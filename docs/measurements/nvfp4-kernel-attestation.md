@@ -68,3 +68,45 @@ pointless. The useful band is ε_B < 25%.
   configuration as 4.0. Both are corrected above.
 
 Reproduce: `tmp/gemm28.py` (in the `vllm/vllm-openai:latest` container).
+
+## Load-time decode: measured, and where it goes
+
+The GEMM is free because the bytes are ordinary NVFP4 by the time the kernel
+sees them.  The cost that is *not* free is the replay that produces them, which
+runs once per unit before serving starts.  Measured on GB10, one real Linear
+(`Qwen3.8-27B layers.0.mlp.gate_proj`, 17408x5120, 89.1M params, R=3 schedule,
+12.5% release):
+
+| stage | before | after | note |
+|---|---|---|---|
+| trellis replay | 561.4 ms | 99.9 ms | row-at-a-time loop -> windowed function |
+| NVFP4 pack | 12.7 ms | 12.3 ms | unchanged; already one gather |
+| **total** | **574.2 ms** | **112.2 ms** | **5.1x** |
+| extrapolated, 355B body | 38.1 min | 7.4 min | one-time, per load |
+
+**Why it was slow, and why that was a bug rather than a price.**
+`ConvCode.step` is `((bit << memory) | state) >> 1` -- a pure shift register.
+The state at row *r* is therefore exactly the previous `memory` select bits, so
+the replay is a *windowed function of the stored stream* with O(1) depth, not a
+sequential scan.  Walking it row by row spent ~6 kernel launches per trellis
+step for 17408 steps.  `decode.replay_body` now checks the shift-register
+property against the tables it builds from `code.step` (rather than assuming
+it) and takes the parallel path when it holds; a code that fails the check
+still decodes down the sequential path.
+
+Two further profiler-directed fixes, both from `torch.profiler`:
+
+- the lagged-OR ladder cost `memory` passes over a full-size int64 tensor
+  (55.9 ms of `bitwise_or_`, 40% of the replay).  Building the window by
+  doubling makes it log2(memory) passes, and the window needs only `memory`
+  bits, so int16 carries it: **-66% on that term**.
+- the subset and transition tables were rebuilt per call -- 264 small copies
+  for 128 table entries.  `functools.lru_cache` on `_replay_tables` makes that
+  O(distinct trellises)=3 instead of O(units).
+
+What remains is full-size int64 traffic: `aten::index` 18.1 ms (the two
+gathers, irreducible), `bitwise_and`/`rshift` 23.5 ms on a 712 MB `body_bits`.
+Storing `body_bits` narrower would take most of that, and is not done here.
+
+**Correctness:** `replay_body` parallel == sequential for memory in {3,4,5,6,8}
+x R in {1,2,3}, and the full suite (190 tests) is green.

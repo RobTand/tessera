@@ -16,6 +16,8 @@ direction would be dishonest, so the two are separate quantities here too.
 
 from __future__ import annotations
 
+import functools
+
 import torch
 
 from .alphabet import AnchorForest
@@ -34,6 +36,31 @@ __all__ = [
 ]
 
 
+@functools.lru_cache(maxsize=32)
+def _replay_tables(
+    forest: AnchorForest, code: ConvCode, device: str
+) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
+    """Subset table + the code's transition tables, built once per trellis.
+
+    These depend on nothing but ``(forest, code, device)``, and rebuilding them
+    per call cost 264 small copies -- a third of the replay's GPU time and most
+    of its launch gap -- on tables of 128 entries.  Caching is not a
+    micro-optimisation here; it is the difference between paying O(model) and
+    O(distinct trellises), of which there are three.
+    """
+    from .encode import _subset_table
+
+    subsets = _subset_table(TCQ(forest, code), device)
+    table_next = torch.zeros(2, code.states, dtype=torch.long, device=device)
+    table_sub = torch.zeros(2, code.states, dtype=torch.long, device=device)
+    for value in range(code.states):
+        for bit in (0, 1):
+            nxt, sub = code.step(value, bit)
+            table_next[bit, value] = nxt
+            table_sub[bit, value] = sub
+    return subsets, table_next, table_sub
+
+
 def replay_body(
     body_bits: torch.Tensor, forest: AnchorForest, code: ConvCode
 ) -> torch.Tensor:
@@ -43,34 +70,71 @@ def replay_body(
     anchors using nothing but the stored bits, so the test that it equals
     ``EncodedUnit.anchors`` is the real proof the body is decodable.
     """
-    from .encode import _subset_table, _transition_tables
-
     device = body_bits.device
     rows, cols = body_bits.shape
-    tcq = TCQ(forest, code)
-    subsets = _subset_table(tcq, device)
+    subsets, table_next, table_sub = _replay_tables(forest, code, str(device))
     points = subsets.shape[1]
     shift = points.bit_length() - 1
     mask = (1 << shift) - 1
 
+    select = (body_bits >> shift) & 1
+    point = body_bits & mask
+
+    # The recursion looks sequential -- state_r feeds state_{r+1} -- but
+    # ConvCode.step is ``register >> 1`` over ``(bit << memory) | state``, a
+    # pure shift register.  So state_r is nothing but the previous ``memory``
+    # select bits, a *windowed function of the stored stream*, and the whole
+    # replay has O(1) depth.  Walking it row by row instead costs one Python
+    # iteration and ~6 kernel launches per trellis step: 561 ms on a single
+    # 17k-row Linear, which extrapolates to 38 minutes of load-time decode on
+    # a 355B body.  Principle 1 -- that is the measurement being wrong about
+    # the problem, not a price serving has to pay.
+    shifted = bool(
+        torch.equal(
+            table_next,
+            (torch.arange(code.states, device=device) >> 1).expand(2, -1)
+            | (torch.tensor([[0], [1 << (code.memory - 1)]], device=device)),
+        )
+    )
+    if shifted:
+        # Two things make the window cheap, and the profiler named both.  The
+        # naive ladder ORs in one lagged bit at a time, so it costs ``memory``
+        # passes over a full-size int64 tensor -- 10 GB of traffic on an 89M
+        # Linear, 66% of the replay.  Doubling instead builds a 2k-bit window
+        # from two k-bit ones, which is log2(memory) passes, and the window
+        # itself only ever needs ``memory`` bits, so int16 carries it at an
+        # eighth of the bytes.
+        def lagged(value: torch.Tensor, rows_back: int) -> torch.Tensor:
+            out = torch.zeros_like(value)
+            out[rows_back:] = value[:-rows_back]
+            return out
+
+        window = {1: select.to(torch.int16)}
+        while max(window) * 2 <= code.memory:
+            width = max(window)
+            window[width * 2] = (window[width] << width) | lagged(
+                window[width], width
+            )
+        packed, held = None, 0
+        for width in sorted(window, reverse=True):
+            if not code.memory >> (width.bit_length() - 1) & 1:
+                continue
+            if packed is None:
+                packed, held = window[width], width
+            else:
+                packed = (packed << width) | lagged(window[width], held)
+                held += width
+        state = lagged(packed, 1).to(torch.long)
+        return subsets[table_sub[select, state], point]
+
+    # A code whose step is not a shift register still has to decode, so the
+    # sequential walk stays as the general path rather than an assumption.
     anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
     state = torch.zeros(cols, dtype=torch.long, device=device)
-    # step() is cheap and pure, so build its table once and gather.
-    table_next = torch.zeros(2, code.states, dtype=torch.long, device=device)
-    table_sub = torch.zeros(2, code.states, dtype=torch.long, device=device)
-    for value in range(code.states):
-        for bit in (0, 1):
-            nxt, sub = code.step(value, bit)
-            table_next[bit, value] = nxt
-            table_sub[bit, value] = sub
-
     for row in range(rows):
-        word = body_bits[row]
-        select = (word >> shift) & 1
-        point = word & mask
-        subset = table_sub[select, state]
-        anchors[row] = subsets[subset, point]
-        state = table_next[select, state]
+        subset = table_sub[select[row], state]
+        anchors[row] = subsets[subset, point[row]]
+        state = table_next[select[row], state]
     return anchors
 
 
