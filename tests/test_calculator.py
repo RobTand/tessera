@@ -24,7 +24,7 @@ def figures():
 def test_body_rates_are_exactly_the_root():
     """Segment 0 alone costs exactly r0 bits per weight."""
     for q256 in (256, 384, 512, 640, 768):
-        rate = terminal_rate(512 if False else q256, 4096, 4096, with_scale_base=False)
+        rate = terminal_rate(q256, 4096, 4096, with_scale_base=False)
         assert rate == Fraction(q256, 256)
 
 

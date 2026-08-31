@@ -106,6 +106,8 @@ src/tessera/
 ## Also here
 
 `docs/exl3-comparison.md` — measured treatment of
-`Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`, the matched-treatment ignore list, the
-10.43 GiB of headroom it leaves on the table, and why Tessera cannot be the
-vehicle for that comparison until a `glm5_next` routed-MoE cell exists.
+`Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`, the matched-treatment ignore list, and the
+size arithmetic: no shipped format reaches the sub-4.5 bpp band where 89% of
+that checkpoint's bytes live, so an NVFP4 GLM build is 4.5% *larger* than the
+EXL3 one. The size win and the comparison are the same blocked item — a
+`glm5_next` routed-MoE cell.

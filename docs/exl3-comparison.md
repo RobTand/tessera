@@ -67,22 +67,52 @@ Open, pending a serving-legality check rather than an assumption:
 - `embed_tokens` (1.18 GiB) — embedding lookup generally needs a dequantized
   table; treat as BF16 until a named vLLM route is confirmed.
 
-## 3. Where the headroom is
+## 3. Where the headroom is — and why it is not enough
 
 Mia leaves **14.51 GiB of attention + shared expert + dense MLP at BF16**.
-Those are exactly the Linears a per-Linear allocator exists to price.
+Those are exactly the Linears a per-Linear allocator exists to price. At NVFP4
+(4.5 bpp including scales) that block becomes 4.08 GiB: **10.43 GiB of
+headroom**, real and free.
 
-At NVFP4 (4.5 bpp including scales) that block becomes 4.08 GiB — **10.43 GiB
-of headroom**, which can be spent two ways:
+It is also swamped. The routed expert block is 89% of the bytes, and the
+shipped menu cannot price it as cheaply as EXL3 does:
 
-- **Ship smaller:** 153.13 GiB, **6.4% smaller** at the same expert bit-rate.
-- **Ship better at the same size:** hold 163.56 GiB and lift routed experts
-  from 4.0117 to **4.2992 bpw** (+0.287).
+| Expert format | bpp | Experts | + non-routed q | + held BF16 | **Total** | vs Mia |
+|---|---:|---:|---:|---:|---:|---:|
+| EXL3 (Mia) | 4.0117 | 145.55 | 11.55 (BF16) | 6.46 | **163.56** | — |
+| NVFP4 | 4.500 | 163.27 | 4.08 | 3.51 | **170.86** | **+7.29 (+4.5%)** |
+| MXFP4 | 4.250 | 154.20 | 4.08 | 3.51 | **161.79** | −1.78 (−1.1%) |
+| FP8 | 8.000 | 290.25 | 4.08 | 3.51 | **297.84** | +134.28 |
 
-Adding `lm_head` + `embed_tokens`, if legal, is a further 2.36 GiB.
+NVFP4's floor costs **+17.72 GiB on the experts** against Mia's trellis, which
+buries the 10.43 GiB won on the dense side. **An NVFP4-everywhere GLM artifact
+is 4.5% larger than the EXL3 checkpoint, not smaller.**
 
-Neither option needs a new format. Both are reachable with the shipped
-NVFP4 / FP8_DYNAMIC / BF16 menu and the AURA allocator.
+Matching Mia's *total* size, with the non-routed block already at NVFP4, needs
+**4.2989 bpw on the experts**. The shipped menu has no rung between NVFP4's 4.5
+and FP8's 8. That rate does not exist.
+
+> An earlier revision of this section priced both options at or near Mia's
+> 4.0117 bpw — a rate PrismaQuant cannot emit — and concluded 6.4% smaller. It
+> was wrong, and it was wrong in the direction that mattered.
+
+**MXFP4 (4.25 bpp) is the one arithmetic escape, and it is not offered here.**
+It clears Mia by 1.1% only if the GLM packed-MoE serving profile route-backs
+MXFP4 *natively* on sm121 — a `route_status` fact that is attested from the
+pinned runtime's contract table (principle 14), never assumed. It also carries
+the measured E8M0 power-of-two scale penalty (+13.8% output MSE vs exact-scale
+FP8 over 410 Gemma Linears) that de-menued the MX family in the first place.
+Read the route status before treating it as an option at all.
+
+**So the entire size win against EXL3 lives in the sub-4.5 bpp band on the
+routed expert block.** That band is precisely Tessera's §6 thesis — root rates
+r₀ ∈ {1.0 … 3.0} with per-column refinement, terminating on W4A4 native tensor
+cores instead of an FP16 GEMM. There is no shipped format that reaches it. That
+is the argument for building one, stated as a measurement rather than a
+preference.
+
+Adding `lm_head` + `embed_tokens`, if legal, is a further 2.36 GiB — worth
+having, not decisive at this scale.
 
 ## 4. The activation-contract argument, stated honestly
 
@@ -139,16 +169,27 @@ contract → Arm 12 against that exact wheel.
 
 ## 6. Recommended sequence
 
-1. **Ship the NVFP4 mixed-precision artifact now.** It is the thing that beats
-   this checkpoint on size, on the activation contract, and on serving
-   qualification, and it needs no new format. It also establishes the matched
-   harness — ignore list, calibration, KL/PPL/ToolEval gates — that the Tessera
-   arm will later reuse unchanged.
-2. **Run Tessera's dense-only arms as research**, reported as dense-only and
-   never as a GLM shipping claim (§16).
-3. **Fund the `glm5_next` routed-MoE cell in Gridbook.** It is the single item
-   standing between Tessera and the comparison that would actually prove the
-   thesis on this model.
+The size table above sets the order. Only one of these paths ends in a smaller
+artifact.
 
-The claim "Tessera ≫ EXL3" is worth making. It is not yet measurable on GLM,
-and the artifact that beats EXL3 *this week* is an NVFP4 build.
+1. **Build the format, and fund the `glm5_next` routed-MoE cell in Gridbook.**
+   It is the single item standing between Tessera and both goals at once: it is
+   the only route to an artifact smaller than the EXL3 checkpoint, *and* the
+   only way the Tessera-vs-EXL3 comparison becomes measurable on this model at
+   all. Item 1a/1b is done and committed; the order from here is full-layout
+   skeleton (arm 4b) → external Gridbook reader/kernels **including the
+   routed-MoE cell** → pinned RC wheel + packaged contract → Arm 12.
+2. **Run Tessera's dense-only arms as research** in parallel, reported as
+   dense-only and never as a GLM shipping claim (§16). They exercise the
+   layout, the accountant, and the reader on real tensors while the routed cell
+   is built.
+3. **Treat an NVFP4 GLM build as a harness, not a headline.** It establishes
+   the matched ignore list, calibration, and KL/PPL/ToolEval gates that the
+   Tessera arm reuses unchanged, and it wins on the activation contract (W4A4
+   vs W4A16) and on serving qualification (vanilla vLLM eager + graph vs Mia's
+   own `serving_reader_qualified: false`). It does **not** win on size, and
+   must not be published as if it did.
+
+The claim "Tessera ≫ EXL3" is worth making. The corrected arithmetic says it is
+also the *only* claim available: no shipped format reaches the band where the
+bytes are.
