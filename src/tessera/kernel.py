@@ -337,3 +337,353 @@ def nvfp4_gemv(
         half=half, BLOCK_N=block_n, BLOCK_K=block_k, SPLIT_K=split_k,
     )
     return out
+
+
+# ---------------------------------------------------------------------------
+# The kernel lane's resident layout
+#
+# The wire BODY plane interleaves each position's select bit with its point
+# bits, which is right for a bitstream and wrong for a decoder: assembling the
+# six-bit state then costs six separate byte loads, one per row of history, and
+# the measured kernel spent its time on them rather than on weight bytes.
+#
+# Sliced into a select plane and a point plane, the state stops being six loads
+# and becomes seven *adjacent bits*: rows n-6..n of one column are consecutive
+# in the select plane, so one 16-bit window carries the whole history plus the
+# current select bit.  Nothing about the artifact changes -- the same bits are
+# permuted at load, exactly as the stock lane permutes them into NVFP4 nibbles
+# -- so this costs no grammar and no stored bytes.
+# ---------------------------------------------------------------------------
+
+#: Zero bits prepended to each column's select plane so that row 0's history
+#: window reads the encoder's initial state instead of the previous column.
+#: Eight rather than six keeps every column byte-aligned.
+SELECT_PAD = 8
+
+
+def pack_kernel_planes(
+    body_bits: torch.Tensor, rate: int = 3, memory: int = 6
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """Wire BODY -> (select plane, point plane), column-major, MSB-first.
+
+    The select plane carries ``SELECT_PAD`` zero bits before each column, which
+    is what lets a decoder read row 0's history without a boundary test: the pad
+    *is* the initial state.
+    """
+    rows, cols = body_bits.shape
+    device = body_bits.device
+    if rows % 8:
+        raise GrammarError(f"{rows} rows does not byte-align a column plane")
+    body = body_bits.to(torch.int32)
+
+    select = (body >> (rate - 1)) & 1
+    padded = torch.zeros(rows + SELECT_PAD, cols, dtype=torch.int32, device=device)
+    padded[SELECT_PAD:] = select
+    select_plane = _pack_columns(padded, 1)
+
+    point = body & ((1 << (rate - 1)) - 1)
+    point_plane = _pack_columns(point, rate - 1)
+    return select_plane, point_plane
+
+
+def _pack_columns(values: torch.Tensor, width: int) -> torch.Tensor:
+    """Pack ``[rows, cols]`` small integers column-major, MSB-first within byte."""
+    rows, cols = values.shape
+    bits = torch.zeros(cols, rows * width, dtype=torch.uint8, device=values.device)
+    for position in range(width):
+        bits[:, position::width] = (
+            (values >> (width - 1 - position)) & 1
+        ).t().to(torch.uint8)
+    flat = bits.reshape(-1)
+    weights = (1 << torch.arange(7, -1, -1, device=values.device, dtype=torch.uint8))
+    return (flat.reshape(-1, 8) * weights).sum(1, dtype=torch.uint8)
+
+
+def build_history_lut(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> torch.Tensor:
+    """``(history window, point) -> E2M1 nibble``, indexed by raw stream bits.
+
+    The seven-bit window read out of the select plane is in *stream* order --
+    oldest row first -- while ``ConvCode``'s state numbers the newest row
+    highest.  Rather than reverse the bits in the kernel every position, the
+    permutation is folded into the table, which costs nothing: the table is the
+    same 512 bytes either way.  Built from ``_replay_tables`` so it cannot
+    disagree with the reference decoder.
+    """
+    subsets, _table_next, table_sub = _replay_tables(forest, code, device)
+    blocks = torch.tensor(forest.blocks, device=device, dtype=torch.uint8)
+    points = subsets.shape[1]
+    lut = torch.zeros((1 << (memory_bits := code.memory + 1)) * points,
+                      dtype=torch.uint8, device=device)
+    for window in range(1 << memory_bits):
+        select = window & 1
+        history = window >> 1
+        # stream order: bit (memory-1-i) of `history` is row n-memory+i.
+        state = 0
+        for i in range(code.memory):
+            bit = (history >> (code.memory - 1 - i)) & 1
+            state |= bit << i
+        subset = int(table_sub[select, state])
+        for point in range(points):
+            lut[window * points + point] = blocks[int(subsets[subset, point]), 0]
+    return lut
+
+
+@triton.jit
+def _sliced_gemv_kernel(
+    x_ptr, select_ptr, point_ptr, lut_ptr, scale_ptr, value_ptr, out_ptr,
+    global_scale, rows, cols,
+    memory: tl.constexpr, rate: tl.constexpr, half: tl.constexpr, pad: tl.constexpr,
+    BLOCK_N: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """GEMV over the sliced layout, one scale group of K per iteration.
+
+    Two costs the interleaved version paid and this one does not: the six
+    history loads collapse into one 16-bit window, and ``BLOCK_K == half`` makes
+    the E4M3 scale constant across the iteration, so it is loaded once per output
+    row instead of once per weight.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    live_n = offs_n < rows
+
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        # One E4M3 per (row, group): loaded once, used `half` times.
+        e4m3 = tl.load(scale_ptr + g * rows + offs_n, mask=live_n, other=0).to(tl.int32)
+        scale = tl.exp2(((e4m3 >> 3) & 0xF).to(tl.float32) - 7.0) * (
+            1.0 + (e4m3 & 0x7).to(tl.float32) / 8.0
+        )
+        for i in tl.static_range(half):
+            k = g * half + i
+            # Seven adjacent bits of the select plane: rows n-memory..n.
+            p = k.to(tl.int64) * (rows + pad) + offs_n.to(tl.int64) + (pad - memory)
+            lo = tl.load(select_ptr + p // 8, mask=live_n, other=0).to(tl.int32)
+            hi = tl.load(select_ptr + p // 8 + 1, mask=live_n, other=0).to(tl.int32)
+            window = (((lo << 8) | hi) >> (9 - (p % 8).to(tl.int32))) & 0x7F
+
+            q = k.to(tl.int64) * rows * (rate - 1) + offs_n.to(tl.int64) * (rate - 1)
+            byte = tl.load(point_ptr + q // 8, mask=live_n, other=0).to(tl.int32)
+            pt = (byte >> (8 - (rate - 1) - (q % 8).to(tl.int32))) & ((1 << (rate - 1)) - 1)
+
+            nib = tl.load(
+                lut_ptr + window * (1 << (rate - 1)) + pt, mask=live_n, other=0
+            ).to(tl.int32)
+            acc += tl.load(value_ptr + nib, mask=live_n, other=0.0) * scale * tl.load(
+                x_ptr + k
+            )
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live_n)
+
+
+def tessera_gemv_sliced(
+    x: torch.Tensor,
+    select_plane: torch.Tensor,
+    point_plane: torch.Tensor,
+    lut: torch.Tensor,
+    e4m3_t: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    rate: int = 3,
+    memory: int = 6,
+    half: int = 16,
+    block_n: int = 128,
+    split_k: int = 8,
+) -> torch.Tensor:
+    """``W @ x`` from the sliced resident layout.  ``e4m3_t`` is ``[cols/half, rows]``."""
+    from .encode import e2m1_value_table
+
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
+        x.reshape(-1), select_plane, point_plane, lut, e4m3_t.reshape(-1),
+        e2m1_value_table(x.device).float(), out,
+        float(global_scale), rows, cols,
+        memory=memory, rate=rate, half=half, pad=SELECT_PAD,
+        BLOCK_N=block_n, SPLIT_K=split_k,
+    )
+    return out
+
+
+@triton.jit
+def _nvfp4_sliced_gemv_kernel(
+    x_ptr, packed_ptr, scale_ptr, value_ptr, out_ptr,
+    global_scale, rows, cols,
+    half: tl.constexpr, BLOCK_N: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """The 4.5 bpp comparator, in the same layout family as the sliced lane.
+
+    Nibbles packed column-major so a warp walks consecutive output rows, scales
+    transposed to ``[cols/half, rows]`` and hoisted out of the inner loop --
+    every structural advantage the Tessera kernel gets, given to NVFP4 too.
+    What is left between them is the thing under test: 4.5 bpp of weight bytes
+    against 3.5, and one extra table lookup per position to decode them.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
+    live_n = offs_n < rows
+
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        e4m3 = tl.load(scale_ptr + g * rows + offs_n, mask=live_n, other=0).to(tl.int32)
+        scale = tl.exp2(((e4m3 >> 3) & 0xF).to(tl.float32) - 7.0) * (
+            1.0 + (e4m3 & 0x7).to(tl.float32) / 8.0
+        )
+        for i in tl.static_range(half):
+            k = g * half + i
+            flat = k.to(tl.int64) * rows + offs_n.to(tl.int64)
+            byte = tl.load(packed_ptr + flat // 2, mask=live_n, other=0).to(tl.int32)
+            nib = tl.where(flat % 2 == 0, byte & 0xF, (byte >> 4) & 0xF)
+            acc += tl.load(value_ptr + nib, mask=live_n, other=0.0) * scale * tl.load(
+                x_ptr + k
+            )
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live_n)
+
+
+def nvfp4_gemv_sliced(
+    x: torch.Tensor,
+    packed_t: torch.Tensor,
+    e4m3_t: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    half: int = 16,
+    block_n: int = 256,
+    split_k: int = 32,
+) -> torch.Tensor:
+    """``W @ x`` over column-major NVFP4 nibbles.  The controlled comparator."""
+    from .encode import e2m1_value_table
+
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _nvfp4_sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
+        x.reshape(-1), packed_t.reshape(-1), e4m3_t.reshape(-1),
+        e2m1_value_table(x.device).float(), out,
+        float(global_scale), rows, cols,
+        half=half, BLOCK_N=block_n, SPLIT_K=split_k,
+    )
+    return out
+
+
+def pack_nvfp4_column_major(codes: torch.Tensor) -> torch.Tensor:
+    """Nibbles packed along the row axis, the comparator's resident layout."""
+    rows, cols = codes.shape
+    flat = codes.t().reshape(-1).to(torch.uint8)
+    return (flat[0::2] & 0xF) | ((flat[1::2] & 0xF) << 4)
+
+
+def build_value_lut(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> torch.Tensor:
+    """``(history window, point) -> the decoded E2M1 *value*``, as fp32.
+
+    The nibble is never wanted for its own sake in a GEMV -- it is immediately
+    used to index the 16-entry value table -- so the two lookups fold into one
+    2 KB table and the inner loop loses a load per position.  Built by composing
+    ``build_history_lut`` with the same value table the reference decoder uses.
+    """
+    from .encode import e2m1_value_table
+
+    return e2m1_value_table(device).float()[build_history_lut(forest, code, device).long()]
+
+
+@triton.jit
+def _wide_gemv_kernel(
+    x_ptr, select_ptr, point_ptr, lut_ptr, scale_ptr, out_ptr,
+    global_scale, rows, cols,
+    memory: tl.constexpr, rate: tl.constexpr, half: tl.constexpr, pad: tl.constexpr,
+    LANES: tl.constexpr, VEC: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """GEMV where each lane decodes ``VEC`` consecutive output rows per load.
+
+    The sliced layout removed the six history loads; what remained was one load
+    per *position*, which left the kernel instruction-bound at a third of the
+    bandwidth its byte count deserved -- while the NVFP4 comparator, needing one
+    load per two positions, ran at 84% of peak.
+
+    Consecutive rows of a column share almost all of their history: rows n and
+    n+1 differ by one select bit.  So ``VEC`` rows need ``VEC + memory`` select
+    bits -- fifteen for VEC=8 -- which is three bytes, and ``2*VEC`` point bits,
+    which is two.  Five loads now serve eight positions instead of sixteen.
+
+    Both planes land on constant shifts, which is why VEC is 8 and the pad is 8:
+    with ``rows % 8 == 0`` the point plane is byte-aligned outright, and the
+    select plane sits at a fixed offset of ``pad - memory`` bits into its byte.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    base = pid_n * LANES * VEC + tl.arange(0, LANES) * VEC
+    vec = tl.arange(0, VEC)
+    offs_n = base[:, None] + vec[None, :]
+    live = offs_n < rows
+    live_base = base < rows
+    acc = tl.zeros((LANES, VEC), dtype=tl.float32)
+
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        scale_byte = tl.load(
+            scale_ptr + g * rows + offs_n, mask=live, other=0
+        ).to(tl.int32)
+        scale = tl.exp2(((scale_byte >> 3) & 0xF).to(tl.float32) - 7.0) * (
+            1.0 + (scale_byte & 0x7).to(tl.float32) / 8.0
+        )
+        for i in tl.static_range(half):
+            k = g * half + i
+            # Select plane: VEC + memory bits at a constant sub-byte offset.
+            p = k.to(tl.int64) * (rows + pad) + base.to(tl.int64) + (pad - memory)
+            b0 = tl.load(select_ptr + p // 8, mask=live_base, other=0).to(tl.int32)
+            b1 = tl.load(select_ptr + p // 8 + 1, mask=live_base, other=0).to(tl.int32)
+            b2 = tl.load(select_ptr + p // 8 + 2, mask=live_base, other=0).to(tl.int32)
+            wide = (b0 << 16) | (b1 << 8) | b2
+            # `wide` is a 24-bit big-endian window from byte p//8.  Row base+v's
+            # seven history bits end at bit offset (p%8) + v + memory, and
+            # p%8 is the constant `pad - memory`, so the shift is 23 - pad - v.
+            window = (wide[:, None] >> (23 - pad - vec[None, :])) & 0x7F
+
+            # Point plane: 2*VEC bits, byte-aligned.
+            q = k.to(tl.int64) * rows * (rate - 1) + base.to(tl.int64) * (rate - 1)
+            c0 = tl.load(point_ptr + q // 8, mask=live_base, other=0).to(tl.int32)
+            c1 = tl.load(point_ptr + q // 8 + 1, mask=live_base, other=0).to(tl.int32)
+            pair = (c0 << 8) | c1
+            pt = (pair[:, None] >> (16 - (rate - 1) * (vec[None, :] + 1))) & (
+                (1 << (rate - 1)) - 1
+            )
+
+            value = tl.load(
+                lut_ptr + window * (1 << (rate - 1)) + pt, mask=live, other=0.0
+            )
+            acc += value * scale * tl.load(x_ptr + k)
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live)
+
+
+def tessera_gemv_wide(
+    x: torch.Tensor,
+    select_plane: torch.Tensor,
+    point_plane: torch.Tensor,
+    value_lut: torch.Tensor,
+    e4m3_t: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    rate: int = 3,
+    memory: int = 6,
+    half: int = 16,
+    lanes: int = 64,
+    vec: int = 8,
+    split_k: int = 32,
+) -> torch.Tensor:
+    """``W @ x`` at ``VEC`` output rows per lane per load."""
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
+        x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        float(global_scale), rows, cols,
+        memory=memory, rate=rate, half=half, pad=SELECT_PAD,
+        LANES=lanes, VEC=vec, SPLIT_K=split_k,
+    )
+    return out
