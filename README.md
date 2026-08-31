@@ -8,7 +8,7 @@ Implemented against `prismaquant/docs/design/embedded_native_weight_coding_2026-
 revision 8, review cycle closed).
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/ -q     # 101 passing, stdlib only
+PYTHONPATH=src python3 -m pytest tests/ -q     # 115 passing, stdlib only
 ```
 
 No dependencies. No torch, no GPU, no model data.
@@ -23,8 +23,8 @@ Gridbook release.
 
 | Item | Deliverable | State |
 |---|---|---|
-| 1a | Reviewed byte-level schema and parse algorithm | Authored — **review owed** |
-| 1b | Pure serializer/parser/footprint plus bytes-only tests | Passing locally |
+| 1a | Reviewed byte-level schema and parse algorithm | **Pass 1 complete** — 9 findings, all closed (`docs/schema/review-1a-findings.md`); two external passes running |
+| 1b | Pure serializer/parser/footprint plus bytes-only tests | Passing locally, 115 tests |
 | 11 | Legacy-plane wire arithmetic in a pure calculator | Derived, provenance-tagged |
 
 A separate repository is the right shape for this: §16 forbids menu, pipeline,
@@ -33,7 +33,17 @@ that structurally rather than by discipline.
 
 ## What it proves
 
-The exhaustive tests are the point. Three results worth naming:
+The exhaustive tests are the point. Four results worth naming:
+
+- **A truncated artifact is now verifiable.** Truncation is this format's
+  headline feature, and until the 1a review it was the one case with *no*
+  integrity check: the whole-artifact digest covers only untruncated bytes, and
+  the per-plane `content_digest` held `sha256(b"")` for seven of nine planes.
+  The fixture shipped a plane region contradicting its own declared digests and
+  all 101 tests passed. Every terminal now carries a digest of its own byte
+  prefix, plane digests cover real bytes, padding is forced zero, and a terminal
+  must be a genuine *prefix* — the property the truncation contract rested on
+  and nothing checked.
 
 - **All 65,536 §6b words classified**, legal-set digest frozen at
   `da398624…a1b3`. The codec reaches **all seven** positive E4M3FN subnormals
