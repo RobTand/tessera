@@ -63,6 +63,38 @@ Matched at 4.0 bpp (payload + 0.5 scale planes), 3 seeds × 2 shapes:
 21.4% lower error than release at identical bytes. Spread across seeds is
 ±0.0003, so the gap is ~70× the noise.
 
+## Finding 3 — the coding gain grows as the rate falls, and vanishes at 4.5
+
+`k` sweeps the payload rate as `(4k−1)/k`. Measured on 1024×1024, memory-6
+code, against E2M1 scalar rounding at 4.5 bpp (rel_err 0.09886):
+
+| k | payload | total bpp | rel_err | = scalar NVFP4 at | saving | gain |
+|--:|--------:|----------:|--------:|------------------:|-------:|-----:|
+| 1 | 3.000 | 3.500 | 0.14118 | 3.986 bpp | 0.486 | 2.93 dB |
+| 2 | 3.500 | 4.000 | 0.10956 | 4.352 bpp | 0.352 | 2.12 dB |
+| 4 | 3.750 | 4.250 | 0.10119 | 4.466 bpp | 0.216 | 1.30 dB |
+| 8 | 3.875 | 4.375 | 0.09923 | 4.495 bpp | 0.125 | 0.72 dB |
+| 16 | 3.938 | 4.438 | 0.09889 | 4.500 bpp | 0.063 | 0.37 dB |
+| — | 4.000 | 4.500 | 0.09886 | 4.500 bpp | 0 | 0 |
+
+**At 4.5 bpp a trellis holds nothing a scalar format does not.** That is
+structural, not an encoder limit: 4.5 bpp is 4.0 payload bits, 4 bits over a
+16-code grid makes every code reachable at every position, and that *is*
+scalar NVFP4 with no redundancy left to code with. `(4k−1)/k → 4` only as
+`k → ∞`, and the gain decays to zero with it.
+
+The advantage therefore runs the other way — it grows as the rate falls, and
+it is largest exactly where NVFP4 cannot operate at all. This is the whole
+value proposition, and it says the target band is 3.5–4.25, not 4.5.
+
+**One precision about the baseline.** The comparator is E2M1 rounding — NVFP4
+as the hardware actually deploys it — not an optimal scalar quantiser of a
+Gaussian. E2M1 is a fixed non-uniform grid that is not matched to the source,
+so part of the measured gain is the trellis compensating for that mismatch
+rather than pure granular gain (which is bounded near 1.53 dB). That is a real
+advantage against the format we must beat, but it is not a claim about
+information theory, and 2.93 dB should not be quoted as a trellis coding gain.
+
 ## What this implies for the grammar
 
 The k-tuple trellis reaches `(2k−1)/k` payload bits — 3.0, 3.5, 3.75, 3.875 —
