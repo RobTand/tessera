@@ -185,10 +185,34 @@ uint still round-trips, and the signed boundary `-2⁶³` stays legal.
 
 ---
 
-## Pass 2 — `glm53-flash-high` (adversarial ambiguity)
+## Passes 2 and 3 — external reviewers
 
-*Pending.*
+Two independent external passes were commissioned: `glm53-flash-high` on an
+adversarial wire-ambiguity framing, and Muse Spark on a normative-claim
+conformance trace. Both are recorded here with their outcome, because a review
+gate that silently produced nothing is worse than one that admits it.
 
-## Pass 3 — Muse Spark (conformance trace)
+**Two infrastructure faults surfaced first, and both are worth keeping:**
 
-*Pending.*
+1. **Every Muse Spark dispatch was silently dead.** `~/.claude/muse/muse.py`
+   carried `MODEL_DEFAULT = "meta/muse-spark-1.2-contributor"`; that provider
+   prefix no longer resolves and opencode dies in `prompt_async`. The failure
+   is invisible to the caller — `status` reports `running`, `harvest` returns
+   `chars=0, tools=0, error: None`. Two dispatches sat "running" for ~20
+   minutes each having done nothing. Corrected to
+   `opencode-go/muse-spark-1.2-contributor`, verified against
+   `GET /config/providers`.
+2. **Reading the 1090-line design document hangs the opencode read tool.**
+   Three separate runs stalled with a `read` stuck in `running` on that path,
+   no error logged. A brief scoped to the schema doc and the source files —
+   which are small — completed eight reads cleanly. The design doc is the
+   normative source, so this is a real constraint on delegating any review of
+   it, not a preference.
+
+The pass that ran to completion is recorded below. Its findings are merged only
+after being verified against the code; a reviewer assertion is a lead, not a
+finding.
+
+### Pass 2 — `glm53-flash-high`, self-contained brief
+
+*Running at the time of writing; findings merged on completion.*
