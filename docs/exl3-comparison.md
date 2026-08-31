@@ -58,14 +58,39 @@ To be apples-to-apples, an artifact must hold these at BF16:
 - `model.visual.*` — the whole vision tower (1.05 GiB)
 - `model.language_model.layers.45.eh_proj`, `…layers.45.shared_head.*` — MTP
 
-Open, pending a serving-legality check rather than an assumption:
+**`lm_head`: legal. `embed_tokens`: not legal.** Attested 2026-08-31 by reading
+the dispatch in three vLLM builds (principle 14 — read from the runtime, not
+assumed):
 
-- `lm_head` (1.18 GiB) — Mia declares `head_bits: 16`. PrismaQuant principle 12
-  excludes `lm_head` from bpp accounting regardless, so quantizing it changes
-  the *size* comparison but not the *bpp* comparison, and it must be declared
-  either way.
-- `embed_tokens` (1.18 GiB) — embedding lookup generally needs a dequantized
-  table; treat as BF16 until a named vLLM route is confirmed.
+- `compressed_tensors.py::get_quant_method` has an explicit `ParallelLMHead`
+  branch that returns `CompressedTensorsLinearMethod` when a scheme resolves
+  (`:184` in vLLM 0.19.2rc1; `:180` in both serving images). GLM-5.3-Flash has
+  `tie_word_embeddings: false`, so `lm_head` is a real, separate
+  `[154880, 4096]` tensor — **1.18 GiB, quantizable.** PrismaQuant already
+  reaches it via `--allow-pinned lm_head` / `lm_head_mode: dp`
+  (`export_native_compressed.py:2097-2116`).
+- A plain `VocabParallelEmbedding` matches **no** branch in that dispatch and
+  falls through to `return None` (`:199`), so `embed_tokens` silently gets
+  `UnquantizedEmbeddingMethod` — BF16 — no matter what the recipe says
+  (`vocab_parallel_embedding.py:270-274`). And the fallback is not the only
+  guard: `CompressedTensorsLinearMethod` defines no `embedding` method (grep
+  count 0 in all three builds), so the `is_embedding_layer` check would raise
+  `NotImplementedError` if the dispatch ever did return it
+  (`vocab_parallel_embedding.py:279-286`; the images use the stricter
+  `not isinstance(self, ParallelLMHead)` form at `:296`).
+
+So **`embed_tokens` stays BF16** — that is a property of the runtime, not a
+choice, and its 1.18 GiB is not available. Quantizing `lm_head` is worth 1.18 GiB
+minus its NVFP4 residue; principle 12 excludes it from bpp accounting either
+way, so it moves the *size* comparison and not the *bpp* one, and must be
+declared on the card.
+
+**Serving-lane gap, found while attesting the above:** neither local image
+registers `Glm5NextForConditionalGeneration`. `vllm/vllm-openai:qwen38-flash-next`
+(0.1.dev20073) and `eugr/spark-vllm` (0.26.1rc1.dev693, 2026-08-12) both stop at
+the `Glm4*` family. **No local vLLM can serve GLM-5.3-Flash at all today**, in
+any precision. That blocks the NVFP4 harness as much as it blocks Tessera, and
+it is a separate item from the routed-MoE cell.
 
 ## 3. Where the headroom is — and why it is not enough
 
