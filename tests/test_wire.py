@@ -5,6 +5,9 @@ Everything else round-trips tensors, which cannot see bit order, per-superblock
 counts, sub-byte padding, or whether the artifact is self-describing at all.
 """
 
+import os
+from unittest import mock
+
 import pytest
 import torch
 
@@ -231,3 +234,28 @@ def test_absent_diagonals_shrink_the_artifact_by_their_exact_size():
     _, region_a, _ = build_unit_artifact(with_d, "u", FORESTS, 640, CODE)
     _, region_b, _ = build_unit_artifact(without, "u", FORESTS, 640, CODE)
     assert len(region_a) - len(region_b) == 2 * (64 + 512)  # 16 bits per channel
+
+
+@pytest.mark.parametrize("memory", [3, 4, 5, 6, 8])
+def test_fused_replay_equals_the_eager_path_bit_for_bit(memory):
+    """The fused path is an optimisation, so it owes an exact match.
+
+    ``TESSERA_FUSED_REPLAY=0`` selects the eager chain; the compiled one must
+    agree on every position, or the decoder's output depends on whether
+    inductor was available -- which is the same class of bug as a producer and
+    consumer disagreeing about the wire.
+    """
+    from tessera.decode import _fused_replay, replay_body
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    code = ConvCode(memory=memory)
+    for rate in (1, 2, 3):
+        forest = build_forest(rate)
+        bits = torch.randint(0, 1 << rate, (129, 96), device=device, dtype=torch.uint8)
+        with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "0"}):
+            _fused_replay.cache_clear()
+            eager = replay_body(bits, forest, code)
+        _fused_replay.cache_clear()
+        fused = replay_body(bits, forest, code)
+        assert torch.equal(eager, fused)
+    _fused_replay.cache_clear()

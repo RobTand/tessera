@@ -91,7 +91,13 @@ def unpack_body(
     bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))[:total]
     if bits.size != total:
         raise GrammarError(f"BODY needs {total} bits, the plane holds {bits.size}")
-    out = np.zeros((rows, len(rates)), dtype=np.int64)
+    # uint8, not int64: a plane position carries at most 3 bits, and the replay
+    # is a bandwidth-bound elementwise chain over the BODY plane.  Eight bytes
+    # per three bits made every pass in the decoder read 8x what it needed.
+    # Callers that *index* with the result must widen it first -- a uint8 index
+    # tensor is a boolean mask in torch, which fails loudly here and would not
+    # elsewhere.
+    out = np.zeros((rows, len(rates)), dtype=np.uint8)
     cursor = 0
     for column, rate in enumerate(rates):
         if rate == 0:

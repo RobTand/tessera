@@ -17,6 +17,7 @@ direction would be dishonest, so the two are separate quantities here too.
 from __future__ import annotations
 
 import functools
+import os
 
 import torch
 
@@ -34,6 +35,105 @@ __all__ = [
     "materialize_nvfp4",
     "reconstruct_unit",
 ]
+
+
+def _replay_core(
+    body: torch.Tensor,
+    subsets_flat: torch.Tensor,
+    table_sub_flat: torch.Tensor,
+    shift: int,
+    mask: int,
+    memory: int,
+    points: int,
+) -> torch.Tensor:
+    """Body bits -> anchor indices, as one fusable elementwise chain.
+
+    Every tensor here is uint8 and every operation is elementwise or a lookup
+    into a 128-entry table, so the whole replay is a single pass over the data
+    that ``torch.compile`` fuses into one kernel.  Written unfused over int64 it
+    was ~15 passes at eight bytes per three bits of payload, and that -- not the
+    trellis -- was the load-time cost.
+
+    The window is built by *doubling*, a 2k-bit window from two k-bit ones,
+    rather than by ORing in one lagged bit at a time: depth log2(memory) instead
+    of memory.  That matters less once fused, but it is what keeps the eager
+    fallback tolerable on a machine with no inductor.
+    """
+    select = (body >> shift) & 1
+    point = body & mask
+
+    def lagged(value: torch.Tensor, rows_back: int) -> torch.Tensor:
+        out = torch.zeros_like(value)
+        out[rows_back:] = value[:-rows_back]
+        return out
+
+    window = {1: select}
+    while max(window) * 2 <= memory:
+        width = max(window)
+        window[width * 2] = (window[width] << width) | lagged(window[width], width)
+    packed, held = None, 0
+    for width in sorted(window, reverse=True):
+        if not memory >> (width.bit_length() - 1) & 1:
+            continue
+        if packed is None:
+            packed, held = window[width], width
+        else:
+            packed = (packed << width) | lagged(window[width], held)
+            held += width
+    state = lagged(packed, 1)
+    subset = table_sub_flat[(select.int() << memory) + state.int()]
+    return subsets_flat[subset.int() * points + point.int()]
+
+
+def _decode_core(
+    body: torch.Tensor,
+    subsets_flat: torch.Tensor,
+    table_sub_flat: torch.Tensor,
+    reach_flat: torch.Tensor,
+    completion: torch.Tensor,
+    shift: int,
+    mask: int,
+    memory: int,
+    points: int,
+    width: int,
+) -> torch.Tensor:
+    """Body bits + completion bits -> E2M1 nibbles, in one fused pass.
+
+    Stopping at the anchor index and doing the completion lookup outside cost
+    more than the replay did: the anchor plane is a full-size tensor that only
+    exists to be indexed once.  Fused, it never materialises, and the decoder's
+    whole output is a uint8 nibble per position.
+    """
+    anchor = _replay_core(body, subsets_flat, table_sub_flat, shift, mask, memory, points)
+    return reach_flat[anchor.int() * width + completion.int()]
+
+
+@functools.lru_cache(maxsize=1)
+def _fused_decode():
+    """``_decode_core`` fused, or ``None``.  See ``_fused_replay``."""
+    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
+        return None
+    try:
+        return torch.compile(_decode_core, dynamic=True)
+    except Exception:  # pragma: no cover
+        return None
+
+
+@functools.lru_cache(maxsize=1)
+def _fused_replay():
+    """``_replay_core`` fused into one kernel, or ``None`` if that is refused.
+
+    ``dynamic=True`` because a model presents hundreds of Linear shapes and a
+    recompile for each would cost more than the fusion saves.  Set
+    ``TESSERA_FUSED_REPLAY=0`` to force the eager path: the two must agree
+    bit-for-bit, and a test asserts they do.
+    """
+    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
+        return None
+    try:
+        return torch.compile(_replay_core, dynamic=True)
+    except Exception:  # pragma: no cover - no inductor, no fusion, still correct
+        return None
 
 
 @functools.lru_cache(maxsize=32)
@@ -77,18 +177,17 @@ def replay_body(
     shift = points.bit_length() - 1
     mask = (1 << shift) - 1
 
-    select = (body_bits >> shift) & 1
-    point = body_bits & mask
-
     # The recursion looks sequential -- state_r feeds state_{r+1} -- but
     # ConvCode.step is ``register >> 1`` over ``(bit << memory) | state``, a
     # pure shift register.  So state_r is nothing but the previous ``memory``
     # select bits, a *windowed function of the stored stream*, and the whole
-    # replay has O(1) depth.  Walking it row by row instead costs one Python
-    # iteration and ~6 kernel launches per trellis step: 561 ms on a single
-    # 17k-row Linear, which extrapolates to 38 minutes of load-time decode on
-    # a 355B body.  Principle 1 -- that is the measurement being wrong about
-    # the problem, not a price serving has to pay.
+    # replay has O(1) depth.  Walking it row by row instead cost ~6 kernel
+    # launches per trellis step: 561 ms on a single 17k-row Linear, 38 minutes
+    # of load-time decode on a 355B body.  Principle 1 -- that was the
+    # measurement being wrong about the problem, not a price serving pays.
+    #
+    # The property is checked against the tables built from ``code.step``, never
+    # assumed: a code that failed it would decode to garbage in silence.
     shifted = bool(
         torch.equal(
             table_next,
@@ -97,44 +196,34 @@ def replay_body(
         )
     )
     if shifted:
-        # Two things make the window cheap, and the profiler named both.  The
-        # naive ladder ORs in one lagged bit at a time, so it costs ``memory``
-        # passes over a full-size int64 tensor -- 10 GB of traffic on an 89M
-        # Linear, 66% of the replay.  Doubling instead builds a 2k-bit window
-        # from two k-bit ones, which is log2(memory) passes, and the window
-        # itself only ever needs ``memory`` bits, so int16 carries it at an
-        # eighth of the bytes.
-        def lagged(value: torch.Tensor, rows_back: int) -> torch.Tensor:
-            out = torch.zeros_like(value)
-            out[rows_back:] = value[:-rows_back]
-            return out
-
-        window = {1: select.to(torch.int16)}
-        while max(window) * 2 <= code.memory:
-            width = max(window)
-            window[width * 2] = (window[width] << width) | lagged(
-                window[width], width
-            )
-        packed, held = None, 0
-        for width in sorted(window, reverse=True):
-            if not code.memory >> (width.bit_length() - 1) & 1:
-                continue
-            if packed is None:
-                packed, held = window[width], width
-            else:
-                packed = (packed << width) | lagged(window[width], held)
-                held += width
-        state = lagged(packed, 1).to(torch.long)
-        return subsets[table_sub[select, state], point]
+        body = body_bits if body_bits.dtype == torch.uint8 else body_bits.to(torch.uint8)
+        args = (
+            body,
+            subsets.reshape(-1).to(torch.uint8),
+            table_sub.reshape(-1).to(torch.uint8),
+            shift,
+            mask,
+            code.memory,
+            points,
+        )
+        run = _fused_replay() if body.is_cuda else None
+        if run is not None:
+            try:
+                return run(*args).long()
+            except Exception:  # pragma: no cover - fall back, never fail closed
+                pass
+        return _replay_core(*args).long()
 
     # A code whose step is not a shift register still has to decode, so the
     # sequential walk stays as the general path rather than an assumption.
+    select = (body_bits >> shift) & 1
+    point = body_bits & mask
     anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
     state = torch.zeros(cols, dtype=torch.long, device=device)
     for row in range(rows):
-        subset = table_sub[select[row], state]
-        anchors[row] = subsets[subset, point[row]]
-        state = table_next[select[row], state]
+        subset = table_sub[select[row].long(), state]
+        anchors[row] = subsets[subset, point[row].long()]
+        state = table_next[select[row].long(), state]
     return anchors
 
 
@@ -149,17 +238,20 @@ def decode_codes(
     completion = depth if completion is None else completion
     device = unit.body_bits.device
     anchors = replay_body(unit.body_bits, forest, code)
-    blocks = torch.tensor(forest.blocks, device=device, dtype=torch.long)
+    # uint8 here too, so the single-rate and mixed-rate decoders agree on the
+    # dtype of a nibble.  They did not, and the release scatter caught it.
+    blocks = torch.tensor(forest.blocks, device=device, dtype=torch.uint8)
     reachable = blocks[:, :: 1 << (depth - completion)]
     codes = reachable[anchors, unit.completion_bits]
     if unit.release_index.numel():
-        codes.reshape(-1)[unit.release_index] = unit.release_code
+        codes.reshape(-1)[unit.release_index] = unit.release_code.to(torch.uint8)
     return codes
 
 
 def dequantize(codes: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
     """Nibbles times their half-block scale: the weights the runtime will see."""
-    return e2m1_value_table(codes.device)[codes] * scale
+    # ``.int()``: codes are uint8, and a uint8 index tensor is a boolean mask.
+    return e2m1_value_table(codes.device)[codes.int()] * scale
 
 
 def materialize_nvfp4(
@@ -209,18 +301,45 @@ def decode_codes_mixed(
     device = unit.body_bits.device
     rows, cols = unit.body_bits.shape
     rates = torch.tensor(unit.rates, device=device)
-    codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    # uint8, not int64: a code is a 4-bit nibble.  Carrying the decoder's whole
+    # output at eight bytes a nibble made the completion lookup cost more than
+    # the trellis replay it followed.
+    codes = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
     for present in sorted(set(unit.rates)):
         picked = forests[present]
         depth = 3 - picked.rate
         level = depth if completion is None else min(completion, depth)
         which = torch.nonzero(rates == present).squeeze(1)
-        anchors = replay_body(unit.body_bits[:, which].contiguous(), picked, code)
-        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
-        reachable = blocks[:, :: 1 << (depth - level)]
-        codes[:, which] = reachable[anchors, unit.completion_bits[:, which]]
+        body = unit.body_bits[:, which].contiguous()
+        comp = unit.completion_bits[:, which].contiguous()
+        subsets, table_next, table_sub = _replay_tables(picked, code, str(device))
+        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.uint8)
+        reachable = blocks[:, :: 1 << (depth - level)].contiguous()
+        points = subsets.shape[1]
+        shift = points.bit_length() - 1
+        run = _fused_decode() if body.is_cuda else None
+        args = (
+            body if body.dtype == torch.uint8 else body.to(torch.uint8),
+            subsets.reshape(-1).to(torch.uint8),
+            table_sub.reshape(-1).to(torch.uint8),
+            reachable.reshape(-1),
+            comp if comp.dtype == torch.uint8 else comp.to(torch.uint8),
+            shift,
+            (1 << shift) - 1,
+            code.memory,
+            points,
+            reachable.shape[1],
+        )
+        if run is not None:
+            try:
+                codes[:, which] = run(*args)
+                continue
+            except Exception:  # pragma: no cover - fall back, never fail closed
+                pass
+        anchors = replay_body(body, picked, code)
+        codes[:, which] = reachable.long()[anchors, comp.long()].to(torch.uint8)
     if apply_release and unit.release_index.numel():
-        codes.reshape(-1)[unit.release_index] = unit.release_code
+        codes.reshape(-1)[unit.release_index] = unit.release_code.to(torch.uint8)
     return codes
 
 

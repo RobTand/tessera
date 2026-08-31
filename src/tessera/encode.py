@@ -54,7 +54,7 @@ class EncodedUnit:
     rates: "tuple[int, ...]"
     anchors: torch.Tensor        # [rows, cols] int64, index into forest anchors
     codes: torch.Tensor          # [rows, cols] int64, E2M1 nibble after Stage C
-    body_bits: torch.Tensor      # [rows, cols] int64, the R input bits per position
+    body_bits: torch.Tensor      # [rows, cols] uint8, the R input bits per position
     completion_bits: torch.Tensor  # [rows, cols] int64, the c completion bits
     scale_base: torch.Tensor     # [groups] uint8, E8M0 exponent byte
     scale_refine: torch.Tensor   # [halves] uint8, 4-bit refinement word
@@ -254,7 +254,7 @@ def encode_unit(
     targets = work / scale
 
     anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    body_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    body_bits = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
     completion_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
     codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
     values = e2m1_value_table(device)
@@ -276,7 +276,7 @@ def encode_unit(
         per_pos = values[reachable][a]
         c_bits = ((sub.unsqueeze(2) - per_pos) ** 2).argmin(dim=2)
         anchors[:, which] = a
-        body_bits[:, which] = b
+        body_bits[:, which] = b.to(torch.uint8)
         completion_bits[:, which] = c_bits
         codes[:, which] = reachable[a, c_bits]
 

@@ -79,10 +79,10 @@ runs once per unit before serving starts.  Measured on GB10, one real Linear
 
 | stage | before | after | note |
 |---|---|---|---|
-| trellis replay | 561.4 ms | 99.9 ms | row-at-a-time loop -> windowed function |
-| NVFP4 pack | 12.7 ms | 12.3 ms | unchanged; already one gather |
-| **total** | **574.2 ms** | **112.2 ms** | **5.1x** |
-| extrapolated, 355B body | 38.1 min | 7.4 min | one-time, per load |
+| trellis replay | 561.4 ms | 16.4 ms | scan -> windowed function, fused |
+| NVFP4 pack | 12.7 ms | 6.7 ms | narrower dtypes |
+| **total decode** | **574.2 ms** | **23.1 ms** | **24.9x** |
+| extrapolated, 355B body | 38.1 min | 1.5 min | one-time, per load |
 
 **Why it was slow, and why that was a bug rather than a price.**
 `ConvCode.step` is `((bit << memory) | state) >> 1` -- a pure shift register.
@@ -94,19 +94,45 @@ property against the tables it builds from `code.step` (rather than assuming
 it) and takes the parallel path when it holds; a code that fails the check
 still decodes down the sequential path.
 
-Two further profiler-directed fixes, both from `torch.profiler`:
+Four profiler-directed fixes, in the order the profiler named them:
 
-- the lagged-OR ladder cost `memory` passes over a full-size int64 tensor
-  (55.9 ms of `bitwise_or_`, 40% of the replay).  Building the window by
-  doubling makes it log2(memory) passes, and the window needs only `memory`
-  bits, so int16 carries it: **-66% on that term**.
-- the subset and transition tables were rebuilt per call -- 264 small copies
-  for 128 table entries.  `functools.lru_cache` on `_replay_tables` makes that
-  O(distinct trellises)=3 instead of O(units).
+1. **The scan.** Row-at-a-time -> windowed. 561.4 -> 176.9 ms.
+2. **The ladder.** ORing in one lagged bit at a time costs `memory` passes over
+   a full-size tensor (55.9 ms of `bitwise_or_`, 40% of the replay).  Building
+   the window by *doubling* -- a 2k-bit window from two k-bit ones -- is
+   log2(memory) passes. 176.9 -> 99.9 ms.
+3. **The tables.** Subset and transition tables were rebuilt per call: 264 small
+   copies for 128 entries.  `lru_cache` makes that O(distinct trellises)=3.
+4. **The dtypes, and the fusion.** Every plane and every intermediate was int64
+   -- eight bytes per three bits of payload -- across ~15 unfused passes.  BODY
+   and the decoder's whole output are now uint8, and `_decode_core` (replay +
+   completion lookup) is one `torch.compile`d kernel.  99.9 -> 16.4 ms.
 
-What remains is full-size int64 traffic: `aten::index` 18.1 ms (the two
-gathers, irreducible), `bitwise_and`/`rshift` 23.5 ms on a 712 MB `body_bits`.
-Storing `body_bits` narrower would take most of that, and is not done here.
+The isolated replay reaches **1.8 ms** (48.8 G param/s); the 16.4 ms measured
+in `decode_codes_mixed` is the per-rate-group column gather and scatter around
+it, which a uniform-rate schedule would avoid.
 
-**Correctness:** `replay_body` parallel == sequential for memory in {3,4,5,6,8}
-x R in {1,2,3}, and the full suite (190 tests) is green.
+**Two dtype landmines this exposed**, both silent in a way that matters: a
+`uint8` index tensor is a *boolean mask* in torch, not an integer index, so
+COMPLETION is widened at the reader (`unit_artifact`) while BODY stays narrow;
+and `decode_codes` and `decode_codes_mixed` had disagreed about the dtype of a
+nibble, which only the release scatter caught.
+
+**Correctness:** `replay_body` parallel == sequential for memory in
+{3,4,5,6,8} x R in {1,2,3}; fused == eager bit-for-bit over the same grid
+(`test_fused_replay_equals_the_eager_path_bit_for_bit`); the full suite (195
+tests) is green with fusion on *and* under `TESSERA_FUSED_REPLAY=0`.
+
+## What this does and does not buy
+
+- **Disk:** no sidecar is needed.  At 1.5 min for a 355B body, decoding at load
+  is cheaper than the disk the materialised copy would cost.
+- **VRAM:** unchanged at 4.5 bpp.  The decoder still *produces* a standard
+  NVFP4 tensor, and that is what occupies memory.  Tessera compresses the
+  artifact, not the working set.
+- **Only an in-kernel decoder changes the second line**, and that is the thing
+  this design deliberately avoids.  See `release-vs-tuple-trellis.md`: the
+  RELEASE plane is the part of the current grammar that is *not*
+  kernel-friendly, because its positions are data-dependent (ordered by
+  decoded magnitude on the pre-release decode), so an in-kernel decoder would
+  need an explicit index that costs more bits than release saves.

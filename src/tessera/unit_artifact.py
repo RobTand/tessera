@@ -224,9 +224,13 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         anchors=torch.zeros(rows, cols, dtype=torch.long, device=device),
         codes=torch.zeros(rows, cols, dtype=torch.long, device=device),
         body_bits=unpack_body(chunks[PlaneKind.BODY], rates, rows, device),
+        # BODY stays uint8 -- the replay is bandwidth-bound over it -- but
+        # COMPLETION indexes the reachable-descendant table, and a uint8 index
+        # tensor is a *boolean mask* in torch, not an integer index.  The two
+        # planes share a reader and must not share a dtype.
         completion_bits=unpack_body(
             chunks[PlaneKind.COMPLETION], completion_widths, rows, device
-        ),
+        ).long(),
         scale_base=unpack_uniform(
             chunks[PlaneKind.SCALE_BASE],
             geometry.positions // geometry.group_weights, 8, device,
@@ -265,7 +269,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
                                unit.group, unit.half),
             unit.half,
         ).reshape(rows, cols)
-        decoded = e2m1_value_table(device)[pre] * scale
+        decoded = e2m1_value_table(device)[pre.int()] * scale
         unit.release_index = _canonical_release_order(
             decoded, cols, geometry.superblock_columns, n_released
         )
