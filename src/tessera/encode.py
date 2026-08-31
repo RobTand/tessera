@@ -64,6 +64,12 @@ class EncodedUnit:
     rotation: RotationState = RotationState.NONE
     rotation_block: int = 1
     diagonals: "Diagonals | None" = None   # segment 2a, None when not fitted
+    # The segment-2b block geometry.  Stored because a decoder holding only the
+    # planes cannot otherwise turn ``scale_base``/``scale_refine`` back into a
+    # per-position scale: the byte counts alone do not say which axis they run
+    # along.  These travel in the manifest geometry on the wire.
+    group: int = 32
+    half: int = 16
 
     @property
     def released_positions(self) -> int:
@@ -304,6 +310,8 @@ def encode_unit(
         rotation=rotation,
         rotation_block=rotation_block,
         diagonals=fitted,
+        group=group,
+        half=half,
     )
 
 

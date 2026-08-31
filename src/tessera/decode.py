@@ -24,7 +24,14 @@ from .errors import GrammarError
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
-__all__ = ["replay_body", "decode_codes", "dequantize", "materialize_nvfp4"]
+__all__ = [
+    "replay_body",
+    "decode_codes",
+    "decode_codes_mixed",
+    "dequantize",
+    "materialize_nvfp4",
+    "reconstruct_unit",
+]
 
 
 def replay_body(
@@ -92,48 +99,48 @@ def dequantize(codes: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
 
 
 def materialize_nvfp4(
-    codes: torch.Tensor, scale: torch.Tensor, half: int = 16
+    codes: torch.Tensor,
+    scale_base: torch.Tensor,
+    scale_refine: torch.Tensor,
+    group: int = 32,
+    half: int = 16,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """Pack to the standard NVFP4 layout: 2 nibbles/byte + one E4M3 per 16.
 
-    Returns ``(packed[rows, cols//2] uint8, scales[rows, cols//half] uint8)``.
+    Returns ``(packed[rows, cols//2] uint8, scales[rows, cols//half] uint8,
+    global_scale float)`` -- NVFP4's two scale levels, both of them.
     Every Tessera code is a legal E2M1 nibble by construction -- the alphabet
     *is* the grid -- so this pads information, never truncates it, and the
     result is an ordinary NVFP4 tensor that stock kernels consume.
     """
+    from .wire import nvfp4_scale_bytes
+
     rows, cols = codes.shape
     if cols % 2:
         raise GrammarError(f"{cols} columns cannot pack 2 nibbles to a byte")
     low = codes[:, 0::2].to(torch.uint8)
     high = codes[:, 1::2].to(torch.uint8)
     packed = (low & 0xF) | ((high & 0xF) << 4)
-
-    per_half = scale[:, ::half].contiguous()
-    exponent = torch.floor(torch.log2(per_half.clamp_min(1e-30)))
-    mantissa = per_half / torch.exp2(exponent)
-    biased = (exponent + 7).clamp(0, 15).to(torch.uint8)
-    frac = ((mantissa - 1.0) * 8.0).round().clamp(0, 7).to(torch.uint8)
-    e4m3 = (biased << 3) | frac
-    return packed, e4m3
+    e4m3, global_scale = nvfp4_scale_bytes(scale_base, scale_refine, group, half)
+    return packed, e4m3.reshape(rows, cols // half), global_scale
 
 
-def reconstruct_unit(
+def decode_codes_mixed(
     unit: "EncodedUnit",
     forest: "AnchorForest | dict[int, AnchorForest]",
     code: ConvCode,
-    scale: torch.Tensor,
     completion: int | None = None,
+    apply_release: bool = True,
 ) -> torch.Tensor:
-    """The whole inverse path: body -> codes -> weights -> 2a -> rotation.
+    """Body + completion -> E2M1 nibbles, over a mixed-rate schedule.
 
-    Undone in the exact reverse of the order the encoder applied them (S5's
-    segment order read backwards).  Getting this order wrong produces weights
-    that are wrong by a rank-1 factor or an orthogonal transform -- both of
-    which look plausible and neither of which the round-trip test tolerates.
+    ``apply_release=False`` returns the **pre-release** codes, which is not a
+    debugging convenience: §9 orders released positions by descending decoded
+    magnitude on the pre-release decode, so a reader has to reproduce that
+    intermediate state to know *which* positions the RELEASE plane refers to.
+    The plane stores codes, never indices -- that is where its rate advantage
+    comes from, and it is only decodable because the order is derivable.
     """
-    from .decode import decode_codes as _decode
-    from .diagonals import undo_diagonals, undo_rotation
-
     forests = forest if isinstance(forest, dict) else {forest.rate: forest}
     device = unit.body_bits.device
     rows, cols = unit.body_bits.shape
@@ -148,9 +155,46 @@ def reconstruct_unit(
         blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
         reachable = blocks[:, :: 1 << (depth - level)]
         codes[:, which] = reachable[anchors, unit.completion_bits[:, which]]
-    if unit.release_index.numel():
+    if apply_release and unit.release_index.numel():
         codes.reshape(-1)[unit.release_index] = unit.release_code
+    return codes
 
+
+def reconstruct_unit(
+    unit: "EncodedUnit",
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    code: ConvCode,
+    scale: torch.Tensor | None = None,
+    completion: int | None = None,
+) -> torch.Tensor:
+    """The whole inverse path: body -> codes -> weights -> 2a -> rotation.
+
+    Undone in the exact reverse of the order the encoder applied them (S5's
+    segment order read backwards).  Getting this order wrong produces weights
+    that are wrong by a rank-1 factor or an orthogonal transform -- both of
+    which look plausible and neither of which the round-trip test tolerates.
+
+    ``scale`` defaults to the scale **derived from the unit's own stored
+    segment-2b bytes** via S6b, which is the only scale a decoder reading an
+    artifact can have.  Accepting the encoder's float tensor instead -- which
+    this function used to require -- leaves the S6b codec untested, and S6b's
+    round-trip is exactly what the doc says T-nvfp4-class is conjectural
+    without.  The argument survives only so a test can pass a *different* scale
+    and watch the reconstruction move.
+    """
+    from .decode import decode_codes as _decode
+    from .diagonals import undo_diagonals, undo_rotation
+    from .wire import scales_from_planes
+
+    codes = decode_codes_mixed(unit, forest, code, completion)
+    rows, cols = unit.body_bits.shape
+    if scale is None:
+        scale = torch.repeat_interleave(
+            scales_from_planes(
+                unit.scale_base, unit.scale_refine, unit.group, unit.half
+            ),
+            unit.half,
+        ).reshape(rows, cols)
     out = dequantize(codes, scale)
     if unit.diagonals is not None:
         out = undo_diagonals(out, unit.diagonals)
