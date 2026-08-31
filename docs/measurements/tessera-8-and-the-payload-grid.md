@@ -96,6 +96,18 @@ scalar arm would separate them and has not been run.
 - One tensor, one shape, weight-space `rel_err` only. Not a served result.
 - The free-grid arms are **kernel-lane only** by construction: a 32-code
   source-matched grid cannot be materialised into NVFP4.
+- **Grid identity is not yet in the wire, and that is fail-open.** The
+  ALPHABET/DESCENDANT planes carry *codes*; code -> value comes from the grid,
+  which today is implicit E2M1. The moment TESSERA-8 or a free grid serialises,
+  two artifacts over different grids become wire-indistinguishable and the
+  wrong one decodes to plausible, wrong weights. Either `encoder_profile_id`
+  must digest the `PayloadGrid` (values + native map) or the values must travel
+  in a plane. This is a gate, not a nicety, and it belongs in the same commit
+  as the family descriptor.
+- **`lloyd_max` must be promoted out of `experiments/` before a free grid
+  ships.** If the grid is wire, its construction is wire: deterministic,
+  versioned, and reproducible from the artifact, not a scratch function with an
+  iteration count nobody recorded.
 - The TESSERA-8 **wire** path is not built. `calculator.py`, `artifact.py`,
   `layout.py` and `unit_artifact.py` still assume `cap = 3`, so E4M3 units
   encode and decode but do not serialise. That is the next piece of work, and

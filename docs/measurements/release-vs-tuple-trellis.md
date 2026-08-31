@@ -168,3 +168,36 @@ fair predictor for this tensor. One tensor of one model is not a survey.
 - Decode cost is unmeasured. It is still a table lookup per pair and it
   materialises to identical NVFP4 nibbles, so no kernel changes — but "no
   kernel change" is an argument, not a measurement.
+
+## Finding 6 — a mixed-rate schedule does not replace the k-tuple trellis
+
+The payload-grid generalization (`tessera-8-and-the-payload-grid.md`) opened
+what looked like a cheaper route to 4.0 bpp. A free 32-code grid has `cap = 4`,
+so **R=4 is legal on it** — which E2M1 forbids, since `|A_R| = 2^(R+1)` needs 32
+anchors and E2M1 has 16. A per-column schedule alternating R=3 and R=4 averages
+3.5 payload bits, the same rate the pair trellis reaches, using only machinery
+that already ships: no k-tuple alphabet, no new Viterbi, no grammar change.
+
+Measured on the Finding 4 tensor and slice, so the numbers below sit in the
+same table as the pair arms (`experiments/mixed4.py`):
+
+| arm | bpp | rel_err | vs NVFP4 |
+|---|---:|---:|---:|
+| E2M1 trellis R=3 (k=1) | 3.500 | 0.14113 | 1.43× |
+| free-32 trellis R=3 | 3.500 | 0.15971 | 1.62× |
+| **free-32 trellis, mixed R=3/R=4** | **4.000** | **0.12363** | 1.25× |
+| **pair trellis k=2** | **4.000** | **0.10941** | 1.11× |
+| free-32 trellis R=4 | 4.500 | 0.07139 | 0.72× |
+| NVFP4 RTN (E2M1 scalar) | 4.500 | 0.09869 | 1.00× |
+
+**The k-tuple trellis wins by 11.5% at identical bytes.** Mixing rates is
+time-sharing between two operating points, and time-sharing draws the *chord*
+across a convex rate–distortion curve while a k-tuple trellis lands a genuinely
+new point *on* it. A second effect compounds it: free-32 at R=3 (0.15971) is
+worse than E2M1 at R=3 (0.14113), because R=3 over a 32-code grid selects 16
+anchors out of 32 Lloyd-Max levels and that subset is a worse 16-level grid than
+E2M1 is. The low half of the mixture is handicapped before the averaging starts.
+
+So the k-tuple decision stands on its own and is not dissolved by the grid work.
+The two are orthogonal levers — a k-tuple trellis *over* a free grid is the
+untested combination, and building it is the same grammar change as before.

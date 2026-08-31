@@ -678,7 +678,20 @@ def tessera_gemv_wide(
     vec: int = 8,
     split_k: int = 32,
 ) -> torch.Tensor:
-    """``W @ x`` at ``VEC`` output rows per lane per load."""
+    """``W @ x`` at ``VEC`` output rows per lane per load.
+
+    The split-K reduction lands through ``tl.atomic_add``, so the low bits of
+    the output depend on the order the partial sums arrive and vary run to run.
+    That is harmless for weights -- a one-hot probe returns a column exactly,
+    because nothing is summed -- but it means this path must never be cited in a
+    bit-identical-within-session reproducibility claim.
+    """
+    if vec != 8:
+        raise GrammarError(
+            f"vec={vec}: the constant-shift arithmetic in _wide_gemv_kernel is "
+            "derived for VEC=8 against SELECT_PAD=8 and rows % 8 == 0. Another "
+            "width needs the shifts re-derived, not just this check relaxed."
+        )
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
         x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
