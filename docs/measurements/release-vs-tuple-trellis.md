@@ -109,11 +109,30 @@ total. The claim is narrower and it is the measured one: **release is the wrong
 mechanism to carry the main rate increase above 3 bits, and §9's placement rule
 should not ship as written.**
 
+## Finding 4 — it holds on real weights
+
+Repeated on a real BF16 Linear: Qwen3.8-27B `layers.0.mlp.gate_proj`, a
+2048×5120 slice (σ = 0.01026, kurtosis 3.24 — close to Gaussian, so the
+synthetic screen was not flattering itself here).
+
+| arm | bpp | rel_err | vs NVFP4 |
+|---|---:|---:|---:|
+| NVFP4 RTN (scalar E2M1) | 4.500 | 0.09869 | — |
+| Tessera k=1 | 3.500 | 0.14113 | +43.0% |
+| Tessera k=2 | 4.000 | 0.10941 | +10.9% |
+| Tessera k=4 | 4.250 | 0.10098 | **+2.3%** |
+
+k=4 lands within 2.3% of scalar NVFP4's error for 5.6% fewer bytes. Every
+figure tracks the synthetic curve to within 0.5%, so the Gaussian screen was a
+fair predictor for this tensor. One tensor of one model is not a survey.
+
 ## Caveats, stated plainly
 
-- Synthetic i.i.d. Gaussian. Real weights are neither i.i.d. nor Gaussian, and
-  the trellis's whole premise is that it extracts structure a scalar quantiser
-  cannot — so this understates a tuple trellis if anything, but it is untested.
+- **The comparator here is scalar NVFP4, not EXL3.** EXL3 is *also* a trellis
+  quantiser, with its own coding gain plus Hadamard incoherence processing, and
+  Tessera's §5 rotation states and §2a `su`/`sv` diagonals are not implemented
+  yet. Nothing above is evidence about EXL3 in either direction, and it must
+  not be read as any.
 - Weight-space rel_err only. No end-to-end KL, no served artifact, no PPL.
 - The pair alphabet used a plain `(rank₁+rank₂) mod 4` subset partition, not an
   optimised one. The 2.10 dB is a floor for the construction, not its ceiling.
