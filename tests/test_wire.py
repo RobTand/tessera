@@ -210,3 +210,24 @@ def test_reader_fails_closed_on_an_unknown_trellis():
     forged = dc_replace(manifest, encoder_profile_id=bytes(32))
     with pytest.raises(GrammarError, match="matches no convolutional code"):
         read_unit_artifact(serialize(forged, region))
+
+
+@pytest.mark.parametrize("q256,released", [(640, 0), (768, 2000), (256, 500)])
+def test_wire_round_trip_without_diagonals(q256, released):
+    """The *recommended* recipe has segment 2a off, so it is the configuration
+    that most needs a wire path.  It had none: build_unit_artifact refused a
+    unit with no diagonals, and every other test here passes diagonals=True."""
+    _, unit = _unit(q256=q256, released=released, diagonals=False)
+    reference = reconstruct_unit(unit, FORESTS, CODE)
+    _, region, blob = build_unit_artifact(unit, "unit0", FORESTS, q256, CODE)
+    assert torch.equal(read_unit_artifact(blob), reference)
+
+
+def test_absent_diagonals_shrink_the_artifact_by_their_exact_size():
+    """Absent is not the same as truncated away: the planes must not be
+    declared at all, or every offset after DIAG_SU is wrong."""
+    _, with_d = _unit(q256=640, diagonals=True)
+    _, without = _unit(q256=640, diagonals=False)
+    _, region_a, _ = build_unit_artifact(with_d, "u", FORESTS, 640, CODE)
+    _, region_b, _ = build_unit_artifact(without, "u", FORESTS, 640, CODE)
+    assert len(region_a) - len(region_b) == 2 * (64 + 512)  # 16 bits per channel

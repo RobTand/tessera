@@ -168,6 +168,7 @@ def build_planes(
     alignment_bytes: int = 1,
     max_released: int = 0,
     payloads: "dict[PlaneKind, bytes] | None" = None,
+    with_diagonals: bool = True,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -176,6 +177,13 @@ def build_planes(
     RELEASE plane's full extent: every terminal is a prefix of the declared
     extent, so a terminal may never claim more released positions than the
     plane declares.
+
+    ``with_diagonals=False`` declares segment 2a **absent from the unit**, which
+    is different from a terminal that merely truncates it away.  A terminal's
+    byte range is the concatenation of each plane's truncated extent, so a unit
+    that never fitted diagonals must not declare their full extent either --
+    otherwise the region written and the ranges a terminal computes disagree by
+    ``16 * (rows + columns)`` bits and every offset after DIAG_SU is wrong.
     """
     superblocks = max(1, len(rates) // geometry.superblock_columns)
     descriptors = []
@@ -189,6 +197,8 @@ def build_planes(
             len(descendant_blob),
             max_released,
         )
+        if not with_diagonals and kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
+            total = 0
         if kind in (PlaneKind.BODY, PlaneKind.COMPLETION):
             granularity = CountGranularity.PER_SUPERBLOCK
             per, remainder = divmod(total, superblocks)

@@ -120,22 +120,19 @@ def build_unit_artifact(
     )
     alphabet, descendant = _forest_planes(rates, forests)
 
-    if unit.diagonals is None:
-        raise GrammarError(
-            "this terminal declares segment 2a; encode with with_diagonals=True "
-            "or build a terminal that does not claim the diagonal planes"
-        )
+    has_diagonals = unit.diagonals is not None
     payloads = {
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
         PlaneKind.BODY: pack_body(unit.body_bits, rates),
         PlaneKind.SCALE_BASE: pack_uniform(unit.scale_base, 8),
         PlaneKind.COMPLETION: pack_body(unit.completion_bits, completion_widths),
-        PlaneKind.DIAG_SU: pack_fp16(unit.diagonals.su),
-        PlaneKind.DIAG_SV: pack_fp16(unit.diagonals.sv),
         PlaneKind.SCALE_REFINE: pack_uniform(unit.scale_refine, 4),
         PlaneKind.RELEASE: pack_uniform(unit.release_code, 4),
     }
+    if has_diagonals:
+        payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
+        payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
     planes = build_planes(
         geometry,
         rates,
@@ -144,6 +141,7 @@ def build_unit_artifact(
         alignment_bytes=alignment_bytes,
         max_released=unit.released_positions,
         payloads=payloads,
+        with_diagonals=has_diagonals,
     )
     region = build_plane_region(planes, payloads)
     spec = TerminalSpec(
@@ -152,7 +150,7 @@ def build_unit_artifact(
         released_positions=unit.released_positions,
         with_scale_base=True,
         with_scale_refine=True,
-        with_diagonals=True,
+        with_diagonals=has_diagonals,
     )
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
@@ -242,9 +240,13 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         sse=0.0,
         rotation=manifest.branch.rotation,
         rotation_block=128,
-        diagonals=Diagonals(
-            sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
-            su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
+        diagonals=(
+            Diagonals(
+                sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
+                su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
+            )
+            if chunks.get(PlaneKind.DIAG_SU)
+            else None
         ),
         group=geometry.group_weights,
         half=geometry.half_weights,
