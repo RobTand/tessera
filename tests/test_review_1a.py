@@ -301,3 +301,41 @@ def test_serialize_refuses_a_region_that_matches_no_terminal(artifact):
     padded = region + b"\x00"
     with pytest.raises(Exception):
         serialize(manifest, padded)
+
+
+# --- F10: the reader's integer domain must equal the writer's -------------
+
+
+def test_a_varint_outside_the_64_bit_domain_is_refused():
+    """The decoder used to accept what the encoder cannot produce.
+
+    Ten bytes -- nine continuations then a final group at shift 63 -- decode to
+    about 2**70. `encode_uint` refuses that value, so the byte string is outside
+    the image of every conforming encoder, and a content-addressed format must
+    not accept it.
+    """
+    from tessera.canonical import decode_uint, encode_uint
+    from tessera.errors import CanonicalEncodingError
+
+    blob = bytes([0x80] * 9 + [0x7F])
+    with pytest.raises(CanonicalEncodingError, match="64-bit domain"):
+        decode_uint(blob)
+    with pytest.raises(CanonicalEncodingError, match="64-bit domain"):
+        encode_uint(1 << 64)
+
+
+def test_the_largest_legal_uint_still_round_trips():
+    from tessera.canonical import decode_uint, encode_uint
+
+    largest = (1 << 64) - 1
+    assert decode_uint(encode_uint(largest))[0] == largest
+
+
+def test_signed_encoding_refuses_values_outside_its_domain():
+    """`_zigzag`'s sign mask is only valid inside the signed 64-bit domain."""
+    from tessera.canonical import CanonicalEncodingError, Writer
+
+    writer = Writer()
+    writer.sint(-(1 << 63))  # the boundary is legal
+    with pytest.raises(CanonicalEncodingError, match="signed 64-bit domain"):
+        writer.sint(-(1 << 70))

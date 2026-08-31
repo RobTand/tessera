@@ -155,6 +155,34 @@ terminal, three terminals in the test ladder — over `plane_region[:exact_bytes
 That gives **complete integrity for every legal truncation**, and subsumes the
 partial-plane gap entirely.
 
+### F10 (BLOCKER) — the decoder's integer domain is wider than the encoder's
+
+`canonical.py`'s `decode_uint` guards `shift > 63`, which still admits a final
+group *at* shift 63 carrying seven bits. Ten bytes — nine continuations then
+`0x7F` — decode to 1,171,368,248,680,556,527,616 (~2⁷⁰). `encode_uint` refuses
+that value outright (`:48-49`).
+
+So there exist byte strings **outside the image of every conforming encoder**
+that the decoder accepts. In a content-addressed format that is a fail-open
+hole: a manifest field can carry a value the schema's own domain forbids, and
+re-encoding the parsed record raises instead of reproducing the bytes it came
+from — the round-trip that identity depends on.
+
+Verified directly, not reasoned about:
+
+```
+decoded: 1171368248680556527616   exceeds 64-bit domain: True
+encode_uint REFUSES it: value exceeds 64-bit domain
+```
+
+Fix: bound the decoded value by `_MAX_UINT` before returning. Same asymmetry on
+the signed side — `_zigzag`'s `value >> 63` is a sign mask only inside the
+signed 64-bit domain, and outside it returns a magnitude — so `sint` now checks
+its domain rather than assuming it.
+
+**FIXED**, with tests: the out-of-domain varint is refused, the largest legal
+uint still round-trips, and the signed boundary `-2⁶³` stays legal.
+
 ---
 
 ## Pass 2 — `glm53-flash-high` (adversarial ambiguity)

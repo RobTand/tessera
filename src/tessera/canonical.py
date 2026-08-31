@@ -76,11 +76,30 @@ def decode_uint(data: bytes, offset: int = 0) -> tuple[int, int]:
             # group, and only the single byte 0x00 may encode zero.
             if index - offset > 1 and byte == 0:
                 raise CanonicalEncodingError("non-minimal varint (zero continuation)")
+            # The reader's domain must equal the writer's, not exceed it
+            # (review finding F10).  The `shift > 63` guard admits a final
+            # group at shift 63 carrying seven bits, so ten bytes could decode
+            # to ~2**70 -- a value `encode_uint` refuses to produce.  That is a
+            # byte string outside the image of every conforming encoder, which
+            # a content-addressed format must not accept.
+            if result > _MAX_UINT:
+                raise CanonicalEncodingError(
+                    f"varint {result} exceeds the 64-bit domain"
+                )
             return result, index
         shift += 7
 
 
+_MIN_SINT = -(1 << 63)
+_MAX_SINT = (1 << 63) - 1
+
+
 def _zigzag(value: int) -> int:
+    # The `value >> 63` arm is only the sign mask inside the signed 64-bit
+    # domain; outside it the shift returns a magnitude, not -1, so the domain
+    # is checked rather than assumed.
+    if not _MIN_SINT <= value <= _MAX_SINT:
+        raise CanonicalEncodingError(f"value outside the signed 64-bit domain: {value}")
     return (value << 1) ^ (value >> 63) if value < 0 else value << 1
 
 
