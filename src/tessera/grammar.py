@@ -65,16 +65,22 @@ C_FULL_BITS = 3
 Q256_UNIT = 256
 
 
-def alphabet_size(rate: int) -> int:
+def alphabet_size(rate: int, cap: int = C_FULL_BITS) -> int:
     """``|A_R| = 2**(R+1)`` exhaustively optimised codes."""
-    _check_rate(rate)
+    _check_rate(rate, cap)
     return 1 << (rate + 1)
 
 
-def completion_capacity(rate: int) -> int:
-    """Maximum completion level ``c = 3 - R`` for a column at this rate."""
-    _check_rate(rate)
-    return C_FULL_BITS - rate
+def completion_capacity(rate: int, cap: int = C_FULL_BITS) -> int:
+    """Maximum completion level ``c = cap - R`` for a column at this rate.
+
+    ``cap`` is the payload grid's own width minus one: 3 over E2M1's 16 codes,
+    7 over E4M3's 256.  It is a parameter rather than a constant because
+    TESSERA-4 and TESSERA-8 are the *same* construction at two grid widths --
+    ``2^(R+1) * 2^(cap-R) = 2^(cap+1)`` closes at every rate either way.
+    """
+    _check_rate(rate, cap)
+    return cap - rate
 
 
 def descendant_set_size(completion: int) -> int:
@@ -84,10 +90,11 @@ def descendant_set_size(completion: int) -> int:
     return 1 << completion
 
 
-def _check_rate(rate: int) -> None:
-    if rate not in LEGAL_RATES:
+def _check_rate(rate: int, cap: int = C_FULL_BITS) -> None:
+    legal = LEGAL_RATES if cap == C_FULL_BITS else tuple(range(1, cap + 1))
+    if rate not in legal:
         raise GrammarError(
-            f"rate {rate} outside the shaped domain {LEGAL_RATES} "
+            f"rate {rate} outside the shaped domain {legal} "
             "(max_trellis_rate = native - 1)"
         )
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 import torch
 
-from .alphabet import E2M1_VALUES, AnchorForest, build_forest
+from .alphabet import E2M1_GRID, E2M1_VALUES, AnchorForest, PayloadGrid, build_forest
 from .diagonals import (
     Diagonals,
     apply_diagonals,
@@ -37,7 +37,7 @@ from .manifest import RotationState
 from .errors import GrammarError
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
-__all__ = ["EncodedUnit", "encode_unit", "e2m1_value_table"]
+__all__ = ["EncodedUnit", "encode_unit", "e2m1_value_table", "grid_value_table"]
 
 #: E4M3 scale grid, used for the segment-2b refinement (S6b).
 _E4M3_MAX = 448.0
@@ -45,6 +45,19 @@ _E4M3_MAX = 448.0
 
 def e2m1_value_table(device=None, dtype=torch.float32) -> torch.Tensor:
     return torch.tensor(E2M1_VALUES, device=device, dtype=dtype)
+
+
+def grid_value_table(
+    grid: PayloadGrid = E2M1_GRID, device=None, dtype=torch.float32
+) -> torch.Tensor:
+    """``slot -> value`` for any payload grid.
+
+    TESSERA-4 and TESSERA-8 are one construction at two grid widths, so every
+    place that used to reach for the E2M1 table takes the forest's own grid
+    instead.  ``e2m1_value_table`` survives as the TESSERA-4 spelling because
+    the kernel lane and the NVFP4 materialiser are E2M1 by definition.
+    """
+    return torch.tensor(grid.values, device=device, dtype=dtype)
 
 
 @dataclass
@@ -106,7 +119,7 @@ def _transition_tables(code: ConvCode, device):
 def _descendant_values(forest: AnchorForest, completion: int, device):
     """``[n_anchors, 2^c]`` of the values reachable at this completion level."""
     table = [
-        [E2M1_VALUES[code] for code in forest.reachable(anchor, completion)]
+        [forest.grid.values[code] for code in forest.reachable(anchor, completion)]
         for anchor in range(len(forest.blocks))
     ]
     return torch.tensor(table, device=device, dtype=torch.float32)
@@ -179,7 +192,7 @@ def viterbi_columns(
     return anchors, bits, sse
 
 
-def _pack_scales(weights: torch.Tensor, group: int, half: int):
+def _pack_scales(weights: torch.Tensor, group: int, half: int, peak: float = 6.0):
     """S6b: one E8M0 base byte per group, one 4-bit refinement per half.
 
     The refinement word is ``d`` (one exponent-delta bit) and ``m`` (three
@@ -195,12 +208,14 @@ def _pack_scales(weights: torch.Tensor, group: int, half: int):
     amax_group = groups.abs().amax(dim=1).clamp_min(1e-30)
     amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
 
-    # Base: the po2 that puts the group's amax at the top of the E2M1 range.
-    target = amax_group / 6.0
+    # Base: the po2 that puts the group's amax at the top of the payload grid's
+    # range -- 6.0 for E2M1, 448.0 for E4M3.  Scaling to the wrong peak wastes
+    # binades at one end and clips at the other.
+    target = amax_group / peak
     exponent = torch.floor(torch.log2(target)).clamp(-127, 128)
     base_byte = (exponent + 127).clamp(0, 255).to(torch.uint8)
 
-    per_half = amax_half / 6.0
+    per_half = amax_half / peak
     base_for_half = torch.repeat_interleave(exponent, group // half)
     ratio = per_half / torch.exp2(base_for_half)
     # ratio in [1, 4); d picks the octave, m the mantissa within it.
@@ -232,6 +247,9 @@ def encode_unit(
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
     forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    grid = next(iter(forests.values())).grid
+    if any(f.grid != grid for f in forests.values()):
+        raise GrammarError("a unit's rate schedule must share one payload grid")
     for present in sorted(set(rates)):
         if present not in forests:
             raise GrammarError(
@@ -249,7 +267,9 @@ def encode_unit(
     fitted = fit_diagonals(rotated) if with_diagonals else None
     work = apply_diagonals(rotated, fitted) if fitted else rotated
 
-    base_byte, refine, effective = _pack_scales(work, group, half)
+    base_byte, refine, effective = _pack_scales(
+        work, group, half, peak=max(abs(v) for v in grid.values)
+    )
     scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
     targets = work / scale
 
@@ -257,7 +277,7 @@ def encode_unit(
     body_bits = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
     completion_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
     codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    values = e2m1_value_table(device)
+    values = grid_value_table(grid, device)
     rate_vector = torch.tensor(rates, device=device)
     sse = 0.0
 
@@ -265,7 +285,7 @@ def encode_unit(
     # is a partition of columns and not a harder problem.
     for present in sorted(set(rates)):
         picked = forests[present]
-        depth = 3 - present
+        depth = picked.cap - present
         level = depth if completion is None else min(completion, depth)
         which = torch.nonzero(rate_vector == present).squeeze(1)
         sub = targets[:, which].contiguous()

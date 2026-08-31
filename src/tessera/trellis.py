@@ -110,7 +110,7 @@ class TCQ:
     def subsets(self) -> "tuple[tuple[int, ...], ...]":
         """The anchors, value-ordered and split by stride into four subsets."""
         anchors = self.forest.anchors
-        order = [a for a in value_order() if a in set(anchors)]
+        order = [a for a in value_order(self.forest.grid) if a in set(anchors)]
         index = {anchor: position for position, anchor in enumerate(anchors)}
         ordered = [index[a] for a in order]
         return tuple(tuple(ordered[offset::SUBSET_COUNT]) for offset in range(SUBSET_COUNT))
@@ -123,7 +123,7 @@ class TCQ:
     def _reachable_value_error(self, anchor: int, target: float, completion: int) -> float:
         """Squared error at the best descendant reachable at level ``completion``."""
         codes = self.forest.reachable(anchor, completion)
-        return min((target - E2M1_VALUES[code]) ** 2 for code in codes)
+        return min((target - self.forest.grid.values[code]) ** 2 for code in codes)
 
     def decode(self, bits: "list[int]", length: int) -> "list[int]":
         """Replay the code: input bits -> anchor indices. Exact, no search."""

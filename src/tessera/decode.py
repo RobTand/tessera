@@ -234,7 +234,7 @@ def decode_codes(
     completion: int | None = None,
 ) -> torch.Tensor:
     """Full decode from stored planes to E2M1 nibbles, in wire order."""
-    depth = 3 - forest.rate
+    depth = forest.cap - forest.rate
     completion = depth if completion is None else completion
     device = unit.body_bits.device
     anchors = replay_body(unit.body_bits, forest, code)
@@ -248,10 +248,13 @@ def decode_codes(
     return codes
 
 
-def dequantize(codes: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
-    """Nibbles times their half-block scale: the weights the runtime will see."""
+def dequantize(codes: torch.Tensor, scale: torch.Tensor, grid=None) -> torch.Tensor:
+    """Codes times their half-block scale: the weights the runtime will see."""
+    from .alphabet import E2M1_GRID
+    from .encode import grid_value_table
+
     # ``.int()``: codes are uint8, and a uint8 index tensor is a boolean mask.
-    return e2m1_value_table(codes.device)[codes.int()] * scale
+    return grid_value_table(grid or E2M1_GRID, codes.device)[codes.int()] * scale
 
 
 def materialize_nvfp4(
@@ -307,7 +310,7 @@ def decode_codes_mixed(
     codes = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
     for present in sorted(set(unit.rates)):
         picked = forests[present]
-        depth = 3 - picked.rate
+        depth = picked.cap - picked.rate
         level = depth if completion is None else min(completion, depth)
         which = torch.nonzero(rates == present).squeeze(1)
         body = unit.body_bits[:, which].contiguous()
@@ -378,7 +381,8 @@ def reconstruct_unit(
             ),
             unit.half,
         ).reshape(rows, cols)
-    out = dequantize(codes, scale)
+    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    out = dequantize(codes, scale, next(iter(forests.values())).grid)
     if unit.diagonals is not None:
         out = undo_diagonals(out, unit.diagonals)
     return undo_rotation(out, unit.rotation, unit.rotation_block)

@@ -65,6 +65,10 @@ from .grammar import alphabet_size, completion_capacity
 
 __all__ = [
     "E2M1_VALUES",
+    "E4M3_VALUES",
+    "PayloadGrid",
+    "E2M1_GRID",
+    "E4M3_GRID",
     "value_order",
     "AnchorForest",
     "build_forest",
@@ -79,15 +83,92 @@ E2M1_VALUES: tuple[float, ...] = tuple(
 )
 
 
-def value_order() -> tuple[int, ...]:
-    """The 16 nibbles ascending by decoded value, ties broken by nibble.
+def _e4m3_value(byte: int) -> float:
+    """One E4M3FN byte -> its value.  Sign 1, exponent 4, mantissa 3, bias 7."""
+    sign = -1.0 if byte >> 7 else 1.0
+    exponent = (byte >> 3) & 0xF
+    mantissa = byte & 0x7
+    if exponent == 0:                       # subnormal
+        return sign * (mantissa / 8.0) * 2.0 ** -6
+    return sign * (1.0 + mantissa / 8.0) * 2.0 ** (exponent - 7)
+
+
+#: The 256 E4M3FN byte patterns by value.  ``0x7F``/``0xFF`` are NaN in FN and
+#: are given the value of their neighbour instead -- see ``E4M3_GRID``.
+E4M3_VALUES: tuple[float, ...] = tuple(
+    _e4m3_value(0x7E if byte == 0x7F else 0xFE if byte == 0xFF else byte)
+    for byte in range(256)
+)
+
+
+@dataclass(frozen=True)
+class PayloadGrid:
+    """The reconstruction grid a trellis quantises onto.
+
+    Tessera's grammar is stated over a code *space* of ``2^payload_bits`` slots
+    -- ``|A_R| * |D(a)| = 2^(R+1) * 2^(cap-R)`` has to close exactly at every
+    rate -- so what varies between families is the width of that space and what
+    each slot decodes to.  TESSERA-4 is this construction over E2M1's 16
+    nibbles; TESSERA-8 is the identical construction over E4M3's 256 bytes.
+
+    ``native`` exists because E4M3FN is **not** a clean power of two: two of its
+    256 patterns are NaN.  Dropping them would leave 254 slots and no exact
+    dyadic partition, so instead those slots carry a neighbour's value and
+    ``native`` maps them back to the legal byte at materialisation.  Four slots
+    of 256 are then duplicates -- the two signed zeros, which E2M1 also has, and
+    the two former NaNs.  A duplicate is never *preferred*: ties break to the
+    lower code, and the lower code is always the legal one.
+    """
+
+    name: str
+    values: tuple[float, ...]
+    native: tuple[int, ...]
+
+    @property
+    def size(self) -> int:
+        return len(self.values)
+
+    @property
+    def payload_bits(self) -> int:
+        """``log2(size)`` -- the scalar format's own width."""
+        return self.size.bit_length() - 1
+
+    @property
+    def rate_cap(self) -> int:
+        """Highest trellis rate: one bit of the payload is the code's redundancy."""
+        return self.payload_bits - 1
+
+    def __post_init__(self) -> None:
+        if self.size & (self.size - 1):
+            raise GrammarError(
+                f"grid {self.name} has {self.size} slots, which is not a power of "
+                "two; the anchor/descendant partition cannot close"
+            )
+        if len(self.native) != self.size:
+            raise GrammarError(f"grid {self.name}: native map is not {self.size} long")
+
+
+E2M1_GRID = PayloadGrid("E2M1", E2M1_VALUES, tuple(range(16)))
+E4M3_GRID = PayloadGrid(
+    "E4M3",
+    E4M3_VALUES,
+    tuple(0x7E if b == 0x7F else 0xFE if b == 0xFF else b for b in range(256)),
+)
+
+
+def value_order(grid: PayloadGrid = E2M1_GRID) -> tuple[int, ...]:
+    """The grid's codes ascending by decoded value, ties broken by code.
 
     ``-0.0 == 0.0`` in IEEE arithmetic, so the two signed zeros tie and the
-    tie-break places ``+0`` (nibble 0) before ``-0`` (nibble 8).  That is not
-    cosmetic: it fixes which zero is an anchor at rates below 3, and the
-    reviewed rate-2 fixture agrees with this placement.
+    tie-break places ``+0`` before ``-0``.  That is not cosmetic: it fixes which
+    zero is an anchor at rates below the cap, and the reviewed rate-2 fixture
+    agrees with this placement.  The same rule sends E4M3's two NaN-slot
+    duplicates behind the legal bytes they copy, so neither is ever chosen as a
+    representative over the byte it duplicates.
     """
-    return tuple(sorted(range(16), key=lambda code: (E2M1_VALUES[code], code)))
+    return tuple(
+        sorted(range(grid.size), key=lambda code: (grid.values[code], code))
+    )
 
 
 def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ...]:
@@ -128,10 +209,15 @@ class AnchorForest:
 
     rate: int
     blocks: tuple[tuple[int, ...], ...]
+    grid: PayloadGrid = E2M1_GRID
+
+    @property
+    def cap(self) -> int:
+        return self.grid.rate_cap
 
     def __post_init__(self) -> None:
-        expected_anchors = alphabet_size(self.rate)
-        depth = completion_capacity(self.rate)
+        expected_anchors = alphabet_size(self.rate, self.cap)
+        depth = completion_capacity(self.rate, self.cap)
         width = 1 << depth
         if len(self.blocks) != expected_anchors:
             raise GrammarError(
@@ -146,16 +232,19 @@ class AnchorForest:
                     f"got {len(block)}"
                 )
             for code in block:
-                if not 0 <= code < 16:
-                    raise GrammarError(f"code {code} is outside the E2M1 grid")
+                if not 0 <= code < self.grid.size:
+                    raise GrammarError(
+                        f"code {code} is outside the {self.grid.name} grid"
+                    )
                 if code in seen:
                     raise GrammarError(
-                        f"code {code} appears under two anchors; at c = 3 - R "
-                        "the descendant sets must partition the 16-code grid"
+                        f"code {code} appears under two anchors; at c = cap - R "
+                        f"the descendant sets must partition the "
+                        f"{self.grid.size}-code grid"
                     )
                 seen.add(code)
-        if len(seen) != 16:
-            missing = sorted(set(range(16)) - seen)
+        if len(seen) != self.grid.size:
+            missing = sorted(set(range(self.grid.size)) - seen)
             raise GrammarError(
                 f"descendant sets do not cover the grid; missing {missing}"
             )
@@ -167,19 +256,19 @@ class AnchorForest:
 
     def reachable(self, anchor: int, completion: int) -> tuple[int, ...]:
         """The ``2^c`` codes reachable from ``anchor`` at completion level c."""
-        depth = completion_capacity(self.rate)
+        depth = completion_capacity(self.rate, self.cap)
         if not 0 <= completion <= depth:
             raise GrammarError(
-                f"completion level {completion} exceeds 3 - R = {depth}"
+                f"completion level {completion} exceeds cap - R = {depth}"
             )
         stride = 1 << (depth - completion)
         return self.blocks[anchor][::stride]
 
     def decode(self, anchor: int, bits: tuple[int, ...]) -> int:
         """Walk ``len(bits)`` completion bits down the tree from ``anchor``."""
-        depth = completion_capacity(self.rate)
+        depth = completion_capacity(self.rate, self.cap)
         if len(bits) > depth:
-            raise GrammarError(f"{len(bits)} completion bits exceed 3 - R = {depth}")
+            raise GrammarError(f"{len(bits)} completion bits exceed cap - R = {depth}")
         index = 0
         for bit in bits:
             index = (index << 1) | bit
@@ -190,27 +279,32 @@ class AnchorForest:
         return bytes(self.anchors)
 
     def descendant_plane(self) -> bytes:
-        """The DESCENDANT plane: the forest flattened, 16 bytes at every rate."""
+        """The DESCENDANT plane: the forest flattened, one byte per grid code."""
         return bytes(code for block in self.blocks for code in block)
 
 
 def _best_representative(
-    candidates: tuple[int, ...], assigned: "list[float]"
+    candidates: tuple[int, ...], assigned: "list[float]",
+    grid: PayloadGrid = E2M1_GRID,
 ) -> int:
     """The candidate minimizing SSE over the source mass routed to this node."""
     if not assigned:
         # No mass: prefer the candidate nearest zero, deterministically.
-        return min(candidates, key=lambda code: (abs(E2M1_VALUES[code]), code))
+        return min(candidates, key=lambda code: (abs(grid.values[code]), code))
     best, best_cost = candidates[0], None
     for code in candidates:
-        value = E2M1_VALUES[code]
+        value = grid.values[code]
         cost = sum((sample - value) ** 2 for sample in assigned)
         if best_cost is None or cost < best_cost:
             best, best_cost = code, cost
     return best
 
 
-def build_forest(rate: int, samples: "tuple[float, ...] | None" = None) -> AnchorForest:
+def build_forest(
+    rate: int,
+    samples: "tuple[float, ...] | None" = None,
+    grid: PayloadGrid = E2M1_GRID,
+) -> AnchorForest:
     """Build the optimized anchor forest for ``rate``.
 
     Contiguous dyadic blocks over the value order, with every node's
@@ -219,38 +313,64 @@ def build_forest(rate: int, samples: "tuple[float, ...] | None" = None) -> Ancho
     holds by construction: truncating completion bits lands on an ancestor,
     which is a legal partial map.
     """
-    order = value_order()
-    depth = completion_capacity(rate)
+    order = value_order(grid)
+    depth = completion_capacity(rate, grid.rate_cap)
     width = 1 << depth
-    anchors = alphabet_size(rate)
-    if anchors * width != 16:
+    anchors = alphabet_size(rate, grid.rate_cap)
+    if anchors * width != grid.size:
         raise GrammarError(
-            f"rate {rate}: {anchors} anchors x {width} descendants != 16"
+            f"rate {rate}: {anchors} anchors x {width} descendants "
+            f"!= {grid.size} ({grid.name})"
         )
     if samples is None:
-        samples = GAUSSIAN_SOURCE()
+        # In grid units.  Weights reach the alphabet divided by their group
+        # scale, and S6b sets that scale so the group's amax lands on the
+        # grid's peak -- 6.0 on E2M1, 448.0 on E4M3.  So the source's spread is
+        # a property of the *grid*, not a constant: the E2M1 default of
+        # sigma=1.0 against a peak of 6.0 fixes the ratio, and every other grid
+        # inherits it.  Optimising a 256-anchor E4M3 forest against a sigma-1
+        # Gaussian instead puts every anchor in the bottom 1% of the range and
+        # costs 4.4x the error at 3.5 bpp -- worse than the 16-code grid.
+        peak = max(abs(value) for value in grid.values)
+        samples = GAUSSIAN_SOURCE(sigma=peak / 6.0)
 
     # Contiguous blocks in value order, then route each sample to the block
     # whose value span is nearest -- a nearest-code assignment, since blocks
     # are contiguous.
     raw_blocks = [order[i * width : (i + 1) * width] for i in range(anchors)]
+    # Blocks are contiguous in value order, so routing to the nearest block is
+    # routing to the nearest code, and the block's bounds decide it: a sample
+    # below the first value belongs to block 0, above the last to block -1, and
+    # otherwise to whichever adjacent block is closer.  Written as a scan over
+    # every (sample, code) pair this is O(samples * grid), which is 4.2M inner
+    # steps on E4M3 -- the same answer for a few hundred times the work.
+    edges = [grid.values[block[-1]] for block in raw_blocks[:-1]]
     routed: list[list[float]] = [[] for _ in range(anchors)]
     for sample in samples:
-        best, best_distance = 0, None
-        for index, block in enumerate(raw_blocks):
-            distance = min(abs(sample - E2M1_VALUES[code]) for code in block)
-            if best_distance is None or distance < best_distance:
-                best, best_distance = index, distance
-        routed[best].append(sample)
+        low, high = 0, len(edges)
+        while low < high:                       # first block whose top >= sample
+            mid = (low + high) // 2
+            if edges[mid] < sample:
+                low = mid + 1
+            else:
+                high = mid
+        index = low
+        if index and index <= len(edges):
+            below = grid.values[raw_blocks[index - 1][-1]]
+            above = grid.values[raw_blocks[index][0]]
+            if abs(sample - below) < abs(sample - above):
+                index -= 1
+        routed[index].append(sample)
 
     blocks: list[tuple[int, ...]] = []
     for index, block in enumerate(raw_blocks):
-        blocks.append(_order_block(block, routed[index], depth))
-    return AnchorForest(rate=rate, blocks=tuple(blocks))
+        blocks.append(_order_block(block, routed[index], depth, grid))
+    return AnchorForest(rate=rate, blocks=tuple(blocks), grid=grid)
 
 
 def _order_block(
-    block: tuple[int, ...], assigned: "list[float]", depth: int
+    block: tuple[int, ...], assigned: "list[float]", depth: int,
+    grid: PayloadGrid = E2M1_GRID,
 ) -> tuple[int, ...]:
     """Arrange one block into completion order by recursive dyadic refinement.
 
@@ -262,13 +382,13 @@ def _order_block(
         return block
     half = len(block) // 2
     low, high = block[:half], block[half:]
-    split = (E2M1_VALUES[low[-1]] + E2M1_VALUES[high[0]]) / 2
+    split = (grid.values[low[-1]] + grid.values[high[0]]) / 2
     low_mass = [sample for sample in assigned if sample < split]
     high_mass = [sample for sample in assigned if sample >= split]
-    left = _order_block(low, low_mass, depth - 1)
-    right = _order_block(high, high_mass, depth - 1)
+    left = _order_block(low, low_mass, depth - 1, grid)
+    right = _order_block(high, high_mass, depth - 1, grid)
     # The representative of the whole node is the better of its two children's
     # representatives, and it must sit at index 0.  Swapping the halves is the
     # only reordering that achieves that while keeping the tree dyadic.
-    pick = _best_representative((left[0], right[0]), assigned)
+    pick = _best_representative((left[0], right[0]), assigned, grid)
     return left + right if pick == left[0] else right + left
