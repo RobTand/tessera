@@ -26,7 +26,14 @@ from dataclasses import dataclass
 
 import torch
 
-from .alphabet import E2M1_VALUES, AnchorForest
+from .alphabet import E2M1_VALUES, AnchorForest, build_forest
+from .diagonals import (
+    Diagonals,
+    apply_diagonals,
+    apply_rotation,
+    fit_diagonals,
+)
+from .manifest import RotationState
 from .errors import GrammarError
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
@@ -54,6 +61,9 @@ class EncodedUnit:
     release_index: torch.Tensor  # [n_released] int64, flat position indices
     release_code: torch.Tensor   # [n_released] int64, the override nibble
     sse: float
+    rotation: RotationState = RotationState.NONE
+    rotation_block: int = 1
+    diagonals: "Diagonals | None" = None   # segment 2a, None when not fitted
 
     @property
     def released_positions(self) -> int:
@@ -198,9 +208,11 @@ def _pack_scales(weights: torch.Tensor, group: int, half: int):
 
 def encode_unit(
     weights: torch.Tensor,
-    forest: AnchorForest,
+    forest: "AnchorForest | dict[int, AnchorForest]",
     rates: "tuple[int, ...]",
     code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
     completion: int | None = None,
     released_positions: int = 0,
     group: int = 32,
@@ -213,37 +225,54 @@ def encode_unit(
     rows, cols = weights.shape
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
-    if len(set(rates)) != 1:
-        raise GrammarError(
-            "mixed per-column rates need one forest per rate; encode_unit takes "
-            "a single-rate schedule. Split the unit by rate and merge the planes."
-        )
-    rate = rates[0]
-    if forest.rate != rate:
-        raise GrammarError(f"forest is rate {forest.rate}, schedule is rate {rate}")
-    depth = 3 - rate
-    completion = depth if completion is None else completion
-    if not 0 <= completion <= depth:
-        raise GrammarError(f"completion {completion} exceeds 3 - R = {depth}")
+    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    for present in sorted(set(rates)):
+        if present not in forests:
+            raise GrammarError(
+                f"the schedule uses rate {present} but no forest was supplied "
+                f"for it; got forests for {sorted(forests)}"
+            )
+    device = weights.device
 
-    work = weights.to(torch.float32)
+    # S5 transforms, outermost first: rotate the input basis, then remove the
+    # rank-1 magnitude field, then set scales on what is left.  The order is
+    # forced -- fitting diagonals before rotating would fit the rotation's
+    # own structure, and setting scales first would price a matrix the body
+    # never sees.
+    rotated, rotation_block = apply_rotation(weights, rotation)
+    fitted = fit_diagonals(rotated) if with_diagonals else None
+    work = apply_diagonals(rotated, fitted) if fitted else rotated
+
     base_byte, refine, effective = _pack_scales(work, group, half)
     scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
     targets = work / scale
 
-    anchors, body_bits, sse = viterbi_columns(targets, forest, code, completion)
-
-    # Stage C: walk the anchor's tree to the best reachable descendant.
-    device = work.device
-    blocks = torch.tensor(forest.blocks, device=device, dtype=torch.long)  # [A, 2^depth]
-    stride = 1 << (depth - completion)
-    reachable = blocks[:, ::stride]                                    # [A, 2^c]
+    anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    body_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    completion_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
     values = e2m1_value_table(device)
-    cand = values[reachable]                                           # [A, 2^c]
-    per_pos = cand[anchors]                                            # [rows,cols,2^c]
-    err = (targets.unsqueeze(2) - per_pos) ** 2
-    completion_bits = err.argmin(dim=2)
-    codes = reachable[anchors, completion_bits]
+    rate_vector = torch.tensor(rates, device=device)
+    sse = 0.0
+
+    # One Viterbi per rate: columns are independent, so a mixed-rate schedule
+    # is a partition of columns and not a harder problem.
+    for present in sorted(set(rates)):
+        picked = forests[present]
+        depth = 3 - present
+        level = depth if completion is None else min(completion, depth)
+        which = torch.nonzero(rate_vector == present).squeeze(1)
+        sub = targets[:, which].contiguous()
+        a, b, s_ = viterbi_columns(sub, picked, code, level)
+        sse += s_
+        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
+        reachable = blocks[:, :: 1 << (depth - level)]
+        per_pos = values[reachable][a]
+        c_bits = ((sub.unsqueeze(2) - per_pos) ** 2).argmin(dim=2)
+        anchors[:, which] = a
+        body_bits[:, which] = b
+        completion_bits[:, which] = c_bits
+        codes[:, which] = reachable[a, c_bits]
 
     # Stage B: release, in S9's canonical order -- descending |decoded value|
     # within the superblock, on the PRE-release decode so the decoder can
@@ -272,6 +301,9 @@ def encode_unit(
         release_index=release_index,
         release_code=release_code,
         sse=sse,
+        rotation=rotation,
+        rotation_block=rotation_block,
+        diagonals=fitted,
     )
 
 

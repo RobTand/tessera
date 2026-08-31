@@ -115,3 +115,43 @@ def materialize_nvfp4(
     frac = ((mantissa - 1.0) * 8.0).round().clamp(0, 7).to(torch.uint8)
     e4m3 = (biased << 3) | frac
     return packed, e4m3
+
+
+def reconstruct_unit(
+    unit: "EncodedUnit",
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    code: ConvCode,
+    scale: torch.Tensor,
+    completion: int | None = None,
+) -> torch.Tensor:
+    """The whole inverse path: body -> codes -> weights -> 2a -> rotation.
+
+    Undone in the exact reverse of the order the encoder applied them (S5's
+    segment order read backwards).  Getting this order wrong produces weights
+    that are wrong by a rank-1 factor or an orthogonal transform -- both of
+    which look plausible and neither of which the round-trip test tolerates.
+    """
+    from .decode import decode_codes as _decode
+    from .diagonals import undo_diagonals, undo_rotation
+
+    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    device = unit.body_bits.device
+    rows, cols = unit.body_bits.shape
+    rates = torch.tensor(unit.rates, device=device)
+    codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    for present in sorted(set(unit.rates)):
+        picked = forests[present]
+        depth = 3 - picked.rate
+        level = depth if completion is None else min(completion, depth)
+        which = torch.nonzero(rates == present).squeeze(1)
+        anchors = replay_body(unit.body_bits[:, which].contiguous(), picked, code)
+        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
+        reachable = blocks[:, :: 1 << (depth - level)]
+        codes[:, which] = reachable[anchors, unit.completion_bits[:, which]]
+    if unit.release_index.numel():
+        codes.reshape(-1)[unit.release_index] = unit.release_code
+
+    out = dequantize(codes, scale)
+    if unit.diagonals is not None:
+        out = undo_diagonals(out, unit.diagonals)
+    return undo_rotation(out, unit.rotation, unit.rotation_block)

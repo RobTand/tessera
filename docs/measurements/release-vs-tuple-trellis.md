@@ -95,6 +95,35 @@ rather than pure granular gain (which is bounded near 1.53 dB). That is a real
 advantage against the format we must beat, but it is not a claim about
 information theory, and 2.93 dB should not be quoted as a trellis coding gain.
 
+## Finding 5 — incoherence processing buys ~1% on these weights
+
+Segment 2a (rank-1 `su`/`sv`) and the §5 `R_in` rotation are implemented and
+lossless (both invert to 1e-7). Measured on three real Qwen3.8-27B Linears,
+R=3 body at the 3.5 bpp class:
+
+| tensor (kurtosis) | plain | + 2a | + rotation | + both |
+|---|---:|---:|---:|---:|
+| `mlp.gate_proj` (3.24) | 0.14137 | 0.14040 | 0.14102 | **0.14003** |
+| `mlp.down_proj` (3.13) | 0.14127 | 0.14049 | 0.14103 | **0.14002** |
+| `linear_attn.out_proj` (5.49) | 0.14133 | *0.14324* | 0.14000 | **0.13997** |
+
+Diagonals cost 0.0187 bpp; the rotation is free. Two things worth recording:
+
+- The total gain is **~1%**, not the large lever it is in the QTIP/EXL3
+  literature. These weights are already near-Gaussian and near-balanced, so
+  there is little rank-1 field or outlier tail to remove. The machinery is not
+  idle — on a planted rank-1 field it cuts row/column RMS spread from 0.25 to
+  0.0002, and it thins a planted outlier's kurtosis from 35.8 to 8.4 — the
+  tensors simply do not need it.
+- On `out_proj`, the highest-kurtosis tensor, **diagonals alone made it
+  worse** (0.14133 → 0.14324) while rotation helped. Rebalancing changes which
+  weights share a 32-group scale, and that interaction can cost more than the
+  balance gains. The two are not independent levers and should not be enabled
+  as if they were.
+
+This weakens one hypothesis about the EXL3 gap: whatever EXL3's advantage is on
+weights like these, incoherence processing is unlikely to be most of it.
+
 ## What this implies for the grammar
 
 The k-tuple trellis reaches `(2k−1)/k` payload bits — 3.0, 3.5, 3.75, 3.875 —
