@@ -85,12 +85,75 @@ minus its NVFP4 residue; principle 12 excludes it from bpp accounting either
 way, so it moves the *size* comparison and not the *bpp* one, and must be
 declared on the card.
 
-**Serving-lane gap, found while attesting the above:** neither local image
-registers `Glm5NextForConditionalGeneration`. `vllm/vllm-openai:qwen38-flash-next`
-(0.1.dev20073) and `eugr/spark-vllm` (0.26.1rc1.dev693, 2026-08-12) both stop at
-the `Glm4*` family. **No local vLLM can serve GLM-5.3-Flash at all today**, in
-any precision. That blocks the NVFP4 harness as much as it blocks Tessera, and
-it is a separate item from the routed-MoE cell.
+## 2b. The serving lane, read from Mia's own recipe
+
+An earlier revision of this file claimed no local vLLM could serve
+GLM-5.3-Flash. **That was wrong** — I checked two of the three local images and
+not the one that mattered. Mia's Spark recipe
+(`github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks`, 2× GB10 with TP)
+builds `FROM vllm/vllm-openai:glm53-flash-arm64-cu130@sha256:905c0293…`, and
+that image is already on this box. Read from it directly:
+
+- vLLM `0.1.dev20051+g487ecf187` — **Mia's exact pinned commit**.
+- Registers `Glm5NextForCausalLM`, `Glm5NextForConditionalGeneration`, **and
+  `Glm5NextMTPModel`**. GLM-5.3-Flash serves here, MTP included.
+- `compressed-tensors` is a supported quantization method. **`exl3` is not** —
+  it is absent from `QUANTIZATION_METHODS` entirely.
+
+That last line is the asymmetry worth naming. A PrismaQuant
+`compressed-tensors` artifact runs on the **stock upstream image, unmodified**.
+Mia's EXL3 artifact needs their own container (`ghcr.io/miaai-lab/…:exl3`), a
+pinned ExLlamaV3 `c5d9c657`, `--quantization exl3`, and **six runtime overlay
+patches** (MLA sparse kernels, DFlash2, grammar termination, KV slot-mapping,
+video placeholders, refusal ablation). Their own
+`serving_reader_qualified: false` says the rest.
+
+### The route status, exactly (principle 9 vocabulary)
+
+`fused_moe/oracle/nvfp4.py` carries the answer in its own words:
+
+```python
+# FLASHINFER_B12X is intentionally excluded from auto-selection until
+# the upstream CUTLASS SM121 MMA op guard is resolved; use
+# moe_backend="flashinfer_b12x" to opt in explicitly.
+```
+
+The native Blackwell-12.x kernel **ships in the image**
+(`experts/flashinfer_b12x_moe.py`, `FlashInferB12xExperts`) and is **excluded
+from auto-selection**. Auto falls through `FLASHINFER_TRTLLM → CUTEDSL →
+CUTLASS → VLLM_CUTLASS → MARLIN → HUMMING → EMULATION`.
+
+So for NVFP4 packed MoE on GB10:
+
+| field | value |
+|---|---|
+| `route_status` | `backed_with_serve_flag` |
+| `requires_serve_flags` | `--moe-backend flashinfer_b12x` |
+
+**Auto-selection must never carry a shipping claim on this hardware.** That is
+the 2026-08-17 incident restated by the runtime itself: a silent fallback that
+nothing refuses.
+
+### MXFP4 is off the table, and for a better reason than the E8M0 penalty
+
+§3 floated MXFP4 (4.25 bpp → 161.79 GiB, 1.1% under Mia) as the one arithmetic
+escape, conditional on its route. The route says no. `oracle/mxfp4.py` has **no
+B12X backend at all**, and its only W4A4 entry — `AITER_MXFP4_MXFP4` — is ROCm.
+On NVIDIA the available MXFP4 backends are `MXFP4_BF16` and `MXFP4_MXFP8`:
+**W4A16 or W4A8, not W4A4.**
+
+Taking MXFP4 to get under Mia's size would surrender the activation contract
+and land on the same W4A16 footing as EXL3 — abandoning the thesis to win the
+scoreboard. It is withdrawn.
+
+### What that leaves
+
+Reading the runtime rather than arguing about it:
+
+- Sub-4.5 bpp **and** W4A4 is what beats this checkpoint. Nothing shipped does
+  both: NVFP4 is W4A4 but floors at 4.5; MXFP4 reaches 4.25 but only at W4A16/W4A8.
+- That gap — sub-4.5 at W4A4 on native Blackwell tensor cores — is the whole of
+  Tessera's §6 thesis, stated by the serving stack instead of by us.
 
 ## 3. Where the headroom is — and why it is not enough
 
