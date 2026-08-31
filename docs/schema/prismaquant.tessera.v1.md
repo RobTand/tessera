@@ -1,0 +1,150 @@
+# `prismaquant.tessera.v1` — byte-level schema and parse algorithm
+
+**Status:** build item 1a, authored. **Review is owed** — "reviewed byte-level
+schema" is the item's own definition, and this text has not been reviewed.
+
+Implemented against `embedded_native_weight_coding_2026-08-31.md`
+(sha256 `1f813a354fe694b31a24aee65f47e3f6cc5b1043f3556005120a1b795bf27886`).
+Section references below are to that document.
+
+---
+
+## 1. Container
+
+Little-endian. Three regions: header, manifest, plane region.
+
+| Offset | Size | Field |
+|---|---|---|
+| 0 | 8 | magic `\x89TESSERA` |
+| 8 | 2 | schema major (`1`) |
+| 10 | 2 | schema minor (`0`) |
+| 12 | 4 | header bytes (`24`) |
+| 16 | 4 | manifest bytes |
+| 20 | 4 | plane-region bytes (full extent) |
+| 24 | … | canonical manifest |
+| … | … | plane region |
+
+The manifest is **never truncatable**. A legal truncation shortens only the
+plane region; the header keeps declaring the full extent, and the actual
+length is resolved against the declared terminals.
+
+## 2. Decisions this schema makes
+
+The design document leaves these open. Deciding them *is* item 1a.
+
+**D1 — canonical encoding and hash domain.** Integers only. Unsigned values are
+minimal-length LEB128; a non-minimal encoding is rejected on read, so one value
+has exactly one byte string. Signed values are zig-zag mapped. Rationals are
+`(numerator, denominator)` in lowest terms. **No floating-point value is ever
+encoded or hashed.** Digests are SHA-256 with a domain-separation prefix, so a
+terminal record can never collide with an encoder profile or a payload.
+
+**D2 — refinement nibble layout.** Half 0 occupies bits 0–3 of the refinement
+byte, half 1 bits 4–7. Within a nibble the exponent-delta bit `d` is bit 3 and
+the mantissa `m` is bits 2–0.
+
+**D3 — §6b canonicalisation.** §6b notes that `(E, d=0)` and `(E−1, d=1)` are
+duplicate encodings "until a canonicalization rule picks one". **The canonical
+group is the one with `min(d_lo, d_hi) == 0`.** A group with both deltas set is
+the same pair of scales as base `E+1` with both deltas cleared.
+
+*Why this direction:* it is the truncation-safe choice. §6b's prefix semantics
+leave later halves at the po2 base when the refinement plane is cut; if `d=1`
+were canonical, that cut would silently shift a half by an octave. Under this
+rule at least one half's po2 prefix carries its correct octave.
+
+*No exception arises:* every legal word has `k = E − 127 + d ∈ [−9, 8]`, so
+`E ≤ 135`, and `E+1` is always inside the E8M0 finite domain. Proved by
+enumeration, not asserted.
+
+**D4 — bit order.** Planes pack MSB-first within each byte; the final byte is
+zero-padded and the pad bits must be zero. Padding is charged as physical bytes.
+
+**D5 — canonical plane order**, which is also the truncation order:
+
+`ALPHABET → DESCENDANT → BODY → SCALE_BASE → COMPLETION → DIAG_SU → DIAG_SV →
+SCALE_REFINE → RELEASE`
+
+Forced by §6's terminal classes: T-po2 is body + po2 base + partial completion;
+T-C3 adds C-full; T-nvfp4-class adds refinement and release. The two blob
+planes lead because nothing decodes without them.
+
+**D6 — what `exact_bpp` means.** `TerminalRecord.exact_bpp` is the
+**plane-region** rate over quantizable parameters. Header and manifest side
+bytes are real and are reported separately as `wire_bpp`; folding them into the
+stored figure is impossible, because the manifest's size depends on the
+terminal records it contains.
+
+**D7 — disjointness by construction.** The magic's leading `0x89` has the high
+bit set, so a Tessera artifact is never valid ASCII or UTF-8 at byte 0. The
+legacy `TCQ_*` name grammar is pure ASCII text, so the two languages are
+disjoint structurally rather than by a lookup table.
+
+**D8 — undeclared physical constants.** Superblock size, group/half weights,
+and the q256 semantics are **declared schema parameters** on the wire, never
+guessed constants. This package cannot verify a Gridbook-side constant from
+outside that repository (rule 14: a claim about another runtime is attested,
+never asserted).
+
+## 3. Plane element units
+
+One uniform `element_bits` per plane, chosen so per-column rate variation is
+carried by the count rather than the width.
+
+| Plane | Element | Bits |
+|---|---|---|
+| ALPHABET / DESCENDANT | byte | 8 |
+| BODY | bit | 1 (count = Σ_col R·rows) |
+| SCALE_BASE | 32-weight group | 8 (E8M0) |
+| COMPLETION | bit | 1 (count = Σ_col c·rows) |
+| DIAG_SU / DIAG_SV | channel | 16 |
+| SCALE_REFINE | 16-weight half | 4 |
+| RELEASE | released position | 4 |
+
+## 4. Parse algorithm
+
+1. Read and validate the 24-byte header: magic, version, header size.
+2. Read exactly `manifest_bytes`; decode canonically; **reject trailing bytes**.
+3. Validate the manifest: canonical plane order, no duplicate kinds, rate
+   schedule exact against the root, complete superblocks keep the quota, no two
+   terminals share an `exact_bytes`.
+4. Measure the physical plane region. Find the terminal whose `exact_bytes`
+   equals it. **No match is a rejection** — arbitrary byte prefixes are not
+   terminals (§9).
+5. Re-run the accountant: recomputed bytes must equal both the declared bytes
+   and the physical bytes. Any disagreement is a defect.
+6. On a complete artifact only, verify the payload digest.
+
+Every step fails closed.
+
+## 5. Identity
+
+`TESSERA_E2M1_R{q256}` / `TESSERA_E4M3_R{q256}` is a **human-readable family
+descriptor only** and carries no normative weight. The one normative persisted
+representation is the structured record of schema, `encoder_profile_id`,
+`terminal_id`, branch identity, and payload digest, digested over itself
+(round-8 P1-5: no "or" alternative). `require_terminal_record` fails closed on
+a descriptor or a bare name.
+
+`terminal_id` binds the branch and the encoder profile, so identical count
+arrays under a different branch are a different terminal.
+
+## 6. Frozen constants
+
+Legal-set digest over all 65,536 `(base, refinement)` words at clip 0:
+
+```
+da39862453b9670fbe71e1e71880a0e995b960f383248bf4dc4acf9aa880a1b3
+```
+
+Census: 2,826 legal-canonical · 966 legal-non-canonical · 61,744 illegal.
+
+A change to either means the legality predicate moved, which is a reviewed
+schema change.
+
+## 7. Deliberately absent
+
+No encoder (arm 2's minimal measurement encoder is the first gated ask), no
+trellis decoder (Gridbook's, gated behind arm 4b), no rate-1/rate-2 alphabet
+convention (build item 2, explicitly owed), no menu, DP, export, or serving
+wiring.

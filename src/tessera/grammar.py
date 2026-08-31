@@ -1,0 +1,292 @@
+"""The refinement grammar (doc S6), decoder-level and exact.
+
+A root ``r0`` fixes a per-column schedule over integer rates ``R in {1,2,3}``
+under an exact Bresenham quota.  Each column's base alphabet ``A_R`` has
+``|A_R| = 2**(R+1)`` codes.  Stage C (completion) spends ``c <= 3 - R`` bits
+per column against a stored descendant map; at ``c = 3 - R`` the descendant
+sets **partition** the 16-code grid.  Stage B (release) replaces a position's
+code with any of 16 at a cost of 4 bits.
+
+Two facts this module proves rather than asserts:
+
+* C-full costs ``R + (3 - R) = 3`` bits per column from *every* root, so
+  completion equalises all roots at the joint-16 wire.
+* The partition property is forced by cardinality:
+  ``|A_R| * 2**(3-R) == 2**(R+1) * 2**(3-R) == 16`` for every legal ``R``.
+
+What this module deliberately does **not** do: define the rate-1/rate-2
+set-partitioning alphabet convention.  That is build item 2 and is explicitly
+owed; alphabets and descendant maps are supplied as stored blobs and validated
+structurally only.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from fractions import Fraction
+
+from .errors import GrammarError
+
+__all__ = [
+    "NATIVE_CODE_BITS",
+    "GRID_CODES",
+    "LEGAL_RATES",
+    "RELEASE_BITS",
+    "C_FULL_BITS",
+    "alphabet_size",
+    "completion_capacity",
+    "descendant_set_size",
+    "bresenham_rate_schedule",
+    "validate_rate_schedule",
+    "superblock_quota_ok",
+    "bits_per_position",
+    "prefix_cardinality",
+    "validate_descendant_map",
+    "root_from_q256",
+    "q256_from_root",
+    "RateSchedule",
+]
+
+#: E2M1 is a 4-bit native code: 16 codes on the terminal grid.
+NATIVE_CODE_BITS = 4
+GRID_CODES = 1 << NATIVE_CODE_BITS  # 16
+
+#: Shaped trellis rates. ``max_trellis_rate = native - 1`` (doc S15,
+#: `trellis.py:112-113,182`), so the shaped body tops out at 3.
+LEGAL_RATES = (1, 2, 3)
+
+#: A released position stores a full 16-code override (doc S6).
+RELEASE_BITS = 4
+
+#: Payload bits per column at C-full, from any root.
+C_FULL_BITS = 3
+
+#: The q256 parameterisation: r0 = q256 / 256 (doc S5).
+Q256_UNIT = 256
+
+
+def alphabet_size(rate: int) -> int:
+    """``|A_R| = 2**(R+1)`` exhaustively optimised codes."""
+    _check_rate(rate)
+    return 1 << (rate + 1)
+
+
+def completion_capacity(rate: int) -> int:
+    """Maximum completion level ``c = 3 - R`` for a column at this rate."""
+    _check_rate(rate)
+    return C_FULL_BITS - rate
+
+
+def descendant_set_size(completion: int) -> int:
+    """``|D(a)| = 2**c`` -- the per-position reachable set after completion."""
+    if completion < 0:
+        raise GrammarError(f"negative completion level: {completion}")
+    return 1 << completion
+
+
+def _check_rate(rate: int) -> None:
+    if rate not in LEGAL_RATES:
+        raise GrammarError(
+            f"rate {rate} outside the shaped domain {LEGAL_RATES} "
+            "(max_trellis_rate = native - 1)"
+        )
+
+
+def root_from_q256(q256: int) -> Fraction:
+    """Root rate ``r0`` for a q256 parameter."""
+    if q256 <= 0:
+        raise GrammarError(f"q256 must be positive: {q256}")
+    return Fraction(q256, Q256_UNIT)
+
+
+def q256_from_root(root: Fraction) -> int:
+    """Inverse of :func:`root_from_q256`; raises if not an integral q256."""
+    scaled = root * Q256_UNIT
+    if scaled.denominator != 1:
+        raise GrammarError(f"root {root} does not land on an integral q256")
+    return int(scaled)
+
+
+@dataclass(frozen=True)
+class RateSchedule:
+    """A per-column rate assignment realising a root exactly."""
+
+    rates: tuple[int, ...]
+    root: Fraction
+
+    @property
+    def total_body_bits_per_row(self) -> int:
+        """Body bits contributed by one row across all columns."""
+        return sum(self.rates)
+
+    def __post_init__(self) -> None:
+        validate_rate_schedule(self.rates, self.root)
+
+
+def bresenham_rate_schedule(root: Fraction, n_columns: int) -> tuple[int, ...]:
+    """Canonical exact quota for ``root`` over ``n_columns`` columns.
+
+    The schedule mixes only the two rates bracketing the root, and the count at
+    the upper rate is exactly ``n_columns * (root - floor(root))`` -- which must
+    be an integer, or the root is not realisable at this column count.
+    Placement is Bresenham (evenly distributed, deterministic).
+
+    Importance-placed arrangements are also legal provided every complete
+    superblock keeps the quota (doc S6); see :func:`superblock_quota_ok`.
+    """
+    if n_columns <= 0:
+        raise GrammarError(f"n_columns must be positive: {n_columns}")
+
+    lower = int(root) if root.denominator == 1 else root.numerator // root.denominator
+    upper = lower if root.denominator == 1 else lower + 1
+    _check_rate(lower)
+    if upper != lower:
+        _check_rate(upper)
+
+    exact_upper_count = (root - lower) * n_columns
+    if exact_upper_count.denominator != 1:
+        raise GrammarError(
+            f"root {root} is not realisable over {n_columns} columns: "
+            f"it needs {exact_upper_count} columns at rate {upper}"
+        )
+    n_upper = int(exact_upper_count)
+
+    # Bresenham: column i takes the upper rate when the accumulated ideal count
+    # crosses an integer boundary. Deterministic and evenly spread.
+    schedule = []
+    accumulator = 0
+    for _ in range(n_columns):
+        accumulator += n_upper
+        if accumulator >= n_columns:
+            accumulator -= n_columns
+            schedule.append(upper)
+        else:
+            schedule.append(lower)
+    return tuple(schedule)
+
+
+def validate_rate_schedule(rates: tuple[int, ...], root: Fraction) -> None:
+    """Raise unless every rate is legal and the quota is exact."""
+    if not rates:
+        raise GrammarError("empty rate schedule")
+    for rate in rates:
+        _check_rate(rate)
+    total = sum(rates)
+    exact = root * len(rates)
+    if exact.denominator != 1 or total != int(exact):
+        raise GrammarError(
+            f"inexact quota: schedule sums to {total} bits, "
+            f"root {root} over {len(rates)} columns requires {exact}"
+        )
+
+
+def superblock_quota_ok(
+    rates: tuple[int, ...], superblock_columns: int, root: Fraction
+) -> bool:
+    """True iff every *complete* superblock keeps the quota (doc S6).
+
+    A trailing partial superblock is not required to keep it; only complete
+    superblocks are constrained, which is what makes importance placement legal.
+    """
+    if superblock_columns <= 0:
+        raise GrammarError(f"superblock_columns must be positive: {superblock_columns}")
+    per_superblock = root * superblock_columns
+    if per_superblock.denominator != 1:
+        raise GrammarError(
+            f"root {root} does not yield an integral quota over "
+            f"{superblock_columns} columns"
+        )
+    target = int(per_superblock)
+    n_complete = len(rates) // superblock_columns
+    for index in range(n_complete):
+        block = rates[index * superblock_columns : (index + 1) * superblock_columns]
+        if sum(block) != target:
+            return False
+    return True
+
+
+def bits_per_position(rate: int, completion: int, released: bool = False) -> int:
+    """Payload bits for one position: ``R + c`` plus 4 if released.
+
+    Release-everywhere costs ``3 + 4 = 7`` bits per column, which is never
+    byte-competitive with scalar 4.5 -- so scalar rate-4 is not a Tessera
+    endpoint (doc S6).
+    """
+    _check_rate(rate)
+    if not 0 <= completion <= completion_capacity(rate):
+        raise GrammarError(
+            f"completion {completion} exceeds capacity {completion_capacity(rate)} "
+            f"at rate {rate}"
+        )
+    return rate + completion + (RELEASE_BITS if released else 0)
+
+
+def prefix_cardinality(rate: int, completion: int) -> int:
+    """Per-position reachable-set size after ``completion`` bits.
+
+    Nesting: this is ``2**c`` at every prefix, and reaches the full 16-code
+    grid jointly (not per position) exactly at ``c = 3 - R``.
+    """
+    _check_rate(rate)
+    if not 0 <= completion <= completion_capacity(rate):
+        raise GrammarError(
+            f"completion {completion} exceeds capacity {completion_capacity(rate)} "
+            f"at rate {rate}"
+        )
+    return descendant_set_size(completion)
+
+
+def validate_descendant_map(
+    rate: int, completion: int, descendant_map: dict[int, tuple[int, ...]]
+) -> None:
+    """Validate a stored descendant map structurally (doc S6).
+
+    Checks, in order: the map is keyed by exactly the alphabet's anchors; every
+    descendant set has size ``2**c``; every descendant is a legal 16-grid code;
+    and, at ``c = 3 - R`` only, the descendant sets **partition** the grid --
+    every code is a descendant of exactly one anchor.
+
+    The alphabet's *content* is not validated: the rate-1/rate-2
+    set-partitioning convention is build item 2 and is not defined here.
+    """
+    _check_rate(rate)
+    capacity = completion_capacity(rate)
+    if not 0 <= completion <= capacity:
+        raise GrammarError(
+            f"completion {completion} exceeds capacity {capacity} at rate {rate}"
+        )
+
+    expected_anchors = alphabet_size(rate)
+    if len(descendant_map) != expected_anchors:
+        raise GrammarError(
+            f"descendant map has {len(descendant_map)} anchors, "
+            f"rate {rate} requires {expected_anchors}"
+        )
+    if set(descendant_map) != set(range(expected_anchors)):
+        raise GrammarError("descendant map anchors must be exactly 0..|A_R|-1")
+
+    expected_size = descendant_set_size(completion)
+    seen: dict[int, int] = {}
+    for anchor, descendants in sorted(descendant_map.items()):
+        if len(descendants) != expected_size:
+            raise GrammarError(
+                f"anchor {anchor}: |D(a)| = {len(descendants)}, expected "
+                f"{expected_size} at completion {completion}"
+            )
+        if len(set(descendants)) != len(descendants):
+            raise GrammarError(f"anchor {anchor}: duplicate descendants")
+        for code in descendants:
+            if not 0 <= code < GRID_CODES:
+                raise GrammarError(f"anchor {anchor}: code {code} off the 16-grid")
+            if code in seen:
+                raise GrammarError(
+                    f"code {code} is a descendant of both anchor {seen[code]} "
+                    f"and anchor {anchor}: descendant sets must be disjoint"
+                )
+            seen[code] = anchor
+
+    if completion == capacity and len(seen) != GRID_CODES:
+        raise GrammarError(
+            f"at c = 3 - R = {capacity} the descendant sets must partition the "
+            f"{GRID_CODES}-code grid; they cover {len(seen)}"
+        )
