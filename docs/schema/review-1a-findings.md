@@ -11,6 +11,28 @@ self-certification is accepted.
 
 Status legend: **OPEN** / **FIXED** (commit) / **REJECTED** (with reason).
 
+**Pass 1 resolution, all in `81ec726`** — 115 tests, up from 101; every fix has
+a test in `tests/test_review_1a.py` that exercises the input which used to be
+accepted:
+
+| # | Severity as filed | Verified severity | Status |
+|---|---|---|---|
+| F1 | BLOCKER | BLOCKER | FIXED — plane digests cover real bytes and are verified |
+| F2 | BLOCKER | MINOR (over-filed) | FIXED — bound moved into the validator |
+| F3 | MAJOR | MAJOR | FIXED — `NORMATIVE_ELEMENT_BITS` binds every descriptor |
+| F4 | MAJOR | MAJOR | FIXED — zero padding, alignment bytes and sub-byte slack |
+| F5 | MAJOR (misstated) | MAJOR | FIXED — prefix-sum identity, not strict ascent |
+| F6 | MINOR | MINOR | FIXED — `WHOLE_PLANE` carries one count |
+| F7 | MINOR | MINOR | FIXED — `serialize` runs the accountant |
+| F8 | BLOCKER | BLOCKER | FIXED — the prefix shape is validated |
+| F9 | BLOCKER | BLOCKER | FIXED — per-terminal `payload_digest` |
+
+Two of my own findings were wrong as filed and are corrected in place rather
+than quietly dropped: **F2** was not a fail-open hole (the accountant does
+refuse an over-claiming terminal, and `parse` reaches it), and **F5**'s proposed
+"strictly ascending" rule would have been an incorrect fix, because a
+zero-count granule legitimately repeats an offset.
+
 ---
 
 ## Pass 1 — this session, independent
