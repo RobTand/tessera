@@ -44,6 +44,7 @@ def test_declared_byte_disagreement_is_a_defect(artifact):
         plane_elements=terminal.plane_elements,
         exact_bytes=terminal.exact_bytes + 1,
         exact_bpp=terminal.exact_bpp,
+        payload_digest=terminal.payload_digest,
     )
     with pytest.raises(FootprintDisagreementError, match="accountant computes"):
         account_terminal(manifest, tampered, side_bytes=0)
@@ -60,6 +61,7 @@ def test_terminal_cannot_claim_more_elements_than_the_plane_declares(artifact):
         plane_elements=tuple(inflated),
         exact_bytes=terminal.exact_bytes,
         exact_bpp=terminal.exact_bpp,
+        payload_digest=terminal.payload_digest,
     )
     with pytest.raises(FootprintDisagreementError, match="which declares"):
         account_terminal(manifest, tampered, side_bytes=0)

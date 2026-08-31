@@ -33,9 +33,11 @@ import hashlib
 import struct
 from dataclasses import dataclass
 
-from .errors import SchemaError, TruncationError
+from .errors import PlaneLayoutError, SchemaError, TruncationError
 from .footprint import account_terminal, plane_region_bytes
+from .exact import bits_to_bytes
 from .manifest import Manifest, TerminalRecord
+from .planes import CANONICAL_PLANE_ORDER, PlaneDescriptor, Storage
 
 __all__ = [
     "MAGIC",
@@ -45,6 +47,8 @@ __all__ = [
     "serialize",
     "parse",
     "ParsedArtifact",
+    "plane_ranges",
+    "verify_plane_region",
 ]
 
 MAGIC = b"\x89TESSERA"
@@ -63,6 +67,11 @@ def serialize(manifest: Manifest, plane_region: bytes) -> bytes:
         raise SchemaError(
             "payload_digest does not match the supplied plane region"
         )
+    full = max(manifest.terminals, key=lambda terminal: terminal.exact_bytes)
+    account_terminal(
+        manifest, full, side_bytes=0, physical_bytes=len(plane_region)
+    )
+    verify_plane_region(manifest, full, plane_region)
     header = _HEADER.pack(
         MAGIC,
         SCHEMA_MAJOR,
@@ -72,6 +81,81 @@ def serialize(manifest: Manifest, plane_region: bytes) -> bytes:
         len(plane_region),
     )
     return header + manifest_bytes + plane_region
+
+
+def plane_ranges(
+    manifest: Manifest, terminal: TerminalRecord
+) -> "list[tuple[PlaneDescriptor, int, int, int]]":
+    """`(descriptor, offset, content_bytes, total_bytes)` per plane, in order.
+
+    The canonical plane order is the byte order, so a terminal's region is the
+    concatenation of each plane's truncated extent.  `content_bytes` excludes
+    alignment padding; `total_bytes` includes it.
+    """
+    order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+    ranges, offset = [], 0
+    for descriptor in manifest.planes:
+        if descriptor.storage is Storage.REFERENCE:
+            continue
+        count = terminal.plane_elements[order[descriptor.kind]]
+        total = descriptor.byte_length(count)
+        content = bits_to_bytes(count * descriptor.element_bits)
+        ranges.append((descriptor, offset, content, total))
+        offset += total
+    return ranges
+
+
+def verify_plane_region(
+    manifest: Manifest, terminal: TerminalRecord, plane_region: bytes
+) -> None:
+    """Check every integrity claim the manifest makes about these bytes.
+
+    Three claims, none of which was checked before this review:
+
+    * the terminal's own `payload_digest` over its whole byte prefix, which is
+      the only integrity a *truncated* artifact has (F9);
+    * each fully-present plane's `content_digest` (F1);
+    * that alignment padding is zero, so the encoding is canonical and the
+      slack is not a covert channel (F4).
+    """
+    if hashlib.sha256(plane_region).digest() != terminal.payload_digest:
+        raise SchemaError(
+            f"terminal {terminal.slot_id!r}: plane-region bytes do not match "
+            "the declared payload digest"
+        )
+    order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+    for descriptor, offset, content, total in plane_ranges(manifest, terminal):
+        chunk = plane_region[offset : offset + total]
+        if len(chunk) != total:
+            raise TruncationError(
+                f"{descriptor.kind.name}: region holds {len(chunk)} of {total} bytes"
+            )
+        if any(chunk[content:]):
+            raise PlaneLayoutError(
+                f"{descriptor.kind.name}: non-zero alignment padding; the "
+                "encoding must be canonical"
+            )
+        # Sub-byte slack too: a 1-bit plane whose count is not a multiple of 8
+        # leaves pad bits inside the final content byte.  MSB-first packing puts
+        # them in the low bits.  Unconstrained, they are the same canonicality
+        # hole as the alignment bytes above, one byte earlier.
+        bits = count_bits = terminal.plane_elements[
+            order[descriptor.kind]
+        ] * descriptor.element_bits
+        slack = (-bits) % 8
+        if slack and content:
+            if chunk[content - 1] & ((1 << slack) - 1):
+                raise PlaneLayoutError(
+                    f"{descriptor.kind.name}: non-zero pad bits in the final "
+                    "content byte; the encoding must be canonical"
+                )
+        count = terminal.plane_elements[order[descriptor.kind]]
+        if count == descriptor.element_count:
+            if hashlib.sha256(chunk).digest() != descriptor.content_digest:
+                raise SchemaError(
+                    f"{descriptor.kind.name}: bytes do not match the plane's "
+                    "declared content digest"
+                )
 
 
 @dataclass(frozen=True)
@@ -138,9 +222,11 @@ def parse(data: bytes, verify_payload_digest: bool = True) -> ParsedArtifact:
         manifest, terminal, side_bytes=side_bytes, physical_bytes=len(plane_region)
     )
 
-    if verify_payload_digest and len(plane_region) == region_bytes:
-        if hashlib.sha256(plane_region).digest() != manifest.payload_digest:
-            raise SchemaError("payload digest mismatch on a complete artifact")
+    if verify_payload_digest:
+        verify_plane_region(manifest, terminal, plane_region)
+        if len(plane_region) == region_bytes:
+            if hashlib.sha256(plane_region).digest() != manifest.payload_digest:
+                raise SchemaError("payload digest mismatch on a complete artifact")
 
     return ParsedArtifact(
         manifest=manifest,

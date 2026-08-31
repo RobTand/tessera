@@ -30,11 +30,13 @@ import hashlib
 from dataclasses import dataclass
 from fractions import Fraction
 
-from .errors import GrammarError
+from .errors import GrammarError, PlaneLayoutError
+from .exact import bits_to_bytes
 from .grammar import RELEASE_BITS, completion_capacity
 from .manifest import Geometry, TerminalRecord
 from .planes import (
     CANONICAL_PLANE_ORDER,
+    NORMATIVE_ELEMENT_BITS,
     BitOrder,
     CountGranularity,
     IndexDomain,
@@ -48,17 +50,6 @@ __all__ = ["TerminalSpec", "build_planes", "build_terminal", "ZERO_DIGEST"]
 
 ZERO_DIGEST = bytes(32)
 
-_ELEMENT_BITS = {
-    PlaneKind.ALPHABET: 8,
-    PlaneKind.DESCENDANT: 8,
-    PlaneKind.BODY: 1,
-    PlaneKind.SCALE_BASE: 8,
-    PlaneKind.COMPLETION: 1,
-    PlaneKind.DIAG_SU: 16,
-    PlaneKind.DIAG_SV: 16,
-    PlaneKind.SCALE_REFINE: 4,
-    PlaneKind.RELEASE: RELEASE_BITS,
-}
 
 _INDEX_DOMAIN = {
     PlaneKind.ALPHABET: IndexDomain.WHOLE_UNIT,
@@ -136,6 +127,39 @@ def _counts_for(
     raise GrammarError(f"unhandled plane kind {kind}")
 
 
+def content_byte_length(descriptor: PlaneDescriptor) -> int:
+    """Bytes of real content in a plane, before alignment padding."""
+    return bits_to_bytes(descriptor.element_count * descriptor.element_bits)
+
+
+def build_plane_region(
+    planes: tuple[PlaneDescriptor, ...],
+    payloads: "dict[PlaneKind, bytes] | None" = None,
+) -> bytes:
+    """Lay payloads out into the exact plane region, in canonical order.
+
+    This is the serializer half of build item 1b.  Padding is written as zero
+    and is not the caller's to choose: unconstrained padding would make the
+    same logical content admit many byte strings, and identity here is a
+    function of content (review finding F4).
+    """
+    payloads = payloads or {}
+    region = bytearray()
+    for descriptor in planes:
+        if descriptor.storage is Storage.REFERENCE:
+            continue
+        need = content_byte_length(descriptor)
+        payload = payloads.get(descriptor.kind, bytes(need))
+        if len(payload) != need:
+            raise PlaneLayoutError(
+                f"{descriptor.kind.name}: payload is {len(payload)} bytes, "
+                f"the plane holds exactly {need}"
+            )
+        region += payload
+        region += bytes(descriptor.byte_length() - need)
+    return bytes(region)
+
+
 def build_planes(
     geometry: Geometry,
     rates: tuple[int, ...],
@@ -143,6 +167,7 @@ def build_planes(
     descendant_blob: bytes,
     alignment_bytes: int = 1,
     max_released: int = 0,
+    payloads: "dict[PlaneKind, bytes] | None" = None,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -177,24 +202,41 @@ def build_planes(
         for count in counts:
             offsets.append(running)
             running += count
-        blob = (
+        # The plane's digest covers its exact on-wire byte range -- content
+        # plus the zero padding -- so `parse` can verify it against the bytes it
+        # actually holds.  Digesting a placeholder (this was `sha256(b"")` for
+        # every non-blob plane) made the field unverifiable by construction:
+        # review finding F1.
+        bits = NORMATIVE_ELEMENT_BITS[kind]
+        need = bits_to_bytes(total * bits)
+        default = (
             alphabet_blob
             if kind is PlaneKind.ALPHABET
-            else descendant_blob if kind is PlaneKind.DESCENDANT else b""
+            else descendant_blob if kind is PlaneKind.DESCENDANT else bytes(need)
+        )
+        blob = (payloads or {}).get(kind, default)
+        if len(blob) != need:
+            raise PlaneLayoutError(
+                f"{kind.name}: payload is {len(blob)} bytes, the plane holds "
+                f"exactly {need}"
+            )
+        raw = bits_to_bytes(total * bits)
+        padded = raw + (
+            0 if raw % alignment_bytes == 0 else alignment_bytes - raw % alignment_bytes
         )
         descriptors.append(
             PlaneDescriptor(
                 kind=kind,
                 index_domain=_INDEX_DOMAIN[kind],
                 storage=Storage.INLINE,
-                element_bits=_ELEMENT_BITS[kind],
+                element_bits=NORMATIVE_ELEMENT_BITS[kind],
                 bit_order=BitOrder.MSB_FIRST,
                 alignment_bytes=alignment_bytes,
                 count_granularity=granularity,
                 counts=counts,
                 restart_offsets=tuple(offsets),
                 payload_dtype=_DTYPE[kind],
-                content_digest=hashlib.sha256(blob).digest(),
+                content_digest=hashlib.sha256(blob + bytes(padded - raw)).digest(),
             )
         )
     return tuple(descriptors)
@@ -207,8 +249,16 @@ def build_terminal(
     planes: tuple[PlaneDescriptor, ...],
     alphabet_bytes: int,
     descendant_bytes: int,
+    plane_region: bytes | None = None,
 ) -> TerminalRecord:
-    """Compute a terminal's exact per-plane counts, bytes, and bpp."""
+    """Compute a terminal's exact per-plane counts, bytes, bpp, and digest.
+
+    `plane_region` is the artifact's full region; the terminal's digest covers
+    its own byte prefix of it.  Without a per-terminal digest, every legal
+    truncation -- this format's headline case -- would carry no integrity check
+    at all, because the whole-artifact digest only covers the untruncated
+    bytes (review finding F9).
+    """
     if len(spec.completion_bits) != len(rates):
         raise GrammarError(
             f"terminal {spec.slot_id!r}: completion vector covers "
@@ -233,10 +283,21 @@ def build_terminal(
         elements.append(count)
         total_bytes += by_kind[kind].byte_length(count)
 
+    if plane_region is None:
+        payload_digest = hashlib.sha256(bytes(total_bytes)).digest()
+    else:
+        if len(plane_region) < total_bytes:
+            raise PlaneLayoutError(
+                f"terminal {spec.slot_id!r}: needs {total_bytes} bytes, the "
+                f"region holds {len(plane_region)}"
+            )
+        payload_digest = hashlib.sha256(plane_region[:total_bytes]).digest()
+
     return TerminalRecord(
         slot_id=spec.slot_id,
         clip_exponent_code=spec.clip_exponent_code,
         plane_elements=tuple(elements),
         exact_bytes=total_bytes,
         exact_bpp=Fraction(8 * total_bytes, geometry.quantizable_params),
+        payload_digest=payload_digest,
     )

@@ -19,11 +19,13 @@ from dataclasses import dataclass
 from enum import IntEnum
 
 from .canonical import DIGEST_BYTES, Reader, Writer
+from .grammar import RELEASE_BITS
 from .errors import PlaneLayoutError
 from .exact import bits_to_bytes
 
 __all__ = [
     "PlaneKind",
+    "NORMATIVE_ELEMENT_BITS",
     "IndexDomain",
     "Storage",
     "BitOrder",
@@ -68,6 +70,17 @@ CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
 )
 
 
+#: Normative per-plane element width (schema 1a, review finding F3).
+#:
+#: These widths are fixed by the doc: a stage-B release is 4 bits/position, a
+#: C-full completion is 1 bit, an E8M0 base is a byte, a segment-2b refinement
+#: word is a nibble.  The table lived in ``layout.py`` and was therefore
+#: consulted only when *building* a descriptor, so a decoded or hand-built
+#: manifest could declare any width and two conforming decoders would disagree
+#: on bytes.  It binds every descriptor now, however constructed.
+NORMATIVE_ELEMENT_BITS: "dict[PlaneKind, int]" = {}  # populated below
+
+
 class IndexDomain(IntEnum):
     """What one element of the plane is indexed by."""
 
@@ -103,6 +116,21 @@ class PayloadDtype(IntEnum):
     FP16 = 4
 
 
+NORMATIVE_ELEMENT_BITS.update(
+    {
+        PlaneKind.ALPHABET: 8,
+        PlaneKind.DESCENDANT: 8,
+        PlaneKind.BODY: 1,
+        PlaneKind.SCALE_BASE: 8,
+        PlaneKind.COMPLETION: 1,
+        PlaneKind.DIAG_SU: 16,
+        PlaneKind.DIAG_SV: 16,
+        PlaneKind.SCALE_REFINE: 4,
+        PlaneKind.RELEASE: RELEASE_BITS,
+    }
+)
+
+
 @dataclass(frozen=True)
 class PlaneDescriptor:
     """One plane's complete self-description.
@@ -128,6 +156,12 @@ class PlaneDescriptor:
     def __post_init__(self) -> None:
         if self.element_bits <= 0:
             raise PlaneLayoutError(f"{self.kind.name}: element_bits must be positive")
+        normative = NORMATIVE_ELEMENT_BITS.get(self.kind)
+        if normative is not None and self.element_bits != normative:
+            raise PlaneLayoutError(
+                f"{self.kind.name}: element_bits {self.element_bits} contradicts "
+                f"the schema's normative width {normative}"
+            )
         if self.alignment_bytes <= 0:
             raise PlaneLayoutError(f"{self.kind.name}: alignment must be positive")
         if self.alignment_bytes & (self.alignment_bytes - 1):
@@ -139,13 +173,38 @@ class PlaneDescriptor:
             raise PlaneLayoutError(f"{self.kind.name}: negative element count")
         if len(self.content_digest) != DIGEST_BYTES:
             raise PlaneLayoutError(f"{self.kind.name}: malformed content digest")
+        if self.count_granularity is CountGranularity.WHOLE_PLANE:
+            if len(self.counts) != 1:
+                raise PlaneLayoutError(
+                    f"{self.kind.name}: WHOLE_PLANE granularity declares "
+                    f"{len(self.counts)} counts, expected exactly 1"
+                )
+        elif not self.counts:
+            raise PlaneLayoutError(
+                f"{self.kind.name}: {self.count_granularity.name} granularity "
+                "declares no granules"
+            )
         if self.restart_offsets and len(self.restart_offsets) != len(self.counts):
             raise PlaneLayoutError(
                 f"{self.kind.name}: restart table has {len(self.restart_offsets)} "
                 f"entries for {len(self.counts)} granules"
             )
-        if list(self.restart_offsets) != sorted(self.restart_offsets):
-            raise PlaneLayoutError(f"{self.kind.name}: restart offsets not ascending")
+        # The table is the running prefix sum of `counts` by construction, so it
+        # is a derivable that must agree with what it is derived from.  Ascent
+        # alone is too weak (a zero-count granule makes two offsets equal, which
+        # is legal) and does not bound the offsets at all -- and this table is
+        # what a GPU consumer uses for segment-local random access without a
+        # host parse (doc S9).  Review finding F5.
+        if self.restart_offsets:
+            expected, running = [], 0
+            for count in self.counts:
+                expected.append(running)
+                running += count
+            if list(self.restart_offsets) != expected:
+                raise PlaneLayoutError(
+                    f"{self.kind.name}: restart offsets {list(self.restart_offsets)} "
+                    f"are not the prefix sums of counts ({expected})"
+                )
 
     @property
     def element_count(self) -> int:

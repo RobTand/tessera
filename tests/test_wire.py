@@ -129,6 +129,7 @@ def test_duplicate_terminal_sizes_are_rejected(artifact):
             plane_elements=clash.plane_elements,
             exact_bytes=clash.exact_bytes,
             exact_bpp=clash.exact_bpp,
+            payload_digest=clash.payload_digest,
         ),
     )
     with pytest.raises(ManifestError, match="same exact_bytes"):

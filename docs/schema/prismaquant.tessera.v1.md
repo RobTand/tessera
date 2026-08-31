@@ -89,7 +89,11 @@ never asserted).
 ## 3. Plane element units
 
 One uniform `element_bits` per plane, chosen so per-column rate variation is
-carried by the count rather than the width.
+carried by the count rather than the width. **These widths are normative and
+bind every descriptor**: `planes.NORMATIVE_ELEMENT_BITS` refuses a descriptor
+that contradicts the table, however the descriptor was constructed. (Before the
+1a review the table lived in the *builder*, so a decoded manifest could declare
+any width and two conforming decoders would disagree on bytes — finding F3.)
 
 | Plane | Element | Bits |
 |---|---|---|
@@ -100,6 +104,46 @@ carried by the count rather than the width.
 | DIAG_SU / DIAG_SV | channel | 16 |
 | SCALE_REFINE | 16-weight half | 4 |
 | RELEASE | released position | 4 |
+
+## 3b. Plane metadata that is derivable is also constrained
+
+Two descriptor fields are functions of others and must agree with what they are
+derived from, or a consumer that trusts one and a consumer that trusts the other
+read different bytes:
+
+- `restart_offsets` **is** the running prefix sum of `counts`. Ascent alone is
+  too weak: it neither bounds the offsets nor pins them, and a zero-count
+  granule legitimately repeats an offset, so "strictly ascending" would be
+  wrong. §9 gives this table to a GPU consumer for segment-local random access
+  without a host parse; that consumer is exactly who an unpinned table hurts
+  (finding F5).
+- `counts` arity follows `count_granularity`: `WHOLE_PLANE` carries exactly one
+  count (finding F6).
+
+## 3c. Truncation, integrity, and canonical bytes
+
+Three rules that together make a *truncated* artifact as trustworthy as a
+complete one. Truncation is this format's headline feature, so the common case
+must not be the unverified one.
+
+1. **Every terminal is a prefix.** In canonical plane order a terminal declares
+   full planes, then at most one partially-present plane, then nothing. A
+   terminal shaped (full, empty, full) prices to a real byte count and would
+   match a real truncation length, but the bytes at that length are not the
+   bytes it describes. The shape is validated in `Manifest.__post_init__`
+   (finding F8), alongside the bound that no terminal may claim more elements
+   than its plane declares (finding F2).
+2. **Every terminal carries `payload_digest`** over its own byte prefix — 32
+   bytes per terminal. The whole-artifact digest covers only the untruncated
+   bytes, so without this a truncation carries no integrity check at all
+   (finding F9). Each *fully present* plane is additionally checked against its
+   `content_digest`, which covers the plane's exact on-wire range, content plus
+   padding (finding F1).
+3. **Padding is zero — both alignment bytes and sub-byte slack.** Padding is
+   not the encoder's to choose. Unconstrained, the same logical content admits
+   many byte strings, and identity here is a function of content; the slack is
+   also a covert channel. MSB-first packing puts sub-byte pad bits in the low
+   bits of the final content byte (finding F4).
 
 ## 4. Parse algorithm
 
@@ -113,7 +157,17 @@ carried by the count rather than the width.
    terminals (§9).
 5. Re-run the accountant: recomputed bytes must equal both the declared bytes
    and the physical bytes. Any disagreement is a defect.
-6. On a complete artifact only, verify the payload digest.
+6. Verify the matched terminal's `payload_digest` over the whole plane region —
+   **for truncated and complete artifacts alike**.
+7. For each plane fully present in that terminal, verify its `content_digest`
+   over the plane's exact byte range.
+8. Verify that all padding is zero: alignment bytes, and the sub-byte slack in
+   each plane's final content byte.
+9. On a complete artifact only, additionally verify the manifest's whole-region
+   payload digest.
+
+`serialize` runs the same accountant and the same region verification before it
+emits anything, so the write side cannot produce what the read side refuses.
 
 Every step fails closed.
 

@@ -10,7 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.container import serialize  # noqa: E402
 from tessera.grammar import bresenham_rate_schedule, root_from_q256  # noqa: E402
-from tessera.layout import TerminalSpec, build_planes, build_terminal  # noqa: E402
+from tessera.layout import (  # noqa: E402
+    TerminalSpec,
+    build_plane_region,
+    build_planes,
+    build_terminal,
+)
+from tessera.planes import PlaneKind  # noqa: E402
 from tessera.manifest import (  # noqa: E402
     ArrangementMode,
     BranchIdentity,
@@ -40,9 +46,19 @@ def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8):
     geometry = make_geometry(rows, columns, superblock_columns)
     root = root_from_q256(q256)
     rates = bresenham_rate_schedule(root, columns)
+    payloads = {
+        PlaneKind.ALPHABET: ALPHABET_BLOB,
+        PlaneKind.DESCENDANT: DESCENDANT_BLOB,
+    }
     planes = build_planes(
-        geometry, rates, ALPHABET_BLOB, DESCENDANT_BLOB, max_released=4
+        geometry,
+        rates,
+        ALPHABET_BLOB,
+        DESCENDANT_BLOB,
+        max_released=4,
+        payloads=payloads,
     )
+    plane_region = build_plane_region(planes, payloads)
 
     specs = [
         TerminalSpec("t-po2", (0,) * columns, with_scale_base=True),
@@ -62,12 +78,16 @@ def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8):
     ]
     terminals = tuple(
         build_terminal(
-            geometry, rates, spec, planes, len(ALPHABET_BLOB), len(DESCENDANT_BLOB)
+            geometry,
+            rates,
+            spec,
+            planes,
+            len(ALPHABET_BLOB),
+            len(DESCENDANT_BLOB),
+            plane_region=plane_region,
         )
         for spec in specs
     )
-    full = max(terminals, key=lambda t: t.exact_bytes)
-    plane_region = bytes(full.exact_bytes)
 
     manifest = Manifest(
         encoder_profile_id=hashlib.sha256(b"profile").digest(),

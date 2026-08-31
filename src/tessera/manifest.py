@@ -182,6 +182,7 @@ class TerminalRecord:
     plane_elements: tuple[int, ...]
     exact_bytes: int
     exact_bpp: Fraction
+    payload_digest: bytes
 
     def __post_init__(self) -> None:
         if len(self.plane_elements) != len(CANONICAL_PLANE_ORDER):
@@ -194,6 +195,10 @@ class TerminalRecord:
             raise ManifestError(f"terminal {self.slot_id!r}: negative plane count")
         if self.exact_bytes < 0:
             raise ManifestError(f"terminal {self.slot_id!r}: negative byte count")
+        if len(self.payload_digest) != DIGEST_BYTES:
+            raise ManifestError(
+                f"terminal {self.slot_id!r}: malformed payload digest"
+            )
         if not 0 <= self.clip_exponent_code < 8:
             raise ManifestError(
                 f"terminal {self.slot_id!r}: clip exponent code "
@@ -210,6 +215,7 @@ class TerminalRecord:
             .uint_seq(self.plane_elements)
             .uint(self.exact_bytes)
             .ratio(self.exact_bpp)
+            .digest32(self.payload_digest)
         )
         return writer.bytes
 
@@ -228,6 +234,7 @@ class TerminalRecord:
             .uint_seq(self.plane_elements)
             .uint(self.exact_bytes)
             .ratio(self.exact_bpp)
+            .digest32(self.payload_digest)
         )
 
     @classmethod
@@ -238,6 +245,7 @@ class TerminalRecord:
             plane_elements=reader.uint_seq(),
             exact_bytes=reader.uint(),
             exact_bpp=reader.ratio(),
+            payload_digest=reader.digest32(),
         )
 
 
@@ -298,6 +306,46 @@ class Manifest:
                 "two terminals declare the same exact_bytes: a truncation length "
                 "must identify exactly one terminal"
             )
+        self._validate_terminal_prefixes()
+
+    def _validate_terminal_prefixes(self) -> None:
+        """Every terminal must be a genuine **prefix** of the plane region.
+
+        Review findings F2 and F8.  The canonical plane order is also the
+        truncation order, and `container.parse` hands a matched byte length back
+        as that terminal's whole plane region -- so a terminal's declared counts
+        are only meaningful if the bytes they describe really are the leading
+        bytes of the artifact.  That requires, in canonical order: full planes,
+        then at most one partially-present plane, then nothing.
+
+        A terminal shaped (full, empty, full) prices to a real byte count and
+        would match a real truncation length, but the bytes at that length are
+        not the bytes it describes.  The accountant catches an *over*-claim
+        (`footprint.plane_region_bytes`); nothing caught the shape.
+        """
+        extents = [0] * len(CANONICAL_PLANE_ORDER)
+        order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+        for descriptor in self.planes:
+            extents[order[descriptor.kind]] = descriptor.element_count
+
+        for terminal in self.terminals:
+            truncated = False
+            for index, kind in enumerate(CANONICAL_PLANE_ORDER):
+                count = terminal.plane_elements[index]
+                extent = extents[index]
+                if count > extent:
+                    raise ManifestError(
+                        f"terminal {terminal.slot_id!r} claims {count} elements "
+                        f"of {kind.name}, which declares only {extent}"
+                    )
+                if truncated and count:
+                    raise ManifestError(
+                        f"terminal {terminal.slot_id!r} is not a prefix: "
+                        f"{kind.name} carries {count} elements after an earlier "
+                        "plane was left incomplete"
+                    )
+                if count < extent:
+                    truncated = True
 
     @property
     def schedule(self) -> RateSchedule:

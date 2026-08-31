@@ -31,21 +31,17 @@ a whole-region digest collision or a mis-assembled region is not localised.
 Fix: verify each fully-present plane's byte range against its declared
 `content_digest` during `parse`, for truncated and complete artifacts alike.
 
-### F2 (BLOCKER) — terminal plane counts are not bounded by plane extents
+### F2 (MINOR, downgraded on verification) — the terminal/plane-extent bound is enforced late
 
-`TerminalRecord.__post_init__` (`manifest.py`) checks arity, non-negativity and
-the clip-exponent domain, and `Manifest.__post_init__` checks slot and byte
-uniqueness. **Nothing checks `terminal.plane_elements[i] <= planes[i].element_count`.**
+Originally filed as a blocker. **Wrong.** `footprint.plane_region_bytes` does
+raise `FootprintDisagreementError` when `count > descriptor.element_count`, and
+`parse` reaches it through `account_terminal` (`container.py:137`). The read
+path is fail-closed.
 
-This is not hypothetical: it is the bug this session already hit during 1b test
-bring-up, where a terminal declared 4 released positions against a RELEASE plane
-whose extent was 0. It was fixed in the *builder* (`layout.build_planes`
-gained `max_released`) — the *invariant* was never added, so any manifest not
-built by `layout.py` can still declare a terminal that overruns its own planes.
-Fixing a symptom in the producer left the validator fail-open.
-
-Fix: validate the bound in `Manifest.__post_init__`, where it holds for every
-manifest however constructed.
+What survives is placement: the invariant lives in the *accountant* rather than
+in `Manifest.__post_init__`, so an invalid manifest can be constructed and
+carried around, and is only refused when someone prices it. Worth moving
+earlier as defence in depth; not a hole.
 
 ### F3 (MAJOR) — `element_bits` is unbound from `PlaneKind`
 
@@ -74,15 +70,21 @@ identity is not a function of content), and the slack is a covert channel.
 
 Fix: require zero padding and verify it on parse.
 
-### F5 (MAJOR) — `restart_offsets` are unbounded and only weakly ordered
+### F5 (MAJOR, restated) — `restart_offsets` are a redundant derivable, unpinned
 
-`planes.py:146-148` requires the table to be ascending via `sorted()`, which
-admits *equal* adjacent offsets, and never checks that an offset lies inside
-the plane's own extent. §9's stated purpose for the table is segment-local
-random access on the GPU without a host parse — an out-of-range or duplicated
-offset is exactly the input that turns that into an out-of-bounds read.
+`planes.py:146-148` requires only `sorted()`. My first draft of this finding
+proposed *strict* ascent; that is wrong — a granule with a zero count makes two
+adjacent offsets legitimately equal.
 
-Fix: strict ascent, and bound every offset by the plane's element extent.
+The real invariant is stronger and exact: `layout.py:174-177` builds the table
+as the running prefix sum of `counts`, so `restart_offsets[i] == sum(counts[:i])`
+identically. The table is fully derivable, and nothing requires it to agree with
+the counts it is derived from. A manifest may therefore declare offsets that
+contradict its own counts, and §9's stated purpose for the table — segment-local
+random access on the GPU without a host parse — is exactly the consumer that
+would then read the wrong range.
+
+Fix: require the prefix-sum identity, which subsumes ascent and bounds together.
 
 ### F6 (MINOR) — `counts` arity is unrelated to `count_granularity`
 
@@ -97,6 +99,39 @@ read, so this is non-canonicality without a decode divergence.
 accountant over it, so a region whose length matches no declared terminal is
 emitted happily and then refused by `parse`. The write side should be as
 fail-closed as the read side.
+
+### F8 (BLOCKER) — "a terminal is a prefix" is asserted everywhere and enforced nowhere
+
+`planes.py:51-57` and `manifest.py`'s `TerminalRecord` docstring both state that
+a terminal is a **prefix** of the canonical plane order, and `container.py`'s
+truncation contract depends on it: `parse` resolves a byte length to a terminal
+and hands back `data[manifest_end:]` as that terminal's plane region.
+
+`footprint.plane_region_bytes` sums `byte_length(count)` over the planes in
+canonical order **whatever the counts are**. A terminal declaring, say, (full,
+0, full) is priced happily. Its `exact_bytes` is a real number, `parse` will
+match a region of that length, and the bytes handed back are *not* the bytes
+that terminal describes — the region is a byte-prefix of the artifact, but the
+terminal's own layout skips a plane in the middle.
+
+So the format's central safety property, that truncating an artifact at a
+declared boundary yields exactly the declared terminal, rests on a claim no
+code checks.
+
+Fix: enforce the prefix shape in `Manifest.__post_init__` — for each terminal,
+counts equal the plane extent up to some index, at most one plane is partial,
+and every plane after it is zero.
+
+### F9 (BLOCKER, subsumes F1) — no terminal carries a digest of its own bytes
+
+Following F1: even with per-plane digests, the plane cut at the truncation
+boundary can never be verified against a whole-plane digest, so every legal
+truncation keeps one unverified plane.
+
+The proportionate fix is a per-terminal `payload_digest` — 32 bytes per
+terminal, three terminals in the test ladder — over `plane_region[:exact_bytes]`.
+That gives **complete integrity for every legal truncation**, and subsumes the
+partial-plane gap entirely.
 
 ---
 
