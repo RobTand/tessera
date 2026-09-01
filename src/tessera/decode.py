@@ -250,13 +250,16 @@ def decode_codes(
     completion = depth if completion is None else completion
     device = unit.body_bits.device
     anchors = replay_body(unit.body_bits, forest, code)
-    # uint8 here too, so the single-rate and mixed-rate decoders agree on the
-    # dtype of a nibble.  They did not, and the release scatter caught it.
-    blocks = torch.tensor(forest.blocks, device=device, dtype=torch.uint8)
+    # A code is a nibble only while the grid is E2M1.  Above 256 codes a uint8
+    # table silently wraps, so the dtype follows the grid -- and it stays uint8
+    # below that so the single-rate and mixed-rate decoders agree on the dtype
+    # of a nibble.  They did not, and the release scatter caught it.
+    code_dtype = torch.uint8 if forest.grid.size <= 256 else torch.int32
+    blocks = torch.tensor(forest.blocks, device=device, dtype=code_dtype)
     reachable = blocks[:, :: 1 << (depth - completion)]
     codes = reachable[anchors, unit.completion_bits]
     if unit.release_index.numel():
-        codes.reshape(-1)[unit.release_index] = unit.release_code.to(torch.uint8)
+        codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)
     return codes
 
 

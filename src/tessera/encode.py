@@ -180,11 +180,11 @@ def viterbi_columns(
     dvals = _descendant_values(forest, completion, device)      # [A, 2^c, arity]
     subsets = _subset_table(tcq, device)                        # [4, P]
     points = subsets.shape[1]
-    if points > 256:
-        raise GrammarError(
-            f"rate {forest.rate} needs {points} points per subset; the "
-            "traceback stores the winner in a uint8 and would wrap silently"
-        )
+    # The traceback stores the winning point index per (step, column, subset).
+    # A byte holds it up to rate 9; above that the index must widen or it wraps
+    # silently -- the same "a code is a nibble" assumption that corrupted the
+    # body plane at rate 9.  Width follows the rate; it is never assumed.
+    point_dtype = torch.uint8 if points <= 256 else torch.int32
 
     # [steps, arity, cols]: a tuple is ``arity`` CONSECUTIVE ROWS of one
     # column, because the trellis runs down columns and the k positions of a
@@ -194,7 +194,7 @@ def viterbi_columns(
     cost = torch.full((cols, states), float("inf"), device=device)
     cost[:, 0] = 0.0
     choice = torch.zeros(steps, cols, states, dtype=torch.bool, device=device)
-    picked = torch.zeros(steps, cols, SUBSET_COUNT, dtype=torch.uint8, device=device)
+    picked = torch.zeros(steps, cols, SUBSET_COUNT, dtype=point_dtype, device=device)
 
     for step in range(steps):
         target = tuples[step].t().reshape(cols, 1, 1, arity)     # [cols,1,1,k]
@@ -204,7 +204,7 @@ def viterbi_columns(
         err = ((target - dvals.unsqueeze(0)) ** 2).sum(dim=3).amin(dim=2)  # [cols,A]
         by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
         best, point = by_subset.min(dim=2)                       # [cols, 4]
-        picked[step] = point.to(torch.uint8)
+        picked[step] = point.to(point_dtype)
 
         branch = torch.stack(
             [cost[:, prev[side]] + best[:, subset_of[side]] for side in (0, 1)]
