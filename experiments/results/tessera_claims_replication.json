@@ -1,0 +1,92 @@
+{
+ "rows": [
+  {
+   "trellis_gain": 1.114909854191242,
+   "learned_values": 0.9131882838695913,
+   "selection_penalty": 1.337990164756775,
+   "tessera_rel_err": 0.11225071549415588,
+   "tensor": "model.language_model.layers.10.self_attn.b_proj.weight",
+   "shape": [
+    64,
+    384
+   ]
+  },
+  {
+   "trellis_gain": 1.1467435132228947,
+   "learned_values": 1.0123632785474628,
+   "selection_penalty": 1.3020325899124146,
+   "tessera_rel_err": 0.10918571054935455,
+   "tensor": "model.language_model.layers.10.self_attn.f_b_proj.weight",
+   "shape": [
+    2048,
+    128
+   ]
+  },
+  {
+   "trellis_gain": 1.1183916710839545,
+   "learned_values": 1.021861362116126,
+   "selection_penalty": 1.3121898174285889,
+   "tessera_rel_err": 0.1096768006682396,
+   "tensor": "model.language_model.layers.20.self_attn.g_b_proj.weight",
+   "shape": [
+    2048,
+    128
+   ]
+  },
+  {
+   "trellis_gain": 1.1562826183622363,
+   "learned_values": 0.9942312406507624,
+   "selection_penalty": 1.3213516473770142,
+   "tessera_rel_err": 0.1082409918308258,
+   "tensor": "model.language_model.layers.10.mlp.shared_experts.gate_proj.weight",
+   "shape": [
+    2048,
+    384
+   ]
+  },
+  {
+   "trellis_gain": 1.1381231008989439,
+   "learned_values": 1.001658449853832,
+   "selection_penalty": 1.3630789518356323,
+   "tessera_rel_err": 0.10799873620271683,
+   "tensor": "model.language_model.layers.20.mlp.shared_experts.down_proj.weight",
+   "shape": [
+    2048,
+    384
+   ]
+  },
+  {
+   "trellis_gain": 1.130778448222774,
+   "learned_values": 1.001719610744476,
+   "selection_penalty": 1.3864049911499023,
+   "tessera_rel_err": 0.10828275233507156,
+   "tensor": "model.language_model.layers.10.mlp.experts.0.gate_proj.weight",
+   "shape": [
+    2048,
+    384
+   ]
+  },
+  {
+   "trellis_gain": 1.1189285085471081,
+   "learned_values": 0.9948443484845778,
+   "selection_penalty": 1.3648797273635864,
+   "tessera_rel_err": 0.10786468535661697,
+   "tensor": "model.language_model.layers.30.mlp.experts.5.down_proj.weight",
+   "shape": [
+    2048,
+    384
+   ]
+  },
+  {
+   "trellis_gain": 1.1196431786122862,
+   "learned_values": 0.9772442276878437,
+   "selection_penalty": 1.3770370483398438,
+   "tessera_rel_err": 0.1077713668346405,
+   "tensor": "model.language_model.layers.40.mlp.experts.9.up_proj.weight",
+   "shape": [
+    2048,
+    384
+   ]
+  }
+ ]
+}
