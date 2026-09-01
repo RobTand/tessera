@@ -99,12 +99,38 @@ activation-aware encoder to measure. Do not quote 1.37× as the coder gap.
 
 ## The rate axis is two points, not a band
 
+> **⚠ SUPERSEDED 2026-09-01, later the same day. This section is false on
+> `HEAD`.** It was written at 05:51, before `a96064b` (07:43) fixed the flat
+> ladder and `a4de134` (08:08) admitted `E4M3` to the serialisable set. Both the
+> heading and the claim that there is "nothing above 4.0" are wrong. The rate
+> axis is continuous and the serialisable set is three families, not two:
+>
+> | Family | Ladder, at completion 0 | Top rung |
+> |---|---|---|
+> | `E2M1_K1` | 1.5 to 3.5 bpp | 3.5000 |
+> | `E2M1_K2` | 1.0 to 4.0 bpp | 4.0000 |
+> | `E4M3_K1` | 1.5 to 7.5 bpp | 7.5000 |
+>
+> What survives: every measurement taken at a **top rung** is unaffected,
+> because at the cap the completion capacity is zero and the bugs are inert.
+> That covers the EXL3 head-to-head, the matched-payload 1.142x, and "Tessera
+> 4.0 beats NVFP4 4.5 as served". Any sub-cap point measured before `a96064b`
+> is void.
+>
+> See `docs/handovers/tessera-handover-2026-09-01-evening.md` for the audit,
+> and `experiments/results/tessera_rate_grid.json` for the measured ladder
+> these rows are read from.
+
+<details><summary>The superseded section, kept for the record</summary>
+
 Every rung of a Tessera family serialises to the **same bytes** — a column at
 rate `R` writes `R` body bits *and* `cap − R` completion bits. The serialisable
 set is `E2M1_K1` at **3.5000** and `E2M1_K2` at **4.0000**, and there is nothing
 between them and nothing above 4.0. The rung is a quality knob at fixed size;
 every sub-top rung is strictly dominated
 (`docs/measurements/tessera-rate-ceiling-2026-09-01.md`).
+
+</details>
 
 This refuted the bit-trade's gain leg. The trade still wins — freeing 8.123 GiB
 by pricing attention and `lm_head` at FP8 buys FP8 on ~2.6 of 45 expert layers,
