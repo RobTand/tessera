@@ -184,3 +184,64 @@ False).
 The conclusion is not to keep probing. The comparator that decides anything is
 **served KL** (principle 3), and serving lets vLLM perform the decode, which
 removes this problem entirely rather than solving it.
+
+## 8. Pricing, the budget, and the route to a served number (2026-09-01)
+
+### 8.1 The allocator was pricing a checkpoint the exporter never writes
+
+`FormatSpec` models a format as an integer weight rate plus a group-scale term.
+Tessera's rate is fractional and `artifact_bpp` **already counts the scale
+planes**, so synthesizing a spec from it charged `ceil(bpp)` *plus a second
+scale term*: `TESSERA_E2M1_K2_R896` priced at **4.25 bpp** against an artifact
+whose byte-exact accountant measures **4.00**.
+
+This was live on both paths that decide anything —
+`allocator_solver.py:748` reads `effective_bits_for_shape` for the DP's
+per-format bit cost, and `footprint.py` reads `memory_bytes_for_shape` for the
+byte-budget gate — while `tessera_footprint.py`, which the *candidate builder*
+uses, priced it correctly all along. **Two accountants, one format, different
+numbers**, and the allocator was ranking Tessera against NVFP4 on a 6.25%
+overcharge it invented.
+
+`FormatSpec.exact_bits_per_param` is the fix: when set it is the *whole* rate
+and **replaces** both terms rather than adding to them. Every other format
+leaves it `None` and prices byte-identically to before. Three tests pin it,
+including one that asserts the registry and the footprint agree byte-for-byte
+across the rung range.
+
+The lesson is the ordinary one in a new form: a format whose cost model is a
+*special case* of the generic one will be silently mis-priced by the generic
+one, and both numbers look plausible.
+
+### 8.2 The size target is 158.783 GiB, and Mia leaves 15.44 GiB on the table
+
+Measured from her artifact and the BF16 source
+(`docs/measurements/glm53-body-budget-2026-09-01.md`). **Layer 45 is the MTP
+layer and it is a full MoE block** — 288 quantized experts, 3.729 GiB, not the
+two BF16 projections a prior note recorded. Since the target excludes MTP, that
+correction moves the budget by 3.7 GiB.
+
+Mia quantizes **only** the routed experts. Attention, dense and `lm_head` —
+15.44 GiB on 2.6% of the parameters — stay at 16 bpp. Pricing those at FP8
+frees 7.692 GiB, worth **+0.2171 bpp on the experts at identical total size**.
+That is the heterogeneous-allocation thesis stated in bytes on this model, and
+it is available to PrismaQuant and structurally not to a uniform-format method.
+
+### 8.3 A served number without a serving backend
+
+The kernel lane is not optional and not merely preferable: GLM's 311.7B routed
+params are ~623 GB in BF16, so **dequant-on-load cannot serve the full model on
+any box here**. A dequant-on-load vLLM plugin would therefore be throwaway
+plumbing, and the size claim lives *only* in the kernel lane.
+
+But quality does not have to wait for it. `experiments/decode_back_to_bf16.py`
+decodes an artifact into a plain BF16 checkpoint through `read_unit_artifact`
+— the format's own reader, the one the Triton kernel is pinned bit-exact
+against — so the tensors *are* the artifact's meaning and a KL measured on them
+transfers to the kernel lane exactly: both lanes serve the same W4A16 contract,
+the kernel just decodes later and in registers. The output is BF16-resident and
+proves **nothing** about size.
+
+`experiments/assert_render_export_identity.py` checks the seam nothing
+structurally enforces — that the render PrismaQuant prices equals the bytes the
+exporter wrote — on real exported units rather than by assumption.

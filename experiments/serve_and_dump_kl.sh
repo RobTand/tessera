@@ -24,7 +24,7 @@ docker run -d --rm --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
   "$IMAGE" \
-  --model "$MODEL" --served-model-name kl-target \
+  "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 \
   --gpu-memory-utilization 0.85 \
