@@ -120,6 +120,7 @@ class RateSchedule:
 
     rates: tuple[int, ...]
     root: Fraction
+    cap: int = C_FULL_BITS
 
     @property
     def total_body_bits_per_row(self) -> int:
@@ -127,10 +128,12 @@ class RateSchedule:
         return sum(self.rates)
 
     def __post_init__(self) -> None:
-        validate_rate_schedule(self.rates, self.root)
+        validate_rate_schedule(self.rates, self.root, self.cap)
 
 
-def bresenham_rate_schedule(root: Fraction, n_columns: int) -> tuple[int, ...]:
+def bresenham_rate_schedule(
+    root: Fraction, n_columns: int, cap: int = C_FULL_BITS
+) -> tuple[int, ...]:
     """Canonical exact quota for ``root`` over ``n_columns`` columns.
 
     The schedule mixes only the two rates bracketing the root, and the count at
@@ -140,15 +143,22 @@ def bresenham_rate_schedule(root: Fraction, n_columns: int) -> tuple[int, ...]:
 
     Importance-placed arrangements are also legal provided every complete
     superblock keeps the quota (doc S6); see :func:`superblock_quota_ok`.
+
+    ``cap`` is the family's rate cap -- ``payload_bits - 1``.  It defaults to
+    ``C_FULL_BITS`` because that is TESSERA-4's, and every artifact built
+    before families existed was TESSERA-4.  It is a real parameter, not a
+    formality: a root above 3 is *ordinary* on E4M3 (cap 7) and on any k=2
+    grid (cap 7), and defaulting it silently refused every rung those families
+    exist to reach.
     """
     if n_columns <= 0:
         raise GrammarError(f"n_columns must be positive: {n_columns}")
 
     lower = int(root) if root.denominator == 1 else root.numerator // root.denominator
     upper = lower if root.denominator == 1 else lower + 1
-    _check_rate(lower)
+    _check_rate(lower, cap)
     if upper != lower:
-        _check_rate(upper)
+        _check_rate(upper, cap)
 
     exact_upper_count = (root - lower) * n_columns
     if exact_upper_count.denominator != 1:
@@ -172,12 +182,14 @@ def bresenham_rate_schedule(root: Fraction, n_columns: int) -> tuple[int, ...]:
     return tuple(schedule)
 
 
-def validate_rate_schedule(rates: tuple[int, ...], root: Fraction) -> None:
-    """Raise unless every rate is legal and the quota is exact."""
+def validate_rate_schedule(
+    rates: tuple[int, ...], root: Fraction, cap: int = C_FULL_BITS
+) -> None:
+    """Raise unless every rate is legal for ``cap`` and the quota is exact."""
     if not rates:
         raise GrammarError("empty rate schedule")
     for rate in rates:
-        _check_rate(rate)
+        _check_rate(rate, cap)
     total = sum(rates)
     exact = root * len(rates)
     if exact.denominator != 1 or total != int(exact):
@@ -212,33 +224,37 @@ def superblock_quota_ok(
     return True
 
 
-def bits_per_position(rate: int, completion: int, released: bool = False) -> int:
+def bits_per_position(
+    rate: int, completion: int, released: bool = False, cap: int = C_FULL_BITS
+) -> int:
     """Payload bits for one position: ``R + c`` plus 4 if released.
 
     Release-everywhere costs ``3 + 4 = 7`` bits per column, which is never
     byte-competitive with scalar 4.5 -- so scalar rate-4 is not a Tessera
     endpoint (doc S6).
     """
-    _check_rate(rate)
-    if not 0 <= completion <= completion_capacity(rate):
+    _check_rate(rate, cap)
+    if not 0 <= completion <= completion_capacity(rate, cap):
         raise GrammarError(
-            f"completion {completion} exceeds capacity {completion_capacity(rate)} "
-            f"at rate {rate}"
+            f"completion {completion} exceeds capacity "
+            f"{completion_capacity(rate, cap)} at rate {rate} (cap {cap})"
         )
     return rate + completion + (RELEASE_BITS if released else 0)
 
 
-def prefix_cardinality(rate: int, completion: int) -> int:
+def prefix_cardinality(
+    rate: int, completion: int, cap: int = C_FULL_BITS
+) -> int:
     """Per-position reachable-set size after ``completion`` bits.
 
     Nesting: this is ``2**c`` at every prefix, and reaches the full 16-code
     grid jointly (not per position) exactly at ``c = 3 - R``.
     """
-    _check_rate(rate)
-    if not 0 <= completion <= completion_capacity(rate):
+    _check_rate(rate, cap)
+    if not 0 <= completion <= completion_capacity(rate, cap):
         raise GrammarError(
-            f"completion {completion} exceeds capacity {completion_capacity(rate)} "
-            f"at rate {rate}"
+            f"completion {completion} exceeds capacity "
+            f"{completion_capacity(rate, cap)} at rate {rate} (cap {cap})"
         )
     return descendant_set_size(completion)
 
