@@ -28,7 +28,7 @@ import sys
 import torch
 from safetensors import safe_open
 
-from tessera.alphabet import E2M1_GRID, tuple_grid
+from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
 from tessera.decode import reconstruct_unit
 from tessera.encode import encode_unit
 from tessera.export import _plan_for, encode_linear
@@ -50,11 +50,14 @@ PROJ = ("gate_proj", "up_proj")
 # the grid's cap; everything between is legal now that the sub-cap partition
 # is balanced.  Step 64 = a quarter bit per code.
 FAMILIES = {
-    "E2M1_K1": (E2M1_GRID, tuple(range(256, 769, 64))),
+    "E2M1_K1": (E2M1_GRID, tuple(range(256, 769, 64)), (0, 1, 2, None)),
     "E2M1_K2": (tuple_grid(E2M1_GRID, 2, partition="coset"),
-                tuple(range(128, 897, 64))),
+                tuple(range(128, 897, 64)), (0, 1, 2, None)),
+    # The 8-bit ladder, on the same weights and the same accountant.  Only
+    # c=0 and full: the two E2M1 families already answer the completion
+    # question, and re-asking it over seven more rungs buys nothing.
+    "E4M3_K1": (E4M3_GRID, tuple(range(256, 1793, 128)), (0, None)),
 }
-COMPLETIONS = (0, 1, 2, None)
 
 
 def main():
@@ -74,10 +77,10 @@ def main():
             ref = x @ wf.T
             den = ref.norm()
             rows, cols = w.shape
-            for fam, (grid, rungs) in FAMILIES.items():
+            for fam, (grid, rungs, completions) in FAMILIES.items():
                 for q256 in rungs:
                     rates, forests = _plan_for(grid, q256, cols)
-                    for comp in COMPLETIONS:
+                    for comp in completions:
                         tag = f"{fam}/q{q256}/c{'F' if comp is None else comp}"
                         unit = encode_unit(wf, forests, rates, CC,
                                            rotation=RotationState.NONE,
@@ -99,13 +102,14 @@ def main():
         torch.cuda.empty_cache()
 
     means = {k: st.mean(v) for k, v in arms.items()}
-    for fam, (grid, rungs) in FAMILIES.items():
-        print(f"\n== {fam}  cap={grid.rate_cap} arity={grid.arity}")
+    for fam, (grid, rungs, completions) in FAMILIES.items():
+        print(f"\n== {fam}  cap={grid.rate_cap} arity={grid.arity}  "
+              f"payload ceiling {grid.rate_cap / grid.arity} b/wt")
         print(f"{'rung':>8} " + "".join(
-            f"{('c=' + ('F' if c is None else str(c))):>19}" for c in COMPLETIONS))
+            f"{('c=' + ('F' if c is None else str(c))):>19}" for c in completions))
         for q256 in rungs:
             cells = []
-            for comp in COMPLETIONS:
+            for comp in completions:
                 tag = f"{fam}/q{q256}/c{'F' if comp is None else comp}"
                 cells.append(f"{sizes[tag]:8.4f}bpp {means[tag]:8.5f}"
                              if tag in sizes else " " * 19)
