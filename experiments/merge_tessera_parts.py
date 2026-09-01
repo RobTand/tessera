@@ -31,9 +31,38 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-SHARED = ("grid", "grid_digest", "code", "group", "half", "rotation",
-          "with_diagonals", "tp_size", "container", "superblock",
-          "encoder_profile", "arity", "source_model")
+#: Fields that define the ENCODING and must therefore be identical across every
+#: part.  Dotted paths, because the exporter nests them: eight of the thirteen
+#: names this tuple used to carry (``grid_digest``, ``code``, ``group``,
+#: ``half``, ``container``, ``superblock``, ``encoder_profile``, ``arity``)
+#: exist nowhere in the config the exporter writes, so they compared
+#: ``None == None`` and passed vacuously.  ``grid.digest`` and ``conv_memory``
+#: were among them -- precisely the two that catch encoder drift, which is the
+#: failure this merge exists to prevent.
+#:
+#: Excluded on purpose: ``accounting``, ``plan`` and ``rungs_q256`` are per-part
+#: by construction and are summed or unioned, not compared.
+SHARED = (
+    "quant_method", "container_version", "blob_suffix",
+    "grid.digest", "grid.name", "grid.base", "grid.partition",
+    "grid.arity", "grid.size", "grid.rate_cap",
+    "conv_memory", "scale.group", "scale.half",
+    "rotation", "with_diagonals", "tp_size",
+    "source_model", "prismaquant_plan", "route_status",
+    "requires_serve_flags", "inherits",
+)
+
+_MISSING = object()
+
+
+def dotted(config, path):
+    """``config`` walked by a dotted path, or ``_MISSING``."""
+    node = config
+    for part in path.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return _MISSING
+        node = node[part]
+    return node
 
 
 def load(part):
@@ -82,12 +111,23 @@ def main():
 
     # --- config: identical where it must be, summed where it adds --------
     base = dict(loaded[0][2])
-    for _, _, config in loaded[1:]:
+    # A guard that cannot find the field it guards is a bug, not a pass.  The
+    # old ``if field in base`` skipped absent names silently, which is how
+    # eight of them went unenforced without anyone noticing.
+    absent = [f for f in SHARED if dotted(base, f) is _MISSING]
+    if absent:
+        raise SystemExit(
+            f"{loaded[0][0].name} has no {absent} -- these fields define the "
+            f"encoding and cannot be compared across parts, so the merge "
+            f"cannot certify the parts were encoded identically. Either the "
+            f"exporter stopped writing them or SHARED names them wrongly; "
+            f"fix that rather than merging unchecked.")
+    for part, _, config in loaded[1:]:
         for field in SHARED:
-            if field in base and base.get(field) != config.get(field):
+            if dotted(base, field) != dotted(config, field):
                 raise SystemExit(
-                    f"parts disagree on {field!r}: {base.get(field)!r} vs "
-                    f"{config.get(field)!r} -- two halves encoded differently "
+                    f"parts disagree on {field!r}: {dotted(base, field)!r} vs "
+                    f"{dotted(config, field)!r} -- two halves encoded differently "
                     f"are two artifacts, not one")
     acct = {"quantized_params": 0, "quantized_bytes": 0, "passthrough_bytes": 0}
     plan, rungs = {}, set()
