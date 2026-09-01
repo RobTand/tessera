@@ -1,0 +1,212 @@
+exllamav3 commit ca5270c4b842876ddbe9a28594fbb6eac516cdf2
+torch 2.11.0+cu130 cuda 13.0 cap (12, 1)
+
+== L5  H from 7168 rows, eval 1024 rows
+   K=4 seed=0 default * rel=0.08816  out=0.07237  proxy=0.001654  bpw=4.0117  g_scale=0.72308  1.6s
+   K=5 seed=0 default * rel=0.04482  out=0.03674  proxy=0.000426  bpw=5.0117  g_scale=0.69366  1.2s
+   K=6 seed=0 default * rel=0.02294  out=0.01877  proxy=0.000111  bpw=6.0117  g_scale=0.66134  9.1s
+   K=8 seed=0 default * rel=0.00623  out=0.00511  proxy=0.000008  bpw=8.0117  g_scale=0.56623  1.5s
+   K=4 seed=0 prior     rel=0.08891  out=0.07288  proxy=0.001683  bpw=4.0117  g_scale=0.89620  1.5s
+   K=4 seed=0 default   rel=0.08816  out=0.07237  proxy=0.001654  bpw=4.0117  g_scale=0.72308  1.3s
+   K=4 seed=1 default   rel=0.08816  out=0.07242  proxy=0.001654  bpw=4.0117  g_scale=0.72562  1.3s
+   K=4 seed=0 default * rel=0.08816  out=0.07465  proxy=0.001759  bpw=4.0117  g_scale=0.72768  1.3s
+   K=5 seed=0 default * rel=0.04483  out=0.03800  proxy=0.000453  bpw=5.0117  g_scale=0.69469  1.2s
+   K=6 seed=0 default * rel=0.02295  out=0.01944  proxy=0.000118  bpw=6.0117  g_scale=0.66136  9.1s
+   K=8 seed=0 default * rel=0.00617  out=0.00523  proxy=0.000009  bpw=8.0117  g_scale=0.57987  1.4s
+   K=4 seed=0 prior     rel=0.08893  out=0.07539  proxy=0.001790  bpw=4.0117  g_scale=0.89976  1.5s
+
+== L20  H from 7168 rows, eval 1024 rows
+   K=4 seed=0 default * rel=0.08495  out=0.06925  proxy=0.001413  bpw=4.0117  g_scale=0.72910  1.3s
+   K=5 seed=0 default * rel=0.04317  out=0.03530  proxy=0.000364  bpw=5.0117  g_scale=0.69820  1.2s
+   K=6 seed=0 default * rel=0.02211  out=0.01799  proxy=0.000095  bpw=6.0117  g_scale=0.66848  9.1s
+   K=8 seed=0 default * rel=0.00608  out=0.00495  proxy=0.000007  bpw=8.0117  g_scale=0.65000  1.4s
+   K=4 seed=0 prior     rel=0.08572  out=0.07018  proxy=0.001438  bpw=4.0117  g_scale=0.90209  1.5s
+   K=4 seed=0 default * rel=0.08492  out=0.07293  proxy=0.001586  bpw=4.0117  g_scale=0.73146  1.3s
+   K=5 seed=0 default * rel=0.04315  out=0.03726  proxy=0.000408  bpw=5.0117  g_scale=0.69710  1.2s
+   K=6 seed=0 default * rel=0.02205  out=0.01908  proxy=0.000107  bpw=6.0117  g_scale=0.66945  9.1s
+   K=8 seed=0 default * rel=0.00588  out=0.00505  proxy=0.000008  bpw=8.0117  g_scale=0.60126  1.4s
+   K=4 seed=0 prior     rel=0.08565  out=0.07377  proxy=0.001615  bpw=4.0117  g_scale=0.90052  1.5s
+
+== L42  H from 7168 rows, eval 1024 rows
+   K=4 seed=0 default * rel=0.08580  out=0.05132  proxy=0.000645  bpw=4.0117  g_scale=0.72947  1.3s
+   K=5 seed=0 default * rel=0.04361  out=0.02610  proxy=0.000166  bpw=5.0117  g_scale=0.69846  1.2s
+   K=6 seed=0 default * rel=0.02232  out=0.01333  proxy=0.000043  bpw=6.0117  g_scale=0.66708  9.1s
+   K=8 seed=0 default * rel=0.00600  out=0.00359  proxy=0.000003  bpw=8.0117  g_scale=0.59920  1.4s
+   K=4 seed=0 prior     rel=0.08653  out=0.05169  proxy=0.000656  bpw=4.0117  g_scale=0.90308  1.5s
+   K=4 seed=0 default * rel=0.08580  out=0.06673  proxy=0.001127  bpw=4.0117  g_scale=0.72109  1.3s
+   K=5 seed=0 default * rel=0.04366  out=0.03389  proxy=0.000291  bpw=5.0117  g_scale=0.68946  1.2s
+   K=6 seed=0 default * rel=0.02238  out=0.01736  proxy=0.000076  bpw=6.0117  g_scale=0.65718  9.1s
+   K=8 seed=0 default * rel=0.00615  out=0.00479  proxy=0.000006  bpw=8.0117  g_scale=0.55000  1.4s
+   K=4 seed=0 prior     rel=0.08660  out=0.06706  proxy=0.001147  bpw=4.0117  g_scale=0.89218  1.5s
+
+== i.i.d. Gaussian [2048, 4096] sanity arm  (2^-K bound: K=4:0.06250, K=5:0.03125)
+   identity    K=4  rel_rms=0.06674  bound=2^-4=0.06250  ratio=1.0678  bpw=4.0117 (trellis 4.0 + suh/svh 0.0117)  fallback=False  1.3s
+   identity    K=5  rel_rms=0.03390  bound=2^-5=0.03125  ratio=1.0849  bpw=5.0117 (trellis 5.0 + suh/svh 0.0117)  fallback=False  1.3s
+   no_hessian  K=4  rel_rms=0.06674  bound=2^-4=0.06250  ratio=1.0678  bpw=4.0117 (trellis 4.0 + suh/svh 0.0117)  fallback=True  1.3s
+   no_hessian  K=5  rel_rms=0.03390  bound=2^-5=0.03125  ratio=1.0849  bpw=5.0117 (trellis 5.0 + suh/svh 0.0117)  fallback=True  1.2s
+
+relative WEIGHT error  ||W_hat-W||_F / ||W||_F
+tensor                 K=4       K=5       K=6       K=8   bpw K4
+L5.gate_proj       0.08816   0.04482   0.02294   0.00623   4.0117
+L5.up_proj         0.08816   0.04483   0.02295   0.00617   4.0117
+L20.gate_proj      0.08495   0.04317   0.02211   0.00608   4.0117
+L20.up_proj        0.08492   0.04315   0.02205   0.00588   4.0117
+L42.gate_proj      0.08580   0.04361   0.02232   0.00600   4.0117
+L42.up_proj        0.08580   0.04366   0.02238   0.00615   4.0117
+MEAN               0.08630   0.04387   0.02246   0.00608
+
+output-space WEIGHT LEG  ||X(W_hat-W)^T|| / ||XW^T||
+tensor                 K=4       K=5       K=6       K=8   bpw K4
+L5.gate_proj       0.07237   0.03674   0.01877   0.00511   4.0117
+L5.up_proj         0.07465   0.03800   0.01944   0.00523   4.0117
+L20.gate_proj      0.06925   0.03530   0.01799   0.00495   4.0117
+L20.up_proj        0.07293   0.03726   0.01908   0.00505   4.0117
+L42.gate_proj      0.05132   0.02610   0.01333   0.00359   4.0117
+L42.up_proj        0.06673   0.03389   0.01736   0.00479   4.0117
+MEAN               0.06787   0.03455   0.01766   0.00478
+
+The 0.05653 prior (experiments/results/exl3_rate_sweep_K4.json) is an
+OUTPUT-SPACE weight leg, on a different capture and a half/half split,
+with the mcg codebook and out-scales auto. Compare it to:
+  this run, library defaults, K=4 out leg : 0.06787
+  this run, prior settings,  K=4 out leg : 0.06849
+  prior artifact                          : 0.05653
+
+checks (not shipped):
+  L5.gate_proj     K=4 seed=0 prior    rel=0.088906  out=0.072877
+  L5.gate_proj     K=4 seed=0 default  rel=0.088162  out=0.072366
+  L5.gate_proj     K=4 seed=1 default  rel=0.088164  out=0.072418
+  L5.up_proj       K=4 seed=0 prior    rel=0.088925  out=0.075387
+  L20.gate_proj    K=4 seed=0 prior    rel=0.085723  out=0.070180
+  L20.up_proj      K=4 seed=0 prior    rel=0.085649  out=0.073774
+  L42.gate_proj    K=4 seed=0 prior    rel=0.086533  out=0.051695
+  L42.up_proj      K=4 seed=0 prior    rel=0.086601  out=0.067056
+
+wrote /home/rob/dq-runs/exl3-ref/summary.json (24 shipped entries)
+
+################################################################
+# Replication of the 0.05653 prior: exl3_rate_sweep.py's own data and
+# settings (probe capture, 256 rows, half/half split, mcg codebook,
+# out-scales auto), re-run against this build.  Isolates the library
+# and this harness from the calibration/eval data.
+################################################################
+exllamav3 commit ca5270c4b842876ddbe9a28594fbb6eac516cdf2
+torch 2.11.0+cu130 cuda 13.0 cap (12, 1)
+
+== L5  H from 128 rows, eval 128 rows
+   K=4 seed=0 prior     rel=0.07332  out=0.06417  proxy=0.000192  bpw=4.0117  g_scale=0.89620  1.8s
+   K=4 seed=0 prior     rel=0.07338  out=0.06659  proxy=0.000204  bpw=4.0117  g_scale=0.89976  1.5s
+
+== L20  H from 128 rows, eval 128 rows
+   K=4 seed=0 prior     rel=0.07329  out=0.05747  proxy=0.000166  bpw=4.0117  g_scale=0.90209  1.5s
+   K=4 seed=0 prior     rel=0.07327  out=0.06103  proxy=0.000188  bpw=4.0117  g_scale=0.90052  1.5s
+
+== L42  H from 128 rows, eval 128 rows
+   K=4 seed=0 prior     rel=0.07321  out=0.03857  proxy=0.000091  bpw=4.0117  g_scale=0.90308  1.5s
+   K=4 seed=0 prior     rel=0.07323  out=0.05204  proxy=0.000157  bpw=4.0117  g_scale=0.89218  1.5s
+
+merged 6 entries into /home/rob/dq-runs/exl3-ref/summary.json under 'prior_replication'
+
+relative WEIGHT error  ||W_hat-W||_F / ||W||_F
+tensor                 K=4   bpw K4
+L5.gate_proj             -        -
+L5.up_proj               -        -
+L20.gate_proj            -        -
+L20.up_proj              -        -
+L42.gate_proj            -        -
+L42.up_proj              -        -
+MEAN                     -
+
+output-space WEIGHT LEG  ||X(W_hat-W)^T|| / ||XW^T||
+tensor                 K=4   bpw K4
+L5.gate_proj             -        -
+L5.up_proj               -        -
+L20.gate_proj            -        -
+L20.up_proj              -        -
+L42.gate_proj            -        -
+L42.up_proj              -        -
+MEAN                     -
+
+The 0.05653 prior (experiments/results/exl3_rate_sweep_K4.json) is an
+OUTPUT-SPACE weight leg, on a different capture and a half/half split,
+with the mcg codebook and out-scales auto. Compare it to:
+  this run, library defaults, K=4 out leg : nan
+  this run, prior settings,  K=4 out leg : 0.05665
+  prior artifact                          : 0.05653
+
+checks (not shipped):
+  L5.gate_proj     K=4 seed=0 prior    rel=0.073320  out=0.064171
+  L5.up_proj       K=4 seed=0 prior    rel=0.073381  out=0.066593
+  L20.gate_proj    K=4 seed=0 prior    rel=0.073293  out=0.057473
+  L20.up_proj      K=4 seed=0 prior    rel=0.073269  out=0.061032
+  L42.gate_proj    K=4 seed=0 prior    rel=0.073206  out=0.038567
+  L42.up_proj      K=4 seed=0 prior    rel=0.073229  out=0.052038
+
+################################################################
+# Diagnostic: same capture, same held-out last-1024 eval set, but H
+# built from only the first 128 fit rows -- the probe's calibration
+# size.  Separates 'how many calibration rows' from 'which eval set'.
+################################################################
+exllamav3 commit ca5270c4b842876ddbe9a28594fbb6eac516cdf2
+torch 2.11.0+cu130 cuda 13.0 cap (12, 1)
+
+== L5  H from 128 rows, eval 1024 rows
+   K=4 seed=0 default   rel=0.07154  out=0.06680  proxy=0.000159  bpw=4.0117  g_scale=0.72308  1.6s
+   K=4 seed=0 prior     rel=0.07217  out=0.06754  proxy=0.000162  bpw=4.0117  g_scale=0.89620  1.5s
+   K=4 seed=0 default   rel=0.07156  out=0.06937  proxy=0.000169  bpw=4.0117  g_scale=0.72768  1.3s
+   K=4 seed=0 prior     rel=0.07221  out=0.06984  proxy=0.000173  bpw=4.0117  g_scale=0.89976  1.5s
+
+== L20  H from 128 rows, eval 1024 rows
+   K=4 seed=0 default   rel=0.07225  out=0.06489  proxy=0.000153  bpw=4.0117  g_scale=0.72910  1.3s
+   K=4 seed=0 prior     rel=0.07288  out=0.06592  proxy=0.000156  bpw=4.0117  g_scale=0.90209  1.5s
+   K=4 seed=0 default   rel=0.07221  out=0.06858  proxy=0.000176  bpw=4.0117  g_scale=0.73146  1.3s
+   K=4 seed=0 prior     rel=0.07287  out=0.06902  proxy=0.000179  bpw=4.0117  g_scale=0.90052  1.5s
+
+== L42  H from 128 rows, eval 1024 rows
+   K=4 seed=0 default   rel=0.07189  out=0.04801  proxy=0.000091  bpw=4.0117  g_scale=0.72947  1.3s
+   K=4 seed=0 prior     rel=0.07250  out=0.04828  proxy=0.000092  bpw=4.0117  g_scale=0.90308  1.5s
+   K=4 seed=0 default   rel=0.07192  out=0.06212  proxy=0.000135  bpw=4.0117  g_scale=0.72109  1.3s
+   K=4 seed=0 prior     rel=0.07254  out=0.06277  proxy=0.000138  bpw=4.0117  g_scale=0.89218  1.5s
+
+merged 12 entries into /home/rob/dq-runs/exl3-ref/summary.json under 'capture_128row_h'
+
+relative WEIGHT error  ||W_hat-W||_F / ||W||_F
+tensor                 K=4   bpw K4
+L5.gate_proj             -        -
+L5.up_proj               -        -
+L20.gate_proj            -        -
+L20.up_proj              -        -
+L42.gate_proj            -        -
+L42.up_proj              -        -
+MEAN                     -
+
+output-space WEIGHT LEG  ||X(W_hat-W)^T|| / ||XW^T||
+tensor                 K=4   bpw K4
+L5.gate_proj             -        -
+L5.up_proj               -        -
+L20.gate_proj            -        -
+L20.up_proj              -        -
+L42.gate_proj            -        -
+L42.up_proj              -        -
+MEAN                     -
+
+The 0.05653 prior (experiments/results/exl3_rate_sweep_K4.json) is an
+OUTPUT-SPACE weight leg, on a different capture and a half/half split,
+with the mcg codebook and out-scales auto. Compare it to:
+  this run, library defaults, K=4 out leg : nan
+  this run, prior settings,  K=4 out leg : 0.06390
+  prior artifact                          : 0.05653
+
+checks (not shipped):
+  L5.gate_proj     K=4 seed=0 default  rel=0.071544  out=0.066805
+  L5.gate_proj     K=4 seed=0 prior    rel=0.072173  out=0.067544
+  L5.up_proj       K=4 seed=0 default  rel=0.071561  out=0.069373
+  L5.up_proj       K=4 seed=0 prior    rel=0.072210  out=0.069837
+  L20.gate_proj    K=4 seed=0 default  rel=0.072247  out=0.064893
+  L20.gate_proj    K=4 seed=0 prior    rel=0.072879  out=0.065918
+  L20.up_proj      K=4 seed=0 default  rel=0.072211  out=0.068583
+  L20.up_proj      K=4 seed=0 prior    rel=0.072875  out=0.069024
+  L42.gate_proj    K=4 seed=0 default  rel=0.071893  out=0.048013
+  L42.gate_proj    K=4 seed=0 prior    rel=0.072501  out=0.048283
+  L42.up_proj      K=4 seed=0 default  rel=0.071916  out=0.062124
+  L42.up_proj      K=4 seed=0 prior    rel=0.072535  out=0.062769

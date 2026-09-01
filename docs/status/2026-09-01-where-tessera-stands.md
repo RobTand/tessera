@@ -20,6 +20,14 @@ out, against EXL3 quantized fresh by its own quantizer
 Shipping the artifact today would mean shipping something size-matched to Mia's
 and measurably worse than it. That is the whole finding.
 
+> **Re-measured 2026-09-01 (late):** the 1.72× was against a probe-split EXL3
+> number. EXL3 quantised fresh with a 7168-row Hessian and scored on the same
+> held-out capture rows is 0.0679; the default wire is **1.176× behind on the
+> weight leg, 1.070× under W4A4, 1.017× in weight space**
+> (`docs/measurements/tessera8-targets-2026-09-01.md`). The size target is
+> still reachable and the quality gap is now small enough to be a served-KL
+> question rather than a format question.
+
 ## What the routed-expert menu actually is
 
 Six GLM projections, layers 5/20/42, gate and up, real cached activations,
@@ -214,7 +222,12 @@ The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
    decodes are still open; the tuple family is what ships.
    **Also landed:** the scale-weighted trellis
    (`docs/measurements/tessera-trellis-weighting-2026-09-01.md`), exporter
-   default, +0.8% at the default wire; W4A4 vs EXL3@A4 is now **1.133×**.
+   default, +0.8% at the default wire; W4A4 vs EXL3@A4 is now **1.133×**
+   *projected* — and **1.070× measured** once EXL3 was quantised fresh and
+   scored on the same held-out capture rows (K=4 out-space 0.0679, not the
+   probe's 0.0565; weight leg 1.176×, weight space 1.017×;
+   `docs/measurements/tessera8-targets-2026-09-01.md` §3). Every "1.72×"
+   and every ratio built on 0.0565 in this file is superseded by that.
 2. **Re-drain GLM on the new wire** (Rob's call; the merged export is a
    different artifact under minor 1) and the **served A/B** — new default vs
    the refit-0 export — on the `tessera-served-kl-2026-09-01` harness. That
@@ -225,14 +238,34 @@ The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
    gain still rising at 7k rows). Large capture (≥64k tokens, per-expert
    routed tokens shrunk towards the shared H), then the LDLQ encode inside
    PrismaQuant's render path. Stacks with the new wire (~1.10× more, screen).
-4. **The E4M3 payload grid — Rob's next mandate (2026-09-01 22:50 UTC):**
-   *"perform the same optimization on the 8-bit format + kernels. Those
-   probably have a much better shot of beating EXL3 outright"*, against two
-   targets: **(1) the theoretical bound** at each bit rate and **(2) EXL3
-   projected with 8-bit activations**. Known: `build_forest` dispatches on
-   arity, not spread, and the E4M3 low rungs are ~1.5× off; arity-1 rungs
-   weigh 0.5 b/wt more under span 2 (the label) and 0.25 less under the LUT
-   plane, so span 2 must be compared against the same bits spent on the
-   rate axis; there is no E4M3 kernel lane (`build_code_lut` is R=3).
+4. **The E4M3 payload grid — Rob's mandate (2026-09-01 22:50 UTC), analysis
+   DONE** (`docs/measurements/tessera8-targets-2026-09-01.md`): *"perform the
+   same optimization on the 8-bit format + kernels … two targets: the
+   theoretical, and how exl3 would perform with 8-bit activations"*.
+   - **Target 1:** the E4M3 alphabet floor (per-channel FP8 RTN, 8 bpp) is
+     **0.0189** A16 / **0.0306** W8A8; no E4M3 tile at any rate goes below.
+     The served A8 leg alone is 0.0241. Trellis-mechanism gap to Shannon on
+     Gaussian: 1.29× at R=4 with the corrected codebook geometry (was 1.39×),
+     vs EXL3's 1.07×.
+   - **Target 2:** EXL3 K6@A8 = 0.0299 already sits on that floor and
+     K8@A8 = 0.0246 is **1.25× better** than any 8-bit E4M3 tile — *"beat
+     EXL3 with W8A8"* is closed above ~5 bpp by the alphabet. At **4–5 bpp**
+     a per-channel, no-plane Tessera-8 (LM+midpoints anchors snapped to
+     E4M3, Ungerboeck code, LS row scale) is at **weight-space parity** with
+     EXL3 and **1.13× behind under W?A8**, its decoded tile a stock
+     per-channel FP8 tensor on every vendor — the cross-platform case, with
+     LDLQ (1.06–1.09×, no wire change) unspent.
+   - **Gridbook (Rob's ask):** Tessera-4 at 4.0 beats FP8-CB K32 by 1.09×;
+     Tessera-8 beats FP8-CB by 1.12× at 4 and 5 bpw and loses 1.25× at 6;
+     FP4-CB K24 beats Tessera-4's sub-cap ladder by 1.09× at 3.28 bpp.
+   - **Found on the way:** below the cap the doubled Lloyd-Max codebook is
+     worse than scalar RTN at R=5 and the conv code is non-Ungerboeck; on
+     the E2M1×2 cap the code is worth 0.0–0.3 % (closed), below the cap it
+     is the whole game. Next: fix the sub-cap builder anchors (E4M3 and
+     E2M1×2), LDLQ on the per-channel arm, then an 8-bit kernel lane
+     (`build_code_lut` is still R=3). `conv_generators` is now in the config
+     and the merge guard; a config replay resolves missing keys to their
+     legacy meaning (`encode_settings_from_config`, witnessed byte-identical
+     on two GLM units of the 151 GiB export).
 5. Held: scalar-lane LUT split; delete partA/partB (ask first); ladder
    probe dispatch; box chores.

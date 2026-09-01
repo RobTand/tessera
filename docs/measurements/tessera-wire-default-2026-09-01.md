@@ -10,6 +10,14 @@ NVFP4 activation quantiser fitted on the other rows. **Metric:** output-space
 weight leg `‖x_ev·(Ŵ−W)ᵀ‖/‖x_ev·Wᵀ‖`; W4A4 = both legs served;
 EXL3@A4 = √(0.05653² + act²) per tensor.
 
+> **Correction (2026-09-01, later):** 0.05653 was EXL3's output-space number
+> on the 128-row *probe* split. On this capture's held-out rows EXL3 K=4 is
+> **0.06787** (`exl3_reference_quantise.py`), and its W4A4 composite measured
+> directly is **0.10989**, so the new default's gap is **1.070×** under W4A4
+> and **1.176×** on the weight leg, not the 1.137× / 1.185× the column below
+> projects. Every Tessera number in this file stands; only the EXL3 column
+> was fitted. See `tessera8-targets-2026-09-01.md` §3.
+
 ## What changed on the wire
 
 Schema minor 1 (`docs/schema/prismaquant.tessera.v1.md` §1a):
