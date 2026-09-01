@@ -175,3 +175,30 @@ Format-vs-format in weight space, then: Tessera 0.0982 vs EXL3 ≈0.069
 1.365× is the tile. The measured 1.72× output-space gap = that 1.42× times
 EXL3's H-side gain of ~1.2× that Tessera does not yet take. Both halves
 are now quantified: one is hardware, the other is calibration tokens.
+
+## 7. Addendum: LDLQ gain vs calibration tokens (the §5 discriminator, run)
+
+`experiments/tessera_ldlq_token_scaling.py`, L5 and L42 `gate_proj`, flat
+E4M3 plane + refit, fit on the first 2/4/8/14 documents of the 16-document
+pread capture, evaluated on the last 2 (1024 rows); gain = refit-only /
+LDLQ on the output-space weight leg:
+
+| tensor | σ_reg | 2 docs (1k rows) | 4 docs | 8 docs | 14 docs (7k rows) |
+|---|---:|---:|---:|---:|---:|
+| L5 gate | 0.1 | 0.888× | 0.865× | 0.892× | 0.952× |
+| L5 gate | 0.3 | 0.949× | 0.949× | 0.974× | 1.014× |
+| L5 gate | 1.0 | 1.004× | 1.009× | 1.031× | 1.060× |
+| L5 gate | 3.0 | 1.032× | 1.039× | 1.052× | 1.069× |
+| L42 gate | 0.1 | 0.931× | 0.914× | 0.930× | 0.976× |
+| L42 gate | 0.3 | 0.998× | 0.990× | 1.011× | 1.042× |
+| L42 gate | 1.0 | 1.047× | 1.052× | 1.065× | 1.090× |
+| L42 gate | 3.0 | 1.069× | 1.078× | 1.087× | 1.098× |
+
+The gain rises monotonically with tokens at every σ, has not flattened by
+7k rows (+0.03 per doubling at σ=1.0 from 8 to 14 docs), and the best σ
+moves *down* as the estimate improves (σ=0.3 goes from harmful to positive
+between 4 and 14 docs). So the Hessian estimate binds first, not the
+alphabet — a large capture pays, and the σ that a 200k-token H allows will
+sit below 1.0. What the alphabet's own response to feedback costs is not
+yet separable from this data; it becomes visible only when the gain stops
+tracking tokens.

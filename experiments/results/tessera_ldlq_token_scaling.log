@@ -1,0 +1,35 @@
+== L5 gate_proj: refit-only (flat E4M3 plane) out=0.09426 on the last 2 docs
+   fit  2 docs ( 1024 rows) sigma=0.1   out=0.10612 gain 0.888x  34s
+   fit  2 docs ( 1024 rows) sigma=0.3   out=0.09932 gain 0.949x  35s
+   fit  2 docs ( 1024 rows) sigma=1.0   out=0.09386 gain 1.004x  34s
+   fit  2 docs ( 1024 rows) sigma=3.0   out=0.09131 gain 1.032x  34s
+   fit  4 docs ( 2048 rows) sigma=0.1   out=0.10897 gain 0.865x  34s
+   fit  4 docs ( 2048 rows) sigma=0.3   out=0.09935 gain 0.949x  34s
+   fit  4 docs ( 2048 rows) sigma=1.0   out=0.09338 gain 1.009x  35s
+   fit  4 docs ( 2048 rows) sigma=3.0   out=0.09074 gain 1.039x  34s
+   fit  8 docs ( 4096 rows) sigma=0.1   out=0.10562 gain 0.892x  34s
+   fit  8 docs ( 4096 rows) sigma=0.3   out=0.09674 gain 0.974x  34s
+   fit  8 docs ( 4096 rows) sigma=1.0   out=0.09144 gain 1.031x  34s
+   fit  8 docs ( 4096 rows) sigma=3.0   out=0.08962 gain 1.052x  34s
+   fit 14 docs ( 7168 rows) sigma=0.1   out=0.09897 gain 0.952x  35s
+   fit 14 docs ( 7168 rows) sigma=0.3   out=0.09295 gain 1.014x  34s
+   fit 14 docs ( 7168 rows) sigma=1.0   out=0.08892 gain 1.060x  47s
+   fit 14 docs ( 7168 rows) sigma=3.0   out=0.08817 gain 1.069x  49s
+== L42 gate_proj: refit-only (flat E4M3 plane) out=0.06895 on the last 2 docs
+   fit  2 docs ( 1024 rows) sigma=0.1   out=0.07407 gain 0.931x  50s
+   fit  2 docs ( 1024 rows) sigma=0.3   out=0.06910 gain 0.998x  48s
+   fit  2 docs ( 1024 rows) sigma=1.0   out=0.06585 gain 1.047x  52s
+   fit  2 docs ( 1024 rows) sigma=3.0   out=0.06449 gain 1.069x  36s
+   fit  4 docs ( 2048 rows) sigma=0.1   out=0.07547 gain 0.914x  34s
+   fit  4 docs ( 2048 rows) sigma=0.3   out=0.06968 gain 0.990x  34s
+   fit  4 docs ( 2048 rows) sigma=1.0   out=0.06552 gain 1.052x  42s
+   fit  4 docs ( 2048 rows) sigma=3.0   out=0.06398 gain 1.078x  46s
+   fit  8 docs ( 4096 rows) sigma=0.1   out=0.07417 gain 0.930x  47s
+   fit  8 docs ( 4096 rows) sigma=0.3   out=0.06821 gain 1.011x  47s
+   fit  8 docs ( 4096 rows) sigma=1.0   out=0.06475 gain 1.065x  46s
+   fit  8 docs ( 4096 rows) sigma=3.0   out=0.06343 gain 1.087x  46s
+   fit 14 docs ( 7168 rows) sigma=0.1   out=0.07063 gain 0.976x  46s
+   fit 14 docs ( 7168 rows) sigma=0.3   out=0.06615 gain 1.042x  40s
+   fit 14 docs ( 7168 rows) sigma=1.0   out=0.06324 gain 1.090x  35s
+   fit 14 docs ( 7168 rows) sigma=3.0   out=0.06282 gain 1.098x  33s
+wrote experiments/results/tessera_ldlq_token_scaling.json
