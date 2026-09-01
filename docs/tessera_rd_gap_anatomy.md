@@ -21,7 +21,7 @@ scale planes are the same 0.5 bpp and had never been priced.
 | the redundancy bit (trellis vs NN, matched rate, at the cap) | **1.134x** | fairly priced; 0.5 bpp is worth 1.161x at the RD slope, so it roughly breaks even |
 | group-32 scale planes vs a rank-1 row x col fit | **1.140x** for 0.477 bpp | also fairly priced (1.155x at the slope). Not a lever. |
 | trellis memory 6 -> 10 | **1.010x** | free in bits AND in decode, and nearly empty. Closed. |
-| tensor-product grid vs a free 256-point 2D codebook | **1.116x** at identical bpp | **the live lever** |
+| tensor-product grid vs a free 256-point 2D codebook | **1.106x** at identical bpp | **the live lever**, replicated |
 | rotation (Hadamard, in or out) | 1.005x, and *negative* on the grid arms | dead, third independent confirmation |
 
 ## The redundancy bit CAN be split -- just not by changing the code
