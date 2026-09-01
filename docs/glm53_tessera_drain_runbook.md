@@ -25,9 +25,18 @@ across parts. That last check was repaired in `317c882` -- it was comparing
 5 of 13 fields and silently skipping the eight that do not exist, including
 `grid.digest` and `conv_memory`, the two that detect encoder drift.
 
-Expect body bpp 4.0005 and ~163 GiB (Mia's reference: 163.560 GiB).
+Expect body bpp 4.0005 and **151.5 GiB** on disk. Do NOT expect ~163 GiB --
+an earlier revision of this line conflated our expected size with Mia's EXL3
+reference (163.560 GiB), which is a different artifact. Ours is 12.1 GiB
+smaller at a comparable rate; that is a result, not a shortfall.
 
-## 2. Cross-check BEFORE deleting anything
+## 2. Cross-check BEFORE deleting anything  [DONE 2026-09-01]
+
+Merged clean: 120 shards, 38,770 tensors, 4.0005 bpp, 151.487 GiB. The repaired
+guard resolved 21/21 SHARED fields with zero disagreements across all 120 parts
+-- no encoder drift. Shards 00001 and 00036 (partA) and 00085 (partB) verified
+byte-identical old-vs-new, joining shard 61. Four independent witnesses; step 2
+passes and step 3 is unblocked pending the announcement it requires.
 
 Two part directories from the 2026-08-31 run survive as an independent
 witness. Shard 61 was already verified byte-identical between the old and
