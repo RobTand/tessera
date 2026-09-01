@@ -51,8 +51,10 @@ __all__ = [
     "ExportReport",
     "ExportedUnit",
     "encode_linear",
+    "encode_settings_from_config",
     "export_checkpoint",
     "export_checkpoint_streaming",
+    "grid_from_config",
     "load_tessera_weight",
     "read_checkpoint_config",
 ]
@@ -333,6 +335,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
             "rate_cap": grid.rate_cap,
         },
         "conv_memory": code.memory,
+        # The generators are wire too (bound into the encoder profile id): a
+        # code of the same memory order with different taps emits streams
+        # that decode to other weights.  Octal strings, the notation the
+        # code's own table uses; a config without this key means the table's
+        # default for its memory order, which is what every earlier artifact
+        # was written with.
+        "conv_generators": [oct(g) for g in code.generators],
         # The trellis span is wire (manifest field, profile-id tag).  Recorded
         # here as well so a merge can refuse parts built at different spans
         # without opening a blob.
@@ -511,6 +520,59 @@ def export_checkpoint_streaming(
 
 def read_checkpoint_config(out_dir: "str | Path") -> dict:
     return json.loads((Path(out_dir) / "tessera_config.json").read_text())
+
+
+def encode_settings_from_config(config: dict) -> dict:
+    """The ``encode_linear`` keyword arguments that reproduce a written checkpoint.
+
+    A config written before a setting existed means the value the exporter
+    had *then*, not the value it defaults to now -- the exporter's defaults
+    moved on 2026-09-01 (span 2, LUT plane, refit 4, scale-weighted trellis)
+    while the 151 GiB GLM export on disk was built at span 1, S6b, refit 0,
+    unweighted, under a config that names none of those fields.  Any replay
+    that rebuilds encode arguments from a config goes through here, so a
+    missing key resolves to its legacy meaning rather than to today's default.
+    ``conv_generators`` is read when present and otherwise resolved from the
+    memory order's table, which is what every earlier artifact used.
+    """
+    memory = int(config.get("conv_memory", DEFAULT_CODE.memory))
+    generators = config.get("conv_generators")
+    code = (ConvCode(memory=memory, generators=tuple(int(g, 8) for g in generators))
+            if generators else ConvCode(memory=memory))
+    scale = config.get("scale", {})
+    trellis = config.get("trellis", {})
+    plane = scale.get("plane", "s6b")
+    if plane not in ("s6b", "lut16"):
+        raise GrammarError(f"unknown scale plane {plane!r} in config")
+    return dict(
+        code=code,
+        group=int(scale.get("group", DEFAULT_GROUP)),
+        half=int(scale.get("half", DEFAULT_HALF)),
+        rotation=RotationState[config.get("rotation", "NONE")],
+        with_diagonals=bool(config.get("with_diagonals", False)),
+        scale_refit=int(scale.get("refit", 0)),
+        span=int(trellis.get("span", 1)),
+        scale_plane=ScalePlaneKind.S6B if plane == "s6b" else ScalePlaneKind.LUT,
+        trellis_weighting=str(trellis.get("weighting", "none")),
+    )
+
+
+def grid_from_config(config: dict) -> PayloadGrid:
+    """Resolve the payload grid a config names, and check it against the digest."""
+    from .alphabet import E2M1_GRID, E4M3_GRID, grid_digest, tuple_grid
+
+    spec = config["grid"]
+    base = {"E2M1": E2M1_GRID, "E4M3": E4M3_GRID}.get(spec.get("base"))
+    if base is None:
+        raise GrammarError(f"unknown grid base {spec.get('base')!r} in config")
+    arity = int(spec.get("arity", 1))
+    grid = base if arity == 1 else tuple_grid(base, arity, spec.get("partition", "coset"))
+    if grid_digest(grid) != spec["digest"]:
+        raise GrammarError(
+            f"config names grid {spec.get('name')!r} but its digest does not match "
+            "the grid this exporter builds from that name; refusing to replay"
+        )
+    return grid
 
 
 def _shard_holding(out: Path, key: str) -> Path:

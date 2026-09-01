@@ -178,3 +178,39 @@ def test_loading_an_absent_unit_names_the_index(tmp_path):
     export_checkpoint({"a.weight": _w()}, {"a.weight": 896}, tmp_path, grid=K2)
     with pytest.raises(KeyError):
         load_tessera_weight(tmp_path, "nope.weight")
+
+
+def test_encode_settings_replay_a_config_at_its_own_meaning(tmp_path):
+    """A config missing a setting means what the exporter meant THEN.
+
+    The 151 GiB GLM export's config has no ``trellis`` key and a ``scale``
+    block without ``refit``/``plane``: it was written at span 1, S6b, refit 0,
+    unweighted.  Replaying it through today's defaults would silently rebuild
+    a different artifact, so a missing key resolves to its legacy meaning.
+    """
+    from tessera.alphabet import grid_digest
+    from tessera.export import (DEFAULT_TRELLIS_WEIGHTING, encode_settings_from_config,
+                                grid_from_config)
+    from tessera.manifest import ScalePlaneKind
+    from tessera.trellis import ConvCode
+
+    legacy = {"grid": {"digest": grid_digest(K2), "name": "E2M1x2", "base": "E2M1",
+                       "partition": "coset", "arity": 2, "size": 256, "rate_cap": 7},
+              "conv_memory": 6, "scale": {"group": 32, "half": 16},
+              "rotation": "NONE", "with_diagonals": False}
+    s = encode_settings_from_config(legacy)
+    assert (s["span"], s["scale_plane"], s["scale_refit"], s["trellis_weighting"]) == \
+        (1, ScalePlaneKind.S6B, 0, "none")
+    assert s["code"] == ConvCode(memory=6)
+    assert grid_from_config(legacy) == K2
+
+    # today's exporter round-trips to today's defaults, generators included
+    export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)
+    config = read_checkpoint_config(tmp_path)
+    s = encode_settings_from_config(config)
+    assert config["conv_generators"] == ["0o133", "0o171"]
+    assert (s["span"], s["scale_plane"], s["scale_refit"], s["trellis_weighting"]) == \
+        (2, ScalePlaneKind.LUT, 4, DEFAULT_TRELLIS_WEIGHTING)
+    assert grid_from_config(config) == K2
+    with pytest.raises(GrammarError, match="digest"):
+        grid_from_config({**config, "grid": {**config["grid"], "arity": 1}})
