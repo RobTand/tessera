@@ -28,6 +28,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 \
   --gpu-memory-utilization 0.85 \
+  --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
   --enforce-eager --trust-remote-code \
   >/dev/null
 
@@ -54,7 +55,7 @@ if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   docker rm -f "$NAME" >/dev/null; exit 2
 fi
 
-ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}"
+ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"
       --corpus-contract "$CORPUS" --role "$ROLE" --artifact-path "$MODEL")
 [ -n "$LABEL" ] && ARGS+=(--teacher-label "$LABEL")
 /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python /home/rob/dq-runs/kl_tool.py "${ARGS[@]}"
