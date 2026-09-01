@@ -67,7 +67,15 @@ pointless. The useful band is ε_B < 25%.
 - Earlier revision of this document reported 0.19.2 and mislabelled a 4.5 bpp
   configuration as 4.0. Both are corrected above.
 
-Reproduce: `tmp/gemm28.py` (in the `vllm/vllm-openai:latest` container).
+**Reproduction: NOT PRESERVED.** This measurement was taken with a scratch
+script at `tmp/gemm28.py` inside the `vllm/vllm-openai:latest` container, and
+that file no longer exists — it was never moved into the repository. By this
+project's own standard *a result whose reproduction code has been deleted is not
+a reproducible result*, so read the numbers above as a recorded observation with
+a broken chain of custody, not as something you can re-derive here. Re-running it
+means writing the benchmark again from the description above; if you do, put it
+in `experiments/` with a row in that README, which is where every measurement
+script has lived since.
 
 ## Load-time decode: measured, and where it goes
 

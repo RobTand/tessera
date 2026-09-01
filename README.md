@@ -8,10 +8,19 @@ Implemented against `prismaquant/docs/design/embedded_native_weight_coding_2026-
 revision 8, review cycle closed).
 
 ```bash
-PYTHONPATH=src python3 -m pytest tests/ -q     # 115 passing, stdlib only
+# The pure lane -- build items 1a/1b/11. Stdlib only: no torch, no GPU, no model data.
+PYTHONPATH=src python3 -m pytest tests -q \
+    --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py   # 210 passing
+
+# Everything, including the pre-gate kernel lane. Needs torch + triton + a GPU.
+PYTHONPATH=src python3 -m pytest tests -q                          # 249 passing
 ```
 
-No dependencies. No torch, no GPU, no model data.
+**The split is the point, not an accident of packaging.** S16 forbids pipeline
+wiring before 1b passes, and a test job that imports no torch proves that
+structurally rather than by discipline. CI runs the pure lane only; the kernel
+lane cannot run on a hosted runner and must never become a required check,
+because a green tick on a screen is exactly the promotion this repo refuses.
 
 ---
 
@@ -24,12 +33,27 @@ Gridbook release.
 | Item | Deliverable | State |
 |---|---|---|
 | 1a | Reviewed byte-level schema and parse algorithm | **Pass 1 complete** — 9 findings, all closed (`docs/schema/review-1a-findings.md`); two external passes running |
-| 1b | Pure serializer/parser/footprint plus bytes-only tests | Passing locally, 115 tests |
+| 1b | Pure serializer/parser/footprint plus bytes-only tests | Passing, 210 bytes-only tests |
 | 11 | Legacy-plane wire arithmetic in a pure calculator | Derived, provenance-tagged |
 
 A separate repository is the right shape for this: §16 forbids menu, pipeline,
 or shipping-code wiring before 1b passes, and a standalone package enforces
 that structurally rather than by discipline.
+
+### And one thing beyond that scope, named rather than hidden
+
+`src/tessera/kernel.py` and the encoder/trellis it exercises are **outside items
+1a/1b/11**. They are **pre-gate research under S16 P1-6/P1-7**: their results
+bind only the construction that produced them, they are screens and not results
+under principle 3, and **promotion remains Arm-12-gated** — no menu entry, no
+pipeline wiring, no serving claim follows from anything measured here.
+
+They exist because the decode-regime question in S13 turned out to be
+decoder-specific rather than general, and that is worth constructive evidence.
+`docs/measurements/` states the evidence tier of every number, including what is
+still owed (energy, in-process profile, a served artifact — none of which exist).
+A reader who takes the kernel numbers as a serving result has been warned by the
+docs and is still wrong.
 
 ## What it proves
 

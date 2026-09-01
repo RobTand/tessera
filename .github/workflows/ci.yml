@@ -1,0 +1,48 @@
+# The pure half of the repo runs anywhere; the kernel half needs a GPU.
+#
+# Splitting them is the point.  Build items 1a/1b are stdlib-only by design --
+# S16 forbids pipeline wiring before 1b passes, and a job that needs no torch
+# proves that structurally rather than by discipline.  The kernel lane is
+# pre-gate research (S16 P1-6/P1-7) and cannot run here; it is gated on a GPU
+# runner and must never become a required check, because a green tick on a
+# screen is exactly the promotion this project refuses.
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  pure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      - name: bytes-only tests (no torch, no GPU, no model data)
+        run: PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider
+             --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py
+
+      # S14's ledger invariant is absolute: no prohibited-source artifact
+      # participates.  `provenance.py` ships the MECHANISM and the list is
+      # deliberately empty, so this check refuses the one failure mode an empty
+      # denylist creates -- silently certifying everything.  It asserts the
+      # refusal fires, not that the list has entries.
+      - name: item 11 -- an empty denylist must refuse to certify
+        run: |
+          PYTHONPATH=src python - <<'PY'
+          from tessera.provenance import assert_denylist_populated, Denylist
+          from tessera.errors import ProvenanceError
+          try:
+              assert_denylist_populated(Denylist())
+          except ProvenanceError as refusal:
+              print(f"refused as required: {refusal}")
+          else:
+              raise SystemExit(
+                  "assert_denylist_populated accepted an empty denylist; "
+                  "silently passing everything is the failure this check exists for"
+              )
+          PY
