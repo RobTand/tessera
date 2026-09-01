@@ -1,5 +1,31 @@
 # The rung is not a rate: Tessera has two sizes, not a band
 
+> **⚠ CAUSE FOUND 2026-09-01 (later the same day). The "identical bytes" this
+> document measures are a SERIALISER BUG, not a property of the format.**
+> `unit_artifact.py:160` sizes the COMPLETION plane from the *rate*
+> (`completion_capacity(r, cap)`) instead of from the completion depth the
+> encoder actually used — and `encode.py:371` shows the encoder can use less
+> (`level = depth if completion is None else min(completion, depth)`).
+> Measured, E2M1_K1 256x1024 at `q256=256`, `completion=0`: the completion
+> tensor is **all zeros — 0 nonzero of 262,144 entries — and still serialises
+> to 65,536 bytes**. The artifact carries 1.0 body + 0.5 scale = **1.5 bpp of
+> information and writes 3.52 bpp**.
+>
+> So "every sub-top rung is strictly dominated" is true *only while the bug
+> exists*. The rate axis is continuous across each family's full range, as the
+> design intends and as `tessera_formats`'s own docstring says
+> ("continuous at a 1/256-bpp quantum ... ~9500 rungs ... spanning 1.00 to
+> 8.00 bpp"). **Fixing it needs the manifest to carry the completion depth so
+> the reader can size the plane.** Every artifact ever exported sits at a top
+> rung, where `completion_capacity(cap, cap) = 0` and the plane is genuinely
+> absent, so an honest-width serialiser is **byte-identical on all of them**.
+>
+> What survives unchanged: the accounting-bug half below (`artifact_bpp`
+> returning `(q256+128)/256`) was real and is fixed, and every RD measurement
+> taken at a top rung — including the EXL3 head-to-head and "Tessera 4.0 beats
+> NVFP4 4.5 as served" — is unaffected. See [[tessera-nine-sizes-two-writable]].
+
+
 **Measured 2026-09-01**, Qwen3-0.6B, same harness as
 `tessera-served-kl-2026-09-01.md` (WikiText-2, n=8 × 512, 4088 scored
 positions, `kl_tool.py` against a BF16 reference serve, everything decoded to
@@ -171,3 +197,50 @@ NVFP4. On real GLM routed-expert activations, `NVFP4` at 4.5 bpp scores
 Pareto-dominated on this route. The expert menu is `{3.5000, 4.0000, 8.0156}`,
 and the freed body bytes buy **FP8 on ~2.6 of the 45 expert layers**, not a
 rate increase on any of them.
+
+---
+
+## Where the fix goes (traced 2026-09-01, not implemented)
+
+`unit_artifact.py:160` computes **one** width tuple and uses it for two
+different jobs:
+
+```python
+completion_widths = tuple(completion_capacity(r, grid.rate_cap) for r in rates)
+...
+PlaneKind.COMPLETION: pack_body(unit.completion_bits, completion_widths),   # :177
+spec = TerminalSpec("t-nvfp4", completion_widths, ...)                      # :197
+```
+
+Those jobs want different numbers, which is why one constant cannot serve both:
+
+* the **plane extent** is a declared maximum and should stay at
+  `completion_capacity(r, cap)` — shrinking it fights the truncation model
+  (`layout.py:194`: *"every terminal is a prefix of the declared extent"*), and
+  changing it moves every downstream plane offset and the payload digest.
+  Shrinking it is what I tried first; it raises
+  `PlaneLayoutError: COMPLETION: payload is 0 bytes, the plane holds exactly N`.
+* the **terminal** should declare the depth the encoder actually used,
+  `min(limit, completion_capacity(r, cap))`. `TerminalSpec.completion_bits` is
+  already a per-column tuple on the wire (`layout.py:84`,
+  *"per column, 0 <= c <= 3 - R"*) and `_counts_for` already honours it
+  (`layout.py:127-130`), so **this needs no schema change at all** — the field
+  exists and is simply fed full capacity today.
+
+Measured on the current code, both readings agree at 3.50 bpp for every rung
+and for both completion settings, which is the bug:
+
+| q256 | completion | blob bpp | `terminal.exact_bytes` | terminal bpp |
+|---:|---|---:|---:|---:|
+| 256 | full | 3.5200 | 114,708 | 3.5006 |
+| 256 | **0** | 3.5200 | **114,708** | **3.5006** |
+| 512 | **0** | 3.5201 | 114,712 | 3.5007 |
+| 768 | 0 | 3.5199 | 114,720 | 3.5010 |
+
+**The open question, and why this stops here.** Splitting the two widths makes
+the *accountant* honest immediately. Whether the shipped file also gets smaller
+depends on where an artifact is truncated to its terminal — `serialize` writes
+the whole region, so `encode_linear` would still emit full-length bytes unless
+the exporter ships the truncation. That is a design decision about the
+container, not a bug to patch blind: it decides whether a Tessera artifact is
+"the full region plus a terminal that says where to cut" or "already cut".

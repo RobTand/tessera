@@ -395,8 +395,11 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #: the reader can rebuild them without the values on the wire:
 #:   * ``E2M1`` -- arity 1, 16 codes, cap 3.  Every artifact built before the
 #:     grid was bound into the profile id used this one implicitly.
-#:   * ``E2M1^2`` -- arity 2, 256 codes, cap 7.  The stock-lane rung: a code
-#:     covers two consecutive rows, and at R=7 the body is 4.0 bpp.
+#:   * ``E2M1^2`` -- arity 2, 512 codes, cap 7.  The stock-lane rung: a code
+#:     covers two consecutive rows.  cap 7 over arity 2 is **3.5 payload bits
+#:     per weight**; the 0.5 bpp scale plane brings the artifact to 4.0 bpp.
+#:     Those two numbers get confused constantly -- 4.0 is the SIZE, 3.5 is the
+#:     payload half of it, and EXL3's 4.0117 bpw is 4.0 payload + 0.0117.
 #:
 #: **Free (Lloyd-Max) grids are deliberately absent.**  Their values are fitted
 #: to the tensor and are not reproducible by a reader from any identifier, so
