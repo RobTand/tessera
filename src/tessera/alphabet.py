@@ -391,7 +391,7 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #: ``read_unit_artifact`` searches, so a grid that is not here cannot be
 #: written *or* read -- both directions fail closed rather than guessing.
 #:
-#: Two entries today, both derivable from a name and an arity, which is why
+#: Three entries today, all derivable from a name and an arity, which is why
 #: the reader can rebuild them without the values on the wire:
 #:   * ``E2M1`` -- arity 1, 16 codes, cap 3.  Every artifact built before the
 #:     grid was bound into the profile id used this one implicitly.
@@ -400,6 +400,19 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #:     per weight**; the 0.5 bpp scale plane brings the artifact to 4.0 bpp.
 #:     Those two numbers get confused constantly -- 4.0 is the SIZE, 3.5 is the
 #:     payload half of it, and EXL3's 4.0117 bpw is 4.0 payload + 0.0117.
+#:   * ``E4M3`` -- arity 1, 256 codes, cap 7: **the 8-bit ladder**, 1.0 to 7.0
+#:     payload bits per weight.  It was absent for no reason the criterion
+#:     above supports -- its values come from the byte pattern
+#:     (``_e4m3_value``), so a reader rebuilds them from the name exactly as it
+#:     does E2M1's, which is precisely what the Lloyd-Max exclusion below turns
+#:     on.  Its absence left the menu with **nothing between Tessera-4's 4.0
+#:     bpp ceiling and FP8's 8.0**, so an allocator wanting 5 or 6 bits had to
+#:     buy 8.  Round-trips at every rung (``test_e4m3_ladder_serialises``).
+#:
+#: ``E4M3^2`` is **not** here and its absence is structural, not an oversight:
+#: 65536 codes, and the ALPHABET/DESCENDANT planes are one byte per code.  256
+#: codes is the wire's ceiling, which is why the serialisable set is exactly
+#: the three grids that fit in a byte.
 #:
 #: **Free (Lloyd-Max) grids are deliberately absent.**  Their values are fitted
 #: to the tensor and are not reproducible by a reader from any identifier, so
@@ -407,7 +420,7 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #: second schema change.  That is a deferral, not an oversight.
 SERIALISABLE_GRIDS: "dict[str, PayloadGrid]" = {
     grid_digest(grid): grid
-    for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2))
+    for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2), E4M3_GRID)
 }
 
 
