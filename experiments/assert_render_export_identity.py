@@ -26,6 +26,8 @@ def main() -> None:
     ap.add_argument("source", type=Path, help="the BF16 checkpoint it was built from")
     ap.add_argument("--samples", type=int, default=6)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--base", help="base grid name, for artifacts written "
+                                   "before the config recorded one")
     args = ap.parse_args()
 
     from prismaquant.tessera_render import render_tessera_weight
@@ -33,6 +35,17 @@ def main() -> None:
     config = read_checkpoint_config(args.artifact)
     suffix = config.get("blob_suffix", BLOB_SUFFIX)
     grid = config["grid"]
+    # Older configs recorded only the digest; derive the base from the grid
+    # name when the explicit field is absent rather than failing on an
+    # artifact that is otherwise perfectly readable.
+    base = args.base or grid.get("base") or grid.get("name", "").split("x")[0]
+    if not base:
+        raise SystemExit(
+            "this artifact's config names no base grid, so the rung it was "
+            "built at cannot be reconstructed. Re-export with a current "
+            "writer, or pass --base if you know it (the digest below still "
+            "verifies the guess): " + grid.get("digest", "?")
+        )
     rungs = config["rungs_q256"]
 
     names = sorted(n for n in config["plan"])
@@ -45,13 +58,13 @@ def main() -> None:
 
     from safetensors import safe_open
 
-    print(f"grid {grid['base']} K{grid['arity']}  rungs {rungs}")
+    print(f"grid {base} K{grid['arity']}  rungs {rungs}")
     print(f"checking {len(names)} of {len(config['plan'])} units\n")
 
     failures = 0
     for name in names:
         q256 = config["plan"][name]
-        rung = f"TESSERA_{grid['base']}_K{grid['arity']}_R{q256}"
+        rung = f"TESSERA_{base}_K{grid['arity']}_R{q256}"
         with safe_open(str(args.source / src_index[name]), framework="pt") as h:
             weight = h.get_tensor(name).cuda()
 

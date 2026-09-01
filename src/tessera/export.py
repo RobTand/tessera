@@ -266,7 +266,14 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "container_version": CONTAINER_VERSION,
         "blob_suffix": BLOB_SUFFIX,
         "grid": {
+            # The digest is the wire identity and the only field a reader may
+            # trust.  The name and base are recorded so the config can be
+            # *audited* -- a config that cannot say which grid it used forces
+            # every reader to reverse a hash to answer "what format is this?".
             "digest": grid_digest(grid),
+            "name": grid.name,
+            "base": grid.name.split("x")[0],
+            "partition": grid.partition,
             "arity": grid.arity,
             "size": grid.size,
             "rate_cap": grid.rate_cap,
