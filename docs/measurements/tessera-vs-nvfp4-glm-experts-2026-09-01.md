@@ -3,6 +3,13 @@
 2026-09-01. Weight-space and functional rel_err — **screens, not promotion
 metrics** (principle 3). Reported because the gap changes what to build next.
 
+> **Read §"Contract-matched" first.** The weight-space table below compares two
+> dequantized weights, which is not how either format serves. It priced NVFP4
+> as **W4A16** when the GLM route serves it **W4A4**. Corrected, the verdict
+> inverts: Tessera is ~10% *better* functionally, not 16% worse. The weight-only
+> table is kept because it is a true statement about weights and it is the term
+> the allocator's surrogate currently sees — not because it is the answer.
+
 ## What was measured
 
 Six real routed-expert projections from `layers.20` of
@@ -35,6 +42,68 @@ cap rung does not reach NVFP4's error at 11% fewer bits.
 
 That is not a contradiction of the earlier measurement. It is the cost of the
 grid being wire-legible, and it was not previously priced.
+
+## Contract-matched: the measurement that supersedes the table above
+
+`experiments/tessera_vs_nvfp4_served_contract.py` (in `prismaquant/`). The
+weight-space screen compares `W` to `W_q`. Neither format serves that way:
+
+- **NVFP4 on this route is W4A4.** `flashinfer_b12x` quantizes the activation
+  to FP4 as well as the weight.
+- **Tessera's kernel lane is W4A16** — the body decodes to bf16 and consumes a
+  bf16 activation. **So is EXL3.** That is the contract the real comparator runs.
+
+Scoring `y = X W^T` instead of `W`, on **real cached routed-expert input
+activations** from the GLM-5.3-Flash BF16 probe
+(`glm53-bf16-pread-probe-1469b9b-20260830`), 256 tokens **split fit/eval**:
+
+| layer | NVFP4 W4A16 | NVFP4 **as served** (W4A4) | Tessera 4.0 (W4A16) | T / served |
+|---|---|---|---|---|
+| 5 gate | 0.07459 | 0.11838 | 0.10489 | 0.8861 |
+| 5 up | 0.07731 | 0.12289 | 0.10882 | 0.8855 |
+| 20 gate | 0.06672 | 0.10920 | 0.09786 | 0.8962 |
+| 20 up | 0.07096 | 0.11623 | 0.10380 | 0.8930 |
+| 42 gate | 0.04504 | 0.07751 | 0.07273 | 0.9384 |
+| 42 up | 0.06107 | 0.10415 | 0.09617 | 0.9234 |
+
+**Mean 0.9038 — Tessera delivers ~10% lower functional error on 11% fewer
+bytes.** Stable across early/mid/late layers (0.886–0.938), so this is not
+one layer's quirk.
+
+Both arms are at their production best, and the two biases run opposite ways:
+
+- NVFP4's weight leg is the **production render** (GPTQ + static_act_order +
+  JSO), not RTN. Tessera's arm is plain — no rotation, no diagonals, which the
+  weight screen says are worth ~1%.
+- **Held-out split.** GPTQ fits its Hessian on `X_fit`, static `G` calibrates on
+  `X_fit`, all arms score on the disjoint `X_eval`. Scored in-sample GPTQ looked
+  **3.3× better than RTN**; held out it is ~15%. The in-sample number would have
+  flattered NVFP4 exactly the way this project's `damp_sweep` evaluator once
+  did, and Tessera's encoder sees no activations at all, so without the split
+  the arms were not even on the same footing.
+
+### Why it inverts
+
+Once the weight leg is well-rendered, **NVFP4's activation leg is its dominant
+error term**: at layer 20, W4A16 0.0667 → W4A4 0.1092, +64%, larger than
+everything weight quantization costs. A W4A16 format at a *lower* bit rate can
+therefore beat a W4A4 format at a higher one — the bits are not the binding
+constraint, the activation contract is.
+
+This also reframes the whole comparison. Mia's artifact is strong partly
+*because* EXL3 is W4A16. Tessera vs NVFP4 was never quite the question;
+**Tessera vs EXL3, both W4A16 at ~4.0 bpw, is** — and it remains unmeasured
+(`exl3-decode-invocation-unsolved`).
+
+### What this does not establish
+
+Functional rel_err on cached activations is still a screen. It selects nothing
+(principle 3), it excludes `down_proj` (~⅓ of expert params — the probe caches
+one input per packed-expert entry, at hidden dim, and the intermediate
+activation was never cached), and Tessera has **no exporter and no serving
+backend**, so its W4A16 contract is a property of a kernel that no runtime
+executes (principle 9). The number says the direction is worth building toward.
+It is not a result.
 
 ## Two structural limits of E2M1_K2
 
