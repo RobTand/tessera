@@ -93,15 +93,16 @@ def main():
         print(f"  {p:7d}{p/2:7.2f}{(f'{e_tr:.5f}' if e_tr else '-'):>10}"
               f"{(f'{e_nn:.5f}' if e_nn else '-'):>10}{worth:>18}")
 
-    print("\n  THE PUNCTURING TEST -- does spending the bit on PAYLOAD beat")
-    print("  spending it on SHAPING?   NN(p+1) vs trellis(p), same total bits:")
+    print("\n  NN(p+1) vs trellis(p) -- SAME CODEBOOK, and NN spends one more")
+    print("  bit.  Not a matched-rate comparison; the matched-rate one is the")
+    print("  'redundancy worth' column above, which is clean only at p = cap.")
     verdict = []
     for p in sorted(tre):
         if p + 1 in nn:
             r = nn[p+1] / tre[p]
             verdict.append(r)
             print(f"    NN({p+1}) {nn[p+1]:.5f}  vs  trellis({p}) {tre[p]:.5f}"
-                  f"   -> {r:.3f}x  {'PAYLOAD wins' if r < 1 else 'SHAPING wins'}")
+                  f"   -> {r:.3f}x for +1 bit")
     json.dump({"trellis": tre, "nn": nn}, open(a.out, "w"), indent=1)
     print(f"\nwrote {a.out}")
 
