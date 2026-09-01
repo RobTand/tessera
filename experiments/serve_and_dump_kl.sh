@@ -20,7 +20,7 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 echo "serving $MODEL  ($IMAGE)"
-docker run -d --rm --name "$NAME" --gpus all --ipc=host \
+docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
   "$IMAGE" \
@@ -37,8 +37,11 @@ for i in $(seq 1 240); do
     echo "  up after ${i}0s"; break
   fi
   if ! docker ps -q -f name="$NAME" | grep -q .; then
+    # Not --rm: a container that dies during startup takes its logs with it,
+    # and the startup failures are exactly the ones worth reading.
     docker logs "$NAME" > "$LOG" 2>&1 || true
-    echo "serve died; log at $LOG"; tail -30 "$LOG"; exit 1
+    echo "serve died (exit $(docker inspect -f '{{.State.ExitCode}}' "$NAME" 2>/dev/null)); log at $LOG"
+    tail -30 "$LOG"; docker rm -f "$NAME" >/dev/null 2>&1; exit 1
   fi
   sleep 10
 done
