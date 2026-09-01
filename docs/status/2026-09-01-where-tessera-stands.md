@@ -109,6 +109,16 @@ EXL3@A4 projected. Full tables: `docs/measurements/tessera-fp4-native-levers-202
   halves — until the 16-document capture running on lina scores it.
 - **Closed under the constraint:** global headroom (again), H16-weighted LS
   (+1%, needs activations), group-local LDLQ, every plane-thinning form.
+- **Format against format** (weight leg alone vs EXL3 K=4, the 1.72× above):
+  artifact plane 1.722× → default encoder **1.590× at exactly 4.0 bpp**, no
+  wire change; flat E4M3 plane 1.565×; per-32 E4M3 + L=2 1.519× at 4.0;
+  per-16 E4M3 + L=2 1.409× at 4.25; LDLQ stack 1.396× (screen).
+- **The rate/plane frontier is mapped** (plane granularity × Wei L, every
+  cell refit): at 4.0 bpp the point is **per-32 E4M3 + L=2 (1.047×)**; the
+  flat E4M3 plane beats S6b at every L (1.7–2.9%); above 4.0, per-32 + L=4
+  (4.125, 1.074×) then per-16 + L=2 (4.25, 1.129×). A Wei-L wire change
+  keeps the embedded completion axis and the served tile; it changes the
+  load-time materialiser (stock lane) and the kernel lane's decoder.
 
 <details><summary>The superseded bound, kept for the record</summary>
 

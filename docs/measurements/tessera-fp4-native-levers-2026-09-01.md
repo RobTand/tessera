@@ -5,7 +5,8 @@
 `experiments/tessera_fp4_native_levers.py` (the battery),
 `experiments/tessera_rank1_plane_multidim.py`,
 `experiments/tessera_plane_alternatives.py`,
-`experiments/tessera_refit_schedule.py`; every table below is rendered from
+`experiments/tessera_refit_schedule.py`, `experiments/tessera_rate_plane_frontier.py`;
+every table below is rendered from
 the JSONs in `experiments/results/` (`experiments/render_fp4_native_tables.py`,
 or the schedule script's own summary) — no number here is typed by hand
 except the export-path encode times, which say so.
@@ -207,7 +208,85 @@ These rows are a screen. The unblock is running: a 16-document × 512-token
 capture of the same experts on lina (`glm53-bf16-pread-capture-1469b9b-20260901`,
 rows in document order) so fit and eval can be split by whole documents.
 
+## The rate/plane frontier: where a bit should go
+
+`tessera_rate_plane_frontier.py`: plane granularity (how many per-16 MMA
+slots share one stored E4M3 scale: per-16 = NVFP4's flat plane at 0.5 bpp,
+per-32 0.25, per-64 0.125, per-128 0.0625; S6b two-tier at 0.5 = today's
+wire) × Wei's L (payload 4 − 1/(2L)), every cell with the same LS refit
+landed on its own plane (shared scales use the exact shared LS). Six
+tensors, held-out, served activation quantiser. Sorted by bpp:
+
+| arm | bpp | out-space weight leg | vs S6b L=1 | W4A4 | vs EXL3@A4 |
+|---|---:|---:|---:|---:|---:|
+| E4M3 per-128 + LS  L=1 | 3.5625 | 0.10553 | 0.852x | 0.13569 | 1.314x |
+| E4M3 per-64 + LS  L=1 | 3.6250 | 0.10048 | 0.895x | 0.13182 | 1.277x |
+| E4M3 per-32 + LS  L=1 | 3.7500 | 0.09498 | 0.947x | 0.12769 | 1.237x |
+| E4M3 per-128 + LS  L=2 | 3.8125 | 0.09513 | 0.945x | 0.12775 | 1.237x |
+| E4M3 per-64 + LS  L=2 | 3.8750 | 0.09055 | 0.993x | 0.12444 | 1.206x |
+| E4M3 per-128 + LS  L=4 | 3.9375 | 0.09271 | 0.970x | 0.12596 | 1.220x |
+| E4M3 per-128 + LS  L=8 | 4.0000 | 0.09246 | 0.973x | 0.12577 | 1.218x |
+| E4M3 per-16 + LS  L=1 | 4.0000 | 0.08846 | 1.017x | 0.12292 | 1.190x |
+| E4M3 per-32 + LS  L=2 | 4.0000 | 0.08590 | 1.047x | 0.12107 | 1.173x |
+| E4M3 per-64 + LS  L=4 | 4.0000 | 0.08828 | 1.018x | 0.12281 | 1.190x |
+| S6b per-16 + LS  L=1 | 4.0000 | 0.08997 | 1.000x | 0.12404 | 1.201x |
+| E4M3 per-64 + LS  L=8 | 4.0625 | 0.08803 | 1.021x | 0.12263 | 1.188x |
+| E4M3 per-32 + LS  L=4 | 4.1250 | 0.08377 | 1.074x | 0.11964 | 1.159x |
+| E4M3 per-32 + LS  L=8 | 4.1875 | 0.08345 | 1.078x | 0.11939 | 1.156x |
+| E4M3 per-16 + LS  L=2 | 4.2500 | 0.07964 | 1.129x | 0.11679 | 1.131x |
+| S6b per-16 + LS  L=2 | 4.2500 | 0.08144 | 1.105x | 0.11802 | 1.143x |
+| E4M3 per-16 + LS  L=4 | 4.3750 | 0.07743 | 1.162x | 0.11529 | 1.117x |
+| S6b per-16 + LS  L=4 | 4.3750 | 0.07971 | 1.129x | 0.11687 | 1.132x |
+| E4M3 per-16 + LS  L=8 | 4.4375 | 0.07716 | 1.166x | 0.11509 | 1.115x |
+| S6b per-16 + LS  L=8 | 4.4375 | 0.07954 | 1.132x | 0.11669 | 1.130x |
+
+Read at a fixed size. **At exactly 4.0 bpp the frontier point is one E4M3
+per 32 + L=2: 1.047× over the shipping encoder** (per-16 flat + L=1 1.017×,
+per-64 + L=4 1.018×, per-128 + L=8 0.973× — the rate axis saturates faster
+than the plane degrades, so the trade stops at per-32). Above 4.0 the
+frontier is per-32 + L=4 at 4.125 (1.074×), then per-16 + L=2 at 4.25
+(1.129×), per-16 + L=4 at 4.375 (1.162×). **The flat E4M3 plane beats the
+S6b two-tier at every L** (1.7% at L=1, 2.2% at L=2, 2.9% at L=4): the
+octave lock costs more as the payload gets finer, and flat per-16 E4M3 is
+exactly the layout NVFP4 stores, so the relabel disappears.
+
+### What a Wei-L wire change touches
+
+Wei's partition keeps every position's subset and its within-subset descent:
+one conv-code bit picks the super-symbol's label (the sum of L subset labels
+mod 4), 2(L−1) member bits pick the per-position subsets in that class, and
+the 6L within-subset bits are the same per-position completion bits as
+today. So the embedded rate axis (`completion` depth, `decode_codes`'s
+`reachable[anchors, completion_bits]`) survives L>1 unchanged; what changes
+is the body: the trellis advances one step per L positions and a member-bit
+stage sits between the conv-code state and the per-position anchor. In the
+stock lane that is a change to the load-time materialiser only (the served
+tensor is still E2M1 × per-16 E4M3 — no kernel change). In the kernel lane
+(`kernel.py`, which decodes a tile from a local span with a `memory`-row
+halo) the halo becomes L·memory rows and the member-bit lookup is added; a
+decoder change, not a new MMA path.
+
 ## What this adds up to
+
+Format against format — the weight leg alone, against EXL3 K=4's 0.05653 —
+is the number Rob's brief asks about; the composite dilutes every gap through
+the shared activation leg:
+
+| arm | bpp | out-space weight leg | weight leg vs EXL3 K=4 |
+|---|---:|---:|---:|
+| artifact plane (refit 0) | 4.0000 | 0.09736 | 1.722× |
+| TR (free) | 4.0000 | 0.09327 | 1.650× |
+| TRTRTRT (`cf82b00`) | 4.0000 | 0.08997 | 1.591× |
+| **TRTRTRTR (`61df165` default)** | 4.0000 | 0.08986 | **1.590×** |
+| refit → flat E4M3 per-16 | 4.0000 | 0.08846 | 1.565× |
+| per-32 E4M3 + LS, L=2 | 4.0000 | 0.08590 | 1.519× |
+| per-16 E4M3 + LS, L=2 | 4.2500 | 0.07964 | 1.409× |
+| full-LDLQ σ=1.0 + in-block LS (S6b) | 4.0000 | 0.07998 | 1.415× (screen) |
+| full-LDLQ σ=1.0 + in-block LS (flat E4M3) | 4.0000 | 0.07892 | 1.396× (screen) |
+
+The status doc's 1.72× is the first row; the default encoder is now at
+1.59× at exactly 4.0 bpp with no wire change.
+
 
 | | vs EXL3@A4 | status |
 |---|---:|---|
