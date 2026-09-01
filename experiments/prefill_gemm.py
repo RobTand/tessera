@@ -7,9 +7,14 @@ generation", and Tessera's decoder is a different object: `ConvCode.step` is a
 shift register, so a tile decodes from a local span with a six-row halo in N and
 NO dependence along K -- and K is the reduction axis.
 
-Same 4096^2 tile, so the numbers are directly comparable.  Every arm is swept
-over one identical block grid: an under-tuned baseline is the cheapest way to
-manufacture a speedup, and this project has already caught itself doing it once.
+Same 4096^2 tile, so the numbers are directly comparable.  The two *Triton*
+arms are swept over one identical block grid -- an under-tuned baseline is the
+cheapest way to manufacture a speedup, and this project has already caught
+itself doing it once.  The bf16 arm is cuBLAS and is not swept, and it is bf16
+in / bf16 out where the Triton arms accumulate and return fp32; read it as a
+reference point, not a matched arm.  Both swept arms now carry a value check on
+their winning config -- the nvfp4 arm did not, and spent its whole life reading
+the transpose of its own weights.
 """
 import sys, torch, triton, triton.language as tl; sys.path.insert(0, "/home/rob/tessera/src")
 from tessera.alphabet import build_forest
@@ -105,7 +110,12 @@ scales = e4m3.reshape(N, K // 16).t().contiguous()
 # The comparator holds the SAME weights, so a quality difference cannot leak in.
 from tessera.encode import e2m1_value_table
 e2lut = e2m1_value_table(dev).float()
-nib = codes.to(torch.int32)
+# The kernel indexes `w_ptr + (k // 2) * rows + n`, i.e. the two nibbles in a
+# byte are consecutive in **k**.  `codes` is [N, K], so it must be transposed
+# before pairing -- without this the comparator silently reads the transpose of
+# its own weights (byte count, shape and addressing are all still valid, so it
+# never faults and no shape surfaces it; only a value check does).
+nib = codes.t().contiguous().to(torch.int32)          # [K, N]
 packed = ((nib[0::2, :] << 4) | nib[1::2, :]).to(torch.uint8).contiguous()
 Wb = W.to(torch.bfloat16)
 
@@ -129,9 +139,11 @@ def sweep(make, M, verify=None):
         raise SystemExit(f"fastest config {best[1:]} does not reproduce the reference")
     return best
 
-print(f"tile {N}x{K}, fp32 accumulate, all arms swept over one identical grid\n")
+import socket
+print(f"tile {N}x{K} on {socket.gethostname()}; the two Triton arms are swept "
+      f"over one identical grid, bf16 is unswept cuBLAS\n")
 print(f"{'M':>6}{'tessera 3.5bpp':>17}{'nvfp4 4.5bpp':>15}{'bf16 torch':>13}"
-      f"{'t/nv':>8}{'decode/FLOP':>13}")
+      f"{'t/nv':>8}{'t/bf16':>13}")
 x1 = torch.randn(1, K, device=dev)
 y = tessera_gemm(x1, sel, pt, lut, scales, gs, N, K)
 assert torch.allclose(y, x1 @ ref.t(), rtol=2e-5, atol=2e-4), "gemm disagrees with reference"
@@ -150,9 +162,12 @@ for M in _MS:
             x @ ref.t(), rtol=3e-2, atol=3e-2))
     v = sweep(lambda a, b, c, w, st: (lambda: nvfp4_gemm(
         x, packed, scales, e2lut, gs, N, K, bm=a, bn=b, bk=c,
-        bf16=True, warps=w, stages=st)), M)
+        bf16=True, warps=w, stages=st)), M,
+        verify=lambda a, b, c, w, st: torch.allclose(
+            nvfp4_gemm(x, packed, scales, e2lut, gs, N, K, bm=a, bn=b, bk=c,
+                       bf16=True, warps=w, stages=st),
+            x @ ref.t(), rtol=3e-2, atol=3e-2))
     xb = x.to(torch.bfloat16)
     bf = bench(lambda: xb @ Wb.t())
-    flops = 2.0 * M * N * K
     print(f"{M:>6}{t[0]:>12.1f} us{v[0]:>10.1f} us{bf:>9.1f} us"
-          f"{t[0]/v[0]:>8.2f}{(t[0]-v[0])*1e-6*flops/flops if False else (t[0]-bf)/max(bf,1e-9):>13.2f}")
+          f"{t[0]/v[0]:>8.2f}{t[0]/max(bf, 1e-9):>13.2f}")
