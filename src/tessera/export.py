@@ -322,6 +322,7 @@ def export_checkpoint_streaming(
     verify: bool = True,
     copy_aux: bool = True,
     progress=None,
+    shard_filter: "set[str] | None" = None,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -332,6 +333,16 @@ def export_checkpoint_streaming(
 
     Encoding runs on ``device``; the trellis is the whole cost of an export and
     it is a GPU job (principle 7).
+
+    ``shard_filter`` restricts the run to a subset of input shards.  The 1:1
+    shard mapping is what makes this safe: shards share no state -- the plan is
+    per-tensor, the forests are rebuilt per (grid, rung, width) and cached, and
+    nothing accumulates across shards except the report -- so N boxes each
+    taking a disjoint subset produce exactly the files one box would have
+    written, and the run becomes embarrassingly parallel across a fleet.  The
+    index and config a filtered run writes cover **only its own shards**; the
+    caller merges them.  This exists because a 320B-parameter export is nine
+    hours on one GB10 and the second one was idle at 4 W.
     """
     import shutil
 
@@ -354,9 +365,17 @@ def export_checkpoint_streaming(
             with safe_open(str(shard_path), framework="pt") as handle:
                 shards[shard_path.name] = list(handle.keys())
 
+    if shard_filter is not None:
+        unknown = sorted(set(shard_filter) - set(shards))
+        if unknown:
+            raise KeyError(f"shard_filter names absent shards: {unknown[:5]}")
+        shards = {k: v for k, v in shards.items() if k in shard_filter}
+        if not shards:
+            raise ValueError("shard_filter selected no shards")
+
     known = {name for names in shards.values() for name in names}
     missing = sorted(set(plan) - known)
-    if missing:
+    if missing and shard_filter is None:
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )

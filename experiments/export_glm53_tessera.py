@@ -27,6 +27,7 @@ second code path -- there is no branch that can disagree with the census.
 accepted.  The bytes are the claim (today's lesson: never a formula where an
 accountant exists), and the accountant is the thing that writes them.
 """
+import argparse
 import json, sys, time
 from pathlib import Path
 
@@ -42,10 +43,26 @@ PLAN = "/home/rob/.claude/jobs/033fd976/tmp/glm53_tessera_plan.json"
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--shards", default="",
+                    help="inclusive 1-based input-shard range, e.g. 61-120; "
+                         "empty means all of them")
+    ap.add_argument("--out", default=OUT)
+    args = ap.parse_args()
+
     plan = {k: int(v) for k, v in json.load(open(PLAN)).items()}
+    shard_filter = None
+    if args.shards:
+        lo, _, hi = args.shards.partition("-")
+        lo, hi = int(lo), int(hi or lo)
+        # The 1:1 shard mapping is what makes a split safe: shards share no
+        # state, so a disjoint subset writes exactly the files one box would.
+        shard_filter = {f"model-{n:05d}-of-00120.safetensors"
+                        for n in range(lo, hi + 1)}
     grid = tuple_grid(E2M1_GRID, 2)          # the serialisable arity-2 grid
     started = time.time()
-    print(f"plan: {len(plan):,} tensors -> {OUT}", flush=True)
+    print(f"plan: {len(plan):,} tensors -> {args.out}  "
+          f"shards={args.shards or 'all'}", flush=True)
 
     def progress(position, total, shard, n_units):
         elapsed = time.time() - started
@@ -55,9 +72,9 @@ def main():
               flush=True)
 
     report = export_checkpoint_streaming(
-        SRC, OUT, plan, grid=grid, rotation=RotationState.NONE,
+        SRC, args.out, plan, grid=grid, rotation=RotationState.NONE,
         with_diagonals=False, device="cuda", verify=True, copy_aux=True,
-        progress=progress,
+        progress=progress, shard_filter=shard_filter,
         extra_config={"prismaquant_plan": "everything-eligible",
                       "source_model": SRC,
                       "inherits": {"vision": "bf16 passthrough (Mia)",
@@ -79,7 +96,7 @@ def main():
                "passthrough_bytes": report.passthrough_bytes,
                "total_bytes": report.total_bytes,
                "grid_digest": report.grid_digest},
-              open(f"{OUT}/export_report.json", "w"), indent=1)
+              open(f"{args.out}/export_report.json", "w"), indent=1)
 
 
 if __name__ == "__main__":
