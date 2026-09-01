@@ -65,7 +65,7 @@ measured. See `docs/measurements/tessera-activation-aware-encoder-2026-09-01.md`
   0.11093 where **EXL3 at 3.0117 scores 0.11089**.
 - **The gap is the rate-distortion slope:** EXL3 buys 1.96× per payload bit,
   Tessera 1.347× per bpp on a clean within-family sweep. It widens with rate —
-  1.142× → ~1.43× → 1.572×.
+  1.142× → ~1.44× → 1.572×.
 - **Closed by measurement:** `R_IN_ONLY` rotation (0.987×, hurts), the global
   scale-headroom multiplier (loses to the `amax` rule), finer LDL blocks
   (non-monotonic), diagonal-Hessian importance weighting (a *provable* no-op).

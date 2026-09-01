@@ -218,13 +218,21 @@ round-trip, and returns `exact_bytes`.
 | geometry | scale bpp | total bpp | rel_err | vs `g32/h16` |
 |---|---:|---:|---:|---:|
 | `g32/h16` (today) | 0.5000 | 4.0005 | 0.09738 | 1.000× |
-| `g32/h16` + diagonals | 0.5000 | 4.0239 | 0.09689 | 1.005× |
+| `g32/h16` + diagonals | 0.5000 | 4.0122 | 0.09689 | 1.005× |
 | `g64/h32` | 0.2500 | 3.7505 | 0.10276 | 0.948× |
-| `g64/h32` + diagonals | 0.2500 | 3.7739 | 0.10137 | 0.961× |
+| `g64/h32` + diagonals | 0.2500 | 3.7622 | 0.10137 | 0.961× |
 | `g128/h64` | 0.1250 | 3.6255 | 0.10723 | 0.908× |
-| `g128/h64` + diagonals | 0.1250 | 3.6489 | 0.10519 | 0.926× |
+| `g128/h64` + diagonals | 0.1250 | 3.6372 | 0.10519 | 0.926× |
 | `g256/h128` | 0.0625 | 3.5630 | 0.11093 | 0.878× |
-| `g256/h128` + diagonals | 0.0625 | 3.5864 | 0.10905 | 0.893× |
+| `g256/h128` + diagonals | 0.0625 | 3.5747 | 0.10905 | 0.893× |
+
+*The accountant's totals carry ~0.0005 bpp of container overhead that the
+formula-derived `bpp` columns in Results 3–4 omit, and it prices the rank-1
+diagonal planes itself — the `+d` rows differ from their `−d` rows by exactly
+16·(rows+cols)/params = 0.011719 bpp and nothing more.  A first version of this
+table added that term on top of `exact_bytes` and over-charged every `+d` row by
+0.0117 bpp; the `rel_err` column was never affected and the corrected sizes make
+the diagonal arms marginally cheaper than first published, not dearer.*
 
 So the scale plane can be cut from 0.5000 bpp to 0.0625 — down to EXL3's order
 of overhead — for **1.139× error and 0.4375 bpp saved**.  That is a real,
@@ -254,12 +262,12 @@ still small.
 | bpp | EXL3 | Tessera (best arm at that size) | gap |
 |---:|---:|---:|---:|
 | 4.0117 | **0.05653** | 0.08888 (`d-q`, LDLQ + diagonals) | **1.572×** |
-| ~3.56–3.59 | ~0.0765 (interpolated) | 0.10905 (`g256/h128`+d) | ~1.43× |
+| 3.5747 | ~0.0759 (interpolated) | 0.10905 (`g256/h128`+d) | ~1.44× |
 | 3.0117 | **0.11089** | — (Tessera cannot reach 3.01) | — |
 | 3.0 payload bits | 0.11089 | 0.12666 (`E2M1_K1`) | **1.142×** |
 
 **EXL3's curve is below Tessera's at every size Tessera can reach, and the gap
-widens with rate** — 1.142× at 3.0 payload bits, ~1.43× near 3.57 bpp, 1.572×
+widens with rate** — 1.142× at 3.0 payload bits, ~1.44× near 3.57 bpp, 1.572×
 at 4.0117.  That is EXL3's steeper slope, not a single missing lever.
 
 ---

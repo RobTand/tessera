@@ -86,13 +86,15 @@ def main():
                         float(((x @ recon.T - ref).norm() / den)))
                     if tag not in sizes:
                         # The accountant, on the real bytes, with its own
-                        # round-trip verification -- not a formula.
+                        # round-trip verification -- not a formula.  It already
+                        # prices the diagonal planes: the +d/-d delta here is
+                        # exactly 16*(rows+cols)/params = 0.011719 bpp, so
+                        # adding that term again would double-count it.
                         built = encode_linear(w, grid=grid, q256=896, name=tag,
                                               code=CC, group=group, half=half,
                                               rotation=RotationState.NONE,
                                               with_diagonals=diag, verify=True)
-                        extra = 16 * (rows + cols) if diag else 0
-                        sizes[tag] = (built.exact_bytes * 8 + extra) / (rows * cols)
+                        sizes[tag] = built.exact_bytes * 8 / (rows * cols)
             print(f"{layer:>3} {proj:<10} done", flush=True)
             del w, wf, ref
             torch.cuda.empty_cache()
