@@ -1,0 +1,19 @@
+model.language_model.layers.10.mlp.experts.0.gate_proj.weight  slice 2048x512  torch.bfloat16
+  rung 1: depth 6, deep encode 1.2s
+  rung 2: depth 5, deep encode 1.2s
+  rung 3: depth 4, deep encode 1.1s
+  rung 4: depth 3, deep encode 1.1s
+  rung 5: depth 2, deep encode 1.1s
+  rung 6: depth 1, deep encode 1.1s
+  rung 7: depth 0, deep encode 1.0s
+
+   bpp  rung     native  trunc@rung1   ratio
+  0.50     1    0.94497      0.97177   1.028x
+  1.00     2    0.76999      0.79146   1.028x
+  1.50     3    0.57261      0.64388   1.124x
+  2.00     4    0.39516      0.50422   1.276x
+  2.50     5    0.28422      0.38354   1.349x
+  3.00     6    0.19661      0.31568   1.606x
+  3.50     7    0.10816      0.23288   2.153x
+
+wrote experiments/results/tessera_embedded_ladder.json

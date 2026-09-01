@@ -1,0 +1,84 @@
+{
+ "rows": [
+  {
+   "grid": "E2M1x2",
+   "rung": 3,
+   "k": 16,
+   "anchors": 0.5998052358627319,
+   "best_subset": 0.4939940571784973,
+   "free_lloyd": 0.46338769793510437,
+   "selection_penalty": 1.2141952461707477,
+   "value_penalty": 1.0660491406651007
+  },
+  {
+   "grid": "E2M1x2",
+   "rung": 4,
+   "k": 32,
+   "anchors": 0.4658578932285309,
+   "best_subset": 0.36720186471939087,
+   "free_lloyd": 0.33954691886901855,
+   "selection_penalty": 1.2686697372425688,
+   "value_penalty": 1.0814466110971848
+  },
+  {
+   "grid": "E2M1x2",
+   "rung": 5,
+   "k": 64,
+   "anchors": 0.3672330975532532,
+   "best_subset": 0.2568686306476593,
+   "free_lloyd": 0.2433384209871292,
+   "selection_penalty": 1.4296533470331698,
+   "value_penalty": 1.055602438799608
+  },
+  {
+   "grid": "E2M1x2",
+   "rung": "full",
+   "k": 256,
+   "anchors": 0.21488741040229797,
+   "best_subset": 0.21488741040229797,
+   "free_lloyd": 0.12556873261928558,
+   "selection_penalty": 1.0,
+   "value_penalty": 1.7113130468061626
+  },
+  {
+   "grid": "E4M3",
+   "rung": 3,
+   "k": 16,
+   "anchors": 0.23999678237097602,
+   "best_subset": 0.106706902384758,
+   "free_lloyd": 0.10074578864233834,
+   "selection_penalty": 2.249121443949414,
+   "value_penalty": 1.0591698553632096
+  },
+  {
+   "grid": "E4M3",
+   "rung": 4,
+   "k": 32,
+   "anchors": 0.1138903498649597,
+   "best_subset": 0.06078926580292838,
+   "free_lloyd": 0.05613722332886287,
+   "selection_penalty": 1.8735273137559973,
+   "value_penalty": 1.082869123162949
+  },
+  {
+   "grid": "E4M3",
+   "rung": 5,
+   "k": 64,
+   "anchors": 0.04331460701567786,
+   "best_subset": 0.031805707940033505,
+   "free_lloyd": 0.03375599639756339,
+   "selection_penalty": 1.3618501149964415,
+   "value_penalty": 0.9422239404649698
+  },
+  {
+   "grid": "E4M3",
+   "rung": "full",
+   "k": 256,
+   "anchors": 0.026397906775985445,
+   "best_subset": 0.026397906775985445,
+   "free_lloyd": 0.014318624777453286,
+   "selection_penalty": 1.0,
+   "value_penalty": 1.8436062950369863
+  }
+ ]
+}
