@@ -877,7 +877,7 @@ def _gemm_kernel(
     global_scale, M, rows, cols,
     memory: tl.constexpr, rate: tl.constexpr, half: tl.constexpr, pad: tl.constexpr,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
-    BF16: tl.constexpr, GROUP_M: tl.constexpr,
+    BF16: tl.constexpr, GROUP_M: tl.constexpr, WIDE: tl.constexpr,
 ):
     """``x @ W.T`` for prefill: decode a weight tile, then feed it to ``tl.dot``.
 
@@ -928,17 +928,27 @@ def _gemm_kernel(
         live = live_k[:, None] & live_n[None, :]
 
         # Select plane: row n's `memory + 1` history bits start at bit b.
-        b = k.to(tl.int64) * (rows + pad) + (pad - memory) + n.to(tl.int64)
-        byte = b // 8
-        shift = 9 - (b % 8).to(tl.int32)
+        #
+        # The index arithmetic is int32 whenever the planes fit, and they nearly
+        # always do: a 4096x4096 unit's largest select-plane bit index is
+        # ~16.8M against int32's 2.1B headroom.  This is not a micro-optimisation
+        # -- it is two 64-bit multiplies and two 64-bit divisions PER WEIGHT in
+        # the inner loop of a decode-bound kernel, and the GEMV never paid it
+        # because it addresses one column at a time.  `WIDE` restores int64 for
+        # units that genuinely need it; the wrapper decides, nothing is assumed.
+        kk = k.to(tl.int64) if WIDE else k
+        nn = n.to(tl.int64) if WIDE else n
+        b = kk * (rows + pad) + (pad - memory) + nn
+        byte = b >> 3
+        shift = 9 - (b & 7).to(tl.int32)
         s0 = tl.load(select_ptr + byte, mask=live, other=0).to(tl.int32)
         s1 = tl.load(select_ptr + byte + 1, mask=live, other=0).to(tl.int32)
         window = (((s0 << 8) | s1) >> shift) & 0x7F
 
         # Point plane: `rate - 1` bits, densely packed in row order.
-        q = (k.to(tl.int64) * rows + n.to(tl.int64)) * (rate - 1)
-        qbyte = q // 8
-        qshift = (16 - (rate - 1) - (q % 8)).to(tl.int32)
+        q = (kk * rows + nn) * (rate - 1)
+        qbyte = q >> 3
+        qshift = (16 - (rate - 1) - (q & 7)).to(tl.int32)
         p0 = tl.load(point_ptr + qbyte, mask=live, other=0).to(tl.int32)
         p1 = tl.load(point_ptr + qbyte + 1, mask=live, other=0).to(tl.int32)
         pt = (((p0 << 8) | p1) >> qshift) & point_mask
@@ -993,6 +1003,7 @@ def tessera_gemm(
     block_k: int = 64,
     bf16: bool = False,
     group_m: int = 8,
+    wide: "bool | None" = None,
     num_warps: int = 4,
     num_stages: int = 3,
 ) -> torch.Tensor:
@@ -1015,6 +1026,12 @@ def tessera_gemm(
             "assumes column starts land on byte boundaries"
         )
     M = x.shape[0]
+    # Both planes are addressed in bits.  int32 holds the larger of the two up
+    # to ~2.1e9 bits; past that the arithmetic must widen or it wraps silently,
+    # which is the same class of bug that corrupted the body plane at rate 9.
+    if wide is None:
+        span = max(cols * (rows + SELECT_PAD), cols * rows * (rate - 1))
+        wide = span >= (1 << 31) - 8
     out = torch.empty((M, rows), dtype=torch.float32, device=x.device)
     grid = (triton.cdiv(M, block_m) * triton.cdiv(rows, block_n),)
     _gemm_kernel[grid](
@@ -1022,7 +1039,7 @@ def tessera_gemm(
         float(global_scale), M, rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
         BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
-        BF16=bf16, GROUP_M=group_m,
+        BF16=bf16, GROUP_M=group_m, WIDE=wide,
         num_warps=num_warps, num_stages=num_stages,
     )
     return out

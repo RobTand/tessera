@@ -135,7 +135,11 @@ print(f"{'M':>6}{'tessera 3.5bpp':>17}{'nvfp4 4.5bpp':>15}{'bf16 torch':>13}"
 x1 = torch.randn(1, K, device=dev)
 y = tessera_gemm(x1, sel, pt, lut, scales, gs, N, K)
 assert torch.allclose(y, x1 @ ref.t(), rtol=2e-5, atol=2e-4), "gemm disagrees with reference"
-for M in (1, 8, 32, 128, 512, 2048, 4096):
+# M values come from argv so the sweep can be split across Sparky and
+# Sparklina.  Both boxes are GB10 sm_121; run one M on BOTH as a cross-check,
+# because "we measured it on the other box" is only sound if the boxes agree.
+_MS = [int(a) for a in sys.argv[1:]] or [1, 8, 32, 128, 512, 2048, 4096]
+for M in _MS:
     x = torch.randn(M, K, device=dev)
     t = sweep(lambda a, b, c, w, st: (lambda: tessera_gemm(
         x, sel, pt, lut, scales, gs, N, K, block_m=a, block_n=b, block_k=c,
