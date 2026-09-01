@@ -69,14 +69,46 @@ measured. See `docs/measurements/tessera-activation-aware-encoder-2026-09-01.md`
 - **Closed by measurement:** `R_IN_ONLY` rotation (0.987×, hurts), the global
   scale-headroom multiplier (loses to the `amax` rule), finer LDL blocks
   (non-monotonic), diagonal-Hessian importance weighting (a *provable* no-op).
-- **Still open, neither evaluated:** raise the grid cap above 3.5 payload bits;
-  the free-grid question (≈1.22× at zero redundancy, inherited not re-measured).
-  Wire-free encoder levers: `static_act_order`, and a per-group scale search
-  over the **stored scale words** (the effective scale snaps through E8M0 + a
-  4-bit refinement, so a continuous multiplier is the wrong search space).
+- **Still open:** the free-grid question (≈1.22× at zero redundancy,
+  inherited not re-measured) — and, under the FP4-native constraint below, it
+  is out of scope for the default; `static_act_order`.
+- **Built since (2026-09-01, later the same day):** the per-group scale search
+  over the **stored scale words** is `scale_refit` — see the next section.
 
 **The best Tessera arm at Mia's exact rate (4.0117 bpp) scores 0.08888 where
 EXL3 scores 0.05653.** The size target is reachable; the quality is not.
+
+## The FP4-native lever battery — MEASURED, 2026-09-01
+
+Rob's constraint, same day: Tessera must natively use NVIDIA's 4-bit tensor
+cores. Tessera-4's decoded tile already does (E2M1 codes × a per-16
+E4M3-representable S6b scale); the learned codebook is the one lever that
+does not, and it stays kernel-lane research. Every FP4-native lever was then
+priced on the **real K-grouped S6b plane** (every earlier number used an
+N-grouped fp32 amax plane), six routed experts, held-out, against
+EXL3@A4 projected. Full tables: `docs/measurements/tessera-fp4-native-levers-2026-09-01.md`.
+
+- **The plane's VALUES are the lever, and it ships.** LS refit of each
+  half's scale to the trellis's codes, landed on the stored S6b words,
+  alternated with the trellis and ending on a refit: **1.084× over the
+  artifact plane at the same four Viterbi passes, default-on** (`cf82b00`,
+  `61df165`), no wire change, the profile id untouched. EXL3@A4 gap
+  1.253× → ~1.199×. Encode time ~4× the amax plane's; `scale_refit=1` is a
+  free 1.044×. The merged 151.487 GiB export was built at refit 0.
+- **The plane cannot be deleted or thinned.** Rank-1 (row × 16-block)
+  field 0.77×, 0.83× with its bits re-spent on L=8; E8M0-only 0.84×;
+  E8M0 + L=2 at 4.0 bpp 0.90×. The 0.5 bpp buys per-column magnitude
+  structure and the per-16 hardware scale is the right carrier for it.
+- **Extra rate has one FP4-native home: Wei L=2 in the trellis** (+0.25 bpp,
+  1.104×, gap → 1.142×), a wire change. **At exactly 4.0 bpp, one E4M3
+  per 32 duplicated into both per-16 slots + L=2 is 1.047× over the shipping
+  encoder** — the strongest same-size wire candidate.
+- **LDLQ's regulariser was the unswept knob:** σ=1.0 is 1.137× (S6b) /
+  1.178× (flat E4M3) where EXL3's 0.025 gave 1.083×; stacked with the refit,
+  1.134× / 1.149×, gap → 1.131× / 1.125×. Still a screen — adjacent 128-token
+  halves — until the 16-document capture running on lina scores it.
+- **Closed under the constraint:** global headroom (again), H16-weighted LS
+  (+1%, needs activations), group-local LDLQ, every plane-thinning form.
 
 <details><summary>The superseded bound, kept for the record</summary>
 
@@ -161,11 +193,13 @@ above is. What follows from them:
    which is exactly where the shipping rungs sit (`completion=0`). Also a wire
    change (a VALUES plane). The 1.78 dB figure is inherited from
    `tessera-project-scope`, not re-measured, so re-measure it first.
-3. **Cheap and wire-free, if the above is going to take a while:**
-   `static_act_order`, and a per-group scale search over the stored scale
-   words. Together these are the difference between the 1.076× this LDLQ gets
-   and the 1.258× GPTQ+JSO gets on a scalar coder — worth ~1.17×, not enough
-   alone.
+3. **Cheap and wire-free — half built.** The per-group scale search over the
+   stored scale words is `scale_refit`, default-on since `cf82b00`/`61df165`
+   (1.084×). `static_act_order` is still unmeasured on Tessera. Under the
+   FP4-native constraint items 1 and 2 narrow to: Wei L=2 (+0.25 bpp,
+   1.104×) or per-32 E4M3 + L=2 at 4.0 bpp (1.047×) — both wire changes —
+   and the LDLQ stack once the multi-document capture says whether its
+   1.134× generalises.
 4. **The scale-plane geometry is a real size lever even so.** `g256/h128` ships
    at 3.5630 bpp for 1.139× error, all on the wire today, accountant-priced. If
    a smaller-than-Mia artifact is wanted more than a better one, that is the

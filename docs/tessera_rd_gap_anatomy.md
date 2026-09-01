@@ -162,6 +162,13 @@ Puncturing, fractional redundancy, higher-rate convolutional codes, trellis
 memory, rotation, and learned scalar spacings. Do not re-open without new
 evidence; each has a measurement above.
 
+Added 2026-09-01 under the FP4-native constraint
+(`docs/measurements/tessera-fp4-native-levers-2026-09-01.md`): deleting or
+thinning the scale plane (rank-1 field 0.77–0.83×, E8M0-only 0.84×), the
+global headroom multiplier, group-local LDLQ. What opened: the plane's
+VALUES (LS refit, 1.084×, default-on), Wei L=2 (+0.25 bpp, 1.104×), and the
+LDLQ regulariser (σ=1.0, 1.137× — a screen).
+
 
 ## Serving cost of a per-unit grid, and why it is now 0.047%
 
