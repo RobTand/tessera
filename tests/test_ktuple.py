@@ -117,11 +117,23 @@ def test_coset_partition_is_balanced_at_the_cap():
     assert [len(s) for s in subsets] == [64, 64, 64, 64]
 
 
-def test_coset_partition_refuses_when_unbalanced():
-    """Below the cap the anchors are representatives, not a full lattice."""
+def test_below_the_cap_the_partition_is_balanced_by_stride_instead():
+    """Below the cap the anchors are representatives, not a full lattice.
+
+    This used to raise.  Refusing was the right response to an unbalanced
+    split -- the point field is a fixed ``R-1`` bits, so unequal subsets are
+    unencodable, not merely worse -- but refusing at the *partition* left every
+    sub-cap rung of every k-tuple family unreachable, which is why the family
+    looked like a two-point set rather than a rate ladder.  The stride rule is
+    balanced for any anchor count divisible by four, so the constraint is met
+    without giving anything up, and only where the coset rule had raised.
+    """
     grid = tuple_grid(E2M1_GRID, 2)
-    with pytest.raises(GrammarError, match="unbalanced"):
-        TCQ(build_forest(6, grid=grid), CC).subsets
+    for rate in range(1, 7):
+        subsets = TCQ(build_forest(rate, grid=grid), CC).subsets
+        width = (1 << (rate + 1)) // 4
+        assert [len(s) for s in subsets] == [width] * 4, rate
+        assert sorted(p for s in subsets for p in s) == list(range(1 << (rate + 1)))
 
 
 # --- the k-dimensional forest generalises the scalar one -----------------

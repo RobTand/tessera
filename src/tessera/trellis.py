@@ -123,7 +123,11 @@ class TCQ:
           rather than an interval.
 
         Balance is not cosmetic: an unbalanced split gives subsets of different
-        sizes, and the point field is a fixed ``R-1`` bits wide.
+        sizes, and the point field is a fixed ``R-1`` bits wide.  The ``coset``
+        rule is balanced only where the anchors *are* that lattice, which on a
+        k-tuple grid means the rate cap and nothing else; below the cap it is
+        the stride rule that holds, and the fallback below is what makes the
+        sub-cap rungs of a k-tuple family encodable at all.
         """
         anchors = self.forest.anchors
         grid = self.forest.grid
@@ -133,12 +137,38 @@ class TCQ:
             for position, anchor in enumerate(anchors):
                 groups[sum(keys[anchor]) % SUBSET_COUNT].append(position)
             width = len(anchors) // SUBSET_COUNT
-            if any(len(group) != width for group in groups):
+            if all(len(group) == width for group in groups):
+                return tuple(tuple(group) for group in groups)
+            if len(anchors) % SUBSET_COUNT:
                 raise GrammarError(
-                    f"coset partition of {grid.name} is unbalanced: "
-                    f"{[len(g) for g in groups]} anchors per subset, need {width}"
+                    f"{grid.name} at rate {self.rate} has {len(anchors)} "
+                    f"anchors, which no rule splits into {SUBSET_COUNT} equal "
+                    f"subsets"
                 )
-            return tuple(tuple(group) for group in groups)
+            # Balance is structural, not a preference: the code emits one of
+            # four subsets per step and the point field is a fixed R-1 bits, so
+            # unequal subsets are not a worse partition, they are an unencodable
+            # one.  The rank-sum coset rule is balanced only when the anchors
+            # are a full lattice -- true at the rate cap, where every code is an
+            # anchor, and false at every rate below it, where the anchors are
+            # the representatives of k-d bisection blocks chosen for error and
+            # not for their residues.  Rate 3 of E2M1x2 splits [3,5,4,4].
+            #
+            # So below the cap the partition falls back to the stride rule,
+            # which is balanced by construction for any anchor count divisible
+            # by four.  ``_build_forest_kd`` already sorts anchors by rank sum
+            # then rank vector -- neighbouring anchors are near in value -- so
+            # taking every fourth separates neighbours, which is what
+            # Ungerboeck partitioning is for.
+            #
+            # This cannot move a byte of any artifact that exists: it is
+            # reached only where the coset rule *raised*, so every rate it
+            # newly admits was previously unencodable.  The rate cap keeps the
+            # coset partition verbatim.
+            return tuple(
+                tuple(range(len(anchors)))[offset::SUBSET_COUNT]
+                for offset in range(SUBSET_COUNT)
+            )
         order = [a for a in value_order(grid) if a in set(anchors)]
         index = {anchor: position for position, anchor in enumerate(anchors)}
         ordered = [index[a] for a in order]

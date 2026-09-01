@@ -144,9 +144,20 @@ def encode_linear(
     half: int = DEFAULT_HALF,
     rotation: RotationState = RotationState.NONE,
     with_diagonals: bool = False,
+    completion: "int | None" = 0,
     verify: bool = True,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
+
+    ``completion`` is the second rate axis and it was previously nailed shut at
+    zero here.  A column at body rate ``R`` may spend up to ``cap - R`` further
+    bits selecting among the descendants its trellis subset reaches; ``None``
+    spends every one of them, an integer spends at most that many, and ``0``
+    spends none.  It is a real rate: the artifact pays for what it spends, so
+    ``(q256, completion)`` is a two-dimensional rate grid, not a rung and a
+    switch.  The default stays ``0`` so the exporter's rung names keep meaning
+    the rate they have always meant -- ``q256`` alone -- and a caller that wants
+    the other axis asks for it.
 
     ``verify`` reads the bytes back and compares to the encoder's own
     reconstruction.  It is on by default and costs one decode: the guarantee
@@ -165,7 +176,7 @@ def encode_linear(
     unit = encode_unit(
         weight, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
-        completion=0, group=group, half=half,
+        completion=completion, group=group, half=half,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares

@@ -83,6 +83,55 @@ def completion_capacity(rate: int, cap: int = C_FULL_BITS) -> int:
     return cap - rate
 
 
+def completion_widths(
+    rates: "tuple[int, ...]", cap: int = C_FULL_BITS, limit: "int | None" = None
+) -> "tuple[int, ...]":
+    """Bits the COMPLETION plane spends per column at an encoded depth.
+
+    ``completion_capacity`` is a *ceiling* -- what the rate leaves room for.
+    The encoder spends ``min(limit, capacity)`` (``encode_unit``), so these are
+    two different numbers whenever the unit was encoded shallower than its rate
+    allows, and the plane must be sized by the one that was actually written.
+    ``limit=None`` means "as deep as each rate allows" and reproduces the
+    ceiling exactly, which is why every full-depth artifact is unaffected.
+    """
+    caps = tuple(completion_capacity(rate, cap) for rate in rates)
+    if limit is None:
+        return caps
+    if limit < 0:
+        raise GrammarError(f"completion limit {limit} is negative")
+    return tuple(min(limit, c) for c in caps)
+
+
+def completion_limit_from_elements(
+    elements: int, rates: "tuple[int, ...]", steps: int, cap: int = C_FULL_BITS
+) -> "int | None":
+    """Recover the depth a unit was written at from its declared plane size.
+
+    The COMPLETION plane's element count is already on the wire -- the terminal
+    records one per plane -- and ``sum(min(limit, cap - R))`` is monotone in
+    ``limit``, so the depth is recoverable without a new schema field.  A reader
+    that instead assumed the ceiling would mis-slice every shallow unit.
+    """
+    caps = [completion_capacity(rate, cap) for rate in rates]
+    ceiling = max(caps, default=0)
+    if steps <= 0 or not caps:
+        return None if elements == 0 else _unrecoverable(elements, steps)
+    for limit in range(ceiling + 1):
+        if sum(min(limit, c) for c in caps) * steps == elements:
+            return None if limit == ceiling else limit
+    return _unrecoverable(elements, steps)
+
+
+def _unrecoverable(elements: int, steps: int):
+    raise GrammarError(
+        f"COMPLETION declares {elements} elements over {steps} steps, which no "
+        f"completion depth over this rate schedule produces. The plane, the "
+        f"terminal and the rate schedule disagree; refusing to guess a depth "
+        f"and mis-slice the plane."
+    )
+
+
 def descendant_set_size(completion: int) -> int:
     """``|D(a)| = 2**c`` -- the per-position reachable set after completion."""
     if completion < 0:

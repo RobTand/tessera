@@ -185,6 +185,7 @@ def build_planes(
     with_diagonals: bool = True,
     cap: int = C_FULL_BITS,
     arity: int = 1,
+    spec: "TerminalSpec | None" = None,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -193,6 +194,14 @@ def build_planes(
     RELEASE plane's full extent: every terminal is a prefix of the declared
     extent, so a terminal may never claim more released positions than the
     plane declares.
+
+    ``spec`` declares the terminal this unit is built for, and it is what makes
+    the COMPLETION plane's extent follow the depth the encoder actually used
+    rather than the depth the *rate* leaves room for.  Passing ``None`` sizes
+    COMPLETION at full capacity, which is what a unit that used every
+    completion bit gets anyway -- so the default is unchanged.  Without it a
+    column encoded at ``completion=0`` still paid ``cap - rate`` bits for an
+    all-zero plane, which is what made every rung of a family weigh the same.
 
     ``with_diagonals=False`` declares segment 2a **absent from the unit**, which
     is different from a terminal that merely truncates it away.  A terminal's
@@ -208,7 +217,7 @@ def build_planes(
             kind,
             geometry,
             rates,
-            None,
+            spec,
             len(alphabet_blob),
             len(descendant_blob),
             max_released,

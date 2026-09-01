@@ -103,6 +103,14 @@ class EncodedUnit:
     # along.  These travel in the manifest geometry on the wire.
     group: int = 32
     half: int = 16
+    # The completion depth this unit was *encoded* at, or None for "as deep as
+    # each rate allows".  It is not the same as ``3 - R``: the encoder truncates
+    # to ``min(completion, depth)`` (see ``encode_unit``), so a unit written at
+    # completion=0 carries no completion information at all.  The serialiser
+    # needs it to size the COMPLETION plane at the depth that was used rather
+    # than the depth the rate leaves room for -- writing the wider plane is what
+    # made every rung of a family weigh the same.
+    completion_limit: "int | None" = None
 
     @property
     def released_positions(self) -> int:
@@ -423,6 +431,7 @@ def encode_unit(
         diagonals=fitted,
         group=group,
         half=half,
+        completion_limit=completion,
     )
 
 

@@ -28,7 +28,12 @@ from .alphabet import (
     build_forest,
     grid_digest,
 )
-from .grammar import completion_capacity, validate_rate_schedule
+from .grammar import (
+    completion_capacity,
+    completion_limit_from_elements,
+    completion_widths as completion_widths_for,
+    validate_rate_schedule,
+)
 from .container import parse, serialize
 from .decode import reconstruct_unit
 from .encode import EncodedUnit
@@ -157,7 +162,13 @@ def build_unit_artifact(
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity
     rates = unit.rates
-    completion_widths = tuple(completion_capacity(r, grid.rate_cap) for r in rates)
+    # The depth the encoder *used*, not the depth the rate leaves room for.
+    # Sizing this plane from the rate alone wrote a full-width, all-zero plane
+    # for every unit encoded shallower than its cap -- which is why every rung
+    # of a family used to weigh the same.  ``completion_limit=None`` (full
+    # depth) reproduces the old widths exactly, so full-depth artifacts are
+    # byte-identical across this change.
+    widths = completion_widths_for(rates, grid.rate_cap, unit.completion_limit)
     geometry = Geometry(
         rows=rows,
         columns=cols,
@@ -174,13 +185,26 @@ def build_unit_artifact(
         PlaneKind.DESCENDANT: descendant,
         PlaneKind.BODY: pack_body(unit.body_bits, rates),
         PlaneKind.SCALE_BASE: pack_uniform(unit.scale_base, 8),
-        PlaneKind.COMPLETION: pack_body(unit.completion_bits, completion_widths),
+        PlaneKind.COMPLETION: pack_body(unit.completion_bits, widths),
         PlaneKind.SCALE_REFINE: pack_uniform(unit.scale_refine, 4),
         PlaneKind.RELEASE: pack_uniform(unit.release_code, 4),
     }
     if has_diagonals:
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
+    spec = TerminalSpec(
+        "t-nvfp4",
+        widths,
+        released_positions=unit.released_positions,
+        with_scale_base=True,
+        with_scale_refine=True,
+        with_diagonals=has_diagonals,
+    )
+    # The spec is built first and handed to the layout on purpose: the plane
+    # extent, the bytes packed into it and the terminal that describes it are
+    # one decision, and the bug this fixes was three call sites disagreeing
+    # about it (the extent said "capacity", the payload said "capacity", the
+    # encoder said "min(limit, capacity)").
     planes = build_planes(
         geometry,
         rates,
@@ -192,16 +216,9 @@ def build_unit_artifact(
         with_diagonals=has_diagonals,
         cap=grid.rate_cap,
         arity=grid.arity,
+        spec=spec,
     )
     region = build_plane_region(planes, payloads)
-    spec = TerminalSpec(
-        "t-nvfp4",
-        completion_widths,
-        released_positions=unit.released_positions,
-        with_scale_base=True,
-        with_scale_refine=True,
-        with_diagonals=has_diagonals,
-    )
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
         plane_region=region, cap=grid.rate_cap, arity=grid.arity,
@@ -276,19 +293,29 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     # The manifest deferred the rate ceiling because it had no grid; there is
     # one now, so apply it before a single code becomes a weight.
     validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap)
-    completion_widths = tuple(completion_capacity(r, grid.rate_cap) for r in rates)
     if rows % grid.arity:
         raise GrammarError(
             f"geometry declares {rows} rows, not a whole number of arity-"
             f"{grid.arity} tuples over grid {grid.name}"
         )
     steps = rows // grid.arity
+    # The COMPLETION plane's element count is on the wire, and the depth is the
+    # unique solution of ``sum(min(limit, cap - R)) * steps``.  Recomputing the
+    # ceiling here instead would mis-slice every unit encoded shallower than its
+    # rate allows -- silently, since the bits would still unpack.
+    from .planes import CANONICAL_PLANE_ORDER
+
+    completion_limit = completion_limit_from_elements(
+        terminal.plane_elements[CANONICAL_PLANE_ORDER.index(PlaneKind.COMPLETION)],
+        rates,
+        steps,
+        grid.rate_cap,
+    )
+    widths = completion_widths_for(rates, grid.rate_cap, completion_limit)
 
     forests = _read_forest_planes(
         rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT], grid
     )
-
-    from .planes import CANONICAL_PLANE_ORDER
 
     n_released = terminal.plane_elements[
         CANONICAL_PLANE_ORDER.index(PlaneKind.RELEASE)
@@ -303,7 +330,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         # tensor is a *boolean mask* in torch, not an integer index.  The two
         # planes share a reader and must not share a dtype.
         completion_bits=unpack_body(
-            chunks[PlaneKind.COMPLETION], completion_widths, steps, device
+            chunks[PlaneKind.COMPLETION], widths, steps, device
         ).long(),
         scale_base=unpack_uniform(
             chunks[PlaneKind.SCALE_BASE],
@@ -316,6 +343,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,
+        completion_limit=completion_limit,
         rotation=manifest.branch.rotation,
         rotation_block=128,
         diagonals=(
