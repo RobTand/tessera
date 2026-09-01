@@ -94,7 +94,9 @@ EXL3@A4 projected. Full tables: `docs/measurements/tessera-fp4-native-levers-202
   artifact plane at the same four Viterbi passes, default-on** (`cf82b00`,
   `61df165`), no wire change, the profile id untouched. EXL3@A4 gap
   1.253× → ~1.199×. Encode time ~4× the amax plane's; `scale_refit=1` is a
-  free 1.044×. The merged 151.487 GiB export was built at refit 0.
+  free 1.044×. The merged 151.487 GiB export was built at refit 0. This is a
+  per-tensor screen (six tensors, weight leg, 128 held-out tokens);
+  promotion needs the served refit-0-vs-4 A/B, queued.
 - **The plane cannot be deleted or thinned.** Rank-1 (row × 16-block)
   field 0.77×, 0.83× with its bits re-spent on L=8; E8M0-only 0.84×;
   E8M0 + L=2 at 4.0 bpp 0.90×. The 0.5 bpp buys per-column magnitude

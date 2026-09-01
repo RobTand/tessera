@@ -112,6 +112,12 @@ and k refits with the last one trailing; `scale_refit=0` is the amax plane
 byte for byte and `scale_refit=1` is the free 4.4%. Six passes buy another
 0.2% for 50% more time — four is the knee.
 
+**What this evidence is:** a per-tensor screen — six tensors, the
+output-space weight leg, 128 held-out tokens (principle 3). Default-on is
+authorised for a format that has not shipped; *promotion* needs the served
+A/B (refit 0 vs refit 4 on the served-KL harness of
+`tessera-served-kl-2026-09-01.md`), which is queued, not run.
+
 **Encode cost:** 0.36 s per Viterbi pass on a 2048×4096 expert, so the
 default is ~4× the amax plane's encode (1.43 s vs 0.38 s). On the real export
 path under concurrent jobs the same ratio read refit 0 / 1 / 3 = 2.25 / 4.61
@@ -240,8 +246,12 @@ tensors, held-out, served activation quantiser. Sorted by bpp:
 | E4M3 per-16 + LS  L=8 | 4.4375 | 0.07716 | 1.166x | 0.11509 | 1.115x |
 | S6b per-16 + LS  L=8 | 4.4375 | 0.07954 | 1.132x | 0.11669 | 1.130x |
 
-Read at a fixed size. **At exactly 4.0 bpp the frontier point is one E4M3
-per 32 + L=2: 1.047× over the shipping encoder** (per-16 flat + L=1 1.017×,
+Read at a fixed size — and read bpp as *disk* bpp, which is how Tessera is
+accounted throughout: in the stock lane the materialised tensor weighs
+NVFP4's 4.5 bpp whatever the plane cost on disk (`kernel-lane.md`), so a
+per-32 plane's 0.25 bpp is a disk and kernel-lane saving, not a resident
+one. **At exactly 4.0 bpp the frontier point is one E4M3 per 32 + L=2:
+1.047× over the shipping encoder** (per-16 flat + L=1 1.017×,
 per-64 + L=4 1.018×, per-128 + L=8 0.973× — the rate axis saturates faster
 than the plane degrades, so the trade stops at per-32). Above 4.0 the
 frontier is per-32 + L=4 at 4.125 (1.074×), then per-16 + L=2 at 4.25
@@ -291,7 +301,7 @@ The status doc's 1.72× is the first row; the default encoder is now at
 | | vs EXL3@A4 | status |
 |---|---:|---|
 | artifact plane (floor mantissa, refit 0) | 1.253× | what the 151.487 GiB export was built with |
-| LS refit, trailing, four passes (`61df165`) | ~1.199× | **default**; no wire change |
+| LS refit, trailing, four passes (`61df165`) | ~1.199× | **default**; no wire change; per-tensor screen, served A/B pending |
 | + Wei L=2 (+0.25 bpp) | 1.142× | wire change to the trellis |
 | per-32 E4M3 dup + L=2 at 4.0 bpp | 1.173× | wire change, same size |
 | + full-LDLQ σ=1.0 (S6b / flat E4M3) | 1.131× / 1.125× | screen until the multi-document capture scores it |
