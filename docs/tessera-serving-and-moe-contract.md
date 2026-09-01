@@ -108,3 +108,79 @@ comparator, which `tessera-project-scope` already flags as not the real
 comparison, and prefill needs a GEMM where only dequant-then-GEMM exists. If
 that loses badly, the lane's shippability is decided by numbers rather than
 after the backend is built.
+
+---
+
+## 7. The exporter, and what it settled (2026-09-01)
+
+`src/tessera/export.py` closes the first of the two blockers this document
+opened with. `build_unit_artifact` already inverted exactly; what was missing
+was the walk around it.
+
+- `export_checkpoint(tensors, plan, out, grid=…)` — in-memory, for tests.
+- `export_checkpoint_streaming(src, out, plan, grid=…)` — one output shard per
+  input shard, so a 100B-plus checkpoint never has to fit beside its own
+  encoding. Encoding runs on GPU.
+
+`plan` maps tensor name → **per-position** rate in q256 units. A name in the
+plan that is absent from the checkpoint is an error, not a no-op: a plan that
+silently fails to apply is how an artifact ends up heavier than the allocation
+that justified it.
+
+**Rendering identity is asserted, not assumed.** Every unit is read back off
+its own bytes and compared to the encoder's reconstruction *before* it is
+written. The surrogate that priced a Linear and the bytes that ship are then
+the same tensor by construction.
+
+**The arity trap, now pinned by test.** `build_unit_artifact`'s `q256` is the
+per-**code** rate; a rung name's R-number is per-**position**, and a code spans
+`arity` positions. Passing the rung number straight through produces a legal
+artifact whose manifest declares *half* the rate it carries. `R896` at arity 2
+lands on **4.001953 bpp** on a 512×4096 unit — the 0.002 is the fixed forest
+planes amortising.
+
+### 7.1 Tessera artifacts are TP-degree-specific — EXL3's are not
+
+Reading vLLM's `exl3.py` beside our encoder settles an open question the wrong
+way for us. EXL3 shards by `Tensor.narrow` on `trellis` dim 0/1 and on
+`suh`/`svh` (`shard_exl3_col` / `shard_exl3_row`), because its trellis is a
+structured tile tensor `[in/16, out/16, 64]`. Any TP degree is a view.
+
+A Tessera unit is one blob of packed bit-planes with per-column rates. No byte
+range is a sub-weight, and the trellis runs **down rows within a column**
+(`body_bits` is `[rows/arity, cols]`), so a row-parallel split — exactly what
+column-parallel Linears like gate/up need — cuts the trellis along its own
+state path. **A Tessera artifact must be re-encoded per rank.** The config
+declares `tp_size` so a loader cannot quietly use one at the wrong degree.
+
+This is a real cost EXL3 does not pay. It is not a bug to fix; it follows from
+the trellis being the thing that buys the rate. It matters directly here,
+because the target is a 2×DGX-Spark serve.
+
+### 7.2 Two corrections to what this repo believed
+
+- **`exl3.py` is not in stock vLLM.** It is absent from
+  `vllm/vllm-openai@905c0293` and present only in
+  `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3`. Serving EXL3 means
+  running Mia's image.
+- **Mia's artifact self-declares it is not qualified to serve.**
+  `exl3-mcg-storage-abi.json` carries `"serving_reader_qualified": false`,
+  `"qualified_tp_sizes": []`, and the reason *"ExLlamaV3 v0.0.43 has no audited
+  GLM-5.3 TP model load/inference receipt"*. Its scope is
+  `glm53_routed_experts_only`.
+
+### 7.3 The EXL3 comparator is still open, and should move to served KL
+
+Five offline probes could not reproduce EXL3's weights: `rel_err` ≈ √2, norm
+ratio 0.999, cosine ≈ 0, identical through `execute_exl3_linear`, an identity
+probe, and EXL3's own `get_weight_tensor()`. Ruled out: wrong source (`suh`
+correlates with BF16 column norms, +0.09 to +0.30, layer-varying), expert
+permutation (all 288 experts checked, best |cos| 0.0021), and garbage
+(reconstruction kurtosis matches the true weight's to three significant figures
+and tracks it per tensor). The values are right and the **basis** is wrong —
+consistent with a missing Hadamard/sign leg (`su`/`sv` are `None`, `mul1` is
+False).
+
+The conclusion is not to keep probing. The comparator that decides anything is
+**served KL** (principle 3), and serving lets vLLM perform the decode, which
+removes this problem entirely rather than solving it.

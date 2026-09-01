@@ -269,6 +269,12 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
         "requires_serve_flags": [],
+        # A unit is one trellis blob, not a sliceable tensor: the path runs down
+        # rows within a column, so a row-parallel split cuts the trellis along
+        # its own state. EXL3 narrows tensor dims and is TP-agnostic; Tessera
+        # must be *re-encoded* per rank, which makes an artifact TP-specific.
+        # Declared so a loader cannot quietly use it at the wrong degree.
+        "tp_size": 1,
         "accounting": {
             "quantized_params": report.quantized_params,
             "quantized_bytes": report.quantized_bytes,

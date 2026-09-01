@@ -103,3 +103,15 @@ def test_r896_k2_declares_four_bits_per_parameter(tmp_path):
         {"w": _w(rows=512, cols=1024)}, {"w": 896}, tmp_path, grid=K2
     )
     assert 3.95 < float(report.body_bpp) < 4.10, float(report.body_bpp)
+
+
+def test_config_declares_the_tp_degree_it_was_encoded_for(tmp_path):
+    """A unit is a blob, not a sliceable tensor, so TP degree is baked in.
+
+    The trellis runs down rows inside each column; a row-parallel split -- what
+    a column-parallel Linear needs -- cuts it along its own state path. EXL3
+    narrows tensor dims and stays TP-agnostic; Tessera cannot, so the artifact
+    has to say which degree it was built for rather than fail obscurely at load.
+    """
+    export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)
+    assert read_checkpoint_config(tmp_path)["tp_size"] == 1
