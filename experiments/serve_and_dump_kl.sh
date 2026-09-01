@@ -20,9 +20,14 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 echo "serving $MODEL  ($IMAGE)"
+# Mount the model's own directory, not just /mnt/shared: a path the container
+# cannot see is not reported as a missing file, it is reported as a malformed
+# HuggingFace repo id, which sends you looking in entirely the wrong place.
+MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
+  -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
   "$IMAGE" \
   "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
