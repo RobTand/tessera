@@ -290,23 +290,7 @@ def lloyd_max_grid(
     These levels are **not** materialisable into any hardware format -- see
     ``native=None`` -- so a grid built here is kernel-lane only.
     """
-    source = GAUSSIAN_SOURCE(samples, sigma)
-    lo, hi = source[0], source[-1]
-    levels = [lo + (hi - lo) * index / (size - 1) for index in range(size)]
-    for _ in range(iterations):
-        buckets: list[list[float]] = [[] for _ in range(size)]
-        for sample in source:
-            best, best_gap = 0, None
-            for index, level in enumerate(levels):
-                gap = abs(sample - level)
-                if best_gap is None or gap < best_gap:
-                    best, best_gap = index, gap
-            buckets[best].append(sample)
-        levels = [
-            sum(bucket) / len(bucket) if bucket else levels[index]
-            for index, bucket in enumerate(buckets)
-        ]
-        levels.sort()
+    levels = _lloyd_levels(GAUSSIAN_SOURCE(samples, sigma), size, iterations)
     return PayloadGrid(name or f"LM{size}", tuple(levels))
 
 
@@ -574,7 +558,7 @@ def build_forest(
         # Gaussian instead puts every anchor in the bottom 1% of the range and
         # costs 4.4x the error at 3.5 bpp -- worse than the 16-code grid.
         peak = max(abs(value) for value in grid.values)
-        samples = GAUSSIAN_SOURCE(sigma=peak / 6.0)
+        samples = GROUP_SCALED_SOURCE(peak)
 
     # Contiguous blocks in value order, then route each sample to the block
     # whose value span is nearest -- a nearest-code assignment, since blocks
@@ -588,34 +572,236 @@ def build_forest(
         return AnchorForest(
             rate=rate, blocks=tuple((code,) for code in order), grid=grid
         )
-    # Blocks are contiguous in value order, so routing to the nearest block is
-    # routing to the nearest code, and the block's bounds decide it: a sample
-    # below the first value belongs to block 0, above the last to block -1, and
-    # otherwise to whichever adjacent block is closer.  Written as a scan over
-    # every (sample, code) pair this is O(samples * grid), which is 4.2M inner
-    # steps on E4M3 -- the same answer for a few hundred times the work.
-    edges = [grid.values[block[-1]] for block in raw_blocks[:-1]]
-    routed: list[list[float]] = [[] for _ in range(anchors)]
-    for sample in samples:
-        low, high = 0, len(edges)
-        while low < high:                       # first block whose top >= sample
-            mid = (low + high) // 2
-            if edges[mid] < sample:
-                low = mid + 1
-            else:
-                high = mid
-        index = low
-        if index and index <= len(edges):
-            below = grid.values[raw_blocks[index - 1][-1]]
-            above = grid.values[raw_blocks[index][0]]
-            if abs(sample - below) < abs(sample - above):
-                index -= 1
-        routed[index].append(sample)
+    # Two candidate partitions, and the SOURCE picks between them.
+    #
+    # The contiguous rule is right whenever the grid's codes are spread like the
+    # source, and it is what every E2M1 artifact was built with.  The
+    # mass-balanced rule is right when they are not -- on E4M3 the contiguous
+    # split wastes ten of sixteen anchors.  Neither dominates, so neither is
+    # asserted: both are built, both are scored on the same Gaussian at the
+    # ``c = 0`` the pipeline actually decodes at, and the cheaper one is used.
+    # The choice is by measurement against the objective, which is what
+    # principle 2 asks for -- not a rule about which grids are "log-spaced".
+    balanced, balanced_reps = _mass_balanced_blocks(grid, samples, anchors, width)
+    scored = [
+        (_partition_cost(grid, samples, raw_blocks), raw_blocks),
+        (_partition_cost(grid, samples, balanced, seed=balanced_reps), balanced),
+    ]
+    (_, routed), raw_blocks = min(scored, key=lambda entry: entry[0][0])
 
     blocks: list[tuple[int, ...]] = []
     for index, block in enumerate(raw_blocks):
         blocks.append(_order_block(block, routed[index], depth, grid))
     return AnchorForest(rate=rate, blocks=tuple(blocks), grid=grid)
+
+
+def _lloyd_levels(
+    source: "tuple[float, ...]", size: int, iterations: int = 40,
+) -> "list[float]":
+    """Lloyd-Max levels for an arbitrary SORTED source.
+
+    Assignment is by bisection on the midpoints rather than a scan over levels,
+    which is what makes this affordable to call once per forest build.
+    """
+    from bisect import bisect
+
+    lo, hi = source[0], source[-1]
+    levels = [lo + (hi - lo) * index / (size - 1) for index in range(size)]
+    for _ in range(iterations):
+        cuts = [(levels[i] + levels[i + 1]) / 2.0 for i in range(size - 1)]
+        buckets: "list[list[float]]" = [[] for _ in range(size)]
+        for sample in source:
+            buckets[bisect(cuts, sample)].append(sample)
+        levels = [
+            sum(bucket) / len(bucket) if bucket else levels[index]
+            for index, bucket in enumerate(buckets)
+        ]
+        levels.sort()
+    return levels
+
+
+def GROUP_SCALED_SOURCE(
+    peak: float, group: int = 16, count: int = 1 << 14,
+) -> "tuple[float, ...]":
+    """The source the ALPHABET actually sees -- bounded by ``peak``, not by sigma.
+
+    S6b divides every group of ``group`` weights by ``amax/peak``, so the value
+    reaching the grid is ``w / amax * peak``: a Gaussian normalised by its OWN
+    group maximum.  That distribution is **bounded** -- exactly one value per
+    group lands on ``peak`` -- and it is not a Gaussian of any sigma.
+
+    Modelling it as ``GAUSSIAN_SOURCE(sigma=peak/6)`` is wrong twice over.  The
+    measured spread after scaling is ``peak/2.05``, not ``peak/6``; and no
+    Gaussian is right at any sigma, because at ``sigma = peak/2.05`` Lloyd-Max's
+    top level sits at ``1.36 x peak``, outside the grid entirely.  At the cap
+    neither error matters -- every code is an anchor and the top level IS the
+    peak by construction.  Below the cap the source decides WHICH codes become
+    anchors, and a mis-modelled tail spends anchors on values the data never
+    reaches while clipping the ones it does.  That is the whole of TESSERA-8's
+    sub-cap collapse.
+
+    Deterministic, because an alphabet that changed run to run would make
+    artifacts irreproducible: a fixed LCG permutes the inverse-CDF sample so
+    that groups are representative rather than sorted runs, and nothing here
+    reads a seed from the environment or the clock.
+    """
+    base = list(GAUSSIAN_SOURCE(count))
+    state = 0x2545F491
+    for index in range(len(base) - 1, 0, -1):
+        state = (state * 1103515245 + 12345) & 0x7FFFFFFF
+        swap = state % (index + 1)
+        base[index], base[swap] = base[swap], base[index]
+    out: "list[float]" = []
+    for start in range(0, len(base) - group + 1, group):
+        chunk = base[start : start + group]
+        amax = max(abs(value) for value in chunk)
+        if amax == 0.0:                         # pragma: no cover - measure zero
+            continue
+        out.extend(value * peak / amax for value in chunk)
+    out.sort()
+    return tuple(out)
+
+
+def _partition_cost(
+    grid: PayloadGrid, samples: "tuple[float, ...]",
+    blocks: "list[tuple[int, ...]]",
+    seed: "list[int] | None" = None, iterations: int = 12,
+) -> "tuple[float, list[list[float]]]":
+    """Expected SSE of a partition at ``c = 0``, and the routing that gives it.
+
+    At ``c = 0`` a block reconstructs on exactly one member, so a partition is
+    worth precisely what its ``anchors`` representatives are worth -- and the
+    encoder sends a weight to the nearest **representative**, not to the block
+    holding the nearest code.  Scoring by nearest-code flatters any partition
+    whose blocks are value-contiguous, because every sample then lands in a
+    block that contains something near it whether or not that block's single
+    reachable value is near it.  That is the difference between a partition
+    that looks balanced and one that reconstructs well.
+
+    So: Lloyd descent under the block constraint.  Route to the nearest rep,
+    re-pick each block's rep from its own members, repeat.  Both steps are
+    non-increasing in SSE, so this converges, and it evaluates the quantity the
+    decoder will actually pay.
+    """
+    from bisect import bisect
+
+    values = grid.values
+    # Lloyd runs on a deterministic stride of the source; the final routing is
+    # over all of it.  Choosing between two partitions does not need 16k points.
+    coarse = samples[::4] or samples
+    # Lloyd is a descent, so the seed decides which optimum it finds.  A
+    # mass-balanced block holds its anchor plus whatever fillers were nearest
+    # it, so its mean is nowhere near its anchor -- seeding on the mean starts
+    # that partition on a filler and it never recovers.  A construction that
+    # knows its own anchors says so.
+    reps = list(seed) if seed is not None else [
+        min(block, key=lambda c: abs(values[c] - sum(values[m] for m in block) / len(block)))
+        for block in blocks
+    ]
+
+    def route(source: "tuple[float, ...]") -> "list[list[float]]":
+        order = sorted(range(len(reps)), key=lambda b: values[reps[b]])
+        ladder = [values[reps[b]] for b in order]
+        cuts = [(ladder[i] + ladder[i + 1]) / 2.0 for i in range(len(ladder) - 1)]
+        out: "list[list[float]]" = [[] for _ in blocks]
+        for sample in source:
+            out[order[bisect(cuts, sample)]].append(sample)
+        return out
+
+    routed = route(coarse)
+    for _ in range(iterations):
+        moved = False
+        for index, block in enumerate(blocks):
+            assigned = routed[index]
+            if not assigned:
+                continue
+            count = len(assigned)
+            first = sum(assigned)
+            best = min(
+                block,
+                key=lambda c: count * values[c] ** 2 - 2.0 * values[c] * first,
+            )
+            if best != reps[index]:
+                reps[index], moved = best, True
+        if not moved:
+            break
+        routed = route(coarse)
+
+    routed = route(samples)
+    total = 0.0
+    for index, block in enumerate(blocks):
+        assigned = routed[index]
+        if not assigned:
+            continue
+        count = len(assigned)
+        first = sum(assigned)
+        second = sum(sample * sample for sample in assigned)
+        total += min(
+            count * values[c] ** 2 - 2.0 * values[c] * first + second for c in block
+        )
+    return total, routed
+
+
+def _mass_balanced_blocks(
+    grid: PayloadGrid, samples: "tuple[float, ...]", anchors: int, width: int,
+) -> "tuple[list[tuple[int, ...]], list[int]]":
+    """``anchors`` blocks of ``width`` codes, grouped by MASS rather than count.
+
+    The grammar needs ``anchors`` blocks of exactly ``width`` codes, because the
+    completion field is a fixed ``depth`` bits wide.  It does **not** need them
+    contiguous in value order -- the ALPHABET and DESCENDANT planes write the
+    grouping out explicitly, so any partition is wire-expressible.
+
+    Contiguity is only correct when the grid's codes are spread like the source.
+    E4M3's 256 codes are log-spaced over ``2^-9 .. 448``, so sixteen equal-COUNT
+    runs put ten of the sixteen anchors inside ``|x| < sigma/10`` -- a region
+    holding about 1% of a Gaussian's mass, and a 16-level budget spending six.
+
+    So the anchors are placed where the source is: Lloyd-Max levels for the same
+    Gaussian the forest is optimised against, snapped to distinct grid codes,
+    with the remaining codes filling each block out to ``width`` nearest-anchor
+    first so a block stays a neighbourhood and completion bits still refine.
+    """
+    values = grid.values
+    targets = _lloyd_levels(samples[::4] or samples, anchors)
+
+    # Snap each target to a DISTINCT code, globally greedy on distance, so the
+    # result does not depend on the order the targets are visited.
+    pairs = sorted(
+        (abs(targets[t] - values[c]), t, c)
+        for t in range(anchors)
+        for c in range(grid.size)
+    )
+    rep_of: "dict[int, int]" = {}
+    taken: "set[int]" = set()
+    for _, target, code in pairs:
+        if target not in rep_of and code not in taken:
+            rep_of[target] = code
+            taken.add(code)
+            if len(rep_of) == anchors:
+                break
+
+    members: "list[list[int]]" = [[rep_of[t]] for t in range(anchors)]
+    ranked = {
+        code: sorted((abs(values[code] - values[rep_of[t]]), t) for t in range(anchors))
+        for code in range(grid.size)
+        if code not in taken
+    }
+    # Most-contested code first: one whose nearest and second-nearest anchors
+    # are far apart has the most to lose from being displaced, so it chooses
+    # before the ambivalent ones.
+    for code in sorted(ranked, key=lambda c: ranked[c][0][0] - ranked[c][min(1, anchors - 1)][0]):
+        for _, target in ranked[code]:
+            if len(members[target]) < width:
+                members[target].append(code)
+                break
+        else:                                   # pragma: no cover - capacity is exact
+            raise GrammarError(
+                f"no block had room for code {code}; {anchors} x {width} "
+                f"!= {grid.size} ({grid.name})"
+            )
+    blocks = [tuple(sorted(block, key=lambda c: (values[c], c))) for block in members]
+    return blocks, [rep_of[t] for t in range(anchors)]
 
 
 def _code_density(grid: PayloadGrid) -> "tuple[float, ...]":

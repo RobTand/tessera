@@ -50,11 +50,28 @@ for name, (grid, _, _) in ARMS.items():
     RATES[name] = R
     FORESTS[name] = {R: build_forest(R, grid=grid)}
 
-def rtn(W, values, peak):
-    _, _, eff = _pack_scales(W, 32, 16, peak=peak)
-    scale = torch.repeat_interleave(eff, 16).reshape(W.shape)
+def _q(W, scale, values):
     t = (W / scale).unsqueeze(-1)
     return ((values[((t - values) ** 2).argmin(-1)] * scale - W).norm() / W.norm()).item()
+
+def rtn_s6b(W, values, peak):
+    _, _, eff = _pack_scales(W, 32, 16, peak=peak)
+    return _q(W, torch.repeat_interleave(eff, 16).reshape(W.shape), values)
+
+def rtn_per_tensor(W, values, peak):
+    """What FP8 ACTUALLY costs.  FP8 carries a per-tensor (or per-channel)
+    scale -- 8.002 bpp, not 8.5.  Giving it Tessera's per-16 S6b plane prices a
+    format nobody deploys AND scores it worse, because S6b FLOORS its exponent
+    so every half's amax lands above the grid peak and clips."""
+    return _q(W, (W.abs().amax() / peak).clamp_min(1e-30), values)
+
+def rtn_true_nvfp4(W):
+    """Real NVFP4: amax/6 per group of 16, rounded to a representable E4M3."""
+    e4 = torch.tensor([v for v in E4M3_GRID.values if v > 0], device=dev).unique()
+    r, c = W.shape
+    a = W.reshape(-1, 16).abs().amax(-1) / 6.0
+    sc = e4[(a.unsqueeze(-1) - e4).abs().argmin(-1)].clamp_min(1e-30)
+    return _q(W, sc.reshape(r, c // 16).repeat_interleave(16, dim=1), E2M1_V)
 
 E2M1_V = e2m1_value_table(dev)
 E4M3_V = torch.tensor(E4M3_GRID.values, device=dev, dtype=torch.float32)
@@ -74,13 +91,15 @@ def measure(W):
         )
         rec = reconstruct_unit(u, FORESTS[name], CC, completion=0).float()
         out[name] = ((rec - W).norm() / W.norm()).item()
-    out["NVFP4 RTN"] = rtn(W, E2M1_V, 6.0)
-    out["FP8 RTN (E4M3)"] = rtn(W, E4M3_V, 448.0)
+    out["NVFP4 RTN (S6b)"] = rtn_s6b(W, E2M1_V, 6.0)
+    out["NVFP4 RTN (true)"] = rtn_true_nvfp4(W)
+    out["FP8 RTN per-tensor"] = rtn_per_tensor(W, E4M3_V, 448.0)
     return out
 
 WANT = ("gate_proj", "down_proj", "up_proj", "q_proj", "o_proj")
-order = sorted(ARMS, key=lambda n: (ARMS[n][1], n)) + ["NVFP4 RTN", "FP8 RTN (E4M3)"]
-BPP = dict({n: ARMS[n][1] for n in ARMS}, **{"NVFP4 RTN": 4.5, "FP8 RTN (E4M3)": 8.5})
+BASE = {"NVFP4 RTN (S6b)": 4.5, "NVFP4 RTN (true)": 4.5, "FP8 RTN per-tensor": 8.002}
+order = sorted(ARMS, key=lambda n: (ARMS[n][1], n)) + list(BASE)
+BPP = dict({n: ARMS[n][1] for n in ARMS}, **BASE)
 
 rows = []
 seen = set()
@@ -101,10 +120,11 @@ for path in sorted(glob.glob("/home/rob/.cache/huggingface/hub/models--Qwen--Qwe
             print(f"  {role} done", flush=True)
 
 print(f"\n{'arm':<20}{'bpp':>6}{'lane':>8}  " + "".join(f"{r:>11}" for r, _ in rows)
-      + f"{'mean/FP8':>11}{'worst/FP8':>11}")
+      + f"{'mean/FP8':>11}{'worst/FP8':>11}{'vsFP8 bytes':>13}")
 for name in order:
-    ratios = [res[name] / res["FP8 RTN (E4M3)"] for _, res in rows]
+    ratios = [res[name] / res["FP8 RTN per-tensor"] for _, res in rows]
     lane = ARMS[name][2] if name in ARMS else "-"
     print(f"{name:<20}{BPP[name]:>6.1f}{lane:>8}  "
           + "".join(f"{res[name]:>11.5f}" for _, res in rows)
-          + f"{sum(ratios)/len(ratios):>11.3f}{max(ratios):>11.3f}")
+          + f"{sum(ratios)/len(ratios):>11.3f}{max(ratios):>11.3f}"
+          + f"{100*(1-BPP[name]/8.002):>12.1f}%")
