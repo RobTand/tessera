@@ -34,6 +34,8 @@ import sys
 W = "/mnt/shared/dq-runs/glm53-tessera-alloc-20260901/artifacts"
 PROBE = "/mnt/shared/dq-runs/glm53-bf16-pread-probe-1469b9b-20260830/artifacts/probe.pkl"
 COST_A = "/home/rob/tessera/experiments/results/glm53_full_body_cost_A.json"
+PLAN = f"{W}/glm53_tessera_plan.json"
+MODEL = "/mnt/shared/models/GLM-5.3-Flash-BF16"
 # Mia, measured: body excluding vision and MTP, minus embed_tokens (vLLM's
 # VocabParallelEmbedding has no quantized path) -- docs/measurements/
 # glm53-body-budget-2026-09-01.md
@@ -45,6 +47,56 @@ def unit_bits(fmt, shape):
     if fmt == "BF16":
         return 16.0
     return float(fr.get_format(fmt).effective_bits_for_shape(shape))
+
+
+#: Every parameter the cost run could not price is charged here.  4.0 bpp is
+#: the top serialisable Tessera rung, which is what the uniform export writes,
+#: so the reserve is the size those units actually take if they ship as
+#: Tessera -- not an optimistic floor.
+UNCOVERED_FORMAT = "TESSERA_E2M1_K2_R896"
+
+
+def uncovered_params(priced):
+    """Parameters in the export plan that no priced unit covers.
+
+    Leaf tensors are mapped to the serving unit the cost run named -- fused
+    siblings collapse to ``gate_up_proj``, and every routed expert's leaf
+    collapses to its layer's packed unit -- because that is the granularity the
+    DP decides at.
+    """
+    import re
+    from safetensors import safe_open
+
+    plan = json.load(open(PLAN))
+    plan = plan["plan"] if isinstance(plan, dict) and "plan" in plan else plan
+    index = json.load(open(f"{MODEL}/model.safetensors.index.json"))["weight_map"]
+
+    def unit_of(name):
+        name = name.replace(".weight", "")
+        match = re.match(r"(.*\.mlp\.experts)\.\d+\.(gate_proj|up_proj|down_proj)$",
+                         name)
+        if match:
+            leaf = ".down_proj" if match.group(2) == "down_proj" else ".gate_up_proj"
+            return match.group(1) + leaf
+        for leaf in (".gate_proj", ".up_proj"):
+            if name.endswith(leaf):
+                return name[: -len(leaf)] + ".gate_up_proj"
+        return name
+
+    by_file = collections.defaultdict(list)
+    for name in plan:
+        by_file[index[name]].append(name)
+    total = 0
+    for shard, names in by_file.items():
+        with safe_open(f"{MODEL}/{shard}", framework="pt") as handle:
+            for name in names:
+                if unit_of(name) in priced:
+                    continue
+                count = 1
+                for dim in handle.get_slice(name).get_shape():
+                    count *= dim
+                total += count
+    return total
 
 
 def main():
@@ -79,14 +131,38 @@ def main():
         gen = torch.Generator().manual_seed(20260901 + layer)
         return torch.randperm(n_experts, generator=gen)[:k].tolist()
 
+    def probe_row(name):
+        """The probe's stats for a cost unit, fusing siblings where it must.
+
+        The cost run scores `gate_up_proj` as one unit because that is the
+        serving unit -- fused siblings must share a format -- but the probe
+        recorded `gate_proj` and `up_proj` separately for the *shared* experts
+        (the packed routed experts are already fused there).  `h_trace` is a
+        sum over output rows of `E_t[||g||^2 ||x||^2]`, and fused siblings see
+        the same input, so the fused row is the sum of its siblings' and the
+        out_features add.  Guessing one sibling's h_trace for the pair would
+        halve the Fisher weight of every shared expert in the model.
+        """
+        if name in stats:
+            return stats[name]
+        if not name.endswith(".gate_up_proj"):
+            raise KeyError(name)
+        stem = name[: -len("gate_up_proj")]
+        parts = [stats[stem + leaf] for leaf in ("gate_proj", "up_proj")]
+        row = dict(parts[0])
+        row["h_trace"] = sum(float(p["h_trace"]) for p in parts)
+        row["out_features"] = sum(int(p["out_features"]) for p in parts)
+        return row
+
     units, candidates, coverage = {}, {}, collections.Counter()
     for name, entry in cost["units"].items():
         n_params = entry["n_params"]
         scale = entry["scale"]
         samples = entry["samples"]
-        per_expert_h = stats[name].get("h_trace_per_expert")
-        picked = (sampled_experts(name, int(stats[name]["num_experts"]), len(samples))
-                  if per_expert_h and ".layers." in name else None)
+        row = probe_row(name)
+        per_expert_h = row.get("h_trace_per_expert")
+        picked = (sampled_experts(name, int(row["num_experts"]), len(samples))
+                  if per_expert_h is not None and ".layers." in name else None)
         rows = {}
         for fmt, _bits in menu:
             joint = 0.0
@@ -97,11 +173,11 @@ def main():
                 if per_expert_h and picked and index < len(picked):
                     h = float(per_expert_h[picked[index]])
                 else:
-                    h = float(stats[name]["h_trace"])
+                    h = float(row["h_trace"])
                 joint += 0.5 * h * sq
             rows[fmt] = joint / max(1, len(samples)) * scale
         units[name] = {"n_params": n_params}
-        shape = (stats[name]["out_features"], stats[name]["in_features"])
+        shape = (row["out_features"], row["in_features"])
         candidates[name] = [
             Candidate(fmt=fmt, bits_per_param=unit_bits(fmt, shape),
                       memory_bytes=int(n_params * unit_bits(fmt, shape) / 8),
@@ -113,13 +189,35 @@ def main():
         if name in aqua:
             coverage["aqua_priced"] += 1
 
+    # --- what the cost run does NOT cover ---------------------------------
+    #
+    # The DP can only place units it has a cost for, and the cost run priced
+    # the MoE experts, the shared experts, the dense MLPs and lm_head -- 95.8%
+    # of the export plan's parameters.  The rest (attention q/k/v/o and the
+    # expert units outside the measured layers) has no probe activation capture
+    # at all, so it has no honest cost and cannot be allocated.  Charging it at
+    # zero would make the frontier's GiB a number for a different artifact than
+    # the one that ships, which is exactly the accounting that gets a size
+    # claim retracted.  So it is charged at a DECLARED default, subtracted from
+    # the budget before the DP runs, and reported.
+    uncovered = uncovered_params(cost["units"])
+    # A square-ish shape: the Tessera accountant's bits depend on the shape
+    # only through the scale/forest/header planes, which are a fraction of a
+    # percent at these sizes, so one representative shape is honest here and
+    # the per-unit exact price is what the exporter charges.
+    reserve_bits = unit_bits(UNCOVERED_FORMAT, (4096, 4096))
+    reserve_gib = uncovered * reserve_bits / 8 / 2 ** 30
+    budget = MIA_BODY_GIB - reserve_gib
     print(f"units {coverage['units']}  params {coverage['params']:,}  "
           f"aqua-priced {coverage['aqua_priced']}")
+    print(f"uncovered by the cost run: {uncovered/1e9:.2f} B params "
+          f"({100*uncovered/(uncovered+coverage['params']):.1f}% of the plan), "
+          f"charged at {UNCOVERED_FORMAT} = {reserve_gib:.3f} GiB")
     total = coverage["params"]
     floor = min(sum(min(c.bits_per_param for c in cs) * units[n]["n_params"]
                     for n, cs in candidates.items()) / total for _ in (0,))
-    print(f"menu floor {floor:.4f} bpp   "
-          f"Mia body budget {MIA_BODY_GIB} GiB\n")
+    print(f"menu floor {floor:.4f} bpp   Mia body budget {MIA_BODY_GIB} GiB   "
+          f"available to the DP {budget:.3f} GiB\n")
 
     targets = ([float(v) for v in args.targets.split(",")] if args.targets
                else [floor + 0.05 * k for k in range(0, 24)])
@@ -143,11 +241,15 @@ def main():
 
     json.dump(frontier, open(f"{W}/glm53_frontier.json", "w"), indent=1)
     print(f"\nwrote {W}/glm53_frontier.json")
-    fits = [f for f in frontier if f["gib"] <= MIA_BODY_GIB]
+    fits = [f for f in frontier if f["gib"] <= budget]
     if fits:
         best = min(fits, key=lambda f: f["dloss"])
+        whole = best["gib"] + reserve_gib
         print(f"\nBest under Mia's {MIA_BODY_GIB} GiB body budget: "
-              f"{best['bits']:.4f} bpp, {best['gib']:.3f} GiB, "
+              f"{best['bits']:.4f} bpp over the priced units, "
+              f"{best['gib']:.3f} GiB + {reserve_gib:.3f} GiB reserved "
+              f"= {whole:.3f} GiB whole body "
+              f"({100*(1-whole/MIA_BODY_GIB):+.2f}% vs Mia), "
               f"dloss {best['dloss']:.6g}")
         print(f"  mix: {best['mix']}")
 
