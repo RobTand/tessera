@@ -66,6 +66,12 @@ from .grammar import alphabet_size, completion_capacity
 #: The rate-1/2 convolutional code emits two bits, so it selects one of four
 #: subsets.  Imported by ``trellis`` rather than the other way round: the grid
 #: has to know the count to refuse a code space that cannot be split evenly.
+#: ``PayloadGrid.partition`` for a grid whose code order is a tree traversal.
+#: ``build_forest`` reads it to skip both the k-d bisection and the scalar
+#: routing scan: a tree grid has already decided its blocks and their
+#: representatives, at fit time, with the data in hand.
+TREE_PARTITION = "tree"
+
 SUBSET_COUNT = 4
 
 __all__ = [
@@ -188,10 +194,10 @@ class PayloadGrid:
             )
         if self.native is not None and len(self.native) != self.size:
             raise GrammarError(f"grid {self.name}: native map is not {self.size} long")
-        if self.partition not in ("stride", "coset"):
+        if self.partition not in ("stride", "coset", TREE_PARTITION):
             raise GrammarError(
-                f"grid {self.name}: partition must be 'stride' or 'coset', "
-                f"got {self.partition!r}"
+                f"grid {self.name}: partition must be 'stride', 'coset' or "
+                f"{TREE_PARTITION!r}, got {self.partition!r}"
             )
         if self.keys is None:
             # A scalar grid's key is its rank in value order, which is what the
@@ -581,6 +587,8 @@ def build_forest(
     depth = completion_capacity(rate, grid.rate_cap)
     width = 1 << depth
     anchors = alphabet_size(rate, grid.rate_cap)
+    if grid.partition == TREE_PARTITION:
+        return _build_forest_tree(rate, grid, width, anchors)
     if depth and grid.arity > 1:
         return _build_forest_kd(rate, grid, depth, width, anchors)
     if anchors * width != grid.size:
@@ -929,6 +937,33 @@ def _order_block_kd(
     right = _order_block_kd(high, grid, density, depth - 1)
     pick = _representative((left[0], right[0]), grid, density)
     return left + right if pick == left[0] else right + left
+
+
+def _build_forest_tree(
+    rate: int, grid: PayloadGrid, width: int, anchors: int
+) -> "AnchorForest":
+    """The forest for a grid whose code order IS a tree traversal.
+
+    There is nothing to choose.  ``learn_tree_codebook`` emits leaves in tree
+    order, so the contiguous dyadic block ``[k*width, (k+1)*width)`` is exactly
+    the set of leaves under node ``k`` at level ``rate+1``; and it hoists each
+    node's representative to its block's first slot, so index 0 is already the
+    anchor.  Both of the things ``build_forest`` normally computes -- which
+    codes group together, and which of them speaks for the group -- were decided
+    against the real points rather than against a Gaussian stand-in.
+    """
+    if anchors * width != grid.size:
+        raise GrammarError(
+            f"rate {rate}: {anchors} anchors x {width} descendants "
+            f"!= {grid.size} ({grid.name})"
+        )
+    return AnchorForest(
+        rate=rate,
+        blocks=tuple(
+            tuple(range(k * width, (k + 1) * width)) for k in range(anchors)
+        ),
+        grid=grid,
+    )
 
 
 def _build_forest_kd(

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import torch
 
-from .alphabet import PayloadGrid
+from .alphabet import TREE_PARTITION, PayloadGrid
 from .errors import GrammarError
 
 __all__ = ["learn_tree_codebook", "TREE_PARTITION"]
@@ -70,6 +70,35 @@ def _two_means(points: torch.Tensor, iterations: int = 12) -> torch.Tensor:
             if int((assign == side).sum()):
                 centroids[side] = points[assign == side].mean(0)
     return centroids
+
+
+def _hoist(
+    points: torch.Tensor, assign: torch.Tensor, leaves: torch.Tensor, depth: int
+) -> torch.Tensor:
+    """Leaf order placing every node's representative first in its own block.
+
+    Bottom-up: a leaf represents itself; an internal node is represented by
+    whichever child's representative costs less **over that node's own points**,
+    and that child's subtree is emitted first.  Scoring against the node's
+    points rather than the child's is the whole point -- the representative is
+    what a reader gets when it truncates to this level, so it is answering for
+    its sibling's mass too.
+    """
+    def walk(level: int, node: int) -> "tuple[list[int], int]":
+        if level == depth:
+            return [node], node
+        left, left_rep = walk(level + 1, 2 * node)
+        right, right_rep = walk(level + 1, 2 * node + 1)
+        mine = points[(assign >> (depth - level)) == node]
+        if not len(mine):
+            return left + right, left_rep
+        cost = lambda rep: float(((mine - leaves[rep]) ** 2).sum())
+        if cost(left_rep) <= cost(right_rep):
+            return left + right, left_rep
+        return right + left, right_rep
+
+    order, _ = walk(0, 0)
+    return torch.tensor(order, dtype=torch.long, device=leaves.device)
 
 
 def learn_tree_codebook(
@@ -112,6 +141,22 @@ def learn_tree_codebook(
         right = torch.cdist(points, nxt[1::2]).gather(1, assign[:, None]).squeeze(1)
         assign = 2 * assign + (right < left).long()
         level = nxt
+
+    # --- hoist each node's representative to its block's index 0 -----------
+    # ``_order_block`` does this for scalar grids by recursive swap, scoring
+    # candidates against samples.  It cannot run here: it reads
+    # ``grid.values[code]`` as a scalar and a k-tuple code has no scalar.  But
+    # the swap does not need to happen at forest-build time -- it needs to have
+    # happened.  Doing it during the fit, where the points are still in hand, is
+    # strictly better information than a forest builder would have, and it
+    # leaves ``build_forest`` with nothing to decide: a block is a contiguous
+    # slice whose first element is already its representative, at every level at
+    # once, because a node's representative is its better child's.
+    #
+    # Swapping two subtrees keeps every block a contiguous dyadic run, so the
+    # nesting property survives the reordering that establishes it.
+    order = _hoist(points, assign, level, depth)
+    level = level[order]
 
     values = tuple(level.reshape(-1).tolist())
     # ``keys`` drives ``value_order``, which sorts by (sum, vector, code).  One
