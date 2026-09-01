@@ -47,8 +47,14 @@ quantize_exl3 = importlib.import_module(
 
 BF16 = "/mnt/shared/models/GLM-5.3-Flash-BF16"
 ACT = "/mnt/shared/dq-runs/glm53-bf16-pread-probe-1469b9b-20260830/act"
-OUT = "/work/experiments/results/exl3_rate_sweep.json"
-KS = (2, 3, 4)
+OUT = f"/work/experiments/results/exl3_rate_sweep_K{sys.argv[1]}.json"
+# ONE K PER PROCESS.  Running K=2,3,4 in a single process gives correct output
+# for the first K and rel_err ~55-65 for the rest, at unchanged reader drift --
+# so the reader agrees with a quantizer that produced garbage.  Something in
+# quantize_exl3's call path is stateful across K; rather than diagnose someone
+# else's cache, isolate.  The K=4 arm re-measuring exl3_arm_glm_experts_v2's
+# 0.05653 is the check that isolation worked.
+KS = (int(sys.argv[1]),)
 # Tessera, same six tensors, uncompensated.  payload bits -> mean rel_err.
 TESSERA = {3.0: 0.12666, 3.5: 0.09738}
 

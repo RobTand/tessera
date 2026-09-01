@@ -235,7 +235,10 @@ def viterbi_columns(
     return anchors, bits, sse
 
 
-def _pack_scales(weights: torch.Tensor, group: int, half: int, peak: float = 6.0):
+def _pack_scales(
+    weights: torch.Tensor, group: int, half: int, peak: float = 6.0,
+    headroom: float = 1.0,
+):
     """S6b: one E8M0 base byte per group, one 4-bit refinement per half.
 
     The refinement word is ``d`` (one exponent-delta bit) and ``m`` (three
@@ -254,11 +257,18 @@ def _pack_scales(weights: torch.Tensor, group: int, half: int, peak: float = 6.0
     # Base: the po2 that puts the group's amax at the top of the payload grid's
     # range -- 6.0 for E2M1, 448.0 for E4M3.  Scaling to the wrong peak wastes
     # binades at one end and clips at the other.
-    target = amax_group / peak
+    #
+    # ``headroom`` scales that landing point.  ``amax / peak`` is a *heuristic*:
+    # it guarantees nothing is clipped, which is not the same as minimising
+    # error.  Below 1.0 the extremes clip and everything else is coded finer;
+    # above 1.0 the reverse.  Which is better is a property of the weight
+    # distribution and the grid, so it is a question for the objective, not for
+    # a rule -- principle 2.  1.0 is exactly today's behaviour, byte for byte.
+    target = amax_group / (peak * headroom)
     exponent = torch.floor(torch.log2(target)).clamp(-127, 128)
     base_byte = (exponent + 127).clamp(0, 255).to(torch.uint8)
 
-    per_half = amax_half / peak
+    per_half = amax_half / (peak * headroom)
     base_for_half = torch.repeat_interleave(exponent, group // half)
     ratio = per_half / torch.exp2(base_for_half)
     # ratio in [1, 4); d picks the octave, m the mantissa within it.
@@ -277,10 +287,12 @@ def encode_unit(
     code: ConvCode = ConvCode(),
     rotation: RotationState = RotationState.NONE,
     with_diagonals: bool = False,
+    diagonals: "Diagonals | None" = None,
     completion: int | None = None,
     released_positions: int = 0,
     group: int = 32,
     half: int = 16,
+    scale_headroom: float = 1.0,
     superblock: int = 256,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype."""
@@ -314,11 +326,24 @@ def encode_unit(
         )
 
     rotated, rotation_block = apply_rotation(weights, rotation)
-    fitted = fit_diagonals(rotated) if with_diagonals else None
+    # A caller may supply a fit made on a WIDER matrix than this call sees.
+    # ``sv`` is per output row and a row spans every column, so a fit made on a
+    # column slice is not the fit a whole-matrix encode would make -- which
+    # silently breaks the slice-equals-whole property ``compensate.py`` relies
+    # on to be preprocessing rather than surgery.  Passing the whole matrix's
+    # fit in is how a compensated encode stays reproducible from its target.
+    if diagonals is not None and with_diagonals:
+        raise GrammarError(
+            "with_diagonals=True fits its own; pass one or the other, not both"
+        )
+    fitted = diagonals if diagonals is not None else (
+        fit_diagonals(rotated) if with_diagonals else None
+    )
     work = apply_diagonals(rotated, fitted) if fitted else rotated
 
     base_byte, refine, effective = _pack_scales(
-        work, group, half, peak=max(abs(v) for v in grid.values)
+        work, group, half, peak=max(abs(v) for v in grid.values),
+        headroom=scale_headroom,
     )
     scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
     targets = work / scale
