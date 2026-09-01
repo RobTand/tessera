@@ -869,3 +869,131 @@ def tessera_gemv_tuple(
         LANES=lanes, VEC=vec, SPLIT_K=split_k,
     )
     return out
+
+
+@triton.jit
+def _gemm_kernel(
+    x_ptr, select_ptr, point_ptr, lut_ptr, scale_ptr, out_ptr,
+    global_scale, M, rows, cols,
+    memory: tl.constexpr, rate: tl.constexpr, half: tl.constexpr, pad: tl.constexpr,
+    BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+):
+    """``x @ W.T`` for prefill: decode a weight tile, then feed it to ``tl.dot``.
+
+    The GEMV pays one LUT gather per weight for one multiply-accumulate.  Here
+    the decoded tile is reused ``BLOCK_M`` times, so the decode cost per useful
+    FLOP falls as ``1/M`` -- which is the whole reason a prefill path is worth
+    measuring separately rather than extrapolating from batch 1.
+
+    **Why a tile is decodable at all.**  ``ConvCode.step`` is a shift register:
+    the state after row ``n`` is the last ``memory`` select bits, so row ``n``
+    decodes from bits ``n - memory .. n`` of its own column and nothing else.
+    The trellis runs down ``rows`` (output features), so a ``[BLOCK_K,
+    BLOCK_N]`` tile needs a six-row halo in N and has **no dependence along K
+    whatsoever** -- and K is the reduction axis.  A prefill tile is therefore
+    embarrassingly decodable, which is the property whose absence makes a
+    sequential-dependence format lose here.
+
+    Bits are read per element rather than by the GEMV's shared-window trick:
+    the window trick amortises loads across ``VEC`` rows of ONE column, which
+    is a batch-1 optimisation, and at prefill the decode is amortised over
+    ``BLOCK_M`` anyway.  Correctness first; the shared window is available if a
+    profile says the tile decode is the ceiling.
+    """
+    pid_m = tl.program_id(0)
+    pid_n = tl.program_id(1)
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    live_m = offs_m < M
+    live_n = offs_n < rows
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+
+    point_mask = (1 << (rate - 1)) - 1
+    for k0 in range(0, cols, BLOCK_K):
+        offs_k = k0 + tl.arange(0, BLOCK_K)
+        live_k = offs_k < cols
+        k = offs_k[:, None]
+        n = offs_n[None, :]
+        live = live_k[:, None] & live_n[None, :]
+
+        # Select plane: row n's `memory + 1` history bits start at bit b.
+        b = k.to(tl.int64) * (rows + pad) + (pad - memory) + n.to(tl.int64)
+        byte = b // 8
+        shift = 9 - (b % 8).to(tl.int32)
+        s0 = tl.load(select_ptr + byte, mask=live, other=0).to(tl.int32)
+        s1 = tl.load(select_ptr + byte + 1, mask=live, other=0).to(tl.int32)
+        window = (((s0 << 8) | s1) >> shift) & 0x7F
+
+        # Point plane: `rate - 1` bits, densely packed in row order.
+        q = (k.to(tl.int64) * rows + n.to(tl.int64)) * (rate - 1)
+        qbyte = q // 8
+        qshift = (16 - (rate - 1) - (q % 8)).to(tl.int32)
+        p0 = tl.load(point_ptr + qbyte, mask=live, other=0).to(tl.int32)
+        p1 = tl.load(point_ptr + qbyte + 1, mask=live, other=0).to(tl.int32)
+        pt = (((p0 << 8) | p1) >> qshift) & point_mask
+
+        value = tl.load(lut_ptr + window * (1 << (rate - 1)) + pt, mask=live, other=0.0)
+
+        scale_byte = tl.load(
+            scale_ptr + (k // half) * rows + n, mask=live, other=0
+        ).to(tl.int32)
+        scale = tl.exp2(((scale_byte >> 3) & 0xF).to(tl.float32) - 7.0) * (
+            1.0 + (scale_byte & 0x7).to(tl.float32) / 8.0
+        )
+        w = value * scale                                   # [BLOCK_K, BLOCK_N]
+
+        xt = tl.load(
+            x_ptr + offs_m[:, None] * cols + offs_k[None, :],
+            mask=live_m[:, None] & live_k[None, :], other=0.0,
+        )
+        acc += tl.dot(xt, w, allow_tf32=False)
+
+    tl.store(
+        out_ptr + offs_m[:, None] * rows + offs_n[None, :], acc * global_scale,
+        mask=live_m[:, None] & live_n[None, :],
+    )
+
+
+def tessera_gemm(
+    x: torch.Tensor,
+    select_plane: torch.Tensor,
+    point_plane: torch.Tensor,
+    value_lut: torch.Tensor,
+    e4m3_t: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    rate: int = 3,
+    memory: int = 6,
+    half: int = 16,
+    block_m: int = 64,
+    block_n: int = 64,
+    block_k: int = 64,
+) -> torch.Tensor:
+    """``x @ W.T`` with ``W`` decoded from its planes inside the mainloop.
+
+    Unlike :func:`tessera_gemv_wide` this reduces inside one program and stores
+    rather than atomically adding, so the result is deterministic run to run and
+    *may* be cited in a bit-identical claim.
+    """
+    if x.ndim != 2 or x.shape[1] != cols:
+        raise GrammarError(
+            f"x is {tuple(x.shape)}; a prefill GEMM needs [M, {cols}] because "
+            f"the reduction runs over the {cols} columns the trellis does NOT "
+            "run down"
+        )
+    if rows % 8:
+        raise GrammarError(
+            f"rows={rows} must be a multiple of 8: the select plane is written "
+            f"with a {SELECT_PAD}-bit pad per column and the halo arithmetic "
+            "assumes column starts land on byte boundaries"
+        )
+    M = x.shape[0]
+    out = torch.empty((M, rows), dtype=torch.float32, device=x.device)
+    _gemm_kernel[(triton.cdiv(M, block_m), triton.cdiv(rows, block_n))](
+        x, select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        float(global_scale), M, rows, cols,
+        memory=memory, rate=rate, half=half, pad=SELECT_PAD,
+        BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
+    )
+    return out

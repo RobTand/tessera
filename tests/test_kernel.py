@@ -237,3 +237,83 @@ def test_tuple_kernel_refuses_shapes_its_shifts_do_not_cover(tuple_unit):
             x, select, point, lut, tuple_unit["scales"], tuple_unit["global_scale"],
             rows=100, cols=cols, rate=rate, arity=2,
         )
+
+
+# --- prefill: the same planes, decoded into a tile instead of a vector -------
+
+
+@pytest.fixture(scope="module")
+def prefill_unit():
+    from tessera.decode import decode_codes
+    from tessera.kernel import build_value_lut, pack_kernel_planes
+
+    torch.manual_seed(11)
+    rows, cols = 256, 512
+    weights = (torch.randn(rows, cols, device="cuda") * 0.02).float()
+    forest = {3: build_forest(3)}
+    unit = encode_unit(weights, forest, (3,) * cols, ConvCode(memory=6),
+                       rotation=RotationState.NONE, with_diagonals=False)
+    reference = reconstruct_unit(unit, forest, ConvCode(memory=6)).float()
+    select, point = pack_kernel_planes(unit.body_bits, 3, 6)
+    lut = build_value_lut(forest[3], ConvCode(memory=6), "cuda")
+    codes = decode_codes(unit, forest[3], ConvCode(memory=6))
+    _packed, e4m3, gs = materialize_nvfp4(
+        codes, unit.scale_base, unit.scale_refine, unit.group, unit.half)
+    scales = e4m3.reshape(rows, cols // 16).t().contiguous()
+    return unit, reference, select, point, lut, scales, gs, rows, cols
+
+
+def test_prefill_gemm_one_hot_is_bit_exact(prefill_unit):
+    """A one-hot row must return a column of the reference decode exactly.
+
+    Nothing is summed, so this isolates the tile decode from the accumulate --
+    and unlike the GEMV, this path reduces inside one program and stores, so
+    there is no atomic ordering to blur the low bits.
+    """
+    from tessera.kernel import tessera_gemm
+    _u, reference, select, point, lut, scales, gs, rows, cols = prefill_unit
+    for column in (0, 1, 7, 63, cols - 1):
+        probe = torch.zeros(1, cols, device="cuda")
+        probe[0, column] = 1.0
+        got = tessera_gemm(probe, select, point, lut, scales, gs, rows, cols)[0]
+        assert torch.equal(got, reference[:, column]), f"column {column}"
+
+
+def test_prefill_gemm_matches_the_reference_decode(prefill_unit):
+    """Full GEMM against the materialised weights, over several M.
+
+    M crosses the tile boundary in both directions so a tail-masking error in
+    the M dimension cannot hide inside a full tile.
+    """
+    from tessera.kernel import tessera_gemm
+    _u, reference, select, point, lut, scales, gs, rows, cols = prefill_unit
+    for m in (1, 15, 64, 129):
+        x = torch.randn(m, cols, device="cuda")
+        got = tessera_gemm(x, select, point, lut, scales, gs, rows, cols)
+        want = x @ reference.t()
+        assert torch.allclose(got, want, rtol=2e-5, atol=2e-4), f"M={m}"
+
+
+def test_prefill_gemm_is_deterministic(prefill_unit):
+    """No atomics here, so two runs must agree bit for bit.
+
+    The GEMV cannot make this claim -- its split-K lands through `atomic_add`
+    and the low bits depend on arrival order.  The distinction is worth a test
+    because it decides which path may be cited in a reproducibility claim.
+    """
+    from tessera.kernel import tessera_gemm
+    _u, _r, select, point, lut, scales, gs, rows, cols = prefill_unit
+    x = torch.randn(96, cols, device="cuda")
+    first = tessera_gemm(x, select, point, lut, scales, gs, rows, cols)
+    second = tessera_gemm(x, select, point, lut, scales, gs, rows, cols)
+    assert torch.equal(first, second)
+
+
+def test_prefill_gemm_refuses_a_mismatched_reduction(prefill_unit):
+    """x's inner dimension is the axis the trellis does NOT run down."""
+    from tessera.errors import GrammarError
+    from tessera.kernel import tessera_gemm
+    _u, _r, select, point, lut, scales, gs, rows, cols = prefill_unit
+    with pytest.raises(GrammarError, match="reduction runs over"):
+        tessera_gemm(torch.randn(8, cols - 1, device="cuda"),
+                     select, point, lut, scales, gs, rows, cols)
