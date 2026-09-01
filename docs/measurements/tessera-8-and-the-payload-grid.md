@@ -118,3 +118,44 @@ scalar arm would separate them and has not been run.
 - Per the source spec TESSERA-8 should use "per-channel scalar DNA instead of
   MXFP8's po2 blocks". These arms use the S6b per-16 plane on **both** sides, so
   the comparison isolates the payload. The per-channel variant is unmeasured.
+
+---
+
+## Update 2026-08-31 — Result 2 was a construction defect, and it is fixed
+
+**Result 2 above ("4.5–6.5 bpp is a dead zone") is RETRACTED.** It was not
+structural. TESSERA-8 below its cap was optimising its alphabet against a source
+the encoder never produces, and every sub-cap number in this document is
+superseded. See `fp8-band-and-the-source-model.md` for the diagnosis; the
+corrected figures on one real Linear, at identical bytes:
+
+| bpp | arm | was | now |
+|---:|---|---:|---:|
+| 3.5 | E4M3 R=3 | 0.56891 | **0.14643** |
+| 4.5 | E4M3 R=4 | 0.32772 | **0.07581** |
+| 5.5 | E4M3 R=5 | 0.14489 | **0.04229** |
+| 6.5 | E4M3 R=6 | 0.06444 | 0.03813 |
+
+At 4.5 bpp TESSERA-8 now beats NVFP4 at the same bytes; at 5.5 bpp it beats the
+*free* Lloyd-Max grid (0.04229 vs 0.04344) while staying E4M3-representable.
+
+**Result 3's framing needs one correction too.** It said free grids are the
+kernel lane's privilege. Below the cap the forest *selects* its anchors from the
+256 E4M3 codes, so a sub-cap TESSERA-8 alphabet **is** a source-matched grid --
+one whose identity is derivable from `(family, rate)` alone, with no float table
+on the wire. That is a materially cheaper wire story than shipping Lloyd-Max
+levels, and it is the reason the sub-cap rungs matter beyond their error.
+
+**Result 1's cap arms are untouched.** `build_forest` short-circuits at
+`depth == 0`, before any of the changed code, so every arm at `R = cap` --
+TESSERA-4 at 3.5, TESSERA-8 at 7.5, every free grid, every k-tuple -- is
+bit-identical across the fix. Verified: the same three tensors read
+0.14151/0.14104/0.14101 for E2M1 R=3 both before and after.
+
+**Tested and rejected:** rebuilding the *free* grids against the same bounded
+source (a fixed point where the grid's peak sets the scale that sets the source
+whose Lloyd-Max top level is the peak) is **worse** below 128 codes -- +3.7% at
+16, +5.7% at 32, +2.4% at 64 -- and only helps at 128 (−3.4%). With few levels,
+concentrating them in the bulk and letting the group max clip is the better
+trade, which is the same implicit-clipping effect JSO exploits in PrismaQuant.
+The free grids stay as they are.
