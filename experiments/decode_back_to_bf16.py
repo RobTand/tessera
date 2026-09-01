@@ -6,12 +6,20 @@ number the format has is a weight-space or offline screen, which principle 3
 says is triage and not a result.
 
 A decode-back serve closes that gap without a backend.  The bytes are decoded
-by ``read_unit_artifact`` -- the same reader the format defines, the same one
-the Triton kernel is pinned bit-exact against -- so the BF16 tensors written
-here *are* the artifact's meaning.  A KL measured on them is the KL of the
-Tessera artifact, and it transfers to the eventual kernel lane exactly, because
-both lanes serve the identical W4A16 contract: the kernel decodes the same
-codes to the same values, just later and in registers.
+by ``read_unit_artifact`` -- the same reader the format defines, and the one
+``tests/test_kernel.py`` pins the Triton decode against with ``torch.equal``
+-- so the tensors written here *are* the artifact's meaning.  A KL measured on
+them is the KL of the Tessera artifact, and it carries to the kernel lane
+because both lanes serve the identical W4A16 contract: the kernel decodes the
+same codes to the same values, just later and in registers.
+
+**One caveat, stated rather than glossed.**  ``read_unit_artifact`` returns
+fp32 and this writes bf16, so the served weights carry a bf16 rounding of the
+reconstruction that a kernel lane feeding an fp32 accumulator would not.  That
+rounding is ~2^-9 relative against a reconstruction error of ~9e-2, i.e. ~0.2%
+of the error energy -- small, and in the direction of making this arm slightly
+*worse* than the kernel lane, not better.  It is not "exact"; it is bounded and
+conservative.
 
 **What it is not.**  The output is BF16-resident, so it is the same size as the
 source and proves *nothing* about the size target.  The size claim lives only

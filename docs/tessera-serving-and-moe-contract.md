@@ -236,11 +236,14 @@ plumbing, and the size claim lives *only* in the kernel lane.
 
 But quality does not have to wait for it. `experiments/decode_back_to_bf16.py`
 decodes an artifact into a plain BF16 checkpoint through `read_unit_artifact`
-— the format's own reader, the one the Triton kernel is pinned bit-exact
-against — so the tensors *are* the artifact's meaning and a KL measured on them
-transfers to the kernel lane exactly: both lanes serve the same W4A16 contract,
-the kernel just decodes later and in registers. The output is BF16-resident and
-proves **nothing** about size.
+— the format's own reader, the one `tests/test_kernel.py` pins the Triton
+decode against with `torch.equal` — so the tensors *are* the artifact's meaning
+and a KL measured on them carries to the kernel lane: both lanes serve the same
+W4A16 contract, the kernel just decodes later and in registers. Two caveats,
+both stated: the output is BF16-resident and proves **nothing** about size; and
+the bf16 cast of an fp32 reconstruction adds a ~2^-9 rounding the kernel lane
+need not have — ~0.2% of the error energy, and in the direction that makes this
+arm slightly worse than the kernel lane rather than better.
 
 `experiments/assert_render_export_identity.py` checks the seam nothing
 structurally enforces — that the render PrismaQuant prices equals the bytes the
