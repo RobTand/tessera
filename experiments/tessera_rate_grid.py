@@ -45,10 +45,14 @@ PROJ = ("gate_proj", "up_proj")
 # q256 is the per-POSITION body rate x256; the per-CODE rate is q256*arity/256
 # and must not exceed the grid's cap.  Both families are swept over the same
 # per-position band so the two ladders are directly comparable.
+# The whole realisable band of each family, in q256.  The floor is the rate
+# the shaped domain admits (R >= 1, so q256 >= 256/arity) and the ceiling is
+# the grid's cap; everything between is legal now that the sub-cap partition
+# is balanced.  Step 64 = a quarter bit per code.
 FAMILIES = {
-    "E2M1_K1": (E2M1_GRID, (256, 384, 512, 640, 768)),
+    "E2M1_K1": (E2M1_GRID, tuple(range(256, 769, 64))),
     "E2M1_K2": (tuple_grid(E2M1_GRID, 2, partition="coset"),
-                (256, 384, 512, 640, 768, 896)),
+                tuple(range(128, 897, 64))),
 }
 COMPLETIONS = (0, 1, 2, None)
 
@@ -72,8 +76,6 @@ def main():
             rows, cols = w.shape
             for fam, (grid, rungs) in FAMILIES.items():
                 for q256 in rungs:
-                    if q256 * grid.arity > 256 * grid.rate_cap:
-                        continue
                     rates, forests = _plan_for(grid, q256, cols)
                     for comp in COMPLETIONS:
                         tag = f"{fam}/q{q256}/c{'F' if comp is None else comp}"
@@ -102,8 +104,6 @@ def main():
         print(f"{'rung':>8} " + "".join(
             f"{('c=' + ('F' if c is None else str(c))):>19}" for c in COMPLETIONS))
         for q256 in rungs:
-            if q256 * grid.arity > 256 * grid.rate_cap:
-                continue
             cells = []
             for comp in COMPLETIONS:
                 tag = f"{fam}/q{q256}/c{'F' if comp is None else comp}"

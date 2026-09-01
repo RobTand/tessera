@@ -1,29 +1,48 @@
 # The rung is not a rate: Tessera has two sizes, not a band
 
-> **⚠ CAUSE FOUND 2026-09-01 (later the same day). The "identical bytes" this
-> document measures are a SERIALISER BUG, not a property of the format.**
-> `unit_artifact.py:160` sizes the COMPLETION plane from the *rate*
-> (`completion_capacity(r, cap)`) instead of from the completion depth the
-> encoder actually used — and `encode.py:371` shows the encoder can use less
-> (`level = depth if completion is None else min(completion, depth)`).
-> Measured, E2M1_K1 256x1024 at `q256=256`, `completion=0`: the completion
-> tensor is **all zeros — 0 nonzero of 262,144 entries — and still serialises
-> to 65,536 bytes**. The artifact carries 1.0 body + 0.5 scale = **1.5 bpp of
-> information and writes 3.52 bpp**.
+> **⚠ SUPERSEDED 2026-09-01 (same day). BOTH claims in this document's title
+> were bugs, and both are FIXED in `a96064b`. The measurements below are real;
+> the conclusion drawn from them was not.**
 >
-> So "every sub-top rung is strictly dominated" is true *only while the bug
-> exists*. The rate axis is continuous across each family's full range, as the
-> design intends and as `tessera_formats`'s own docstring says
-> ("continuous at a 1/256-bpp quantum ... ~9500 rungs ... spanning 1.00 to
-> 8.00 bpp"). **Fixing it needs the manifest to carry the completion depth so
-> the reader can size the plane.** Every artifact ever exported sits at a top
-> rung, where `completion_capacity(cap, cap) = 0` and the plane is genuinely
-> absent, so an honest-width serialiser is **byte-identical on all of them**.
+> **Bug 1 — the flat ladder.** `unit_artifact` sized *and packed* the
+> COMPLETION plane from the *rate* (`completion_capacity(r, cap)`) instead of
+> from the depth the encoder used (`encode.py`: `level = min(completion,
+> depth)`). Measured, E2M1_K1 256x1024 at `q256=256`, `completion=0`: the
+> completion tensor is **all zeros — 0 nonzero of 262,144 entries — and still
+> serialises to 65,536 bytes**; 1.5 bpp of information written as 3.52 bpp.
+> Because `sum(R) + sum(cap - R) = columns * cap` is constant, the body shrank
+> and the all-zero plane grew to match: **the ladder was flat by arithmetic.**
 >
-> What survives unchanged: the accounting-bug half below (`artifact_bpp`
-> returning `(q256+128)/256`) was real and is fixed, and every RD measurement
-> taken at a top rung — including the EXL3 head-to-head and "Tessera 4.0 beats
-> NVFP4 4.5 as served" — is unaffected. See [[tessera-nine-sizes-two-writable]].
+> The fix needed **no manifest change** — this document guessed otherwise.
+> `_counts_for` already sized the plane from `spec.completion_bits`;
+> `build_planes` simply never passed a spec. The depth is *solved back* from
+> the COMPLETION plane's already-recorded element count, which is monotone in
+> the limit. `encode_linear` also hardcoded `completion=0`, so the exporter
+> could not reach the second rate axis at all; it is a parameter now.
+>
+> **Bug 2 — the missing K2 rungs.** "Two sizes" was a *second* bug of the same
+> shape. Below the rate cap a k-tuple family's anchors are k-d bisection
+> representatives, not a lattice, so the rank-sum coset partition came out
+> unbalanced (rate 3 of E2M1x2 splits `[3,5,4,4]`) and `subsets` **refused** —
+> every sub-cap K2 rung was unencodable. Balance is structural (the point field
+> is a fixed `R-1` bits), but the stride rule satisfies it by construction, and
+> it is reached only where the old code raised.
+>
+> **The ladder is continuous and monotone now** (accountant bytes, round-trip
+> verified, 64x512): `E2M1_K1` q256..q768 = 1.5049 -> 3.5078 bpp; `E2M1_K2`
+> q128..q896 = 1.0635 -> 4.1250 bpp, at every step of 64 q256.
+>
+> **What survives unchanged.** The accounting-bug half below (`artifact_bpp`
+> returning `(q256+128)/256`) was real and is fixed. Every RD measurement taken
+> at a **top rung** — the EXL3 head-to-head, the matched-payload 1.142x, and
+> "Tessera 4.0 beats NVFP4 4.5 as served" — is unaffected, because at the cap
+> `completion_capacity == 0` and both bugs are inert there. Top-rung artifacts
+> are byte-identical across the fix (sha `411416ad6db8f40c` K1 q768,
+> `abe7e80e9978c8dc` K2 q896). **Any sub-cap RD point measured before
+> `a96064b` is invalid** — it paid cap weight for an empty plane — and needs
+> re-measuring; `experiments/tessera_rate_grid.py` is that sweep.
+>
+> See [[tessera-rate-axis-is-continuous]].
 
 
 **Measured 2026-09-01**, Qwen3-0.6B, same harness as

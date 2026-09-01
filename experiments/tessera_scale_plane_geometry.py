@@ -10,9 +10,17 @@ differ because the budgets are spent differently:
     EXL3    K=4     @ 4.0117 bpw = 4.0 payload + 0.0117 (fp16 suh/svh)
 
 Tessera hands **12.5% of its bits to scale metadata**; EXL3 hands over 0.3%.
-Body and completion sum to the grid's cap, so Tessera cannot move the saving
-into the payload -- but it can move it off the artifact, and the size win in
+It cannot move that saving into the payload *at this rung* -- q896 is the grid's
+cap, where the completion plane is structurally empty and the body is already as
+wide as a code gets -- but it can move it off the artifact, and the size win in
 the sub-4.5 band is the whole thesis.
+
+(An earlier version of this paragraph said "body and completion sum to the
+grid's cap" as though that held at every rung.  It did, and it was the bug
+`a96064b` fixed: the completion plane was written at full width whatever depth
+the encoder used, which made every rung of a family weigh the same.  Below the
+cap the two planes now sum to what was actually spent.  This sweep is at the
+cap, so its numbers are unaffected.)
 
 `group` and `half` are manifest geometry, already on the wire, already
 parameters of `encode_unit` and `encode_linear`.  So this is a sweep over
