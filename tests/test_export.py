@@ -115,3 +115,55 @@ def test_config_declares_the_tp_degree_it_was_encoded_for(tmp_path):
     """
     export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)
     assert read_checkpoint_config(tmp_path)["tp_size"] == 1
+
+
+def test_a_sharded_export_reads_back_through_its_index(tmp_path):
+    """The streaming exporter writes one shard per input shard plus an index.
+
+    A reader that assumes the single-file ``model.safetensors`` layout can read
+    back nothing this format exports at scale -- which is every checkpoint the
+    streaming path exists for.  This is the only test that exercises the
+    multi-shard read, so without it the sharded artifact is write-only.
+    """
+    import json
+
+    from safetensors.torch import save_file
+
+    from tessera.export import export_checkpoint_streaming
+
+    src = tmp_path / "src"
+    src.mkdir()
+    tensors = {
+        "layers.0.mlp.gate_proj.weight": _w(seed=1),
+        "layers.1.mlp.gate_proj.weight": _w(seed=2),
+    }
+    weight_map = {}
+    for i, (name, tensor) in enumerate(tensors.items(), start=1):
+        shard = f"model-0000{i}-of-00002.safetensors"
+        save_file({name: tensor}, str(src / shard), metadata={"format": "pt"})
+        weight_map[name] = shard
+    (src / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {"total_size": 0}, "weight_map": weight_map})
+    )
+
+    out = tmp_path / "out"
+    plan = {n: 896 for n in tensors}
+    report = export_checkpoint_streaming(
+        src, out, plan, grid=K2, device="cpu", copy_aux=False
+    )
+    assert len(report.units) == 2
+    assert not (out / "model.safetensors").exists()  # sharded, not single-file
+
+    from tessera.unit_artifact import read_unit_artifact
+
+    for name in plan:
+        direct = encode_linear(tensors[name], grid=K2, q256=896, name=name)
+        assert torch.equal(
+            load_tessera_weight(out, name), read_unit_artifact(direct.blob)
+        )
+
+
+def test_loading_an_absent_unit_names_the_index(tmp_path):
+    export_checkpoint({"a.weight": _w()}, {"a.weight": 896}, tmp_path, grid=K2)
+    with pytest.raises(KeyError):
+        load_tessera_weight(tmp_path, "nope.weight")

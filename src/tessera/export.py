@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import torch
@@ -117,8 +118,15 @@ class ExportReport:
         return self.passthrough_bytes + self.quantized_bytes
 
 
+@lru_cache(maxsize=256)
 def _plan_for(grid: PayloadGrid, q256: int, columns: int):
-    """Rate schedule and forests for one (grid, rung, width)."""
+    """Rate schedule and forests for one (grid, rung, width).
+
+    Cached because the forests are an exhaustive per-rate optimisation and are
+    identical for every Linear of the same width at the same rung -- on a
+    288-expert MoE layer that is hundreds of units sharing one plan, and
+    rebuilding it per tensor is the export's largest avoidable cost.
+    """
     root = Fraction(q256 * grid.arity, 256)
     rates = bresenham_rate_schedule(root, columns, cap=grid.rate_cap)
     forests = {rate: build_forest(rate, grid=grid) for rate in sorted(set(rates))}
@@ -403,15 +411,34 @@ def read_checkpoint_config(out_dir: "str | Path") -> dict:
     return json.loads((Path(out_dir) / "tessera_config.json").read_text())
 
 
+def _shard_holding(out: Path, key: str) -> Path:
+    """Locate the shard holding ``key``, honouring a written index.
+
+    ``export_checkpoint_streaming`` writes one shard per input shard plus an
+    index; only the in-memory ``export_checkpoint`` writes a lone
+    ``model.safetensors``.  A reader that assumes the single-file layout can
+    read back nothing this format actually exports at scale, so the index is
+    consulted first and the single file is the fallback, not the rule.
+    """
+    index_path = out / "model.safetensors.index.json"
+    if index_path.exists():
+        weight_map = json.loads(index_path.read_text())["weight_map"]
+        if key not in weight_map:
+            raise KeyError(f"{key!r} is not in this checkpoint's index")
+        return out / weight_map[key]
+    return out / "model.safetensors"
+
+
 def load_tessera_weight(
     out_dir: "str | Path", name: str, device: "str | torch.device" = "cpu"
 ) -> torch.Tensor:
     """Decode one Linear back out of a written checkpoint."""
     from safetensors import safe_open
 
-    config = read_checkpoint_config(out_dir)
+    out = Path(out_dir)
+    config = read_checkpoint_config(out)
     key = name + config.get("blob_suffix", BLOB_SUFFIX)
-    with safe_open(str(Path(out_dir) / "model.safetensors"), framework="pt") as handle:
+    with safe_open(str(_shard_holding(out, key)), framework="pt") as handle:
         if key not in handle.keys():
             raise KeyError(f"{name!r} is not a quantized unit in this checkpoint")
         blob = handle.get_tensor(key)
