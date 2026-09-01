@@ -97,19 +97,44 @@ def test_the_accountant_prices_every_family_not_just_the_4_bit_one():
 
     Left that way it silently refused every TESSERA-8 rung above 3.0 body
     bits -- most of the range an 8-bit family exists to reach -- so the
-    allocator could address rungs the byte accountant could not price.  A
-    rate axis whose bpp cannot be computed is not an allocatable axis.
+    allocator could address rungs the byte accountant could not price.
+
+    What this test must NOT be read as saying is that those rungs are
+    different *sizes*.  They are not: see the two assertions below, and
+    `docs/measurements/tessera-rate-ceiling-2026-09-01.md`.  Every rung of a
+    family serialises to the same bytes, so the q256 grid is the realisable
+    set of *schedules*, not an allocatable rate axis.
     """
     from tessera.calculator import terminal_rate
 
     for cap, rungs in ((3, (256, 400, 512, 768)),
                        (7, (256, 768, 1000, 1024, 1280, 1792))):
         for body_q256 in rungs:
-            bpp = terminal_rate(
-                body_q256, 4096, 4096, with_scale_refine=True, cap=cap
+            # Two different questions, and conflating them is what let a
+            # wrong bpp stand for as long as it did.
+            #
+            # (a) What does `terminal_rate` price for a terminal that carries
+            #     no completion plane?  Body plus the S6b half-bit, exactly.
+            #     This is the parameterisation check, not an artifact size.
+            hypothetical = terminal_rate(
+                body_q256, 4096, 4096, with_scale_refine=True, cap=cap,
+                completion=0,
             )
-            # body + the S6b plane's flat half-bit, exactly.
-            assert bpp == Fraction(body_q256 + Q256_UNIT // 2, Q256_UNIT)
+            assert hypothetical == Fraction(
+                body_q256 + Q256_UNIT // 2, Q256_UNIT
+            )
+
+            # (b) What does the *encoder* build?  `unit_artifact` writes
+            #     COMPLETION at the full `cap - rate` width at every rung and
+            #     offers no way to omit it, so the artifact weighs `cap` body
+            #     bits per code no matter which rung was asked for.  The rung
+            #     buys quality -- bits moved from the greedy completion plane
+            #     into the trellis-searched body plane -- and never size.
+            built = terminal_rate(
+                body_q256, 4096, 4096, with_scale_refine=True, cap=cap,
+                completion=cap,
+            )
+            assert built == Fraction(cap * Q256_UNIT + Q256_UNIT // 2, Q256_UNIT)
 
 
 def test_the_accountants_cap_default_reproduces_every_cited_figure():
