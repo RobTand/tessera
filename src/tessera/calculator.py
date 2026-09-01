@@ -140,8 +140,15 @@ def terminal_rate(
     superblock_columns: int = 256,
     cap: int = C_FULL_BITS,
     arity: int = 1,
+    span: int = 1,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
+
+    ``span`` is the trellis super-symbol length (schema minor 1): the BODY
+    plane holds ``span * R + span - 1`` bits per super-symbol per column.  A
+    LUT scale plane is spelled ``with_scale_base=False, with_scale_refine=True``
+    -- its table is manifest side bytes, outside the plane-region rate this
+    function states.  The defaults are the minor-0 wire.
 
     ``cap`` is the family's rate cap -- ``payload_bits - 1``.  It defaults to
     ``C_FULL_BITS`` so every figure derived before families existed is
@@ -190,9 +197,9 @@ def terminal_rate(
     # divergence between the two accountants is exactly the bug class this
     # function keeps having, not because a rung was ever mispriced here.
     planes = build_planes(geometry, rates, b"", b"", cap=cap, arity=arity,
-                          spec=spec)
+                          spec=spec, span=span)
     return build_terminal(
-        geometry, rates, spec, planes, 0, 0, cap=cap, arity=arity
+        geometry, rates, spec, planes, 0, 0, cap=cap, arity=arity, span=span
     ).exact_bpp
 
 
