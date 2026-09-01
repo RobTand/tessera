@@ -196,17 +196,29 @@ def replay_body(
         )
     )
     if shifted:
-        body = body_bits if body_bits.dtype == torch.uint8 else body_bits.to(torch.uint8)
+        # Narrowing the body is a bandwidth choice too, and it is available
+        # only while a code fits in a byte.  At R=9 this truncated the select
+        # bit off every code and the replay diverged from row 1 on.
+        body_fits = forest.rate <= 8
+        body = (
+            body_bits
+            if body_bits.dtype == torch.uint8 or not body_fits
+            else body_bits.to(torch.uint8)
+        )
+        # uint8 is a bandwidth choice, and it is only available while every
+        # anchor index fits in one.  Above that it is a correctness bug.
+        narrow = forest.grid.size <= 256 and points <= 256 and body_fits
+        index_dtype = torch.uint8 if narrow else torch.int32
         args = (
             body,
-            subsets.reshape(-1).to(torch.uint8),
+            subsets.reshape(-1).to(index_dtype),
             table_sub.reshape(-1).to(torch.uint8),
             shift,
             mask,
             code.memory,
             points,
         )
-        run = _fused_replay() if body.is_cuda else None
+        run = _fused_replay() if body.is_cuda and narrow else None
         if run is not None:
             try:
                 return run(*args).long()
@@ -249,12 +261,23 @@ def decode_codes(
 
 
 def dequantize(codes: torch.Tensor, scale: torch.Tensor, grid=None) -> torch.Tensor:
-    """Codes times their half-block scale: the weights the runtime will see."""
-    from .alphabet import E2M1_GRID
-    from .encode import grid_value_table
+    """Codes times their half-block scale: the weights the runtime will see.
 
+    ``codes`` is ``[steps, cols]``, one entry per *code*.  At arity 1 that is
+    one per weight; above it, each code fans out to ``arity`` consecutive rows,
+    which is the only place the tuple layout becomes visible outside the
+    trellis.
+    """
+    from .alphabet import E2M1_GRID
+    from .encode import grid_vector_table
+
+    grid = grid or E2M1_GRID
     # ``.int()``: codes are uint8, and a uint8 index tensor is a boolean mask.
-    return grid_value_table(grid or E2M1_GRID, codes.device)[codes.int()] * scale
+    out = grid_vector_table(grid, codes.device)[codes.int()]   # [steps, cols, k]
+    if grid.arity == 1:
+        return out.squeeze(-1) * scale
+    steps, cols, arity = out.shape
+    return out.permute(0, 2, 1).reshape(steps * arity, cols) * scale
 
 
 def materialize_nvfp4(
@@ -307,7 +330,13 @@ def decode_codes_mixed(
     # uint8, not int64: a code is a 4-bit nibble.  Carrying the decoder's whole
     # output at eight bytes a nibble made the completion lookup cost more than
     # the trellis replay it followed.
-    codes = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
+    grid = next(iter(forests.values())).grid
+    # A code is a nibble only on a 16-code grid.  ``uint8`` silently wraps at
+    # 256, which a 1024-code k-tuple grid reaches -- and a wrapped code decodes
+    # to a plausible wrong weight, never to an error.
+    narrow = grid.size <= 256
+    code_dtype = torch.uint8 if narrow else torch.int32
+    codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
     for present in sorted(set(unit.rates)):
         picked = forests[present]
         depth = picked.cap - picked.rate
@@ -316,13 +345,19 @@ def decode_codes_mixed(
         body = unit.body_bits[:, which].contiguous()
         comp = unit.completion_bits[:, which].contiguous()
         subsets, table_next, table_sub = _replay_tables(picked, code, str(device))
-        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.uint8)
+        blocks = torch.tensor(picked.blocks, device=device, dtype=code_dtype)
         reachable = blocks[:, :: 1 << (depth - level)].contiguous()
         points = subsets.shape[1]
         shift = points.bit_length() - 1
-        run = _fused_decode() if body.is_cuda else None
+        # The fused chain carries anchors and points in uint8 for bandwidth.
+        # Above 256 anchors that is not a slow path, it is a wrong one.
+        run = (
+            _fused_decode()
+            if body.is_cuda and narrow and points <= 256 and picked.rate <= 8
+            else None
+        )
         args = (
-            body if body.dtype == torch.uint8 else body.to(torch.uint8),
+            body if run is None or body.dtype == torch.uint8 else body.to(torch.uint8),
             subsets.reshape(-1).to(torch.uint8),
             table_sub.reshape(-1).to(torch.uint8),
             reachable.reshape(-1),
@@ -340,9 +375,9 @@ def decode_codes_mixed(
             except Exception:  # pragma: no cover - fall back, never fail closed
                 pass
         anchors = replay_body(body, picked, code)
-        codes[:, which] = reachable.long()[anchors, comp.long()].to(torch.uint8)
+        codes[:, which] = reachable.long()[anchors, comp.long()].to(code_dtype)
     if apply_release and unit.release_index.numel():
-        codes.reshape(-1)[unit.release_index] = unit.release_code.to(torch.uint8)
+        codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)
     return codes
 
 
@@ -373,7 +408,11 @@ def reconstruct_unit(
     from .wire import scales_from_planes
 
     codes = decode_codes_mixed(unit, forest, code, completion)
-    rows, cols = unit.body_bits.shape
+    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    grid = next(iter(forests.values())).grid
+    # ``body_bits`` is one row per CODE; the scale planes are per position.
+    steps, cols = unit.body_bits.shape
+    rows = steps * grid.arity
     if scale is None:
         scale = torch.repeat_interleave(
             scales_from_planes(
@@ -381,8 +420,7 @@ def reconstruct_unit(
             ),
             unit.half,
         ).reshape(rows, cols)
-    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
-    out = dequantize(codes, scale, next(iter(forests.values())).grid)
+    out = dequantize(codes, scale, grid)
     if unit.diagonals is not None:
         out = undo_diagonals(out, unit.diagonals)
     return undo_rotation(out, unit.rotation, unit.rotation_block)

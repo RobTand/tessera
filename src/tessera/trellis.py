@@ -41,14 +41,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .alphabet import E2M1_VALUES, AnchorForest, value_order
+from .alphabet import SUBSET_COUNT, AnchorForest, value_order
 from .errors import GrammarError
 
 __all__ = ["ConvCode", "TCQ", "SUBSET_COUNT"]
 
-#: The convolutional code emits two bits, so it selects one of four subsets.
-#: This is a property of a rate-1/2 code, not a tunable.
-SUBSET_COUNT = 4
+# ``SUBSET_COUNT`` is defined in ``alphabet`` -- the grid must refuse a code
+# space it cannot split -- and re-exported here, where it reads naturally.
 
 #: Published maximum-free-distance rate-1/2 generators, by memory order.
 _ODS_GENERATORS = {
@@ -108,9 +107,39 @@ class TCQ:
 
     @property
     def subsets(self) -> "tuple[tuple[int, ...], ...]":
-        """The anchors, value-ordered and split by stride into four subsets."""
+        """The anchors, ordered and split into four subsets.
+
+        Two rules, and they agree wherever both are defined at arity 1:
+
+        - ``stride`` walks the value order and takes every fourth anchor.  This
+          is Ungerboeck partitioning on a line and it is what every scalar
+          Tessera artifact was built with, so it stays the arity-1 default
+          verbatim -- including at ``R < cap``, where the anchors are a
+          *subset* of the grid and their ranks are no longer contiguous.
+        - ``coset`` groups by ``sum of rank vector mod 4``.  On a line that is
+          the same partition as ``stride``; in ``k`` dimensions it is the
+          standard multidimensional generalisation, and it is the only one of
+          the two that is guaranteed balanced when the anchors are a lattice
+          rather than an interval.
+
+        Balance is not cosmetic: an unbalanced split gives subsets of different
+        sizes, and the point field is a fixed ``R-1`` bits wide.
+        """
         anchors = self.forest.anchors
-        order = [a for a in value_order(self.forest.grid) if a in set(anchors)]
+        grid = self.forest.grid
+        if grid.arity > 1 and grid.partition == "coset":
+            keys = grid.keys or ()
+            groups: "list[list[int]]" = [[] for _ in range(SUBSET_COUNT)]
+            for position, anchor in enumerate(anchors):
+                groups[sum(keys[anchor]) % SUBSET_COUNT].append(position)
+            width = len(anchors) // SUBSET_COUNT
+            if any(len(group) != width for group in groups):
+                raise GrammarError(
+                    f"coset partition of {grid.name} is unbalanced: "
+                    f"{[len(g) for g in groups]} anchors per subset, need {width}"
+                )
+            return tuple(tuple(group) for group in groups)
+        order = [a for a in value_order(grid) if a in set(anchors)]
         index = {anchor: position for position, anchor in enumerate(anchors)}
         ordered = [index[a] for a in order]
         return tuple(tuple(ordered[offset::SUBSET_COUNT]) for offset in range(SUBSET_COUNT))
@@ -120,10 +149,20 @@ class TCQ:
         """Bits spent selecting within the subset the code chose."""
         return self.rate - 1
 
-    def _reachable_value_error(self, anchor: int, target: float, completion: int) -> float:
-        """Squared error at the best descendant reachable at level ``completion``."""
+    def _reachable_value_error(self, anchor: int, target, completion: int) -> float:
+        """Squared error at the best descendant reachable at level ``completion``.
+
+        ``target`` is a scalar at arity 1 and a sequence of ``arity`` values
+        otherwise; the metric is the squared Euclidean distance either way.
+        """
         codes = self.forest.reachable(anchor, completion)
-        return min((target - self.forest.grid.values[code]) ** 2 for code in codes)
+        grid = self.forest.grid
+        if grid.arity == 1:
+            return min((target - grid.values[code]) ** 2 for code in codes)
+        return min(
+            sum((t - v) ** 2 for t, v in zip(target, grid.vector(code)))
+            for code in codes
+        )
 
     def decode(self, bits: "list[int]", length: int) -> "list[int]":
         """Replay the code: input bits -> anchor indices. Exact, no search."""

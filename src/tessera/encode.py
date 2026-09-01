@@ -57,7 +57,27 @@ def grid_value_table(
     instead.  ``e2m1_value_table`` survives as the TESSERA-4 spelling because
     the kernel lane and the NVFP4 materialiser are E2M1 by definition.
     """
+    if grid.arity != 1:
+        raise GrammarError(
+            f"grid {grid.name} has arity {grid.arity}: a code decodes to "
+            f"{grid.arity} values, not one. Use grid_vector_table."
+        )
     return torch.tensor(grid.values, device=device, dtype=dtype)
+
+
+def grid_vector_table(
+    grid: PayloadGrid = E2M1_GRID, device=None, dtype=torch.float32
+) -> torch.Tensor:
+    """``[size, arity]`` -- every code's reconstruction, whatever its width.
+
+    The scalar table is the ``arity == 1`` column of this one, so the encoder
+    and decoder run the arity-1 path through the same expression: a sum over a
+    length-1 axis is exact in floating point, which is what makes "arity 1 is
+    byte-identical" a property rather than a hope.
+    """
+    return torch.tensor(grid.values, device=device, dtype=dtype).reshape(
+        grid.size, grid.arity
+    )
 
 
 @dataclass
@@ -117,9 +137,10 @@ def _transition_tables(code: ConvCode, device):
 
 
 def _descendant_values(forest: AnchorForest, completion: int, device):
-    """``[n_anchors, 2^c]`` of the values reachable at this completion level."""
+    """``[n_anchors, 2^c, arity]`` of the reconstructions reachable at level c."""
+    grid = forest.grid
     table = [
-        [forest.grid.values[code] for code in forest.reachable(anchor, completion)]
+        [grid.vector(code) for code in forest.reachable(anchor, completion)]
         for anchor in range(len(forest.blocks))
     ]
     return torch.tensor(table, device=device, dtype=torch.float32)
@@ -139,55 +160,77 @@ def viterbi_columns(
     """Exact Viterbi down every column at once.
 
     ``targets`` is ``[rows, cols]`` already divided by its group scale.
-    Returns ``(anchor_index[rows, cols], point_bits[rows, cols], sse)``.
+    Returns ``(anchor_index[steps, cols], point_bits[steps, cols], sse)`` where
+    ``steps = rows // grid.arity`` -- one trellis step per *code*, which is one
+    row only when the grid is scalar.
     """
     device = targets.device
     rows, cols = targets.shape
+    grid = forest.grid
+    arity = grid.arity
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    steps = rows // arity
     tcq = TCQ(forest, code)
     states = code.states
     prev, subset_of = _transition_tables(code, device)
-    dvals = _descendant_values(forest, completion, device)      # [A, 2^c]
+    dvals = _descendant_values(forest, completion, device)      # [A, 2^c, arity]
     subsets = _subset_table(tcq, device)                        # [4, P]
     points = subsets.shape[1]
+    if points > 256:
+        raise GrammarError(
+            f"rate {forest.rate} needs {points} points per subset; the "
+            "traceback stores the winner in a uint8 and would wrap silently"
+        )
+
+    # [steps, arity, cols]: a tuple is ``arity`` CONSECUTIVE ROWS of one
+    # column, because the trellis runs down columns and the k positions of a
+    # code have to share one branch decision.
+    tuples = targets.reshape(steps, arity, cols)
 
     cost = torch.full((cols, states), float("inf"), device=device)
     cost[:, 0] = 0.0
-    choice = torch.zeros(rows, cols, states, dtype=torch.bool, device=device)
-    picked = torch.zeros(rows, cols, SUBSET_COUNT, dtype=torch.uint8, device=device)
+    choice = torch.zeros(steps, cols, states, dtype=torch.bool, device=device)
+    picked = torch.zeros(steps, cols, SUBSET_COUNT, dtype=torch.uint8, device=device)
 
-    for row in range(rows):
-        target = targets[row].unsqueeze(1).unsqueeze(2)          # [cols,1,1]
-        # Anticipated-completion metric: score the best reachable descendant.
-        err = ((target - dvals.unsqueeze(0)) ** 2).amin(dim=2)   # [cols, A]
+    for step in range(steps):
+        target = tuples[step].t().reshape(cols, 1, 1, arity)     # [cols,1,1,k]
+        # Anticipated-completion metric, in k dimensions: score the best
+        # reachable descendant under squared Euclidean distance.  At k=1 the
+        # sum is over one term and this is bit-identical to the scalar form.
+        err = ((target - dvals.unsqueeze(0)) ** 2).sum(dim=3).amin(dim=2)  # [cols,A]
         by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
         best, point = by_subset.min(dim=2)                       # [cols, 4]
-        picked[row] = point.to(torch.uint8)
+        picked[step] = point.to(torch.uint8)
 
         branch = torch.stack(
             [cost[:, prev[side]] + best[:, subset_of[side]] for side in (0, 1)]
         )                                                        # [2, cols, states]
         cost, taken = branch.min(dim=0)
-        choice[row] = taken.bool()
+        choice[step] = taken.bool()
 
     end = cost.argmin(dim=1)                                     # [cols]
     sse = float(cost.gather(1, end.unsqueeze(1)).sum())
 
-    anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
     column = torch.arange(cols, device=device)
     state = end
-    for row in range(rows - 1, -1, -1):
-        side = choice[row][column, state].long()                 # [cols]
+    for step in range(steps - 1, -1, -1):
+        side = choice[step][column, state].long()                # [cols]
         sub = subset_of[side, state]
-        pt = picked[row][column, sub].long()
-        anchors[row] = subsets[sub, pt]
+        pt = picked[step][column, sub].long()
+        anchors[step] = subsets[sub, pt]
         # ``side`` says which *predecessor* won, which is not the input bit.
         # For this code ``next = (bit << m-1) | (state >> 1)``, so both
         # predecessors of a state share one input bit and it is read off the
         # state itself.  Emitting ``side`` instead would produce a stream that
         # replays to different anchors -- the round-trip test catches it.
         select = (state >> (code.memory - 1)) & 1
-        bits[row] = (select << (subsets.shape[1].bit_length() - 1)) | pt
+        bits[step] = (select << (subsets.shape[1].bit_length() - 1)) | pt
         state = prev[side, state]
     return anchors, bits, sse
 
@@ -263,6 +306,13 @@ def encode_unit(
     # forced -- fitting diagonals before rotating would fit the rotation's
     # own structure, and setting scales first would price a matrix the body
     # never sees.
+    arity = grid.arity
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+
     rotated, rotation_block = apply_rotation(weights, rotation)
     fitted = fit_diagonals(rotated) if with_diagonals else None
     work = apply_diagonals(rotated, fitted) if fitted else rotated
@@ -273,11 +323,18 @@ def encode_unit(
     scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
     targets = work / scale
 
-    anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    body_bits = torch.zeros(rows, cols, dtype=torch.uint8, device=device)
-    completion_bits = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    codes = torch.zeros(rows, cols, dtype=torch.long, device=device)
-    values = grid_value_table(grid, device)
+    # A code covers ``arity`` consecutive rows, so every per-code plane is
+    # ``steps`` tall, not ``rows``.  The scale planes stay per-position.
+    steps = rows // arity
+    # One code costs R bits, so the body plane is a uint8 only while R <= 8.
+    # A 1024-code k-tuple grid runs at R=9 and wrapped silently here, decoding
+    # to weights worse than zero (rel_err 1.55) with nothing raising.
+    body_dtype = torch.uint8 if max(rates) <= 8 else torch.int32
+    anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    body_bits = torch.zeros(steps, cols, dtype=body_dtype, device=device)
+    completion_bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
+    vectors = grid_vector_table(grid, device)
     rate_vector = torch.tensor(rates, device=device)
     sse = 0.0
 
@@ -293,10 +350,11 @@ def encode_unit(
         sse += s_
         blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
         reachable = blocks[:, :: 1 << (depth - level)]
-        per_pos = values[reachable][a]
-        c_bits = ((sub.unsqueeze(2) - per_pos) ** 2).argmin(dim=2)
+        per_pos = vectors[reachable][a]                  # [steps, n, D, arity]
+        want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+        c_bits = ((want - per_pos) ** 2).sum(dim=3).argmin(dim=2)
         anchors[:, which] = a
-        body_bits[:, which] = b.to(torch.uint8)
+        body_bits[:, which] = b.to(body_dtype)
         completion_bits[:, which] = c_bits
         codes[:, which] = reachable[a, c_bits]
 
@@ -305,7 +363,15 @@ def encode_unit(
     # reproduce the order from bytes it already has.
     release_index = torch.zeros(0, dtype=torch.long, device=device)
     release_code = torch.zeros(0, dtype=torch.long, device=device)
+    if released_positions and arity > 1:
+        raise GrammarError(
+            "release is not defined at arity > 1: an override replaces one "
+            "position's code, and a k-tuple code has no per-position code to "
+            "replace. The k-tuple trellis is what release was the alternative "
+            "to -- see docs/measurements/release-vs-tuple-trellis.md."
+        )
     if released_positions:
+        values = grid_value_table(grid, device)
         decoded = values[codes] * scale
         release_index = _canonical_release_order(
             decoded, cols, superblock, released_positions

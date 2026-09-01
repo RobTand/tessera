@@ -63,6 +63,11 @@ from dataclasses import dataclass
 from .errors import GrammarError
 from .grammar import alphabet_size, completion_capacity
 
+#: The rate-1/2 convolutional code emits two bits, so it selects one of four
+#: subsets.  Imported by ``trellis`` rather than the other way round: the grid
+#: has to know the count to refuse a code space that cannot be split evenly.
+SUBSET_COUNT = 4
+
 __all__ = [
     "E2M1_VALUES",
     "E4M3_VALUES",
@@ -73,6 +78,9 @@ __all__ = [
     "AnchorForest",
     "build_forest",
     "GAUSSIAN_SOURCE",
+    "tuple_grid",
+    "lloyd_max_grid",
+    "grid_digest",
 ]
 
 _E2M1_MAGNITUDES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
@@ -122,15 +130,19 @@ class PayloadGrid:
 
     name: str
     values: tuple[float, ...]
-    native: tuple[int, ...]
+    native: "tuple[int, ...] | None" = None
+    arity: int = 1
+    keys: "tuple[tuple[int, ...], ...] | None" = None
+    partition: str = "stride"
 
     @property
     def size(self) -> int:
-        return len(self.values)
+        """Number of codes.  ``values`` is flat, ``arity`` floats per code."""
+        return len(self.values) // self.arity
 
     @property
     def payload_bits(self) -> int:
-        """``log2(size)`` -- the scalar format's own width."""
+        """``log2(size)`` -- the width of one code, whatever it reconstructs."""
         return self.size.bit_length() - 1
 
     @property
@@ -138,14 +150,199 @@ class PayloadGrid:
         """Highest trellis rate: one bit of the payload is the code's redundancy."""
         return self.payload_bits - 1
 
+    @property
+    def bits_per_position(self) -> float:
+        """What a full-payload code costs per reconstructed weight.
+
+        This is the whole point of ``arity``.  A code is charged once and pays
+        for ``arity`` positions, so a k-tuple grid over a G-code base spends
+        ``(k*log2(G) - 1)/k`` payload bits per weight at ``R = cap``.  At k=1
+        over E2M1 that is the familiar 3.0; at k=2 it is 3.5; the rate quantum
+        halves with every doubling of k, which is the ladder the scalar
+        grammar cannot express at all.
+        """
+        return self.payload_bits / self.arity
+
+    def vector(self, code: int) -> "tuple[float, ...]":
+        """The ``arity`` values this code reconstructs, in row order."""
+        return self.values[code * self.arity : (code + 1) * self.arity]
+
     def __post_init__(self) -> None:
+        if self.arity < 1:
+            raise GrammarError(f"grid {self.name}: arity must be >= 1")
+        if len(self.values) % self.arity:
+            raise GrammarError(
+                f"grid {self.name}: {len(self.values)} values is not a whole "
+                f"number of arity-{self.arity} codes"
+            )
         if self.size & (self.size - 1):
             raise GrammarError(
                 f"grid {self.name} has {self.size} slots, which is not a power of "
                 "two; the anchor/descendant partition cannot close"
             )
-        if len(self.native) != self.size:
+        if self.size % SUBSET_COUNT:
+            raise GrammarError(
+                f"grid {self.name} has {self.size} codes, which is not divisible "
+                f"by the {SUBSET_COUNT} trellis subsets"
+            )
+        if self.native is not None and len(self.native) != self.size:
             raise GrammarError(f"grid {self.name}: native map is not {self.size} long")
+        if self.partition not in ("stride", "coset"):
+            raise GrammarError(
+                f"grid {self.name}: partition must be 'stride' or 'coset', "
+                f"got {self.partition!r}"
+            )
+        if self.keys is None:
+            # A scalar grid's key is its rank in value order, which is what the
+            # stride rule has always used.  Deriving it here rather than at each
+            # call site is what lets one formula cover both arities.
+            rank = {
+                code: position
+                for position, code in enumerate(
+                    sorted(range(self.size), key=lambda c: (self.values[c], c))
+                )
+            }
+            object.__setattr__(
+                self, "keys", tuple((rank[c],) for c in range(self.size))
+            )
+        elif len(self.keys) != self.size:
+            raise GrammarError(f"grid {self.name}: keys map is not {self.size} long")
+
+
+def tuple_grid(base: PayloadGrid, k: int, partition: str = "coset") -> PayloadGrid:
+    """``k`` consecutive positions quantised as one code over ``base**k``.
+
+    **This is the k-tuple trellis, and it needs no new trellis.**  ``|A_R| =
+    2^(R+1)`` caps a *scalar* trellis at R = log2(G) - 1 over a G-code grid --
+    R=3 on E2M1, because R=4 would need 32 reconstruction levels and E2M1 has
+    16.  A pair of positions has G^2 joint codes, so the identical construction
+    one level up spends R = 2*log2(G) - 1 bits per *pair*, which is
+    ``(2*log2(G) - 1)/2`` bits per position with the redundancy bit intact.
+    Everything downstream -- the anchor/descendant partition, the completion
+    grammar, the Viterbi, the replay -- operates on codes and never asked how
+    many weights a code stands for.  So the whole change is here.
+
+    Codes are ordered ``c_1`` slowest: code ``i`` reconstructs base codes
+    ``i // G^(k-1), ..., i % G``, mapped onto ``k`` **consecutive rows**.  Rows
+    rather than columns because the trellis runs down columns, so a tuple must
+    be a contiguous run along the trellis axis for its positions to share one
+    branch decision.
+
+    ``partition="coset"`` is the default at k>1: subsets are the level curves
+    of ``sum of base ranks mod 4``, the standard multidimensional Ungerboeck
+    partition, which reduces exactly to the scalar stride-4 rule at k=1.
+    """
+    if k < 1:
+        raise GrammarError(f"tuple arity must be >= 1, got {k}")
+    if base.arity != 1:
+        raise GrammarError(
+            f"tuple_grid needs a scalar base grid; {base.name} has arity "
+            f"{base.arity}. Build the k-tuple in one step, not by nesting."
+        )
+    if k == 1:
+        return base
+    size = base.size**k
+    if size > 1 << 16:
+        raise GrammarError(
+            f"{base.name}^{k} is {size} codes; the Viterbi scores every anchor "
+            "at every step, so this is a cost refusal, not a grammar one"
+        )
+    base_rank = {code: rank for rank, code in enumerate(value_order(base))}
+    values: list[float] = []
+    keys: list[tuple[int, ...]] = []
+    for code in range(size):
+        digits = []
+        rest = code
+        for _ in range(k):
+            digits.append(rest % base.size)
+            rest //= base.size
+        digits.reverse()
+        for digit in digits:
+            values.append(base.values[digit])
+        keys.append(tuple(base_rank[digit] for digit in digits))
+    return PayloadGrid(
+        name=f"{base.name}x{k}",
+        values=tuple(values),
+        native=None,                 # a tuple code is not a hardware byte
+        arity=k,
+        keys=tuple(keys),
+        partition=partition,
+    )
+
+
+def lloyd_max_grid(
+    size: int,
+    sigma: float = 1.0,
+    iterations: int = 80,
+    samples: int = 1 << 15,
+    name: "str | None" = None,
+) -> PayloadGrid:
+    """The SSE-optimal scalar levels for a Gaussian source, as a grid.
+
+    Promoted out of the measurement scripts because **a grid is wire**: a
+    decoder that reconstructs on different levels than the encoder chose
+    produces plausible, wrong weights rather than an error.  So the
+    construction has to be deterministic and versioned, which means the
+    iteration count and sample count are parameters of the artifact and not
+    of whoever ran the script.  ``GAUSSIAN_SOURCE`` is an inverse-CDF sample,
+    so there is no seed anywhere in this.
+
+    These levels are **not** materialisable into any hardware format -- see
+    ``native=None`` -- so a grid built here is kernel-lane only.
+    """
+    source = GAUSSIAN_SOURCE(samples, sigma)
+    lo, hi = source[0], source[-1]
+    levels = [lo + (hi - lo) * index / (size - 1) for index in range(size)]
+    for _ in range(iterations):
+        buckets: list[list[float]] = [[] for _ in range(size)]
+        for sample in source:
+            best, best_gap = 0, None
+            for index, level in enumerate(levels):
+                gap = abs(sample - level)
+                if best_gap is None or gap < best_gap:
+                    best, best_gap = index, gap
+            buckets[best].append(sample)
+        levels = [
+            sum(bucket) / len(bucket) if bucket else levels[index]
+            for index, bucket in enumerate(buckets)
+        ]
+        levels.sort()
+    return PayloadGrid(name or f"LM{size}", tuple(levels))
+
+
+def grid_digest(grid: PayloadGrid) -> str:
+    """A stable identity for a grid, for the wire.
+
+    The ALPHABET and DESCENDANT planes carry **codes**; code -> value comes
+    from the grid, which no plane records.  Two artifacts over different grids
+    are therefore byte-indistinguishable today, and the wrong one decodes to
+    plausible wrong weights -- silent corruption, not a load error.  This is
+    the value an ``encoder_profile_id`` has to absorb before anything but
+    implicit-E2M1 is allowed to serialise.
+
+    Values are digested at their exact float64 bit patterns, because a grid
+    that round-trips through a lower precision is a *different* grid and must
+    say so.
+    """
+    import hashlib
+    import struct
+
+    hasher = hashlib.sha256()
+    hasher.update(f"tessera-grid-v1|{grid.name}|{grid.arity}|{grid.size}|".encode())
+    hasher.update(grid.partition.encode())
+    for value in grid.values:
+        hasher.update(struct.pack("<d", value))
+    hasher.update(b"|native|")
+    if grid.native is None:
+        hasher.update(b"none")
+    else:
+        for code in grid.native:
+            hasher.update(struct.pack("<I", code))
+    hasher.update(b"|keys|")
+    for key in grid.keys or ():
+        for entry in key:
+            hasher.update(struct.pack("<I", entry))
+    return hasher.hexdigest()
 
 
 E2M1_GRID = PayloadGrid("E2M1", E2M1_VALUES, tuple(range(16)))
@@ -159,6 +356,11 @@ E4M3_GRID = PayloadGrid(
 def value_order(grid: PayloadGrid = E2M1_GRID) -> tuple[int, ...]:
     """The grid's codes ascending by decoded value, ties broken by code.
 
+    For a k-tuple grid there is no scalar value to sort on, so the order is
+    over the code's **rank vector**: total rank first, then the vector itself.
+    At k=1 the rank vector is ``(rank,)`` and total rank *is* the rank, so this
+    reproduces the scalar value order exactly -- one formula, both arities.
+
     ``-0.0 == 0.0`` in IEEE arithmetic, so the two signed zeros tie and the
     tie-break places ``+0`` before ``-0``.  That is not cosmetic: it fixes which
     zero is an anchor at rates below the cap, and the reviewed rate-2 fixture
@@ -166,8 +368,9 @@ def value_order(grid: PayloadGrid = E2M1_GRID) -> tuple[int, ...]:
     duplicates behind the legal bytes they copy, so neither is ever chosen as a
     representative over the byte it duplicates.
     """
+    keys = grid.keys or ()
     return tuple(
-        sorted(range(grid.size), key=lambda code: (grid.values[code], code))
+        sorted(range(grid.size), key=lambda code: (sum(keys[code]), keys[code], code))
     )
 
 
@@ -274,12 +477,49 @@ class AnchorForest:
             index = (index << 1) | bit
         return self.blocks[anchor][index << (depth - len(bits))]
 
+    def _refuse_unserialisable(self) -> None:
+        """The one hard line: only implicit-E2M1 may reach the wire today.
+
+        These planes carry **codes**.  Code -> value comes from the grid, and
+        no plane, header or descriptor records which grid that was, so two
+        artifacts over different grids are byte-indistinguishable and the wrong
+        one decodes to plausible wrong weights rather than to an error.  Until
+        the family descriptor carries ``grid_digest``, anything but the grid
+        every existing artifact was built with is refused here -- at the
+        serialisation boundary, which is the only place the ambiguity becomes
+        real.  Encoding, decoding and measuring on other grids stay open.
+        """
+        if self.grid.arity > 1:
+            raise GrammarError(
+                f"grid {self.grid.name} has arity {self.grid.arity}: a code "
+                "covers several positions and the layout has no field saying "
+                "so. Serialising a k-tuple body is a schema change (family "
+                "descriptor, arity, grid digest), not a cast."
+            )
+        if self.grid.size > 256:
+            raise GrammarError(
+                f"grid {self.grid.name} has {self.grid.size} codes: the "
+                "ALPHABET/DESCENDANT planes are one byte per code and cannot "
+                "carry it. A wider code space is a schema change (wider plane "
+                "element, family descriptor, grid digest), not a cast."
+            )
+        if grid_digest(self.grid) != grid_digest(E2M1_GRID):
+            raise GrammarError(
+                f"grid {self.grid.name} is not the E2M1 grid every artifact on "
+                "the wire is implicitly decoded against, and no plane records "
+                f"which grid was used (digest {grid_digest(self.grid)[:16]}). "
+                "Give the family descriptor a grid digest before serialising "
+                "this -- silent misdecode is the failure mode, not a load error."
+            )
+
     def alphabet_plane(self) -> bytes:
         """The ALPHABET plane: one byte per anchor, in anchor order."""
+        self._refuse_unserialisable()
         return bytes(self.anchors)
 
     def descendant_plane(self) -> bytes:
         """The DESCENDANT plane: the forest flattened, one byte per grid code."""
+        self._refuse_unserialisable()
         return bytes(code for block in self.blocks for code in block)
 
 
@@ -317,6 +557,8 @@ def build_forest(
     depth = completion_capacity(rate, grid.rate_cap)
     width = 1 << depth
     anchors = alphabet_size(rate, grid.rate_cap)
+    if depth and grid.arity > 1:
+        return _build_forest_kd(rate, grid, depth, width, anchors)
     if anchors * width != grid.size:
         raise GrammarError(
             f"rate {rate}: {anchors} anchors x {width} descendants "
@@ -338,6 +580,14 @@ def build_forest(
     # whose value span is nearest -- a nearest-code assignment, since blocks
     # are contiguous.
     raw_blocks = [order[i * width : (i + 1) * width] for i in range(anchors)]
+    if depth == 0:
+        # Every block is one code, so there is no representative to choose and
+        # no mass to route.  Skipping the routing scan is not just a saving:
+        # it is what lets a k-tuple grid through, since routing reads
+        # ``grid.values[code]`` as a scalar and a tuple code has no scalar.
+        return AnchorForest(
+            rate=rate, blocks=tuple((code,) for code in order), grid=grid
+        )
     # Blocks are contiguous in value order, so routing to the nearest block is
     # routing to the nearest code, and the block's bounds decide it: a sample
     # below the first value belongs to block 0, above the last to block -1, and
@@ -366,6 +616,121 @@ def build_forest(
     for index, block in enumerate(raw_blocks):
         blocks.append(_order_block(block, routed[index], depth, grid))
     return AnchorForest(rate=rate, blocks=tuple(blocks), grid=grid)
+
+
+def _code_density(grid: PayloadGrid) -> "tuple[float, ...]":
+    """Each code's source mass under a product Gaussian, in grid units.
+
+    The scalar builder routes explicit samples to blocks and then picks the
+    member nearest the routed mean.  Since ``sum_s (s - v)^2`` is minimised by
+    the ``v`` nearest ``mean(s)``, that rule *is* "nearest the mass centroid" --
+    so the k-dimensional generalisation needs the centroid, not the samples,
+    and the density gives it in closed form with no sampling and no seed.
+
+    The one honest difference: the scalar path weights by mass actually routed
+    to the cell, this weights by density at the code.  They agree in the limit
+    of a fine grid and differ slightly on a coarse one.
+    """
+    from math import exp
+
+    sigma = max(abs(value) for value in grid.values) / 6.0
+    out = []
+    for code in range(grid.size):
+        mass = 1.0
+        for value in grid.vector(code):
+            mass *= exp(-0.5 * (value / sigma) ** 2)
+        out.append(mass)
+    return tuple(out)
+
+
+def _kd_bisect(
+    codes: "tuple[int, ...]", grid: PayloadGrid, density: "tuple[float, ...]"
+) -> "tuple[tuple[int, ...], tuple[int, ...]]":
+    """Split a code set into two equal halves across its widest axis.
+
+    A k-tuple code space has no value order to chop contiguously, so the
+    scalar builder's "contiguous dyadic blocks" has to become something that
+    means the same thing in k dimensions.  Splitting the widest axis at the
+    median is the k-d tree construction: cells stay compact, the halves stay
+    exactly equal -- which the dyadic tree requires -- and it is deterministic,
+    which a k-means split with a seed would not be.  At arity 1 the widest axis
+    is the only axis and the median split *is* the contiguous split, so this
+    reduces to the scalar rule (``tests/test_ktuple.py`` asserts it).
+    """
+    vectors = {code: grid.vector(code) for code in codes}
+    total = sum(density[code] for code in codes) or 1.0
+    mean = [
+        sum(density[c] * vectors[c][axis] for c in codes) / total
+        for axis in range(grid.arity)
+    ]
+    spread = [
+        sum(density[c] * (vectors[c][axis] - mean[axis]) ** 2 for c in codes)
+        for axis in range(grid.arity)
+    ]
+    axis = max(range(grid.arity), key=lambda i: (spread[i], -i))
+    order = tuple(sorted(codes, key=lambda c: (vectors[c][axis], vectors[c], c)))
+    half = len(order) // 2
+    return order[:half], order[half:]
+
+
+def _representative(
+    codes: "tuple[int, ...]", grid: PayloadGrid, density: "tuple[float, ...]"
+) -> int:
+    """The member nearest this node's mass centroid -- the scalar rule, in k-d."""
+    total = sum(density[code] for code in codes) or 1.0
+    centroid = [
+        sum(density[c] * grid.vector(c)[axis] for c in codes) / total
+        for axis in range(grid.arity)
+    ]
+    return min(
+        codes,
+        key=lambda c: (
+            sum((v - m) ** 2 for v, m in zip(grid.vector(c), centroid)),
+            c,
+        ),
+    )
+
+
+def _order_block_kd(
+    codes: "tuple[int, ...]", grid: PayloadGrid, density: "tuple[float, ...]",
+    depth: int,
+) -> "tuple[int, ...]":
+    """One block into completion order, representative first, in k dimensions."""
+    if depth == 0:
+        return codes
+    low, high = _kd_bisect(codes, grid, density)
+    left = _order_block_kd(low, grid, density, depth - 1)
+    right = _order_block_kd(high, grid, density, depth - 1)
+    pick = _representative((left[0], right[0]), grid, density)
+    return left + right if pick == left[0] else right + left
+
+
+def _build_forest_kd(
+    rate: int, grid: PayloadGrid, depth: int, width: int, anchors: int
+) -> "AnchorForest":
+    """The forest for a k-tuple grid below its rate cap.
+
+    Recursive balanced bisection down to ``anchors`` blocks, then each block
+    into completion order.  This is the scalar construction with "contiguous in
+    value order" replaced by "compact under k-d bisection", which is the only
+    part of it that assumed one dimension.
+    """
+    density = _code_density(grid)
+    blocks: "list[tuple[int, ...]]" = [tuple(range(grid.size))]
+    while len(blocks) < anchors:
+        blocks = [
+            half for block in blocks for half in _kd_bisect(block, grid, density)
+        ]
+    ordered = [_order_block_kd(block, grid, density, depth) for block in blocks]
+    # Anchor order follows the blocks' own bisection traversal, which keeps
+    # neighbouring anchors adjacent -- that is what makes the stride subset
+    # rule separate them.
+    ordered.sort(key=lambda block: (sum(grid.keys[block[0]]), grid.keys[block[0]]))
+    if width != len(ordered[0]):
+        raise GrammarError(
+            f"k-d bisection produced blocks of {len(ordered[0])}, need {width}"
+        )
+    return AnchorForest(rate=rate, blocks=tuple(ordered), grid=grid)
 
 
 def _order_block(
