@@ -193,44 +193,34 @@ gain/cost **7.7×** — but its mechanism is "promote the layers that need it", 
 4. Therefore: encoder first. The backend and the rate-ceiling work are both
    gated on the same harness re-run.
 
-## Next, in order
+## Next, in order (rewritten 21:50 UTC after the limits computation)
 
-Steps 1 and 2 below are **done** — that is what the measured decomposition
-above is. What follows from them:
+`docs/measurements/tessera-theoretical-limits-2026-09-01.md` changed the
+order. The weight-space encoder is at its floor (≤2% left at the current
+wire); same-size wire changes cap near 1.05× because the E2M1×2 alphabet
+absorbs extra rate at ~45% efficiency; the tile's plane is a 1.365×
+hardware tax on stationary weights that nothing FP4-native buys back. The
+one large lever left for the served metric is output-space compensation,
+whose ceiling is 1.91× with a known Hessian and 1.08× realised with the
+4k-token one we have.
 
-1. **Decide whether Tessera's rate ceiling can rise above 3.5 payload bits.**
-   This is now the only lever with the size to close a slope gap, and it has
-   never been evaluated. It is a wire change (a new committed grid digest).
-2. **Or reopen the free-grid question**, worth ≈1.22× at zero redundancy —
-   which is exactly where the shipping rungs sit (`completion=0`). Also a wire
-   change (a VALUES plane). The 1.78 dB figure is inherited from
-   `tessera-project-scope`, not re-measured, so re-measure it first.
-3. **Cheap and wire-free — half built.** The per-group scale search over the
-   stored scale words is `scale_refit`, default-on since `cf82b00`/`61df165`
-   (1.084×). `static_act_order` is still unmeasured on Tessera. Under the
-   FP4-native constraint items 1 and 2 narrow to: Wei L=2 (+0.25 bpp,
-   1.104×) or per-32 E4M3 + L=2 at 4.0 bpp (1.047×) — both wire changes —
-   and the LDLQ stack once the multi-document capture says whether its
-   1.134× generalises.
-4. **The scale-plane geometry is a real size lever even so.** `g256/h128` ships
-   at 3.5630 bpp for 1.139× error, all on the wire today, accountant-priced. If
-   a smaller-than-Mia artifact is wanted more than a better one, that is the
-   knob.
-
-## Untouched ledger
-
-Aqua at the allocate step · PrismaBuild integration · MTP and vision-head
-inheritance from Mia · TP-aware export (re-encode per rank) for 2×DGX-Spark ·
-the NVFP4 **W4A4** served-KL arm on Qwen3-0.6B (the GLM screen predicts it flips
-the earlier served-KL result) · `TESSERA_E2M1_K2_R128` rendering at rel_err
-**0.90**, 73× worse than R896 at identical size, unexplained.
-
-## One caveat on the comparator
-
-Mia's shipped artifact **does not reconstruct** under the exllamav3 version its
-own ABI names. The reader was proven exact against the quantizer's own
-reconstruction (cos 1.0000), an expert permutation was excluded over all 288
-experts, and version and codebook were confirmed. Her own
-`exl3-mcg-storage-abi.json` declares `serving_reader_qualified: false` — bytes
-verified, decode never audited. This is a **strong indication, not a verdict**;
-the head-to-head above sidesteps it entirely by re-quantizing the BF16 weights.
+1. **LDLQ with a real Hessian.** Token-scaling run
+   (`experiments/tessera_ldlq_token_scaling.py`, fit 2/4/8/14 docs, fixed
+   eval) to get the slope; then a large capture (≥64k tokens; the tokens
+   routed to each expert, shrunk towards the shared H) and the LDLQ encode
+   inside PrismaQuant's render path where per-expert activations already
+   exist for GPTQ. No wire change. Default-on when activations are present.
+   Caveat to design in: LDLQ pins a unit to the completion depth it was
+   compensated at (the embedded rate axis is not free under compensation).
+2. **Served A/B for the refit default** (refit 0 vs 4) on the
+   `tessera-served-kl-2026-09-01` harness — the promotion gate for what is
+   already default.
+3. **Wire family above 4.0 only:** flat E4M3 plane (share 1/2) + Wei L, for
+   the 4.25/4.375 disk/kernel-lane rungs (1.129×/1.162×). The 4.0 point
+   (1.047×) rides along; it is not the reason to do it. `(i+2j) mod 4` is a
+   free 0.4% to bundle into the same profile-id bump.
+4. **The E4M3 payload grid** (the 8-bit weight rung): `build_forest`
+   dispatches on arity, not spread; its low rungs are ~1.5× off. Same
+   limits analysis applies; untouched by today's work.
+5. Held: scalar-lane LUT split; delete partA/partB (ask first); ladder
+   probe dispatch; box chores.

@@ -176,8 +176,13 @@ def main():
             # within-block shape: normalise each 16-block to unit RMS
             z16 = (w.reshape(rows, -1, 16) / block_var(w, 16).sqrt().unsqueeze(-1).clamp_min(1e-30)).reshape(-1)
             dh16 = entropy_bits(z16) - gauss_bits(float(z16.pow(2).mean()))
+            # BF16 weights are discrete at ~2^-8 relative spacing; a histogram
+            # finer than that sees spikes and the entropy collapses (the first
+            # run reported -3.9 bits here).  1024 bins over +-max is ~0.01 sigma
+            # wide, well above the spacing near |z| ~ 1.  The block-normalised
+            # z16 is smeared by its per-block divisor and needs no such care.
             zt = (w / math.sqrt(am)).reshape(-1)
-            dh_t = entropy_bits(zt) - gauss_bits(float(zt.pow(2).mean()))
+            dh_t = entropy_bits(zt, bins=1024) - gauss_bits(float(zt.pow(2).mean()))
             kurt16 = float(z16.pow(4).mean() / z16.pow(2).mean() ** 2)
             # the plane's information content: entropy of the refit E4M3 bytes
             G = F.E4M3_MAX / F.amax_half(w).max()
