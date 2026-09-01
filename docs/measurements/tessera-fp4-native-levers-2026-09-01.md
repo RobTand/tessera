@@ -4,10 +4,11 @@
 `61df165` (trailing refit, default four passes). **Scripts:**
 `experiments/tessera_fp4_native_levers.py` (the battery),
 `experiments/tessera_rank1_plane_multidim.py`,
-`experiments/tessera_plane_alternatives.py`; every table below is rendered by
-`experiments/render_fp4_native_tables.py` from the JSONs in
-`experiments/results/` — no number here is typed by hand except the schedule
-and encode-cost tables, which say so.
+`experiments/tessera_plane_alternatives.py`,
+`experiments/tessera_refit_schedule.py`; every table below is rendered from
+the JSONs in `experiments/results/` (`experiments/render_fp4_native_tables.py`,
+or the schedule script's own summary) — no number here is typed by hand
+except the export-path encode times, which say so.
 
 ## The constraint
 
@@ -86,31 +87,36 @@ block is +1%, needs activations, not wired.
 
 ### The schedule: end on a refit
 
-Measured after the battery on the same six tensors and scorer (ad-hoc run,
-the encoder itself at each schedule; ratios are the output-space weight leg
-over the amax plane):
+`tessera_refit_schedule.py` runs the encoder itself — `61df165`'s (ends on a
+refit, `T(RT)^(k-1)R`) and `cf82b00`'s, loaded from git (ends on the trellis,
+`(TR)^k T`) — on the same six tensors and scorer. Ratios are the held-out
+output-space weight leg over the amax plane; encode seconds are one job on
+the box, one 2048×4096 expert, including the release-stage pass.
 
-| schedule | Viterbi passes | vs amax plane |
-|---|---:|---:|
-| `T` (amax plane) | 1 | 1.000× |
-| `TR` | 1 | 1.044× |
-| `TRT` | 2 | 1.063× |
-| `TRTR` | 2 | 1.072× |
-| `TRTRT` | 3 | 1.077× |
-| `TRTRTR` | 3 | 1.080× |
-| `TRTRTRT` (`cf82b00` default) | 4 | 1.082× |
-| **`TRTRTRTR` (`61df165` default)** | 4 | **1.084×** |
+| schedule | passes | vs amax plane | min-max | encode s |
+|---|---:|---:|---:|---:|
+| T (new k=0) | 1 | 1.000x | 1.000-1.000 | 0.38 |
+| TR (new k=1) | 1 | 1.044x | 1.040-1.047 | 0.36 |
+| TRT (old k=1) | 2 | 1.063x | 1.058-1.069 | 0.71 |
+| TRTR (new k=2) | 2 | 1.072x | 1.065-1.078 | 0.72 |
+| TRTRT (old k=2) | 3 | 1.077x | 1.072-1.084 | 1.07 |
+| TRTRTR (new k=3) | 3 | 1.080x | 1.074-1.087 | 1.07 |
+| TRTRTRT (old k=3, `cf82b00` default) | 4 | 1.082x | 1.077-1.089 | 1.43 |
+| **TRTRTRTR (new k=4, `61df165` default)** | 4 | **1.084x** | 1.079-1.090 | 1.43 |
+| TRTRTRTRTRTR (new k=6) | 6 | 1.086x | 1.079-1.094 | 2.16 |
 
 A trailing refit costs no Viterbi and is monotone, so at every pass count
 ending on R beats ending on T. `61df165` makes `scale_refit=k` mean k passes
 and k refits with the last one trailing; `scale_refit=0` is the amax plane
-byte for byte and `scale_refit=1` is the free 4.4%.
+byte for byte and `scale_refit=1` is the free 4.4%. Six passes buy another
+0.2% for 50% more time — four is the knee.
 
-**Encode cost** on the real export path (one 2048×4096 expert, concurrent jobs
-inflating absolutes; the ratio is the claim): refit 0 / 1 / 3 = 2.25 / 4.61 /
-9.11 s. The default is ~4× the amax plane's encode time. The merged
-151.487 GiB GLM export was built at refit 0; shipping the refit means
-re-draining.
+**Encode cost:** 0.36 s per Viterbi pass on a 2048×4096 expert, so the
+default is ~4× the amax plane's encode (1.43 s vs 0.38 s). On the real export
+path under concurrent jobs the same ratio read refit 0 / 1 / 3 = 2.25 / 4.61
+/ 9.11 s (hand-recorded from the drain logs, absolutes inflated by the
+concurrency). The merged 151.487 GiB GLM export was built at refit 0;
+shipping the refit means re-draining.
 
 ## M — half the redundancy (Wei multidimensional partition)
 

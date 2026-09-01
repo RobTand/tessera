@@ -1,0 +1,79 @@
+
+== L5 gate_proj (2048, 4096)  act leg served 0.09203
+    T (new k=0)                passes=1 wt=0.10812 out=0.10489 W4A4=0.13903    0.41s
+    TR (new k=1)               passes=1 wt=0.10338 out=0.10016 W4A4=0.13560    0.37s
+    TRTR (new k=2)             passes=2 wt=0.10044 out=0.09750 W4A4=0.13378    0.73s
+    TRTRTR (new k=3)           passes=3 wt=0.09957 out=0.09664 W4A4=0.13309    1.08s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09924 out=0.09643 W4A4=0.13292    1.44s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09903 out=0.09625 W4A4=0.13281    2.16s
+    TRT (old k=1)              passes=2 wt=0.10137 out=0.09838 W4A4=0.13439    0.72s
+    TRTRT (old k=2)            passes=3 wt=0.09987 out=0.09692 W4A4=0.13327    1.08s
+    TRTRTRT (old k=3)          passes=4 wt=0.09936 out=0.09648 W4A4=0.13297    1.43s
+
+== L5 up_proj (2048, 4096)  act leg served 0.09552
+    T (new k=0)                passes=1 wt=0.10808 out=0.10882 W4A4=0.14439    0.38s
+    TR (new k=1)               passes=1 wt=0.10334 out=0.10408 W4A4=0.14091    0.37s
+    TRTR (new k=2)             passes=2 wt=0.10042 out=0.10120 W4A4=0.13885    0.73s
+    TRTRTR (new k=3)           passes=3 wt=0.09954 out=0.10011 W4A4=0.13810    1.08s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09921 out=0.09980 W4A4=0.13798    1.44s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09899 out=0.09946 W4A4=0.13771    2.17s
+    TRT (old k=1)              passes=2 wt=0.10135 out=0.10200 W4A4=0.13941    0.72s
+    TRTRT (old k=2)            passes=3 wt=0.09985 out=0.10038 W4A4=0.13826    1.08s
+    TRTRTRT (old k=3)          passes=4 wt=0.09933 out=0.09997 W4A4=0.13807    1.44s
+
+== L20 gate_proj (2048, 4096)  act leg served 0.08675
+    T (new k=0)                passes=1 wt=0.10751 out=0.09786 W4A4=0.13033    0.38s
+    TR (new k=1)               passes=1 wt=0.10336 out=0.09398 W4A4=0.12753    0.36s
+    TRTR (new k=2)             passes=2 wt=0.10067 out=0.09173 W4A4=0.12593    0.72s
+    TRTRTR (new k=3)           passes=3 wt=0.09986 out=0.09110 W4A4=0.12551    1.07s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09954 out=0.09074 W4A4=0.12522    1.44s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09936 out=0.09046 W4A4=0.12494    2.15s
+    TRT (old k=1)              passes=2 wt=0.10149 out=0.09250 W4A4=0.12643    0.71s
+    TRTRT (old k=2)            passes=3 wt=0.10014 out=0.09131 W4A4=0.12564    1.07s
+    TRTRTRT (old k=3)          passes=4 wt=0.09966 out=0.09085 W4A4=0.12529    1.43s
+
+== L20 up_proj (2048, 4096)  act leg served 0.09220
+    T (new k=0)                passes=1 wt=0.10760 out=0.10380 W4A4=0.13837    0.38s
+    TR (new k=1)               passes=1 wt=0.10342 out=0.09982 W4A4=0.13553    0.36s
+    TRTR (new k=2)             passes=2 wt=0.10069 out=0.09743 W4A4=0.13387    0.71s
+    TRTRTR (new k=3)           passes=3 wt=0.09987 out=0.09659 W4A4=0.13328    1.07s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09956 out=0.09624 W4A4=0.13294    1.43s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09937 out=0.09605 W4A4=0.13282    2.15s
+    TRT (old k=1)              passes=2 wt=0.10154 out=0.09810 W4A4=0.13436    0.71s
+    TRTRT (old k=2)            passes=3 wt=0.10015 out=0.09685 W4A4=0.13349    1.06s
+    TRTRTRT (old k=3)          passes=4 wt=0.09967 out=0.09637 W4A4=0.13303    1.43s
+
+== L42 gate_proj (2048, 4096)  act leg served 0.06309
+    T (new k=0)                passes=1 wt=0.10775 out=0.07273 W4A4=0.09630    0.37s
+    TR (new k=1)               passes=1 wt=0.10311 out=0.06958 W4A4=0.09397    0.36s
+    TRTR (new k=2)             passes=2 wt=0.10042 out=0.06744 W4A4=0.09229    0.72s
+    TRTRTR (new k=3)           passes=3 wt=0.09965 out=0.06733 W4A4=0.09224    1.08s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09936 out=0.06687 W4A4=0.09198    1.43s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09920 out=0.06672 W4A4=0.09184    2.16s
+    TRT (old k=1)              passes=2 wt=0.10124 out=0.06804 W4A4=0.09269    0.71s
+    TRTRT (old k=2)            passes=3 wt=0.09991 out=0.06752 W4A4=0.09238    1.07s
+    TRTRTRT (old k=3)          passes=4 wt=0.09946 out=0.06694 W4A4=0.09203    1.43s
+
+== L42 up_proj (2048, 4096)  act leg served 0.08471
+    T (new k=0)                passes=1 wt=0.10784 out=0.09617 W4A4=0.12773    0.38s
+    TR (new k=1)               passes=1 wt=0.10317 out=0.09200 W4A4=0.12463    0.36s
+    TRTR (new k=2)             passes=2 wt=0.10038 out=0.09010 W4A4=0.12343    0.71s
+    TRTRTR (new k=3)           passes=3 wt=0.09960 out=0.08931 W4A4=0.12288    1.06s
+    TRTRTRTR (new k=4)         passes=4 wt=0.09929 out=0.08906 W4A4=0.12275    1.43s
+    TRTRTRTRTRTR (new k=6)     passes=6 wt=0.09911 out=0.08913 W4A4=0.12284    2.15s
+    TRT (old k=1)              passes=2 wt=0.10124 out=0.09071 W4A4=0.12387    0.71s
+    TRTRT (old k=2)            passes=3 wt=0.09987 out=0.08954 W4A4=0.12303    1.06s
+    TRTRTRT (old k=3)          passes=4 wt=0.09940 out=0.08920 W4A4=0.12283    1.43s
+
+| schedule | passes | vs amax plane | min-max | encode s |
+| T (new k=0) | 1 | 1.000x | 1.000-1.000 | 0.38 |
+| TR (new k=1) | 1 | 1.044x | 1.040-1.047 | 0.36 |
+| TRT (old k=1) | 2 | 1.063x | 1.058-1.069 | 0.71 |
+| TRTR (new k=2) | 2 | 1.072x | 1.065-1.078 | 0.72 |
+| TRTRT (old k=2) | 3 | 1.077x | 1.072-1.084 | 1.07 |
+| TRTRTR (new k=3) | 3 | 1.080x | 1.074-1.087 | 1.07 |
+| TRTRTRT (old k=3) | 4 | 1.082x | 1.077-1.089 | 1.43 |
+| TRTRTRTR (new k=4) | 4 | 1.084x | 1.079-1.090 | 1.43 |
+| TRTRTRTRTRTR (new k=6) | 6 | 1.086x | 1.079-1.094 | 2.16 |
+
+wrote experiments/results/tessera_refit_schedule.json

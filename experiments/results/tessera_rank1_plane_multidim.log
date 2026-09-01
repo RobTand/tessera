@@ -1,0 +1,172 @@
+
+== L5 gate_proj (2048, 4096)  act leg served 0.09203
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09936 0.09656 0.13306    3.1s
+    S6b plane + LS x3  L=2                    4.250 0.09007 0.08757 0.12674    5.3s
+    S6b plane + LS x3  L=4                    4.375 0.08811 0.08578 0.12554    7.3s
+    S6b plane + LS x3  L=8                    4.438 0.08794 0.08533 0.12518   10.8s
+    rank-1 field (amax start)  L=1            3.504 0.14364 0.13946 0.16568   11.8s
+    rank-1 field + LS x3  L=1                 3.504 0.13143 0.12722 0.15638   14.7s
+    rank-1 field + LS x3  L=2                 3.754 0.12460 0.12063 0.15124   18.3s
+    rank-1 field + LS x3  L=4                 3.879 0.12323 0.11951 0.15044   21.8s
+    rank-1 field + LS x3  L=8                 3.942 0.12315 0.11941 0.15042   25.2s
+
+== L5 up_proj (2048, 4096)  act leg served 0.09552
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09934 0.09993 0.13806    4.1s
+    S6b plane + LS x3  L=2                    4.250 0.08998 0.09074 0.13143    7.7s
+    S6b plane + LS x3  L=4                    4.375 0.08798 0.08868 0.13016   11.3s
+    S6b plane + LS x3  L=8                    4.438 0.08782 0.08842 0.12980   14.8s
+    rank-1 field (amax start)  L=1            3.504 0.14383 0.14407 0.17111   15.7s
+    rank-1 field + LS x3  L=1                 3.504 0.13107 0.13142 0.16158   18.7s
+    rank-1 field + LS x3  L=2                 3.754 0.12419 0.12474 0.15635   22.3s
+    rank-1 field + LS x3  L=4                 3.879 0.12282 0.12304 0.15503   25.8s
+    rank-1 field + LS x3  L=8                 3.942 0.12274 0.12300 0.15507   29.3s
+
+== L20 gate_proj (2048, 4096)  act leg served 0.08675
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09965 0.09094 0.12539    4.3s
+    S6b plane + LS x3  L=2                    4.250 0.09051 0.08233 0.11937    7.9s
+    S6b plane + LS x3  L=4                    4.375 0.08868 0.08062 0.11826   11.4s
+    S6b plane + LS x3  L=8                    4.438 0.08856 0.08049 0.11809   14.9s
+    rank-1 field (amax start)  L=1            3.504 0.14297 0.13204 0.15688   15.9s
+    rank-1 field + LS x3  L=1                 3.504 0.13781 0.12666 0.15265   18.8s
+    rank-1 field + LS x3  L=2                 3.754 0.13000 0.11903 0.14649   22.4s
+    rank-1 field + LS x3  L=4                 3.879 0.12830 0.11711 0.14506   26.0s
+    rank-1 field + LS x3  L=8                 3.942 0.12815 0.11704 0.14503   29.4s
+
+== L20 up_proj (2048, 4096)  act leg served 0.09220
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09967 0.09629 0.13297    4.2s
+    S6b plane + LS x3  L=2                    4.250 0.09054 0.08745 0.12671    7.8s
+    S6b plane + LS x3  L=4                    4.375 0.08868 0.08563 0.12549   11.4s
+    S6b plane + LS x3  L=8                    4.438 0.08856 0.08550 0.12526   14.8s
+    rank-1 field (amax start)  L=1            3.504 0.14124 0.13697 0.16404   15.8s
+    rank-1 field + LS x3  L=1                 3.504 0.13502 0.13090 0.15941   18.8s
+    rank-1 field + LS x3  L=2                 3.754 0.12629 0.12246 0.15281   22.4s
+    rank-1 field + LS x3  L=4                 3.879 0.12451 0.12098 0.15180   25.1s
+    rank-1 field + LS x3  L=8                 3.942 0.12440 0.12085 0.15172   27.8s
+
+== L42 gate_proj (2048, 4096)  act leg served 0.06309
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09947 0.06695 0.09200    3.1s
+    S6b plane + LS x3  L=2                    4.250 0.09001 0.06002 0.08717    5.9s
+    S6b plane + LS x3  L=4                    4.375 0.08794 0.05877 0.08638    8.6s
+    S6b plane + LS x3  L=8                    4.438 0.08775 0.05889 0.08651   11.3s
+    rank-1 field (amax start)  L=1            3.504 0.14454 0.10285 0.12077   12.1s
+    rank-1 field + LS x3  L=1                 3.504 0.14263 0.10022 0.11846   14.3s
+    rank-1 field + LS x3  L=2                 3.754 0.13664 0.09645 0.11534   16.9s
+    rank-1 field + LS x3  L=4                 3.879 0.13471 0.09488 0.11401   19.4s
+    rank-1 field + LS x3  L=8                 3.942 0.13392 0.09423 0.11346   21.9s
+
+== L42 up_proj (2048, 4096)  act leg served 0.08471
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x3  L=1                    4.000 0.09940 0.08915 0.12278    2.9s
+    S6b plane + LS x3  L=2                    4.250 0.08999 0.08053 0.11671    5.5s
+    S6b plane + LS x3  L=4                    4.375 0.08793 0.07878 0.11541    8.0s
+    S6b plane + LS x3  L=8                    4.438 0.08773 0.07859 0.11530   10.5s
+    rank-1 field (amax start)  L=1            3.504 0.14399 0.13226 0.15606   11.2s
+    rank-1 field + LS x3  L=1                 3.504 0.13249 0.12048 0.14667   13.3s
+    rank-1 field + LS x3  L=2                 3.754 0.12554 0.11461 0.14188   15.9s
+    rank-1 field + LS x3  L=4                 3.879 0.12417 0.11309 0.14065   18.4s
+    rank-1 field + LS x3  L=8                 3.942 0.12402 0.11283 0.14046   20.9s
+
+act leg served 0.08572 over 6 tensors
+arm                                         bpp       wt      out     W4A4   out vs S6b+LS L=1    min    max  vs EXL3@A4
+S6b plane + LS x3  L=1                    4.000  0.09948  0.08997  0.12404              1.000x  1.000  1.000      1.201x
+S6b plane + LS x3  L=2                    4.250  0.09019  0.08144  0.11802              1.105x  1.101  1.115      1.143x
+S6b plane + LS x3  L=4                    4.375  0.08822  0.07971  0.11687              1.129x  1.124  1.139      1.132x
+S6b plane + LS x3  L=8                    4.438  0.08806  0.07954  0.11669              1.132x  1.126  1.137      1.130x
+rank-1 field (amax start)  L=1            3.504  0.14337  0.13128  0.15576              0.684x  0.651  0.703      1.511x
+rank-1 field + LS x3  L=1                 3.504  0.13508  0.12282  0.14919              0.730x  0.668  0.760      1.448x
+rank-1 field + LS x3  L=2                 3.754  0.12788  0.11632  0.14402              0.771x  0.694  0.801      1.399x
+rank-1 field + LS x3  L=4                 3.879  0.12629  0.11477  0.14283              0.781x  0.706  0.812      1.387x
+rank-1 field + LS x3  L=8                 3.942  0.12606  0.11456  0.14269              0.783x  0.710  0.812      1.385x
+
+wrote experiments/results/tessera_rank1_plane_multidim.json
+
+== L5 gate_proj (2048, 4096)  act leg served 0.09203
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09901 0.09627 0.13286    7.1s
+    S6b plane + LS x6  L=2                    4.250 0.08982 0.08736 0.12657   13.4s
+    S6b plane + LS x6  L=4                    4.375 0.08796 0.08559 0.12538   18.2s
+    S6b plane + LS x6  L=8                    4.438 0.08785 0.08525 0.12510   22.5s
+    rank-1 field (amax start)  L=1            3.504 0.13731 0.13327 0.16062   23.2s
+    rank-1 field + LS x6  L=1                 3.504 0.13035 0.12610 0.15598   27.4s
+    rank-1 field + LS x6  L=2                 3.754 0.12437 0.12045 0.15135   31.9s
+    rank-1 field + LS x6  L=4                 3.879 0.12302 0.11923 0.15052   36.3s
+    rank-1 field + LS x6  L=8                 3.942 0.12275 0.11896 0.14995   40.6s
+
+== L5 up_proj (2048, 4096)  act leg served 0.09552
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09897 0.09947 0.13771    5.0s
+    S6b plane + LS x6  L=2                    4.250 0.08973 0.09052 0.13129   10.1s
+    S6b plane + LS x6  L=4                    4.375 0.08783 0.08854 0.13002   16.0s
+    S6b plane + LS x6  L=8                    4.438 0.08774 0.08832 0.12975   23.3s
+    rank-1 field (amax start)  L=1            3.504 0.14120 0.14169 0.16931   24.3s
+    rank-1 field + LS x6  L=1                 3.504 0.13041 0.13088 0.16110   28.4s
+    rank-1 field + LS x6  L=2                 3.754 0.12386 0.12442 0.15611   32.9s
+    rank-1 field + LS x6  L=4                 3.879 0.12241 0.12267 0.15473   37.3s
+    rank-1 field + LS x6  L=8                 3.942 0.12223 0.12248 0.15472   41.7s
+
+== L20 gate_proj (2048, 4096)  act leg served 0.08675
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09933 0.09054 0.12511    5.0s
+    S6b plane + LS x6  L=2                    4.250 0.09029 0.08215 0.11924    9.5s
+    S6b plane + LS x6  L=4                    4.375 0.08856 0.08063 0.11824   14.0s
+    S6b plane + LS x6  L=8                    4.438 0.08848 0.08043 0.11806   18.8s
+    rank-1 field (amax start)  L=1            3.504 0.14250 0.13176 0.15640   19.5s
+    rank-1 field + LS x6  L=1                 3.504 0.12529 0.11384 0.14273   25.7s
+    rank-1 field + LS x6  L=2                 3.754 0.11810 0.10725 0.13743   32.9s
+    rank-1 field + LS x6  L=4                 3.879 0.11649 0.10584 0.13632   38.0s
+    rank-1 field + LS x6  L=8                 3.942 0.11628 0.10558 0.13611   44.2s
+
+== L20 up_proj (2048, 4096)  act leg served 0.09220
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09935 0.09591 0.13266    7.2s
+    S6b plane + LS x6  L=2                    4.250 0.09031 0.08737 0.12664   11.8s
+    S6b plane + LS x6  L=4                    4.375 0.08854 0.08557 0.12546   16.2s
+    S6b plane + LS x6  L=8                    4.438 0.08848 0.08542 0.12518   20.6s
+    rank-1 field (amax start)  L=1            3.504 0.14410 0.14025 0.16651   21.3s
+    rank-1 field + LS x6  L=1                 3.504 0.12497 0.12029 0.15114   25.5s
+    rank-1 field + LS x6  L=2                 3.754 0.11677 0.11253 0.14489   30.0s
+    rank-1 field + LS x6  L=4                 3.879 0.11964 0.11581 0.14733   34.5s
+    rank-1 field + LS x6  L=8                 3.942 0.11707 0.11315 0.14586   40.1s
+
+== L42 gate_proj (2048, 4096)  act leg served 0.06309
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09918 0.06672 0.09185    9.0s
+    S6b plane + LS x6  L=2                    4.250 0.08984 0.05990 0.08709   17.3s
+    S6b plane + LS x6  L=4                    4.375 0.08784 0.05872 0.08633   25.4s
+    S6b plane + LS x6  L=8                    4.438 0.08770 0.05881 0.08645   33.3s
+    rank-1 field (amax start)  L=1            3.504 0.14429 0.10344 0.12115   34.6s
+    rank-1 field + LS x6  L=1                 3.504 0.12821 0.08830 0.10837   42.2s
+    rank-1 field + LS x6  L=2                 3.754 0.12030 0.08239 0.10373   50.5s
+    rank-1 field + LS x6  L=4                 3.879 0.11841 0.08124 0.10279   58.5s
+    rank-1 field + LS x6  L=8                 3.942 0.11767 0.08051 0.10221   66.4s
+
+== L42 up_proj (2048, 4096)  act leg served 0.08471
+    arm                                         bpp      wt     out    W4A4
+    S6b plane + LS x6  L=1                    4.000 0.09910 0.08905 0.12272    9.8s
+    S6b plane + LS x6  L=2                    4.250 0.08979 0.08033 0.11660   19.0s
+    S6b plane + LS x6  L=4                    4.375 0.08782 0.07876 0.11543   27.4s
+    S6b plane + LS x6  L=8                    4.438 0.08768 0.07855 0.11527   36.6s
+    rank-1 field (amax start)  L=1            3.504 0.14317 0.13049 0.15458   38.1s
+    rank-1 field + LS x6  L=1                 3.504 0.12986 0.11755 0.14475   46.6s
+    rank-1 field + LS x6  L=2                 3.754 0.12255 0.11149 0.13996   54.9s
+    rank-1 field + LS x6  L=4                 3.879 0.12080 0.10988 0.13863   62.9s
+    rank-1 field + LS x6  L=8                 3.942 0.12056 0.10968 0.13854   70.9s
+
+act leg served 0.08572 over 6 tensors
+arm                                         bpp       wt      out     W4A4   out vs S6b+LS L=1    min    max  vs EXL3@A4
+S6b plane + LS x6  L=1                    4.000  0.09916  0.08966  0.12382              1.000x  1.000  1.000      1.199x
+S6b plane + LS x6  L=2                    4.250  0.08996  0.08127  0.11791              1.104x  1.098  1.114      1.142x
+S6b plane + LS x6  L=4                    4.375  0.08809  0.07964  0.11681              1.127x  1.121  1.136      1.131x
+S6b plane + LS x6  L=8                    4.438  0.08799  0.07946  0.11663              1.129x  1.123  1.135      1.130x
+rank-1 field (amax start)  L=1            3.504  0.14209  0.13015  0.15476              0.687x  0.645  0.722      1.502x
+rank-1 field + LS x6  L=1                 3.504  0.12818  0.11616  0.14401              0.772x  0.756  0.797      1.395x
+rank-1 field + LS x6  L=2                 3.754  0.12099  0.10975  0.13891              0.817x  0.799  0.852      1.346x
+rank-1 field + LS x6  L=4                 3.879  0.12013  0.10911  0.13839              0.822x  0.807  0.855      1.340x
+rank-1 field + LS x6  L=8                 3.942  0.11942  0.10840  0.13790              0.828x  0.809  0.858      1.335x
+
+wrote experiments/results/tessera_rank1_plane_multidim.json
