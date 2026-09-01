@@ -47,7 +47,40 @@ Two things follow, and they cut opposite ways:
   matched size, and it is what Mia actually shipped. The comparison that
   matters is the one we lose.
 
-## Where the 1.72× comes from — bounded, not settled
+## Where the 1.72× comes from — MEASURED, 2026-09-01
+
+**Superseded by measurement.** The bound below was a transplanted estimate; the
+encoder it was waiting on has since been built and the decomposition is now
+measured. See `docs/measurements/tessera-activation-aware-encoder-2026-09-01.md`.
+
+- **Activation-awareness is worth 1.088×**, not the 1.258× acceptance — but the
+  trellis is *not* less responsive than a scalar coder (same LDLQ loop, five
+  block sizes, NVFP4-RTN vs Tessera → **gain ratio 1.00×**).
+- **At matched *payload* bits the formats are 1.142× apart**, not 1.72×:
+  EXL3 K=3 at 3.0 payload scores 0.11089, Tessera `E2M1_K1` scores 0.12666.
+  Tessera @4.0000 bpp spends 3.5 payload + **0.5 on its scale plane**; EXL3
+  @4.0117 spends 4.0 + 0.0117.
+- **Buying the scale plane back does not lift the curve.** 0.5000 → 0.0625 bpp
+  of scale costs 1.139× and saves 0.4375 bpp; Tessera at 3.5630 bpp scores
+  0.11093 where **EXL3 at 3.0117 scores 0.11089**.
+- **The gap is the rate-distortion slope:** EXL3 buys 1.96× per payload bit,
+  Tessera 1.347× per bpp on a clean within-family sweep. It widens with rate —
+  1.142× → ~1.43× → 1.572×.
+- **Closed by measurement:** `R_IN_ONLY` rotation (0.987×, hurts), the global
+  scale-headroom multiplier (loses to the `amax` rule), finer LDL blocks
+  (non-monotonic), diagonal-Hessian importance weighting (a *provable* no-op).
+- **Still open, neither evaluated:** raise the grid cap above 3.5 payload bits;
+  the free-grid question (≈1.22× at zero redundancy, inherited not re-measured).
+  Wire-free encoder levers: `static_act_order`, and a per-group scale search
+  over the **stored scale words** (the effective scale snaps through E8M0 + a
+  4-bit refinement, so a continuous multiplier is the wrong search space).
+
+**The best Tessera arm at Mia's exact rate (4.0117 bpp) scores 0.08888 where
+EXL3 scores 0.05653.** The size target is reachable; the quality is not.
+
+<details><summary>The superseded bound, kept for the record</summary>
+
+### Where the 1.72× comes from — bounded, not settled
 
 NVFP4 RTN (activation-blind) 0.08294 → GPTQ+JSO (activation-aware) 0.06595 is a
 **1.258×** response to compensation. Transplanting that response to Tessera
@@ -61,6 +94,8 @@ bolted on after — then calibration's share is at least 42%. If a trellis
 responds *worse*, the coder gap is larger and the format itself is the problem.
 Nothing here measures Tessera's response, because Tessera has no
 activation-aware encoder to measure. Do not quote 1.37× as the coder gap.
+
+</details>
 
 ## The rate axis is two points, not a band
 
@@ -90,17 +125,25 @@ gain/cost **7.7×** — but its mechanism is "promote the layers that need it", 
 
 ## Next, in order
 
-1. **Give Tessera an activation-aware encoder.** The one identified, quantified
-   deficit, and it needs no wire change. Build **error feedback**, not
-   importance weighting — the 1.258× reference came from sequential residual
-   propagation, and a diagonal-Hessian weight on the distortion metric tests a
-   different mechanism whose null would read falsely.
-2. **Re-run the harness.** Six tensors, two commands
-   (`experiments/exl3_arm_glm_experts_v2.py`,
-   `prismaquant/experiments/glm53_expert_menu.py`). **0.09738 → ~0.077**
-   confirms the NVFP4-like response and makes the backend worth building.
-   Materially less is itself a finding, and the rate-ceiling work becomes the
-   honest next lever instead.
+Steps 1 and 2 below are **done** — that is what the measured decomposition
+above is. What follows from them:
+
+1. **Decide whether Tessera's rate ceiling can rise above 3.5 payload bits.**
+   This is now the only lever with the size to close a slope gap, and it has
+   never been evaluated. It is a wire change (a new committed grid digest).
+2. **Or reopen the free-grid question**, worth ≈1.22× at zero redundancy —
+   which is exactly where the shipping rungs sit (`completion=0`). Also a wire
+   change (a VALUES plane). The 1.78 dB figure is inherited from
+   `tessera-project-scope`, not re-measured, so re-measure it first.
+3. **Cheap and wire-free, if the above is going to take a while:**
+   `static_act_order`, and a per-group scale search over the stored scale
+   words. Together these are the difference between the 1.076× this LDLQ gets
+   and the 1.258× GPTQ+JSO gets on a scalar coder — worth ~1.17×, not enough
+   alone.
+4. **The scale-plane geometry is a real size lever even so.** `g256/h128` ships
+   at 3.5630 bpp for 1.139× error, all on the wire today, accountant-priced. If
+   a smaller-than-Mia artifact is wanted more than a better one, that is the
+   knob.
 
 ## Untouched ledger
 
