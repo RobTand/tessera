@@ -228,7 +228,8 @@ def main():
                 args.compensate, f"{prefix}.experts.{expert}.gate_up"))
         units[f"{prefix}.mlp.experts.gate_up_proj"] = dict(
             n_params=int(stats[f"{prefix}.mlp.experts.gate_up_proj"]["n_params"]),
-            scale=n_experts / len(per_expert), samples=per_expert, kind="packed_expert")
+            scale=n_experts / len(per_expert), samples=per_expert,
+            expert_ids=picked, kind="packed_expert")
 
         # --- down unit: its input is the gated product, computed in BF16 ---
         per_expert = []
@@ -242,7 +243,8 @@ def main():
             del hid_fit, hid_eval
         units[f"{prefix}.mlp.experts.down_proj"] = dict(
             n_params=int(stats[f"{prefix}.mlp.experts.down_proj"]["n_params"]),
-            scale=n_experts / len(per_expert), samples=per_expert, kind="packed_expert")
+            scale=n_experts / len(per_expert), samples=per_expert,
+            expert_ids=picked, kind="packed_expert")
 
         for _e, pair in gate_up:
             del pair[:]

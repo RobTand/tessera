@@ -39,7 +39,8 @@ from tessera.manifest import RotationState
 
 SRC = "/mnt/shared/models/GLM-5.3-Flash-BF16"
 OUT = "/mnt/shared/models/GLM-5.3-Flash-Tessera-E2M1K2-20260901"
-PLAN = "/home/rob/.claude/jobs/033fd976/tmp/glm53_tessera_plan.json"
+PLAN = ("/mnt/shared/dq-runs/glm53-tessera-alloc-20260901/artifacts/"
+        "glm53_tessera_plan.json")   # shared: both boxes read one plan
 
 
 def main():
