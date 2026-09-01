@@ -364,6 +364,17 @@ def decode_codes_mixed(
         which = torch.nonzero(rates == present).squeeze(1)
         body = unit.body_bits[:, which].contiguous()
         comp = unit.completion_bits[:, which].contiguous()
+        # A truncating read must narrow the completion WORD as well as the
+        # descendant table.  ``reachable`` keeps 2^level columns, but the
+        # stored word still holds the full 2^written-wide index, so indexing
+        # one with the other runs off the end -- on CUDA as a device-side
+        # assert, on CPU as an IndexError.  The descendant order is a tree read
+        # most-significant-bit first, so the ancestor at ``level`` is the top
+        # ``level`` bits: shift the low (written - level) bits away.  This is a
+        # no-op at level == written, which is why every existing test missed it
+        # -- they all decode at the level they encoded.
+        if level < written:
+            comp = comp >> (written - level)
         subsets, table_next, table_sub = _replay_tables(picked, code, str(device))
         blocks = torch.tensor(picked.blocks, device=device, dtype=code_dtype)
         reachable = blocks[:, :: 1 << (depth - level)].contiguous()

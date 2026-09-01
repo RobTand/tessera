@@ -24,7 +24,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from tessera.alphabet import E2M1_GRID, tuple_grid  # noqa: E402
+from tessera.alphabet import E2M1_GRID, build_forest, tuple_grid  # noqa: E402
 from tessera.decode import reconstruct_unit  # noqa: E402
 from tessera.encode import encode_unit  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
@@ -183,3 +183,47 @@ def test_bytes_alone_decode_to_the_encoders_reconstruction_at_every_depth(name, 
         blob = _build(grid, q256, completion, name).blob
         assert torch.equal(read_unit_artifact(blob, device=w.device),
                            reconstruct_unit(unit, forests, CODE))
+
+
+def test_decoding_below_the_written_depth_walks_the_tree_to_an_ancestor():
+    """A deep encode must be readable at every shallower level.
+
+    ``planes.CANONICAL_PLANE_ORDER`` is "wire order, which is also the
+    truncation order", and ``build_forest`` guarantees that "truncating
+    completion bits lands on an ancestor, which is a legal partial map".  That
+    makes one deep encode the whole rate ladder -- read it short and you get a
+    coarser reconstruction for free, with no second Viterbi.
+
+    The property was claimed by three docstrings and implemented by none.
+    ``reachable`` narrowed to 2^level columns while the stored completion word
+    kept its full 2^written-wide value, so every truncating read indexed off
+    the end: a device-side assert on CUDA, an IndexError on CPU.  Nothing
+    caught it because every other test in this repo decodes at exactly the
+    level it encoded, where the shift is a no-op.
+    """
+    grid = tuple_grid(E2M1_GRID, 2)
+    rate = 1
+    depth = grid.rate_cap - rate
+    forests = {rate: build_forest(rate, grid=grid)}
+    torch.manual_seed(0)
+    w = (torch.randn(256, 64) * 0.02).bfloat16()
+
+    deep = encode_unit(w, forests, (rate,) * 64, code=CODE,
+                       rotation=RotationState.NONE, completion=depth)
+
+    def err(level):
+        rec = reconstruct_unit(deep, forests, CODE, completion=level)
+        return (torch.linalg.norm(w.float() - rec.float())
+                / torch.linalg.norm(w.float())).item()
+
+    ladder = [err(c) for c in range(depth + 1)]
+
+    # Every level decodes, and spending a completion bit never costs accuracy:
+    # each level's reconstruction is its predecessor's subtree.
+    assert all(ladder[c] > ladder[c + 1] for c in range(depth)), ladder
+    # Reading at the written depth is the untruncated decode, exactly.
+    assert err(depth) == pytest.approx(
+        (torch.linalg.norm(w.float() - reconstruct_unit(deep, forests, CODE).float())
+         / torch.linalg.norm(w.float())).item())
+    # Asking past what was written cannot reach bits that are not there.
+    assert err(depth + 3) == pytest.approx(ladder[depth])
