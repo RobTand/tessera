@@ -5,7 +5,9 @@ codes for that plane.  `encode_unit` now alternates the two, and these tests
 hold the alternation to what it promises:
 
   * weight-space squared error never rises from one refit to the next, and
-    falls from the amax plane on Gaussian weights;
+    falls from the amax plane on Gaussian weights -- including at
+    `scale_refit=1`, one trellis pass and a trailing refit, which costs no
+    Viterbi over the amax plane;
   * the refit plane is written in ordinary S6b words -- `scales_from_planes`
     reads them back exactly, and every group is canonical;
   * `scale_refit=0` is the amax plane byte for byte, so every artifact built
@@ -54,10 +56,11 @@ def test_refit_is_monotone_and_beats_the_amax_plane(arity):
     rates = (rate,) * w.shape[1]
     errors = [
         _sse(w, encode_unit(w, forests, rates, CODE, scale_refit=k), forests)
-        for k in range(4)
+        for k in range(5)
     ]
     assert all(a >= b for a, b in zip(errors, errors[1:])), errors
-    assert errors[3] < 0.97 * errors[0], errors
+    assert errors[1] < 0.99 * errors[0], errors      # the trailing refit alone
+    assert errors[4] < 0.97 * errors[0], errors
 
 
 def test_refit_zero_is_the_amax_plane_byte_for_byte():
@@ -74,7 +77,7 @@ def test_refit_plane_is_ordinary_s6b_and_canonical():
     w = _weights()
     _, rate, forests = _family(2)
     unit = encode_unit(w, forests, (rate,) * w.shape[1], CODE)
-    assert unit.scale_refit == 3
+    assert unit.scale_refit == 4
     base, refine, _ = _pack_scales(w, 32, 16)
     assert not torch.equal(unit.scale_refine, refine)      # it did move
     decoded = scales_from_planes(unit.scale_base, unit.scale_refine)

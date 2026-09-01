@@ -71,7 +71,7 @@ DEFAULT_HALF = 16
 #: Scale-plane refits per unit (``encode_unit``).  An encoder setting, not
 #: wire: the bytes decode identically at any value.  Recorded in the config so
 #: a merge can refuse parts built at different settings.
-DEFAULT_SCALE_REFIT = 3
+DEFAULT_SCALE_REFIT = 4
 
 
 @dataclass(frozen=True)

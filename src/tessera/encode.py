@@ -111,7 +111,8 @@ class EncodedUnit:
     # than the depth the rate leaves room for -- writing the wider plane is what
     # made every rung of a family weigh the same.
     completion_limit: "int | None" = None
-    # How many scale-plane refits the encoder ran (``encode_unit``).  Not wire:
+    # How many scale-plane refits the encoder ran (``encode_unit``): that many
+    # trellis passes and that many refits, the last refit trailing.  Not wire:
     # the bytes decode identically at any value.  Recorded because two units
     # built at different settings are different renderings of one weight, and
     # a merge that mixes them should be able to see that it did.
@@ -390,7 +391,7 @@ def encode_unit(
     half: int = 16,
     scale_headroom: float = 1.0,
     superblock: int = 256,
-    scale_refit: int = 3,
+    scale_refit: int = 4,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype."""
     if weights.ndim != 2:
@@ -483,20 +484,31 @@ def encode_unit(
     # The amax plane and the trellis are each set without knowledge of the
     # other.  ``scale_refit`` alternates them: re-fit every half's scale to
     # the codes just chosen (``_refit_scales``), then let the trellis choose
-    # again for the new plane.  Each refit is a plane VALUE written in the
-    # same S6b bytes, so the decoder, the kernel and the profile id are
-    # untouched; ``scale_refit=0`` is the amax plane, byte for byte.  The
-    # ``sse`` reported is the final pass's, in that pass's target units.
-    for refit in range(scale_refit + 1):
+    # again for the new plane.  The schedule ENDS on a refit: a refit after
+    # the last trellis pass costs no Viterbi and is monotone, and at equal
+    # pass count it always beats ending on the trellis (six GLM experts,
+    # held-out: T 1.000, TR 1.044, TRTR 1.072, TRTRTRTR 1.084 vs TRTRTRT
+    # 1.082).  So ``scale_refit=k`` runs k trellis passes and k refits, and
+    # ``scale_refit=0`` is the amax plane, byte for byte.  Each refit is a
+    # plane VALUE written in the same S6b bytes: the decoder, the kernel and
+    # the profile id are untouched.
+    for _ in range(max(scale_refit, 1)):
         scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
         targets = work / scale
         sse = trellis_pass(targets)
-        if refit == scale_refit:
+        if scale_refit == 0:
             break
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
         base_byte, refine, effective = _refit_scales(
             work, units, group, half, base_byte, refine, effective
         )
+    if scale_refit:
+        # The plane moved after the last pass; the codes are unchanged and
+        # decode against the new plane.  Report the error in ITS target units
+        # so ``sse`` means one thing at every setting.
+        scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
+        units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
+        sse = float(((work / scale - units) ** 2).sum())
 
     # Stage B: release, in S9's canonical order -- descending |decoded value|
     # within the superblock, on the PRE-release decode so the decoder can
