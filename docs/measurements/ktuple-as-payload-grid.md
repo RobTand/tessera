@@ -166,6 +166,13 @@ kernel being judged gets (`experiments/ktuple_kernel.py`):
 | **Tessera tuple k=2 R=7 (free-16)** | **4.0** | **268** | 166 | 67.7% | **1.007×** |
 | NVFP4 comparator (matched, same author) | 4.5 | **245** | 205 | 83.2% | 1.00× |
 
+**E2M1 k=2 has a stock-lane life.** A tuple code over E2M1 decodes to two E2M1
+*nibbles*, so a k=2 body materialises into an ordinary NVFP4 tensor exactly as
+the scalar one does. That makes it a **4.0 bpp on-disk artifact that vanilla
+vLLM serves at 4.5 bpp resident with no kernel at all** — 11% smaller download
+and checkpoint, 0.109 error against NVFP4's 0.099. It is the no-kernel adoption
+path, and it is blocked only on the wire work, not on the kernel.
+
 **Read this as a trade, not a win.** At 4.0 bpp the tuple kernel serves
 NVFP4-equal quality on **11.1% fewer resident bytes at a 9.4% throughput
 cost**. It is not free, and the direction of the cost is structural: NVFP4

@@ -34,7 +34,13 @@ def bench(fn, iters=50):
 # One grid for every arm.  The comparator is swept exactly as wide as the
 # kernel it is judging -- an under-tuned baseline is the cheapest way to
 # manufacture a speedup, and kernel-lane.md's NVFP4 number came from this grid.
-def sweep(make):
+def sweep(make, verify=None):
+    """Sweep, then check the WINNER is still right.
+
+    A config is only fast if it is also correct, and the swept winner is not
+    one of the configs the tests pin -- so the fastest block shape is exactly
+    the one with no correctness evidence unless it is checked here.
+    """
     best = None
     for lanes in (32, 64, 128, 256, 512):
         for split_k in (16, 32, 64, 128, 256):
@@ -45,6 +51,11 @@ def sweep(make):
                 continue
             if best is None or us < best[0]:
                 best = (us, lanes, split_k)
+    if verify is not None and best is not None:
+        assert verify(best[1], best[2]), (
+            f"the fastest config (lanes={best[1]} split_k={best[2]}) does not "
+            "reproduce the reference decode"
+        )
     return best
 
 rows_out = []
@@ -58,8 +69,15 @@ _p, e4m3, gs = materialize_nvfp4(codes, u1.scale_base, u1.scale_refine, u1.group
 scales = e4m3.reshape(ROWS, COLS // 16).t().contiguous()
 sel1, pt1 = pack_kernel_planes(u1.body_bits)
 lut1 = build_value_lut(F1[3], CC)
-us, la, sk = sweep(lambda l, s: (lambda: tessera_gemv_wide(
-    x, sel1, pt1, lut1, scales, gs, ROWS, COLS, lanes=l, split_k=s)))
+ref1 = reconstruct_unit(u1, F1, CC).float()
+onehot = torch.zeros(COLS, device=dev); onehot[7] = 1.0
+us, la, sk = sweep(
+    lambda l, s: (lambda: tessera_gemv_wide(
+        x, sel1, pt1, lut1, scales, gs, ROWS, COLS, lanes=l, split_k=s)),
+    verify=lambda l, s: torch.equal(
+        tessera_gemv_wide(onehot, sel1, pt1, lut1, scales, gs, ROWS, COLS,
+                          lanes=l, split_k=s), ref1[:, 7]),
+)
 rows_out.append(("Tessera scalar k=1 R=3", 3.5, sel1.numel() + pt1.numel(), us, la, sk))
 
 # --- tuple body, 4.0 bpp --------------------------------------------------
@@ -76,9 +94,14 @@ for label, base in (("E2M1", E2M1_GRID), ("free-16", lloyd_max_grid(16))):
     got = tessera_gemv_tuple(x, sel2, pt2, lut2, sc2, gs2, ROWS, COLS,
                              rate=R, arity=2, lanes=32, split_k=8)
     err = ((got - ref @ x).norm() / (ref @ x).norm()).item()
-    us, la, sk = sweep(lambda l, s: (lambda: tessera_gemv_tuple(
-        x, sel2, pt2, lut2, sc2, gs2, ROWS, COLS, rate=R, arity=2,
-        lanes=l, split_k=s)))
+    us, la, sk = sweep(
+        lambda l, s: (lambda: tessera_gemv_tuple(
+            x, sel2, pt2, lut2, sc2, gs2, ROWS, COLS, rate=R, arity=2,
+            lanes=l, split_k=s)),
+        verify=lambda l, s: torch.equal(
+            tessera_gemv_tuple(onehot, sel2, pt2, lut2, sc2, gs2, ROWS, COLS,
+                               rate=R, arity=2, lanes=l, split_k=s), ref[:, 7]),
+    )
     rows_out.append((f"Tessera tuple k=2 R=7 ({label})", 4.0,
                      sel2.numel() + pt2.numel(), us, la, sk))
     print(f"  [{label}] kernel-vs-reference GEMV rel {err:.2e}")
