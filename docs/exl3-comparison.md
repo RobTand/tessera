@@ -1,5 +1,18 @@
 # Matching `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`
 
+> **QUALITY COUNTERWEIGHT, 2026-09-01.** This document establishes that the
+> *size* win against EXL3 lives in the sub-4.5 bpp band, which is Tessera's
+> thesis. That arithmetic stands. What it does not price is quality at that
+> size, and quality now has a number: **EXL3 at 4.0117 bpw beats Tessera at
+> 4.0000 by 1.72×** on real GLM routed experts, held out
+> (`docs/measurements/exl3-head-to-head-2026-09-01.md`). Reaching the band is
+> necessary and is not sufficient — read every "size win" claim below against
+> that. Separately, Mia's shipped artifact does not reconstruct under the
+> exllamav3 version its own ABI names, so do not use it as a working
+> comparator (`docs/measurements/exl3-head-to-head-2026-09-01.md`, §"Why this
+> arm quantizes").
+
+
 **Status:** measured 2026-08-31 from the local copy at
 `/mnt/shared/models/GLM-5.3-Flash-EXL3-TR3-4bpw`. Every number below is read
 from safetensors headers in that checkout, not quoted from a model card.

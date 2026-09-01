@@ -55,13 +55,22 @@ accounts for `ln(1.258)/ln(1.72) = 42%` of the gap. Credited the *full* factor,
 a hypothetical activation-aware Tessera lands at 0.0774 — **still 1.37× behind
 EXL3 at the same size**.
 
-**Read that as a floor on the coder gap, not a settled split.** 1.258× is
-NVFP4's response to compensation, measured on a scalar-quantized format whose
-compensation is bolted on afterwards. EXL3's LDL ordering is integrated with the
-trellis search, and a trellis coder may respond to a Hessian by more than a
-scalar one does. If Tessera's coder responded like EXL3's, calibration could
-close more than 42%. Nothing here measures that, because Tessera has no
-activation-aware encoder to measure.
+**That 1.37× is a ceiling on the coder gap, not a floor — under one stated
+assumption.** 1.258× is a *transplanted* estimate: it is NVFP4's response to
+compensation, measured on a scalar-quantized format whose compensation is
+bolted on afterwards. Nothing here measures Tessera's response, because Tessera
+has no activation-aware encoder to measure.
+
+- If a trellis responds to a Hessian **at least as well** as a scalar
+  quantizer — plausible, since EXL3's LDL ordering is integrated with its
+  trellis search rather than applied after it — then calibration's share is
+  **≥ 42%** and the coder gap is **≤ 1.37×**.
+- If a trellis responds **worse**, the coder gap is larger than 1.37× and the
+  format itself is the problem.
+
+Which way it goes is exactly what the encoder probe below settles, and the two
+outcomes point at different work. Do not quote 1.37× as the coder gap; quote it
+as the bound it is.
 
 Tessera's arm is otherwise near its best: rotation and diagonals were measured
 at ~1% on the weight screen (`tessera-vs-nvfp4-glm-experts-2026-09-01.md`), far
@@ -114,13 +123,24 @@ GLM-5.3-Flash artifact size-matched to Mia's and measurably *worse* than it.
 The evidence points at two things to do first, in this order:
 
 1. **Give Tessera an activation-aware encoder.** It is the one identified,
-   quantified deficit — worth ≥1.258× and plausibly more on a trellis — and it
-   is the "local question" toolkit PrismaQuant already owns (Hessians, LDL,
-   GPTQ-style ordering). Nothing about the wire format has to change.
-2. **Then re-run this exact harness.** It is six tensors and two commands. If
-   the gap closes to near parity, the backend is worth building; if it stalls
-   near 1.37×, the deficit is the coder and the rate-ceiling work
-   (`tessera-rate-ceiling-2026-09-01.md`) is the honest next lever instead.
+   quantified deficit, and it is the "local question" toolkit PrismaQuant
+   already owns (Hessians, LDL, GPTQ-style ordering). Nothing about the wire
+   format has to change.
+
+   **Build the right mechanism.** The 1.258× reference came from GPTQ+JSO,
+   which is sequential *error feedback* — each column's residual is propagated
+   into the ones not yet quantized. EXL3's is LDL-ordered encoding with
+   propagated residuals: the same family. A first probe that only adds
+   diagonal-Hessian **importance weighting** to the trellis distortion metric
+   tests a different mechanism, and a null from it would read falsely as "the
+   trellis does not respond to calibration". Include the compensation term.
+2. **Then re-run this exact harness.** It is six tensors and two commands, and
+   it is the acceptance test: **0.09738 moving toward ~0.077** confirms the
+   NVFP4-like response and makes the backend worth building. Materially less
+   movement than that is itself a finding — the trellis responds *worse* than a
+   scalar format does, the coder question reopens, and the rate-ceiling work
+   (`tessera-rate-ceiling-2026-09-01.md`) becomes the honest next lever
+   instead.
 
 ## Scope, honestly
 
