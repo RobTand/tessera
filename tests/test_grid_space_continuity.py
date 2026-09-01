@@ -88,3 +88,48 @@ def test_high_rates_cost_what_they_should_per_position():
     assert bits_per_position(4, 0, cap=7) == 4
     with pytest.raises(GrammarError, match="outside the shaped domain"):
         bits_per_position(4, 0)  # cap 3: rate 4 is not a TESSERA-4 rate
+
+
+# --- the exact-byte accountant must price the whole space too ---------------
+
+def test_the_accountant_prices_every_family_not_just_the_4_bit_one():
+    """`terminal_rate` hardcoded `3 - rate` and a cap-3 schedule.
+
+    Left that way it silently refused every TESSERA-8 rung above 3.0 body
+    bits -- most of the range an 8-bit family exists to reach -- so the
+    allocator could address rungs the byte accountant could not price.  A
+    rate axis whose bpp cannot be computed is not an allocatable axis.
+    """
+    from tessera.calculator import terminal_rate
+
+    for cap, rungs in ((3, (256, 400, 512, 768)),
+                       (7, (256, 768, 1000, 1024, 1280, 1792))):
+        for body_q256 in rungs:
+            bpp = terminal_rate(
+                body_q256, 4096, 4096, with_scale_refine=True, cap=cap
+            )
+            # body + the S6b plane's flat half-bit, exactly.
+            assert bpp == Fraction(body_q256 + Q256_UNIT // 2, Q256_UNIT)
+
+
+def test_the_accountants_cap_default_reproduces_every_cited_figure():
+    """Every figure derived before families existed must be byte-identical."""
+    from tessera.calculator import terminal_rate
+
+    for body_q256 in (256, 512, 768):
+        assert terminal_rate(body_q256, 4096, 4096) == terminal_rate(
+            body_q256, 4096, 4096, cap=C_FULL_BITS
+        )
+
+
+def test_completion_capacity_follows_the_cap_in_the_accountant():
+    """At rate 4 on cap 7 there are 3 completion bits; on cap 3 there is no rate 4."""
+    from tessera.calculator import terminal_rate
+
+    with_completion = terminal_rate(
+        1024, 1024, 1024, with_scale_refine=True, cap=7, completion=3
+    )
+    without = terminal_rate(1024, 1024, 1024, with_scale_refine=True, cap=7)
+    assert with_completion > without
+    # cap 7 - rate 4 = 3 completion bits per position, and no more.
+    assert with_completion - without == Fraction(3)

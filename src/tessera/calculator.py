@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 
-from .grammar import bresenham_rate_schedule, root_from_q256
+from .grammar import C_FULL_BITS, bresenham_rate_schedule, root_from_q256
 from .layout import TerminalSpec, build_planes, build_terminal
 from .manifest import Geometry
 
@@ -138,8 +138,18 @@ def terminal_rate(
     completion: int = 0,
     released_positions: int = 0,
     superblock_columns: int = 256,
+    cap: int = C_FULL_BITS,
 ) -> Fraction:
-    """Exact payload bpp for a terminal, from integer byte counts only."""
+    """Exact payload bpp for a terminal, from integer byte counts only.
+
+    ``cap`` is the family's rate cap -- ``payload_bits - 1``.  It defaults to
+    ``C_FULL_BITS`` so every figure derived before families existed is
+    reproduced exactly, but it is load-bearing for anything else: the
+    completion capacity is ``cap - rate``, and the rate schedule itself cannot
+    be built above the cap.  Left at 3, this function silently refused every
+    TESSERA-8 rung above 3.0 body bits -- which is most of the ones an 8-bit
+    family exists to reach.
+    """
     geometry = Geometry(
         rows=rows,
         columns=columns,
@@ -148,19 +158,19 @@ def terminal_rate(
         half_weights=16,
         quantizable_params=rows * columns,
     )
-    rates = bresenham_rate_schedule(root_from_q256(q256), columns)
-    planes = build_planes(geometry, rates, b"", b"")
+    rates = bresenham_rate_schedule(root_from_q256(q256), columns, cap)
+    planes = build_planes(geometry, rates, b"", b"", cap=cap)
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
-            min(completion, 3 - rate) for rate in rates
+            min(completion, cap - rate) for rate in rates
         ),
         released_positions=released_positions,
         with_scale_base=with_scale_base,
         with_scale_refine=with_scale_refine,
         with_diagonals=with_diagonals,
     )
-    return build_terminal(geometry, rates, spec, planes, 0, 0).exact_bpp
+    return build_terminal(geometry, rates, spec, planes, 0, 0, cap=cap).exact_bpp
 
 
 def figure_table(rows: int = 4096, columns: int = 4096) -> tuple[Figure, ...]:

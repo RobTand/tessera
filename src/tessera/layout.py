@@ -32,7 +32,7 @@ from fractions import Fraction
 
 from .errors import GrammarError, PlaneLayoutError
 from .exact import bits_to_bytes
-from .grammar import RELEASE_BITS, completion_capacity
+from .grammar import C_FULL_BITS, RELEASE_BITS, completion_capacity
 from .manifest import Geometry, TerminalRecord
 from .planes import (
     CANONICAL_PLANE_ORDER,
@@ -97,6 +97,7 @@ def _counts_for(
     alphabet_bytes: int,
     descendant_bytes: int,
     max_released: int = 0,
+    cap: int = C_FULL_BITS,
 ) -> int:
     rows = geometry.rows
     positions = geometry.positions
@@ -112,7 +113,7 @@ def _counts_for(
         return positions // geometry.group_weights
     if kind is PlaneKind.COMPLETION:
         if spec is None:
-            return sum(completion_capacity(rate) for rate in rates) * rows
+            return sum(completion_capacity(rate, cap) for rate in rates) * rows
         return sum(spec.completion_bits) * rows
     if kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
         if spec is not None and not spec.with_diagonals:
@@ -169,6 +170,7 @@ def build_planes(
     max_released: int = 0,
     payloads: "dict[PlaneKind, bytes] | None" = None,
     with_diagonals: bool = True,
+    cap: int = C_FULL_BITS,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -196,6 +198,7 @@ def build_planes(
             len(alphabet_blob),
             len(descendant_blob),
             max_released,
+            cap=cap,
         )
         if not with_diagonals and kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
             total = 0
@@ -260,6 +263,7 @@ def build_terminal(
     alphabet_bytes: int,
     descendant_bytes: int,
     plane_region: bytes | None = None,
+    cap: int = C_FULL_BITS,
 ) -> TerminalRecord:
     """Compute a terminal's exact per-plane counts, bytes, bpp, and digest.
 
@@ -275,11 +279,11 @@ def build_terminal(
             f"{len(spec.completion_bits)} columns, rates cover {len(rates)}"
         )
     for column, (rate, completion) in enumerate(zip(rates, spec.completion_bits)):
-        if not 0 <= completion <= completion_capacity(rate):
+        if not 0 <= completion <= completion_capacity(rate, cap):
             raise GrammarError(
                 f"terminal {spec.slot_id!r} column {column}: completion "
-                f"{completion} exceeds capacity {completion_capacity(rate)} at "
-                f"rate {rate}"
+                f"{completion} exceeds capacity "
+                f"{completion_capacity(rate, cap)} at rate {rate} (cap {cap})"
             )
     if not 0 <= spec.released_positions <= geometry.positions:
         raise GrammarError(f"terminal {spec.slot_id!r}: release count out of range")
@@ -288,7 +292,8 @@ def build_terminal(
     elements, total_bytes = [], 0
     for kind in CANONICAL_PLANE_ORDER:
         count = _counts_for(
-            kind, geometry, rates, spec, alphabet_bytes, descendant_bytes
+            kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
+            cap=cap,
         )
         elements.append(count)
         total_bytes += by_kind[kind].byte_length(count)
