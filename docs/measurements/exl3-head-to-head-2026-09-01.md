@@ -1,5 +1,19 @@
 # Tessera vs EXL3 at matched bpw: Tessera loses by 1.72×
 
+> **SUPERSEDED IN PART, 2026-09-01 (same day).** The encoder this document
+> ordered was built, and the decomposition below is now measured rather than
+> transplanted: activation-awareness is worth **1.088×**, the trellis responds
+> to error feedback *exactly* as well as a scalar coder (gain ratio 1.00× at
+> five block sizes), and **at matched payload bits the gap is 1.142×, not
+> 1.72×** — Tessera spends 0.5 of its 4.0 bpp on a scale plane where EXL3
+> spends 0.0117. Buying that back does not lift the curve. The 1.37×
+> "ceiling on the coder gap" below is therefore correct as a bound and far too
+> loose to plan with. The measured arm table, the closed levers and the
+> consequence for the standing goal are in
+> `tessera-activation-aware-encoder-2026-09-01.md`. Everything below still
+> stands as measured; only its forward-looking half is superseded.
+
+
 **Measured 2026-09-01.** `experiments/exl3_arm_glm_experts_v2.py` (EXL3 arm,
 inside Mia's image) and `prismaquant/experiments/glm53_expert_menu.py` (every
 other arm). Six real routed-expert projections from GLM-5.3-Flash BF16
