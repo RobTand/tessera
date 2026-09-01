@@ -105,7 +105,12 @@ def viterbi(x, cb, lab, code):
     cost = torch.stack([d[:, :, s].min(-1).values for s in subsets], -1)   # T,B,4
     pick = torch.stack([s[d[:, :, s].argmin(-1)] for s in subsets], -1)    # T,B,4
 
-    metric = torch.zeros(B, S, device=x.device)
+    # The decoder replays from state 0 (TCQ.decode), so the encoder must start
+    # there too.  A free start (every state at 0) finds paths the decoder cannot
+    # reproduce and reads ~0.3% low in SSE -- every standalone number before
+    # 2026-09-01 carried that optimism, uniformly across arms.
+    metric = torch.full((B, S), float('inf'), device=x.device)
+    metric[:, 0] = 0.0
     back = torch.empty(T, B, S, dtype=torch.uint8, device=x.device)
     ps = pred.reshape(-1)                         # 2S
     pu = sub[pred, pbit].reshape(-1)              # subset on each incoming edge

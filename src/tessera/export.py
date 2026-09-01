@@ -68,6 +68,10 @@ BLOB_SUFFIX = ".tessera"
 DEFAULT_CODE = ConvCode(memory=6)
 DEFAULT_GROUP = 32
 DEFAULT_HALF = 16
+#: Scale-plane refits per unit (``encode_unit``).  An encoder setting, not
+#: wire: the bytes decode identically at any value.  Recorded in the config so
+#: a merge can refuse parts built at different settings.
+DEFAULT_SCALE_REFIT = 3
 
 
 @dataclass(frozen=True)
@@ -146,6 +150,7 @@ def encode_linear(
     with_diagonals: bool = False,
     completion: "int | None" = 0,
     verify: bool = True,
+    scale_refit: int = DEFAULT_SCALE_REFIT,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -177,6 +182,7 @@ def encode_linear(
         weight, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
         completion=completion, group=group, half=half,
+        scale_refit=scale_refit,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -215,6 +221,7 @@ def export_checkpoint(
     with_diagonals: bool = False,
     extra_config: "dict | None" = None,
     verify: bool = True,
+    scale_refit: int = DEFAULT_SCALE_REFIT,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
 
@@ -243,6 +250,7 @@ def export_checkpoint(
                 tensor, grid=grid, q256=plan[name], name=name, code=code,
                 group=group, half=half, rotation=rotation,
                 with_diagonals=with_diagonals, verify=verify,
+                scale_refit=scale_refit,
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -265,13 +273,13 @@ def export_checkpoint(
     )
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config)
+                  report, plan, extra_config, scale_refit)
     return report
 
 
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
-                  extra_config: "dict | None") -> None:
+                  extra_config: "dict | None", scale_refit: int = 0) -> None:
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
@@ -290,7 +298,7 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
             "rate_cap": grid.rate_cap,
         },
         "conv_memory": code.memory,
-        "scale": {"group": group, "half": half},
+        "scale": {"group": group, "half": half, "refit": scale_refit},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
@@ -331,6 +339,7 @@ def export_checkpoint_streaming(
     device: "str | torch.device" = "cuda",
     extra_config: "dict | None" = None,
     verify: bool = True,
+    scale_refit: int = DEFAULT_SCALE_REFIT,
     copy_aux: bool = True,
     progress=None,
     shard_filter: "set[str] | None" = None,
@@ -405,6 +414,7 @@ def export_checkpoint_streaming(
                         tensor.to(device), grid=grid, q256=plan[name], name=name,
                         code=code, group=group, half=half, rotation=rotation,
                         with_diagonals=with_diagonals, verify=verify,
+                        scale_refit=scale_refit,
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -434,7 +444,7 @@ def export_checkpoint_streaming(
         {"metadata": {"total_size": report.total_bytes},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config)
+                  report, plan, extra_config, scale_refit)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):

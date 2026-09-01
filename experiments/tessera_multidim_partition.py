@@ -72,7 +72,8 @@ def viterbi_super(cost, code):
     S = code.states
     _, sub, pred, pbit = transitions(code)
     sub, pred, pbit = sub.to(cost.device), pred.to(cost.device), pbit.to(cost.device)
-    metric = torch.zeros(B, S, device=cost.device)
+    metric = torch.full((B, S), float('inf'), device=cost.device)   # decoder starts at 0
+    metric[:, 0] = 0.0
     back = torch.empty(T, B, S, dtype=torch.uint8, device=cost.device)
     ps, pu = pred.reshape(-1), sub[pred, pbit].reshape(-1)
     for t in range(T):

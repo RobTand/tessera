@@ -46,7 +46,7 @@ SHARED = (
     "quant_method", "container_version", "blob_suffix",
     "grid.digest", "grid.name", "grid.base", "grid.partition",
     "grid.arity", "grid.size", "grid.rate_cap",
-    "conv_memory", "scale.group", "scale.half",
+    "conv_memory", "scale.group", "scale.half", "scale.refit",
     "rotation", "with_diagonals", "tp_size",
     "source_model", "prismaquant_plan", "route_status",
     "requires_serve_flags", "inherits",

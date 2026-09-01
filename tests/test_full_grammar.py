@@ -72,8 +72,11 @@ def test_full_inverse_path_round_trips(rotation, diagonals):
     """
     weights = _weights()
     rates = (3,) * weights.shape[1]
+    # ``_scale_for`` rebuilds the amax plane, so this encode runs without the
+    # scale refit (whose plane is not derivable from the weights alone).
     unit = encode_unit(
-        weights, FORESTS[3], rates, CODE, rotation=rotation, with_diagonals=diagonals
+        weights, FORESTS[3], rates, CODE, rotation=rotation,
+        with_diagonals=diagonals, scale_refit=0,
     )
     scale = _scale_for(unit, weights)
     reconstructed = reconstruct_unit(unit, FORESTS[3], CODE, scale)

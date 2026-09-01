@@ -40,9 +40,12 @@ def _unit(rows=64, cols=512, q256=640, released=0, seed=0, diagonals=True):
     torch.manual_seed(seed)
     weights = torch.randn(rows, cols) * 0.02
     rates = bresenham_rate_schedule(root_from_q256(q256), cols)
+    # These tests re-derive the amax plane from the weights with
+    # ``_pack_scales`` and hold the unit to it, so they run the encoder without
+    # its scale refit; ``test_scale_refit.py`` covers the refit plane.
     unit = encode_unit(
         weights, FORESTS, rates, CODE,
-        with_diagonals=diagonals, released_positions=released,
+        with_diagonals=diagonals, released_positions=released, scale_refit=0,
     )
     return weights, unit
 

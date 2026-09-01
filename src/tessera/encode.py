@@ -111,6 +111,11 @@ class EncodedUnit:
     # than the depth the rate leaves room for -- writing the wider plane is what
     # made every rung of a family weigh the same.
     completion_limit: "int | None" = None
+    # How many scale-plane refits the encoder ran (``encode_unit``).  Not wire:
+    # the bytes decode identically at any value.  Recorded because two units
+    # built at different settings are different renderings of one weight, and
+    # a merge that mixes them should be able to see that it did.
+    scale_refit: int = 0
 
     @property
     def released_positions(self) -> int:
@@ -288,6 +293,89 @@ def _pack_scales(
     return base_byte, refine, effective
 
 
+def _refit_scales(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    group: int,
+    half: int,
+    base_byte: torch.Tensor,
+    refine: torch.Tensor,
+    effective: torch.Tensor,
+):
+    """One least-squares step on the scale plane, landed on S6b words.
+
+    ``_pack_scales`` sets a half's scale from its amax so that nothing clips.
+    That is a legality rule, not a minimiser: once the trellis has chosen its
+    codes, the scale that minimises the half's squared error is
+    ``<w, u> / <u, u>`` over the half's weights ``w`` and their unscaled grid
+    values ``u`` -- and it is lower, because amax/peak spends the half's whole
+    range on one element.  This step moves every half toward that optimum.
+
+    The optimum is a float; the wire stores one E8M0 base per group and a
+    ``(d, m)`` refinement per half.  With the codes fixed a half's error is a
+    parabola in its scale, ``A s^2 - 2 B s + C`` with ``A = <u, u>`` and
+    ``B = <w, u>``, so the choice between candidate words is exact arithmetic
+    on ``A`` and ``B``: three base candidates are tried, each half rounds to its
+    nearest ``(d, m)`` under that base, and a group keeps the word it had
+    wherever no candidate lowers its error.  No group ends worse than it began,
+    and the trellis pass that follows is optimal for the new plane, so the
+    alternation in ``encode_unit`` is monotone in weight-space squared error.
+
+    Words are emitted canonical: a group whose halves both carry ``d = 1`` is
+    written one base higher with ``d = 0``, the form ``scale_codec`` names.
+    The bytes' meaning is unchanged -- ``scales_from_planes`` reads them exactly
+    as it reads the amax plane -- which is what makes this an encoder choice
+    and not a wire change.
+    """
+    per_group = group // half
+    W = work.float().reshape(-1, half)
+    U = units.float().reshape(-1, half)
+    A = (U * U).sum(dim=1)
+    B = (W * U).sum(dim=1)
+    # A half whose codes are all zero, or whose fit points the wrong way, has
+    # no least-squares scale; it keeps the one it has.
+    desired = torch.where(A > 0, B / A.clamp_min(1e-30), effective)
+    desired = torch.where(desired > 0, desired, effective)
+
+    g = desired.reshape(-1, per_group)
+    Ag, Bg = A.reshape(-1, per_group), B.reshape(-1, per_group)
+    prev = effective.reshape(-1, per_group)
+    best_cost = (Ag * prev * prev - 2.0 * Bg * prev).sum(dim=1)
+    best_E = base_byte.to(torch.float32) - 127.0
+    word = refine.to(torch.long).reshape(-1, per_group)
+    best_d = ((word >> 3) & 1).to(torch.float32)
+    best_m = (word & 7).to(torch.float32)
+
+    lo = torch.floor(torch.log2(g.min(dim=1).values))
+    hi = torch.floor(torch.log2(g.max(dim=1).values)) - 1.0
+    for E in (lo, lo + 1.0, hi):
+        E = E.clamp(-127.0, 126.0)
+        ratio = (g / torch.exp2(E)[:, None]).clamp(1.0, 4.0)
+        d = (ratio >= 2.0).to(torch.float32)
+        m = torch.round((ratio / torch.exp2(d) - 1.0) * 8.0)
+        carry = (m >= 8.0) & (d == 0.0)
+        m = torch.where(carry, torch.zeros_like(m), m)
+        d = torch.where(carry, torch.ones_like(d), d)
+        m = m.clamp(max=7.0)
+        both = d.min(dim=1).values == 1.0
+        E = torch.where(both, E + 1.0, E)
+        d = torch.where(both[:, None], torch.zeros_like(d), d)
+        eff = torch.exp2(E[:, None] + d) * (1.0 + m / 8.0)
+        cost = (Ag * eff * eff - 2.0 * Bg * eff).sum(dim=1)
+        take = cost < best_cost
+        best_cost = torch.where(take, cost, best_cost)
+        best_E = torch.where(take, E, best_E)
+        best_d = torch.where(take[:, None], d, best_d)
+        best_m = torch.where(take[:, None], m, best_m)
+
+    new_base = (best_E + 127.0).clamp(0.0, 255.0).to(torch.uint8)
+    new_refine = ((best_d.to(torch.long) << 3) | best_m.to(torch.long)).reshape(-1).to(torch.uint8)
+    new_effective = torch.exp2(
+        torch.repeat_interleave(best_E, per_group) + best_d.reshape(-1)
+    ) * (1.0 + best_m.reshape(-1) / 8.0)
+    return new_base, new_refine, new_effective
+
+
 def encode_unit(
     weights: torch.Tensor,
     forest: "AnchorForest | dict[int, AnchorForest]",
@@ -302,6 +390,7 @@ def encode_unit(
     half: int = 16,
     scale_headroom: float = 1.0,
     superblock: int = 256,
+    scale_refit: int = 3,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype."""
     if weights.ndim != 2:
@@ -353,8 +442,6 @@ def encode_unit(
         work, group, half, peak=max(abs(v) for v in grid.values),
         headroom=scale_headroom,
     )
-    scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
-    targets = work / scale
 
     # A code covers ``arity`` consecutive rows, so every per-code plane is
     # ``steps`` tall, not ``rows``.  The scale planes stay per-position.
@@ -369,27 +456,47 @@ def encode_unit(
     codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
     vectors = grid_vector_table(grid, device)
     rate_vector = torch.tensor(rates, device=device)
-    sse = 0.0
 
-    # One Viterbi per rate: columns are independent, so a mixed-rate schedule
-    # is a partition of columns and not a harder problem.
-    for present in sorted(set(rates)):
-        picked = forests[present]
-        depth = picked.cap - present
-        level = depth if completion is None else min(completion, depth)
-        which = torch.nonzero(rate_vector == present).squeeze(1)
-        sub = targets[:, which].contiguous()
-        a, b, s_ = viterbi_columns(sub, picked, code, level)
-        sse += s_
-        blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
-        reachable = blocks[:, :: 1 << (depth - level)]
-        per_pos = vectors[reachable][a]                  # [steps, n, D, arity]
-        want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
-        c_bits = ((want - per_pos) ** 2).sum(dim=3).argmin(dim=2)
-        anchors[:, which] = a
-        body_bits[:, which] = b.to(body_dtype)
-        completion_bits[:, which] = c_bits
-        codes[:, which] = reachable[a, c_bits]
+    def trellis_pass(targets: torch.Tensor) -> float:
+        # One Viterbi per rate: columns are independent, so a mixed-rate
+        # schedule is a partition of columns and not a harder problem.
+        total = 0.0
+        for present in sorted(set(rates)):
+            picked = forests[present]
+            depth = picked.cap - present
+            level = depth if completion is None else min(completion, depth)
+            which = torch.nonzero(rate_vector == present).squeeze(1)
+            sub = targets[:, which].contiguous()
+            a, b, s_ = viterbi_columns(sub, picked, code, level)
+            total += s_
+            blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
+            reachable = blocks[:, :: 1 << (depth - level)]
+            per_pos = vectors[reachable][a]              # [steps, n, D, arity]
+            want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+            c_bits = ((want - per_pos) ** 2).sum(dim=3).argmin(dim=2)
+            anchors[:, which] = a
+            body_bits[:, which] = b.to(body_dtype)
+            completion_bits[:, which] = c_bits
+            codes[:, which] = reachable[a, c_bits]
+        return total
+
+    # The amax plane and the trellis are each set without knowledge of the
+    # other.  ``scale_refit`` alternates them: re-fit every half's scale to
+    # the codes just chosen (``_refit_scales``), then let the trellis choose
+    # again for the new plane.  Each refit is a plane VALUE written in the
+    # same S6b bytes, so the decoder, the kernel and the profile id are
+    # untouched; ``scale_refit=0`` is the amax plane, byte for byte.  The
+    # ``sse`` reported is the final pass's, in that pass's target units.
+    for refit in range(scale_refit + 1):
+        scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
+        targets = work / scale
+        sse = trellis_pass(targets)
+        if refit == scale_refit:
+            break
+        units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
+        base_byte, refine, effective = _refit_scales(
+            work, units, group, half, base_byte, refine, effective
+        )
 
     # Stage B: release, in S9's canonical order -- descending |decoded value|
     # within the superblock, on the PRE-release decode so the decoder can
@@ -432,6 +539,7 @@ def encode_unit(
         group=group,
         half=half,
         completion_limit=completion,
+        scale_refit=scale_refit,
     )
 
 
