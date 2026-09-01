@@ -116,6 +116,44 @@ directional — no Tessera-at-4.5 number exists or can exist on the current wire
 - KL figures are lower bounds (top-1024 support, teacher∩student partition).
   Mean teacher tail mass outside the support: 0.0335 (R768), 0.0657 (R640).
 
+## One measurement left unexplained
+
+`TESSERA_E2M1_K2_R128` — now understood to weigh the same 4.0000 bpp as
+`R896` — renders at `rel_err` **0.90**. That is 73× worse than `R896` at
+identical size, and far worse than greedy per-position completion over a
+256-code grid has any obvious reason to be: at `R=1` the body carries almost
+nothing and the completion plane should behave roughly like nearest-neighbour
+rounding, which does not lose 90% of the signal.
+
+Recorded as **unexplained**, not folded into "dominated". Dominance predicts
+worse; it does not predict this much worse, and a completion plane that
+degrades non-gracefully at low body rate is a different fact about the coder
+than a rate ceiling is. Not chased — it does not gate anything, because every
+sub-top rung is unshippable regardless of why.
+
+## Two wire changes could exist; only one was flagged
+
+The completion plane is **unconditional** — every column writes `cap − R` bits
+whether or not the body needed them. That is precisely why there is no rate
+ladder, and it means there are *two* structural changes that would give
+Tessera a rate axis, not one:
+
+1. **Raise the ceiling above 4.0** — commit a new grid digest to
+   `SERIALISABLE_GRIDS` with a larger payload alphabet. This is the direction
+   the served RD curve argues for, and it is the one flagged above.
+2. **Make the completion plane sparse or optional at sub-cap rungs** — then
+   `R` becomes a real rate knob within an existing family and the wire gains a
+   ladder between 3.5 and 4.0 without a new alphabet.
+
+**Neither was evaluated.** (2) is not obviously worse: it reuses a committed
+grid, and the served curve's own evidence — R640 vs R768 at identical bytes,
+3.36× apart in KL — says the completion plane's bits are the *cheap* ones, so
+spending fewer of them may cost less than the arithmetic suggests. It is also
+the more invasive change: completion width is load-bearing in
+`unit_artifact.py` and the Triton decode kernel, and dropping it changes the
+alphabet's reconstruction guarantee, not just its layout. Recorded so the
+direction-setting is a decision and not an omission.
+
 ## Consequences for the GLM goal
 
 Mia's routed experts sit at 4.0117 bpw and the body-to-body size match needs
@@ -124,3 +162,12 @@ clears the target with 0.29% to spare on the expert block — but with **no
 headroom to trade and no knob to trade it with**. The allocator's Tessera menu
 is two entries, not a band, and any unit needing more than 4.0 bpp must leave
 Tessera for FP8 or BF16.
+
+**Measured 2026-09-01, and it changes the shape of the GLM plan
+(`glm53-bit-trade-2026-09-01.md`):** the rung Tessera must leave for is *not*
+NVFP4. On real GLM routed-expert activations, `NVFP4` at 4.5 bpp scores
+`rel_err` 0.10806 **as it serves** (W4A4, `flashinfer_b12x`) against Tessera
+4.0's 0.09738 — half a bit more per weight and 11% more error. It is
+Pareto-dominated on this route. The expert menu is `{3.5000, 4.0000, 8.0156}`,
+and the freed body bytes buy **FP8 on ~2.6 of the 45 expert layers**, not a
+rate increase on any of them.

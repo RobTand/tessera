@@ -48,16 +48,35 @@ headroom of 4.3295 bpp.**
 
 Spent on the whole body instead of the experts alone:
 
-| other_body | lm_head | frees | experts gain |
-|---|---|---:|---|
-| FP8 8.023 | FP8 8.023 | 7.692 GiB | **+0.2171 bpp** |
-| 6.000 | FP8 8.023 | 9.493 GiB | **+0.2679 bpp** |
+| other_body | lm_head | frees |
+|---|---|---:|
+| FP8 8.016 | FP8 8.016 | **7.71 GiB** |
+| 6.000 | FP8 8.016 | 9.51 GiB |
 
 FP8 on attention is close to free — `FP8_E4M3` is a high-quality 8-bit format
-and PrismaQuant ships attention at FP8 routinely. It buys **+0.217 bpp on the
-experts, a ~5.4% relative rate increase in the steepest part of the
-rate–distortion curve**, at identical total size. That is the heterogeneous
-allocation thesis stated in bytes, on this model.
+and PrismaQuant ships attention at FP8 routinely.
+
+> **CORRECTED 2026-09-01, same day.** This section originally said the freed
+> bytes were *"worth **+0.2171 bpp on the experts**, a ~5.4% relative rate
+> increase in the steepest part of the rate–distortion curve"*. **They are not
+> worth any rate increase at all.** A Tessera family spends `R` body bits and
+> `cap − R` completion bits, so every rung of a family weighs the same — the
+> serialisable set is two *sizes*, 3.5000 and 4.0000 bpp, with nothing between
+> and nothing above (`tessera-rate-ceiling-2026-09-01.md`). There is no
+> 4.2171 bpp rung to buy.
+>
+> What the freed bytes buy is a **format change on a subset of layers**: with
+> experts at Tessera 4.0000 and the rest at FP8, the plan lands at 149.478 GiB
+> and the 8.12 GiB of slack affords **FP8 on 5.71% of the routed-expert
+> parameters — about 2.6 of the 45 expert layers**, since packed MoE is uniform
+> within a layer and free to differ across them. Measured, that trade still
+> wins by **7.7×** (`glm53-bit-trade-2026-09-01.md`), so the heterogeneous
+> allocation thesis is unharmed; only its mechanism changed.
+>
+> One rung the byte arithmetic would have reached for is **not** an option:
+> `NVFP4` at 4.5 bpp measures **11% worse than Tessera at 4.0** on this route,
+> because `flashinfer_b12x` serves it W4A4 and the activation leg costs +64%.
+> It is Pareto-dominated — more bytes *and* more error.
 
 ## What this does NOT claim
 

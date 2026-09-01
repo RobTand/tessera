@@ -223,9 +223,24 @@ correction moves the budget by 3.7 GiB.
 
 Mia quantizes **only** the routed experts. Attention, dense and `lm_head` —
 15.44 GiB on 2.6% of the parameters — stay at 16 bpp. Pricing those at FP8
-frees 7.692 GiB, worth **+0.2171 bpp on the experts at identical total size**.
-That is the heterogeneous-allocation thesis stated in bytes on this model, and
-it is available to PrismaQuant and structurally not to a uniform-format method.
+frees **7.71 GiB**.
+
+**Corrected 2026-09-01:** those bytes buy **no rate increase on the experts**.
+An earlier line here said "+0.2171 bpp on the experts at identical total size";
+there is no such rung. Body and completion sum to the cap, so a Tessera family
+has one size — the serialisable set is 3.5000 and 4.0000 bpp, nothing between,
+nothing above (`docs/measurements/tessera-rate-ceiling-2026-09-01.md`). And
+`NVFP4` at 4.5 is **Pareto-dominated** by Tessera at 4.0 on this route: more
+bytes *and* 11% more functional error, because `flashinfer_b12x` serves it
+W4A4.
+
+What the bytes buy instead is a **format change on ~2.6 of the 45 expert
+layers** — FP8 on 5.71% of routed-expert parameters, which packed MoE permits
+because uniformity is required within a layer and not across them. Measured,
+that trade wins by **7.7×** (`docs/measurements/glm53-bit-trade-2026-09-01.md`).
+The heterogeneous-allocation thesis holds on this model, and it is still
+structurally unavailable to a uniform-format method; only its mechanism changed
+from "raise everyone's rate" to "promote the layers that need it".
 
 ### 8.3 A served number without a serving backend
 
