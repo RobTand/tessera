@@ -1,0 +1,337 @@
+{
+ "args": {
+  "act": "/mnt/shared/dq-runs/glm53-bf16-pread-capture-1469b9b-20260901/act",
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "fit_docs": 8,
+  "seqlen": 512,
+  "iters": 3,
+  "measured": "experiments/results/tessera_ldlq_generalisation.json",
+  "out": "experiments/results/tessera_theoretical_limits.json"
+ },
+ "tensors": [
+  {
+   "layer": 5,
+   "proj": "gate_proj",
+   "am": 0.00038307823706418276,
+   "am_over_gm": {
+    "blk16": 1.0676003694534302,
+    "blk32": 1.0329948663711548,
+    "row": 1.0004035234451294,
+    "col": 1.000545620918274
+   },
+   "delta_h_bits": {
+    "blk16": -0.005086427464825238,
+    "tensor": -4.02155477479765
+   },
+   "kurtosis_blk16": 2.6896309852600098,
+   "plane": {
+    "entropy_bits_per_block": 3.4234519004821777,
+    "bpp_entropy": 0.2139657437801361,
+    "used_e4m3_values": 29,
+    "octaves": 3.4854268026012916
+   },
+   "measured_refit_e4m3_wt": 0.09793918579816818,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.060488896207880595,
+    "blk16_Rs0.5": 0.08554421739016323,
+    "blk16_Rs0.5_shape": 0.08524315007099915,
+    "blk16_Rs_entropy": 0.07015938388649544,
+    "blk16_Rs_entropy_shape": 0.06991246248999039,
+    "blk32_Rs0.25": 0.0731287979247119,
+    "blk32_Rs0.25_shape": 0.07287142586828795
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.3194035291671753,
+     "feedback_gain_block1_mse": 1.3140698671340942,
+     "feedback_gain_block32_mse": 1.311936616897583
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 4.394723892211914,
+     "feedback_gain_block1_mse": 3.4685862064361572,
+     "feedback_gain_block32_mse": 3.42641282081604
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 4.492532730102539,
+     "feedback_gain_block1_mse": 3.505847215652466,
+     "feedback_gain_block32_mse": 3.4618661403656006
+    }
+   }
+  },
+  {
+   "layer": 5,
+   "proj": "up_proj",
+   "am": 0.00038242951268330216,
+   "am_over_gm": {
+    "blk16": 1.0673967599868774,
+    "blk32": 1.0329065322875977,
+    "row": 1.000357747077942,
+    "col": 1.0005465745925903
+   },
+   "delta_h_bits": {
+    "blk16": -0.005058555310455848,
+    "tensor": -3.9999711904597395
+   },
+   "kurtosis_blk16": 2.6901817321777344,
+   "plane": {
+    "entropy_bits_per_block": 3.427694320678711,
+    "bpp_entropy": 0.21423089504241943,
+    "used_e4m3_values": 27,
+    "octaves": 3.222392372198547
+   },
+   "measured_refit_e4m3_wt": 0.09798669070005417,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.06049466516140947,
+    "blk16_Rs0.5": 0.08555237592248446,
+    "blk16_Rs0.5_shape": 0.08525292691835203,
+    "blk16_Rs_entropy": 0.07017897206218611,
+    "blk16_Rs_entropy_shape": 0.0699333327907052,
+    "blk32_Rs0.25": 0.07313192484231802,
+    "blk32_Rs0.25_shape": 0.07287594969460076
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.3194035291671753,
+     "feedback_gain_block1_mse": 1.3140698671340942,
+     "feedback_gain_block32_mse": 1.311936616897583
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 4.394723892211914,
+     "feedback_gain_block1_mse": 3.4685862064361572,
+     "feedback_gain_block32_mse": 3.42641282081604
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 4.492532730102539,
+     "feedback_gain_block1_mse": 3.505847215652466,
+     "feedback_gain_block32_mse": 3.4618661403656006
+    }
+   }
+  },
+  {
+   "layer": 20,
+   "proj": "gate_proj",
+   "am": 0.0003315587528049946,
+   "am_over_gm": {
+    "blk16": 1.0727592706680298,
+    "blk32": 1.038133978843689,
+    "row": 1.0053527355194092,
+    "col": 1.0007115602493286
+   },
+   "delta_h_bits": {
+    "blk16": -0.005197724729387065,
+    "tensor": -3.942593661561523
+   },
+   "kurtosis_blk16": 2.6880135536193848,
+   "plane": {
+    "entropy_bits_per_block": 3.4521915912628174,
+    "bpp_entropy": 0.2157619744539261,
+    "used_e4m3_values": 29,
+    "octaves": 3.4854268026012916
+   },
+   "measured_refit_e4m3_wt": 0.0981019139289856,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.06034327532012535,
+    "blk16_Rs0.5": 0.08533827835573495,
+    "blk16_Rs0.5_shape": 0.08503137579436296,
+    "blk16_Rs_entropy": 0.07007767835606221,
+    "blk16_Rs_entropy_shape": 0.06982565758183444,
+    "blk32_Rs0.25": 0.07294756728142968,
+    "blk32_Rs0.25_shape": 0.07268522550847754
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.3473200798034668,
+     "feedback_gain_block1_mse": 1.34242582321167,
+     "feedback_gain_block32_mse": 1.3401201963424683
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 4.171241283416748,
+     "feedback_gain_block1_mse": 3.49143648147583,
+     "feedback_gain_block32_mse": 3.4486067295074463
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 4.176279067993164,
+     "feedback_gain_block1_mse": 3.4816136360168457,
+     "feedback_gain_block32_mse": 3.439608097076416
+    }
+   }
+  },
+  {
+   "layer": 20,
+   "proj": "up_proj",
+   "am": 0.00033986393827944994,
+   "am_over_gm": {
+    "blk16": 1.0705927610397339,
+    "blk32": 1.0361846685409546,
+    "row": 1.00352144241333,
+    "col": 1.0006029605865479
+   },
+   "delta_h_bits": {
+    "blk16": -0.0052231977275654096,
+    "tensor": -3.9781611713765916
+   },
+   "kurtosis_blk16": 2.689681053161621,
+   "plane": {
+    "entropy_bits_per_block": 3.4329752922058105,
+    "bpp_entropy": 0.21456095576286316,
+    "used_e4m3_values": 29,
+    "octaves": 3.4854268026012916
+   },
+   "measured_refit_e4m3_wt": 0.09797785431146622,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.06040430142562836,
+    "blk16_Rs0.5": 0.08542458230179611,
+    "blk16_Rs0.5_shape": 0.08511586650032366,
+    "blk16_Rs_entropy": 0.0700901758626328,
+    "blk16_Rs_entropy_shape": 0.06983687705526687,
+    "blk32_Rs0.25": 0.0730161509204217,
+    "blk32_Rs0.25_shape": 0.07275227793510003
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.3473200798034668,
+     "feedback_gain_block1_mse": 1.34242582321167,
+     "feedback_gain_block32_mse": 1.3401201963424683
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 4.171241283416748,
+     "feedback_gain_block1_mse": 3.49143648147583,
+     "feedback_gain_block32_mse": 3.4486067295074463
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 4.176279067993164,
+     "feedback_gain_block1_mse": 3.4816136360168457,
+     "feedback_gain_block32_mse": 3.439608097076416
+    }
+   }
+  },
+  {
+   "layer": 42,
+   "proj": "gate_proj",
+   "am": 0.0003685873234644532,
+   "am_over_gm": {
+    "blk16": 1.0838310718536377,
+    "blk32": 1.0487651824951172,
+    "row": 1.0157374143600464,
+    "col": 1.001224160194397
+   },
+   "delta_h_bits": {
+    "blk16": -0.005062202117623205,
+    "tensor": -3.5088861580182287
+   },
+   "kurtosis_blk16": 2.687870979309082,
+   "plane": {
+    "entropy_bits_per_block": 3.4713189601898193,
+    "bpp_entropy": 0.2169574350118637,
+    "used_e4m3_values": 30,
+    "octaves": 3.6374299451842416
+   },
+   "measured_refit_e4m3_wt": 0.09888054430484772,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.06003426786020694,
+    "blk16_Rs0.5": 0.08490127581504388,
+    "blk16_Rs0.5_shape": 0.0846038919208872,
+    "blk16_Rs_entropy": 0.06977661776258934,
+    "blk16_Rs_entropy_shape": 0.06953221104299509,
+    "blk32_Rs0.25": 0.07257689526627402,
+    "blk32_Rs0.25_shape": 0.07232268000822413
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.4091893434524536,
+     "feedback_gain_block1_mse": 1.4044781923294067,
+     "feedback_gain_block32_mse": 1.4016848802566528
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 5.147937297821045,
+     "feedback_gain_block1_mse": 4.24641752243042,
+     "feedback_gain_block32_mse": 4.179046630859375
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 5.062666893005371,
+     "feedback_gain_block1_mse": 4.175330638885498,
+     "feedback_gain_block32_mse": 4.103544235229492
+    }
+   }
+  },
+  {
+   "layer": 42,
+   "proj": "up_proj",
+   "am": 0.00037656736094504595,
+   "am_over_gm": {
+    "blk16": 1.0764801502227783,
+    "blk32": 1.0416433811187744,
+    "row": 1.0087662935256958,
+    "col": 1.0008158683776855
+   },
+   "delta_h_bits": {
+    "blk16": -0.005148663595147429,
+    "tensor": -3.6674628061767227
+   },
+   "kurtosis_blk16": 2.6844115257263184,
+   "plane": {
+    "entropy_bits_per_block": 3.4561781883239746,
+    "bpp_entropy": 0.2160111367702484,
+    "used_e4m3_values": 29,
+    "octaves": 3.4854268026012916
+   },
+   "measured_refit_e4m3_wt": 0.09833342581987381,
+   "bounds_rms_rel": {
+    "rot_gauss_4.0": 0.0625,
+    "blk16_free_plane": 0.06023889605275239,
+    "blk16_Rs0.5": 0.08519066378018554,
+    "blk16_Rs0.5_shape": 0.08488717876013106,
+    "blk16_Rs_entropy": 0.06996854388139298,
+    "blk16_Rs_entropy_shape": 0.06971928646278878,
+    "blk32_Rs0.25": 0.07282457972556212,
+    "blk32_Rs0.25_shape": 0.07256514790454124
+   },
+   "ceilings": {
+    "fit s=1.0": {
+     "transform_gain_mse": 1.4091893434524536,
+     "feedback_gain_block1_mse": 1.4044781923294067,
+     "feedback_gain_block32_mse": 1.4016848802566528
+    },
+    "fit s=0.025": {
+     "transform_gain_mse": 5.147937297821045,
+     "feedback_gain_block1_mse": 4.24641752243042,
+     "feedback_gain_block32_mse": 4.179046630859375
+    },
+    "eval s=0.025": {
+     "transform_gain_mse": 5.062666893005371,
+     "feedback_gain_block1_mse": 4.175330638885498,
+     "feedback_gain_block32_mse": 4.103544235229492
+    }
+   }
+  }
+ ],
+ "synthetic": {
+  "L=1": {
+   "rms_rel": 0.1239023357629776,
+   "clip_k": 2.8000000000000003,
+   "rate": 3.5,
+   "shannon_gauss": 0.08838834764831845,
+   "loss_x": 1.401794909165663
+  },
+  "L=2": {
+   "rms_rel": 0.11482930183410645,
+   "clip_k": 2.9000000000000004,
+   "rate": 3.75,
+   "shannon_gauss": 0.07432544468767006,
+   "loss_x": 1.5449527724541905
+  }
+ }
+}
