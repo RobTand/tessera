@@ -205,13 +205,16 @@ the production encoder measures **1.125× over today's default at 4.0 bpp**
 on the six GLM experts, and the W4A4 gap to EXL3@A4 is 1.205× → **1.137×**.
 The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
 
-1. **Kernel lane: span-2 decode.** `pack_kernel_planes` refuses span 2; the
-   Triton GEMV reads one select bit and R−1 point bits per position. Needed:
-   one select per pair, the stored label at odd positions, the derived label
-   at even ones, in `_decode_tile` / `_tuple_gemv_kernel` / the prefill GEMM,
-   bit-exact against `reconstruct_unit`, with profiler evidence before and
-   after (principle 15). The LUT plane needs nothing: it materialises to the
-   per-16 E4M3 bytes the kernel already reads.
+1. ~~**Kernel lane: span-2 decode.**~~ **Done** (`docs/measurements/tessera-kernel-span2-2026-09-01.md`):
+   the tuple GEMV decodes the minor-1 wire bit-exactly at the wire's own
+   4.0 b/wt (the LUT plane is read as nibbles, not materialised), and with
+   the per-unit values in subset order it is as fast as span 1 at the same
+   launch shape (0.0664 vs 0.0673 ms) and 11% faster at its default
+   (0.0524 vs 0.0589 ms, 75 W of ~140). Scalar-lane and prefill-GEMM span-2
+   decodes are still open; the tuple family is what ships.
+   **Also landed:** the scale-weighted trellis
+   (`docs/measurements/tessera-trellis-weighting-2026-09-01.md`), exporter
+   default, +0.8% at the default wire; W4A4 vs EXL3@A4 is now **1.133×**.
 2. **Re-drain GLM on the new wire** (Rob's call; the merged export is a
    different artifact under minor 1) and the **served A/B** — new default vs
    the refit-0 export — on the `tessera-served-kl-2026-09-01` harness. That
@@ -222,9 +225,14 @@ The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
    gain still rising at 7k rows). Large capture (≥64k tokens, per-expert
    routed tokens shrunk towards the shared H), then the LDLQ encode inside
    PrismaQuant's render path. Stacks with the new wire (~1.10× more, screen).
-4. **The E4M3 payload grid** (the 8-bit weight rung): `build_forest`
-   dispatches on arity, not spread; its low rungs are ~1.5× off. Arity-1
-   rungs now weigh 0.25 bpp more under span 2 — check the ladder still
-   prices where the allocator expects.
+4. **The E4M3 payload grid — Rob's next mandate (2026-09-01 22:50 UTC):**
+   *"perform the same optimization on the 8-bit format + kernels. Those
+   probably have a much better shot of beating EXL3 outright"*, against two
+   targets: **(1) the theoretical bound** at each bit rate and **(2) EXL3
+   projected with 8-bit activations**. Known: `build_forest` dispatches on
+   arity, not spread, and the E4M3 low rungs are ~1.5× off; arity-1 rungs
+   weigh 0.5 b/wt more under span 2 (the label) and 0.25 less under the LUT
+   plane, so span 2 must be compared against the same bits spent on the
+   rate axis; there is no E4M3 kernel lane (`build_code_lut` is R=3).
 5. Held: scalar-lane LUT split; delete partA/partB (ask first); ladder
    probe dispatch; box chores.

@@ -29,7 +29,7 @@ import triton.language as tl
 from .alphabet import AnchorForest
 from .decode import _replay_tables
 from .errors import GrammarError
-from .trellis import ConvCode
+from .trellis import ConvCode, SUBSET_COUNT
 
 __all__ = ["build_code_lut", "build_tuple_index_lut", "build_anchor_values",
            "tessera_dequant", "tessera_gemv", "nvfp4_gemv"]
@@ -364,41 +364,85 @@ SELECT_PAD = 8
 
 def pack_kernel_planes(
     body_bits: torch.Tensor, rate: int = 3, memory: int = 6, span: int = 1
-) -> "tuple[torch.Tensor, torch.Tensor]":
-    """Wire BODY -> (select plane, point plane), column-major, MSB-first.
+) -> "tuple[torch.Tensor, ...]":
+    """Wire BODY -> kernel planes, column-major, MSB-first.
 
-    The select plane carries ``SELECT_PAD`` zero bits before each column, which
-    is what lets a decoder read row 0's history without a boundary test: the pad
-    *is* the initial state.
+    ``span == 1``: ``(select plane, point plane)``.  The select plane carries
+    ``SELECT_PAD`` zero bits before each column, which is what lets a decoder
+    read row 0's history without a boundary test: the pad *is* the initial
+    state.
 
-    ``span`` is the unit's trellis span.  The kernel lane reads one select bit
-    and ``rate - 1`` point bits per position; a span-2 body carries a stored
-    label at every second position and one select bit per pair, which these
-    planes cannot express.  Refused here, at the seam, rather than decoded as
-    if it were span 1 -- which would produce plausible weights from the wrong
-    subsets.  The scale plane needs no such guard: a LUT plane materialises
-    to the same per-16 E4M3 bytes the kernel already reads.
+    ``span == 2``: ``(select plane, label plane, point plane)``.  One select
+    bit per super-symbol (a pair of codes), padded per column exactly as
+    above; the stored two-bit label of every odd position; and the point
+    plane, which is byte for byte the span-1 point plane because the point
+    field is the same width at both positions of a pair.  The select plane
+    ends with eight bytes of slack so the kernel's three-byte window read on
+    the last pair of the last column stays inside the tensor.  A column of
+    pairs must be a multiple of eight pairs (sixteen codes) so that every
+    column's planes start on a byte.
     """
     rows, cols = body_bits.shape
     device = body_bits.device
-    if span != 1:
+    if span not in (1, 2):
         raise GrammarError(
-            f"the kernel lane decodes span-1 bodies; this unit is span {span}. "
-            "The span-2 decode is the next kernel-lane item; use the reference "
-            "decoder (materialize_nvfp4) until it lands."
+            f"the kernel lane decodes span-1 and span-2 bodies; this unit is span {span}"
         )
-    if rows % 8:
-        raise GrammarError(f"{rows} rows does not byte-align a column plane")
     body = body_bits.to(torch.int32)
-
-    select = (body >> (rate - 1)) & 1
-    padded = torch.zeros(rows + SELECT_PAD, cols, dtype=torch.int32, device=device)
-    padded[SELECT_PAD:] = select
-    select_plane = _pack_columns(padded, 1)
-
     point = body & ((1 << (rate - 1)) - 1)
     point_plane = _pack_columns(point, rate - 1)
-    return select_plane, point_plane
+    if span == 1:
+        if rows % 8:
+            raise GrammarError(f"{rows} rows does not byte-align a column plane")
+        select = (body >> (rate - 1)) & 1
+        padded = torch.zeros(rows + SELECT_PAD, cols, dtype=torch.int32, device=device)
+        padded[SELECT_PAD:] = select
+        return _pack_columns(padded, 1), point_plane
+    if rows % 16:
+        raise GrammarError(
+            f"{rows} codes is not a multiple of 16; a span-2 column holds one "
+            "select bit and one label per pair and needs a byte-aligned column of pairs"
+        )
+    select = (body[0::2] >> (rate - 1)) & 1                 # [pairs, cols]
+    label = (body[1::2] >> (rate - 1)) & (SUBSET_COUNT - 1)  # [pairs, cols]
+    padded = torch.zeros(rows // 2 + SELECT_PAD, cols, dtype=torch.int32, device=device)
+    padded[SELECT_PAD:] = select
+    select_plane = torch.cat([
+        _pack_columns(padded, 1), torch.zeros(8, dtype=torch.uint8, device=device)
+    ])
+    return select_plane, _pack_columns(label, 2), point_plane
+
+
+def pack_scale_nibbles(scale_refine: torch.Tensor, rows: int, cols: int, half: int = 16) -> torch.Tensor:
+    """The LUT scale plane as the kernel reads it: ``[groups, rows]`` nibbles,
+    two per byte, the even row in the high nibble.
+
+    A lane's sixteen output rows of one column group are then eight
+    consecutive bytes.  This is the plane at its wire size -- a nibble per
+    sixteen weights, 0.25 bpp -- where the span-1 kernel reads a materialised
+    E4M3 byte per sixteen (0.5 bpp): the bits the LUT plane saved on disk are
+    not spent again in memory.
+    """
+    if rows % 2:
+        raise GrammarError(f"{rows} rows does not pair nibbles into bytes")
+    groups = cols // half
+    nib = scale_refine.reshape(rows, groups).t().contiguous().to(torch.int32)
+    if nib.numel() and int(nib.max()) > 0xF:
+        raise GrammarError("a LUT scale index wider than a nibble")
+    flat = nib.reshape(-1, 2)
+    return ((flat[:, 0] << 4) | flat[:, 1]).to(torch.uint8)
+
+
+def lut_scale_table(scale_lut: torch.Tensor, device: str = "cuda") -> torch.Tensor:
+    """``[16]`` fp32 -- the LUT plane's E4M3 entries as numbers, zero past the
+    table's end.  The unit's global scale stays a scalar on the wrapper, as
+    for the span-1 kernel."""
+    table = torch.zeros(16, dtype=torch.float32, device=device)
+    n = int(scale_lut.numel())
+    if n > 16:
+        raise GrammarError(f"a LUT scale plane holds at most 16 entries, got {n}")
+    table[:n] = scale_lut.to(device).view(torch.float8_e4m3fn).float()
+    return table
 
 
 def _pack_columns(values: torch.Tensor, width: int) -> torch.Tensor:
@@ -889,6 +933,272 @@ def _tuple_gemv_kernel(
             acc += value * scale * tl.load(x_ptr + k)
 
     tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live)
+
+
+def build_subset_values(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> torch.Tensor:
+    """``(label, point) -> the anchor's ``arity`` values``, at index
+    ``(label * points + point) * arity``.  The PER-UNIT half, in subset order.
+
+    ``build_anchor_values`` is indexed by anchor, so a kernel reaches it
+    through a ``(window, point) -> anchor`` table.  The four subsets partition
+    the anchors (``_replay_tables``), so permuting the value table into
+    subset order makes the anchor index arithmetic -- ``label * points +
+    point`` -- and the span-2 kernel, which derives the label per pair, needs
+    no ``(label, point)`` table at all.  Same 2 KB per unit; the same
+    permutation for every unit at a rate.
+    """
+    subsets, _table_next, _table_sub = _replay_tables(forest, code, device)
+    arity = forest.grid.arity
+    values = build_anchor_values(forest, device).reshape(-1, arity)
+    return values[subsets.reshape(-1).long()].reshape(-1).contiguous()
+
+
+def build_span2_luts(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """``(label_lut[2^(memory+1)] int32: history window -> super-label,
+    subset_lut[4 * points] int16: (label, point) -> anchor)``.  SHARED.
+
+    The span-1 ``build_tuple_index_lut`` fuses these two: ``index[window *
+    points + point] == subset_lut[label_lut[window] * points + point]`` (a
+    test holds them to it).  At span 2 the fusion cannot be done ahead of
+    time, because position 0's label is the super-label minus the pair's
+    stored label (``trellis.py``, ``decode._replay_span``): the window gives
+    the super-label, the label plane gives position 1's label, and position
+    0's is derived per pair in the kernel.  Both halves depend on the replay
+    tables and the forest's block layout only, never on what a block
+    reconstructs to, so every unit at a rate shares them.
+    """
+    subsets, _table_next, table_sub = _replay_tables(forest, code, device)
+    if len(forest.blocks) > (1 << 15):
+        raise GrammarError(
+            f"{len(forest.blocks)} anchors does not fit the int16 subset table; "
+            "widen it deliberately rather than letting it wrap"
+        )
+    sub_cpu = table_sub.tolist()
+    labels: "list[int]" = []
+    for window in range(1 << (code.memory + 1)):
+        select = window & 1
+        history = window >> 1
+        state = 0
+        for index in range(code.memory):
+            state |= ((history >> (code.memory - 1 - index)) & 1) << index
+        labels.append(int(sub_cpu[select][state]))
+    label_lut = torch.tensor(labels, dtype=torch.int32, device=device)
+    subset_lut = subsets.reshape(-1).to(torch.int16).to(device)
+    return label_lut, subset_lut
+
+
+@triton.jit
+def _tuple_gemv_span2_kernel(
+    x_ptr, select_ptr, label_ptr, point_ptr, nib_ptr, table_ptr,
+    label_lut_ptr, value_ptr, out_ptr,
+    global_scale, rows, steps, cols,
+    memory: tl.constexpr, rate: tl.constexpr, arity: tl.constexpr,
+    half: tl.constexpr, pad: tl.constexpr,
+    LANES: tl.constexpr, VEC: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """GEMV over a span-2 k-tuple body with a LUT scale plane.
+
+    The span-1 tuple kernel reads one select bit and ``rate-1`` point bits
+    per code, and one E4M3 scale byte per output row per column group.  Here:
+
+    - the select plane holds one bit per PAIR of codes, so a lane of ``VEC``
+      codes reads ``VEC/2 + memory`` bits.  The pair index of a lane is
+      ``base/2``, a multiple of ``VEC/2`` but not of 8, so the sub-byte offset
+      of the window is not a constant: it is computed per lane (``pm``).
+    - the label plane holds two bits per pair, MSB-first: a lane's four
+      pairs are one byte, byte-aligned because ``base`` and ``steps`` are
+      multiples of 8.
+    - the point plane is the span-1 point plane, read exactly as before.
+    - a pair's super-label comes from the window (``label_lut``); position 1
+      takes the stored label, position 0 the super-label minus it mod 4.
+      ``value_ptr`` is in SUBSET order (``build_subset_values``), so the
+      value of ``(label, point)`` is at ``(label * POINTS + point) * arity``
+      with no table between: the dependent-load depth per code is the
+      span-1 kernel's -- window bytes, one small table, the value.
+    - the scale is a nibble per (row, group) into a 16-entry fp32 table --
+      the LUT plane at its wire size, not materialised to bytes.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    base = pid_n * LANES * VEC + tl.arange(0, LANES) * VEC       # first CODE
+    j = tl.arange(0, VEC * arity)
+    v = j // arity                        # which code within the lane
+    a = j % arity                         # which position within the code
+    sv = v // 2                           # which pair within the lane
+    parity = v % 2                        # which position within the pair
+    offs_n = base[:, None] * arity + j[None, :]
+    live = offs_n < rows
+    live_base = base < steps
+    acc = tl.zeros((LANES, VEC * arity), dtype=tl.float32)
+
+    P: tl.constexpr = rate - 1
+    POINTS: tl.constexpr = 1 << (rate - 1)
+    HB: tl.constexpr = (VEC * (rate - 1)) // 16      # bytes per half-window
+    HALF_CODES: tl.constexpr = VEC // 2
+    MASK: tl.constexpr = (1 << (memory + 1)) - 1
+
+    pairs = steps // 2
+    pbase = base // 2                                  # first PAIR of the lane
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        # LUT scale plane: [groups, rows] nibbles, even row high.
+        nidx = g.to(tl.int64) * rows + offs_n.to(tl.int64)
+        nb = tl.load(nib_ptr + nidx // 2, mask=live, other=0).to(tl.int32)
+        nib = (nb >> (4 * (1 - (offs_n & 1)))) & 0xF
+        scale = tl.load(table_ptr + nib, mask=live, other=0.0)
+        for i in tl.static_range(half):
+            k = g * half + i
+            # Select plane: one bit per pair; the window of pair ``pbase + sv``
+            # is the memory+1 bits ending at that pair's bit.
+            p = k.to(tl.int64) * (pairs + pad) + pbase.to(tl.int64) + (pad - memory)
+            pm = (p % 8).to(tl.int32)
+            b0 = tl.load(select_ptr + p // 8, mask=live_base, other=0).to(tl.int32)
+            b1 = tl.load(select_ptr + p // 8 + 1, mask=live_base, other=0).to(tl.int32)
+            b2 = tl.load(select_ptr + p // 8 + 2, mask=live_base, other=0).to(tl.int32)
+            wide = (b0 << 16) | (b1 << 8) | b2
+            window = (wide[:, None] >> (23 - pm[:, None] - memory - sv[None, :])) & MASK
+
+            # Label plane: two bits per pair, the lane's four pairs in one byte.
+            q = k.to(tl.int64) * steps + base.to(tl.int64)
+            lb = tl.load(label_ptr + q // 8, mask=live_base, other=0).to(tl.int32)
+            stored = (lb[:, None] >> (6 - 2 * sv[None, :])) & 3
+
+            # Point plane: VEC * P bits, byte-aligned, read as two int32 halves.
+            r = k.to(tl.int64) * steps * P + base.to(tl.int64) * P
+            lo = tl.zeros((LANES,), dtype=tl.int32)
+            for t in tl.static_range(HB):
+                lo = (lo << 8) | tl.load(
+                    point_ptr + r // 8 + t, mask=live_base, other=0
+                ).to(tl.int32)
+            hi = tl.zeros((LANES,), dtype=tl.int32)
+            for t in tl.static_range(HB):
+                hi = (hi << 8) | tl.load(
+                    point_ptr + r // 8 + HB + t, mask=live_base, other=0
+                ).to(tl.int32)
+            packed = tl.where(v[None, :] < HALF_CODES, lo[:, None], hi[:, None])
+            shift = HALF_CODES * P - P * ((v % HALF_CODES) + 1)
+            pt = (packed >> shift[None, :]) & (POINTS - 1)
+
+            ell = tl.load(label_lut_ptr + window, mask=live, other=0)
+            lab = tl.where(parity[None, :] == 0, (ell - stored) & 3, stored)
+            value = tl.load(
+                value_ptr + (lab * POINTS + pt) * arity + a[None, :], mask=live, other=0.0
+            )
+            acc += value * scale * tl.load(x_ptr + k)
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live)
+
+
+def tessera_gemv_tuple_span2(
+    x: torch.Tensor,
+    select_plane: torch.Tensor,
+    label_plane: torch.Tensor,
+    point_plane: torch.Tensor,
+    scale_nibbles: torch.Tensor,
+    scale_table: torch.Tensor,
+    label_lut: torch.Tensor,
+    subset_values: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    rate: int,
+    arity: int,
+    memory: int = 6,
+    half: int = 16,
+    lanes: int = 64,
+    vec: int = 8,
+    split_k: int = 128,
+) -> torch.Tensor:
+    """``W @ x`` decoding a span-2 k-tuple body with a LUT scale plane in the
+    kernel.  Planes from ``pack_kernel_planes(span=2)`` and
+    ``pack_scale_nibbles``; tables from ``build_span2_luts`` (the label
+    half), ``build_subset_values`` (the values in subset order) and
+    ``lut_scale_table`` -- or all of them from ``pack_unit_for_kernel``.  Split-K reduces by atomic add; see
+    ``tessera_gemv_wide`` for what that means for the low bits.  The default
+    launch shape is the measured one (``experiments/results/tessera_kernel_shape_sweep.json``,
+    2048x4096 GLM expert): split-K 128 keeps 256 programs in flight, which is
+    what a latency-bound decode needs on 48 SMs; the span-1 kernel's default
+    of 32 leaves it at 64."""
+    steps = rows // arity
+    if rows % arity or steps % 16:
+        raise GrammarError(
+            f"{rows} rows at arity {arity} gives {steps} codes; a span-2 body "
+            "needs a multiple of 16 codes (8 pairs) per column to stay byte-aligned"
+        )
+    if vec != 8:
+        raise GrammarError(
+            f"vec={vec}: the two-int32-halves split of the point window and the "
+            "one-byte label read are derived for VEC=8"
+        )
+    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
+        raise GrammarError(
+            f"rate {rate}: the point window is split into two equal byte "
+            "halves, which needs an even (rate-1) and a whole number of bytes"
+        )
+    if memory > SELECT_PAD:
+        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    if scale_table.numel() != 16 or scale_table.dtype != torch.float32:
+        raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _tuple_gemv_span2_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
+        x.reshape(-1), select_plane, label_plane, point_plane, scale_nibbles,
+        scale_table, label_lut, subset_values, out,
+        float(global_scale), rows, steps, cols,
+        memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
+        LANES=lanes, VEC=vec, SPLIT_K=split_k,
+    )
+    return out
+
+
+def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
+    """Everything ``tessera_gemv_tuple_span2`` needs, from one encoded unit.
+
+    Refuses what the span-2 kernel does not read: a mixed-rate schedule (one
+    forest per unit here) and an S6b plane at span 2 (the kernel reads the
+    LUT plane's nibbles; the shipping wire is span 2 over a LUT plane).
+    """
+    from .manifest import ScalePlaneKind
+
+    if unit.span != 2:
+        raise GrammarError(f"pack_unit_for_kernel is the span-2 path; this unit is span {unit.span}")
+    if unit.scale_plane is not ScalePlaneKind.LUT:
+        raise GrammarError(
+            "the span-2 kernel reads the LUT scale plane; this unit carries an "
+            f"{unit.scale_plane.name} plane"
+        )
+    rates = set(unit.rates)
+    if rates != {forest.rate}:
+        raise GrammarError(f"unit rates {sorted(rates)} are not the forest's {forest.rate}")
+    # Per-code planes are ``steps`` tall; a code covers ``arity`` rows.
+    steps, cols = unit.codes.shape
+    rows = steps * forest.grid.arity
+    device = unit.body_bits.device
+    select, label, point = pack_kernel_planes(unit.body_bits, rate=forest.rate, memory=code.memory, span=2)
+    label_lut, _subset_lut = build_span2_luts(forest, code, device)
+    return {
+        "select": select, "label": label, "point": point,
+        "nibbles": pack_scale_nibbles(unit.scale_refine, rows, cols, unit.half),
+        "table": lut_scale_table(unit.scale_lut, device),
+        "label_lut": label_lut,
+        "values": build_subset_values(forest, code, device),
+        "global_scale": float(unit.scale_global),
+        "rows": rows, "cols": cols, "rate": forest.rate, "arity": forest.grid.arity,
+        "memory": code.memory, "half": unit.half,
+    }
+
+
+def gemv_from_packed(x: torch.Tensor, packed: dict, **kw) -> torch.Tensor:
+    """``tessera_gemv_tuple_span2`` over a ``pack_unit_for_kernel`` result."""
+    return tessera_gemv_tuple_span2(
+        x, packed["select"], packed["label"], packed["point"], packed["nibbles"],
+        packed["table"], packed["label_lut"], packed["values"],
+        packed["global_scale"], packed["rows"], packed["cols"], packed["rate"],
+        packed["arity"], memory=packed["memory"], half=packed["half"], **kw,
+    )
 
 
 def tessera_gemv_tuple(

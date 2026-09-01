@@ -1,0 +1,524 @@
+[
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 64,
+  "split_k": 32,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.0668887591987067,
+    "calls": 59808,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.434654161083017e-07,
+    "epoch": [
+     1788302614.8633153,
+     1788302618.8638718
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.06609842000000005,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007615999999999668,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 62.76689910673626
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.06646156209634378,
+    "calls": 60192,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.412679632219806e-07,
+    "epoch": [
+     1788302619.6841109,
+     1788302623.6846318
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.06517361999999999,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007724799999999732,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 63.17046827629357
+   }
+  ],
+  "time": 1788302623.694915
+ },
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 64,
+  "split_k": 64,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.06847736321038772,
+    "calls": 58432,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.3120596754088183e-07,
+    "epoch": [
+     1788302631.5778751,
+     1788302635.579222
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.06797617999999996,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007622600000000194,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 61.31077195687232
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.06443502288503745,
+    "calls": 62080,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.3970286494877655e-07,
+    "epoch": [
+     1788302639.3639967,
+     1788302643.364192
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.06292720000000002,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007577799999999746,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 65.15723611196107
+   }
+  ],
+  "time": 1788302643.373986
+ },
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 64,
+  "split_k": 128,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.05867379240897943,
+    "calls": 68192,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.497839031751937e-07,
+    "epoch": [
+     1788302651.1553946,
+     1788302655.1565502
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.057679499999999974,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007481800000000248,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 71.55494519146639
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.051882440717388484,
+    "calls": 77120,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.5363345318728534e-07,
+    "epoch": [
+     1788302658.9229228,
+     1788302662.9241662
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.05058846000000003,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007564800000000077,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 80.92155923946147
+   }
+  ],
+  "time": 1788302662.9338286
+ },
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 32,
+  "split_k": 64,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.06094704808868007,
+    "calls": 65632,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.341513092891546e-07,
+    "epoch": [
+     1788302670.6878989,
+     1788302674.688046
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.060074500000000024,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007558399999999983,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 68.88602699660174
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.0586367458608316,
+    "calls": 68224,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.365828433743445e-07,
+    "epoch": [
+     1788302678.3167887,
+     1788302682.3172903
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.05725521999999998,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008043800000000261,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 71.60028985858966
+   }
+  ],
+  "time": 1788302682.327198
+ },
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 32,
+  "split_k": 128,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.058863329124091486,
+    "calls": 67968,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.474570178241265e-07,
+    "epoch": [
+     1788302690.1231909,
+     1788302694.1240852
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.05794977999999999,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008326599999999961,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 71.32454216358084
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.05169495751710902,
+    "calls": 77408,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.5281337318338046e-07,
+    "epoch": [
+     1788302697.773075,
+     1788302701.7747467
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.050256959999999976,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008019200000000126,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 81.21503917689631
+   }
+  ],
+  "time": 1788302701.784916
+ },
+ {
+  "commit": "d51edce",
+  "label": "shape sweep",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 4.0,
+  "lanes": 16,
+  "split_k": 128,
+  "records": [
+   {
+    "arm": "tessera tuple gemv span1",
+    "ms_per_call": 0.06202592546977694,
+    "calls": 64512,
+    "bytes_per_call": 4198400,
+    "plane_bytes": 3674112,
+    "scale_bytes": 524288,
+    "rel_err_vs_reference": 3.4779748148139333e-07,
+    "epoch": [
+     1788302709.4589627,
+     1788302713.4604497
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_kernel",
+      "self_cuda_ms_per_call": 0.059941220000000024,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0007929600000000118,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 67.68782518280575
+   },
+   {
+    "arm": "tessera tuple gemv span2",
+    "ms_per_call": 0.06733788247383213,
+    "calls": 59424,
+    "bytes_per_call": 4198408,
+    "plane_bytes": 3936264,
+    "scale_bytes": 262144,
+    "rel_err_vs_reference": 3.5034798884225893e-07,
+    "epoch": [
+     1788302717.0168931,
+     1788302721.018452
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.06540994,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008127999999999884,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 62.34838170967917
+   }
+  ],
+  "time": 1788302721.0284314
+ }
+]

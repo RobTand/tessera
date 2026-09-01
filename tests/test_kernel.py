@@ -248,6 +248,189 @@ def test_tuple_kernel_refuses_shapes_its_shifts_do_not_cover(tuple_unit):
         )
 
 
+def test_tuple_gemv_decodes_a_lut_scale_plane_bit_exact():
+    """A LUT plane materialises to per-16 E4M3 bytes (``nvfp4_scale_bytes_lut``)
+    and the kernel reads them by field arithmetic, ``2^(e-7) (1 + m/8)``.  The
+    reference decoder reads the same bytes through the dtype.  They agree only
+    while every table entry is a normal: a subnormal (exponent field 0) is
+    ``2^-6 * m/8`` to the dtype and ``2^-7 * (1 + m/8)`` to the kernel, and the
+    S6b path never produced one.  This is the test that pins the LUT plane to
+    the kernel's contract, over a unit whose scales span several binades."""
+    from tessera.alphabet import E2M1_GRID, tuple_grid
+    from tessera.kernel import (
+        build_anchor_values, build_tuple_index_lut, pack_kernel_planes,
+        tessera_gemv_tuple,
+    )
+    from tessera.manifest import ScalePlaneKind
+    from tessera.wire import nvfp4_scale_bytes_lut
+
+    grid = tuple_grid(E2M1_GRID, 2)
+    rate = grid.rate_cap
+    forests = {rate: build_forest(rate, grid=grid)}
+    torch.manual_seed(3)
+    rows, cols = 256, 512
+    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    weights[:64] *= 8.0
+    weights[64:128] *= 0.125
+    encoded = encode_unit(
+        weights, forests, (rate,) * cols, CODE, rotation=RotationState.NONE,
+        with_diagonals=False, completion=0, span=1,
+        scale_plane=ScalePlaneKind.LUT,
+    )
+    assert encoded.scale_plane is ScalePlaneKind.LUT
+    assert int(encoded.scale_lut.min()) >= 0x08, "a subnormal table entry"
+    e4m3, global_scale = nvfp4_scale_bytes_lut(
+        encoded.scale_refine, encoded.scale_lut, encoded.scale_global
+    )
+    scales = e4m3.reshape(rows, cols // 16).t().contiguous()
+    reference = reconstruct_unit(encoded, forests, CODE, completion=0).float()
+    select, point = pack_kernel_planes(encoded.body_bits, rate=rate)
+    index = build_tuple_index_lut(forests[rate], CODE)
+    values = build_anchor_values(forests[rate])
+    for k in (0, 17, 255, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = tessera_gemv_tuple(
+            x, select, point, index, values, scales, global_scale, rows, cols,
+            rate=rate, arity=2, lanes=8, split_k=4,
+        )
+        assert torch.equal(got, reference[:, k]), f"column {k}"
+
+
+# --- the span-2 lane: one select bit per pair, a label plane, LUT scales ---
+
+
+@pytest.fixture(scope="module")
+def span2_unit(request):
+    """A span-2 body over the grid the parameter names, LUT scale plane, at
+    R = cap.  256 rows = 128 codes = 8 lanes of 8 codes: every lane parity
+    (pair index 0 or 4 mod 8) occurs, which is what the per-lane window shift
+    is for."""
+    from tessera.alphabet import E2M1_GRID, lloyd_max_grid, tuple_grid
+    from tessera.manifest import ScalePlaneKind
+
+    base = E2M1_GRID if request.param == "E2M1" else lloyd_max_grid(16)
+    grid = tuple_grid(base, 2)
+    rate = grid.rate_cap
+    forests = {rate: build_forest(rate, grid=grid)}
+    torch.manual_seed(5)
+    rows, cols = 256, 512
+    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    weights[:32] *= 4.0
+    encoded = encode_unit(
+        weights, forests, (rate,) * cols, CODE, rotation=RotationState.NONE,
+        with_diagonals=False, completion=0, span=2,
+        scale_plane=ScalePlaneKind.LUT,
+    )
+    assert encoded.span == 2 and encoded.scale_plane is ScalePlaneKind.LUT
+    return {
+        "unit": encoded, "forest": forests[rate], "rate": rate, "rows": rows,
+        "cols": cols,
+        "reference": reconstruct_unit(encoded, forests, CODE, completion=0).float(),
+    }
+
+
+@pytest.mark.parametrize("span2_unit", ["E2M1", "free-16"], indirect=True)
+def test_span2_one_hot_gemv_is_bit_exact(span2_unit):
+    """Every column through the kernel equals the reference decode exactly:
+    the derived label at even positions, the stored one at odd, the window
+    at both lane parities, the nibble scale at both row parities."""
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
+
+    cols = span2_unit["cols"]
+    packed = pack_unit_for_kernel(span2_unit["unit"], span2_unit["forest"], CODE)
+    for k in (0, 1, 5, 7, 8, 15, 16, 17, 33, 255, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = gemv_from_packed(x, packed, lanes=8, split_k=4)
+        assert torch.equal(got, span2_unit["reference"][:, k]), f"column {k}"
+
+
+@pytest.mark.parametrize("span2_unit", ["E2M1"], indirect=True)
+def test_span2_gemv_matches_the_reference_decode(span2_unit):
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
+
+    packed = pack_unit_for_kernel(span2_unit["unit"], span2_unit["forest"], CODE)
+    torch.manual_seed(1)
+    x = torch.randn(span2_unit["cols"], device="cuda")
+    got = gemv_from_packed(x, packed)
+    want = span2_unit["reference"] @ x
+    assert (got - want).norm() / want.norm() < 1e-5
+
+
+@pytest.mark.parametrize("span2_unit", ["E2M1"], indirect=True)
+def test_span2_planes_weigh_the_wire(span2_unit):
+    """The kernel's resident bytes are the wire's: 3.75 b/wt of body (one
+    select bit per pair, two label bits per pair, six point bits per code
+    over two weights) plus a nibble per sixteen for the scale plane -- 4.0
+    b/wt, the same as the on-disk artifact, against the span-1 kernel's 3.5
+    body + 0.5 of materialised E4M3 bytes."""
+    from tessera.kernel import SELECT_PAD, pack_unit_for_kernel
+
+    rows, cols = span2_unit["rows"], span2_unit["cols"]
+    packed = pack_unit_for_kernel(span2_unit["unit"], span2_unit["forest"], CODE)
+    steps = rows // 2
+    pairs = steps // 2
+    assert packed["select"].numel() == cols * (pairs + SELECT_PAD) // 8 + 8
+    assert packed["label"].numel() == cols * pairs * 2 // 8
+    assert packed["point"].numel() == cols * steps * 6 // 8
+    assert packed["nibbles"].numel() == rows * cols // 16 // 2
+    body_bits = (packed["select"].numel() - 8) * 8 - cols * SELECT_PAD
+    body_bits += (packed["label"].numel() + packed["point"].numel()) * 8
+    assert body_bits == rows * cols * 3.75
+    assert packed["nibbles"].numel() * 8 == rows * cols * 0.25
+
+
+def test_span2_luts_compose_to_the_span1_index_table():
+    """``index[window, point] == subset[label[window], point]`` -- the fused
+    span-1 table and its two span-2 halves are one function."""
+    from tessera.alphabet import E2M1_GRID, tuple_grid
+    from tessera.kernel import build_span2_luts, build_tuple_index_lut
+
+    grid = tuple_grid(E2M1_GRID, 2)
+    forest = build_forest(grid.rate_cap, grid=grid)
+    fused = build_tuple_index_lut(forest, CODE).long()
+    label_lut, subset_lut = build_span2_luts(forest, CODE)
+    points = 1 << (grid.rate_cap - 1)
+    windows = torch.arange(1 << (CODE.memory + 1), device="cuda")
+    composed = subset_lut.long()[
+        (label_lut[windows].long()[:, None] * points + torch.arange(points, device="cuda")[None, :]).reshape(-1)
+    ]
+    assert torch.equal(fused, composed)
+
+
+@pytest.mark.parametrize("span2_unit", ["E2M1"], indirect=True)
+def test_span2_lane_refuses_what_it_does_not_decode(span2_unit):
+    from tessera.errors import GrammarError
+    from tessera.kernel import (
+        gemv_from_packed, pack_kernel_planes, pack_unit_for_kernel,
+    )
+    from tessera.manifest import ScalePlaneKind
+
+    packed = pack_unit_for_kernel(span2_unit["unit"], span2_unit["forest"], CODE)
+    x = torch.zeros(span2_unit["cols"], device="cuda")
+    with pytest.raises(GrammarError, match="derived for VEC=8"):
+        gemv_from_packed(x, packed, vec=4)
+    with pytest.raises(GrammarError, match="multiple of 16 codes"):
+        gemv_from_packed(x, {**packed, "rows": 240})
+    with pytest.raises(GrammarError, match="span-1 and span-2"):
+        pack_kernel_planes(span2_unit["unit"].body_bits, rate=span2_unit["rate"], span=3)
+    with pytest.raises(GrammarError, match="multiple of 16"):
+        pack_kernel_planes(span2_unit["unit"].body_bits[:120], rate=span2_unit["rate"], span=2)
+    # an S6b plane at span 2 has no kernel path: the kernel reads nibbles
+    rows, cols = span2_unit["rows"], span2_unit["cols"]
+    torch.manual_seed(6)
+    w = torch.randn(rows, cols, device="cuda") * 0.02
+    s6b = encode_unit(w, {span2_unit["rate"]: span2_unit["forest"]}, (span2_unit["rate"],) * cols,
+                      CODE, completion=0, span=2, scale_plane=ScalePlaneKind.S6B)
+    with pytest.raises(GrammarError, match="LUT scale plane"):
+        pack_unit_for_kernel(s6b, span2_unit["forest"], CODE)
+    span1 = encode_unit(w, {span2_unit["rate"]: span2_unit["forest"]}, (span2_unit["rate"],) * cols,
+                        CODE, completion=0, span=1, scale_plane=ScalePlaneKind.LUT)
+    with pytest.raises(GrammarError, match="span-2 path"):
+        pack_unit_for_kernel(span1, span2_unit["forest"], CODE)
+
+
 # --- prefill: the same planes, decoded into a tile instead of a vector -------
 
 
