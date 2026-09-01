@@ -28,7 +28,8 @@ from tessera.alphabet import (  # noqa: E402
     tuple_grid,
 )
 from tessera.errors import GrammarError  # noqa: E402
-from tessera.export import encode_linear  # noqa: E402
+from tessera.export import DEFAULT_SCALE_PLANE, DEFAULT_SPAN, encode_linear  # noqa: E402
+from tessera.manifest import ScalePlaneKind  # noqa: E402
 from tessera.manifest import RotationState  # noqa: E402
 from tessera.trellis import ConvCode  # noqa: E402
 from tessera.unit_artifact import read_unit_artifact  # noqa: E402
@@ -92,9 +93,14 @@ def test_e4m3_ladder_serialises():
         # top step carries 128 extra bytes.  That is a charged plane doing its
         # job, not slack in the accounting.
         assert 1.0 <= upper - lower <= 1.02, sizes
-    # 0.5 bpp of scale plane at the default (32, 16) geometry, plus the forest
-    # and header, which is under a tenth of a bit at this size.
-    assert all(0.5 <= size - rung / 256 < 0.6
+    # The exporter's default overhead above the rung's body rate: the span-L
+    # trellis spends (L - 1) / L extra bits per position (one weight on this
+    # arity-1 grid) and the scale plane spends 0.25 bpp as a LUT index or 0.5
+    # as S6b, at the default (32, 16) geometry -- plus the forest and header,
+    # which is under a tenth of a bit at this size.
+    plane = 0.25 if DEFAULT_SCALE_PLANE is ScalePlaneKind.LUT else 0.5
+    extra = (DEFAULT_SPAN - 1) / DEFAULT_SPAN + plane
+    assert all(extra <= size - rung / 256 < extra + 0.1
                for size, rung in zip(sizes, RUNGS)), sizes
 
 

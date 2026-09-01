@@ -33,11 +33,22 @@ from .diagonals import (
     apply_rotation,
     fit_diagonals,
 )
-from .manifest import RotationState
+from .manifest import RotationState, ScalePlaneKind
 from .errors import GrammarError
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
-__all__ = ["EncodedUnit", "encode_unit", "e2m1_value_table", "grid_value_table"]
+__all__ = [
+    "EncodedUnit",
+    "encode_unit",
+    "e2m1_value_table",
+    "grid_value_table",
+    "LUT_ENTRIES",
+]
+
+#: Entries in the per-unit scale table of a ``ScalePlaneKind.LUT`` plane.  The
+#: SCALE_REFINE plane is four bits per half, so sixteen is what a nibble
+#: indexes; fewer is legal on the wire and wastes index bits.
+LUT_ENTRIES = 16
 
 #: E4M3 scale grid, used for the segment-2b refinement (S6b).
 _E4M3_MAX = 448.0
@@ -117,6 +128,21 @@ class EncodedUnit:
     # built at different settings are different renderings of one weight, and
     # a merge that mixes them should be able to see that it did.
     scale_refit: int = 0
+    # The super-symbol length L of the trellis (``trellis.py``): one select
+    # bit per L positions, ``L - 1`` stored two-bit labels, ``LR + L - 1``
+    # body bits per super-symbol.  Wire: the reader needs it to slice the body
+    # and to replay the code, so it travels in the manifest and is bound into
+    # the encoder profile id.  ``1`` is the per-position trellis, byte for byte.
+    span: int = 1
+    # The scale plane's *kind*.  ``S6B`` is ``scale_base`` + ``scale_refine``
+    # read by ``scales_from_planes``.  ``LUT`` drops the base plane: the
+    # SCALE_REFINE nibble indexes ``scale_lut`` -- up to sixteen distinct E4M3
+    # bytes chosen per unit -- times ``scale_global``.  Same 4 bits per half,
+    # half the plane's bytes, and the half's scale is still one E4M3 behind an
+    # fp32 global, which is exactly the NVFP4 tile's two-level scale.
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B
+    scale_lut: "torch.Tensor | None" = None   # [<=16] uint8 E4M3FN bytes, ascending
+    scale_global: float = 1.0
 
     @property
     def released_positions(self) -> int:
@@ -170,13 +196,29 @@ def viterbi_columns(
     forest: AnchorForest,
     code: ConvCode,
     completion: int,
+    span: int = 1,
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """Exact Viterbi down every column at once.
 
     ``targets`` is ``[rows, cols]`` already divided by its group scale.
-    Returns ``(anchor_index[steps, cols], point_bits[steps, cols], sse)`` where
-    ``steps = rows // grid.arity`` -- one trellis step per *code*, which is one
-    row only when the grid is scalar.
+    Returns ``(anchor_index[steps, cols], body_field[steps, cols], sse)`` where
+    ``steps = rows // grid.arity`` -- one trellis position per *code*, which is
+    one row only when the grid is scalar.
+
+    ``span`` is the super-symbol length L (``trellis.py``).  One trellis step
+    then covers L consecutive positions: each position's best point per subset
+    is found independently, the L per-subset cost vectors are folded with a
+    min-plus convolution over Z/4 -- ``acc[l] = min_v acc[(l - v) mod 4] +
+    best[v]`` -- so the trellis branch sees one four-entry cost vector per
+    super-symbol exactly as it sees one per position at L = 1, and the
+    traceback descends the fold to recover every position's label.  The fold
+    is exact: it is the same minimisation the scalar oracle does by exhausting
+    ``4^(L-1)`` label assignments, in ``L`` steps of a 4x4 minimum.
+
+    The body field per position is ``[select | point]`` at position 0 of a
+    super-symbol and ``[label | point]`` at the others (``R + 1`` bits); at
+    ``L = 1`` every position is ``[select | point]`` and this function is
+    bit-identical to the per-position encoder it replaces.
     """
     device = targets.device
     rows, cols = targets.shape
@@ -188,6 +230,13 @@ def viterbi_columns(
             "k-tuple code spans k consecutive rows and cannot straddle the edge"
         )
     steps = rows // arity
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions is not a whole number of span-{span} "
+            "super-symbols; the multidimensional trellis needs the column "
+            "length to be a multiple of its span"
+        )
+    supers = steps // span
     tcq = TCQ(forest, code)
     states = code.states
     prev, subset_of = _transition_tables(code, device)
@@ -207,24 +256,44 @@ def viterbi_columns(
 
     cost = torch.full((cols, states), float("inf"), device=device)
     cost[:, 0] = 0.0
-    choice = torch.zeros(steps, cols, states, dtype=torch.bool, device=device)
+    choice = torch.zeros(supers, cols, states, dtype=torch.bool, device=device)
     picked = torch.zeros(steps, cols, SUBSET_COUNT, dtype=point_dtype, device=device)
+    # The fold's argument per stored position: which label ``v`` position i
+    # took, indexed by the accumulated label after it.  Empty at L = 1.
+    fold = torch.zeros(
+        supers, max(span - 1, 0), cols, SUBSET_COUNT, dtype=torch.uint8, device=device
+    )
+    roll = torch.arange(SUBSET_COUNT, device=device)
 
-    for step in range(steps):
-        target = tuples[step].t().reshape(cols, 1, 1, arity)     # [cols,1,1,k]
-        # Anticipated-completion metric, in k dimensions: score the best
-        # reachable descendant under squared Euclidean distance.  At k=1 the
-        # sum is over one term and this is bit-identical to the scalar form.
-        err = ((target - dvals.unsqueeze(0)) ** 2).sum(dim=3).amin(dim=2)  # [cols,A]
-        by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
-        best, point = by_subset.min(dim=2)                       # [cols, 4]
-        picked[step] = point.to(point_dtype)
+    for sup in range(supers):
+        acc = None
+        for offset in range(span):
+            step = sup * span + offset
+            target = tuples[step].t().reshape(cols, 1, 1, arity)     # [cols,1,1,k]
+            # Anticipated-completion metric, in k dimensions: score the best
+            # reachable descendant under squared Euclidean distance.  At k=1
+            # the sum is over one term and this is bit-identical to the
+            # scalar form.
+            err = ((target - dvals.unsqueeze(0)) ** 2).sum(dim=3).amin(dim=2)  # [cols,A]
+            by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
+            best, point = by_subset.min(dim=2)                       # [cols, 4]
+            picked[step] = point.to(point_dtype)
+            if acc is None:
+                acc = best
+                continue
+            terms = torch.stack(
+                [acc[:, (roll - v) % SUBSET_COUNT] + best[:, v : v + 1]
+                 for v in range(SUBSET_COUNT)],
+                dim=2,
+            )                                                        # [cols, 4, 4]
+            acc, arg = terms.min(dim=2)
+            fold[sup, offset - 1] = arg.to(torch.uint8)
 
         branch = torch.stack(
-            [cost[:, prev[side]] + best[:, subset_of[side]] for side in (0, 1)]
+            [cost[:, prev[side]] + acc[:, subset_of[side]] for side in (0, 1)]
         )                                                        # [2, cols, states]
         cost, taken = branch.min(dim=0)
-        choice[step] = taken.bool()
+        choice[sup] = taken.bool()
 
     end = cost.argmin(dim=1)                                     # [cols]
     sse = float(cost.gather(1, end.unsqueeze(1)).sum())
@@ -232,19 +301,29 @@ def viterbi_columns(
     anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
     bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
     column = torch.arange(cols, device=device)
+    shift = points.bit_length() - 1
     state = end
-    for step in range(steps - 1, -1, -1):
-        side = choice[step][column, state].long()                # [cols]
-        sub = subset_of[side, state]
-        pt = picked[step][column, sub].long()
-        anchors[step] = subsets[sub, pt]
+    for sup in range(supers - 1, -1, -1):
+        side = choice[sup][column, state].long()                 # [cols]
+        label = subset_of[side, state]                           # super-label
         # ``side`` says which *predecessor* won, which is not the input bit.
         # For this code ``next = (bit << m-1) | (state >> 1)``, so both
         # predecessors of a state share one input bit and it is read off the
         # state itself.  Emitting ``side`` instead would produce a stream that
         # replays to different anchors -- the round-trip test catches it.
         select = (state >> (code.memory - 1)) & 1
-        bits[step] = (select << (subsets.shape[1].bit_length() - 1)) | pt
+        labels = [None] * span
+        for offset in range(span - 1, 0, -1):
+            v = fold[sup, offset - 1][column, label].long()
+            labels[offset] = v
+            label = (label - v) % SUBSET_COUNT
+        labels[0] = label
+        for offset in range(span):
+            step = sup * span + offset
+            pt = picked[step][column, labels[offset]].long()
+            anchors[step] = subsets[labels[offset], pt]
+            head = select if offset == 0 else labels[offset]
+            bits[step] = (head << shift) | pt
         state = prev[side, state]
     return anchors, bits, sse
 
@@ -377,6 +456,189 @@ def _refit_scales(
     return new_base, new_refine, new_effective
 
 
+def e4m3_positive_values(device=None) -> torch.Tensor:
+    """``[126]`` -- the positive finite E4M3FN values, ascending; entry ``i``
+    is byte ``i + 1``.  Byte 0x7F is NaN and 0x00 is zero; neither is a scale."""
+    return (
+        torch.arange(1, 0x7F, dtype=torch.uint8, device=device)
+        .view(torch.float8_e4m3fn)
+        .float()
+    )
+
+
+def _lut_cost(targets: torch.Tensor, weights: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """``sum_h A_h (s_h - nearest(table, s_h))^2`` -- the plane's weighted error."""
+    gap = (targets[:, None] - table[None, :]).abs().amin(dim=1)
+    return (weights * gap * gap).sum()
+
+
+def _nearest(targets: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """Index of the nearest table entry, in the linear domain.
+
+    With the codes fixed a half's error is ``A s^2 - 2 B s + C``, a parabola
+    with its minimum at ``s* = B/A``, so among candidate scales the nearest to
+    ``s*`` in *linear* distance is the exact minimiser -- not the nearest in
+    log distance, which is what an E4M3 rounder would do.
+    """
+    return (targets[:, None] - table[None, :]).abs().argmin(dim=1)
+
+
+def _fit_lut(
+    targets: torch.Tensor,
+    weights: torch.Tensor,
+    global_scale: float,
+    entries: int = LUT_ENTRIES,
+    swaps: int = 2,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """Choose ``entries`` DISTINCT E4M3 scales minimising the weighted error.
+
+    Returns ``(bytes[entries] uint8 ascending, values[entries] float32)``
+    where ``values = e4m3(bytes) * global_scale``.
+
+    Two things this deliberately is not.  It is not k-means: continuous
+    centroids snapped to E4M3 after each Lloyd step collapse onto one another
+    (sixteen centroids became eleven distinct scales on a GLM expert, a 3.4%
+    loss), because the snap is not part of the objective Lloyd minimises.  And
+    it is not a rounder: the objective is exact per assignment, on the finite
+    grid the wire can actually store.
+
+    Greedy backward elimination from every in-range E4M3 value: each round
+    removes the entry whose loss is smallest.  Removing entry ``i`` moves
+    exactly the targets assigned to it, each to the nearer of its two
+    neighbours in the sorted table, so the loss of every candidate removal is
+    one ``index_add`` over the current assignment rather than a full
+    re-evaluation per candidate.  A few swap passes then try each table entry
+    against each unused grid value at full cost.
+    """
+    device = targets.device
+    grid_values = e4m3_positive_values(device) * global_scale          # [126]
+    live = weights > 0
+    if not bool(live.any()):
+        # Nothing to fit: a unit of all-zero halves.  Any table decodes it.
+        return (
+            torch.arange(1, entries + 1, dtype=torch.uint8, device=device),
+            grid_values[:entries],
+        )
+    s, w = targets[live], weights[live]
+    lo, hi = float(s.min()), float(s.max())
+    # The grid values bracketing [lo, hi], one step wider each side, and never
+    # fewer than ``entries`` candidates: a unit whose targets span less than
+    # two octaves has fewer in-range E4M3 values than the table holds.
+    first = max(int((grid_values < lo).sum()) - 1, 0)
+    last = min(int((grid_values <= hi).sum()) + 1, grid_values.numel())
+    while last - first < entries:
+        if first > 0:
+            first -= 1
+        if last - first < entries and last < grid_values.numel():
+            last += 1
+    candidate_bytes = torch.arange(first + 1, last + 1, dtype=torch.long, device=device)
+    table = grid_values[first:last]
+
+    while table.numel() > entries:
+        assign = _nearest(s, table)
+        left = table[(assign - 1).clamp_min(0)]
+        right = table[(assign + 1).clamp_max(table.numel() - 1)]
+        left_gap = torch.where(assign > 0, (s - left).abs(), torch.full_like(s, float("inf")))
+        right_gap = torch.where(
+            assign < table.numel() - 1, (s - right).abs(), torch.full_like(s, float("inf"))
+        )
+        here = (s - table[assign]).abs()
+        alt = torch.minimum(left_gap, right_gap)
+        loss = torch.zeros(table.numel(), device=device, dtype=s.dtype).index_add_(
+            0, assign, w * (alt * alt - here * here)
+        )
+        drop = int(loss.argmin())
+        keep = torch.ones(table.numel(), dtype=torch.bool, device=device)
+        keep[drop] = False
+        table, candidate_bytes = table[keep], candidate_bytes[keep]
+
+    for _ in range(swaps):
+        improved = False
+        base = float(_lut_cost(s, w, table))
+        all_bytes = torch.arange(first + 1, last + 1, dtype=torch.long, device=device)
+        unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
+        for i in range(table.numel()):
+            for byte in unused.tolist():
+                trial = table.clone()
+                trial[i] = grid_values[byte - 1]
+                cost = float(_lut_cost(s, w, trial))
+                if cost < base * (1.0 - 1e-9):
+                    table, base, improved = trial, cost, True
+                    candidate_bytes = candidate_bytes.clone()
+                    candidate_bytes[i] = byte
+                    unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
+        if not improved:
+            break
+    order = torch.argsort(candidate_bytes)
+    return candidate_bytes[order].to(torch.uint8), table[order]
+
+
+def _lut_values(table_bytes: torch.Tensor, global_scale: float) -> torch.Tensor:
+    """E4M3 bytes -> scales, exactly as ``scales_from_lut`` reads them."""
+    return table_bytes.view(torch.float8_e4m3fn).float() * global_scale
+
+
+def _pack_scales_lut(
+    weights: torch.Tensor, half: int, peak: float = 6.0, headroom: float = 1.0,
+    entries: int = LUT_ENTRIES,
+):
+    """The LUT plane's starting point: amax targets, energy weights.
+
+    Returns ``(table_bytes[entries], index[halves] uint8, effective[halves],
+    global_scale)``.  The global is a power of two placing the largest target
+    in E4M3's seventh binade from the top, so the table has headroom above
+    (the least-squares refit can raise a scale past its amax) and seventeen
+    binades below.  Weighting each half by the energy of its normalised
+    weights approximates the ``<u, u>`` the refit will use once codes exist.
+    """
+    flat = weights.reshape(-1)
+    halves = flat.reshape(-1, half)
+    amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
+    target = amax_half / (peak * headroom)
+    energy = ((halves / target[:, None]) ** 2).sum(dim=1)
+    global_scale = float(2.0 ** (torch.floor(torch.log2(target.max())).item() - 6.0))
+    table_bytes, table = _fit_lut(target, energy, global_scale, entries)
+    index = _nearest(target, table)
+    return table_bytes, index.to(torch.uint8), table[index], global_scale
+
+
+def _refit_scales_lut(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    half: int,
+    table_bytes: torch.Tensor,
+    index: torch.Tensor,
+    effective: torch.Tensor,
+    global_scale: float,
+):
+    """One least-squares step on the LUT plane, monotone by construction.
+
+    The per-half optimum ``s* = <w, u> / <u, u>`` is the same as in
+    ``_refit_scales``; what differs is where it lands.  Two tables are tried:
+    the one the unit has, re-assigned nearest-in-linear (which cannot cost
+    more than the current assignment), and a fresh ``_fit_lut`` on the new
+    targets.  The lower weighted cost wins, so a greedy fit that happens to be
+    worse than the table it would replace is never taken -- without this the
+    alternation with the trellis could oscillate.
+    """
+    W = work.float().reshape(-1, half)
+    U = units.float().reshape(-1, half)
+    A = (U * U).sum(dim=1)
+    B = (W * U).sum(dim=1)
+    valid = (A > 0) & (B > 0)
+    targets = torch.where(valid, B / A.clamp_min(1e-30), effective)
+    weights = torch.where(valid, A, torch.zeros_like(A))
+
+    old_table = _lut_values(table_bytes, global_scale)
+    new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel())
+    if float(_lut_cost(targets, weights, new_table)) < float(_lut_cost(targets, weights, old_table)):
+        table_bytes, table = new_bytes, new_table
+    else:
+        table = old_table
+    index = _nearest(targets, table)
+    return table_bytes, index.to(torch.uint8), table[index]
+
+
 def encode_unit(
     weights: torch.Tensor,
     forest: "AnchorForest | dict[int, AnchorForest]",
@@ -392,8 +654,18 @@ def encode_unit(
     scale_headroom: float = 1.0,
     superblock: int = 256,
     scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
 ) -> EncodedUnit:
-    """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype."""
+    """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
+
+    ``span`` is the trellis super-symbol length (``viterbi_columns``) and
+    ``scale_plane`` how segment 2b is written; both are wire and both default
+    to the per-position trellis over the S6b plane so that every artifact
+    built before they existed is reproducible from its source.  The exporter
+    sets the shipping defaults (``export.DEFAULT_SPAN``,
+    ``export.DEFAULT_SCALE_PLANE``).
+    """
     if weights.ndim != 2:
         raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
     rows, cols = weights.shape
@@ -439,18 +711,32 @@ def encode_unit(
     )
     work = apply_diagonals(rotated, fitted) if fitted else rotated
 
-    base_byte, refine, effective = _pack_scales(
-        work, group, half, peak=max(abs(v) for v in grid.values),
-        headroom=scale_headroom,
-    )
+    peak = max(abs(v) for v in grid.values)
+    scale_plane = ScalePlaneKind(scale_plane)
+    table_bytes, global_scale = None, 1.0
+    if scale_plane is ScalePlaneKind.LUT:
+        table_bytes, refine, effective, global_scale = _pack_scales_lut(
+            work, half, peak=peak, headroom=scale_headroom,
+        )
+        base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
+    else:
+        base_byte, refine, effective = _pack_scales(
+            work, group, half, peak=peak, headroom=scale_headroom,
+        )
 
     # A code covers ``arity`` consecutive rows, so every per-code plane is
     # ``steps`` tall, not ``rows``.  The scale planes stay per-position.
     steps = rows // arity
-    # One code costs R bits, so the body plane is a uint8 only while R <= 8.
-    # A 1024-code k-tuple grid runs at R=9 and wrapped silently here, decoding
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions per column is not a whole number of "
+            f"span-{span} super-symbols; pass span=1 for this shape"
+        )
+    # One code costs R bits -- R + 1 at positions carrying a stored label when
+    # span > 1 -- so the body plane is a uint8 only while that fits.  A
+    # 1024-code k-tuple grid runs at R=9 and wrapped silently here, decoding
     # to weights worse than zero (rel_err 1.55) with nothing raising.
-    body_dtype = torch.uint8 if max(rates) <= 8 else torch.int32
+    body_dtype = torch.uint8 if max(rates) + (1 if span > 1 else 0) <= 8 else torch.int32
     anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
     body_bits = torch.zeros(steps, cols, dtype=body_dtype, device=device)
     completion_bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
@@ -468,7 +754,7 @@ def encode_unit(
             level = depth if completion is None else min(completion, depth)
             which = torch.nonzero(rate_vector == present).squeeze(1)
             sub = targets[:, which].contiguous()
-            a, b, s_ = viterbi_columns(sub, picked, code, level)
+            a, b, s_ = viterbi_columns(sub, picked, code, level, span=span)
             total += s_
             blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
             reachable = blocks[:, :: 1 << (depth - level)]
@@ -499,9 +785,14 @@ def encode_unit(
         if scale_refit == 0:
             break
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
-        base_byte, refine, effective = _refit_scales(
-            work, units, group, half, base_byte, refine, effective
-        )
+        if scale_plane is ScalePlaneKind.LUT:
+            table_bytes, refine, effective = _refit_scales_lut(
+                work, units, half, table_bytes, refine, effective, global_scale
+            )
+        else:
+            base_byte, refine, effective = _refit_scales(
+                work, units, group, half, base_byte, refine, effective
+            )
     if scale_refit:
         # The plane moved after the last pass; the codes are unchanged and
         # decode against the new plane.  Report the error in ITS target units
@@ -552,6 +843,10 @@ def encode_unit(
         half=half,
         completion_limit=completion,
         scale_refit=scale_refit,
+        span=span,
+        scale_plane=scale_plane,
+        scale_lut=table_bytes,
+        scale_global=global_scale,
     )
 
 

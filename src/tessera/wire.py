@@ -25,6 +25,7 @@ import numpy as np
 import torch
 
 from .errors import GrammarError
+from .trellis import body_bits as _body_bits
 
 __all__ = [
     "pack_uniform",
@@ -34,7 +35,23 @@ __all__ = [
     "pack_fp16",
     "unpack_fp16",
     "scales_from_planes",
+    "scales_from_lut",
+    "nvfp4_scale_bytes",
+    "nvfp4_scale_bytes_lut",
+    "field_widths",
 ]
+
+
+def field_widths(rate: int, span: int) -> "tuple[int, ...]":
+    """Bits per position within one super-symbol of a span-L column.
+
+    Position 0 stores ``[select | point]`` (``rate`` bits); positions 1..L-1
+    store ``[label | point]`` (``rate + 1``).  At span 1 this is ``(rate,)``
+    and the body is the per-position stream it always was.
+    """
+    if span < 1:
+        raise GrammarError(f"span must be positive, got {span}")
+    return (rate,) + (rate + 1,) * (span - 1)
 
 
 def _to_bits(values: np.ndarray, width: int) -> np.ndarray:
@@ -74,20 +91,62 @@ def unpack_uniform(data: bytes, count: int, width: int, device=None) -> torch.Te
     return torch.from_numpy(_from_bits(bits, width)).to(device or "cpu")
 
 
-def pack_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> bytes:
-    """Pack the BODY plane: column-major, ``rates[j]`` bits per position."""
+def _column_to_bits(column: np.ndarray, rate: int, span: int) -> np.ndarray:
+    """One column's positions -> its bit stream, super-symbol by super-symbol."""
+    if span == 1:
+        return _to_bits(column, rate)
+    widths = field_widths(rate, span)
+    fields = column.reshape(-1, span)
+    return np.concatenate(
+        [_to_bits(fields[:, i], widths[i]).reshape(fields.shape[0], widths[i])
+         for i in range(span)],
+        axis=1,
+    ).ravel()
+
+
+def _column_from_bits(bits: np.ndarray, rate: int, span: int, rows: int) -> np.ndarray:
+    if span == 1:
+        return _from_bits(bits, rate)
+    widths = field_widths(rate, span)
+    per = sum(widths)
+    stream = bits.reshape(rows // span, per)
+    out = np.zeros((rows // span, span), dtype=np.int64)
+    cursor = 0
+    for i, width in enumerate(widths):
+        out[:, i] = _from_bits(stream[:, cursor : cursor + width].ravel(), width)
+        cursor += width
+    return out.ravel()
+
+
+def pack_body(
+    body_bits: torch.Tensor, rates: "tuple[int, ...]", span: int = 1
+) -> bytes:
+    """Pack the BODY plane: column-major, ``rates[j]`` bits per position.
+
+    At ``span > 1`` a column is a sequence of super-symbols of ``span``
+    positions with the widths ``field_widths`` gives; the stream order is
+    still column-major, super-symbol by super-symbol, position by position.
+    """
     rows, cols = body_bits.shape
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
+    if span < 1 or rows % span:
+        raise GrammarError(
+            f"{rows} positions is not a whole number of span-{span} super-symbols"
+        )
     array = body_bits.detach().cpu().numpy()
-    chunks = [_to_bits(array[:, j], rates[j]) for j in range(cols)]
+    chunks = [_column_to_bits(array[:, j], rates[j], span) for j in range(cols)]
     return np.packbits(np.concatenate(chunks) if chunks else np.zeros(0, np.uint8)).tobytes()
 
 
 def unpack_body(
-    data: bytes, rates: "tuple[int, ...]", rows: int, device=None
+    data: bytes, rates: "tuple[int, ...]", rows: int, device=None, span: int = 1
 ) -> torch.Tensor:
-    total = sum(rates) * rows
+    if span < 1 or rows % span:
+        raise GrammarError(
+            f"{rows} positions is not a whole number of span-{span} super-symbols"
+        )
+    total = sum(_body_bits(rate, rows, span) for rate in rates)
     bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))[:total]
     if bits.size != total:
         raise GrammarError(f"BODY needs {total} bits, the plane holds {bits.size}")
@@ -96,8 +155,10 @@ def unpack_body(
     # per three bits made every pass in the decoder read 8x what it needed.
     # Callers that *index* with the result must widen it first -- a uint8 index
     # tensor is a boolean mask in torch, which fails loudly here and would not
-    # elsewhere.
-    out = np.zeros((rows, len(rates)), dtype=np.uint8)
+    # elsewhere.  A stored-label position carries ``rate + 1`` bits, which still
+    # fits a byte at every serialisable grid's cap (7 + 1).
+    widest = max((max(field_widths(rate, span)) for rate in rates), default=0)
+    out = np.zeros((rows, len(rates)), dtype=np.uint8 if widest <= 8 else np.int32)
     cursor = 0
     for column, rate in enumerate(rates):
         if rate == 0:
@@ -105,8 +166,8 @@ def unpack_body(
             # c = 3 - R = 0, so a full-rate COMPLETION plane is *entirely*
             # zero-width -- the commonest case, not an edge case.
             continue
-        take = rate * rows
-        out[:, column] = _from_bits(bits[cursor : cursor + take], rate)
+        take = _body_bits(rate, rows, span)
+        out[:, column] = _column_from_bits(bits[cursor : cursor + take], rate, span, rows)
         cursor += take
     return torch.from_numpy(out).to(device or "cpu")
 
@@ -202,3 +263,43 @@ def nvfp4_scale_bytes(
             "No single NVFP4 scale plane represents this unit exactly."
         )
     return ((biased << 3) | mantissa).to(torch.uint8), float(2.0 ** shift)
+
+
+def scales_from_lut(
+    scale_refine: torch.Tensor, table: torch.Tensor, global_scale: float
+) -> torch.Tensor:
+    """LUT plane: rebuild the per-half scale from the nibble, the table, the global.
+
+    ``table`` is the manifest's E4M3FN bytes as a uint8 tensor.  The half's
+    scale is ``e4m3(table[nibble]) * global`` -- one E4M3 behind an fp32
+    global, which is the NVFP4 tile's own two-level scale, so materialising
+    the served plane is a relabelling (``nvfp4_scale_bytes_lut``) exactly as it
+    is for S6b.
+    """
+    index = scale_refine.to(torch.long)
+    if index.numel() and int(index.max()) >= table.numel():
+        raise GrammarError(
+            f"a scale index {int(index.max())} addresses past the "
+            f"{table.numel()}-entry LUT"
+        )
+    values = table.to(torch.uint8).view(torch.float8_e4m3fn).float() * global_scale
+    return values[index]
+
+
+def nvfp4_scale_bytes_lut(
+    scale_refine: torch.Tensor, table: torch.Tensor, global_scale: float
+) -> "tuple[torch.Tensor, float]":
+    """The LUT plane materialised: ``(e4m3_bytes, global_scale)``, no rounding.
+
+    The table entries *are* E4M3FN bytes and the global is the artifact's own,
+    so the served plane holds the identical number the decoder holds.  Unlike
+    the S6b path there is no exponent shift to check: the encoder chose the
+    global and the table together, on the E4M3 grid behind that global.
+    """
+    index = scale_refine.to(torch.long)
+    if index.numel() and int(index.max()) >= table.numel():
+        raise GrammarError(
+            f"a scale index {int(index.max())} addresses past the "
+            f"{table.numel()}-entry LUT"
+        )
+    return table.to(torch.uint8)[index], float(global_scale)

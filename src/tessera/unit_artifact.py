@@ -46,6 +46,8 @@ from .manifest import (
     Geometry,
     Manifest,
     RotationState,
+    ScalePlane,
+    ScalePlaneKind,
 )
 from .planes import PlaneKind
 from .trellis import ConvCode, _ODS_GENERATORS
@@ -58,6 +60,8 @@ def encoder_profile_id(
     code: ConvCode,
     rates: "tuple[int, ...]",
     grid: PayloadGrid = E2M1_GRID,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
 ) -> bytes:
     """Digest the decisions a reader must reproduce exactly.
 
@@ -83,16 +87,29 @@ def encoder_profile_id(
     written under it now fails closed in ``read_unit_artifact`` -- which
     searches ConvCode x grid and reports both dimensions -- rather than
     decoding against a grid it merely assumed.
+
+    The **trellis span** and the **scale-plane kind** (schema minor 1) are
+    wire for the same reason and are bound the same way -- but *conditionally*:
+    a span-1 S6b unit digests to exactly what it did before the fields
+    existed.  The reader takes both values off the manifest and recomputes
+    this digest with them, so a manifest whose span disagrees with the profile
+    fails closed; and every artifact written before minor 1 still verifies,
+    because its manifest means ``(1, S6B)`` and that pair adds no tag.  The
+    alternative -- an unconditional tag -- would have orphaned a 151 GiB
+    export for no gain in identity.
     """
-    payload = "|".join(
-        [
-            "prismaquant.tessera.v1",
-            f"conv:m={code.memory},g={','.join(oct(g) for g in code.generators)}",
-            f"forest:build_forest/value-order-dyadic",
-            f"rates:{','.join(str(r) for r in sorted(set(rates)))}",
-            f"grid:{grid_digest(grid)},arity={grid.arity},size={grid.size}",
-        ]
-    )
+    parts = [
+        "prismaquant.tessera.v1",
+        f"conv:m={code.memory},g={','.join(oct(g) for g in code.generators)}",
+        f"forest:build_forest/value-order-dyadic",
+        f"rates:{','.join(str(r) for r in sorted(set(rates)))}",
+        f"grid:{grid_digest(grid)},arity={grid.arity},size={grid.size}",
+    ]
+    if span != 1:
+        parts.append(f"trellis:span={span}")
+    if ScalePlaneKind(scale_plane) is not ScalePlaneKind.S6B:
+        parts.append(f"scale:{ScalePlaneKind(scale_plane).name.lower()}")
+    payload = "|".join(parts)
     return hashlib.sha256(payload.encode()).digest()
 
 
@@ -162,6 +179,16 @@ def build_unit_artifact(
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity
     rates = unit.rates
+    span = unit.span
+    plane_kind = ScalePlaneKind(unit.scale_plane)
+    if plane_kind is ScalePlaneKind.LUT:
+        if unit.scale_lut is None:
+            raise GrammarError("a LUT scale plane needs the unit's table")
+        scale_plane = ScalePlane.lut(
+            bytes(unit.scale_lut.detach().cpu().numpy().tobytes()), unit.scale_global
+        )
+    else:
+        scale_plane = ScalePlane.s6b()
     # The depth the encoder *used*, not the depth the rate leaves room for.
     # Sizing this plane from the rate alone wrote a full-width, all-zero plane
     # for every unit encoded shallower than its cap -- which is why every rung
@@ -183,7 +210,7 @@ def build_unit_artifact(
     payloads = {
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
-        PlaneKind.BODY: pack_body(unit.body_bits, rates),
+        PlaneKind.BODY: pack_body(unit.body_bits, rates, span),
         PlaneKind.SCALE_BASE: pack_uniform(unit.scale_base, 8),
         PlaneKind.COMPLETION: pack_body(unit.completion_bits, widths),
         PlaneKind.SCALE_REFINE: pack_uniform(unit.scale_refine, 4),
@@ -196,7 +223,9 @@ def build_unit_artifact(
         "t-nvfp4",
         widths,
         released_positions=unit.released_positions,
-        with_scale_base=True,
+        # A LUT plane has no base plane: its count is zero, exactly as a
+        # T-po2 terminal omits the refinement.  The nibble plane stays.
+        with_scale_base=plane_kind is ScalePlaneKind.S6B,
         with_scale_refine=True,
         with_diagonals=has_diagonals,
     )
@@ -217,14 +246,15 @@ def build_unit_artifact(
         cap=grid.rate_cap,
         arity=grid.arity,
         spec=spec,
+        span=span,
     )
     region = build_plane_region(planes, payloads)
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
-        plane_region=region, cap=grid.rate_cap, arity=grid.arity,
+        plane_region=region, cap=grid.rate_cap, arity=grid.arity, span=span,
     )
     manifest = Manifest(
-        encoder_profile_id=encoder_profile_id(code, rates, grid),
+        encoder_profile_id=encoder_profile_id(code, rates, grid, span, plane_kind),
         branch=BranchIdentity(
             unit_id=unit_id,
             root_q256=q256,
@@ -237,6 +267,8 @@ def build_unit_artifact(
         planes=planes,
         terminals=(terminal,),
         payload_digest=hashlib.sha256(region).digest(),
+        span=span,
+        scale_plane=scale_plane,
     )
     return manifest, region, serialize(manifest, region)
 
@@ -268,11 +300,15 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     # is over the product, because the digest binds the pair jointly -- and the
     # grid must be resolved before anything else, since it fixes both the
     # completion width (``rate_cap``) and how many weights a code covers.
+    span = manifest.span
+    plane = manifest.scale_plane
     code = grid = None
     for memory in sorted(_ODS_GENERATORS):
         candidate = ConvCode(memory=memory)
         for known in SERIALISABLE_GRIDS.values():
-            if encoder_profile_id(candidate, rates, known) == manifest.encoder_profile_id:
+            if encoder_profile_id(
+                candidate, rates, known, span, plane.kind
+            ) == manifest.encoder_profile_id:
                 code, grid = candidate, known
                 break
         if code is not None:
@@ -280,14 +316,17 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     if code is None:
         raise GrammarError(
             "encoder_profile_id matches no (convolutional code, payload grid) "
-            f"pair this reader implements: it searched memory orders "
+            f"pair this reader implements at span {span} over a "
+            f"{plane.kind.name} scale plane: it searched memory orders "
             f"{sorted(_ODS_GENERATORS)} against grids "
             f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
-            "trellis is not one we can replay, or the artifact was written "
-            "over a grid outside SERIALISABLE_GRIDS -- including one written "
-            "before the grid was bound into the profile id. Refusing to decode "
-            "against an assumed grid: that is exactly the silent misdecode "
-            "this digest exists to prevent."
+            "trellis is not one we can replay, the manifest's span or "
+            "scale-plane kind disagrees with the profile the encoder bound, "
+            "or the artifact was written over a grid outside "
+            "SERIALISABLE_GRIDS -- including one written before the grid was "
+            "bound into the profile id. Refusing to decode against an assumed "
+            "grid: that is exactly the silent misdecode this digest exists to "
+            "prevent."
         )
 
     # The manifest deferred the rate ceiling because it had no grid; there is
@@ -299,6 +338,11 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
             f"{grid.arity} tuples over grid {grid.name}"
         )
     steps = rows // grid.arity
+    if steps % span:
+        raise GrammarError(
+            f"geometry declares {steps} trellis positions per column, not a "
+            f"whole number of span-{span} super-symbols"
+        )
     # The COMPLETION plane's element count is on the wire, and the depth is the
     # unique solution of ``sum(min(limit, cap - R)) * steps``.  Recomputing the
     # ceiling here instead would mis-slice every unit encoded shallower than its
@@ -320,11 +364,26 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     n_released = terminal.plane_elements[
         CANONICAL_PLANE_ORDER.index(PlaneKind.RELEASE)
     ]
+    n_base = terminal.plane_elements[CANONICAL_PLANE_ORDER.index(PlaneKind.SCALE_BASE)]
+    if plane.kind is ScalePlaneKind.LUT:
+        if n_base:
+            raise GrammarError(
+                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
+                f"declares {n_base} base elements"
+            )
+        scale_base = torch.zeros(0, dtype=torch.uint8, device=device)
+        scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
+    else:
+        scale_base = unpack_uniform(
+            chunks[PlaneKind.SCALE_BASE],
+            geometry.positions // geometry.group_weights, 8, device,
+        )
+        scale_lut = None
     unit = EncodedUnit(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
         codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
-        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device),
+        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device, span),
         # BODY stays uint8 -- the replay is bandwidth-bound over it -- but
         # COMPLETION indexes the reachable-descendant table, and a uint8 index
         # tensor is a *boolean mask* in torch, not an integer index.  The two
@@ -332,10 +391,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         completion_bits=unpack_body(
             chunks[PlaneKind.COMPLETION], widths, steps, device
         ).long(),
-        scale_base=unpack_uniform(
-            chunks[PlaneKind.SCALE_BASE],
-            geometry.positions // geometry.group_weights, 8, device,
-        ),
+        scale_base=scale_base,
         scale_refine=unpack_uniform(
             chunks[PlaneKind.SCALE_REFINE],
             geometry.positions // geometry.half_weights, 4, device,
@@ -356,6 +412,10 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         ),
         group=geometry.group_weights,
         half=geometry.half_weights,
+        span=span,
+        scale_plane=plane.kind,
+        scale_lut=scale_lut,
+        scale_global=float(plane.global_scale),
     )
     if n_released and grid.arity > 1:
         raise GrammarError(
@@ -368,16 +428,11 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         # §9's placement is *derived*, not stored: decode without release,
         # rank by descending decoded magnitude per superblock, and the RELEASE
         # plane's codes land on those positions in that order.
-        from .decode import decode_codes_mixed
+        from .decode import decode_codes_mixed, unit_half_scales
         from .encode import _canonical_release_order, e2m1_value_table
-        from .wire import scales_from_planes
 
         pre = decode_codes_mixed(unit, forests, code, apply_release=False)
-        scale = torch.repeat_interleave(
-            scales_from_planes(unit.scale_base, unit.scale_refine,
-                               unit.group, unit.half),
-            unit.half,
-        ).reshape(rows, cols)
+        scale = torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
         decoded = e2m1_value_table(device)[pre.int()] * scale
         unit.release_index = _canonical_release_order(
             decoded, cols, geometry.superblock_columns, n_released

@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0`) |
+| 10 | 2 | schema minor (`0` or `1`; see §1a) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -27,6 +27,43 @@ Little-endian. Three regions: header, manifest, plane region.
 The manifest is **never truncatable**. A legal truncation shortens only the
 plane region; the header keeps declaring the full extent, and the actual
 length is resolved against the declared terminals.
+
+### 1a. Schema minor 1 (2026-09-01): trellis span and the scale-plane record
+
+Minor 1 appends two fields to the canonical manifest, **after**
+`payload_digest`:
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `span` | uint | The trellis super-symbol length L (Wei multidimensional partition). One select bit per L consecutive positions of a column; positions `1..L-1` of a super-symbol store a two-bit subset label ahead of their point bits; position 0's label is `(super-label − Σ stored labels) mod 4`. BODY holds `L·R + L − 1` bits per super-symbol per column. `1` is the per-position trellis, byte for byte. |
+| `scale_plane.kind` | uint | `0` = S6b (SCALE_BASE E8M0 per group + SCALE_REFINE `(d,m)` nibble per half). `1` = LUT: SCALE_BASE is absent (count 0) and the SCALE_REFINE nibble indexes `table`. |
+| `scale_plane.table` | blob (LUT only) | 2..16 positive finite E4M3FN bytes (`0x01..0x7E`), strictly ascending. The half's scale is `e4m3(table[nibble]) × global_scale`. |
+| `scale_plane.global_scale` | ratio (LUT only) | Exact rational, representable as an fp32. The encoder writes a power of two. |
+
+**Reading.** The header's minor selects the manifest grammar: a minor-0
+manifest ends at `payload_digest` and means `span = 1, kind = S6b`. A reader
+that accepts minor 1 must still accept minor 0 unchanged.
+
+**Writing.** `serialize` writes the *lowest* minor that expresses the
+manifest: a span-1 S6b unit is a minor-0 artifact and is byte-identical to
+one written before the fields existed (verified against two units of the
+2026-09-01 GLM export, including the 317 MB `lm_head`). Asking a minor-1
+manifest to encode as minor 0 is refused.
+
+**Identity.** Both fields are bound into `encoder_profile_id` (§5), so a
+manifest whose `span` or `kind` disagrees with the profile fails closed at the
+digest search — after the layout, which disagrees first, because BODY's
+element count depends on the span.
+
+**Accounting.** The LUT table and global are manifest bytes: side bytes,
+reported in `wire_bpp`, outside `exact_bpp` (which is the plane-region rate,
+D6). Sixteen bytes per unit.
+
+**Why a minor, not a major.** The plane grammar is unchanged: every plane
+kind, element width, order and truncation rule is what it was. Minor 0
+artifacts mean exactly what they meant. What changed is the meaning of a
+nibble under a new `kind` and the meaning of a BODY column under a new
+`span`, both declared per artifact and both digested.
 
 ## 2. Decisions this schema makes
 
@@ -147,8 +184,12 @@ must not be the unverified one.
 
 ## 4. Parse algorithm
 
-1. Read and validate the 24-byte header: magic, version, header size.
-2. Read exactly `manifest_bytes`; decode canonically; **reject trailing bytes**.
+1. Read and validate the 24-byte header: magic, version (major `1`, minor
+   `0` or `1`), header size.
+2. Read exactly `manifest_bytes`; decode canonically **under the header's
+   minor** (minor 1 reads `span` and the scale-plane record after the payload
+   digest); **reject trailing bytes**. Reject a header that declares minor 0
+   for a manifest that needs minor 1.
 3. Validate the manifest: canonical plane order, no duplicate kinds, rate
    schedule exact against the root, complete superblocks keep the quota, no two
    terminals share an `exact_bytes`.
@@ -182,6 +223,14 @@ a descriptor or a bare name.
 
 `terminal_id` binds the branch and the encoder profile, so identical count
 arrays under a different branch are a different terminal.
+
+`encoder_profile_id` digests the convolutional code, the forest construction,
+the rate set, the payload grid, and — **conditionally, since minor 1** — the
+trellis span (`trellis:span=L`, appended only when `L ≠ 1`) and the
+scale-plane kind (`scale:lut`, appended only when the kind is not S6b). The
+conditional form keeps every pre-minor-1 digest unchanged; the reader
+recomputes the digest from the manifest's own `span` and `kind`, so the pair
+is verified, not assumed.
 
 ## 6. Frozen constants
 

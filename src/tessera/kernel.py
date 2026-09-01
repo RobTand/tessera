@@ -363,16 +363,30 @@ SELECT_PAD = 8
 
 
 def pack_kernel_planes(
-    body_bits: torch.Tensor, rate: int = 3, memory: int = 6
+    body_bits: torch.Tensor, rate: int = 3, memory: int = 6, span: int = 1
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """Wire BODY -> (select plane, point plane), column-major, MSB-first.
 
     The select plane carries ``SELECT_PAD`` zero bits before each column, which
     is what lets a decoder read row 0's history without a boundary test: the pad
     *is* the initial state.
+
+    ``span`` is the unit's trellis span.  The kernel lane reads one select bit
+    and ``rate - 1`` point bits per position; a span-2 body carries a stored
+    label at every second position and one select bit per pair, which these
+    planes cannot express.  Refused here, at the seam, rather than decoded as
+    if it were span 1 -- which would produce plausible weights from the wrong
+    subsets.  The scale plane needs no such guard: a LUT plane materialises
+    to the same per-16 E4M3 bytes the kernel already reads.
     """
     rows, cols = body_bits.shape
     device = body_bits.device
+    if span != 1:
+        raise GrammarError(
+            f"the kernel lane decodes span-1 bodies; this unit is span {span}. "
+            "The span-2 decode is the next kernel-lane item; use the reference "
+            "decoder (materialize_nvfp4) until it lands."
+        )
     if rows % 8:
         raise GrammarError(f"{rows} rows does not byte-align a column plane")
     body = body_bits.to(torch.int32)

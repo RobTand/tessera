@@ -44,6 +44,7 @@ __all__ = [
     "HEADER_BYTES",
     "SCHEMA_MAJOR",
     "SCHEMA_MINOR",
+    "SCHEMA_MINORS_READ",
     "serialize",
     "parse",
     "ParsedArtifact",
@@ -54,14 +55,21 @@ __all__ = [
 MAGIC = b"\x89TESSERA"
 HEADER_BYTES = 24
 SCHEMA_MAJOR = 1
-SCHEMA_MINOR = 0
+#: Minor 1 (2026-09-01) appends the trellis span and the scale-plane record to
+#: the manifest.  ``serialize`` writes the lowest minor a manifest needs, so a
+#: span-1 S6b unit is still a minor-0 artifact byte for byte; ``parse`` reads
+#: both.  A minor bump, not a major one, because the plane region's grammar is
+#: unchanged and every minor-0 artifact means exactly what it meant.
+SCHEMA_MINOR = 1
+SCHEMA_MINORS_READ = (0, 1)
 
 _HEADER = struct.Struct("<8sHHIII")
 
 
 def serialize(manifest: Manifest, plane_region: bytes) -> bytes:
     """Emit a full (untruncated) Tessera artifact."""
-    manifest_bytes = manifest.encode()
+    minor = manifest.schema_minor
+    manifest_bytes = manifest.encode(minor)
     digest = hashlib.sha256(plane_region).digest()
     if digest != manifest.payload_digest:
         raise SchemaError(
@@ -75,7 +83,7 @@ def serialize(manifest: Manifest, plane_region: bytes) -> bytes:
     header = _HEADER.pack(
         MAGIC,
         SCHEMA_MAJOR,
-        SCHEMA_MINOR,
+        minor,
         HEADER_BYTES,
         len(manifest_bytes),
         len(plane_region),
@@ -188,13 +196,18 @@ def parse(data: bytes, verify_payload_digest: bool = True) -> ParsedArtifact:
         raise SchemaError(f"foreign magic {magic!r}: not a Tessera artifact")
     if header_bytes != HEADER_BYTES:
         raise SchemaError(f"declared header size {header_bytes} != {HEADER_BYTES}")
-    if (major, minor) != (SCHEMA_MAJOR, SCHEMA_MINOR):
+    if major != SCHEMA_MAJOR or minor not in SCHEMA_MINORS_READ:
         raise SchemaError(f"unsupported schema version {major}.{minor}")
 
     manifest_end = HEADER_BYTES + manifest_bytes
     if len(data) < manifest_end:
         raise SchemaError("truncated manifest: the manifest is never truncatable")
-    manifest = Manifest.decode(data[HEADER_BYTES:manifest_end])
+    manifest = Manifest.decode(data[HEADER_BYTES:manifest_end], schema_minor=minor)
+    if manifest.schema_minor > minor:
+        raise SchemaError(
+            f"header declares schema minor {minor} but the manifest needs "
+            f"{manifest.schema_minor}"
+        )
 
     plane_region = data[manifest_end:]
     if len(plane_region) != region_bytes:

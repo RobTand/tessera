@@ -40,12 +40,14 @@ from .decode import reconstruct_unit
 from .encode import encode_unit
 from .errors import GrammarError
 from .grammar import bresenham_rate_schedule
-from .manifest import RotationState
+from .manifest import RotationState, ScalePlaneKind
 from .trellis import ConvCode
 from .unit_artifact import build_unit_artifact, read_unit_artifact
 
 __all__ = [
     "CONTAINER_VERSION",
+    "DEFAULT_SPAN",
+    "DEFAULT_SCALE_PLANE",
     "ExportReport",
     "ExportedUnit",
     "encode_linear",
@@ -72,6 +74,17 @@ DEFAULT_HALF = 16
 #: wire: the bytes decode identically at any value.  Recorded in the config so
 #: a merge can refuse parts built at different settings.
 DEFAULT_SCALE_REFIT = 4
+#: The shipping wire since 2026-09-01 (schema minor 1): a span-2 trellis --
+#: one select bit per two positions, 3.75 b/wt at the E2M1x2 cap -- over a
+#: LUT scale plane, a 4-bit index per 16 weights into a per-unit table of
+#: sixteen E4M3 scales at 0.25 bpp.  Together 4.0 bpp, the same size as the
+#: span-1 trellis over the S6b plane it replaces, measured 1.111x better on
+#: the output-space weight leg over six GLM experts
+#: (``docs/measurements/tessera-index-plane-2026-09-01.md``).  Both are wire:
+#: they travel in the manifest and are bound into the encoder profile id, and
+#: ``span=1, scale_plane=S6B`` reproduces every earlier artifact byte for byte.
+DEFAULT_SPAN = 2
+DEFAULT_SCALE_PLANE = ScalePlaneKind.LUT
 
 
 @dataclass(frozen=True)
@@ -151,6 +164,8 @@ def encode_linear(
     completion: "int | None" = 0,
     verify: bool = True,
     scale_refit: int = DEFAULT_SCALE_REFIT,
+    span: int = DEFAULT_SPAN,
+    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -182,7 +197,7 @@ def encode_linear(
         weight, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
         completion=completion, group=group, half=half,
-        scale_refit=scale_refit,
+        scale_refit=scale_refit, span=span, scale_plane=scale_plane,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -222,6 +237,8 @@ def export_checkpoint(
     extra_config: "dict | None" = None,
     verify: bool = True,
     scale_refit: int = DEFAULT_SCALE_REFIT,
+    span: int = DEFAULT_SPAN,
+    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
 
@@ -250,7 +267,7 @@ def export_checkpoint(
                 tensor, grid=grid, q256=plan[name], name=name, code=code,
                 group=group, half=half, rotation=rotation,
                 with_diagonals=with_diagonals, verify=verify,
-                scale_refit=scale_refit,
+                scale_refit=scale_refit, span=span, scale_plane=scale_plane,
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -273,13 +290,16 @@ def export_checkpoint(
     )
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit)
+                  report, plan, extra_config, scale_refit, span, scale_plane)
     return report
 
 
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
-                  extra_config: "dict | None", scale_refit: int = 0) -> None:
+                  extra_config: "dict | None", scale_refit: int = 0,
+                  span: int = 1,
+                  scale_plane: ScalePlaneKind = ScalePlaneKind.S6B) -> None:
+    plane = ScalePlaneKind(scale_plane)
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
@@ -298,11 +318,18 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
             "rate_cap": grid.rate_cap,
         },
         "conv_memory": code.memory,
+        # The trellis span is wire (manifest field, profile-id tag).  Recorded
+        # here as well so a merge can refuse parts built at different spans
+        # without opening a blob.
+        "trellis": {"span": int(span)},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
         # interleave, because the same count meant a different encoder before
         # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
+        # ``plane`` is the segment-2b kind: ``s6b`` (E8M0 base + nibble) or
+        # ``lut16`` (nibble into a per-unit sixteen-entry E4M3 table).
         "scale": {"group": group, "half": half, "refit": scale_refit,
-                  "schedule": "amax" if scale_refit == 0 else "trailing-refit"},
+                  "schedule": "amax" if scale_refit == 0 else "trailing-refit",
+                  "plane": "s6b" if plane is ScalePlaneKind.S6B else "lut16"},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
@@ -347,6 +374,8 @@ def export_checkpoint_streaming(
     copy_aux: bool = True,
     progress=None,
     shard_filter: "set[str] | None" = None,
+    span: int = DEFAULT_SPAN,
+    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -418,7 +447,8 @@ def export_checkpoint_streaming(
                         tensor.to(device), grid=grid, q256=plan[name], name=name,
                         code=code, group=group, half=half, rotation=rotation,
                         with_diagonals=with_diagonals, verify=verify,
-                        scale_refit=scale_refit,
+                        scale_refit=scale_refit, span=span,
+                        scale_plane=scale_plane,
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -448,7 +478,7 @@ def export_checkpoint_streaming(
         {"metadata": {"total_size": report.total_bytes},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit)
+                  report, plan, extra_config, scale_refit, span, scale_plane)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):

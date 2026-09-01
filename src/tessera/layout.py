@@ -33,6 +33,7 @@ from fractions import Fraction
 from .errors import GrammarError, PlaneLayoutError
 from .exact import bits_to_bytes
 from .grammar import C_FULL_BITS, RELEASE_BITS, completion_capacity
+from .trellis import body_bits as _body_bits
 from .manifest import Geometry, TerminalRecord
 from .planes import (
     CANONICAL_PLANE_ORDER,
@@ -99,6 +100,7 @@ def _counts_for(
     max_released: int = 0,
     cap: int = C_FULL_BITS,
     arity: int = 1,
+    span: int = 1,
 ) -> int:
     # ``geometry`` is declared in weight space.  BODY and COMPLETION are
     # per-CODE planes, and a code covers ``arity`` consecutive rows, so they are
@@ -114,12 +116,19 @@ def _counts_for(
     rows = geometry.rows
     steps = rows // arity
     positions = geometry.positions
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions per column is not a whole number of "
+            f"span-{span} super-symbols"
+        )
     if kind is PlaneKind.ALPHABET:
         return alphabet_bytes
     if kind is PlaneKind.DESCENDANT:
         return descendant_bytes
     if kind is PlaneKind.BODY:
-        return sum(rates) * steps
+        # ``span * R + span - 1`` bits per super-symbol (``trellis.body_bits``);
+        # at span 1 that is ``R * steps`` per column, the count it always was.
+        return sum(_body_bits(rate, steps, span) for rate in rates)
     if kind is PlaneKind.SCALE_BASE:
         if spec is not None and not spec.with_scale_base:
             return 0
@@ -186,6 +195,7 @@ def build_planes(
     cap: int = C_FULL_BITS,
     arity: int = 1,
     spec: "TerminalSpec | None" = None,
+    span: int = 1,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -223,6 +233,7 @@ def build_planes(
             max_released,
             cap=cap,
             arity=arity,
+            span=span,
         )
         if not with_diagonals and kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
             total = 0
@@ -289,6 +300,7 @@ def build_terminal(
     plane_region: bytes | None = None,
     cap: int = C_FULL_BITS,
     arity: int = 1,
+    span: int = 1,
 ) -> TerminalRecord:
     """Compute a terminal's exact per-plane counts, bytes, bpp, and digest.
 
@@ -318,7 +330,7 @@ def build_terminal(
     for kind in CANONICAL_PLANE_ORDER:
         count = _counts_for(
             kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
-            cap=cap, arity=arity,
+            cap=cap, arity=arity, span=span,
         )
         elements.append(count)
         total_bytes += by_kind[kind].byte_length(count)

@@ -24,6 +24,7 @@ import torch
 from .alphabet import AnchorForest
 from .encode import EncodedUnit, e2m1_value_table
 from .errors import GrammarError
+from .manifest import ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
@@ -34,6 +35,7 @@ __all__ = [
     "dequantize",
     "materialize_nvfp4",
     "reconstruct_unit",
+    "unit_half_scales",
 ]
 
 
@@ -61,6 +63,20 @@ def _replay_core(
     """
     select = (body >> shift) & 1
     point = body & mask
+    subset = _window_subset(select, table_sub_flat, memory)
+    return subsets_flat[subset.int() * points + point.int()]
+
+
+def _window_subset(
+    select: torch.Tensor, table_sub_flat: torch.Tensor, memory: int
+) -> torch.Tensor:
+    """Select bits ``[T, cols]`` -> the code's output subset per step.
+
+    The state before step t is the previous ``memory`` select bits, so this is
+    a windowed function of the stream with O(1) depth (see ``replay_body``).
+    Shared by the per-position replay and the span-L replay, whose select
+    stream is one bit per super-symbol.
+    """
 
     def lagged(value: torch.Tensor, rows_back: int) -> torch.Tensor:
         out = torch.zeros_like(value)
@@ -81,8 +97,37 @@ def _replay_core(
             packed = (packed << width) | lagged(window[width], held)
             held += width
     state = lagged(packed, 1)
-    subset = table_sub_flat[(select.int() << memory) + state.int()]
-    return subsets_flat[subset.int() * points + point.int()]
+    return table_sub_flat[(select.int() << memory) + state.int()]
+
+
+def _replay_span(
+    body: torch.Tensor,
+    subsets: torch.Tensor,
+    table_sub: torch.Tensor,
+    memory: int,
+    span: int,
+) -> torch.Tensor:
+    """Span-L replay: one select bit per super-symbol, stored labels, points.
+
+    Position 0 of a super-symbol carries ``[select | point]``; positions
+    ``1..L-1`` carry ``[label | point]``.  The code's output for the select
+    bit is the super-label; position 0's subset is the super-label minus the
+    stored labels mod 4 (``trellis.py``).  Int64 throughout -- the fused uint8
+    chain is the per-position path's; this one is correct first and the
+    kernel lane is where the bandwidth question is answered.
+    """
+    steps, cols = body.shape
+    points = subsets.shape[1]
+    shift = points.bit_length() - 1
+    mask = (1 << shift) - 1
+    fields = body.long().reshape(steps // span, span, cols)
+    select = (fields[:, 0] >> shift) & 1                        # [T, cols]
+    stored = (fields[:, 1:] >> shift) & (SUBSET_COUNT - 1)     # [T, L-1, cols]
+    point = fields & mask                                        # [T, L, cols]
+    super_label = _window_subset(select, table_sub.reshape(-1), memory).long()
+    first = (super_label - stored.sum(dim=1)) % SUBSET_COUNT
+    labels = torch.cat([first.unsqueeze(1), stored], dim=1)     # [T, L, cols]
+    return subsets[labels, point].reshape(steps, cols)
 
 
 def _decode_core(
@@ -162,7 +207,7 @@ def _replay_tables(
 
 
 def replay_body(
-    body_bits: torch.Tensor, forest: AnchorForest, code: ConvCode
+    body_bits: torch.Tensor, forest: AnchorForest, code: ConvCode, span: int = 1
 ) -> torch.Tensor:
     """Replay the convolutional code from the body bits alone.
 
@@ -176,6 +221,10 @@ def replay_body(
     points = subsets.shape[1]
     shift = points.bit_length() - 1
     mask = (1 << shift) - 1
+    if span < 1 or rows % span:
+        raise GrammarError(
+            f"{rows} positions is not a whole number of span-{span} super-symbols"
+        )
 
     # The recursion looks sequential -- state_r feeds state_{r+1} -- but
     # ConvCode.step is ``register >> 1`` over ``(bit << memory) | state``, a
@@ -195,6 +244,8 @@ def replay_body(
             | (torch.tensor([[0], [1 << (code.memory - 1)]], device=device)),
         )
     )
+    if shifted and span > 1:
+        return _replay_span(body_bits, subsets, table_sub, code.memory, span)
     if shifted:
         # Narrowing the body is a bandwidth choice too, and it is available
         # only while a code fits in a byte.  At R=9 this truncated the select
@@ -228,15 +279,19 @@ def replay_body(
 
     # A code whose step is not a shift register still has to decode, so the
     # sequential walk stays as the general path rather than an assumption.
-    select = (body_bits >> shift) & 1
-    point = body_bits & mask
-    anchors = torch.zeros(rows, cols, dtype=torch.long, device=device)
+    fields = body_bits.long().reshape(rows // span, span, cols)
+    select = (fields[:, 0] >> shift) & 1
+    stored = (fields[:, 1:] >> shift) & (SUBSET_COUNT - 1)
+    point = fields & mask
+    anchors = torch.zeros(rows // span, span, cols, dtype=torch.long, device=device)
     state = torch.zeros(cols, dtype=torch.long, device=device)
-    for row in range(rows):
-        subset = table_sub[select[row].long(), state]
-        anchors[row] = subsets[subset, point[row].long()]
-        state = table_next[select[row].long(), state]
-    return anchors
+    for sup in range(rows // span):
+        super_label = table_sub[select[sup], state]
+        first = (super_label - stored[sup].sum(dim=0)) % SUBSET_COUNT
+        labels = torch.cat([first.unsqueeze(0), stored[sup]], dim=0)
+        anchors[sup] = subsets[labels, point[sup]]
+        state = table_next[select[sup], state]
+    return anchors.reshape(rows, cols)
 
 
 def decode_codes(
@@ -249,7 +304,7 @@ def decode_codes(
     depth = forest.cap - forest.rate
     completion = depth if completion is None else completion
     device = unit.body_bits.device
-    anchors = replay_body(unit.body_bits, forest, code)
+    anchors = replay_body(unit.body_bits, forest, code, getattr(unit, "span", 1))
     # A code is a nibble only while the grid is E2M1.  Above 256 codes a uint8
     # table silently wraps, so the dtype follows the grid -- and it stays uint8
     # below that so the single-rate and mixed-rate decoders agree on the dtype
@@ -289,6 +344,8 @@ def materialize_nvfp4(
     scale_refine: torch.Tensor,
     group: int = 32,
     half: int = 16,
+    scale_lut: "torch.Tensor | None" = None,
+    scale_global: float = 1.0,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """Pack to the standard NVFP4 layout: 2 nibbles/byte + one E4M3 per 16.
 
@@ -298,7 +355,7 @@ def materialize_nvfp4(
     *is* the grid -- so this pads information, never truncates it, and the
     result is an ordinary NVFP4 tensor that stock kernels consume.
     """
-    from .wire import nvfp4_scale_bytes
+    from .wire import nvfp4_scale_bytes, nvfp4_scale_bytes_lut
 
     rows, cols = codes.shape
     if cols % 2:
@@ -306,8 +363,27 @@ def materialize_nvfp4(
     low = codes[:, 0::2].to(torch.uint8)
     high = codes[:, 1::2].to(torch.uint8)
     packed = (low & 0xF) | ((high & 0xF) << 4)
-    e4m3, global_scale = nvfp4_scale_bytes(scale_base, scale_refine, group, half)
+    if scale_lut is not None:
+        e4m3, global_scale = nvfp4_scale_bytes_lut(scale_refine, scale_lut, scale_global)
+    else:
+        e4m3, global_scale = nvfp4_scale_bytes(scale_base, scale_refine, group, half)
     return packed, e4m3.reshape(rows, cols // half), global_scale
+
+
+def unit_half_scales(unit: "EncodedUnit") -> torch.Tensor:
+    """The per-half scale a decoder derives from the unit's stored planes.
+
+    Dispatches on the plane kind: S6b reads ``scale_base``/``scale_refine``
+    through ``scales_from_planes``; a LUT plane reads the nibble through the
+    unit's table and global.  Either way it is the only scale a reader has.
+    """
+    from .wire import scales_from_lut, scales_from_planes
+
+    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is ScalePlaneKind.LUT:
+        if unit.scale_lut is None:
+            raise GrammarError("a LUT scale plane needs the unit's table")
+        return scales_from_lut(unit.scale_refine, unit.scale_lut, unit.scale_global)
+    return scales_from_planes(unit.scale_base, unit.scale_refine, unit.group, unit.half)
 
 
 def decode_codes_mixed(
@@ -340,6 +416,7 @@ def decode_codes_mixed(
     narrow = grid.size <= 256
     code_dtype = torch.uint8 if narrow else torch.int32
     codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
+    span = getattr(unit, "span", 1)
     # The depth the unit was WRITTEN at bounds the depth it can be read at.
     # ``completion_bits`` at level c is an index into ``reachable(anchor, c)``,
     # and the descendant order is a tree read most-significant-bit first, so the
@@ -385,6 +462,7 @@ def decode_codes_mixed(
         run = (
             _fused_decode()
             if body.is_cuda and narrow and points <= 256 and picked.rate <= 8
+            and span == 1
             else None
         )
         args = (
@@ -405,7 +483,7 @@ def decode_codes_mixed(
                 continue
             except Exception:  # pragma: no cover - fall back, never fail closed
                 pass
-        anchors = replay_body(body, picked, code)
+        anchors = replay_body(body, picked, code, span)
         codes[:, which] = reachable.long()[anchors, comp.long()].to(code_dtype)
     if apply_release and unit.release_index.numel():
         codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)
@@ -436,7 +514,6 @@ def reconstruct_unit(
     """
     from .decode import decode_codes as _decode
     from .diagonals import undo_diagonals, undo_rotation
-    from .wire import scales_from_planes
 
     codes = decode_codes_mixed(unit, forest, code, completion)
     forests = forest if isinstance(forest, dict) else {forest.rate: forest}
@@ -445,12 +522,7 @@ def reconstruct_unit(
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity
     if scale is None:
-        scale = torch.repeat_interleave(
-            scales_from_planes(
-                unit.scale_base, unit.scale_refine, unit.group, unit.half
-            ),
-            unit.half,
-        ).reshape(rows, cols)
+        scale = torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
     out = dequantize(codes, scale, grid)
     if unit.diagonals is not None:
         out = undo_diagonals(out, unit.diagonals)

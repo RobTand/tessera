@@ -94,3 +94,11 @@ A per-tensor screen (six tensors, weight leg + served activation
 quantiser, 1024 held-out rows). It is the same class as every other
 number in the rate/plane frontier and the refit tables; promotion to the
 served KL harness follows the wire build, like the refit A/B.
+
+---
+
+**Built 2026-09-01 (later the same evening):** the wire change is in
+`src/tessera/` as schema minor 1 and is the exporter's default. The
+production encoder, cold-starting the table from the amax targets, measures
+1.125× over the span-1 S6b default at 4.0 bpp on the same six tensors —
+`docs/measurements/tessera-wire-default-2026-09-01.md`.

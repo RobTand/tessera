@@ -43,6 +43,8 @@ __all__ = [
     "ArrangementMode",
     "BranchIdentity",
     "Geometry",
+    "ScalePlaneKind",
+    "ScalePlane",
     "TerminalRecord",
     "Manifest",
 ]
@@ -168,6 +170,81 @@ class Geometry:
         )
 
 
+class ScalePlaneKind(IntEnum):
+    """How the segment-2b bytes turn into a per-half scale."""
+
+    #: One E8M0 base byte per group (SCALE_BASE) plus a ``(d, m)`` nibble per
+    #: half (SCALE_REFINE): ``2^(E-127+d) * (1 + m/8)``, ``scale_codec``'s S6b.
+    S6B = 0
+    #: No base plane.  The SCALE_REFINE nibble indexes a per-unit table of up
+    #: to sixteen distinct E4M3FN bytes, times one fp32 global: the half's
+    #: scale is ``e4m3(table[nibble]) * global``.  Same index granularity as
+    #: S6b at half the bytes; the table is chosen per unit by the encoder.
+    LUT = 1
+
+
+@dataclass(frozen=True)
+class ScalePlane:
+    """The scale plane's kind and, for a LUT plane, its table and global.
+
+    The table travels here rather than in a plane because it is a *unit-level*
+    parameter with no positional index -- the same reason the group and half
+    sizes live in ``Geometry`` -- and because a terminal must stay a prefix of
+    the plane order.  It is charged: manifest bytes are side bytes, which the
+    accountant reports in ``wire_bpp``.
+    """
+
+    kind: ScalePlaneKind
+    table: bytes = b""
+    global_scale: Fraction = Fraction(1)
+
+    def __post_init__(self) -> None:
+        if self.kind is ScalePlaneKind.S6B:
+            if self.table or self.global_scale != 1:
+                raise ManifestError("an S6b scale plane carries no table or global")
+            return
+        if not 2 <= len(self.table) <= 16:
+            raise ManifestError(
+                f"a LUT scale plane holds 2..16 entries, got {len(self.table)}"
+            )
+        # Positive, finite, non-NaN E4M3FN: bytes 0x01..0x7E.  Bytes are
+        # monotone in value over that range, so strictly ascending bytes are
+        # strictly ascending, distinct scales -- the canonical order.
+        if any(not 1 <= byte <= 0x7E for byte in self.table):
+            raise ManifestError(
+                "LUT entries must be positive finite E4M3FN bytes (0x01..0x7E)"
+            )
+        if any(a >= b for a, b in zip(self.table, self.table[1:])):
+            raise ManifestError("LUT entries must be strictly ascending")
+        if self.global_scale <= 0:
+            raise ManifestError("the LUT global scale must be positive")
+        if float(self.global_scale) == 0.0 or Fraction(float(self.global_scale)) != self.global_scale:
+            raise ManifestError(
+                "the LUT global scale must be exactly representable as a float"
+            )
+
+    @classmethod
+    def s6b(cls) -> "ScalePlane":
+        return cls(ScalePlaneKind.S6B)
+
+    @classmethod
+    def lut(cls, table: bytes, global_scale: float) -> "ScalePlane":
+        return cls(ScalePlaneKind.LUT, bytes(table), Fraction(float(global_scale)))
+
+    def encode(self, writer: Writer) -> None:
+        writer.uint(int(self.kind))
+        if self.kind is ScalePlaneKind.LUT:
+            writer.blob(self.table).ratio(self.global_scale)
+
+    @classmethod
+    def decode(cls, reader: Reader) -> "ScalePlane":
+        kind = ScalePlaneKind(reader.uint())
+        if kind is ScalePlaneKind.S6B:
+            return cls(kind)
+        table = reader.blob()
+        return cls(kind, bytes(table), reader.ratio())
+
+
 @dataclass(frozen=True)
 class TerminalRecord:
     """One concrete, exactly-priced terminal.
@@ -261,10 +338,26 @@ class Manifest:
     planes: tuple[PlaneDescriptor, ...]
     terminals: tuple[TerminalRecord, ...]
     payload_digest: bytes
+    # Schema minor 1 (2026-09-01).  ``span`` is the trellis super-symbol
+    # length; ``scale_plane`` says how segment 2b decodes.  A minor-0 artifact
+    # carries neither and means ``(1, S6B)``, which is what these default to,
+    # so every artifact written before the fields existed reads back unchanged
+    # -- and ``encode`` writes a minor-0 manifest whenever that is all there is
+    # to say, so re-serialising one is byte-identical too.
+    span: int = 1
+    scale_plane: ScalePlane = ScalePlane(ScalePlaneKind.S6B)
+
+    @property
+    def schema_minor(self) -> int:
+        """The lowest schema minor that expresses this manifest."""
+        legacy = self.span == 1 and self.scale_plane.kind is ScalePlaneKind.S6B
+        return 0 if legacy else 1
 
     def __post_init__(self) -> None:
         if len(self.encoder_profile_id) != DIGEST_BYTES:
             raise ManifestError("malformed encoder_profile_id")
+        if self.span < 1:
+            raise ManifestError(f"span must be positive, got {self.span}")
         if len(self.payload_digest) != DIGEST_BYTES:
             raise ManifestError("malformed payload_digest")
         if not self.terminals:
@@ -371,7 +464,20 @@ class Manifest:
             for terminal in self.terminals
         }
 
-    def encode(self) -> bytes:
+    def encode(self, schema_minor: "int | None" = None) -> bytes:
+        """Canonical bytes.  ``schema_minor`` defaults to the lowest that fits.
+
+        Asking for minor 0 on a manifest that needs minor 1 is refused rather
+        than silently dropping the fields: a reader given those bytes would
+        decode a span-2 body as span 1 and produce plausible garbage.
+        """
+        minor = self.schema_minor if schema_minor is None else schema_minor
+        if minor < self.schema_minor:
+            raise ManifestError(
+                f"schema minor {minor} cannot express span {self.span} with a "
+                f"{self.scale_plane.kind.name} scale plane; needs minor "
+                f"{self.schema_minor}"
+            )
         writer = Writer()
         writer.text(SCHEMA_ID).digest32(self.encoder_profile_id)
         self.branch.encode(writer)
@@ -387,10 +493,21 @@ class Manifest:
         for terminal in self.terminals:
             terminal.encode(writer)
         writer.digest32(self.payload_digest)
+        if minor >= 1:
+            writer.uint(self.span)
+            self.scale_plane.encode(writer)
         return writer.bytes
 
     @classmethod
-    def decode(cls, data: bytes) -> "Manifest":
+    def decode(cls, data: bytes, schema_minor: int = 0) -> "Manifest":
+        """Parse canonical bytes written at ``schema_minor``.
+
+        The minor is the container header's, not something the manifest can
+        discover about itself: the minor-1 fields follow the payload digest,
+        and a minor-0 reader stopping there would leave trailing bytes, which
+        ``finish`` refuses.  The default is 0 because that is what every
+        caller that predates the field means.
+        """
         reader = Reader(data)
         schema = reader.text()
         if schema != SCHEMA_ID:
@@ -418,6 +535,10 @@ class Manifest:
             TerminalRecord.decode(reader) for _ in range(reader.uint())
         )
         payload_digest = reader.digest32()
+        span, scale_plane = 1, ScalePlane(ScalePlaneKind.S6B)
+        if schema_minor >= 1:
+            span = reader.uint()
+            scale_plane = ScalePlane.decode(reader)
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -428,6 +549,8 @@ class Manifest:
             planes=planes,
             terminals=terminals,
             payload_digest=payload_digest,
+            span=span,
+            scale_plane=scale_plane,
         )
 
     def manifest_digest(self) -> bytes:

@@ -29,6 +29,19 @@ the *best reachable descendant* at the terminal's completion level, not by the
 anchor's own value.  Scoring anchors directly would optimise a quantity the
 artifact never decodes.
 
+**Multidimensional partition (Wei 1987).**  ``span = L > 1`` groups L
+consecutive positions of a column into one super-symbol and labels it by the
+*sum* of its positions' subset labels mod 4.  One convolutional-code bit then
+picks the super-label, ``2(L-1)`` bits pick which member of that label class
+the positions take, and ``L(R-1)`` bits pick points inside the chosen
+per-position subsets: ``LR + L - 1`` bits per super-symbol, ``R + (L-1)/L``
+per position.  Position 0 of a super-symbol stores ``[select | point]`` (R
+bits); positions ``1..L-1`` store ``[label | point]`` (R+1 bits); position 0's
+label is *derived*: ``(super-label - sum of the stored labels) mod 4``.  At
+``L = 1`` there are no stored labels and the layout is byte-identical to the
+per-position trellis.  A rate-k/(k+1) code can only ever spend a whole bit per
+position; the fractional redundancy comes from the partition, not the code.
+
 **Declared, not assumed.**  The convolutional code's memory order and
 generators are wire: two encoders that disagree on them produce streams that
 do not decode to each other.  They are parameters of ``ConvCode``, they are
@@ -44,7 +57,7 @@ from dataclasses import dataclass
 from .alphabet import SUBSET_COUNT, AnchorForest, value_order
 from .errors import GrammarError
 
-__all__ = ["ConvCode", "TCQ", "SUBSET_COUNT"]
+__all__ = ["ConvCode", "TCQ", "SUBSET_COUNT", "body_bits"]
 
 # ``SUBSET_COUNT`` is defined in ``alphabet`` -- the grid must refuse a code
 # space it cannot split -- and re-exported here, where it reads naturally.
@@ -194,56 +207,111 @@ class TCQ:
             for code in codes
         )
 
-    def decode(self, bits: "list[int]", length: int) -> "list[int]":
-        """Replay the code: input bits -> anchor indices. Exact, no search."""
-        expected = length * self.rate
+    def decode(self, bits: "list[int]", length: int, span: int = 1) -> "list[int]":
+        """Replay the code: input bits -> anchor indices. Exact, no search.
+
+        ``span`` is the super-symbol length L.  Each super-symbol is read as
+        ``[select | point_0]`` then ``[label_i | point_i]`` for ``i = 1..L-1``;
+        the code's output for ``select`` is the super-label, and position 0's
+        subset is the super-label minus the stored labels, mod 4.
+        """
+        expected = body_bits(self.rate, length, span)
         if len(bits) != expected:
             raise GrammarError(
-                f"decode needs {expected} bits for {length} positions, got {len(bits)}"
+                f"decode needs {expected} bits for {length} positions at span "
+                f"{span}, got {len(bits)}"
             )
         subsets = self.subsets
         state, out, cursor = 0, [], 0
-        for _ in range(length):
+        for _ in range(length // span):
             select = bits[cursor]
             cursor += 1
-            point = 0
-            for _ in range(self.point_bits):
-                point = (point << 1) | bits[cursor]
-                cursor += 1
-            state, subset = self.code.step(state, select)
-            out.append(subsets[subset][point])
+            fields = []
+            for position in range(span):
+                label = 0
+                if position:
+                    label = (bits[cursor] << 1) | bits[cursor + 1]
+                    cursor += 2
+                point = 0
+                for _ in range(self.point_bits):
+                    point = (point << 1) | bits[cursor]
+                    cursor += 1
+                fields.append((label, point))
+            state, super_label = self.code.step(state, select)
+            stored = sum(label for label, _ in fields[1:])
+            for position, (label, point) in enumerate(fields):
+                subset = (super_label - stored) % SUBSET_COUNT if position == 0 else label
+                out.append(subsets[subset][point])
         return out
 
-    def encode(self, targets, completion: int = 0):
+    def encode(self, targets, completion: int = 0, span: int = 1):
         """Exact Viterbi. Returns ``(bits, anchor_indices, sse)``.
 
         A true minimum-cost path, not a greedy per-position pick: the coding
         gain is the entire reason segment 0 is a trellis, and a greedy encoder
         would forfeit it while still emitting a decodable stream.
+
+        At ``span = L > 1`` one trellis step covers L positions.  For a branch
+        emitting super-label ``s`` the best member of the class is found by
+        exhaustion over the ``4^(L-1)`` stored-label assignments -- exact and
+        slow, which is what an oracle is for.  The vectorised encoder does the
+        same minimisation as a min-plus fold over Z/4; the two must agree on
+        the summed squared error to the digit.
         """
+        targets = list(targets)
+        if span < 1 or len(targets) % span:
+            raise GrammarError(
+                f"{len(targets)} positions is not a whole number of span-{span} "
+                "super-symbols"
+            )
         subsets = self.subsets
         n_states, inf = self.code.states, float("inf")
         cost = [0.0] + [inf] * (n_states - 1)
-        back: "list[list[tuple[int, int, int]]]" = []
+        back: "list[list[tuple[int, int, tuple[tuple[int, int], ...]]]]" = []
 
+        # Per position, per subset: the best point and its error.  Independent
+        # of the trellis state, so it is computed once per position.
+        per_position = []
         for target in targets:
+            best = []
+            for subset in range(SUBSET_COUNT):
+                best_point, best_err = 0, inf
+                for point, anchor in enumerate(subsets[subset]):
+                    err = self._reachable_value_error(anchor, target, completion)
+                    if err < best_err:
+                        best_point, best_err = point, err
+                best.append((best_err, best_point))
+            per_position.append(best)
+
+        for start in range(0, len(targets), span):
+            block = per_position[start : start + span]
+            # For each super-label: the cheapest label assignment whose sum is
+            # that label, as (error, ((label, point) per position)).
+            by_label: "list[tuple[float, tuple]]" = [(inf, ())] * SUBSET_COUNT
+            for stored in _label_assignments(span - 1):
+                first = (-sum(stored)) % SUBSET_COUNT
+                for super_label in range(SUBSET_COUNT):
+                    label_0 = (super_label + first) % SUBSET_COUNT
+                    labels = (label_0,) + stored
+                    err = sum(block[i][labels[i]][0] for i in range(span))
+                    if err < by_label[super_label][0]:
+                        by_label[super_label] = (
+                            err,
+                            tuple((labels[i], block[i][labels[i]][1]) for i in range(span)),
+                        )
             new_cost = [inf] * n_states
-            step: "list[tuple[int, int, int]]" = [(-1, 0, 0)] * n_states
+            step: "list[tuple[int, int, tuple]]" = [(-1, 0, ())] * n_states
             for state in range(n_states):
                 here = cost[state]
                 if here == inf:
                     continue
                 for select in (0, 1):
-                    nxt, subset = self.code.step(state, select)
-                    best_point, best_err = 0, inf
-                    for point, anchor in enumerate(subsets[subset]):
-                        err = self._reachable_value_error(anchor, target, completion)
-                        if err < best_err:
-                            best_point, best_err = point, err
-                    total = here + best_err
+                    nxt, super_label = self.code.step(state, select)
+                    err, fields = by_label[super_label]
+                    total = here + err
                     if total < new_cost[nxt]:
                         new_cost[nxt] = total
-                        step[nxt] = (state, select, best_point)
+                        step[nxt] = (state, select, fields)
             cost = new_cost
             back.append(step)
 
@@ -251,11 +319,44 @@ class TCQ:
         sse, state = cost[end], end
         bits_rev, anchors_rev = [], []
         for step in reversed(back):
-            prev, select, point = step[state]
-            _, subset = self.code.step(prev, select)
-            anchors_rev.append(subsets[subset][point])
-            for shift in range(self.point_bits):
-                bits_rev.append((point >> shift) & 1)
-            bits_rev.append(select)
+            prev, select, fields = step[state]
+            # Emit the super-symbol's bits in reverse, position by position.
+            for position in range(span - 1, -1, -1):
+                label, point = fields[position]
+                anchors_rev.append(subsets[label][point])
+                for shift in range(self.point_bits):
+                    bits_rev.append((point >> shift) & 1)
+                if position:
+                    bits_rev.append(label & 1)
+                    bits_rev.append(label >> 1)
+                else:
+                    bits_rev.append(select)
             state = prev
         return bits_rev[::-1], anchors_rev[::-1], sse
+
+
+def body_bits(rate: int, positions: int, span: int = 1) -> int:
+    """Bits the body spends on ``positions`` codes at ``rate`` and ``span``.
+
+    ``span * rate + span - 1`` per super-symbol: one select bit, ``span - 1``
+    two-bit stored labels, ``span`` point fields of ``rate - 1`` bits.  At
+    ``span = 1`` this is ``rate * positions``, the per-position trellis.
+    """
+    if span < 1:
+        raise GrammarError(f"span must be positive, got {span}")
+    if positions % span:
+        raise GrammarError(
+            f"{positions} positions is not a whole number of span-{span} "
+            "super-symbols"
+        )
+    return (span * rate + span - 1) * (positions // span)
+
+
+def _label_assignments(count: int):
+    """Every tuple of ``count`` subset labels, in lexicographic order."""
+    if count == 0:
+        yield ()
+        return
+    for head in range(SUBSET_COUNT):
+        for tail in _label_assignments(count - 1):
+            yield (head,) + tail

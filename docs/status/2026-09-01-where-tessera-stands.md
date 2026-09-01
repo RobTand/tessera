@@ -193,34 +193,38 @@ gain/cost **7.7×** — but its mechanism is "promote the layers that need it", 
 4. Therefore: encoder first. The backend and the rate-ceiling work are both
    gated on the same harness re-run.
 
-## Next, in order (rewritten 21:50 UTC after the limits computation)
+## Next, in order (rewritten 23:40 UTC after the wire build)
 
-`docs/measurements/tessera-theoretical-limits-2026-09-01.md` changed the
-order. The weight-space encoder is at its floor (≤2% left at the current
-wire); same-size wire changes cap near 1.05× because the E2M1×2 alphabet
-absorbs extra rate at ~45% efficiency; the tile's plane is a 1.365×
-hardware tax on stationary weights that nothing FP4-native buys back. The
-one large lever left for the served metric is output-space compensation,
-whose ceiling is 1.91× with a known Hessian and 1.08× realised with the
-4k-token one we have.
+The index-plane measurement (`docs/measurements/tessera-index-plane-2026-09-01.md`)
+overturned the "same-size wire changes cap near 1.05×" reading: that number
+was a per-32 loading loss, not a limit. Halving the plane's *bytes* at per-16
+granularity is lossless, and the freed quarter-bit on Wei's span-2 partition
+is the same-size lever the limits doc said did not exist. **It is built and
+default-on** (schema minor 1, `docs/measurements/tessera-wire-default-2026-09-01.md`):
+the production encoder measures **1.125× over today's default at 4.0 bpp**
+on the six GLM experts, and the W4A4 gap to EXL3@A4 is 1.205× → **1.137×**.
+The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
 
-1. **LDLQ with a real Hessian.** Token-scaling run
-   (`experiments/tessera_ldlq_token_scaling.py`, fit 2/4/8/14 docs, fixed
-   eval) to get the slope; then a large capture (≥64k tokens; the tokens
-   routed to each expert, shrunk towards the shared H) and the LDLQ encode
-   inside PrismaQuant's render path where per-expert activations already
-   exist for GPTQ. No wire change. Default-on when activations are present.
-   Caveat to design in: LDLQ pins a unit to the completion depth it was
-   compensated at (the embedded rate axis is not free under compensation).
-2. **Served A/B for the refit default** (refit 0 vs 4) on the
-   `tessera-served-kl-2026-09-01` harness — the promotion gate for what is
-   already default.
-3. **Wire family above 4.0 only:** flat E4M3 plane (share 1/2) + Wei L, for
-   the 4.25/4.375 disk/kernel-lane rungs (1.129×/1.162×). The 4.0 point
-   (1.047×) rides along; it is not the reason to do it. `(i+2j) mod 4` is a
-   free 0.4% to bundle into the same profile-id bump.
+1. **Kernel lane: span-2 decode.** `pack_kernel_planes` refuses span 2; the
+   Triton GEMV reads one select bit and R−1 point bits per position. Needed:
+   one select per pair, the stored label at odd positions, the derived label
+   at even ones, in `_decode_tile` / `_tuple_gemv_kernel` / the prefill GEMM,
+   bit-exact against `reconstruct_unit`, with profiler evidence before and
+   after (principle 15). The LUT plane needs nothing: it materialises to the
+   per-16 E4M3 bytes the kernel already reads.
+2. **Re-drain GLM on the new wire** (Rob's call; the merged export is a
+   different artifact under minor 1) and the **served A/B** — new default vs
+   the refit-0 export — on the `tessera-served-kl-2026-09-01` harness. That
+   is the promotion gate for both the refit and the wire.
+3. **LDLQ with a real Hessian.** Out-of-document verdict is in
+   (`tessera_ldlq_generalisation.json`: σ=1.0 gives 1.081×/1.105× on the two
+   held-out folds, 1.52× on the adjacent-halves control; σ=0.025 is harmful;
+   gain still rising at 7k rows). Large capture (≥64k tokens, per-expert
+   routed tokens shrunk towards the shared H), then the LDLQ encode inside
+   PrismaQuant's render path. Stacks with the new wire (~1.10× more, screen).
 4. **The E4M3 payload grid** (the 8-bit weight rung): `build_forest`
-   dispatches on arity, not spread; its low rungs are ~1.5× off. Same
-   limits analysis applies; untouched by today's work.
+   dispatches on arity, not spread; its low rungs are ~1.5× off. Arity-1
+   rungs now weigh 0.25 bpp more under span 2 — check the ladder still
+   prices where the allocator expects.
 5. Held: scalar-lane LUT split; delete partA/partB (ask first); ladder
    probe dispatch; box chores.
