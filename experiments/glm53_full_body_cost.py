@@ -65,11 +65,39 @@ ACT = f"{RUN}/act"
 PROBE = f"{RUN}/artifacts/probe.pkl"
 LDLQ_BLOCK = 256
 
-# (name, bits, a_side) -- a_side is how the input is perturbed at serve time.
+# (name, artifact bpp, a_side) -- ``a_side`` is how the input is perturbed at
+# serve time.  Scored here W-only (``--a-side none``); the A-side is AQUA's,
+# added in the allocator, because scoring joint AND adding AQUA counts it twice.
+#
+# **The E4M3 rungs are priced but NOT exportable, and this menu does not claim
+# otherwise.**  Pricing an unbacked rung is legitimate -- an allocator that
+# wants one is reporting a serving gap, which is the signal -- but the gap is
+# recorded here so a consumer of these numbers cannot mistake a priced rung for
+# a shippable one:
+#
+#   * ``E2M1 -> NVFP4``: has a materialiser (``tessera.decode.materialize_nvfp4``)
+#     and a measured route status (GB10 needs ``--moe-backend flashinfer_b12x``;
+#     memory ``glm-nvfp4-moe-route-status``).
+#   * ``E4M3 -> FP8_E4M3``: **has neither.**  ``materialize_nvfp4`` is the only
+#     materialiser in ``src/tessera/`` -- ``tessera/fp8.py`` is the S6b scale-word
+#     codec, not a weight-tensor path -- so no E4M3 artifact can become a stock
+#     tensor today, and no runtime has been asked what it would execute.
+#
+# An earlier draft of this comment asserted "sm89+, W8A8" for the E4M3 leg and
+# priced its activation contract at "~11.7x" the A4 one.  Both were invented at
+# the keyboard: the ratio appeared exactly once in either repo -- in that comment
+# -- and the contract was never read off any runtime's published table.  Stating
+# what a serving runtime does, without an attestation, is the thing CLAUDE.md
+# principle 14 exists to stop, so the claims are withdrawn rather than softened.
+# If the A-side ratio matters to an allocation, measure it.
 MENU = (
     ("BF16", 16.0, "none"),
     ("TESSERA_E2M1_K1_R768", 3.5, "none"),
     ("TESSERA_E2M1_K2_R896", 4.0, "none"),
+    ("TESSERA_E4M3_K1_R896", 4.0, "none"),
+    ("TESSERA_E4M3_K1_R1024", 4.5, "none"),
+    ("TESSERA_E4M3_K1_R1152", 5.0, "none"),
+    ("TESSERA_E4M3_K1_R1280", 5.5, "none"),
     ("NVFP4", 4.5, "nvfp4"),
     ("FP8_E4M3", 8.0234375, "fp8"),
 )
@@ -137,6 +165,13 @@ def ldl_for(x_fit, columns):
                      LDLQ_BLOCK)
 
 
+#: Set by ``main`` from ``--menu``/``--a-side``.  A module global rather than a
+#: parameter because ``score_unit`` is called from four places and threading a
+#: menu through all of them to run a two-format arm is more churn than the arm
+#: is worth; the run records the menu it used in its own output either way.
+ACTIVE_MENU = MENU
+
+
 def score_unit(tensors, x_fit, x_eval, compensate, guard):
     """Return {fmt: (dloss, sq_error)} for one serving unit.
 
@@ -151,7 +186,7 @@ def score_unit(tensors, x_fit, x_eval, compensate, guard):
     energy = float((x_eval * x_eval).sum(dim=1).mean())
     ldl = ldl_for(x_fit, x_eval.shape[1]) if compensate else None
     out = {}
-    for fmt, _bits, kind in MENU:
+    for fmt, _bits, kind in ACTIVE_MENU:
         fmt_obj = None if fmt == "BF16" else fr.get_format(fmt)
         xq = a_side(x_eval, kind, x_fit, fmt_obj)
         dloss, sq = 0.0, 0.0
@@ -188,10 +223,33 @@ def main():
     ap.add_argument("--compensate", action="store_true",
                     help="LDLQ-compensate the Tessera lanes (menu B)")
     ap.add_argument("--layers", default="", help="comma list, default all MoE layers")
+    ap.add_argument("--menu", default="",
+                    help="comma list of format names, default the whole menu")
+    ap.add_argument("--a-side", dest="a_side", default="served",
+                    choices=("served", "none"),
+                    help="'served' perturbs the input the way the lane executes "
+                         "it; 'none' scores every arm W-only, which is the leg "
+                         "AQUA's analytic A-side is meant to be added to. "
+                         "Scoring joint AND adding AQUA would count the "
+                         "activation term twice.")
     args = ap.parse_args()
 
     stats = load_probe()
     mapping = json.load(open(f"{MODEL}/model.safetensors.index.json"))["weight_map"]
+    global ACTIVE_MENU
+    chosen = MENU
+    if args.menu:
+        want = [v.strip() for v in args.menu.split(",")]
+        by_name = {m[0]: m for m in MENU}
+        missing = [v for v in want if v not in by_name]
+        if missing:
+            raise SystemExit(f"--menu names formats outside the menu: {missing}")
+        chosen = tuple(by_name[v] for v in want)
+    if args.a_side == "none":
+        chosen = tuple((name, bits, "none") for name, bits, _ in chosen)
+    ACTIVE_MENU = chosen
+    print("menu: " + "  ".join(f"{n}/a={k}" for n, _b, k in ACTIVE_MENU), flush=True)
+
     moe = sorted({int(k.split(".layers.")[1].split(".")[0])
                   for k in stats if ".mlp.experts.gate_up_proj" in k})
     if args.layers:
@@ -255,8 +313,9 @@ def main():
         print(f"layer {layer:>3}  {done}/{len(moe)}  "
               f"{rate:.1f}s/layer  eta {rate*(len(moe)-done)/60:.1f} min", flush=True)
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
-        json.dump(dict(units=units, menu=[list(m) for m in MENU],
+        json.dump(dict(units=units, menu=[list(m) for m in ACTIVE_MENU],
                        experts_per_layer=args.experts,
+                       a_side=args.a_side,
                        compensate=args.compensate, run=RUN),
                   open(args.out, "w"), indent=1)
 
@@ -317,8 +376,9 @@ def main():
         x_fit, x_eval, "lm_head", "lm_head")
     print("lm_head done", flush=True)
 
-    json.dump(dict(units=units, menu=[list(m) for m in MENU],
+    json.dump(dict(units=units, menu=[list(m) for m in ACTIVE_MENU],
                    experts_per_layer=args.experts,
+                   a_side=args.a_side,
                    compensate=args.compensate, run=RUN),
               open(args.out, "w"), indent=1)
     print(f"\nwrote {args.out}  ({len(units)} units, "
