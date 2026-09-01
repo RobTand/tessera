@@ -1,0 +1,41 @@
+{
+ "tensor": "model.language_model.layers.10.mlp.experts.0.gate_proj.weight",
+ "shape": [
+  2046,
+  384
+ ],
+ "rows": [
+  {
+   "k": 2,
+   "rung": 7,
+   "completion": 0,
+   "payload_bpp": 3.5,
+   "rel_err": 0.10828495770692825,
+   "encode_s": 1.1861650943756104
+  },
+  {
+   "k": 3,
+   "rung": 10,
+   "completion": 0,
+   "payload_bpp": 3.3333333333333335,
+   "rel_err": 0.1397656798362732,
+   "encode_s": 1.2152173519134521
+  },
+  {
+   "k": 3,
+   "rung": 11,
+   "completion": 0,
+   "payload_bpp": 3.6666666666666665,
+   "rel_err": 0.10205589234828949,
+   "encode_s": 1.8880863189697266
+  },
+  {
+   "k": 3,
+   "rung": 10,
+   "completion": 1,
+   "payload_bpp": 3.6666666666666665,
+   "rel_err": 0.10554478317499161,
+   "encode_s": 1.4168546199798584
+  }
+ ]
+}
