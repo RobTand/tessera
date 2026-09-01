@@ -700,3 +700,172 @@ def tessera_gemv_wide(
         LANES=lanes, VEC=vec, SPLIT_K=split_k,
     )
     return out
+
+
+def build_tuple_value_lut(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> torch.Tensor:
+    """``(history window, point) -> the code's ``arity`` decoded values``, fp32.
+
+    The scalar ``build_value_lut`` folds three lookups -- replay, anchor,
+    value -- into one table.  This folds the same three, and the k-tuple's fan
+    out with them: a code decodes to ``arity`` consecutive output rows, so the
+    table is ``arity`` floats wide and the kernel's inner loop still does one
+    load per output row.
+
+    Reading the reconstruction out of ``grid.vector`` rather than an E2M1 table
+    is what makes the kernel lane grid-agnostic: a source-matched grid is just
+    different numbers here, which is the whole reason it is reachable at all.
+    """
+    subsets, _table_next, table_sub = _replay_tables(forest, code, device)
+    grid = forest.grid
+    points = subsets.shape[1]
+    arity = grid.arity
+    subsets_cpu = subsets.tolist()
+    sub_cpu = table_sub.tolist()
+    flat: "list[float]" = []
+    for window in range(1 << (code.memory + 1)):
+        select = window & 1
+        history = window >> 1
+        # The plane's window is in stream order -- oldest row first -- while
+        # ConvCode numbers the newest bit highest.  Folding the reversal into
+        # the table costs nothing and saves it per position.
+        state = 0
+        for index in range(code.memory):
+            state |= ((history >> (code.memory - 1 - index)) & 1) << index
+        row = subsets_cpu[sub_cpu[select][state]]
+        for point in range(points):
+            flat.extend(grid.vector(forest.blocks[row[point]][0]))
+    return torch.tensor(flat, dtype=torch.float32, device=device)
+
+
+@triton.jit
+def _tuple_gemv_kernel(
+    x_ptr, select_ptr, point_ptr, lut_ptr, scale_ptr, out_ptr,
+    global_scale, rows, steps, cols,
+    memory: tl.constexpr, rate: tl.constexpr, arity: tl.constexpr,
+    half: tl.constexpr, pad: tl.constexpr,
+    LANES: tl.constexpr, VEC: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """GEMV over a k-tuple body: ``VEC`` codes, ``VEC * arity`` output rows.
+
+    The scalar wide kernel reads one select bit and ``rate-1`` point bits per
+    output row.  Here both are per *code*, so ``arity`` rows share them and the
+    plane traffic per row falls by ``arity`` while the LUT traffic is unchanged.
+    That is why a k-tuple body is not more expensive to decode than a scalar one
+    despite spending more bits per code -- it spends fewer per weight.
+
+    Two constant-shift facts hold this together, and both are asserted by the
+    wrapper rather than assumed:
+
+    - ``base`` is a multiple of ``VEC`` and ``steps % 8 == 0``, so the point
+      field of code ``base`` starts on a byte and the ``VEC`` fields split into
+      two halves of ``VEC/2 * (rate-1)`` bits, each fitting an int32.
+    - the select plane's pad is ``SELECT_PAD`` and ``memory <= pad``, so code
+      ``base``'s history begins at the fixed sub-byte offset ``pad - memory``.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    base = pid_n * LANES * VEC + tl.arange(0, LANES) * VEC       # first CODE
+    j = tl.arange(0, VEC * arity)
+    v = j // arity                        # which code within the lane
+    a = j % arity                         # which position within the code
+    offs_n = base[:, None] * arity + j[None, :]
+    live = offs_n < rows
+    live_base = base < steps
+    acc = tl.zeros((LANES, VEC * arity), dtype=tl.float32)
+
+    P: tl.constexpr = rate - 1
+    POINTS: tl.constexpr = 1 << (rate - 1)
+    HB: tl.constexpr = (VEC * (rate - 1)) // 16      # bytes per half-window
+    HALF_CODES: tl.constexpr = VEC // 2
+
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        scale_byte = tl.load(
+            scale_ptr + g * rows + offs_n, mask=live, other=0
+        ).to(tl.int32)
+        scale = tl.exp2(((scale_byte >> 3) & 0xF).to(tl.float32) - 7.0) * (
+            1.0 + (scale_byte & 0x7).to(tl.float32) / 8.0
+        )
+        for i in tl.static_range(half):
+            k = g * half + i
+            # Select plane: VEC + memory bits at the constant offset pad-memory.
+            p = k.to(tl.int64) * (steps + pad) + base.to(tl.int64) + (pad - memory)
+            b0 = tl.load(select_ptr + p // 8, mask=live_base, other=0).to(tl.int32)
+            b1 = tl.load(select_ptr + p // 8 + 1, mask=live_base, other=0).to(tl.int32)
+            b2 = tl.load(select_ptr + p // 8 + 2, mask=live_base, other=0).to(tl.int32)
+            wide = (b0 << 16) | (b1 << 8) | b2
+            window = (wide[:, None] >> (23 - pad - v[None, :])) & ((1 << (memory + 1)) - 1)
+
+            # Point plane: VEC * P bits, byte-aligned, read as two int32 halves.
+            q = k.to(tl.int64) * steps * P + base.to(tl.int64) * P
+            lo = tl.zeros((LANES,), dtype=tl.int32)
+            for t in tl.static_range(HB):
+                lo = (lo << 8) | tl.load(
+                    point_ptr + q // 8 + t, mask=live_base, other=0
+                ).to(tl.int32)
+            hi = tl.zeros((LANES,), dtype=tl.int32)
+            for t in tl.static_range(HB):
+                hi = (hi << 8) | tl.load(
+                    point_ptr + q // 8 + HB + t, mask=live_base, other=0
+                ).to(tl.int32)
+            packed = tl.where(v[None, :] < HALF_CODES, lo[:, None], hi[:, None])
+            shift = HALF_CODES * P - P * ((v % HALF_CODES) + 1)
+            pt = (packed >> shift[None, :]) & (POINTS - 1)
+
+            value = tl.load(
+                lut_ptr + (window * POINTS + pt) * arity + a[None, :],
+                mask=live, other=0.0,
+            )
+            acc += value * scale * tl.load(x_ptr + k)
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live)
+
+
+def tessera_gemv_tuple(
+    x: torch.Tensor,
+    select_plane: torch.Tensor,
+    point_plane: torch.Tensor,
+    value_lut: torch.Tensor,
+    e4m3_t: torch.Tensor,
+    global_scale: float,
+    rows: int,
+    cols: int,
+    rate: int,
+    arity: int,
+    memory: int = 6,
+    half: int = 16,
+    lanes: int = 64,
+    vec: int = 8,
+    split_k: int = 32,
+) -> torch.Tensor:
+    """``W @ x`` decoding a k-tuple body in the kernel.  See the split-K note
+    on ``tessera_gemv_wide``: the reduction is an atomic add and its low bits
+    are order-dependent."""
+    steps = rows // arity
+    if rows % arity or steps % 8:
+        raise GrammarError(
+            f"{rows} rows at arity {arity} gives {steps} codes; the column "
+            "planes need a multiple of 8 codes to stay byte-aligned"
+        )
+    if vec != 8:
+        raise GrammarError(
+            f"vec={vec}: the two-int32-halves split of the point window is "
+            "derived for VEC=8. Another width needs the shifts re-derived."
+        )
+    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
+        raise GrammarError(
+            f"rate {rate}: the point window is split into two equal byte "
+            "halves, which needs an even (rate-1) and a whole number of bytes"
+        )
+    if memory > SELECT_PAD:
+        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
+        x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        float(global_scale), rows, steps, cols,
+        memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
+        LANES=lanes, VEC=vec, SPLIT_K=split_k,
+    )
+    return out

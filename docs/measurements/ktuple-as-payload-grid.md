@@ -58,6 +58,26 @@ grammar cannot express at all.
 The rate is `(k·log2(G) − 1)/k + 0.5`, so `k` halves the quantum: k=1 over
 G ∈ {8,16,32} gives 2.5/3.5/4.5, and k=2 fills 3.0/4.0/5.0 between them.
 
+## Result 1b — the 4.0 bpp parity holds across tensors
+
+One tensor is not a result, and this is the number worth building a kernel for,
+so it was repeated on five Linears of Qwen3.8-27B layer 1 (1024×2048 slices),
+spanning MLP and attention roles and kurtosis 3.09–5.67
+(`experiments/ladder_survey.py`), each normalised to *its own* NVFP4 error:
+
+| arm | bpp | mean ratio | worst ratio |
+|---|---:|---:|---:|
+| E2M1 k=1 R=3 | 3.5 | 1.434 | 1.444 |
+| E2M1 k=2 R=7 | 4.0 | 1.110 | 1.113 |
+| free-16 k=1 R=3 | 3.5 | 1.399 | 1.417 |
+| **free-16 k=2 R=7** | **4.0** | **1.007** | **1.016** |
+| NVFP4 RTN | 4.5 | 1.000 | — |
+
+The spread is under 1% across roles, and on `gate_proj` the 4.0 bpp arm is
+*ahead* of NVFP4 outright (0.09880 vs 0.09888). **One model**, though: no other
+checkpoint is present on this box, so "holds across architectures" is not
+claimed and has not been tested.
+
 ## Result 2 — k=2 *below* its cap is dominated, for a structural reason
 
 The obvious next move — sweep R at k=2 for a finer ladder — does not work:
@@ -127,18 +147,47 @@ open; only serialisation is closed, because serialisation is where the
 ambiguity becomes real. `lloyd_max_grid` was promoted out of the measurement
 scripts for the same reason — if a grid is wire, its construction is wire.
 
+## Result 4 — the kernel decodes it, and the trade is stated not hidden
+
+`tessera_gemv_tuple` decodes a k-tuple body inside the GEMV. One select bit and
+`rate-1` point bits are now per *code*, so `arity` output rows share them and
+plane traffic per weight falls by `arity` — which is why a body that spends
+more bits per code is not more expensive to decode per weight. Bit-exact
+against `reconstruct_unit` on one-hot probes for both E2M1 and free-16 grids.
+
+`rows=17408, cols=5120` (a real Qwen3.8-27B shape), batch-1 GEMV, every arm
+swept over the same block grid — the comparator gets exactly the tuning the
+kernel being judged gets (`experiments/ktuple_kernel.py`):
+
+| kernel | bpp resident | µs | GB/s | % of 246 | error vs NVFP4 |
+|---|---:|---:|---:|---:|---:|
+| Tessera scalar k=1 R=3 | 3.5 | **231** | 169 | 68.5% | 1.43× |
+| Tessera tuple k=2 R=7 (E2M1) | 4.0 | 260 | 171 | 69.6% | 1.11× |
+| **Tessera tuple k=2 R=7 (free-16)** | **4.0** | **268** | 166 | 67.7% | **1.007×** |
+| NVFP4 comparator (matched, same author) | 4.5 | **245** | 205 | 83.2% | 1.00× |
+
+**Read this as a trade, not a win.** At 4.0 bpp the tuple kernel serves
+NVFP4-equal quality on **11.1% fewer resident bytes at a 9.4% throughput
+cost**. It is not free, and the direction of the cost is structural: NVFP4
+decodes a nibble arithmetically at ~0.5 loads per weight, while Tessera gathers
+a LUT entry per weight, so the comparator sits at 83% of peak and this sits at
+68%. Fewer bytes moved, more of them scattered.
+
+The scalar 3.5 bpp arm remains the throughput champion — 231 µs, faster than
+NVFP4 on 22% fewer bytes — but at 1.43× the error. Those are two different
+points on one curve, and which one ships is an allocator decision, not a
+kernel one.
+
 ## Limits
 
 - One tensor, one shape, weight-space `rel_err`. **No KL, no PPL, no served
   artifact.** Every number here is a screen.
-- **The kernel does not decode arity 2.** It is E2M1/R=3, so the 4.0 bpp
-  flagship is an *encoder* result with no serving path yet: history advances
-  per tuple, the point field widens from 2 bits to 6, and the LUT grows to
-  `2^(memory+R)`. That is a rework, not a parameter.
-- Free grids are kernel-lane only by construction, so the 4.0 bpp rung needs
-  the kernel work before it is servable at all.
+- Free grids are kernel-lane only by construction, so the 4.0 bpp rung is a
+  kernel-lane artifact and cannot be materialised into NVFP4.
 - k=4 is refused as a cost (65 536 anchors scored per step). The 3.25 bpp rung
   it would give is unmeasured.
+- The kernel arms are synthetic weights on one shape, batch-1 GEMV only. No
+  prefill path, no `tl.dot_scaled`, no served model.
 - The coset subset rule is unbalanced below R=cap and refuses; the stride rule
   is used there. Whether a better k-dimensional partition than either exists is
   untested — `release-vs-tuple-trellis.md` called the coset rule "a floor".

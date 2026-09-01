@@ -103,3 +103,17 @@ select plane sits at a fixed `pad - memory` bits into its byte.
   quality position at matched bytes is the k-tuple question, not this one.
 - `tl.dot_scaled` on sm_121 is untested here; this lane needs no tensor cores
   because a batch-1 GEMV is bandwidth-bound. Prefill is unaddressed.
+
+## Update 2026-08-31 — the lane decodes k-tuple bodies
+
+`tessera_gemv_tuple` extends this lane to a payload grid of arity > 1: the
+select and point fields become per *code*, so `arity` output rows share them.
+On the same shape and the same swept comparator, a 4.0 bpp k=2 body over a
+source-matched grid runs at **268 µs against NVFP4's 245 µs** — NVFP4-equal
+error (1.007× across five tensors) on **11.1% fewer resident bytes at a 9.4%
+throughput cost**. Bit-exact on one-hot probes.
+
+That is a trade rather than the strict win the 3.5 bpp arm records above, and
+the cost is structural: NVFP4 decodes arithmetically at ~0.5 loads per weight,
+Tessera gathers one LUT entry per weight. See
+`ktuple-as-payload-grid.md` for the full table and the quality survey.

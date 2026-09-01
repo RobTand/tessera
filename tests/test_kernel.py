@@ -141,3 +141,99 @@ def test_the_kernel_lane_refuses_a_body_that_carries_completion_bits(unit):
 
     with pytest.raises(GrammarError, match="full-rate"):
         build_code_lut(unit["forests"][2], CODE)
+
+
+# --- the k-tuple lane -----------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def tuple_unit(request):
+    """A k=2 body over the grid the parameter names, encoded at R = cap."""
+    from tessera.alphabet import E2M1_GRID, lloyd_max_grid, tuple_grid
+
+    base = E2M1_GRID if request.param == "E2M1" else lloyd_max_grid(16)
+    grid = tuple_grid(base, 2)
+    rate = grid.rate_cap
+    forests = {rate: build_forest(rate, grid=grid)}
+    torch.manual_seed(0)
+    rows, cols = 256, 512
+    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    encoded = encode_unit(
+        weights, forests, (rate,) * cols, CODE, rotation=RotationState.NONE,
+        with_diagonals=False, completion=0,
+    )
+    from tessera.wire import nvfp4_scale_bytes
+
+    e4m3, global_scale = nvfp4_scale_bytes(
+        encoded.scale_base, encoded.scale_refine, encoded.group, encoded.half
+    )
+    return {
+        "unit": encoded, "forests": forests, "rate": rate, "rows": rows,
+        "cols": cols, "global_scale": global_scale,
+        "scales": e4m3.reshape(rows, cols // 16).t().contiguous(),
+        "reference": reconstruct_unit(encoded, forests, CODE, completion=0).float(),
+    }
+
+
+@pytest.mark.parametrize("tuple_unit", ["E2M1", "free-16"], indirect=True)
+def test_tuple_one_hot_gemv_is_bit_exact(tuple_unit):
+    """A code covers two rows, so an off-by-one in the fan-out is invisible
+    in aggregate and total per column.  One-hot is what exposes it."""
+    from tessera.kernel import (
+        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+    )
+
+    rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
+    select, point = pack_kernel_planes(tuple_unit["unit"].body_bits, rate=rate)
+    lut = build_tuple_value_lut(tuple_unit["forests"][rate], CODE)
+    for k in (0, 1, 5, 7, 8, 9, 33, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = tessera_gemv_tuple(
+            x, select, point, lut, tuple_unit["scales"],
+            tuple_unit["global_scale"], rows, cols, rate=rate, arity=2,
+            lanes=8, split_k=4,
+        )
+        assert torch.equal(got, tuple_unit["reference"][:, k]), f"column {k}"
+
+
+@pytest.mark.parametrize("tuple_unit", ["free-16"], indirect=True)
+def test_tuple_gemv_matches_the_reference_decode(tuple_unit):
+    from tessera.kernel import (
+        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+    )
+
+    rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
+    select, point = pack_kernel_planes(tuple_unit["unit"].body_bits, rate=rate)
+    torch.manual_seed(1)
+    x = torch.randn(cols, device="cuda")
+    got = tessera_gemv_tuple(
+        x, select, point, build_tuple_value_lut(tuple_unit["forests"][rate], CODE),
+        tuple_unit["scales"], tuple_unit["global_scale"], rows, cols,
+        rate=rate, arity=2, lanes=8, split_k=4,
+    )
+    want = tuple_unit["reference"] @ x
+    assert (got - want).norm() / want.norm() < 1e-5
+
+
+@pytest.mark.parametrize("tuple_unit", ["E2M1"], indirect=True)
+def test_tuple_kernel_refuses_shapes_its_shifts_do_not_cover(tuple_unit):
+    from tessera.errors import GrammarError
+    from tessera.kernel import (
+        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+    )
+
+    rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
+    select, point = pack_kernel_planes(tuple_unit["unit"].body_bits, rate=rate)
+    lut = build_tuple_value_lut(tuple_unit["forests"][rate], CODE)
+    x = torch.zeros(cols, device="cuda")
+    with pytest.raises(GrammarError, match="derived for VEC=8"):
+        tessera_gemv_tuple(
+            x, select, point, lut, tuple_unit["scales"], tuple_unit["global_scale"],
+            rows, cols, rate=rate, arity=2, vec=4,
+        )
+    with pytest.raises(GrammarError, match="multiple of 8 codes"):
+        tessera_gemv_tuple(
+            x, select, point, lut, tuple_unit["scales"], tuple_unit["global_scale"],
+            rows=100, cols=cols, rate=rate, arity=2,
+        )
