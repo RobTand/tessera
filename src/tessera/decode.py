@@ -340,10 +340,27 @@ def decode_codes_mixed(
     narrow = grid.size <= 256
     code_dtype = torch.uint8 if narrow else torch.int32
     codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
+    # The depth the unit was WRITTEN at bounds the depth it can be read at.
+    # ``completion_bits`` at level c is an index into ``reachable(anchor, c)``,
+    # and the descendant order is a tree read most-significant-bit first, so the
+    # same integer addresses a *different* node at a different level: reading a
+    # level-1 index as a level-2 index lands in the wrong subtree.  This used to
+    # default to the full capacity regardless of what the encoder spent, and it
+    # was invisible -- ``encode_linear``'s round-trip check compares two decodes
+    # that both made the assumption, so both were wrong identically.  Below the
+    # rate cap it made every completion level decode as garbage, which is why
+    # spending completion bits appeared to make the error *worse*.
+    #
+    # ``completion_limit`` is recovered from the artifact itself (the COMPLETION
+    # plane's recorded element count), so a reader holding only bytes has it.
+    # An explicit ``completion`` argument still truncates -- but it can only
+    # truncate, never reach past what was written.
     for present in sorted(set(unit.rates)):
         picked = forests[present]
         depth = picked.cap - picked.rate
-        level = depth if completion is None else min(completion, depth)
+        limit = getattr(unit, "completion_limit", None)
+        written = depth if limit is None else min(limit, depth)
+        level = written if completion is None else min(completion, written)
         which = torch.nonzero(rates == present).squeeze(1)
         body = unit.body_bits[:, which].contiguous()
         comp = unit.completion_bits[:, which].contiguous()

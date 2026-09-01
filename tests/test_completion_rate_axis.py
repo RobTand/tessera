@@ -138,3 +138,48 @@ def test_the_depth_is_solved_from_the_recorded_element_count():
 def test_an_impossible_element_count_refuses_rather_than_guessing():
     with pytest.raises(GrammarError):
         completion_limit_from_elements(7, (3, 2, 1), 8, 3)
+
+
+# --- the depth must survive the round trip, not just the plane -------------
+
+@pytest.mark.parametrize("name,grid", FAMILIES)
+def test_error_falls_monotonically_with_the_completion_depth(name, grid):
+    """A completion bit refines within the anchor's own descendant tree, and
+    the Viterbi metric at depth ``c+1`` scores every path by its best depth-
+    ``c+1`` descendant.  The depth-``c`` optimum is therefore feasible at
+    ``c+1``, so squared error is non-increasing in the depth -- an encoder
+    property, checkable without reference to any baseline.
+
+    It did not hold.  ``decode_codes_mixed`` defaulted to the full capacity
+    whatever depth the encoder spent, and a level-``c`` index read at a deeper
+    level addresses a different subtree, so deeper completion decoded to
+    *worse* weights.  ``encode_linear``'s round-trip check could not see it:
+    it compares two decodes that shared the assumption.
+    """
+    torch.manual_seed(1)
+    w = (torch.randn(64, 256) * 0.05).float()
+    q256 = 256 * grid.rate_cap // grid.arity // 2         # mid-ladder
+    rates, forests = _plan_for(grid, q256, w.shape[1])
+    errors = []
+    for completion in (0, 1, 2, None):
+        unit = encode_unit(w, forests, rates, CODE, rotation=RotationState.NONE,
+                           completion=completion, group=32, half=16)
+        recon = reconstruct_unit(unit, forests, CODE)
+        errors.append(float(((recon - w) ** 2).sum()))
+    assert errors == sorted(errors, reverse=True), dict(
+        zip(("c0", "c1", "c2", "cF"), errors))
+
+
+@pytest.mark.parametrize("name,grid", FAMILIES)
+def test_bytes_alone_decode_to_the_encoders_reconstruction_at_every_depth(name, grid):
+    """The reader gets the depth from the artifact, never from the caller."""
+    q256 = 256 * grid.rate_cap // grid.arity // 2
+    w = _weight()
+    rates, forests = _plan_for(grid, q256, w.shape[1])
+    for completion in (0, 1, 2, None):
+        unit = encode_unit(w.float(), forests, rates, CODE,
+                           rotation=RotationState.NONE, completion=completion,
+                           group=32, half=16)
+        blob = _build(grid, q256, completion, name).blob
+        assert torch.equal(read_unit_artifact(blob, device=w.device),
+                           reconstruct_unit(unit, forests, CODE))
