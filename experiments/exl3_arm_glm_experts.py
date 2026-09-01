@@ -1,4 +1,18 @@
-"""EXL3's own functional error on the same GLM experts, same eval tokens.
+"""SUPERSEDED 2026-09-01 by ``exl3_arm_glm_experts_v2.py``.
+
+This reads Mia's TR3 artifact directly and gets the garbage signature --
+norm_ratio 0.999, cos 0.001, rel_err ~sqrt(2).  The reader is not at fault: it
+reproduces the quantizer's own verified reconstruction to rel 0.00044 / cos
+1.0000, it is not an expert permutation (top |cos| over all 288 experts is
+0.0014), and the version and MCG codebook match the artifact's own ABI.  The
+artifact declares ``serving_reader_qualified: false`` -- its bytes were
+verified, its decode never was.  v2 quantizes the same weights with EXL3's own
+quantizer instead: a fairer arm and a stronger one.  Kept as the record of what
+was excluded.  See docs/measurements/exl3-head-to-head-2026-09-01.md.
+
+Original docstring follows.
+
+EXL3's own functional error on the same GLM experts, same eval tokens.
 
 This is the comparator that matters.  Tessera's kernel lane and EXL3 are both
 **W4A16** at ~4.0 bpw, so unlike the NVFP4 comparison there is no activation-

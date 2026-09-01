@@ -80,12 +80,16 @@ and PrismaQuant ships attention at FP8 routinely.
 
 ## What this does NOT claim
 
-- **The expert format is not settled.** Tessera at W4A16 measured **0.9038×**
-  NVFP4-as-served weight error on real GLM expert activations (held out, both
-  arms at production best) — but the comparison against **EXL3, which is what
-  Mia actually ships, is unresolved**: five offline decode probes failed to
-  reproduce EXL3's reconstruction and the stop rule was applied. The honest
-  route to that number is a served KL, not offline decoding.
+- **The expert format is not settled, and it moved against Tessera.** Tessera
+  at W4A16 measured **0.9038×** NVFP4-as-served weight error on real GLM expert
+  activations (held out, both arms at production best) — but NVFP4 was never
+  the deciding comparator. **Against EXL3 — what Mia actually ships — Tessera
+  loses 1.72× at matched bpw**: 0.09738 at 4.0000 vs 0.05653 at 4.0117,
+  measured 2026-09-01 by quantizing the same weights with EXL3's own quantizer
+  (`exl3-head-to-head-2026-09-01.md`). The earlier "five offline decode probes
+  failed" note was chasing Mia's *artifact*, which does not reconstruct under
+  the exllamav3 version its own ABI names; the arm that settled it does not
+  read her artifact at all.
 - **This is arithmetic on byte counts, not a quality measurement.** It says
   what the allocator *can* spend, not what it *should*. AURA decides that from
   measured per-Linear costs; the real-KL gate decides what ships.

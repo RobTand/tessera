@@ -92,8 +92,15 @@ constraint, the activation contract is.
 
 This also reframes the whole comparison. Mia's artifact is strong partly
 *because* EXL3 is W4A16. Tessera vs NVFP4 was never quite the question;
-**Tessera vs EXL3, both W4A16 at ~4.0 bpw, is** — and it remains unmeasured
-(`exl3-decode-invocation-unsolved`).
+**Tessera vs EXL3, both W4A16 at ~4.0 bpw, is.**
+
+**Measured 2026-09-01, and Tessera loses: EXL3 at 4.0117 bpw scores 0.05653
+against Tessera 4.0's 0.09738 — 1.72× at matched size**, on these same six
+projections and the same held-out tokens. EXL3 also beats the production NVFP4
+render at 4.5 bpp by 1.17×. Activation-awareness accounts for at most 42% of
+the gap (`exl3-head-to-head-2026-09-01.md`). The arm quantizes with EXL3's own
+quantizer rather than decoding Mia's artifact, which does not reconstruct under
+the exllamav3 version its own ABI names.
 
 ### What this does not establish
 
