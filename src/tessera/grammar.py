@@ -90,7 +90,23 @@ def descendant_set_size(completion: int) -> int:
     return 1 << completion
 
 
-def _check_rate(rate: int, cap: int = C_FULL_BITS) -> None:
+def _check_rate(rate: int, cap: "int | None" = C_FULL_BITS) -> None:
+    """Bound a rate.  ``cap=None`` defers the *upper* bound, deliberately.
+
+    The upper bound is a property of the payload grid (``rate_cap =
+    payload_bits - 1``), and one caller legitimately does not have the grid
+    yet: the manifest parser.  A grid is committed in ``encoder_profile_id``
+    and recovered *after* the manifest validates, so requiring a cap there
+    would mean either inventing one (silently refusing every rung above 3) or
+    duplicating the grid's cap as a second wire field that could disagree with
+    it.  Deferring is not dropping: ``AnchorForest.__post_init__`` applies the
+    real cap the moment the grid is resolved, and it does so before any code is
+    decoded, so nothing reaches a weight on an unbounded rate.
+    """
+    if rate < 1:
+        raise GrammarError(f"rate {rate} is below the shaped domain (min 1)")
+    if cap is None:
+        return
     legal = LEGAL_RATES if cap == C_FULL_BITS else tuple(range(1, cap + 1))
     if rate not in legal:
         raise GrammarError(
@@ -132,7 +148,7 @@ class RateSchedule:
 
 
 def bresenham_rate_schedule(
-    root: Fraction, n_columns: int, cap: int = C_FULL_BITS
+    root: Fraction, n_columns: int, cap: "int | None" = C_FULL_BITS
 ) -> tuple[int, ...]:
     """Canonical exact quota for ``root`` over ``n_columns`` columns.
 
@@ -183,7 +199,7 @@ def bresenham_rate_schedule(
 
 
 def validate_rate_schedule(
-    rates: tuple[int, ...], root: Fraction, cap: int = C_FULL_BITS
+    rates: tuple[int, ...], root: Fraction, cap: "int | None" = C_FULL_BITS
 ) -> None:
     """Raise unless every rate is legal for ``cap`` and the quota is exact."""
     if not rates:

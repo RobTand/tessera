@@ -98,23 +98,36 @@ def _counts_for(
     descendant_bytes: int,
     max_released: int = 0,
     cap: int = C_FULL_BITS,
+    arity: int = 1,
 ) -> int:
+    # ``geometry`` is declared in weight space.  BODY and COMPLETION are
+    # per-CODE planes, and a code covers ``arity`` consecutive rows, so they are
+    # sized in *steps*; the scale planes and DIAG_SV stay in weight space.
+    # Sizing a per-code plane in weight space is not a rounding error -- it
+    # over-declares the plane by exactly ``arity``, and then every plane offset
+    # after it is wrong.
+    if arity < 1 or geometry.rows % arity:
+        raise GrammarError(
+            f"geometry declares {geometry.rows} rows, not a whole number of "
+            f"arity-{arity} tuples"
+        )
     rows = geometry.rows
+    steps = rows // arity
     positions = geometry.positions
     if kind is PlaneKind.ALPHABET:
         return alphabet_bytes
     if kind is PlaneKind.DESCENDANT:
         return descendant_bytes
     if kind is PlaneKind.BODY:
-        return sum(rates) * rows
+        return sum(rates) * steps
     if kind is PlaneKind.SCALE_BASE:
         if spec is not None and not spec.with_scale_base:
             return 0
         return positions // geometry.group_weights
     if kind is PlaneKind.COMPLETION:
         if spec is None:
-            return sum(completion_capacity(rate, cap) for rate in rates) * rows
-        return sum(spec.completion_bits) * rows
+            return sum(completion_capacity(rate, cap) for rate in rates) * steps
+        return sum(spec.completion_bits) * steps
     if kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
         if spec is not None and not spec.with_diagonals:
             return 0
@@ -171,6 +184,7 @@ def build_planes(
     payloads: "dict[PlaneKind, bytes] | None" = None,
     with_diagonals: bool = True,
     cap: int = C_FULL_BITS,
+    arity: int = 1,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
 
@@ -199,6 +213,7 @@ def build_planes(
             len(descendant_blob),
             max_released,
             cap=cap,
+            arity=arity,
         )
         if not with_diagonals and kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
             total = 0
@@ -264,6 +279,7 @@ def build_terminal(
     descendant_bytes: int,
     plane_region: bytes | None = None,
     cap: int = C_FULL_BITS,
+    arity: int = 1,
 ) -> TerminalRecord:
     """Compute a terminal's exact per-plane counts, bytes, bpp, and digest.
 
@@ -293,7 +309,7 @@ def build_terminal(
     for kind in CANONICAL_PLANE_ORDER:
         count = _counts_for(
             kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
-            cap=cap,
+            cap=cap, arity=arity,
         )
         elements.append(count)
         total_bytes += by_kind[kind].byte_length(count)

@@ -81,6 +81,7 @@ __all__ = [
     "tuple_grid",
     "lloyd_max_grid",
     "grid_digest",
+    "SERIALISABLE_GRIDS",
 ]
 
 _E2M1_MAGNITUDES = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
@@ -383,6 +384,30 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
     return tuple(sigma * ppf((index + 0.5) / count) for index in range(count))
 
 
+#: The grids a Tessera artifact may be serialised over.  **Closed by
+#: construction**: every entry is a permanent wire commitment, because the
+#: ALPHABET/DESCENDANT planes carry codes and the grid is what turns a code
+#: into a value.  Membership is what ``encoder_profile_id`` binds and what
+#: ``read_unit_artifact`` searches, so a grid that is not here cannot be
+#: written *or* read -- both directions fail closed rather than guessing.
+#:
+#: Two entries today, both derivable from a name and an arity, which is why
+#: the reader can rebuild them without the values on the wire:
+#:   * ``E2M1`` -- arity 1, 16 codes, cap 3.  Every artifact built before the
+#:     grid was bound into the profile id used this one implicitly.
+#:   * ``E2M1^2`` -- arity 2, 256 codes, cap 7.  The stock-lane rung: a code
+#:     covers two consecutive rows, and at R=7 the body is 4.0 bpp.
+#:
+#: **Free (Lloyd-Max) grids are deliberately absent.**  Their values are fitted
+#: to the tensor and are not reproducible by a reader from any identifier, so
+#: admitting one needs the values themselves on the wire -- a VALUES plane, a
+#: second schema change.  That is a deferral, not an oversight.
+SERIALISABLE_GRIDS: "dict[str, PayloadGrid]" = {
+    grid_digest(grid): grid
+    for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2))
+}
+
+
 @dataclass(frozen=True)
 class AnchorForest:
     """One rate's alphabet plus its nested descendant map.
@@ -462,38 +487,37 @@ class AnchorForest:
         return self.blocks[anchor][index << (depth - len(bits))]
 
     def _refuse_unserialisable(self) -> None:
-        """The one hard line: only implicit-E2M1 may reach the wire today.
+        """The one hard line: only a grid the wire commits to may be written.
 
-        These planes carry **codes**.  Code -> value comes from the grid, and
-        no plane, header or descriptor records which grid that was, so two
-        artifacts over different grids are byte-indistinguishable and the wrong
-        one decodes to plausible wrong weights rather than to an error.  Until
-        the family descriptor carries ``grid_digest``, anything but the grid
-        every existing artifact was built with is refused here -- at the
-        serialisation boundary, which is the only place the ambiguity becomes
-        real.  Encoding, decoding and measuring on other grids stay open.
+        These planes carry **codes**.  Code -> value comes from the grid, so
+        two artifacts over different grids would be byte-indistinguishable and
+        the wrong one would decode to plausible wrong weights rather than to an
+        error.  That ambiguity is now closed at its root: ``encoder_profile_id``
+        absorbs ``grid_digest``, so the grid *is* on the wire, and a reader
+        recovers it by searching :data:`SERIALISABLE_GRIDS` for a digest match
+        exactly as it recovers the ConvCode.  What remains is the membership
+        test -- a grid outside that registry has no identity a reader can
+        resolve, so it is refused here, at the serialisation boundary.
+        Encoding, decoding and measuring on any grid stay open.
         """
-        if self.grid.arity > 1:
+        digest = grid_digest(self.grid)
+        if digest not in SERIALISABLE_GRIDS:
             raise GrammarError(
-                f"grid {self.grid.name} has arity {self.grid.arity}: a code "
-                "covers several positions and the layout has no field saying "
-                "so. Serialising a k-tuple body is a schema change (family "
-                "descriptor, arity, grid digest), not a cast."
+                f"grid {self.grid.name} (arity {self.grid.arity}, "
+                f"{self.grid.size} codes, digest {digest[:16]}) is not in "
+                "SERIALISABLE_GRIDS, so no reader can resolve its digest back "
+                "to a code->value map and the artifact would decode to "
+                "plausible wrong weights. A fitted/free grid needs its values "
+                "on the wire (a VALUES plane) before it can serialise; a "
+                "derivable one needs adding to the registry, which is a "
+                "permanent wire commitment."
             )
         if self.grid.size > 256:
             raise GrammarError(
                 f"grid {self.grid.name} has {self.grid.size} codes: the "
                 "ALPHABET/DESCENDANT planes are one byte per code and cannot "
                 "carry it. A wider code space is a schema change (wider plane "
-                "element, family descriptor, grid digest), not a cast."
-            )
-        if grid_digest(self.grid) != grid_digest(E2M1_GRID):
-            raise GrammarError(
-                f"grid {self.grid.name} is not the E2M1 grid every artifact on "
-                "the wire is implicitly decoded against, and no plane records "
-                f"which grid was used (digest {grid_digest(self.grid)[:16]}). "
-                "Give the family descriptor a grid digest before serialising "
-                "this -- silent misdecode is the failure mode, not a load error."
+                "element), not a cast."
             )
 
     def alphabet_plane(self) -> bytes:

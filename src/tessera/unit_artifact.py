@@ -19,7 +19,16 @@ from fractions import Fraction
 
 import torch
 
-from .alphabet import alphabet_size, build_forest, AnchorForest
+from .alphabet import (
+    SERIALISABLE_GRIDS,
+    AnchorForest,
+    E2M1_GRID,
+    PayloadGrid,
+    alphabet_size,
+    build_forest,
+    grid_digest,
+)
+from .grammar import completion_capacity, validate_rate_schedule
 from .container import parse, serialize
 from .decode import reconstruct_unit
 from .encode import EncodedUnit
@@ -40,7 +49,11 @@ from .wire import pack_body, pack_fp16, pack_uniform, unpack_body, unpack_fp16, 
 __all__ = ["build_unit_artifact", "read_unit_artifact", "encoder_profile_id"]
 
 
-def encoder_profile_id(code: ConvCode, rates: "tuple[int, ...]") -> bytes:
+def encoder_profile_id(
+    code: ConvCode,
+    rates: "tuple[int, ...]",
+    grid: PayloadGrid = E2M1_GRID,
+) -> bytes:
     """Digest the decisions a reader must reproduce exactly.
 
     The convolutional code's memory order and generators are **wire**: two
@@ -48,6 +61,23 @@ def encoder_profile_id(code: ConvCode, rates: "tuple[int, ...]") -> bytes:
     other, silently, into plausible-looking weights.  ``trellis.py`` says they
     are "covered by the encoder profile id" -- this is the function that makes
     that sentence true rather than aspirational.
+
+    The **payload grid** is wire for the identical reason, and is the more
+    dangerous of the two: the ALPHABET and DESCENDANT planes store codes, and
+    only the grid says what a code reconstructs to.  Two artifacts over
+    different grids were byte-indistinguishable until this digest covered the
+    grid -- which is why ``grid_digest``'s docstring names this function as the
+    thing that has to absorb it, and why ``_refuse_unserialisable`` fails
+    closed on any grid a reader cannot resolve.  The grid also fixes ``arity``
+    (how many weights a code covers) and ``rate_cap`` (the completion width),
+    so binding it here is what lets the reader recover the *layout* and not
+    merely the values.
+
+    Digesting the grid unconditionally re-bases every profile id, including
+    arity-1 E2M1's.  Nothing has shipped over the old language, and an artifact
+    written under it now fails closed in ``read_unit_artifact`` -- which
+    searches ConvCode x grid and reports both dimensions -- rather than
+    decoding against a grid it merely assumed.
     """
     payload = "|".join(
         [
@@ -55,6 +85,7 @@ def encoder_profile_id(code: ConvCode, rates: "tuple[int, ...]") -> bytes:
             f"conv:m={code.memory},g={','.join(oct(g) for g in code.generators)}",
             f"forest:build_forest/value-order-dyadic",
             f"rates:{','.join(str(r) for r in sorted(set(rates)))}",
+            f"grid:{grid_digest(grid)},arity={grid.arity},size={grid.size}",
         ]
     )
     return hashlib.sha256(payload.encode()).digest()
@@ -68,7 +99,12 @@ def _forest_planes(rates: "tuple[int, ...]", forests: "dict[int, AnchorForest]")
     return alphabet, descendant
 
 
-def _read_forest_planes(rates: "tuple[int, ...]", alphabet: bytes, descendant: bytes):
+def _read_forest_planes(
+    rates: "tuple[int, ...]",
+    alphabet: bytes,
+    descendant: bytes,
+    grid: PayloadGrid = E2M1_GRID,
+):
     """Rebuild the forests from the two charged planes -- not by re-deriving them.
 
     §6 stores the alphabet and the descendant map *in the artifact* precisely so
@@ -77,17 +113,18 @@ def _read_forest_planes(rates: "tuple[int, ...]", alphabet: bytes, descendant: b
     hide any disagreement between what was encoded and what was written.
     """
     present = sorted(set(rates))
+    cap = grid.rate_cap
     out, a_off, d_off = {}, 0, 0
     for rate in present:
-        n_anchors = alphabet_size(rate)
-        depth = 1 << (3 - rate)
+        n_anchors = alphabet_size(rate, cap)
+        depth = 1 << completion_capacity(rate, cap)
         a_off += n_anchors
         block = descendant[d_off : d_off + n_anchors * depth]
         d_off += n_anchors * depth
         blocks = tuple(
             tuple(block[i * depth : (i + 1) * depth]) for i in range(n_anchors)
         )
-        out[rate] = AnchorForest(rate=rate, blocks=blocks)
+        out[rate] = AnchorForest(rate=rate, blocks=blocks, grid=grid)
     if a_off != len(alphabet) or d_off != len(descendant):
         raise GrammarError(
             f"forest planes hold {len(alphabet)}/{len(descendant)} bytes, the "
@@ -107,9 +144,20 @@ def build_unit_artifact(
     container: ContainerClass = ContainerClass.GRIDBOOK,
 ):
     """Serialise one encoded Linear.  Returns ``(manifest, region, blob)``."""
-    rows, cols = unit.body_bits.shape
+    # Every per-code plane is one row per CODE, and a code covers ``arity``
+    # consecutive rows of the weight.  ``geometry`` is declared in **weight**
+    # space -- the scale planes are per position, ``positions`` is rows*columns,
+    # and ``quantizable_params`` is the denominator the exact-byte accountant
+    # divides by.  Recording the step count here instead would halve the
+    # declared parameter count at arity 2 and inflate every reported bpp by the
+    # arity, which is the one number this format exists to state honestly.
+    grid = next(iter(forests.values())).grid
+    if any(f.grid != grid for f in forests.values()):
+        raise GrammarError("a unit's rate schedule must share one payload grid")
+    steps, cols = unit.body_bits.shape
+    rows = steps * grid.arity
     rates = unit.rates
-    completion_widths = tuple(3 - r for r in rates)
+    completion_widths = tuple(completion_capacity(r, grid.rate_cap) for r in rates)
     geometry = Geometry(
         rows=rows,
         columns=cols,
@@ -142,6 +190,8 @@ def build_unit_artifact(
         max_released=unit.released_positions,
         payloads=payloads,
         with_diagonals=has_diagonals,
+        cap=grid.rate_cap,
+        arity=grid.arity,
     )
     region = build_plane_region(planes, payloads)
     spec = TerminalSpec(
@@ -154,10 +204,10 @@ def build_unit_artifact(
     )
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
-        plane_region=region,
+        plane_region=region, cap=grid.rate_cap, arity=grid.arity,
     )
     manifest = Manifest(
-        encoder_profile_id=encoder_profile_id(code, rates),
+        encoder_profile_id=encoder_profile_id(code, rates, grid),
         branch=BranchIdentity(
             unit_id=unit_id,
             root_q256=q256,
@@ -188,31 +238,55 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     manifest, terminal = art.manifest, art.terminal
     geometry, rates = manifest.geometry, manifest.rates
     rows, cols = geometry.rows, geometry.columns
-    completion_widths = tuple(3 - r for r in rates)
 
     chunks = {}
     for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
         chunks[descriptor.kind] = art.plane_region[offset : offset + content]
 
-    forests = _read_forest_planes(
-        rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT]
-    )
-
-    # The ConvCode is not stored field-by-field; the profile id commits to it.
-    # Recovering it by search over the published orders and checking the digest
-    # is a *verification*, not a guess: a mismatch means the artifact was made
-    # by an encoder this reader does not implement, and it fails closed.
-    code = None
+    # Neither the ConvCode nor the payload grid is stored field-by-field; the
+    # profile id commits to both.  Recovering them by search over the published
+    # orders and the closed grid registry, then checking the digest, is a
+    # *verification*, not a guess: a mismatch means the artifact was made by an
+    # encoder this reader does not implement, and it fails closed.  The search
+    # is over the product, because the digest binds the pair jointly -- and the
+    # grid must be resolved before anything else, since it fixes both the
+    # completion width (``rate_cap``) and how many weights a code covers.
+    code = grid = None
     for memory in sorted(_ODS_GENERATORS):
         candidate = ConvCode(memory=memory)
-        if encoder_profile_id(candidate, rates) == manifest.encoder_profile_id:
-            code = candidate
+        for known in SERIALISABLE_GRIDS.values():
+            if encoder_profile_id(candidate, rates, known) == manifest.encoder_profile_id:
+                code, grid = candidate, known
+                break
+        if code is not None:
             break
     if code is None:
         raise GrammarError(
-            "encoder_profile_id matches no convolutional code this reader "
-            "implements; the artifact's trellis is not one we can replay"
+            "encoder_profile_id matches no (convolutional code, payload grid) "
+            f"pair this reader implements: it searched memory orders "
+            f"{sorted(_ODS_GENERATORS)} against grids "
+            f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
+            "trellis is not one we can replay, or the artifact was written "
+            "over a grid outside SERIALISABLE_GRIDS -- including one written "
+            "before the grid was bound into the profile id. Refusing to decode "
+            "against an assumed grid: that is exactly the silent misdecode "
+            "this digest exists to prevent."
         )
+
+    # The manifest deferred the rate ceiling because it had no grid; there is
+    # one now, so apply it before a single code becomes a weight.
+    validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap)
+    completion_widths = tuple(completion_capacity(r, grid.rate_cap) for r in rates)
+    if rows % grid.arity:
+        raise GrammarError(
+            f"geometry declares {rows} rows, not a whole number of arity-"
+            f"{grid.arity} tuples over grid {grid.name}"
+        )
+    steps = rows // grid.arity
+
+    forests = _read_forest_planes(
+        rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT], grid
+    )
 
     from .planes import CANONICAL_PLANE_ORDER
 
@@ -221,15 +295,15 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     ]
     unit = EncodedUnit(
         rates=rates,
-        anchors=torch.zeros(rows, cols, dtype=torch.long, device=device),
-        codes=torch.zeros(rows, cols, dtype=torch.long, device=device),
-        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, rows, device),
+        anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
+        codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
+        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device),
         # BODY stays uint8 -- the replay is bandwidth-bound over it -- but
         # COMPLETION indexes the reachable-descendant table, and a uint8 index
         # tensor is a *boolean mask* in torch, not an integer index.  The two
         # planes share a reader and must not share a dtype.
         completion_bits=unpack_body(
-            chunks[PlaneKind.COMPLETION], completion_widths, rows, device
+            chunks[PlaneKind.COMPLETION], completion_widths, steps, device
         ).long(),
         scale_base=unpack_uniform(
             chunks[PlaneKind.SCALE_BASE],
@@ -255,6 +329,13 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         group=geometry.group_weights,
         half=geometry.half_weights,
     )
+    if n_released and grid.arity > 1:
+        raise GrammarError(
+            "release is not defined at arity > 1: an override replaces one "
+            "position's code, and a k-tuple code has no per-position code to "
+            "replace. The encoder refuses to produce this; an artifact "
+            "carrying it was not written by this implementation."
+        )
     if n_released:
         # §9's placement is *derived*, not stored: decode without release,
         # rank by descending decoded magnitude per superblock, and the RELEASE

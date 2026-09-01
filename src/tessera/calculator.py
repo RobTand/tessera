@@ -139,6 +139,7 @@ def terminal_rate(
     released_positions: int = 0,
     superblock_columns: int = 256,
     cap: int = C_FULL_BITS,
+    arity: int = 1,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
 
@@ -149,6 +150,13 @@ def terminal_rate(
     be built above the cap.  Left at 3, this function silently refused every
     TESSERA-8 rung above 3.0 body bits -- which is most of the ones an 8-bit
     family exists to reach.
+
+    ``arity`` is load-bearing for the same reason on the other axis: BODY and
+    COMPLETION hold one entry per *code*, and a code covers ``arity`` rows, so
+    at arity 2 they are half the size this function would otherwise predict.
+    A predicted bpp that disagrees with the built artifact's is the failure
+    this parameter exists to prevent -- the accountant and the wire must agree
+    byte for byte, and ``rows`` here is always weight rows.
     """
     geometry = Geometry(
         rows=rows,
@@ -159,7 +167,7 @@ def terminal_rate(
         quantizable_params=rows * columns,
     )
     rates = bresenham_rate_schedule(root_from_q256(q256), columns, cap)
-    planes = build_planes(geometry, rates, b"", b"", cap=cap)
+    planes = build_planes(geometry, rates, b"", b"", cap=cap, arity=arity)
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
@@ -170,7 +178,9 @@ def terminal_rate(
         with_scale_refine=with_scale_refine,
         with_diagonals=with_diagonals,
     )
-    return build_terminal(geometry, rates, spec, planes, 0, 0, cap=cap).exact_bpp
+    return build_terminal(
+        geometry, rates, spec, planes, 0, 0, cap=cap, arity=arity
+    ).exact_bpp
 
 
 def figure_table(rows: int = 4096, columns: int = 4096) -> tuple[Figure, ...]:

@@ -32,7 +32,13 @@ from fractions import Fraction
 
 from .container import serialize
 from .errors import GrammarError
-from .grammar import bresenham_rate_schedule, root_from_q256, superblock_quota_ok
+from .grammar import (
+    C_FULL_BITS,
+    bresenham_rate_schedule,
+    completion_capacity,
+    root_from_q256,
+    superblock_quota_ok,
+)
 from .layout import TerminalSpec, build_plane_region, build_planes, build_terminal
 from .manifest import (
     ArrangementMode,
@@ -96,18 +102,18 @@ class ArtifactPlan:
 
 
 def standard_terminal_specs(
-    rates: tuple[int, ...], released_positions: int = 0
+    rates: tuple[int, ...], released_positions: int = 0, cap: int = C_FULL_BITS
 ) -> tuple[TerminalSpec, ...]:
     """The §6 terminal ladder: T-po2, T-C3, T-nvfp4-class.
 
-    At r0 = 3.0 every column is already R=3, so ``c = 3 - R = 0`` and Stage C
+    At the cap every column is already R = cap, so ``c = cap - R = 0`` and Stage C
     has nothing to add: T-C3 *is* T-po2, byte for byte.  §6 names this case --
     "Sub-mode 'B at r0=3' unifies as R=3, c=0, release-only" -- so the ladder
     there is two rungs, not three.  Emitting both would declare two terminals
     at one byte length, which the manifest rightly refuses: a truncation length
     must identify exactly one terminal.
     """
-    c_full = tuple(3 - rate for rate in rates)
+    c_full = tuple(completion_capacity(rate, cap) for rate in rates)
     release_only = not any(c_full)
     ladder = [TerminalSpec("t-po2", (0,) * len(rates), with_scale_base=True)]
     if not release_only:

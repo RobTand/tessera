@@ -282,14 +282,20 @@ class Manifest:
                 f"rate schedule covers {len(self.rates)} columns, geometry "
                 f"declares {self.geometry.columns}"
             )
-        validate_rate_schedule(self.rates, self.branch.root)
+        # ``cap=None``: the rate ceiling belongs to the payload grid, which is
+        # committed in ``encoder_profile_id`` and resolved only after this
+        # manifest validates.  Asserting TESSERA-4's cap here would refuse
+        # every legal rung of every other family; carrying the cap as a second
+        # wire field would let it disagree with the grid.  The bound is applied
+        # against the real grid at forest rebuild, before any decode.
+        validate_rate_schedule(self.rates, self.branch.root, cap=None)
         if not superblock_quota_ok(
             self.rates, self.geometry.superblock_columns, self.branch.root
         ):
             raise ManifestError("a complete superblock violates the rate quota")
         if self.arrangement is ArrangementMode.BRESENHAM:
             canonical = bresenham_rate_schedule(
-                self.branch.root, self.geometry.columns
+                self.branch.root, self.geometry.columns, cap=None
             )
             if self.rates != canonical:
                 raise ManifestError(
@@ -396,7 +402,15 @@ class Manifest:
         if arrangement is ArrangementMode.STORED:
             rates = reader.uint_seq()
         else:
-            rates = bresenham_rate_schedule(branch.root, geometry.columns)
+            # cap=None for the same reason as in __post_init__: the rate
+            # ceiling lives on the payload grid, which this parser has not yet
+            # resolved.  The schedule itself is cap-independent -- Bresenham
+            # only ever mixes the two rates bracketing the root -- so deferring
+            # the bound changes which artifacts are *accepted here*, never
+            # which schedule is reconstructed.
+            rates = bresenham_rate_schedule(
+                branch.root, geometry.columns, cap=None
+            )
         planes = tuple(
             PlaneDescriptor.decode(reader) for _ in range(reader.uint())
         )

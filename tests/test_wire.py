@@ -211,7 +211,7 @@ def test_reader_fails_closed_on_an_unknown_trellis():
     from tessera.container import serialize
 
     forged = dc_replace(manifest, encoder_profile_id=bytes(32))
-    with pytest.raises(GrammarError, match="matches no convolutional code"):
+    with pytest.raises(GrammarError, match=r"matches no \(convolutional code, payload grid\) pair"):
         read_unit_artifact(serialize(forged, region))
 
 
