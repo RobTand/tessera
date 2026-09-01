@@ -84,10 +84,35 @@ learned the levels and kept the cross.
 
 A free per-tensor Lloyd codebook, partitioned by Ungerboeck's *criterion*
 (greedy 4-colouring: each centroid into the subset whose nearest same-subset
-member is furthest) rather than his *formula*, is worth **1.116x at identical
-bpp** with the greedy partition still crude. It changes no plane, no width and
-no container: the payload still carries codes, the decode is still a 256-entry
-table lookup. It costs 256 x 2 x fp16 = 8 KB per tensor, ~0.0005 bpp.
+member is furthest) rather than his *formula*, is worth **1.106x at identical
+bpp** with the greedy partition still crude.
+
+**Replicated**, which for this lever is not optional -- the learned-*values*
+lever measured 1.006x on one tensor and inverted to 0.990x across eight, and a
+mean over a few slices is a screen. 33 expert tensors at **full width** (11
+layers spread 3..43 x gate/up/down): min 1.091x, median 1.107x, max 1.116x,
+geometric mean 1.106x, spread 2.3%, and **zero tensors where the free codebook
+loses**. Flat across projections -- gate 1.108x, up 1.107x, down 1.105x -- so it
+holds on `down_proj`, whose post-SwiGLU input statistics differ from the rest
+and which nothing else in this document tested.
+
+It changes no plane and no width -- the payload still carries codes and the
+decode is still a 256-entry table lookup -- but it **does** change the
+container, and an earlier revision of this file wrongly said it did not. A
+shipped artifact names its grid by digest (`"name": "E2M1x2", "digest":
+"514a72..."`) and the reader rebuilds the values from that name; it stores no
+values. A per-tensor codebook must be carried in the artifact and read by the
+decoder: a new field and a `container_version` bump. The partition is wire on
+the same argument -- the decoder replays the subset structure, so `colour4`'s
+greedy colouring would have to become a specified, deterministic object rather
+than a heuristic. Storage is cheap (256 x 2 x fp16 = 8 KB per tensor, ~0.0005
+bpp); the container decision is not, and it is unmade.
+
+**Readiness:** none of this exists in `tessera/` -- every number above came from
+a standalone Viterbi in `experiments/`, validated against `encode_unit` to
+0.48%. On the promotion ladder this is Research. It reaches Candidate only after
+the encoder change, the container decision, and a serving lane, and Tessera's
+`route_status` is still `unbacked`.
 
 ## The comparison to EXL3 is not format-vs-format
 
