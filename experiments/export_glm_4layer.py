@@ -29,6 +29,13 @@ def eligible(name: str, shape) -> bool:
         return False
     if "embed_tokens" in name:          # structurally unquantizable in vLLM
         return False
+    if "visual" in name or "vision" in name:
+        # The goal inherits Mia's vision handling, and Mia leaves the tower in
+        # BF16 -- it is 1.050 GiB, outside the size target, and outside bpp by
+        # principle 12.  Quantizing it here would make the artifact and the
+        # budget describe different models.  (The first 4-layer smoke export
+        # predates this line and did quantize all 347 vision tensors.)
+        return False
     if name.endswith("_log") or "norm" in name:
         return False
     return name.endswith(".weight")
