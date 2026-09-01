@@ -60,8 +60,14 @@ part of the EXL3 gap. Tessera's encoder sits 1.155× above the FP4-native
 bound, and about 1.14× of that is also hardware: the E2M1 alphabet's shape
 (1.111×, measured with a free 16-point codebook, `tessera-alphabet-shape-not-spacing`)
 and the E4M3 mantissa's landing of the least-squares scale (1.03×, the
-fp32-plane arm). **What is left in the weight-space encoder at the current
-wire is ≈1–2%.**
+fp32-plane arm). The two factors were measured under different planes —
+the free codebook against the pre-refit amax plane, the mantissa cost
+under refit — and both repair alphabet boundary loss, so they overlap and
+their product (1.144) is an upper bound on the hardware part, not a
+decomposition. **What is left in the weight-space encoder at the current
+wire is ≈2–6%** (1.155 / 1.144 at one end, 1.155 / 1.09 if the overlap
+is as large as the refit's own 1.044× first pass); "stop" holds at either
+end.**
 
 ## 3. What the plane actually does: loading, not adaptation
 
@@ -81,7 +87,16 @@ rank grid (`sum mod 4`, `(i mod 2, j mod 2)`, `(i+2j) mod 4`, `(2i+j) mod 4`)
 differ by ≤0.4% on Gaussian data and on all six experts (`(i+2j) mod 4` is
 the best by 0.4%, on both; a free profile-id change, not a wire change).
 
-## 4. Why the redundant plane bits cannot be cashed: the alphabet caps the trellis
+## 4. The alphabet's rate cap — and how the redundant plane bits ARE cashed
+
+> **Superseded in part, same day.** The arm below prices the plane's
+> redundancy through a *per-32* plane and finds it worth 1.047×. That is
+> the per-32 plane's loading loss, not the alphabet's cap:
+> `tessera-index-plane-2026-09-01.md` keeps per-16 loading with a 4-bit
+> index into a 16-entry per-unit E4M3 LUT — **lossless** against the
+> 8-bit plane — and the freed 0.25 bpp spent on Wei L=2 is worth
+> **1.111× at 4.0 bpp**. The synthetic-Gaussian analysis of the trellis's
+> ~45% rate efficiency stands; the "cannot be cashed" conclusion does not.
 
 | synthetic Gaussian, one global scale | rate | RMS | Shannon | intrinsic loss |
 |---|---:|---:|---:|---:|
@@ -116,25 +131,41 @@ Measured LDLQ on the out-of-document folds (first tensors of
 (worse than none)* at EXL3's `σ=0.025`, with a 4096-token Hessian over
 4096 features. So LDLQ realises ~70% of the ceiling the regularised H
 allows, and the regularisation that makes a 4k-token H usable throws away
-most of the 1.91× the true H would allow. **The limiter is the Hessian
-estimate, not the mechanism** — EXL3's H comes from ~200k tokens. This is
-the only place where a large gain is still on the table for the served
-metric, and it needs no wire change: capture far more tokens (and the
-tokens actually routed to each expert), then re-fit σ.
+most of the 1.91× the true H would allow. **The Hessian estimate is one
+limiter** — EXL3's H comes from ~200k tokens. The ceilings above assume
+the quantiser's error is invariant under compensation, and E2M1 violates
+that: compensated targets widen a block's range and the eight magnitudes
+are spent coarser (the weight leg inflates 5% at σ=1 and 45% at σ=0.025
+in `tessera_ldlq_generalisation`), so the alphabet's response to feedback
+is the second limiter. The token-scaling run
+(`experiments/tessera_ldlq_token_scaling.py`) discriminates: if the gain
+at fixed σ keeps rising with fit tokens, the estimate binds and a large
+capture pays; if it flattens, the alphabet binds and 1.16× is not
+reachable by tokens alone. This is the only place where a large gain is
+still on the table for the served metric, and it needs no wire change:
+capture far more tokens (and the tokens actually routed to each expert),
+then re-fit σ.
 
 ## 6. Stopping rules
 
 1. **Weight-space encoder, current wire — stop.** 0.0982 vs a hardware
    floor of ≈0.097 (0.0853 × 1.111 × 1.03). Refit-4 is at the floor.
-2. **Same-size wire changes (compact plane, L>1) — ≈1.05× is the realisable
-   ceiling** at 4.0 bpp under the alphabet's rate cap; worth having only as
-   the disk/kernel-lane rungs above 4.0 (per-16 + L=2 at 4.25 = 1.129×,
-   L=4 at 4.375 = 1.162× keep a healthier-than-Shannon slope *per bit
-   spent above 3.5* because they start from the plane's redundancy).
-3. **The rotation world's 1.365× is not reachable by any FP4-native
-   wire.** The MMA consumes E2M1 × E4M3-per-16; the plane tax is the price
-   of the hardware, and on stationary weights nothing is bought back. On
-   the served W4A4 metric the activation leg dilutes it to ~1.11×.
+2. **Same-size wire change at 4.0 bpp — 1.111× is realised** (index plane
+   + Wei L=2, `tessera-index-plane-2026-09-01.md`), and it is the whole
+   0.25 bpp of plane redundancy converted at the trellis's ~45% rate
+   efficiency; the earlier "≈1.05× ceiling" was a per-32 plane's loading
+   loss. Above that the alphabet cap holds: per-16 + L=4 at 4.125 (index
+   plane) is the next rung, and each further halving of the redundancy bit
+   buys less.
+3. **The rotation world's 1.365× is not recovered by any FP4-native
+   wire measured so far.** The MMA consumes E2M1 × E4M3-per-16; the
+   plane tax is the price of the hardware, and on stationary weights
+   nothing is bought back. The 1.365× is a property of the 3.5-bit
+   payload structure plus the plane, not a theorem about the tile: every
+   higher-rate structure measured (Wei-L, k-tuples in `c43e059`) absorbs
+   rate at ~45% efficiency, and a structure that did better would move
+   this number. On the served W4A4 metric the activation leg dilutes it
+   to ~1.11×.
 4. **Output-space compensation — do not stop.** Ceiling 1.91× with a known
    H, 1.16× with the H we can afford today, 1.08× realised. More tokens,
    per-expert routed tokens, then σ.
