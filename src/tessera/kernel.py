@@ -31,7 +31,8 @@ from .decode import _replay_tables
 from .errors import GrammarError
 from .trellis import ConvCode
 
-__all__ = ["build_code_lut", "tessera_dequant", "tessera_gemv", "nvfp4_gemv"]
+__all__ = ["build_code_lut", "build_tuple_index_lut", "build_anchor_values",
+           "tessera_dequant", "tessera_gemv", "nvfp4_gemv"]
 
 
 def build_code_lut(
@@ -716,14 +717,46 @@ def build_tuple_value_lut(
     Reading the reconstruction out of ``grid.vector`` rather than an E2M1 table
     is what makes the kernel lane grid-agnostic: a source-matched grid is just
     different numbers here, which is the whole reason it is reachable at all.
+
+    **This fused form is the reference, not the serving path.**  It folds a
+    shared structure -- which anchor a ``(window, point)`` lands on -- together
+    with a per-unit meaning -- what that anchor reconstructs to.  While the grid
+    is global that costs nothing, because every unit at a given rate shares one
+    64 KB table.  Give each unit its own grid and the fused table becomes
+    per-unit too: 37,694 units x 64 KB is 2.4 GB of resident lookup, which is
+    1.6% of the body spent buying back bits the format just saved.
+
+    ``build_tuple_index_lut`` and ``build_anchor_values`` are the same table
+    split along that seam -- 16 KB shared plus 2 KB per unit, 32x less -- at the
+    cost of one dependent load.  They compose back to exactly this tensor, which
+    is why this function is now defined *as* their composition: two forms that
+    must agree cannot drift if one is built from the other.
+    """
+    index = build_tuple_index_lut(forest, code, device)
+    values = build_anchor_values(forest, device)
+    arity = forest.grid.arity
+    return values.reshape(-1, arity)[index.long()].reshape(-1)
+
+
+def build_tuple_index_lut(
+    forest: AnchorForest, code: ConvCode, device: str = "cuda"
+) -> torch.Tensor:
+    """``(history window, point) -> anchor index``.  The SHARED half.
+
+    This half depends on the replay tables and the forest's *block layout* --
+    never on what a block reconstructs to -- so every unit built at the same
+    rate with the same code shares one copy of it, whatever grid it carries.
     """
     subsets, _table_next, table_sub = _replay_tables(forest, code, device)
-    grid = forest.grid
     points = subsets.shape[1]
-    arity = grid.arity
     subsets_cpu = subsets.tolist()
     sub_cpu = table_sub.tolist()
-    flat: "list[float]" = []
+    if len(forest.blocks) > (1 << 15):
+        raise GrammarError(
+            f"{len(forest.blocks)} anchors does not fit the int16 index table; "
+            "widen it deliberately rather than letting it wrap"
+        )
+    flat: "list[int]" = []
     for window in range(1 << (code.memory + 1)):
         select = window & 1
         history = window >> 1
@@ -734,14 +767,29 @@ def build_tuple_value_lut(
         for index in range(code.memory):
             state |= ((history >> (code.memory - 1 - index)) & 1) << index
         row = subsets_cpu[sub_cpu[select][state]]
-        for point in range(points):
-            flat.extend(grid.vector(forest.blocks[row[point]][0]))
+        flat.extend(int(row[point]) for point in range(points))
+    return torch.tensor(flat, dtype=torch.int16, device=device)
+
+
+def build_anchor_values(
+    forest: AnchorForest, device: str = "cuda"
+) -> torch.Tensor:
+    """``anchor index -> the anchor's ``arity`` values``.  The PER-UNIT half.
+
+    ``anchors * arity`` floats: 2 KB at the rate cap of a k=2 grid, against the
+    fused table's 64 KB.  That ratio is the reason the split exists -- see the
+    note on ``build_tuple_value_lut``.
+    """
+    grid = forest.grid
+    flat: "list[float]" = []
+    for block in forest.blocks:
+        flat.extend(grid.vector(block[0]))
     return torch.tensor(flat, dtype=torch.float32, device=device)
 
 
 @triton.jit
 def _tuple_gemv_kernel(
-    x_ptr, select_ptr, point_ptr, lut_ptr, scale_ptr, out_ptr,
+    x_ptr, select_ptr, point_ptr, index_ptr, value_ptr, scale_ptr, out_ptr,
     global_scale, rows, steps, cols,
     memory: tl.constexpr, rate: tl.constexpr, arity: tl.constexpr,
     half: tl.constexpr, pad: tl.constexpr,
@@ -814,9 +862,15 @@ def _tuple_gemv_kernel(
             shift = HALF_CODES * P - P * ((v % HALF_CODES) + 1)
             pt = (packed >> shift[None, :]) & (POINTS - 1)
 
+            # Two loads, not one.  ``window * POINTS + pt`` does not depend on
+            # ``a``, so the first is per CODE and the arity rows of a code hit
+            # the same address; only the second is per row.  The working set
+            # falls from a 64 KB fused table to 16 KB shared + 2 KB per unit.
+            anchor = tl.load(
+                index_ptr + window * POINTS + pt, mask=live, other=0
+            ).to(tl.int32)
             value = tl.load(
-                lut_ptr + (window * POINTS + pt) * arity + a[None, :],
-                mask=live, other=0.0,
+                value_ptr + anchor * arity + a[None, :], mask=live, other=0.0
             )
             acc += value * scale * tl.load(x_ptr + k)
 
@@ -827,7 +881,8 @@ def tessera_gemv_tuple(
     x: torch.Tensor,
     select_plane: torch.Tensor,
     point_plane: torch.Tensor,
-    value_lut: torch.Tensor,
+    index_lut: torch.Tensor,
+    value_table: torch.Tensor,
     e4m3_t: torch.Tensor,
     global_scale: float,
     rows: int,
@@ -840,9 +895,17 @@ def tessera_gemv_tuple(
     vec: int = 8,
     split_k: int = 32,
 ) -> torch.Tensor:
-    """``W @ x`` decoding a k-tuple body in the kernel.  See the split-K note
-    on ``tessera_gemv_wide``: the reduction is an atomic add and its low bits
-    are order-dependent."""
+    """``W @ x`` decoding a k-tuple body in the kernel.
+
+    Takes the lookup in two pieces -- ``index_lut`` from
+    ``build_tuple_index_lut``, shared by every unit at this rate, and
+    ``value_table`` from ``build_anchor_values``, which is the only part a
+    per-unit grid changes.  Passing the fused table instead would work
+    arithmetically and cost 32x the resident memory; see
+    ``build_tuple_value_lut``.
+
+    See the split-K note on ``tessera_gemv_wide``: the reduction is an atomic
+    add and its low bits are order-dependent."""
     steps = rows // arity
     if rows % arity or steps % 8:
         raise GrammarError(
@@ -863,7 +926,8 @@ def tessera_gemv_tuple(
         raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        x.reshape(-1), select_plane, point_plane, index_lut, value_table,
+        e4m3_t.reshape(-1), out,
         float(global_scale), rows, steps, cols,
         memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
         LANES=lanes, VEC=vec, SPLIT_K=split_k,

@@ -180,17 +180,19 @@ def test_tuple_one_hot_gemv_is_bit_exact(tuple_unit):
     """A code covers two rows, so an off-by-one in the fan-out is invisible
     in aggregate and total per column.  One-hot is what exposes it."""
     from tessera.kernel import (
-        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+        build_anchor_values, build_tuple_index_lut, pack_kernel_planes,
+        tessera_gemv_tuple,
     )
 
     rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
     select, point = pack_kernel_planes(tuple_unit["unit"].body_bits, rate=rate)
-    lut = build_tuple_value_lut(tuple_unit["forests"][rate], CODE)
+    index = build_tuple_index_lut(tuple_unit["forests"][rate], CODE)
+    values = build_anchor_values(tuple_unit["forests"][rate])
     for k in (0, 1, 5, 7, 8, 9, 33, cols - 1):
         x = torch.zeros(cols, device="cuda")
         x[k] = 1.0
         got = tessera_gemv_tuple(
-            x, select, point, lut, tuple_unit["scales"],
+            x, select, point, index, values, tuple_unit["scales"],
             tuple_unit["global_scale"], rows, cols, rate=rate, arity=2,
             lanes=8, split_k=4,
         )
@@ -200,7 +202,8 @@ def test_tuple_one_hot_gemv_is_bit_exact(tuple_unit):
 @pytest.mark.parametrize("tuple_unit", ["free-16"], indirect=True)
 def test_tuple_gemv_matches_the_reference_decode(tuple_unit):
     from tessera.kernel import (
-        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+        build_anchor_values, build_tuple_index_lut, pack_kernel_planes,
+        tessera_gemv_tuple,
     )
 
     rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
@@ -208,7 +211,9 @@ def test_tuple_gemv_matches_the_reference_decode(tuple_unit):
     torch.manual_seed(1)
     x = torch.randn(cols, device="cuda")
     got = tessera_gemv_tuple(
-        x, select, point, build_tuple_value_lut(tuple_unit["forests"][rate], CODE),
+        x, select, point,
+        build_tuple_index_lut(tuple_unit["forests"][rate], CODE),
+        build_anchor_values(tuple_unit["forests"][rate]),
         tuple_unit["scales"], tuple_unit["global_scale"], rows, cols,
         rate=rate, arity=2, lanes=8, split_k=4,
     )
@@ -220,21 +225,25 @@ def test_tuple_gemv_matches_the_reference_decode(tuple_unit):
 def test_tuple_kernel_refuses_shapes_its_shifts_do_not_cover(tuple_unit):
     from tessera.errors import GrammarError
     from tessera.kernel import (
-        build_tuple_value_lut, pack_kernel_planes, tessera_gemv_tuple,
+        build_anchor_values, build_tuple_index_lut, pack_kernel_planes,
+        tessera_gemv_tuple,
     )
 
     rate, rows, cols = tuple_unit["rate"], tuple_unit["rows"], tuple_unit["cols"]
     select, point = pack_kernel_planes(tuple_unit["unit"].body_bits, rate=rate)
-    lut = build_tuple_value_lut(tuple_unit["forests"][rate], CODE)
+    index = build_tuple_index_lut(tuple_unit["forests"][rate], CODE)
+    values = build_anchor_values(tuple_unit["forests"][rate])
     x = torch.zeros(cols, device="cuda")
     with pytest.raises(GrammarError, match="derived for VEC=8"):
         tessera_gemv_tuple(
-            x, select, point, lut, tuple_unit["scales"], tuple_unit["global_scale"],
+            x, select, point, index, values, tuple_unit["scales"],
+            tuple_unit["global_scale"],
             rows, cols, rate=rate, arity=2, vec=4,
         )
     with pytest.raises(GrammarError, match="multiple of 8 codes"):
         tessera_gemv_tuple(
-            x, select, point, lut, tuple_unit["scales"], tuple_unit["global_scale"],
+            x, select, point, index, values, tuple_unit["scales"],
+            tuple_unit["global_scale"],
             rows=100, cols=cols, rate=rate, arity=2,
         )
 
@@ -317,3 +326,32 @@ def test_prefill_gemm_refuses_a_mismatched_reduction(prefill_unit):
     with pytest.raises(GrammarError, match="reduction runs over"):
         tessera_gemm(torch.randn(8, cols - 1, device="cuda"),
                      select, point, lut, scales, gs, rows, cols)
+
+
+@pytest.mark.parametrize("tuple_unit", ["E2M1", "free-16"], indirect=True)
+def test_the_split_lookup_composes_back_to_the_fused_table(tuple_unit):
+    """The serving path splits one 64 KB table into 16 KB shared + 2 KB per
+    unit, so that a per-unit grid costs 2 KB of resident lookup instead of
+    64 KB -- 37,694 units x 64 KB would be 2.4 GB, spending 1.6% of the body to
+    buy back bits the format just saved.
+
+    Two tables that must agree are two tables that can drift, so the fused form
+    is now DEFINED as the composition and this pins that definition: if the
+    split ever stopped reproducing the fused table exactly, every kernel result
+    would move with it and no other test would say why.
+    """
+    from tessera.kernel import (
+        build_anchor_values, build_tuple_index_lut, build_tuple_value_lut,
+    )
+
+    forest = tuple_unit["forests"][tuple_unit["rate"]]
+    fused = build_tuple_value_lut(forest, CODE)
+    index = build_tuple_index_lut(forest, CODE)
+    values = build_anchor_values(forest)
+    arity = forest.grid.arity
+
+    assert torch.equal(
+        values.reshape(-1, arity)[index.long()].reshape(-1), fused)
+    # and the split is actually smaller where it counts: the per-unit half
+    assert values.numel() * 4 <= fused.numel() * 4 // 16, (
+        f"per-unit table {values.numel() * 4} B vs fused {fused.numel() * 4} B")

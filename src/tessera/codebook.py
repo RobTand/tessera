@@ -1,0 +1,122 @@
+"""Learned reconstruction grids: a codebook fitted to the tensor it encodes.
+
+``tuple_grid(E2M1_GRID, 2)`` is a *tensor product* -- sixteen scalar levels
+crossed with themselves -- so it spends codes on the corners of a square while
+the weight density it has to cover is a round blob.  That shape costs more than
+the trellis earns: measured at the rate cap, the trellis is worth 1.134x over
+nearest-neighbour on the same grid, and replacing the product grid with a
+codebook fitted to the data is worth 1.106x on top (33 tensors, full width, no
+losses).  Below the cap it is worth far more -- 1.22x to 1.26x -- because there
+the product grid is not merely the wrong shape, its *anchors* are chosen by
+k-d bisection of a lattice rather than by where the data is.
+
+Re-spacing the scalar ladder does not fix this and has been tried: a learned
+sixteen-level E2M1 measured 1.006x and then inverted to 0.990x on replication.
+It learned the levels and kept the cross.
+
+**Why a tree and not free Lloyd.**  Tessera's rate axis is embedded: one deep
+encode serves every lower rate, because ``build_forest`` lays anchors out in
+contiguous dyadic blocks of the value order so that truncating completion bits
+lands on an *ancestor*.  A flat Lloyd codebook has no ancestors, so adopting one
+would buy 1.106x and pay the ladder for it.  Tree-structured VQ buys both: split
+recursively to ``depth``, and the ``2^l`` nodes at level ``l`` are exactly the
+anchor set a rate-``(l-1)`` trellis wants.
+
+The construction is arranged so that the *existing* forest machinery is what
+enforces the nesting, rather than a second mechanism that has to agree with it.
+Leaves are emitted in tree order, so leaf ``i``'s ancestor at level ``l`` is
+``i >> (depth - l)`` -- and a contiguous dyadic block of ``2^(depth-l)`` leaves
+starting at ``k * 2^(depth-l)`` is precisely the set of leaves under node ``k``.
+"Contiguous in the value order" and "under the same subtree" become the same
+statement, so `build_forest` needs no special case beyond declining to k-d
+bisect a grid that is already a tree.
+
+TSVQ is *constrained* Lloyd -- a centroid must live inside its parent's cell --
+so it cannot beat a free fit and does not claim to.  Measured, it keeps 76-80%
+of the free gain at the rungs below the cap and 49% at the cap itself.
+
+**Determinism.**  The codebook travels in the artifact, so a reader never
+rebuilds it and no cross-device float agreement is required for correctness.
+Fitting is nonetheless free of RNG -- splits seed from the principal axis, which
+is a function of the data -- so the same tensor and depth reproduce the same
+grid, which is what makes an encoder profile id meaningful.
+"""
+
+from __future__ import annotations
+
+import torch
+
+from .alphabet import PayloadGrid
+from .errors import GrammarError
+
+__all__ = ["learn_tree_codebook", "TREE_PARTITION"]
+
+#: ``PayloadGrid.partition`` marker for a grid whose code order is a tree
+#: traversal.  ``build_forest`` reads it to skip k-d bisection: the blocks it
+#: would compute are already the code order.
+TREE_PARTITION = "tree"
+
+
+def _two_means(points: torch.Tensor, iterations: int = 12) -> torch.Tensor:
+    """Split one cell in two.  Seeded on the principal axis, so no RNG."""
+    mean = points.mean(0)
+    centred = points - mean
+    axis = torch.linalg.eigh((centred.T @ centred).double())[1][:, -1].float()
+    spread = (centred @ axis).std().clamp(min=1e-12)
+    centroids = torch.stack([mean - axis * spread, mean + axis * spread])
+    for _ in range(iterations):
+        assign = torch.cdist(points, centroids).argmin(1)
+        for side in (0, 1):
+            if int((assign == side).sum()):
+                centroids[side] = points[assign == side].mean(0)
+    return centroids
+
+
+def learn_tree_codebook(
+    samples: torch.Tensor,
+    depth: int = 8,
+    name: str = "TESSERA_TREE",
+) -> PayloadGrid:
+    """Fit a ``2^depth``-code grid to ``samples`` (``n x arity``).
+
+    Returns a ``PayloadGrid`` whose codes are ordered by their path through the
+    tree, which is what makes ``build_forest``'s dyadic blocks its subtrees.
+    """
+    if samples.ndim != 2:
+        raise GrammarError(f"samples must be (n, arity), got {tuple(samples.shape)}")
+    arity = samples.shape[1]
+    if len(samples) < (1 << depth):
+        raise GrammarError(
+            f"{len(samples)} samples cannot fit {1 << depth} codes; a cell with "
+            "no points has no centroid and the grid would carry a duplicate"
+        )
+    points = samples.float()
+    level = points.mean(0, keepdim=True)
+    assign = torch.zeros(len(points), dtype=torch.long, device=points.device)
+    for _ in range(depth):
+        nxt = torch.zeros(2 * len(level), arity, device=points.device)
+        for node in range(len(level)):
+            cell = points[assign == node]
+            if len(cell) < 2:
+                # A cell too small to split keeps its parent's value in both
+                # children.  The duplicate is legal -- ties break to the lower
+                # code -- and it is strictly better than refusing to build a
+                # grid because one tail cell went empty.
+                nxt[2 * node] = nxt[2 * node + 1] = level[node]
+                continue
+            nxt[2 * node:2 * node + 2] = _two_means(cell)
+        # A point may only descend into its own parent's two children, which is
+        # what keeps the tree a tree: re-assigning globally would let a point
+        # cross cells and break the ancestor property this grid exists for.
+        left = torch.cdist(points, nxt[0::2]).gather(1, assign[:, None]).squeeze(1)
+        right = torch.cdist(points, nxt[1::2]).gather(1, assign[:, None]).squeeze(1)
+        assign = 2 * assign + (right < left).long()
+        level = nxt
+
+    values = tuple(level.reshape(-1).tolist())
+    # ``keys`` drives ``value_order``, which sorts by (sum, vector, code).  One
+    # entry per code makes that sort the identity, so the value order IS the
+    # tree order -- the whole construction rests on this line.
+    keys = tuple((code,) for code in range(1 << depth))
+    return PayloadGrid(name=name, values=values, arity=arity,
+                       keys=keys, partition=TREE_PARTITION)

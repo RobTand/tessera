@@ -161,3 +161,47 @@ this repo currently has enough activations to do it.
 Puncturing, fractional redundancy, higher-rate convolutional codes, trellis
 memory, rotation, and learned scalar spacings. Do not re-open without new
 evidence; each has a measurement above.
+
+
+## Serving cost of a per-unit grid, and why it is now 0.047%
+
+The kernel lane was already grid-agnostic -- `build_tuple_value_lut` reads
+reconstructions out of `grid.vector`, never an E2M1 table, and no path in this
+repo has ever used a hardware FP4 conversion instruction. So a learned codebook
+costs nothing arithmetically: same table shape, same load count, same inner
+loop, different numbers.
+
+The cost was memory. That fused table folds a **shared** structure -- which
+anchor a `(window, point)` lands on -- together with a **per-unit** meaning --
+what that anchor reconstructs to. While the grid is global the fold is free,
+because every unit at a given rate shares one 64 KB table. Give each unit its
+own grid and it becomes per-unit: 37,694 x 64 KB = **2.301 GiB** resident, 1.52%
+of the body, spent buying back bits the format had just saved.
+
+`build_tuple_index_lut` and `build_anchor_values` are that table split along the
+seam, and the split is exact because the fused form is now *defined* as their
+composition (`test_the_split_lookup_composes_back_to_the_fused_table` pins it):
+
+| | shared | per unit | 37,694 units |
+|---|---|---|---|
+| fused | - | 64 KB | 2.301 GiB |
+| split | 16 KB | 2 KB | **73.6 MiB** |
+
+**2.229 GiB saved, 1.52% -> 0.047% of the body**, for one extra dependent load
+per output row -- and `window * POINTS + pt` does not depend on `a`, so that
+first load is per *code* and the arity rows of a code hit one address. The hot
+working set also falls from 64 KB to 18 KB, which should help the cache rather
+than hurt it, though that is a prediction and not a measurement.
+
+**Still open:** the scalar lane (`build_value_lut`, `tessera_gemm`) folds the
+same seam and would need the same split before a learned *scalar* grid ships.
+Nothing needs it today, since the shipped family is arity 2.
+
+**What a learned grid does foreclose:** putting Tessera codes in an NVFP4
+container and letting a stock vLLM kernel dequantize them. A stock FP4 kernel
+cannot read a learned table. That route was never built (`route_status:
+unbacked`) and it was never attractive -- materialising to NVFP4 costs 0.5 bpp
+of resident footprint, and plain nearest-neighbour on the grid at 4.5 bpp
+(0.09663) already beats Tessera's trellis at 4.0 (0.10812), so anything that
+materialises to a wider format erases the format's whole reason to exist. But it
+does commit Tessera to shipping its own kernel permanently.
