@@ -71,6 +71,17 @@ def test_config_declares_the_route_unbacked(tmp_path):
     assert config["grid"]["arity"] == 2
 
 
+def test_config_records_the_trellis_weighting(tmp_path):
+    """An encoder setting the merge guard compares, like ``scale.refit``."""
+    from tessera.export import DEFAULT_TRELLIS_WEIGHTING
+
+    export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)
+    config = read_checkpoint_config(tmp_path)
+    assert DEFAULT_TRELLIS_WEIGHTING == "scale"
+    assert config["trellis"]["weighting"] == "scale"
+    assert config["trellis"]["span"] == 2
+
+
 def test_body_bpp_excludes_passthrough_params(tmp_path):
     """principle 12: bpp is over quantizable params only."""
     tensors = {"w": _w(), "embed": torch.zeros(1000, 256).bfloat16()}

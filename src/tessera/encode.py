@@ -197,6 +197,7 @@ def viterbi_columns(
     code: ConvCode,
     completion: int,
     span: int = 1,
+    weights: "torch.Tensor | None" = None,
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """Exact Viterbi down every column at once.
 
@@ -204,6 +205,16 @@ def viterbi_columns(
     Returns ``(anchor_index[steps, cols], body_field[steps, cols], sse)`` where
     ``steps = rows // grid.arity`` -- one trellis position per *code*, which is
     one row only when the grid is scalar.
+
+    ``weights`` is an optional ``[rows, cols]`` positive weight per POSITION
+    on the branch metric.  The targets are normalised per half, so an
+    unweighted trellis minimises ``sum (w/c - q)^2`` -- every position's error
+    divided by its own scale squared, which over-serves the quiet groups a
+    column passes through.  With ``weights = c^2`` the path minimises the
+    true ``sum (w - c q)^2``.  The weight is applied per row inside a code's
+    Euclidean sum: a half is sixteen consecutive columns of one row, so the
+    ``arity`` rows of a code sit in different halves and carry different
+    scales.  ``None`` is bit-identical to the unweighted encoder.
 
     ``span`` is the super-symbol length L (``trellis.py``).  One trellis step
     then covers L consecutive positions: each position's best point per subset
@@ -253,6 +264,7 @@ def viterbi_columns(
     # column, because the trellis runs down columns and the k positions of a
     # code have to share one branch decision.
     tuples = targets.reshape(steps, arity, cols)
+    wrows = None if weights is None else weights.reshape(steps, arity, cols)
 
     cost = torch.full((cols, states), float("inf"), device=device)
     cost[:, 0] = 0.0
@@ -274,7 +286,10 @@ def viterbi_columns(
             # reachable descendant under squared Euclidean distance.  At k=1
             # the sum is over one term and this is bit-identical to the
             # scalar form.
-            err = ((target - dvals.unsqueeze(0)) ** 2).sum(dim=3).amin(dim=2)  # [cols,A]
+            sq = (target - dvals.unsqueeze(0)) ** 2                       # [cols,A,2^c,k]
+            if weights is not None:
+                sq = sq * wrows[step].t().reshape(cols, 1, 1, arity)
+            err = sq.sum(dim=3).amin(dim=2)                              # [cols,A]
             by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
             best, point = by_subset.min(dim=2)                       # [cols, 4]
             picked[step] = point.to(point_dtype)
@@ -456,11 +471,23 @@ def _refit_scales(
     return new_base, new_refine, new_effective
 
 
+E4M3_NORMAL_BYTES = (0x08, 0x7E)   # inclusive: 2^-6 .. 448
+
+
 def e4m3_positive_values(device=None) -> torch.Tensor:
-    """``[126]`` -- the positive finite E4M3FN values, ascending; entry ``i``
-    is byte ``i + 1``.  Byte 0x7F is NaN and 0x00 is zero; neither is a scale."""
+    """``[119]`` -- the positive *normal* E4M3FN values, ascending; entry ``i``
+    is byte ``i + 8``.
+
+    Subnormals (bytes 0x01..0x07, ``2^-6 * m/8``) are excluded on purpose: the
+    kernel lane decodes a scale byte by field arithmetic, ``2^(e-7) (1+m/8)``,
+    which is the S6b relabelling's contract (``wire.nvfp4_scale_bytes`` only
+    ever emits exponent fields 1..15) and is wrong at exponent field 0.  The
+    LUT plane is materialised to the same bytes, so it holds to the same range.
+    Seventeen binades remain; a unit whose scales span more is not a unit.
+    """
+    lo, hi = E4M3_NORMAL_BYTES
     return (
-        torch.arange(1, 0x7F, dtype=torch.uint8, device=device)
+        torch.arange(lo, hi + 1, dtype=torch.uint8, device=device)
         .view(torch.float8_e4m3fn)
         .float()
     )
@@ -511,12 +538,13 @@ def _fit_lut(
     against each unused grid value at full cost.
     """
     device = targets.device
-    grid_values = e4m3_positive_values(device) * global_scale          # [126]
+    grid_values = e4m3_positive_values(device) * global_scale          # [119]
     live = weights > 0
     if not bool(live.any()):
         # Nothing to fit: a unit of all-zero halves.  Any table decodes it.
+        first_byte = E4M3_NORMAL_BYTES[0]
         return (
-            torch.arange(1, entries + 1, dtype=torch.uint8, device=device),
+            torch.arange(first_byte, first_byte + entries, dtype=torch.uint8, device=device),
             grid_values[:entries],
         )
     s, w = targets[live], weights[live]
@@ -531,7 +559,10 @@ def _fit_lut(
             first -= 1
         if last - first < entries and last < grid_values.numel():
             last += 1
-    candidate_bytes = torch.arange(first + 1, last + 1, dtype=torch.long, device=device)
+    # Grid index -> byte: entry ``i`` of ``e4m3_positive_values`` is byte
+    # ``i + FIRST``; the swap loop below inverts it the same way.
+    FIRST = E4M3_NORMAL_BYTES[0]
+    candidate_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
     table = grid_values[first:last]
 
     while table.numel() > entries:
@@ -555,12 +586,12 @@ def _fit_lut(
     for _ in range(swaps):
         improved = False
         base = float(_lut_cost(s, w, table))
-        all_bytes = torch.arange(first + 1, last + 1, dtype=torch.long, device=device)
+        all_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
         unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
         for i in range(table.numel()):
             for byte in unused.tolist():
                 trial = table.clone()
-                trial[i] = grid_values[byte - 1]
+                trial[i] = grid_values[byte - FIRST]
                 cost = float(_lut_cost(s, w, trial))
                 if cost < base * (1.0 - 1e-9):
                     table, base, improved = trial, cost, True
@@ -625,17 +656,37 @@ def _refit_scales_lut(
     U = units.float().reshape(-1, half)
     A = (U * U).sum(dim=1)
     B = (W * U).sum(dim=1)
+    # The assignment rule.  A half with ``B <= 0`` -- codes that anti-correlate
+    # with its weights -- has its exact minimiser at the smallest positive
+    # scale, but handing it a collapsed scale is not free: the trellis runs on
+    # ``work / scale`` (a per-half normalised objective, see ``encode_unit``),
+    # so the next pass would be forced to spend the column's shared path on
+    # that half's enormous normalised residual.  Measured: the alternation
+    # stops being monotone in true SSE.  Such a half keeps its scale.
     valid = (A > 0) & (B > 0)
     targets = torch.where(valid, B / A.clamp_min(1e-30), effective)
     weights = torch.where(valid, A, torch.zeros_like(A))
 
+    # The accept rule, exact.  ``_lut_cost`` is what the fit optimises -- a
+    # weighted distance that equals the per-half parabola ``A c^2 - 2 B c`` up
+    # to a constant only where ``valid``.  The decision between the two tables
+    # is made on the parabola itself, over every half, so a re-assignment of
+    # a held half under the new table is charged at its true cost and the
+    # step is monotone with no hole: under the old table each valid half
+    # lands on its exact minimiser and each held half on the entry it holds.
+    def exact_cost(table: torch.Tensor) -> "tuple[torch.Tensor, float]":
+        index = _nearest(targets, table)
+        c = table[index]
+        return index, float((A * c * c - 2.0 * B * c).sum())
+
     old_table = _lut_values(table_bytes, global_scale)
     new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel())
-    if float(_lut_cost(targets, weights, new_table)) < float(_lut_cost(targets, weights, old_table)):
-        table_bytes, table = new_bytes, new_table
+    old_index, old_cost = exact_cost(old_table)
+    new_index, new_cost = exact_cost(new_table)
+    if new_cost < old_cost:
+        table_bytes, table, index = new_bytes, new_table, new_index
     else:
-        table = old_table
-    index = _nearest(targets, table)
+        table, index = old_table, old_index
     return table_bytes, index.to(torch.uint8), table[index]
 
 
@@ -656,8 +707,15 @@ def encode_unit(
     scale_refit: int = 4,
     span: int = 1,
     scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
+
+    ``trellis_weighting`` is the branch-metric weight the Viterbi runs under:
+    ``"none"`` minimises the per-half normalised error (the encoder as first
+    built), ``"scale"`` weights each code by its half's scale squared so the
+    path minimises the true squared error (``viterbi_columns``).  An encoder
+    setting, not wire: any decoder reads either.
 
     ``span`` is the trellis super-symbol length (``viterbi_columns``) and
     ``scale_plane`` how segment 2b is written; both are wire and both default
@@ -744,7 +802,7 @@ def encode_unit(
     vectors = grid_vector_table(grid, device)
     rate_vector = torch.tensor(rates, device=device)
 
-    def trellis_pass(targets: torch.Tensor) -> float:
+    def trellis_pass(targets: torch.Tensor, weights: "torch.Tensor | None" = None) -> float:
         # One Viterbi per rate: columns are independent, so a mixed-rate
         # schedule is a partition of columns and not a harder problem.
         total = 0.0
@@ -754,7 +812,8 @@ def encode_unit(
             level = depth if completion is None else min(completion, depth)
             which = torch.nonzero(rate_vector == present).squeeze(1)
             sub = targets[:, which].contiguous()
-            a, b, s_ = viterbi_columns(sub, picked, code, level, span=span)
+            sub_w = None if weights is None else weights[:, which].contiguous()
+            a, b, s_ = viterbi_columns(sub, picked, code, level, span=span, weights=sub_w)
             total += s_
             blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
             reachable = blocks[:, :: 1 << (depth - level)]
@@ -778,10 +837,19 @@ def encode_unit(
     # ``scale_refit=0`` is the amax plane, byte for byte.  Each refit is a
     # plane VALUE written in the same S6b bytes: the decoder, the kernel and
     # the profile id are untouched.
+    if trellis_weighting not in ("none", "scale"):
+        raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
     for _ in range(max(scale_refit, 1)):
         scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
         targets = work / scale
-        sse = trellis_pass(targets)
+        weights = None
+        if trellis_weighting == "scale":
+            # One weight per POSITION (a half is sixteen columns of one row,
+            # so every position of a trellis column has its own scale).
+            # Normalised to the column's loudest position so the fp32 path
+            # costs stay O(1); a per-column constant moves no argmin.
+            weights = (scale / scale.amax(dim=0, keepdim=True)) ** 2
+        sse = trellis_pass(targets, weights)
         if scale_refit == 0:
             break
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)

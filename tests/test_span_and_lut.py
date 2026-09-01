@@ -33,7 +33,7 @@ from tessera.encode import (
     encode_unit,
     viterbi_columns,
 )
-from tessera.errors import GrammarError, SchemaError
+from tessera.errors import GrammarError, ManifestError, SchemaError, TesseraError
 from tessera.export import DEFAULT_SCALE_PLANE, DEFAULT_SPAN
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
 from tessera.manifest import ScalePlane, ScalePlaneKind
@@ -134,6 +134,24 @@ def test_lut_plane_decodes_to_the_encoders_scales_exactly():
                        reconstruct_unit(unit, FORESTS2, CODE, scale))
 
 
+def test_scale_weighted_trellis_never_ends_a_column_worse():
+    """With the branch metric weighted by the position's scale squared the
+    Viterbi minimises ``sum (w - c q)^2`` exactly (the cap rate has no
+    completion subtree, so the metric is the leaf error), so on a fixed plane
+    (refit 0) no column can end with more true error than the unweighted
+    path, and the total is lower whenever the plane varies along a column."""
+    w = _weights()
+    plain = encode_unit(w, FORESTS2, (7,) * 512, CODE, scale_refit=0, completion=0)
+    weighted = encode_unit(w, FORESTS2, (7,) * 512, CODE, scale_refit=0, completion=0,
+                           trellis_weighting="scale")
+    per_col = lambda u: ((reconstruct_unit(u, FORESTS2, CODE) - w) ** 2).sum(dim=0)
+    a, b = per_col(plain), per_col(weighted)
+    assert bool((b <= a * (1 + 1e-5) + 1e-12).all()), int((b > a).sum())
+    assert float(b.sum()) < float(a.sum())
+    with pytest.raises(GrammarError, match="trellis_weighting"):
+        encode_unit(w, FORESTS2, (7,) * 512, CODE, trellis_weighting="hessian")
+
+
 def test_lut_refit_is_monotone_and_beats_its_amax_start():
     w = _weights()
     errors = []
@@ -216,7 +234,7 @@ def test_span_one_over_s6b_is_still_a_minor_zero_artifact():
     assert manifest.schema_minor == 0
     assert manifest.encoder_profile_id == encoder_profile_id(CODE, unit.rates, K2)
     assert manifest.encode() == manifest.encode(0)
-    with pytest.raises(Exception):
+    with pytest.raises(ManifestError, match="needs minor"):
         # a minor-1 manifest cannot be squeezed into minor 0
         parse(blob).manifest.__class__(
             **{**manifest.__dict__, "span": 2}
@@ -247,27 +265,36 @@ def test_a_manifest_whose_span_disagrees_with_the_profile_fails_closed():
     # span 1 has a different body size, so the layout itself disagrees first;
     # the digest check is the backstop for a forged manifest with a matching
     # plane region.  Either way: refused, never a silent misdecode.
-    with pytest.raises((GrammarError, SchemaError, Exception)):
+    with pytest.raises(TesseraError):
         read_unit_artifact(serialize(lying, region))
 
 
 def test_scale_plane_record_validates_its_table():
-    with pytest.raises(Exception):
-        ScalePlane.lut(bytes([1, 1, 2]), 1.0)              # not strictly ascending
-    with pytest.raises(Exception):
-        ScalePlane.lut(bytes([0, 1, 2]), 1.0)              # zero is not a scale
-    with pytest.raises(Exception):
-        ScalePlane.lut(bytes([1, 2, 0x7F]), 1.0)           # NaN byte
-    with pytest.raises(Exception):
-        ScalePlane(ScalePlaneKind.S6B, bytes([1, 2]))      # S6b carries no table
-    ScalePlane.lut(bytes(range(1, 17)), 2.0 ** -10)
+    with pytest.raises(ManifestError, match="ascending"):
+        ScalePlane.lut(bytes([8, 8, 9]), 1.0)              # not strictly ascending
+    with pytest.raises(ManifestError, match="normal"):
+        ScalePlane.lut(bytes([0, 8, 9]), 1.0)              # zero is not a scale
+    with pytest.raises(ManifestError, match="normal"):
+        ScalePlane.lut(bytes([7, 8, 9]), 1.0)              # subnormal: the kernel
+    with pytest.raises(ManifestError, match="normal"):     # misdecodes it
+        ScalePlane.lut(bytes([8, 9, 0x7F]), 1.0)           # NaN byte
+    with pytest.raises(ManifestError, match="no table"):
+        ScalePlane(ScalePlaneKind.S6B, bytes([8, 9]))      # S6b carries no table
+    ScalePlane.lut(bytes(range(8, 24)), 2.0 ** -10)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="the kernel lane is a CUDA path")
-def test_the_kernel_lane_refuses_a_span_it_cannot_decode():
+def test_the_kernel_lane_packs_span_2_and_refuses_a_span_it_cannot_decode():
+    """Span 2 is the shipping wire and packs to three planes; span 3 is a
+    body the kernel has no decode for and is refused at the seam rather
+    than decoded as if it were span 1."""
     from tessera.kernel import pack_kernel_planes
 
     w = _weights(rows=256, cols=512).cuda()
     unit = encode_unit(w, {3: FORESTS1[3]}, (3,) * 512, CODE, span=2, scale_refit=0)
+    select, label, point = pack_kernel_planes(unit.body_bits, rate=3, span=2)
+    assert point.numel() == 256 * 512 * 2 // 8
+    assert label.numel() == 128 * 512 * 2 // 8
+    unit3 = encode_unit(w[:192], {3: FORESTS1[3]}, (3,) * 512, CODE, span=3, scale_refit=0)
     with pytest.raises(GrammarError, match="span"):
-        pack_kernel_planes(unit.body_bits, rate=3, memory=6, span=2)
+        pack_kernel_planes(unit3.body_bits, rate=3, span=3)

@@ -74,6 +74,15 @@ DEFAULT_HALF = 16
 #: wire: the bytes decode identically at any value.  Recorded in the config so
 #: a merge can refuse parts built at different settings.
 DEFAULT_SCALE_REFIT = 4
+#: Branch-metric weighting for the Viterbi (``encode_unit``).  ``"scale"``
+#: weights every position by its half's scale squared so the path minimises
+#: the true squared error rather than the per-half normalised one -- the
+#: objective the plane refit already descends.  Measured 1.0077x at the
+#: default wire on six GLM experts (every tensor 1.005-1.010x), 1.014x on the
+#: span-1/S6b/refit-0 wire, at no encode cost
+#: (``experiments/results/tessera_trellis_weighting_check.json``).  An encoder
+#: setting, not wire; recorded in the config for the merge guard.
+DEFAULT_TRELLIS_WEIGHTING = "scale"
 #: The shipping wire since 2026-09-01 (schema minor 1): a span-2 trellis --
 #: one select bit per two positions, 3.75 b/wt at the E2M1x2 cap -- over a
 #: LUT scale plane, a 4-bit index per 16 weights into a per-unit table of
@@ -166,6 +175,7 @@ def encode_linear(
     scale_refit: int = DEFAULT_SCALE_REFIT,
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -198,6 +208,7 @@ def encode_linear(
         rotation=rotation, with_diagonals=with_diagonals,
         completion=completion, group=group, half=half,
         scale_refit=scale_refit, span=span, scale_plane=scale_plane,
+        trellis_weighting=trellis_weighting,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -239,6 +250,7 @@ def export_checkpoint(
     scale_refit: int = DEFAULT_SCALE_REFIT,
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
 
@@ -268,6 +280,7 @@ def export_checkpoint(
                 group=group, half=half, rotation=rotation,
                 with_diagonals=with_diagonals, verify=verify,
                 scale_refit=scale_refit, span=span, scale_plane=scale_plane,
+                trellis_weighting=trellis_weighting,
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -290,7 +303,8 @@ def export_checkpoint(
     )
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, span, scale_plane)
+                  report, plan, extra_config, scale_refit, span, scale_plane,
+                  trellis_weighting)
     return report
 
 
@@ -298,7 +312,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
                   extra_config: "dict | None", scale_refit: int = 0,
                   span: int = 1,
-                  scale_plane: ScalePlaneKind = ScalePlaneKind.S6B) -> None:
+                  scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+                  trellis_weighting: str = "none") -> None:
     plane = ScalePlaneKind(scale_plane)
     config = {
         "quant_method": "tessera",
@@ -321,7 +336,10 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # The trellis span is wire (manifest field, profile-id tag).  Recorded
         # here as well so a merge can refuse parts built at different spans
         # without opening a blob.
-        "trellis": {"span": int(span)},
+        # ``weighting`` is the Viterbi's branch-metric weight (an encoder
+        # setting: ``none`` = per-half normalised error, ``scale`` = true
+        # squared error); the merge guard compares it like ``scale.refit``.
+        "trellis": {"span": int(span), "weighting": str(trellis_weighting)},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
         # interleave, because the same count meant a different encoder before
         # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
@@ -376,6 +394,7 @@ def export_checkpoint_streaming(
     shard_filter: "set[str] | None" = None,
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -449,6 +468,7 @@ def export_checkpoint_streaming(
                         with_diagonals=with_diagonals, verify=verify,
                         scale_refit=scale_refit, span=span,
                         scale_plane=scale_plane,
+                        trellis_weighting=trellis_weighting,
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -478,7 +498,8 @@ def export_checkpoint_streaming(
         {"metadata": {"total_size": report.total_bytes},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, span, scale_plane)
+                  report, plan, extra_config, scale_refit, span, scale_plane,
+                  trellis_weighting)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):

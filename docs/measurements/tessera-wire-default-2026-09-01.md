@@ -43,8 +43,8 @@ Span-1 S6b units still serialise as minor-0 artifacts, byte-identical to the
 | span 2, S6b, refit 4 (trellis alone) | 4.25 | 0.08221 | 1.101× | 0.11920 | 1.148× | 1.3 |
 | span 1, S6b, refit 0 (the 151 GiB export) | 4.00 | 0.09819 | 0.922× | 0.13063 | 1.258× | 0.4 |
 
-Per tensor the new default is 1.121–1.129× over today's default; no tensor
-below 1.12×.
+Per tensor the new default is 1.118–1.135× over today's default (L42 gate the
+least, L20 gate the most; refit 6 spans 1.117–1.135×).
 
 ## Three facts
 

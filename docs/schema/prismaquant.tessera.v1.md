@@ -37,7 +37,7 @@ Minor 1 appends two fields to the canonical manifest, **after**
 |---|---|---|
 | `span` | uint | The trellis super-symbol length L (Wei multidimensional partition). One select bit per L consecutive positions of a column; positions `1..L-1` of a super-symbol store a two-bit subset label ahead of their point bits; position 0's label is `(super-label − Σ stored labels) mod 4`. BODY holds `L·R + L − 1` bits per super-symbol per column. `1` is the per-position trellis, byte for byte. |
 | `scale_plane.kind` | uint | `0` = S6b (SCALE_BASE E8M0 per group + SCALE_REFINE `(d,m)` nibble per half). `1` = LUT: SCALE_BASE is absent (count 0) and the SCALE_REFINE nibble indexes `table`. |
-| `scale_plane.table` | blob (LUT only) | 2..16 positive finite E4M3FN bytes (`0x01..0x7E`), strictly ascending. The half's scale is `e4m3(table[nibble]) × global_scale`. |
+| `scale_plane.table` | blob (LUT only) | 2..16 positive **normal** E4M3FN bytes (`0x08..0x7E`; subnormals are refused because the served plane is decoded as `2^(e-7)(1+m/8)`), strictly ascending. The half's scale is `e4m3(table[nibble]) × global_scale`. |
 | `scale_plane.global_scale` | ratio (LUT only) | Exact rational, representable as an fp32. The encoder writes a power of two. |
 
 **Reading.** The header's minor selects the manifest grammar: a minor-0

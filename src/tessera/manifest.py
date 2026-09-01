@@ -207,12 +207,15 @@ class ScalePlane:
             raise ManifestError(
                 f"a LUT scale plane holds 2..16 entries, got {len(self.table)}"
             )
-        # Positive, finite, non-NaN E4M3FN: bytes 0x01..0x7E.  Bytes are
-        # monotone in value over that range, so strictly ascending bytes are
-        # strictly ascending, distinct scales -- the canonical order.
-        if any(not 1 <= byte <= 0x7E for byte in self.table):
+        # Positive NORMAL E4M3FN: bytes 0x08..0x7E.  Subnormals (0x01..0x07)
+        # are excluded because the kernel lane decodes the materialised byte
+        # as 2^(e-7)(1+m/8) -- the S6b relabelling's contract -- which is
+        # wrong at exponent field 0.  Bytes are monotone in value over the
+        # range, so strictly ascending bytes are strictly ascending, distinct
+        # scales -- the canonical order.
+        if any(not 0x08 <= byte <= 0x7E for byte in self.table):
             raise ManifestError(
-                "LUT entries must be positive finite E4M3FN bytes (0x01..0x7E)"
+                "LUT entries must be positive normal E4M3FN bytes (0x08..0x7E)"
             )
         if any(a >= b for a, b in zip(self.table, self.table[1:])):
             raise ManifestError("LUT entries must be strictly ascending")

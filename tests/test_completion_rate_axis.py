@@ -28,7 +28,9 @@ from tessera.alphabet import E2M1_GRID, build_forest, tuple_grid  # noqa: E402
 from tessera.decode import reconstruct_unit  # noqa: E402
 from tessera.encode import encode_unit  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
-from tessera.export import DEFAULT_SCALE_PLANE, DEFAULT_SPAN, _plan_for, encode_linear  # noqa: E402
+from tessera.export import (  # noqa: E402
+    DEFAULT_SCALE_PLANE, DEFAULT_SPAN, DEFAULT_TRELLIS_WEIGHTING, _plan_for, encode_linear,
+)
 from tessera.grammar import (  # noqa: E402
     completion_capacity,
     completion_limit_from_elements,
@@ -118,7 +120,8 @@ def test_the_reader_recovers_the_depth_it_was_written_at(name, grid, completion)
     unit = encode_unit(w.float(), forests, rates, CODE,
                        rotation=RotationState.NONE, completion=completion,
                        group=32, half=16,
-                       span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE)
+                       span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE,
+                       trellis_weighting=DEFAULT_TRELLIS_WEIGHTING)
     reference = reconstruct_unit(unit, forests, CODE)
     blob = _build(grid, q256, completion, name).blob      # verify=True already
     assert torch.equal(read_unit_artifact(blob, device=w.device), reference)
@@ -183,7 +186,8 @@ def test_bytes_alone_decode_to_the_encoders_reconstruction_at_every_depth(name, 
         unit = encode_unit(w.float(), forests, rates, CODE,
                            rotation=RotationState.NONE, completion=completion,
                            group=32, half=16,
-                           span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE)
+                           span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE,
+                       trellis_weighting=DEFAULT_TRELLIS_WEIGHTING)
         blob = _build(grid, q256, completion, name).blob
         assert torch.equal(read_unit_artifact(blob, device=w.device),
                            reconstruct_unit(unit, forests, CODE))

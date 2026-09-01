@@ -1,0 +1,80 @@
+
+== L5.gate_proj (2048, 4096)  eval 1024 rows  act leg served 0.09170
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08787 0.08471 0.12467    2.3
+    span2 LUT refit4 scale-weighted           4.00 0.08728 0.08410 0.12424    2.2
+    span2 LUT refit0 unweighted               4.00 0.09340 0.08994 0.12829    0.6
+    span2 LUT refit0 scale-weighted           4.00 0.09285 0.08939 0.12783    0.7
+    span1 S6b refit0 unweighted (export)      4.00 0.10812 0.10412 0.13843    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10666 0.10279 0.13742    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.084707 vs prior 0.084707 OK
+    identity check span1 S6b refit0 unweighted (export): 0.104121 vs prior 0.104121 OK
+
+== L5.up_proj (2048, 4096)  eval 1024 rows  act leg served 0.09474
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08796 0.08746 0.12868    2.1
+    span2 LUT refit4 scale-weighted           4.00 0.08733 0.08693 0.12829    2.2
+    span2 LUT refit0 unweighted               4.00 0.09343 0.09288 0.13239    0.6
+    span2 LUT refit0 scale-weighted           4.00 0.09288 0.09239 0.13198    0.7
+    span1 S6b refit0 unweighted (export)      4.00 0.10808 0.10731 0.14277    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10661 0.10601 0.14172    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.087457 vs prior 0.087457 OK
+    identity check span1 S6b refit0 unweighted (export): 0.107305 vs prior 0.107305 OK
+
+== L20.gate_proj (2048, 4096)  eval 1024 rows  act leg served 0.08769
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08830 0.08145 0.11953    2.1
+    span2 LUT refit4 scale-weighted           4.00 0.08767 0.08064 0.11903    2.3
+    span2 LUT refit0 unweighted               4.00 0.09335 0.08632 0.12284    0.6
+    span2 LUT refit0 scale-weighted           4.00 0.09277 0.08560 0.12235    0.7
+    span1 S6b refit0 unweighted (export)      4.00 0.10751 0.09947 0.13240    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10585 0.09818 0.13137    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.081446 vs prior 0.081446 OK
+    identity check span1 S6b refit0 unweighted (export): 0.099474 vs prior 0.099474 OK
+
+== L20.up_proj (2048, 4096)  eval 1024 rows  act leg served 0.09242
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08817 0.08587 0.12600    1.9
+    span2 LUT refit4 scale-weighted           4.00 0.08757 0.08508 0.12545    2.1
+    span2 LUT refit0 unweighted               4.00 0.09322 0.09050 0.12912    0.5
+    span2 LUT refit0 scale-weighted           4.00 0.09264 0.08997 0.12874    0.5
+    span1 S6b refit0 unweighted (export)      4.00 0.10760 0.10398 0.13871    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10600 0.10249 0.13754    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.085867 vs prior 0.085867 OK
+    identity check span1 S6b refit0 unweighted (export): 0.103981 vs prior 0.103981 OK
+
+== L42.gate_proj (2048, 4096)  eval 1024 rows  act leg served 0.06653
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08902 0.06247 0.09126    2.2
+    span2 LUT refit4 scale-weighted           4.00 0.08842 0.06217 0.09105    2.4
+    span2 LUT refit0 unweighted               4.00 0.09430 0.06644 0.09398    0.7
+    span2 LUT refit0 scale-weighted           4.00 0.09370 0.06578 0.09352    0.7
+    span1 S6b refit0 unweighted (export)      4.00 0.10775 0.07640 0.10133    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10600 0.07490 0.10016    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.062474 vs prior 0.062474 OK
+    identity check span1 S6b refit0 unweighted (export): 0.076401 vs prior 0.076401 OK
+
+== L42.up_proj (2048, 4096)  eval 1024 rows  act leg served 0.08633
+    arm                                        bpp       wt      out     W4A4  enc s
+    span2 LUT refit4 unweighted (default)     4.00 0.08873 0.08072 0.11798    2.1
+    span2 LUT refit4 scale-weighted           4.00 0.08814 0.08004 0.11760    2.3
+    span2 LUT refit0 unweighted               4.00 0.09402 0.08562 0.12137    0.7
+    span2 LUT refit0 scale-weighted           4.00 0.09344 0.08474 0.12076    0.7
+    span1 S6b refit0 unweighted (export)      4.00 0.10784 0.09784 0.13013    0.4
+    span1 S6b refit0 scale-weighted           4.00 0.10622 0.09666 0.12929    0.4
+    identity check span2 LUT refit4 unweighted (default): 0.080716 vs prior 0.080716 OK
+    identity check span1 S6b refit0 unweighted (export): 0.097843 vs prior 0.097843 OK
+
+| arm | bpp | out-space weight leg | vs default | W4A4 | vs EXL3@A4 | encode s |
+|---|---:|---:|---:|---:|---:|---:|
+| span2 LUT refit4 unweighted (default) | 4.00 | 0.08044 | 1.000x (1.000-1.000) | 0.11802 | 1.137x | 2.1 |
+| span2 LUT refit4 scale-weighted | 4.00 | 0.07983 | 1.008x (1.005-1.010) | 0.11761 | 1.133x | 2.2 |
+| span2 LUT refit0 unweighted | 4.00 | 0.08528 | 0.943x (0.940-0.949) | 0.12133 | 1.169x | 0.6 |
+| span2 LUT refit0 scale-weighted | 4.00 | 0.08465 | 0.950x (0.947-0.954) | 0.12086 | 1.164x | 0.7 |
+| span1 S6b refit0 unweighted (export) | 4.00 | 0.09819 | 0.819x (0.814-0.826) | 0.13063 | 1.258x | 0.4 |
+| span1 S6b refit0 scale-weighted | 4.00 | 0.09684 | 0.831x (0.824-0.838) | 0.12958 | 1.248x | 0.4 |
+weighted / unweighted at 'span2 LUT refit4 unweighted (default)': 1.0077x (1.0049-1.0100)
+weighted / unweighted at 'span2 LUT refit0 unweighted': 1.0077x (1.0053-1.0104)
+weighted / unweighted at 'span1 S6b refit0 unweighted (export)': 1.0142x (1.0122-1.0201)
+
+wrote experiments/results/tessera_trellis_weighting_check.json
