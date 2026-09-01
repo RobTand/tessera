@@ -210,6 +210,9 @@ def main():
                 unit = encode_unit(w, forests8[R], (R,) * C, LARSEN6, completion=0, span=1,
                                    scale_plane=ScalePlaneKind.S6B, scale_refit=4, trellis_weighting="none")
                 rec(f"Tessera-8 R={R} today (E4M3 S6b span1 refit4, builder anchors)", reconstruct_unit(unit, forests8[R], LARSEN6), R + 0.5)
+                unit = encode_unit(w, forests8[R], (R,) * C, LARSEN6, completion=0, span=1,
+                                   scale_plane=ScalePlaneKind.LUT, scale_refit=4, trellis_weighting="scale")
+                rec(f"Tessera-8 R={R} LUT plane alone (span1 refit4 scale-wt)", reconstruct_unit(unit, forests8[R], LARSEN6), R + 0.25)
                 unit = encode_unit(w, forests8[R], (R,) * C, LARSEN6, completion=0, span=2,
                                    scale_plane=ScalePlaneKind.LUT, scale_refit=4, trellis_weighting="scale")
                 rec(f"Tessera-8 R={R} minor-1 wire (LUT span2 refit4 scale-wt)", reconstruct_unit(unit, forests8[R], LARSEN6), R + 0.75)

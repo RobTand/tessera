@@ -118,6 +118,9 @@ scalar arm would separate them and has not been run.
 - Per the source spec TESSERA-8 should use "per-channel scalar DNA instead of
   MXFP8's po2 blocks". These arms use the S6b per-16 plane on **both** sides, so
   the comparison isolates the payload. The per-channel variant is unmeasured.
+  *(2026-09-01: now measured — `tessera8-targets-2026-09-01.md`, the
+  "per-channel" arms; and "both sides on the S6b plane" was itself a rigged
+  control, `fp8-band-and-the-source-model.md`.)*
 
 ---
 

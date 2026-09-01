@@ -42,6 +42,17 @@ plane is not a neutral control. It is a subsidy to whichever format wants it.**
 Corrected: at 6.5 bpp Tessera reads **1.226× FP8's error on 18.8% fewer bytes**.
 A trade, not a win. Tessera does not beat FP8 anywhere in the measured band.
 
+> **Correction (2026-09-01, `tessera8_bounds.py`, six GLM experts):** the
+> liability above is the S6b *rule* (floored exponent, 5% of weights clipped),
+> not the block plane. A per-16 plane with an honest scale (amax then
+> least-squares, fp32) is **better** than per-channel FP8 at 8 bits — 0.0154
+> vs 0.0187 in output space (A16), 0.0284 vs 0.0303 under W8A8 — at 8.5 bpp
+> with an E4M3 scale byte. Per-channel remains the deployable FP8-GEMM
+> contract; the plane is not what made this comparator worse. The
+> "1.226× on 18.8% fewer bytes" arm is also superseded: the E4M3 family it
+> measured used the builder's sub-cap anchors and the S6b plane, both since
+> found wanting (`tessera8-targets-2026-09-01.md`).
+
 ## The bug this turned up
 
 Chasing the comparator surfaced a real defect. TESSERA-8 below its cap scored
