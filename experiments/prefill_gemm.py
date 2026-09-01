@@ -26,7 +26,8 @@ torch.manual_seed(0)
 
 @triton.jit
 def _nvfp4_gemm(x_ptr, w_ptr, s_ptr, lut_ptr, out_ptr, gs, M, rows, cols,
-                BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr):
+                BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+                BF16: tl.constexpr, GROUP_M: tl.constexpr):
     """The comparator: packed E2M1 nibbles + an E4M3 block scale per 16.
 
     Structurally identical to `_gemm_kernel` -- same tiling, same dot, same
@@ -34,7 +35,13 @@ def _nvfp4_gemm(x_ptr, w_ptr, s_ptr, lut_ptr, out_ptr, gs, M, rows, cols,
     stored bytes into weights.  NVFP4 reads half a byte per weight and indexes a
     16-entry table; Tessera reads two planes and indexes a 512-entry one.
     """
-    pid_m = tl.program_id(0); pid_n = tl.program_id(1)
+    pid = tl.program_id(0)
+    grid_m = tl.cdiv(M, BLOCK_M); grid_n = tl.cdiv(rows, BLOCK_N)
+    width = GROUP_M * grid_n
+    group = pid // width
+    first_m = group * GROUP_M
+    span = tl.minimum(grid_m - first_m, GROUP_M)
+    pid_m = first_m + ((pid % width) % span); pid_n = (pid % width) // span
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     lm = offs_m < M; ln = offs_n < rows
@@ -52,16 +59,26 @@ def _nvfp4_gemm(x_ptr, w_ptr, s_ptr, lut_ptr, out_ptr, gs, M, rows, cols,
             1.0 + (sb & 0x7).to(tl.float32) / 8.0)
         xt = tl.load(x_ptr + offs_m[:, None] * cols + offs_k[None, :],
                      mask=lm[:, None] & lk[None, :], other=0.0)
-        acc += tl.dot(xt, val * sc, allow_tf32=False)
+        # The comparator gets EXACTLY the treatment the kernel under test gets.
+        # Giving only one arm tensor cores is the same class of error as giving
+        # only one arm a scale plane, and that one already cost a retraction.
+        w = val * sc
+        if BF16:
+            acc += tl.dot(xt.to(tl.bfloat16), w.to(tl.bfloat16), out_dtype=tl.float32)
+        else:
+            acc += tl.dot(xt, w, allow_tf32=False)
     tl.store(out_ptr + offs_m[:, None] * rows + offs_n[None, :], acc * gs,
              mask=lm[:, None] & ln[None, :])
 
 
-def nvfp4_gemm(x, w, s, lut, gs, rows, cols, bm=64, bn=64, bk=64):
+def nvfp4_gemm(x, w, s, lut, gs, rows, cols, bm=64, bn=64, bk=64,
+               bf16=True, gm=8, warps=4, stages=3):
     out = torch.empty((x.shape[0], rows), dtype=torch.float32, device=x.device)
-    _nvfp4_gemm[(triton.cdiv(x.shape[0], bm), triton.cdiv(rows, bn))](
+    grid = (triton.cdiv(x.shape[0], bm) * triton.cdiv(rows, bn),)
+    _nvfp4_gemm[grid](
         x, w, s, lut, out, float(gs), x.shape[0], rows, cols,
-        BLOCK_M=bm, BLOCK_N=bn, BLOCK_K=bk)
+        BLOCK_M=bm, BLOCK_N=bn, BLOCK_K=bk, BF16=bf16, GROUP_M=gm,
+        num_warps=warps, num_stages=stages)
     return out
 
 
@@ -92,18 +109,24 @@ nib = codes.to(torch.int32)
 packed = ((nib[0::2, :] << 4) | nib[1::2, :]).to(torch.uint8).contiguous()
 Wb = W.to(torch.bfloat16)
 
-GRID = [(bm, bn, bk) for bm in (16, 32, 64, 128) for bn in (32, 64, 128)
-        for bk in (32, 64, 128)]
+# One grid, both arms.  Now includes num_warps/num_stages, which were never
+# passed before -- every launch took Triton's default 4 warps / 3 stages, so no
+# amount of block-size sweeping could have found the real optimum.
+GRID = [(bm, bn, bk, w, st)
+        for bm in (32, 64, 128) for bn in (64, 128, 256) for bk in (32, 64, 128)
+        for w in (4, 8) for st in (3, 4)]
 
-def sweep(make, M):
+def sweep(make, M, verify=None):
     best = None
-    for bm, bn, bk in GRID:
+    for bm, bn, bk, w, st in GRID:
         if bm > max(16, M) * 2: continue
         try:
-            fn = make(bm, bn, bk); us = bench(fn)
+            fn = make(bm, bn, bk, w, st); us = bench(fn)
         except Exception:
             continue
-        if best is None or us < best[0]: best = (us, bm, bn, bk)
+        if best is None or us < best[0]: best = (us, bm, bn, bk, w, st)
+    if verify is not None and best is not None and not verify(*best[1:]):
+        raise SystemExit(f"fastest config {best[1:]} does not reproduce the reference")
     return best
 
 print(f"tile {N}x{K}, fp32 accumulate, all arms swept over one identical grid\n")
@@ -112,12 +135,18 @@ print(f"{'M':>6}{'tessera 3.5bpp':>17}{'nvfp4 4.5bpp':>15}{'bf16 torch':>13}"
 x1 = torch.randn(1, K, device=dev)
 y = tessera_gemm(x1, sel, pt, lut, scales, gs, N, K)
 assert torch.allclose(y, x1 @ ref.t(), rtol=2e-5, atol=2e-4), "gemm disagrees with reference"
-for M in (1, 8, 32, 128, 512, 2048, 8192):
+for M in (1, 8, 32, 128, 512, 2048, 4096):
     x = torch.randn(M, K, device=dev)
-    t = sweep(lambda a, b, c: (lambda: tessera_gemm(
-        x, sel, pt, lut, scales, gs, N, K, block_m=a, block_n=b, block_k=c)), M)
-    v = sweep(lambda a, b, c: (lambda: nvfp4_gemm(
-        x, packed, scales, e2lut, gs, N, K, bm=a, bn=b, bk=c)), M)
+    t = sweep(lambda a, b, c, w, st: (lambda: tessera_gemm(
+        x, sel, pt, lut, scales, gs, N, K, block_m=a, block_n=b, block_k=c,
+        bf16=True, num_warps=w, num_stages=st)), M,
+        verify=lambda a, b, c, w, st: torch.allclose(
+            tessera_gemm(x, sel, pt, lut, scales, gs, N, K, block_m=a, block_n=b,
+                         block_k=c, bf16=True, num_warps=w, num_stages=st),
+            x @ ref.t(), rtol=3e-2, atol=3e-2))
+    v = sweep(lambda a, b, c, w, st: (lambda: nvfp4_gemm(
+        x, packed, scales, e2lut, gs, N, K, bm=a, bn=b, bk=c,
+        bf16=True, warps=w, stages=st)), M)
     xb = x.to(torch.bfloat16)
     bf = bench(lambda: xb @ Wb.t())
     flops = 2.0 * M * N * K

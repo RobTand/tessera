@@ -877,6 +877,7 @@ def _gemm_kernel(
     global_scale, M, rows, cols,
     memory: tl.constexpr, rate: tl.constexpr, half: tl.constexpr, pad: tl.constexpr,
     BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, BLOCK_K: tl.constexpr,
+    BF16: tl.constexpr, GROUP_M: tl.constexpr,
 ):
     """``x @ W.T`` for prefill: decode a weight tile, then feed it to ``tl.dot``.
 
@@ -900,8 +901,18 @@ def _gemm_kernel(
     ``BLOCK_M`` anyway.  Correctness first; the shared window is available if a
     profile says the tile decode is the ceiling.
     """
-    pid_m = tl.program_id(0)
-    pid_n = tl.program_id(1)
+    # Grouped program order: walk GROUP_M row-blocks before advancing the column,
+    # so the tiles live at any instant share operands and hit in L2.  A plain 2D
+    # program_id sweeps a whole matrix row before reusing anything.
+    pid = tl.program_id(0)
+    grid_m = tl.cdiv(M, BLOCK_M)
+    grid_n = tl.cdiv(rows, BLOCK_N)
+    width = GROUP_M * grid_n
+    group = pid // width
+    first_m = group * GROUP_M
+    span = tl.minimum(grid_m - first_m, GROUP_M)
+    pid_m = first_m + ((pid % width) % span)
+    pid_n = (pid % width) // span
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     live_m = offs_m < M
@@ -946,7 +957,18 @@ def _gemm_kernel(
             x_ptr + offs_m[:, None] * cols + offs_k[None, :],
             mask=live_m[:, None] & live_k[None, :], other=0.0,
         )
-        acc += tl.dot(xt, w, allow_tf32=False)
+        # `tl.dot` on fp32 operands with tf32 disabled compiles to plain FMAs --
+        # no tensor cores at all.  That is a correct GEMM and a useless one: it
+        # measured this kernel 25x off cuBLAS and made the comparison a statement
+        # about the schedule rather than about the format.  BF16 operands with an
+        # fp32 accumulator is what a serving runtime actually executes, and it is
+        # what the NVFP4 comparator must be given too or the arms are not matched.
+        # The fp32 path stays because it is the one that reproduces a decoded
+        # column bit-for-bit, which is how correctness is tested.
+        if BF16:
+            acc += tl.dot(xt.to(tl.bfloat16), w.to(tl.bfloat16), out_dtype=tl.float32)
+        else:
+            acc += tl.dot(xt, w, allow_tf32=False)
 
     tl.store(
         out_ptr + offs_m[:, None] * rows + offs_n[None, :], acc * global_scale,
@@ -969,6 +991,10 @@ def tessera_gemm(
     block_m: int = 64,
     block_n: int = 64,
     block_k: int = 64,
+    bf16: bool = False,
+    group_m: int = 8,
+    num_warps: int = 4,
+    num_stages: int = 3,
 ) -> torch.Tensor:
     """``x @ W.T`` with ``W`` decoded from its planes inside the mainloop.
 
@@ -990,10 +1016,13 @@ def tessera_gemm(
         )
     M = x.shape[0]
     out = torch.empty((M, rows), dtype=torch.float32, device=x.device)
-    _gemm_kernel[(triton.cdiv(M, block_m), triton.cdiv(rows, block_n))](
+    grid = (triton.cdiv(M, block_m) * triton.cdiv(rows, block_n),)
+    _gemm_kernel[grid](
         x, select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
         float(global_scale), M, rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
         BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k,
+        BF16=bf16, GROUP_M=group_m,
+        num_warps=num_warps, num_stages=num_stages,
     )
     return out
