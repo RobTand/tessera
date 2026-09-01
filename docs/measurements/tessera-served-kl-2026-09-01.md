@@ -28,19 +28,30 @@ data-processing inequality — but with <3% mean tail mass the slack is small.)
 question — does Tessera at 4.0 beat NVFP4 at 4.5 *as NVFP4 actually deploys* —
 is still open, because:
 
-**NVFP4 here is W4A16, which is NVFP4's better face.** On the GLM route NVFP4
-serves **W4A4**: `flashinfer_b12x` quantizes activations to FP4 too. Measured
-on real GLM expert activations, that took NVFP4's functional error from 0.0667
-to 0.1092 — **+64%**. This arm pays none of that. So the comparison above is
-deliberately generous to NVFP4, and **the deciding measurement is a real
-compressed-tensors NVFP4 export served natively at W4A4**, which has not been
-run.
+**The NVFP4 arm is asymmetric in BOTH directions, and the two do not cancel.**
 
-**The screen and the gold metric agree in direction, which is reassuring.** The
-weight-space harness had Tessera at 0.0979 against NVFP4-W4A16's 0.0667 —
-**1.47× worse**. The served KL has Tessera at 1.10× worse. Same sign, smaller
-gap on the serving metric. This is *not* one of the project's screen-vs-gold
-inversions; the screen was directionally right and pessimistic.
+*Generous to NVFP4 on activations.* This arm is **W4A16**. On the GLM route
+NVFP4 serves **W4A4**: `flashinfer_b12x` quantizes activations to FP4 too.
+Measured on real GLM expert activations, that took NVFP4's functional error
+from 0.0667 to 0.1092 — **+64%**. This arm pays none of that.
+
+*Harsh to NVFP4 on weights.* `render_arm_to_bf16` renders through
+`spec.quantize_dequantize`, which is **RTN**. PrismaQuant ships NVFP4 with
+GPTQ + JSO, worth ~15% on the project's own held-out measurements. So this is
+NVFP4's better activation face against its worst weight face — while Tessera
+brought its full trellis optimiser to the same comparison.
+
+**The deciding measurement is a real compressed-tensors NVFP4 export, rendered
+with the production levers and served natively at W4A4.** It has not been run,
+and until it is, neither the sign nor the size of the gap is settled.
+
+**The screen and the gold metric agree in direction, which is reassuring** —
+but the two ratios are not the same comparison. The weight-space harness had
+Tessera at 0.0979 against NVFP4-W4A16's 0.0667 (**1.47×**), where that NVFP4
+was *production-rendered*; the served 1.10× is against **RTN**. Same sign,
+different denominators, so the narrowing is not a like-for-like measurement of
+anything. What survives is the sign: this is *not* one of the project's
+screen-vs-gold inversions.
 
 The earlier headline — "Tessera/NVFP4-as-served = 0.9038" — was against
 **W4A4** NVFP4 and is not contradicted by anything here. It is simply a
@@ -77,3 +88,14 @@ Qwen3-0.6B was used instead precisely because it is a real trained model. Its
 - `/mnt/shared/tessera-exports/glm4layer-r896` — 2766 units, 23.677 G params,
   body bpp 4.000479 (exact 11562407/2890256), 12.251 GiB
 - `/mnt/shared/tessera-kl/` — corpus contracts, both dumps per arm, serve logs
+
+
+## Superseded in part, 2026-09-01
+
+The bpp axis in the table above is right, but the *reason* Tessera sits at
+4.0014 and cannot be moved is not what this document assumed. The rung is not
+a rate: every rung of a family serialises to the same bytes, and the whole
+serialisable set is two sizes (3.5 and 4.0 bpp). A matched-4.5 Tessera arm is
+not merely unbuilt, it is unrepresentable on the current wire. See
+`tessera-rate-ceiling-2026-09-01.md`, which also adds the 3.5 bpp point and
+reads the two together as a rate-distortion curve.
