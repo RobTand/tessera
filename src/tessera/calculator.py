@@ -167,7 +167,6 @@ def terminal_rate(
         quantizable_params=rows * columns,
     )
     rates = bresenham_rate_schedule(root_from_q256(q256), columns, cap)
-    planes = build_planes(geometry, rates, b"", b"", cap=cap, arity=arity)
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
@@ -178,6 +177,20 @@ def terminal_rate(
         with_scale_refine=with_scale_refine,
         with_diagonals=with_diagonals,
     )
+    # ``spec`` is what sizes the COMPLETION plane, so the layout is built with
+    # it rather than without it: ``unit_artifact`` passes it and this is the
+    # second implementation of the same schema, so the two should not differ in
+    # what they hand the layout.
+    #
+    # It is a **no-op today**, verified rather than assumed: 520 configurations
+    # (cap 3/7, arity 1/2, every rung at stride 64, completion 0/1/2/full, with
+    # and without the refinement plane) are bit-identical with and without it.
+    # ``build_terminal`` recomputes the exact byte count from ``spec``, so the
+    # plane extent never reaches the returned value.  Kept because a latent
+    # divergence between the two accountants is exactly the bug class this
+    # function keeps having, not because a rung was ever mispriced here.
+    planes = build_planes(geometry, rates, b"", b"", cap=cap, arity=arity,
+                          spec=spec)
     return build_terminal(
         geometry, rates, spec, planes, 0, 0, cap=cap, arity=arity
     ).exact_bpp
