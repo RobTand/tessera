@@ -298,7 +298,11 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
             "rate_cap": grid.rate_cap,
         },
         "conv_memory": code.memory,
-        "scale": {"group": group, "half": half, "refit": scale_refit},
+        # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
+        # interleave, because the same count meant a different encoder before
+        # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
+        "scale": {"group": group, "half": half, "refit": scale_refit,
+                  "schedule": "amax" if scale_refit == 0 else "trailing-refit"},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
