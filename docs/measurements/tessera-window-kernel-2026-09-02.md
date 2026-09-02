@@ -6,9 +6,9 @@
 `worktree-agent-ad5a8f4b23cadfa9f`.
 
 **The headline, stated first because it is the answer to the question that was
-asked.** The fused decoder replaces the pure-torch window reader at **40-202x**
-(eager) and **6-32x** (torch.compile) per unit, and the whole 196-unit reach
-checkpoint decodes DRAM-cold in **9.72 ms** (49.57 us/unit). The torch reader
+asked.** The fused decoder replaces the pure-torch window reader at **50-277x**
+(eager) and **8-34x** (torch.compile) per unit, and the whole 196-unit reach
+checkpoint decodes DRAM-cold in **6.06 ms** (30.94 us/unit). The torch reader
 was not run on a cold rotation, so there is no measured whole-checkpoint
 baseline to divide that by, and this receipt does not extrapolate one. The
 fused GEMV **does not beat the
@@ -16,10 +16,12 @@ resident FP8 GEMV per token at any measured shape or model**: summed over a
 model's Linears at M=1 it is **1.065x behind on Qwen3-0.6B**, **2.343x behind on
 Qwen3-4B** and **1.271x behind on the 27B shape list**, against a resident FP8
 tile plus a fused per-token activation quantiser. The reason is **occupancy, not
-bytes**: on both kernels *no* memory unit ncu exposes on this device is above
-37% of its peak, and L2 -- the unit that stands in front of memory -- is at
-15-22%, so reading 4 bpp instead of 8 buys nothing while the kernel cannot keep
-the memory pipeline fed. (**ncu's DRAM counters are unavailable on GB10** --
+bytes**: on the GEMV *no* memory unit ncu exposes on this device is above 37% of
+its peak and L2 -- the unit that stands in front of memory -- is at 15-22%, so
+reading 4 bpp instead of 8 buys nothing while the kernel cannot keep the memory
+pipeline fed. (The **decoder** was in the same state and is no longer: giving it
+its warps back -- section 6 lever 1 -- took it to ~50% of both cache units and
+1.37-1.71x faster. Better, and still not at a bound.) (**ncu's DRAM counters are unavailable on GB10** --
 `dram__*` returns n/a on this integrated part -- so nothing below is a measured
 DRAM number; see section 5.) The clearest single statement is `17408x5120`: both
 kernels are slow there, the fused GEMV reads **half the bytes** `_scaled_mm`
@@ -54,6 +56,8 @@ Arms and their conditions:
 | ncu decode + the M=4/M=8 sweep | 13:12-13:20 | 4-6 | **yes, two containers** |
 | profile | 13:07 | 5 | **yes, starting** |
 | bandwidth | 13:08 | 4 | **yes** |
+| ncu `BLOCK_C` sweep + registers | 13:20-13:38 | 3-4 | no |
+| decode re-take at `BLOCK_C=16` | 13:40 | 4 | no, **lock held** |
 
 **The serve lock, and a mistake I made with it.** I took sparklina's serve lock
 at 16:16:22Z by writing `/home/rob/tessera-runs/serve.lock/owner` by hand rather
@@ -80,9 +84,14 @@ serves overlapped for roughly a minute and two more `serve_and_dump_kl.sh` runs
 queued behind. **Harm check: none found.** Both dumps completed at full size —
 `/mnt/shared/tessera-kl/qwen_teacher_bf16_lina.json.npz` (33,532,602 B, 13:09)
 and `qwen_rot_teacher_lina.json.npz` (33,532,598 B, 13:12), each with its
-`.meta.json`. Two vLLM containers were up when I finished. This is recorded
-because the next worker to read a KL number taken on sparklina this afternoon
-needs to know a second serve was briefly beside it.
+`.meta.json`. Two vLLM containers were up when I finished that arm. This is
+recorded because the next worker to read a KL number taken on sparklina this
+afternoon needs to know a second serve was briefly beside it.
+
+The **decode re-take** at 13:40 local took and released the lock through
+`experiments/serve_lock.sh` itself (`decode_blockc16_lina.log` carries the owner
+line, pid and all), with **no container on the box** and 4 other CUDA processes.
+That is the protocol followed; the paragraph above is the one where it was not.
 
 **Bandwidth denominators — three probes agree, one arm disagrees, unresolved.**
 On sparklina at 13:08 with 4 other processes: SM read-only **103.0 GB/s**, SM
@@ -542,11 +551,46 @@ could see through it.
 
 Not attempted. Named with the evidence that would justify them.
 
-1. **Registers.** The GEMV is register-limited to 25% theoretical occupancy at
-   160/thread (209 at M=8); the decoder spills, 255/thread and 64,512 spill
-   requests at 16.7%. The state is carried as int64 where 14 bits are live —
-   int32 state and smaller live temporaries are the first thing to try, on both
-   kernels. ncu's own estimate for the occupancy gap alone is 45-75%.
+1. **Registers — TAKEN on the decoder, 1.37-1.71x, and it is the direct test of
+   the diagnosis.** The decode block is `[BLOCK_C, LANES, VEC]` live registers,
+   so `BLOCK_C` *is* the occupancy knob. ncu, FP8 code path, one warmed launch
+   each, `ncu_blockc_sweep.log` (3-4 other CUDA processes; ncu serialises, and
+   registers/spills/occupancy are architectural):
+
+   | shape | `BLOCK_C` | duration | reg | spills | achieved occ. | L1/TEX | L2 |
+   |---|---|---|---|---|---|---|---|
+   | 1024x3072 | 64 | 55.94 us | 255 | 64,512 | 16.27% | 23.76% | 21.72% |
+   | | 32 | 41.09 | 199 | 0 | 16.16% | 27.52% | 17.37% |
+   | | **16** | **32.77** | **96** | **0** | **36.95%** | **50.54%** | **50.72%** |
+   | | 8 | 43.78 | 54 | 0 | 63.31% | 42.56% | 68.91% |
+   | 2560x9728 | 64 | 301.66 | 255 | 510,720 | 16.36% | 30.48% | 33.18% |
+   | | **16** | **198.53** | 96 | **0** | **39.92%** | **56.99%** | **67.41%** |
+   | | 8 | 289.44 | 54 | 0 | 68.10% | 46.80% | 82.97% |
+   | 4096x2560 | 64 | 136.26 | 255 | 215,040 | 16.31% | 27.08% | 29.63% |
+   | | **16** | **99.17** | 96 | **0** | **39.14%** | **47.20%** | **54.52%** |
+   | | 8 | 125.98 | 54 | 0 | 67.21% | 44.40% | 78.85% |
+
+   The register column is `ncu_blockc_registers.log`, a separate `LaunchStats`
+   pass on 1024x3072 — the first version of this table pasted the **value**
+   path's registers into the code path's rows, which the occupancy contradicts
+   (199 registers is 2 blocks an SM, 168 would have been 3). Registers and the
+   block limit do not move with the shape; the durations and cache figures are
+   per shape.
+
+   **This is the diagnosis tested and confirmed.** The bytes are identical in
+   every row; only the occupancy moves, and the time moves with it. It also
+   shows the limit of the argument: at `BLOCK_C=8` the occupancy keeps rising
+   and the time gets *worse*, because each program's per-column reads stop
+   amortising and L2 traffic climbs for the same useful bytes. 16 is the tuned
+   value and is now the default (`_DECODE_BLOCK_C`); all 30 tests hold the
+   output byte-identical across the flip.
+
+   The **GEMV's** register lever is a different knob and is **not** taken: 160
+   registers a thread (209 at M=8) come from `_KB` x `_WARPS` x the accumulator,
+   not from `BLOCK_C`, and nothing here touched it. The state is carried as
+   int64 where 14 bits are live — int32 state and smaller live temporaries are
+   the first thing to try there. ncu's own estimate for the GEMV's occupancy gap
+   alone is 45-75%.
 2. **The split policy.** Round to nearest rather than down: 1.16x at 2560x9728
    (ncu), free.
 3. **The `torch.zeros` output.** 0.92 us of a 23.7 us call is a third launch per
@@ -638,8 +682,9 @@ The parametrisation is built and tested; the *route* is not measured.
 
 ## 10. Reproducing
 
-The `BLOCK_C` sweep of section 6 lever 1 (`ncu_blockc_sweep.log`), which needs
-`/home/rob/tmp/kernel-window/ncu_blockc.py` on the box:
+The `BLOCK_C` sweep of section 6 lever 1 (`ncu_blockc_sweep.log`,
+`ncu_blockc_registers.log`), whose target is tracked at
+`experiments/ncu_blockc.py`:
 
 ```bash
 ncu --kernel-name regex:decode --launch-skip 5 --launch-count 1 \

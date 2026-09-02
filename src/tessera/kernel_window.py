@@ -539,16 +539,19 @@ def _decode_kernel(
 #: one warmed launch each, sparklina 2026-09-02 (duration / registers /
 #: local-spill requests / achieved occupancy / L2 throughput):
 #:
-#:   1024x3072   64: 55.94 us  255 reg  64,512 sp  16.3%  21.7%
-#:               32: 41.09     168       0         16.2%  17.4%
-#:               16: 32.77      92       0         37.0%  50.7%   <- default
-#:                8: 43.78      --       0         63.3%  68.9%
+#:   1024x3072   64: 55.94 us  255 reg  64,512 sp  16.2%  21.7%
+#:               32: 41.09     199       0         16.2%  17.4%
+#:               16: 32.77      96       0         38.0%  50.7%   <- default
+#:                8: 43.78      54       0         64.4%  68.9%
 #:   2560x9728   64: 301.66   255 reg  510,720 sp  16.4%  33.2%
-#:               16: 198.53     92       0         39.9%  67.4%
-#:                8: 289.44     --       0         68.1%  83.0%
+#:               16: 198.53      96       0        39.9%  67.4%
+#:                8: 289.44      54       0        68.1%  83.0%
 #:   4096x2560   64: 136.26   255 reg  215,040 sp  16.3%  29.6%
-#:               16:  99.17     92       0         39.1%  54.5%
-#:                8: 125.98     --       0         67.2%  78.9%
+#:               16:  99.17      96       0        39.1%  54.5%
+#:                8: 125.98      54       0        67.2%  78.9%
+#:
+#: (registers measured on 1024x3072 and constant in the shape; the spill counts
+#: are 336 a block at 64 and zero below it.)
 #:
 #: 16 is 1.37-1.71x over 64 on all three shapes and 8 gives the occupancy back
 #: without the time -- past 16 each program's per-column reads stop amortising
