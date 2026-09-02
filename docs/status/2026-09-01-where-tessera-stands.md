@@ -509,3 +509,51 @@ PrismaQuant re-pin (Rob); (2) the window-body decoder and the E4M3/CHANNEL
 family behind the same byte-exact oracle; (3) the routed-MoE cell; (4) the
 trellis siblings' streamed mode under compile, on the functional-decode
 pattern.
+
+## 2026-09-02 (the product: one lane, two families, one checkpoint)
+
+The stop-hook goal -- one shippable product uniting the 4-bit and 8-bit
+Tessera wires -- is now a served thing rather than a plan. Gridbook's Tessera
+lane has two routes behind one flag pair (`GRIDBOOK_TESSERA=1`,
+`GRIDBOOK_TESSERA_MODE=resident|streamed`): `TESSERA_NVFP4` (E2M1x2 cap wire
+-> the stock NVFP4 tile, W4A4) and `TESSERA_FP8` (E4M3 default wire, window
+L = 14 over the CHANNEL plane -> the per-channel FP8 pair, W8A8). The
+checkpoint's per-module scheme picks the route, so one checkpoint carries
+both and one serve executes each on its own tensor-core path. Everything
+below is Qwen3-0.6B on vanilla vLLM 0.28.0, GB10, both residency modes,
+eager and under the default compiled forward
+(`docs/measurements/tessera-gridbook-fp8-lane-served-2026-09-02.md`):
+
+- **FP8 route.** The fresh E4M3 encode is byte-identical to the stock-lane
+  checkpoint of 2026-09-02 (392 / 392), so that receipt is the comparator:
+  lane 0.4660 eager / 0.4669 compiled against 0.4699; mutual lane-vs-stock
+  0.021 inside the lane's own eager-vs-compiled 0.027; modes bit-identical;
+  model memory 0.73 GiB resident, 0.55 GiB streamed (stock 0.74). The
+  streamed decode is pure torch over the packed window streams -- no custom
+  op, no pool -- and the compiled forward traces it.
+- **E2M1 route under the unified flags:** 0.6316, unchanged, mutual 0.
+- **The mixed checkpoint** (28 `down_proj` on NVFP4, 84 modules on FP8,
+  4.06 bpp wire, 7.32 resident): lane 0.6772 eager / 0.6733 compiled
+  against its compressed-tensors twin's 0.6741 on vLLM's own two kernels;
+  mutual 0.103 inside 0.118; all four censuses 28 + 84 on the declared
+  routes. Module for module it carries exactly the two uniform checkpoints'
+  bytes, and its KL is worse than either (0.640 / 0.470): KL does not add,
+  and the split was a route exercise, not an allocation.
+- **Contract v14** (`gridbook.runtime-contract.v14`): rows `TESSERA_E2M1_K2`
+  and `TESSERA_E4M3_K1`, two `device_qualified` sm_121 cells each,
+  `backed_with_serve_flag` on the one flag pair. PrismaQuant's admission
+  test covers the v14 shape; the answer stays False until the serving pin
+  lands on a Gridbook release that packages v14 (Rob's call).
+
+What this attests is faithfulness, not quality: on this dense model the
+E4M3/CHANNEL wire is 23x behind FP8 RTN and the E2M1x2 wire 1.25x behind
+production NVFP4 at 4.5 (`tessera-stock-lane-served-2026-09-02.md`). The
+lane makes whatever the encoder produces and the allocator chooses
+shippable at the wire's bytes; the wire's quality on dense models is the
+encoder's open problem (the CHANNEL plane's outlier blindness), and the
+Tessera-8 wins on Gaussian-input GLM experts are where the 8-bit route
+earns its place. Not in the lane: sub-cap E2M1x2 rates (the window decoder
+is plane-agnostic and could serve them; the NVFP4 route does not wire it),
+routed MoE experts, TP > 1. Next: the Gridbook release and PrismaQuant
+re-pin; the exporter codec and lane spec on the PrismaQuant side so an
+allocation over `TESSERA_*` rungs ships from there; the routed-MoE cell.
