@@ -305,6 +305,26 @@ def test_the_hessian_key_is_the_tensor_name_minus_one_weight(tmp_path):
 
 
 @cuda
+def test_an_activation_aware_export_writes_different_bytes(tmp_path):
+    """The library path must SHAPE the bytes, not merely record that it meant to.
+
+    Every other test here proves the plumbing is called and that the config
+    says so.  None of them would notice a refactor that accepted an
+    ``ActivationSource``, wrote its block, and dropped the kwargs on the floor
+    -- the artifact would then claim a Hessian it never used, which is worse
+    than not having the path at all.  The bytes are the claim: same wire, same
+    length, different codes.
+    """
+    tensors = _tensors()
+    _export(tmp_path / "plain", tensors=tensors)
+    _export(tmp_path / "aware", tensors=tensors, activation=_source(tensors))
+    plain = (tmp_path / "plain" / "model.safetensors").read_bytes()
+    aware = (tmp_path / "aware" / "model.safetensors").read_bytes()
+    assert plain != aware, "the Hessian was recorded but never reached the encoder"
+    assert len(plain) == len(aware), "both levers are encoder-side; the wire is the same"
+
+
+@cuda
 def test_the_streaming_export_takes_the_same_source(tmp_path):
     """The 100B path is the streaming one; it must not be the path that
     silently encodes weights-only."""
