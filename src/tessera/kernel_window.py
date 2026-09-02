@@ -56,7 +56,10 @@ __all__ = [
     "prepare_window_unit",
     "prepare_from_parsed",
     "decode_fp8_tile",
+    "decode_value_tile",
     "window_gemv",
+    "window_value_linear",
+    "prepare_window_values",
     "window_linear",
     "window_module_decode",
     "window_module_row_scale",
@@ -143,6 +146,9 @@ class PreparedWindowUnit:
 
     def __init__(self, plane_words, wire_bytes, offsets, rates, initial, code_table,
                  value_table, row_scale, rows, cols, window_bits, max_rate):
+        # ``code_table is None`` is the BF16 family: the table holds values,
+        # not E4M3 codes, so there is no byte tile and no separate scale to
+        # ship -- ``decode`` returns the tile the GEMM multiplies.
         self.plane_words = plane_words
         self.wire_bytes = int(wire_bytes)
         self.offsets = offsets
@@ -182,22 +188,77 @@ class PreparedWindowUnit:
             t.numel() * t.element_size()
             for t in (self.plane_words, self.offsets, self.rates, self.initial,
                       self.code_table, self.value_table, self.row_scale)
+            if t is not None
         )
 
+    @property
+    def family(self) -> str:
+        """``"fp8"`` (E4M3 code table, scale beside the tile) or ``"value"``
+        (float table, scale folded into the tile)."""
+        return "fp8" if self.code_table is not None else "value"
+
     def decode(self) -> torch.Tensor:
-        """``uint8 [rows, cols]`` of E4M3 bytes -- a fresh tensor, every call."""
+        """The unit's tile -- a fresh tensor, every call.
+
+        ``uint8 [rows, cols]`` of E4M3 bytes for the FP8 family, whose row
+        scale is ``row_scale`` beside it; ``[rows, cols]`` in the value
+        table's dtype with the scale already applied for the BF16 family.
+        """
+        if self.code_table is None:
+            return decode_value_tile(
+                self.plane_words, self.offsets, self.rates, self.initial,
+                self.value_table, self.row_scale, self.rows, self.cols,
+                self.window_bits, self.max_rate,
+            )
         return decode_fp8_tile(
             self.plane_words, self.offsets, self.rates, self.initial, self.code_table,
             self.rows, self.cols, self.window_bits, self.max_rate,
         )
 
     def gemv(self, x: torch.Tensor) -> torch.Tensor:
-        """``x @ W.T`` for ``x [M, cols]``, ``[M, rows]`` fp32."""
+        """``x @ W.T`` for ``x [M, cols]``, ``[M, rows]`` fp32.
+
+        One kernel for both families: the value table's dtype is whatever the
+        family packed (fp16 E4M3 values, or the BF16 family's bf16 values) and
+        the gather widens to fp32 either way, so the accumulation is the same
+        arithmetic over a different alphabet.
+        """
         return window_gemv(
             x, self.plane_words, self.offsets, self.rates, self.initial,
             self.value_table, self.row_scale, self.rows, self.cols, self.window_bits,
             self.max_rate,
         )
+
+    def linear(self, x: torch.Tensor, gemv_max: int = None) -> torch.Tensor:
+        """``x @ W.T`` at any M, routed by family and batch."""
+        cap = GEMV_MAX_M if gemv_max is None else int(gemv_max)
+        if self.code_table is None:
+            return window_value_linear(
+                x, self.plane_words, self.offsets, self.rates, self.initial,
+                self.value_table, self.row_scale, self.rows, self.cols,
+                self.window_bits, self.max_rate, cap,
+            )
+        return window_linear(
+            x, self.plane_words, self.offsets, self.rates, self.initial,
+            self.code_table, self.value_table, self.row_scale, self.rows, self.cols,
+            self.window_bits, self.max_rate, cap,
+        )
+
+
+def _initial_windows(initial, cols: int, window_bits: int, device) -> torch.Tensor:
+    """The per-column start state: zeros for a whole unit, the parent's last
+    ``window_bits`` bits for a tensor-parallel shard."""
+    if initial is None:
+        return torch.zeros(cols, dtype=torch.int64, device=device)
+    start = initial.to(device, torch.int64).reshape(-1)
+    if start.numel() != cols:
+        raise GrammarError(f"{start.numel()} initial windows for {cols} columns")
+    if start.numel() and (int(start.min()) < 0 or int(start.max()) >= 1 << window_bits):
+        raise GrammarError(
+            f"an initial window is {window_bits} bits; the plane names "
+            f"{int(start.max())}"
+        )
+    return start
 
 
 def prepare_window_unit(
@@ -238,17 +299,7 @@ def prepare_window_unit(
     scale = row_scale.to(device, torch.float32).reshape(-1)
     if scale.numel() != rows:
         raise GrammarError(f"{scale.numel()} row scales for {rows} rows")
-    if initial is None:
-        start = torch.zeros(cols, dtype=torch.int64, device=device)
-    else:
-        start = initial.to(device, torch.int64).reshape(-1)
-        if start.numel() != cols:
-            raise GrammarError(f"{start.numel()} initial windows for {cols} columns")
-        if start.numel() and (int(start.min()) < 0 or int(start.max()) >= 1 << window_bits):
-            raise GrammarError(
-                f"an initial window is {window_bits} bits; the plane names "
-                f"{int(start.max())}"
-            )
+    start = _initial_windows(initial, cols, window_bits, device)
     return PreparedWindowUnit(
         _plane_words(plane.contiguous()), plane.numel(), offsets.contiguous(),
         rate_t.contiguous(), start.contiguous(), code_table,
@@ -408,12 +459,19 @@ def _state_of(span, sub, code, v, rate, init, window: tl.constexpr):
 
 @triton.jit
 def _decode_kernel(
-    words_ptr, offset_ptr, rate_ptr, init_ptr, table_ptr, out_ptr,
+    words_ptr, offset_ptr, rate_ptr, init_ptr, table_ptr, scale_ptr, out_ptr,
     rows, cols,
     window: tl.constexpr, LANES: tl.constexpr, VEC: tl.constexpr,
-    BLOCK_C: tl.constexpr,
+    BLOCK_C: tl.constexpr, SCALED: tl.constexpr,
 ):
-    """A ``[LANES * VEC, BLOCK_C]`` tile of E4M3 bytes, straight from the wire.
+    """A ``[LANES * VEC, BLOCK_C]`` tile of table entries, straight from the wire.
+
+    The table's element type is the tile's: ``uint8`` E4M3 codes for the FP8
+    route, whose row scale travels beside the tile as ``weight_scale`` and is
+    NOT applied here (``SCALED = False``); ``bfloat16`` values for the BF16
+    route, whose tile is what the GEMM multiplies, so the row scale is folded
+    in on the way out (``SCALED = True``).  Both are the same decode: the
+    state walk and the gather do not know what the table holds.
 
     The block is ``[BLOCK_C, LANES, VEC]`` while it reads and ``[LANES * VEC,
     BLOCK_C]`` when it writes, and both orders are forced:
@@ -460,21 +518,27 @@ def _decode_kernel(
         v[None, None, :].to(tl.int64), rate[:, None, None], init[:, None, None],
         window,
     )                                                                      # [BLOCK_C, LANES, VEC]
-    byte = tl.load(table_ptr + state, mask=live[:, :, None], other=0)
+    entry = tl.load(table_ptr + state, mask=live[:, :, None], other=0)
 
-    out = tl.trans(tl.reshape(byte, (BLOCK_C, LANES * VEC)), 1, 0)         # [LANES*VEC, BLOCK_C]
+    out = tl.trans(tl.reshape(entry, (BLOCK_C, LANES * VEC)), 1, 0)        # [LANES*VEC, BLOCK_C]
     p = pid_p * (LANES * VEC) + tl.arange(0, LANES * VEC)
     keep = (p[:, None] < rows) & live_c[None, :]
+    if SCALED:
+        scale = tl.load(scale_ptr + p, mask=p < rows, other=0.0)
+        out = (out.to(tl.float32) * scale[:, None]).to(out_ptr.dtype.element_ty)
     tl.store(out_ptr + p[:, None].to(tl.int64) * cols + c[None, :], out, mask=keep)
 
 
-def _decode_impl(plane_words, offsets, rates, initial, code_table, rows, cols,
-                 window_bits, max_rate, lanes: int = 32, block_c: int = 64):
-    out = torch.empty((rows, cols), dtype=torch.uint8, device=plane_words.device)
+def _decode_impl(plane_words, offsets, rates, initial, table, rows, cols,
+                 window_bits, max_rate, row_scale=None, lanes: int = 32,
+                 block_c: int = 64):
+    """One tile in the table's dtype; ``row_scale`` given means fold it in."""
+    out = torch.empty((rows, cols), dtype=table.dtype, device=plane_words.device)
     _decode_kernel[(triton.cdiv(rows, lanes * _VEC), triton.cdiv(cols, block_c))](
-        plane_words, offsets, rates, initial, code_table, out, rows, cols,
+        plane_words, offsets, rates, initial, table,
+        table if row_scale is None else row_scale, out, rows, cols,
         window=window_bits, LANES=lanes, VEC=_VEC, BLOCK_C=block_c,
-        num_warps=4,
+        SCALED=row_scale is not None, num_warps=4,
     )
     return out
 
@@ -626,6 +690,11 @@ def decode_fp8_tile(
     the same fp32 expression the reference decoder returns.
     """
     _check_reach(int(window_bits), int(max_rate), _VEC)
+    if code_table.dtype != torch.uint8:
+        raise GrammarError(
+            f"the FP8 route's table holds E4M3 bytes; this one is {code_table.dtype}"
+            " (a value table goes through decode_value_tile)"
+        )
     return _decode_impl(plane_words, offsets, rates, initial, code_table,
                         int(rows), int(cols), int(window_bits), int(max_rate))
 
@@ -634,6 +703,50 @@ def decode_fp8_tile(
 def _(plane_words, offsets, rates, initial, code_table, rows, cols, window_bits,
       max_rate):
     return plane_words.new_empty((rows, cols), dtype=torch.uint8)
+
+
+@torch.library.custom_op("tessera_window::decode_value_tile", mutates_args=())
+def decode_value_tile(
+    plane_words: torch.Tensor,
+    offsets: torch.Tensor,
+    rates: torch.Tensor,
+    initial: torch.Tensor,
+    value_table: torch.Tensor,
+    row_scale: torch.Tensor,
+    rows: int,
+    cols: int,
+    window_bits: int,
+    max_rate: int,
+) -> torch.Tensor:
+    """The unit's tile in the table's own dtype, row scale applied.
+
+    The BF16 family's decode target: the same WINDOW body, the same CHANNEL
+    plane and the same ``2^L`` table as the FP8 route, but the table holds
+    bf16 VALUES rather than E4M3 codes, so the tile that comes out is what a
+    stock BF16 GEMM multiplies -- there is no separate ``weight_scale`` for
+    the runtime to carry, because the scale is already in the numbers.
+
+    The dtype is the table's, not a parameter: a bf16 table decodes a bf16
+    tile, an fp16 table an fp16 tile.  ``decode_fp8_tile`` is the same kernel
+    with a uint8 table and the scale left outside.
+    """
+    _check_reach(int(window_bits), int(max_rate), _VEC)
+    if value_table.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+        raise GrammarError(
+            "a value table holds floating-point values; this one is "
+            f"{value_table.dtype} (E4M3 codes go through decode_fp8_tile)"
+        )
+    if row_scale.numel() != rows:
+        raise GrammarError(f"{row_scale.numel()} row scales for {rows} rows")
+    return _decode_impl(plane_words, offsets, rates, initial, value_table,
+                        int(rows), int(cols), int(window_bits), int(max_rate),
+                        row_scale=row_scale)
+
+
+@decode_value_tile.register_fake
+def _(plane_words, offsets, rates, initial, value_table, row_scale, rows, cols,
+      window_bits, max_rate):
+    return value_table.new_empty((rows, cols))
 
 
 @torch.library.custom_op("tessera_window::window_gemv", mutates_args=())
@@ -741,6 +854,99 @@ def _(x, plane_words, offsets, rates, initial, code_table, value_table, row_scal
     return x.new_empty((*x.shape[:-1], rows), dtype=torch.bfloat16)
 
 
+@torch.library.custom_op("tessera_window::window_value_linear", mutates_args=())
+def window_value_linear(
+    x: torch.Tensor,
+    plane_words: torch.Tensor,
+    offsets: torch.Tensor,
+    rates: torch.Tensor,
+    initial: torch.Tensor,
+    value_table: torch.Tensor,
+    row_scale: torch.Tensor,
+    rows: int,
+    cols: int,
+    window_bits: int,
+    max_rate: int,
+    gemv_max: int = GEMV_MAX_M,
+) -> torch.Tensor:
+    """One Linear of the BF16 family: ``x @ W.T`` over a float value table.
+
+    Same dispatch shape as ``window_linear`` and for the same reason -- M is
+    read inside the op, where it is a concrete integer, never in the traced
+    forward.  The difference is the activation contract on the wide side:
+    this family decodes a bf16 tile and runs the stock BF16 GEMM (W16A16),
+    where the FP8 family quantises the activation per token to E4M3 (W8A8).
+    On the narrow side both accumulate in fp32 off the table, so the small-M
+    contract is W16A16 for both -- which the FP8 route's record has to say,
+    and which is native here.
+    """
+    orig = tuple(x.shape)
+    x2 = x.reshape(-1, int(cols))
+    if x2.shape[0] <= int(gemv_max):
+        y = window_gemv(x2.contiguous(), plane_words, offsets, rates, initial,
+                        value_table, row_scale, rows, cols, window_bits, max_rate)
+        y = y.to(value_table.dtype)
+    else:
+        tile = decode_value_tile(plane_words, offsets, rates, initial, value_table,
+                                 row_scale, rows, cols, window_bits, max_rate)
+        y = torch.matmul(x2.to(value_table.dtype), tile.t())
+    return y.reshape(*orig[:-1], int(rows))
+
+
+@window_value_linear.register_fake
+def _(x, plane_words, offsets, rates, initial, value_table, row_scale, rows, cols,
+      window_bits, max_rate, gemv_max=GEMV_MAX_M):
+    return x.new_empty((*x.shape[:-1], rows), dtype=value_table.dtype)
+
+
+def prepare_window_values(
+    body_bits: torch.Tensor,
+    rates,
+    window_bits: int,
+    value_table: torch.Tensor,
+    row_scale: torch.Tensor,
+    initial: "torch.Tensor | None" = None,
+    device=None,
+) -> PreparedWindowUnit:
+    """Pack a BF16-family unit: the same wire, a float table instead of codes.
+
+    ``value_table`` is the family's ``2^L`` bf16 values -- not codes into a
+    hardware grid, so nothing is composed through ``grid.native`` and there is
+    no byte tile.  Everything else (the packing, the per-column rates, the
+    initial windows a TP shard starts from, the CHANNEL row scale) is what
+    ``prepare_window_unit`` does, because it is the same body.
+    """
+    device = torch.device("cuda" if device is None else device)
+    body_bits = body_bits.to(device)
+    rows, cols = body_bits.shape
+    rates = tuple(int(r) for r in rates)
+    if len(rates) != cols:
+        raise GrammarError(f"{len(rates)} rates for {cols} columns")
+    window_bits = int(window_bits)
+    max_rate = max(rates)
+    _check_reach(window_bits, max_rate, _VEC)
+    table = value_table.reshape(-1).to(device).contiguous()
+    if table.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+        raise GrammarError(
+            f"a value table holds floating-point values; this one is {table.dtype}"
+        )
+    if table.numel() != 1 << window_bits:
+        raise GrammarError(
+            f"the window table holds {table.numel()} entries, window_bits "
+            f"{window_bits} needs {1 << window_bits}"
+        )
+    plane, offsets, rate_t = pack_window_planes(body_bits, rates, window_bits)
+    scale = row_scale.to(device, torch.float32).reshape(-1)
+    if scale.numel() != rows:
+        raise GrammarError(f"{scale.numel()} row scales for {rows} rows")
+    start = _initial_windows(initial, cols, window_bits, device)
+    return PreparedWindowUnit(
+        _plane_words(plane.contiguous()), plane.numel(), offsets.contiguous(),
+        rate_t.contiguous(), start.contiguous(), None, table, scale.contiguous(),
+        rows, cols, window_bits, max_rate,
+    )
+
+
 # --- the seam a serving lane calls ------------------------------------------
 #
 # A vLLM Linear is one *module* of one or more Tessera *units* -- q/k/v are
@@ -789,18 +995,20 @@ def window_module_linear(x: torch.Tensor, units, gemv_max: int = GEMV_MAX_M):
     ``qkv_proj`` issues three; a single stacked launch is possible (the units
     would have to share one packed plane) and is not built.
 
-    The activation-contract caveat on ``window_linear`` applies here: below
-    ``gemv_max`` this multiplies bf16 activations directly and above it
-    quantises them per token to E4M3.  A lane that enables the GEMV branch is
-    changing what its ``emit_route`` record must say.
+    The activation-contract caveat on ``window_linear`` applies here: on the
+    FP8 family, below ``gemv_max`` this multiplies bf16 activations directly
+    and above it quantises them per token to E4M3.  A lane that enables the
+    GEMV branch is changing what its ``emit_route`` record must say.  The
+    BF16 family is W16A16 on both sides, and each unit routes by its own
+    family, so a module never mixes the two silently.
     """
     units = list(units)
     if not units:
         raise GrammarError("a module needs at least one unit")
-    parts = [
-        window_linear(x, u.plane_words, u.offsets, u.rates, u.initial, u.code_table,
-                      u.value_table, u.row_scale, u.rows, u.cols, u.window_bits,
-                      u.max_rate, gemv_max)
-        for u in units
-    ]
+    if len({u.family for u in units}) != 1:
+        raise GrammarError(
+            "the units of one module are one family; these are "
+            f"{sorted({u.family for u in units})}"
+        )
+    parts = [u.linear(x, gemv_max) for u in units]
     return parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)

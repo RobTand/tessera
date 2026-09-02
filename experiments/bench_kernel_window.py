@@ -411,6 +411,16 @@ def _fused_quant():
     """
     global _QUANT_C
     if _QUANT_C is None:
+        # One compiled callable meets 4 batches x ~9 column counts here, and
+        # Dynamo's default recompile limit is 8: past it the frame falls back
+        # to EAGER with a warning, which would silently turn this arm back
+        # into the thing it exists to replace.  Raise the limit under both the
+        # current and the older name.
+        cfg = torch._dynamo.config
+        for name in ("recompile_limit", "cache_size_limit",
+                     "accumulated_recompile_limit", "accumulated_cache_size_limit"):
+            if hasattr(cfg, name):
+                setattr(cfg, name, 512)
         _QUANT_C = torch.compile(kw._fp8_per_token, dynamic=False)
     return _QUANT_C
 
@@ -489,6 +499,15 @@ def arm_gemv(out: dict, models=("Qwen3-0.6B", "Qwen3-4B", "27B-assumed"),
                 g["fused_gemv"]["us"] / g["fp8_mm_only"]["us"], 3)
             g["ratio_fused_over_bf16"] = round(
                 g["fused_gemv"]["us"] / g["bf16_linear"]["us"], 3)
+            # The compiled quantisation must actually be fused.  If it is not
+            # faster than the 5-6 eager launches it replaces, Dynamo fell back
+            # and the lane-path comparison for this row is not the lane's.
+            g["lane_quant_is_fused"] = bool(
+                g["fp8_lane_quant_plus_mm"]["us"] <= g["fp8_quant_plus_mm"]["us"] * 1.05)
+            if not g["lane_quant_is_fused"]:
+                print(f"    LANE-QUANT FELL BACK at {r}x{c} M={m}: "
+                      f"{g['fp8_lane_quant_plus_mm']['us']:.2f} vs eager "
+                      f"{g['fp8_quant_plus_mm']['us']:.2f} us")
             entry["M"][m] = g
             print(f"  {r}x{c} M={m}: fused {g['fused_gemv']['us']:8.2f} us "
                   f"({g['fused_gemv']['GB_per_s']:5.1f} GB/s wire) | bf16 "

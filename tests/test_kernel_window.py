@@ -411,6 +411,170 @@ def test_window_linear_dispatches_on_m_inside_the_op():
         assert float((y.float() - want).abs().max() / want.abs().max()) < 5e-3, m
 
 
+# --- the BF16 family --------------------------------------------------------
+#
+# Same WINDOW body, same CHANNEL plane, same 2^14 table -- the table holds bf16
+# VALUES instead of E4M3 codes, and the tile that comes out is what a stock
+# BF16 GEMM multiplies, with the row scale already folded in.  The family's
+# encoder is not merged, so these are synthetic streams against the one-step
+# definition; what they prove is the parametrisation, not the grid.
+
+
+def _reference_states(body_bits, rates, window_bits, initial):
+    """The window state at every position, by the body's definition.
+
+    ``_reference_codes`` walks the same recurrence but returns the TABLE's
+    byte; the value family needs the state itself, in int64, because its
+    table is 2^14 floats and not a byte map.
+    """
+    rows, cols = body_bits.shape
+    mask = (1 << window_bits) - 1
+    state = initial.to(torch.int64).clone()
+    out = torch.zeros(rows, cols, dtype=torch.int64, device=body_bits.device)
+    rate = torch.tensor(rates, dtype=torch.int64, device=body_bits.device)
+    for t in range(rows):
+        state = ((state << rate) | body_bits[t].to(torch.int64)) & mask
+        out[t] = state
+    return out
+
+
+def _value_reference(body_bits, rates, window_bits, table, initial, row_scale):
+    """The tile by the body's definition: walk, look up, scale, round.
+
+    The rounding is last and is the tile's own dtype, which is what the
+    kernel does -- it widens the table entry to fp32, applies the fp32 row
+    scale and stores one rounded value.
+    """
+    state = _reference_states(body_bits, rates, window_bits, initial)
+    return (table[state].float() * row_scale[:, None]).to(table.dtype)
+
+
+def _value_reference_f32(body_bits, rates, window_bits, table, initial, row_scale):
+    """The same product WITHOUT the tile's rounding.
+
+    The GEMV never materialises the tile, so it accumulates the unrounded
+    ``table[state] * scale``; holding it to a rounded tile would be holding a
+    more accurate kernel to a less accurate reference.
+    """
+    state = _reference_states(body_bits, rates, window_bits, initial)
+    return table[state].float() * row_scale[:, None]
+
+
+@cuda
+@pytest.mark.parametrize("rows,cols", [(256, 128), (200, 176), (128, 1024)])
+def test_a_bf16_table_decodes_a_scaled_bf16_tile(rows, cols):
+    """``decode_value_tile``: the tile is the table's dtype, scale applied."""
+    kw = _kw()
+    window_bits, rate = 14, 4
+    torch.manual_seed(rows + cols)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    assert unit.family == "value"
+    got = unit.decode()
+    assert got.dtype is torch.bfloat16
+    want = _value_reference(body, (rate,) * cols, window_bits, table,
+                            torch.zeros(cols, dtype=torch.int64, device="cuda"), scale)
+    assert torch.equal(got, want)
+
+
+@cuda
+def test_the_bf16_family_starts_from_an_initial_window_too():
+    """A TP shard of the value family is the same shard rule as the FP8 one."""
+    kw = _kw()
+    rows, cols, window_bits, rate = 96, 80, 14, 4
+    torch.manual_seed(3)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    start = torch.randint(0, 1 << window_bits, (cols,), dtype=torch.int64, device="cuda")
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    initial=start, device="cuda")
+    want = _value_reference(body, (rate,) * cols, window_bits, table, start, scale)
+    assert torch.equal(unit.decode(), want)
+    zero = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    assert not torch.equal(zero.decode(), want)
+
+
+@cuda
+def test_the_gemv_reads_a_bf16_table():
+    """One GEMV kernel, two alphabets: the table's dtype is all that changes.
+
+    Held to the same fp32-accumulation bar as the FP8 family, against the
+    decoded tile in fp32 -- the tile already carries the scale, so the
+    reference is a plain matmul.
+    """
+    kw = _kw()
+    rows, cols, window_bits, rate = 512, 640, 14, 4
+    torch.manual_seed(5)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    tile = _value_reference_f32(body, (rate,) * cols, window_bits, table,
+                                torch.zeros(cols, dtype=torch.int64, device="cuda"),
+                                scale)
+    for m in (1, 4, 8):
+        x = torch.randn(m, cols, device="cuda", dtype=torch.bfloat16)
+        got = unit.gemv(x)
+        want = x.float() @ tile.t()
+        assert float((got - want).abs().max() / want.abs().max()) < 2e-6, m
+
+
+@cuda
+def test_the_bf16_linear_routes_both_sides_of_the_cap():
+    """``window_value_linear`` at M=1 (GEMV) and M past the cap (BF16 GEMM).
+
+    Both sides are W16A16 -- the wide side decodes a bf16 tile and runs the
+    stock GEMM, so unlike the FP8 family nothing quantises the activation --
+    and both are held to bf16 rounding against the fp32 product.
+    """
+    kw = _kw()
+    rows, cols, window_bits, rate = 384, 512, 14, 4
+    torch.manual_seed(9)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    tile = _value_reference_f32(body, (rate,) * cols, window_bits, table,
+                                torch.zeros(cols, dtype=torch.int64, device="cuda"),
+                                scale)
+    for m in (1, kw.GEMV_MAX_M + 1, 64):
+        x = torch.randn(m, cols, device="cuda", dtype=torch.bfloat16)
+        got = unit.linear(x)
+        assert got.dtype is torch.bfloat16
+        want = x.float() @ tile.t()
+        assert float((got.float() - want).abs().max() / want.abs().max()) < 2.0 ** -7, m
+    got = kw.window_module_linear(torch.randn(1, cols, device="cuda",
+                                              dtype=torch.bfloat16), [unit, unit])
+    assert got.shape == (1, 2 * rows)
+
+
+@cuda
+def test_the_two_families_refuse_each_other_s_tables():
+    """A value table through the FP8 op, and a code table through the value op."""
+    kw = _kw()
+    rows, cols, window_bits, rate = 64, 64, 14, 4
+    torch.manual_seed(13)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    with pytest.raises(GrammarError, match="E4M3 bytes"):
+        kw.decode_fp8_tile(unit.plane_words, unit.offsets, unit.rates, unit.initial,
+                           unit.value_table, rows, cols, window_bits, rate)
+    codes = torch.randint(0, 256, (1 << window_bits,), dtype=torch.uint8, device="cuda")
+    with pytest.raises(GrammarError, match="floating-point"):
+        kw.prepare_window_values(body, (rate,) * cols, window_bits, codes, scale,
+                                 device="cuda")
+
+
 @cuda
 @checkpoint
 def test_the_ops_survive_a_compiled_forward():
