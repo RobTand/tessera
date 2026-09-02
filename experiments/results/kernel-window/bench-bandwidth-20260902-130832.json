@@ -1,0 +1,68 @@
+{
+  "when": "2026-09-02T13:08:27-0400",
+  "device": "NVIDIA GB10",
+  "torch": "2.11.0+cu130",
+  "concurrent_gpu_pids": [
+    "2749905, 635 MiB",
+    "2733611, 1365 MiB",
+    "2756920, 700 MiB",
+    "2813754, 37653 MiB"
+  ],
+  "idle_power": {
+    "mean_w": 33.2,
+    "max_w": 33.4,
+    "min_w": 32.7,
+    "n": 3,
+    "cuda_procs_max": 4,
+    "cuda_procs_min": 4
+  },
+  "bandwidth": {
+    "read_only": {
+      "us": 2605.024,
+      "median_us": 2613.931,
+      "mean_us": 2616.476,
+      "max_us": 2630.209,
+      "rounds": 7,
+      "iters_per_round": 32,
+      "mean_w": 32.0,
+      "max_w": 32.1,
+      "min_w": 31.6,
+      "n": 3,
+      "cuda_procs_max": 5,
+      "cuda_procs_min": 5,
+      "GB_per_s": 103.0
+    },
+    "read_write": {
+      "us": 5224.627,
+      "median_us": 5422.588,
+      "mean_us": 6136.031,
+      "max_us": 7567.655,
+      "rounds": 7,
+      "iters_per_round": 32,
+      "mean_w": 32.0,
+      "max_w": 33.2,
+      "min_w": 31.1,
+      "n": 8,
+      "cuda_procs_max": 5,
+      "cuda_procs_min": 5,
+      "GB_per_s_rw": 102.8
+    },
+    "copy_engine": {
+      "us": 5293.46,
+      "median_us": 5407.612,
+      "mean_us": 5371.349,
+      "max_us": 5428.725,
+      "rounds": 7,
+      "iters_per_round": 32,
+      "mean_w": 32.5,
+      "max_w": 33.5,
+      "min_w": 31.9,
+      "n": 7,
+      "cuda_procs_max": 5,
+      "cuda_procs_min": 5,
+      "GB_per_s_rw": 101.4
+    },
+    "bytes": 268435456,
+    "spec_GB_per_s": 273.0
+  }
+}

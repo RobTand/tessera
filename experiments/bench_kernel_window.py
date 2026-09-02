@@ -675,12 +675,21 @@ def arm_ablate(out: dict):
                           acc * scale[None, :, :],
                           mask=live_m[:, None, None] & live[None, :, :])
 
-    rows_, cols_ = 1024, 3072
+    # Two shapes on purpose: 1024x3072 is where the GEMV is nearest the FP8
+    # mm (1.15x), 2560x9728 is a 4B `down_proj` where it is 3x behind.  An
+    # ablation on the good shape alone cannot say what the bad one spends.
+    out.setdefault("ablate_gemv", {})
+    for rows_, cols_ in ((1024, 3072), (2560, 9728)):
+        _ablate_shape(out, _abl, rows_, cols_)
+
+
+def _ablate_shape(out, _abl, rows_, cols_):
     p = synth(rows_, cols_, seed=11)
     x = torch.randn(1, cols_, dtype=torch.bfloat16, device="cuda")
     lanes = 32
     split = kw._gemv_split(rows_, lanes)
     res = {}
+    print(f"  -- {rows_}x{cols_}, split {split}")
     for mode, label in ((0, "full"), (1, "no wire read"), (2, "no value gather"),
                         (4, "neither wire nor gather"), (5, "no split-K atomic"),
                         (3, "no activation load / FMA")):
@@ -692,14 +701,15 @@ def arm_ablate(out: dict):
                 x, p.plane_words, p.offsets, p.rates, p.initial, p.value_table,
                 p.row_scale, o, rows_, cols_, 1, window=p.window_bits, LANES=lanes,
                 VEC=8, MBLK=1, KB=8, SPLIT=split, MODE=mode, num_warps=2)
-        r = bench(run, n=64, seconds=1.5)
+        r = bench(run, n=64 if rows_ * cols_ <= (4 << 20) else 16, seconds=1.5)
         res[label] = r
-        print(f"  {label:28s} {r['us']:7.2f} us   ({r.get('mean_w')} W)")
+        print(f"     {label:28s} {r['us']:7.2f} us   ({r.get('mean_w')} W)")
     full = res["full"]["us"]
     for label, r in res.items():
         if label != "full":
             r["share_of_full_removed"] = round((full - r["us"]) / full, 3)
-    out["ablate_gemv"] = {"shape": [rows_, cols_], "split": split, "arms": res}
+    out["ablate_gemv"][f"{rows_}x{cols_}"] = {
+        "shape": [rows_, cols_], "split": split, "arms": res}
 
 
 def arm_profile(out: dict, outdir: Path):

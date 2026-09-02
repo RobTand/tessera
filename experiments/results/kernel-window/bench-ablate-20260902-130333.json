@@ -1,0 +1,218 @@
+{
+  "when": "2026-09-02T13:03:10-0400",
+  "device": "NVIDIA GB10",
+  "torch": "2.11.0+cu130",
+  "concurrent_gpu_pids": [
+    "2734685, 3119 MiB",
+    "2749905, 585 MiB",
+    "2750496, 1085 MiB",
+    "2733611, 1333 MiB",
+    "2756920, 175 MiB"
+  ],
+  "idle_power": {
+    "mean_w": 30.6,
+    "max_w": 31.1,
+    "min_w": 29.7,
+    "n": 3,
+    "cuda_procs_max": 5,
+    "cuda_procs_min": 5
+  },
+  "ablate_gemv": {
+    "1024x3072": {
+      "shape": [
+        1024,
+        3072
+      ],
+      "split": 64,
+      "arms": {
+        "full": {
+          "us": 21.173,
+          "median_us": 21.306,
+          "mean_us": 21.303,
+          "max_us": 21.535,
+          "rounds": 357,
+          "iters_per_round": 64,
+          "mean_w": 34.9,
+          "max_w": 42.5,
+          "min_w": 29.9,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6
+        },
+        "no wire read": {
+          "us": 17.64,
+          "median_us": 17.737,
+          "mean_us": 17.738,
+          "max_us": 18.048,
+          "rounds": 378,
+          "iters_per_round": 64,
+          "mean_w": 40.1,
+          "max_w": 42.5,
+          "min_w": 39.2,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": 0.167
+        },
+        "no value gather": {
+          "us": 18.956,
+          "median_us": 19.018,
+          "mean_us": 19.013,
+          "max_us": 19.188,
+          "rounds": 359,
+          "iters_per_round": 64,
+          "mean_w": 38.9,
+          "max_w": 41.5,
+          "min_w": 38.2,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": 0.105
+        },
+        "neither wire nor gather": {
+          "us": 23.582,
+          "median_us": 23.628,
+          "mean_us": 23.635,
+          "max_us": 23.726,
+          "rounds": 338,
+          "iters_per_round": 64,
+          "mean_w": 38.7,
+          "max_w": 41.5,
+          "min_w": 36.8,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": -0.114
+        },
+        "no split-K atomic": {
+          "us": 19.463,
+          "median_us": 19.537,
+          "mean_us": 19.537,
+          "max_us": 19.699,
+          "rounds": 329,
+          "iters_per_round": 64,
+          "mean_w": 38.0,
+          "max_w": 40.9,
+          "min_w": 35.8,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": 0.081
+        },
+        "no activation load / FMA": {
+          "us": 21.905,
+          "median_us": 22.024,
+          "mean_us": 22.03,
+          "max_us": 22.179,
+          "rounds": 340,
+          "iters_per_round": 64,
+          "mean_w": 40.1,
+          "max_w": 43.1,
+          "min_w": 39.0,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": -0.035
+        }
+      }
+    },
+    "2560x9728": {
+      "shape": [
+        2560,
+        9728
+      ],
+      "split": 16,
+      "arms": {
+        "full": {
+          "us": 324.986,
+          "median_us": 349.852,
+          "mean_us": 381.77,
+          "max_us": 477.366,
+          "rounds": 158,
+          "iters_per_round": 16,
+          "mean_w": 39.7,
+          "max_w": 40.8,
+          "min_w": 39.0,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6
+        },
+        "no wire read": {
+          "us": 109.21,
+          "median_us": 109.726,
+          "mean_us": 109.733,
+          "max_us": 110.236,
+          "rounds": 323,
+          "iters_per_round": 16,
+          "mean_w": 40.7,
+          "max_w": 43.8,
+          "min_w": 39.1,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": 0.664
+        },
+        "no value gather": {
+          "us": 320.36,
+          "median_us": 460.452,
+          "mean_us": 429.038,
+          "max_us": 608.434,
+          "rounds": 137,
+          "iters_per_round": 16,
+          "mean_w": 40.7,
+          "max_w": 43.8,
+          "min_w": 39.8,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": 0.014
+        },
+        "neither wire nor gather": {
+          "us": 380.244,
+          "median_us": 532.384,
+          "mean_us": 520.81,
+          "max_us": 660.65,
+          "rounds": 115,
+          "iters_per_round": 16,
+          "mean_w": 42.4,
+          "max_w": 43.1,
+          "min_w": 41.5,
+          "n": 10,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": -0.17
+        },
+        "no split-K atomic": {
+          "us": 331.87,
+          "median_us": 344.596,
+          "mean_us": 344.135,
+          "max_us": 350.906,
+          "rounds": 178,
+          "iters_per_round": 16,
+          "mean_w": 39.7,
+          "max_w": 42.0,
+          "min_w": 38.6,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": -0.021
+        },
+        "no activation load / FMA": {
+          "us": 330.7,
+          "median_us": 343.182,
+          "mean_us": 354.054,
+          "max_us": 475.164,
+          "rounds": 173,
+          "iters_per_round": 16,
+          "mean_w": 39.3,
+          "max_w": 41.0,
+          "min_w": 38.4,
+          "n": 9,
+          "cuda_procs_max": 6,
+          "cuda_procs_min": 6,
+          "share_of_full_removed": -0.018
+        }
+      }
+    }
+  }
+}
