@@ -298,7 +298,34 @@ branch.
 
 ## Scope, and what is not measured
 
-*(list)*
+- **The refit lever and the LDLQ lever do not live in the same place.** On
+  dense Qwen the block-scale refit is worth real error; on the GLM experts it is
+  a measured no-op (`refit-h^1.0` moves `out` by <0.1% on every expert). That is
+  the same fact the rotation A/B found from the other side: the experts' inputs
+  are close to Gaussian, so their `diag(H)` is nearly flat, and a metric that is
+  flat is the plain refit. The GLM gate below is therefore carried by **LDLQ**,
+  not by the refit. Read the two levers separately; do not assume either
+  transfers.
+- **One export, one serve.** The served leg is a single Qwen3-0.6B artifact at
+  one rung (E2M1x2, q896, the TCQ cap) against one teacher on one box. It is
+  the arm the weight-space screen chose, not a sweep of arms; a served
+  comparison of `hessian` against `h^1.0` was deliberately not run, because the
+  screen separated them and each export costs ~9 h.
+- **`sigma` and `block` were not re-tuned for this plane.** They are the
+  window-body receipt's values (1.0 / 32) carried over, and the sweep's
+  three-sigma scan confirms 1.0 on this body rather than deriving it. Block 32
+  in particular is the whole cost story above; a larger block would be cheaper
+  and was not measured.
+- **The Hessian is one capture.** 16k tokens of wikitext-2 *train*, disjoint
+  from the wikitext-2 *test* KL corpus by construction and by hash (table
+  above). Nothing here says how the levers behave under a calibration mismatch,
+  which is the failure mode GPTQ is known for and the reason the weights-only
+  wire remains the default when no H is supplied.
+- **Weights-only encodes are unchanged, and that is tested, not asserted.**
+  `base2` -- the weights-only baseline re-exported by the arm's own post-merge
+  code -- is byte-identical to the pre-merge `base` and to the served 0.640
+  comparator, 784/784 tensors. The wire schema, the recipes and the reader are
+  untouched: both levers are encoder-side.
 
 ## Files
 
