@@ -553,7 +553,12 @@ shippable at the wire's bytes; the wire's quality on dense models is the
 encoder's open problem (the CHANNEL plane's outlier blindness), and the
 Tessera-8 wins on Gaussian-input GLM experts are where the 8-bit route
 earns its place. Not in the lane: sub-cap E2M1x2 rates (the window decoder
-is plane-agnostic and could serve them; the NVFP4 route does not wire it),
-routed MoE experts, TP > 1. Next: the Gridbook release and PrismaQuant
+is plane-agnostic by construction, but decoding an E2M1x2 window body
+through it is untested and the NVFP4 route does not wire it), routed MoE
+experts, TP > 1, and the trellis siblings still hold their own pools. One
+lead from the three arms, an inference and not a decomposition: moving 84
+of 112 modules from E2M1x2 to E4M3 moved KL 0.640 -> 0.677, so `down_proj`
+carries the damage in every arm and the other modules' family barely
+moves this model. Next: the Gridbook release and PrismaQuant
 re-pin; the exporter codec and lane spec on the PrismaQuant side so an
 allocation over `TESSERA_*` rungs ships from there; the routed-MoE cell.

@@ -190,9 +190,13 @@ carry the kernel-level spread.
 executes two tensor-core contracts from one checkpoint; nothing chose it on
 cost. Its KL is worse than either uniform arm (0.640 all-E2M1x2, 0.470
 all-E4M3) although every module carries exactly the bytes it carries there:
-KL does not add across modules, and a plan that puts the outlier-carrying
-`down_proj` on the 4-bit route while the rest stays 8-bit is not an
-allocation anyone would make. The allocation is PrismaQuant's job -- the
+KL does not add across modules. The three arms together carry a lead, an
+inference rather than a measured decomposition: moving 84 of the 112
+modules from E2M1x2 to E4M3 -- the family that reads 0.470 when every
+module is on it -- moved KL from 0.640 to 0.677, so the 84 modules' family
+barely moves this model and `down_proj` carries the damage in every arm,
+consistent with the outlier-column note in the stock-lane receipt. A
+per-module decomposition would settle it; nothing here measured one. The allocation is PrismaQuant's job -- the
 rungs are priced there by name (`TESSERA_<grid>_K<arity>_R<q256>`) and
 admission waits on the serving pin -- and the lane is what makes whatever it
 chooses shippable.
@@ -202,8 +206,9 @@ chooses shippable.
 * One rate per family: the E2M1x2 cap (q256 = 896, TCQ) on the NVFP4 route
   and the E4M3 default (q256 = 1024, window L = 14) on the FP8 route; the
   contract rows name those rates and no other. Sub-cap E2M1x2 rates (window
-  body over the LUT16 plane) are decodable by the same window decoder but
-  are not wired into the NVFP4 route.
+  body over the LUT16 plane) are not in the NVFP4 route; the window decoder
+  is plane-agnostic by construction, but decoding an E2M1x2 window body
+  through it is untested.
 * One model, dense, TP = 1, `sm_121`. Routed MoE experts -- where Tessera 4.0
   beats NVFP4 4.5 and where every Tessera-8 win was measured -- are not in
   the lane.
