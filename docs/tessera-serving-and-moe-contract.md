@@ -294,3 +294,121 @@ arm slightly worse than the kernel lane rather than better.
 `experiments/assert_render_export_identity.py` checks the seam nothing
 structurally enforces — that the render PrismaQuant prices equals the bytes the
 exporter wrote — on real exported units rather than by assumption.
+
+## 9. Four measured facts that shape the MoE route (2026-09-02)
+
+Everything here was measured on this date against the pinned serving image
+`prismaquant/glm53-mia-sm121:487ecf187` (vllm `0.1.dev20051+g487ecf187`) and
+the surgical model `/mnt/shared/models/GLM-5.3-Flash-4layer`. Each carries the
+scope it was measured at, per principle 14 — none of them is a claim about GLM
+proper, or about any other build.
+
+### 9.1 The NVFP4 MoE arm is refused by this model's own config
+
+`GLM-5.3-Flash-4layer/config.json` sets `swiglu_limit: 10.0`. The build's
+`fused_moe/oracle/nvfp4.py` excludes `FLASHINFER_B12X` from
+`NVFP4_BACKENDS_WITH_CLAMP`, so an explicit `--moe-backend flashinfer_b12x`
+raises `ValueError` on this config, and the auto list is filtered to the
+clamp-capable backends — `FLASHINFER_TRTLLM`, `FLASHINFER_CUTEDSL`,
+`FLASHINFER_CUTLASS`, `VLLM_CUTLASS`, `MARLIN`, `EMULATION`, `HUMMING`. Which
+of those is backed on sm121 is **not measured**.
+
+**Scope: build `487ecf187`, this model's config.** This does not contradict the
+route status recorded for GLM NVFP4 MoE elsewhere, which was measured on a
+config without a `swiglu_limit`, and it does not generalise to GLM proper
+without re-measuring. It has one consequence that is not scoped, though: the
+sentence in `serving/config.py`'s MoE refusal that says NVFP4 W4A4 "needs
+`--moe-backend flashinfer_b12x` on GB10" is an *asserted* runtime claim of the
+kind principle 14 forbids, and on this model it is false. It is corrected when
+the MoE route lands, not before, so that the correction and its evidence travel
+together.
+
+The FP8 oracle carries no analogous clamp filter, so **the TESSERA_FP8 family
+(E4M3 wire, WINDOW body, CHANNEL plane -> per-channel FP8 W8A8) is the first
+and only served MoE arm.** The `requires_serve_flags` value for its contract
+cell will be whatever the pinned build is *seen* to need — not a backend name
+copied from the NVFP4 lane.
+
+### 9.2 The exporter could not see this model's body at all
+
+Three faults, all at plan time, all silent (fixed; see
+`tests/test_export_moe_layouts.py`):
+
+* `quantizable` filtered on `name.startswith("model.layers.")` and `main`
+  parsed the layer index as `name.split(".")[2]`. This checkpoint roots its
+  decoder under a sub-model, `model.language_model.layers.N.`, so the filter
+  matched **nothing**: an export would have quantized zero Linears and reported
+  success. `BODY_LAYER` matches `model.<...>.layers.<N>.`; the vision tower is
+  `model.visual.blocks.N.` and stays BF16 by the same rule rather than by a
+  second exclusion list.
+* Routed experts here are **unpacked per-expert 2-D**
+  (`...mlp.experts.{e}.{gate,up,down}_proj.weight`, 2592 of them across layers
+  1–3; layer 0 is dense). Being 2-D, nothing separated them from ordinary
+  Linears, and they would have been encoded — for hours — into a checkpoint
+  whose `config_groups` name modules vLLM never builds, which the plugin then
+  refuses at **load**. `ROUTED_EXPERT_2D` splits them out at plan time. Its
+  `\d+` segment is what distinguishes a routed expert from
+  `mlp.shared_experts.gate_proj`, which is an ordinary Linear and stays
+  quantizable as one.
+* `len(shape) >= 3` was the whole test for "packed expert stack", and this
+  model's attention carries `k_conv1d.weight [8192, 1, 4]`. Its ignore entry —
+  module minus leaf — is `...self_attn`, the parent of every attention Linear
+  in the layer. `PACKED_EXPERT_ND` identifies a stack by where it sits.
+
+Measured after the fix: **49 dense Linears (was 0), 2592 routed expert leaves
+across layers [1, 2, 3], 0 packed stacks.**
+
+### 9.3 A packed expert stack cannot always be oriented, and this model is the case
+
+`[E, A, B]` is ambiguous on its face, and transformers-5 architectures genuinely
+differ (`gate_up_proj` appears both as `[E, hidden, 2*inter]` and as
+`[E, 2*inter, hidden]`). `packed_expert_orientation` reads the output axis off
+`hidden_size`/`moe_intermediate_size` and **refuses** when the dims cannot
+decide it.
+
+That refusal is not defensive programming. This model has
+`hidden_size == 2 * moe_intermediate_size == 4096`, so a packed `gate_up_proj`
+would be `[E, 4096, 4096]` — square — and no comparison of dims orients it. A
+default axis order there transposes every expert in silence.
+
+The packed path's tests are therefore **synthetic**: no packed-expert source is
+at hand, so they fix the contract, not agreement with a real checkpoint.
+
+### 9.4 The encode budget is real, and the fused path is already taken
+
+Profiled (`torch.profiler`, one unit at the real expert shape 2048x4096, E4M3
+q256=1024 -> WINDOW/CHANNEL, `window_bits = 14`):
+
+* `fused_available()` is **true** and the fused Triton `_step` is **97.97% of
+  CUDA time** (4.600 s of 4.696 s). The rate is not a missing fused path; it
+  *is* the fused path.
+* `verify=True` costs ~3% (5.13 s vs 4.97 s), so the verify is not a lever.
+* **~5.0 s per expert unit** (gate/up 2048x4096: 4.97 s; down 4096x2048:
+  5.11 s), so one MoE layer — 288 experts x 3 projections = 864 units — is
+  **~72 min on one box**, or ~36 min split across sparky and sparklina.
+
+Power, against the box (Netdata, `nvidia_smi.gpu_power_draw`, sparky): the
+encode loop holds **71–73 W of GB10's ~140 W envelope**, against 6–17 W idle.
+So the encoder is fused but roughly half-loaded, and utilization would have
+said nothing — on GB10 it reads "a kernel is resident", not "the SMs are
+working". That headroom is real and unspent: `src/tessera/encode.py` is
+out of scope here, and the budget above is workable without it.
+
+### 9.5 The serving image could not build the streamed decoder
+
+Found by making the NVFP4 streamed tests fail instead of skip. Three hosts,
+three different causes, all previously reported as one absent kernel:
+
+| host | cause | now |
+|---|---|---|
+| sparky | `/usr/local/cuda` -> `/etc/alternatives/cuda` -> `cuda-13.3`, a partial install with no `bin/nvcc`; the complete `cuda-13.0` sits one directory away and matches `torch.version.cuda` | 23 passed |
+| sparklina | `ninja` is in the venv's `bin`, off a non-login ssh's `PATH` | 23 passed |
+| `glm53-mia-sm121:487ecf187` | nvcc and ninja both present, but no `cusparse.h` under `/usr/local/cuda`; ATen's `CUDAContextLight.h` includes it unconditionally | 128 passed, 0 skipped |
+
+The third is the one that matters for shipping: the **streamed residency has no
+pure-torch fallback by design**, so until this was fixed that route could not
+build on the very image that serves it — and nothing said so, because a blanket
+`skip if get_tessera_ext() is None` is green whether the kernel is absent or
+merely unbuilt. `ext.toolchain_report()` now separates the two, and the tests
+skip only on a genuinely absent toolchain and **fail** when the toolchain is
+present and the build broke.
