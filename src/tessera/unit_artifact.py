@@ -349,8 +349,40 @@ def build_unit_artifact(
     return manifest, region, serialize(manifest, region)
 
 
+@dataclass
+class ParsedUnit:
+    """An artifact parsed to the encoder's own vocabulary, before any weight
+    is reconstructed: the unit's planes as tensors, the alphabet the body
+    indexes (the forests under TCQ, the bare grid under WINDOW), the
+    convolutional code (``None`` under WINDOW) and the resolved grid.
+
+    This is the seam a serving lane reads.  ``read_unit_artifact`` is
+    ``reconstruct_unit`` over it; a kernel lane packs its planes instead
+    (``tessera.lane_planes``), so the bytes a runtime decodes are the bytes
+    this reader verified -- the digest, the profile id and every range check
+    have already run by the time a ``ParsedUnit`` exists.
+    """
+
+    unit: EncodedUnit
+    forests: "dict[int, AnchorForest] | PayloadGrid"
+    code: "ConvCode | None"
+    grid: PayloadGrid
+    manifest: Manifest
+
+    @property
+    def body(self) -> BodyKind:
+        return BodyKind(getattr(self.unit, "body", BodyKind.TCQ))
+
+
 def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
-    """Decode an artifact to weights from **bytes alone**.
+    """Decode an artifact to weights from **bytes alone**: ``reconstruct_unit``
+    over ``parse_unit_artifact``."""
+    parsed = parse_unit_artifact(blob, device)
+    return reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+
+
+def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
+    """Parse an artifact to a ``ParsedUnit`` from **bytes alone**.
 
     Nothing here comes from the encoder: the forests come off the ALPHABET and
     DESCENDANT planes, the scales off segment 2b, the convolutional code out of
@@ -509,7 +541,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
         )
-    return reconstruct_unit(unit, forests, code)
+    return ParsedUnit(unit=unit, forests=forests, code=code, grid=grid, manifest=manifest)
 
 
 def _read_scale_planes(plane, chunks, terminal, geometry, device) -> dict:
@@ -587,8 +619,8 @@ def _read_diagonals(plane, chunks, rows, cols, device):
     )
 
 
-def _read_window_unit(art, grid: PayloadGrid, device) -> torch.Tensor:
-    """The window body's half of ``read_unit_artifact``: bytes -> weights.
+def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
+    """The window body's half of ``parse_unit_artifact``: bytes -> the unit.
 
     The table comes off the ALPHABET plane and is range-checked against the
     resolved grid before any state indexes it; DESCENDANT and COMPLETION must
@@ -676,4 +708,4 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> torch.Tensor:
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
         )
-    return reconstruct_unit(unit, grid, None)
+    return ParsedUnit(unit=unit, forests=grid, code=None, grid=grid, manifest=manifest)
