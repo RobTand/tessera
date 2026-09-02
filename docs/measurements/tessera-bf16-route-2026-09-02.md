@@ -673,6 +673,16 @@ encoder-drift diff, the structural twin check, the `grid_from_config` hole, the
 PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d, and
 this section's contention note).
 
+**Merge note (this branch is cut at `3d419e7`).** `master` has since renamed
+`experiments/export_gridbook_tessera.py` to `experiments/export_tessera_serving.py`
+(`fb84e41`, a **pure** rename -- the two blobs are byte-identical), and this
+branch's `--grid BF16` / `--stock-twin` work is a diff against the old path.
+Apply it to the new name; there is no content conflict. Everything else on this
+branch is either a new file or a localized hunk in `alphabet.py`, `encode.py`,
+`export.py`, `decode.py`, `stock.py`, `calculator.py`, `unit_artifact.py`. The
+no-touch files (`serving/`, `kernel*.py`, `compensate.py`, `scale_channel.py`,
+`layout.py`) are untouched.
+
 **What is measured here, and on what.** Weight-space and (on GLM) output-space
 error, on real tensors, both arms through the real wire, priced at the bytes
 actually written. The GLM rows are the same six routed-expert projections and
