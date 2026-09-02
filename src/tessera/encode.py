@@ -911,6 +911,10 @@ def encode_unit(
     window_seed: int = 0,
     window_sigma: "float | None" = None,
     channel_sigma: "float | None" = None,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = 128,
+    refit_metric: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
 
@@ -933,6 +937,25 @@ def encode_unit(
     built), ``"scale"`` weights each code by its half's scale squared so the
     path minimises the true squared error (``viterbi_columns``).  An encoder
     setting, not wire: any decoder reads either.
+
+    ``ldl`` turns the pass into **LDLQ**: the unit-block-lower factor of the
+    regularised input Hessian (``compensate.block_ldl``) over this unit's
+    columns, under which the encoder quantises column blocks of ``ldl_block``
+    from last to first and pushes each block's residual into the blocks not
+    yet quantised.  Columns are independent inside the Viterbi, so a block is
+    exactly the columns of a whole-matrix pass restricted to that range --
+    which is what makes this a scheduling change and not a second encoder.
+    The scale plane is shared by every block and refit between passes, so the
+    slice-equals-whole property the standalone ``compensate.compensated_targets``
+    needs does not arise.  Encoder-side only: no byte of the wire changes, and
+    the same decoder reads the result.
+
+    ``refit_metric`` is the error the row-scale refit minimises: ``None`` the
+    plain squared error, ``[cols]`` a per-input-column weight (a diagonal
+    Hessian, or a power of one), ``[cols, cols]`` the full Hessian's exact
+    quadratic (``scale_channel.refit_channel_scale``).  ``refit_reach_floor``
+    keeps every row's refit scale high enough that the pass's own target stays
+    inside the body's reach.  Both are encoder settings; neither is wire.
 
     ``span`` is the trellis super-symbol length (``viterbi_columns``) and
     ``scale_plane`` how segment 2b is written; both are wire and both default
@@ -1012,6 +1035,7 @@ def encode_unit(
     scale_plane = ScalePlaneKind(scale_plane)
     table_bytes, global_scale = None, 1.0
     channel_rows = effective_rows = None
+    body_reach = None
     if scale_plane is ScalePlaneKind.CHANNEL:
         from .scale_channel import default_channel_sigma, initial_channel_scale
 
@@ -1038,6 +1062,7 @@ def encode_unit(
                     torch.as_tensor(f.blocks, device=device, dtype=torch.long)].abs().max())
                 for f in forests.values()
             )
+        body_reach = reach
         channel_rows, effective_rows, global_scale = initial_channel_scale(
             work, channel_sigma, reach=reach,
         )
@@ -1096,15 +1121,33 @@ def encode_unit(
             return channel_scale_field(channel_rows, global_scale, rows, cols)
         return torch.repeat_interleave(effective, half).reshape(rows, cols)
 
-    def trellis_pass(targets: torch.Tensor, weights: "torch.Tensor | None" = None) -> float:
+    def trellis_pass(
+        targets: torch.Tensor,
+        weights: "torch.Tensor | None" = None,
+        span_cols: "tuple[int, int] | None" = None,
+    ) -> float:
         # One Viterbi per rate: columns are independent, so a mixed-rate
         # schedule is a partition of columns and not a harder problem.
+        # ``span_cols`` restricts the pass to a half-open range of columns and
+        # is the whole of what LDLQ needs from the trellis: because the Viterbi
+        # carries no state across columns, encoding a range is bit-identical to
+        # the same columns of a full pass over the same targets and scale.
         total = 0.0
+        in_range = None
+        if span_cols is not None:
+            lo, hi = span_cols
+            column = torch.arange(cols, device=device)
+            in_range = (column >= lo) & (column < hi)
         if body is BodyKind.WINDOW:
             # One table for every rate: a state indexes the same entry
             # whatever width the column's new bits have.
             for present in sorted(set(rates)):
-                which = torch.nonzero(rate_vector == present).squeeze(1)
+                which = torch.nonzero(
+                    (rate_vector == present) if in_range is None
+                    else ((rate_vector == present) & in_range)
+                ).squeeze(1)
+                if which.numel() == 0:
+                    continue
                 sub = targets[:, which].contiguous()
                 sub_w = None if weights is None else weights[:, which].contiguous()
                 state, s_ = viterbi_window(sub, window_vectors, window_bits, present, weights=sub_w)
@@ -1117,7 +1160,12 @@ def encode_unit(
             picked = forests[present]
             depth = picked.cap - present
             level = depth if completion is None else min(completion, depth)
-            which = torch.nonzero(rate_vector == present).squeeze(1)
+            which = torch.nonzero(
+                (rate_vector == present) if in_range is None
+                else ((rate_vector == present) & in_range)
+            ).squeeze(1)
+            if which.numel() == 0:
+                continue
             sub = targets[:, which].contiguous()
             sub_w = None if weights is None else weights[:, which].contiguous()
             a, b, s_ = viterbi_columns(sub, picked, code, level, span=span, weights=sub_w)
@@ -1146,9 +1194,31 @@ def encode_unit(
     # the profile id are untouched.
     if trellis_weighting not in ("none", "scale"):
         raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
+    if ldl is not None:
+        if ldl.shape != (cols, cols):
+            raise GrammarError(
+                f"the LDL factor is {tuple(ldl.shape)}, expected ({cols}, {cols}) "
+                "-- one row and column per input feature of THIS unit"
+            )
+        if ldl_block < 1:
+            raise GrammarError(f"the LDLQ block must be at least one column, got {ldl_block}")
+        if scale_plane is not ScalePlaneKind.CHANNEL:
+            # A block plane's scale is fit to a within-row span of columns, so
+            # a block-sequential pass would fit each span to a target the next
+            # block has not produced yet.  The CHANNEL plane has no column
+            # axis, which is why LDLQ lands there first.
+            raise GrammarError(
+                "LDLQ is implemented for the CHANNEL scale plane; a block plane's "
+                "per-column-span scales would have to be scheduled with it"
+            )
+        ldl_factor = ldl.to(device=device, dtype=torch.float32)
+        # Descending block starts; only the lowest-index block may be short.
+        block_spans = [
+            (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
+        ]
+    ldlq_target = None
     for _ in range(max(scale_refit, 1)):
         scale = current_scale()
-        targets = work / scale
         weights = None
         if trellis_weighting == "scale":
             # One weight per POSITION (a half is sixteen columns of one row,
@@ -1156,15 +1226,50 @@ def encode_unit(
             # Normalised to the column's loudest position so the fp32 path
             # costs stay O(1); a per-column constant moves no argmin.
             weights = (scale / scale.amax(dim=0, keepdim=True)) ** 2
-        sse = trellis_pass(targets, weights)
+        if ldl is None:
+            targets = work / scale
+            sse = trellis_pass(targets, weights)
+        else:
+            # LDLQ: quantise column blocks last to first, and push each
+            # block's reconstruction residual into the blocks still to come.
+            base = work.float()
+            ldlq_target = base.clone()
+            recon = torch.zeros_like(base)
+            targets = torch.empty_like(base)
+            sse = 0.0
+            for start, stop in block_spans:
+                if stop < cols:
+                    residual = base[:, stop:] - recon[:, stop:]
+                    ldlq_target[:, start:stop] = (
+                        base[:, start:stop] + residual @ ldl_factor[stop:, start:stop]
+                    )
+                # Only this block's columns are read; scaling the whole matrix
+                # once per block would cost the pass a factor of cols/block.
+                targets[:, start:stop] = ldlq_target[:, start:stop] / scale[:, start:stop]
+                sse += trellis_pass(targets, weights, span_cols=(start, stop))
+                block_units = (
+                    vectors[codes[:, start:stop]].permute(0, 2, 1).reshape(rows, stop - start)
+                )
+                recon[:, start:stop] = block_units * scale[:, start:stop]
+            del base, recon, targets
         if scale_refit == 0:
             break
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
         if scale_plane is ScalePlaneKind.CHANNEL:
             from .scale_channel import refit_channel_scale
 
+            floor = None
+            if refit_reach_floor:
+                if body_reach is None:
+                    raise GrammarError("a reach floor needs the body's reach; none was computed")
+                # The target the trellis actually saw this pass -- W without
+                # LDLQ, the compensated target with it, which is the one that
+                # can walk out past the table's last entry.
+                seen = work.float() if ldlq_target is None else ldlq_target
+                floor = seen.abs().amax(dim=1) / float(body_reach)
             channel_rows, effective_rows = refit_channel_scale(
-                work, units, channel_rows, global_scale
+                work, units, channel_rows, global_scale,
+                metric=refit_metric, floor=floor,
             )
         elif scale_plane is ScalePlaneKind.LUT:
             table_bytes, refine, effective = _refit_scales_lut(
@@ -1174,10 +1279,13 @@ def encode_unit(
             base_byte, refine, effective = _refit_scales(
                 work, units, group, half, base_byte, refine, effective
             )
-    if scale_refit:
+    if scale_refit or ldl is not None:
         # The plane moved after the last pass; the codes are unchanged and
         # decode against the new plane.  Report the error in ITS target units
-        # so ``sse`` means one thing at every setting.
+        # so ``sse`` means one thing at every setting -- and under LDLQ that
+        # must be the error against the WEIGHT, not against the compensated
+        # target the last block was measured on, or the number would flatter
+        # every compensated arm by construction.
         scale = current_scale()
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
         sse = float(((work / scale - units) ** 2).sum())

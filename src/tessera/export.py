@@ -449,6 +449,10 @@ def encode_linear_planes(
     window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = 128,
+    refit_metric: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -474,6 +478,14 @@ def encode_linear_planes(
     switch.  The default stays ``0`` so the exporter's rung names keep meaning
     the rate they have always meant -- ``q256`` alone -- and a caller that wants
     the other axis asks for it.
+
+    ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
+    activation-aware encoder settings (``encode_unit``): the input Hessian's
+    LDL factor for this unit's columns, and the error the row-scale refit
+    minimises.  They change no byte of the wire's grammar -- an artifact built
+    with them is read by the same decoder -- but an encode that uses them is
+    not reproducible from the weights alone, so an exporter that sets them
+    records where its Hessian came from.
 
     ``verify`` reads the bytes back and compares to the encoder's own
     reconstruction.  It is on by default and costs one decode: the guarantee
@@ -507,6 +519,8 @@ def encode_linear_planes(
         trellis_weighting=trellis_weighting,
         body=body, window_bits=window_bits, window_seed=window_seed,
         window_sigma=window_sigma, channel_sigma=channel_sigma,
+        ldl=ldl, ldl_block=ldl_block, refit_metric=refit_metric,
+        refit_reach_floor=refit_reach_floor,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares

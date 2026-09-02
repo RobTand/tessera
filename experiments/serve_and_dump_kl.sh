@@ -14,10 +14,12 @@ MODEL="$1"; OUT="$2"; ROLE="$3"; LABEL="${4:-}"
 IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
 PORT="${TESSERA_KL_PORT:-8000}"
 CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
-NAME="tessera-kl-serve"
+# One name per worker.  The removal below is unconditional, so a hardcoded
+# name means a second worker's `serve_and_dump_kl.sh` kills the serve that
+# currently holds the lock -- and then waits on it.  The default keeps every
+# existing caller's container name; a parallel worker sets its own.
+NAME="${TESSERA_KL_NAME:-tessera-kl-serve}"
 LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json).log"
-
-docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  The repeated
 # store_true flag is a no-op stand-in so the argv shape does not change.
@@ -30,6 +32,8 @@ echo "serving $MODEL  ($IMAGE)"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
 trap serve_lock_release EXIT
+# Only inside the lock: a stale container of OUR name is ours to remove.
+docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
