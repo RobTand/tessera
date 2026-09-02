@@ -47,6 +47,16 @@ output, and to say whether the fix changes encoded BYTES. Reports:
    first ceil(L/R) rows decode wrong. Nothing in `serving/` imports either
    module today, so it is reachable via the public API and the bench harnesses,
    not via a served lane -- but TP row-sharding is a shipped design promise.
+5a. **Scope check on all of §6, verified here rather than taken from the
+   report: the served path cannot reach any of it.** `src/tessera/serving/`
+   imports no `kernel*` module — it has its own `native_ops.py` and `window.py`,
+   and those *do* read `initial_state` (as do `serving/fp8_route.py` and
+   `serving/ops.py`). `kernel_window_gemv` and `bf16_route` have **zero
+   importers anywhere in `src/`**. So no §6 finding can produce a wrong weight
+   on a served artifact; they produce wrong weights for a caller of the kernel
+   lane's public API with a sharded unit, and they falsify the claim that TP
+   works *through the kernel lane*. The GEMV throughput numbers are unaffected —
+   they were taken on whole units, whose start state is zero either way.
 6. **§6 P0 missing `rows % 8` / `cols % half` guards** in 5 of 6 kernel
    wrappers. The packer refuses these units, so no artifact encodes them; a
    hand-built call gets silently dropped columns (GEMV) or an out-of-range
