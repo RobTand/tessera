@@ -38,7 +38,11 @@ namespace {
 
 constexpr int TILE_ROWS = 512;
 constexpr int RED_STRIDE = 33;   // padded [16][33] reduction rows: conflict-free lane writes
-constexpr int MAX_ITEM_COLS = 256;
+// Columns a block reduces at once: bounded by the x tile in shared memory
+// (MAX_COLS * MT fp32, double-buffered) -- 1024 at M<=2, 256 above.
+__host__ __device__ constexpr int max_item_cols(int mt) { return mt <= 2 ? 1024 : 256; }
+// Per-thread x prefetch capacity: max_item_cols(MT) * MT / 256 threads (>= 8 warps).
+constexpr int X_PREFETCH = 8;
 
 struct __align__(16) Item {
     int tile;    // 512-row tile index
@@ -54,7 +58,7 @@ struct Params {
     const Item* __restrict__ items;
     int n_items;
     long tile_words;
-    const int* __restrict__ perm;        // permuted column -> original column
+    const int* __restrict__ perm;        // permuted column -> original column, or null (identity)
     const __nv_bfloat16* __restrict__ x; // [M, K] bf16, original column order
     int K;
     int M;
@@ -213,35 +217,70 @@ __device__ __forceinline__ void run_item(
 }
 
 template <int L, int RPL, int MT, typename TBL, bool ABL_GATHER, bool ABL_LOAD, bool ABL_FMA>
-__global__ void __launch_bounds__(512, 2) window_gemv_kernel(Params p)
+__global__ void __launch_bounds__(512, (MT >= 8) ? 1 : 2) window_gemv_kernel(Params p)
 {
+    constexpr int MAX_COLS = max_item_cols(MT);
+    constexpr int TABLE_BYTES = (1 << L) * (int)sizeof(TBL);
     extern __shared__ __align__(16) unsigned char smem_raw[];
     TBL* tbl = reinterpret_cast<TBL*>(smem_raw);
-    constexpr int TABLE_BYTES = (1 << L) * (int)sizeof(TBL);
     float* red = reinterpret_cast<float*>(smem_raw + TABLE_BYTES);           // [MT][16*33]
-    float* xs = red + MT * 16 * RED_STRIDE;                                  // [MAX_ITEM_COLS][MT]
+    float* xs0 = red + MT * 16 * RED_STRIDE;                                 // [MAX_COLS][MT], two buffers
+    float* xs1 = xs0 + MAX_COLS * MT;
 
     const int tid = threadIdx.x;
     const int nthreads = blockDim.x;
     const int warp = tid >> 5, lane = tid & 31, nwarps = nthreads >> 5;
 
-    // Stage the table once per block (16-byte copies).
+    // Stage the table once per block (16-byte copies); zero the reduction slots.
     {
         const uint4* src = reinterpret_cast<const uint4*>(p.table);
         uint4* dst = reinterpret_cast<uint4*>(smem_raw);
         for (int i = tid; i < TABLE_BYTES / 16; i += nthreads) dst[i] = __ldg(src + i);
-    }
-
-    for (int item_idx = blockIdx.x; item_idx < p.n_items; item_idx += gridDim.x) {
-        const Item it = p.items[item_idx];
-        __syncthreads();   // previous item's reduction fully drained
         for (int i = tid; i < MT * 16 * RED_STRIDE; i += nthreads) red[i] = 0.f;
-        for (int i = tid; i < it.ncols * MT; i += nthreads) {
-            const int jj = i / MT, m = i - jj * MT;
-            const int col = p.perm[it.col0 + jj];
-            xs[i] = __bfloat162float(p.x[(long)m * p.K + col]);
+    }
+    int item_idx = blockIdx.x;
+    if (item_idx >= p.n_items) return;
+    Item it = p.items[item_idx];
+
+    // x for an item: MT values per column, gathered through perm (or not).
+    auto fetch_x = [&](const Item& item, float (&xr)[X_PREFETCH]) {
+#pragma unroll
+        for (int q = 0; q < X_PREFETCH; ++q) {
+            const int i = tid + q * nthreads;
+            float v = 0.f;
+            if (i < item.ncols * MT) {
+                const int jj = i / MT, m = i - jj * MT;
+                const int col = p.perm ? p.perm[item.col0 + jj] : (item.col0 + jj);
+                v = __bfloat162float(p.x[(long)m * p.K + col]);
+            }
+            xr[q] = v;
         }
-        __syncthreads();
+    };
+    auto store_x = [&](const Item& item, const float (&xr)[X_PREFETCH], float* xs) {
+#pragma unroll
+        for (int q = 0; q < X_PREFETCH; ++q) {
+            const int i = tid + q * nthreads;
+            if (i < item.ncols * MT) xs[i] = xr[q];
+        }
+    };
+    {
+        float xr[X_PREFETCH];
+        fetch_x(it, xr);
+        store_x(it, xr, xs0);
+    }
+    __syncthreads();
+    float* xs = xs0;
+    float* xs_next = xs1;
+
+    for (;;) {
+        // Prefetch the next item and its x into registers: their latency
+        // overlaps this item's column loop.
+        const int next_idx = item_idx + gridDim.x;
+        const bool has_next = next_idx < p.n_items;
+        Item nit;
+        float xr[X_PREFETCH];
+        if (has_next) { nit = p.items[next_idx]; fetch_x(nit, xr); }
+
         switch (it.rate) {
             case 4: run_item<L, RPL, 4, MT, TBL, ABL_GATHER, ABL_LOAD, ABL_FMA>(p, it, tbl, red, xs, warp, nwarps, lane); break;
             case 2: run_item<L, RPL, 2, MT, TBL, ABL_GATHER, ABL_LOAD, ABL_FMA>(p, it, tbl, red, xs, warp, nwarps, lane); break;
@@ -249,17 +288,23 @@ __global__ void __launch_bounds__(512, 2) window_gemv_kernel(Params p)
                 if (RPL == 16) run_item<L, 16, 1, MT, TBL, ABL_GATHER, ABL_LOAD, ABL_FMA>(p, it, tbl, red, xs, warp, nwarps, lane);
                 break;  // RPL=8 at R=1 is refused on the host
         }
-        __syncthreads();
-        // One coalesced atomicAdd per (m, row) with the row scale folded in.
+        __syncthreads();   // every warp's partials are in red
+        // One coalesced atomicAdd per (m, row) with the row scale folded in;
+        // the slot is re-zeroed by the thread that read it.
         const int row0 = it.tile * TILE_ROWS;
         for (int i = tid; i < MT * TILE_ROWS; i += nthreads) {
             const int m = i / TILE_ROWS, r = i - m * TILE_ROWS;
             const int row = row0 + r;
-            if (row < p.rows) {
-                const float v = red[m * (16 * RED_STRIDE) + red_index<RPL>(r)] * p.scale[row];
-                atomicAdd(p.out + (long)m * p.rows + row, v);
-            }
+            float* slot = red + m * (16 * RED_STRIDE) + red_index<RPL>(r);
+            const float v = *slot;
+            *slot = 0.f;
+            if (row < p.rows) atomicAdd(p.out + (long)m * p.rows + row, v * p.scale[row]);
         }
+        if (!has_next) break;
+        store_x(nit, xr, xs_next);
+        it = nit; item_idx = next_idx;
+        float* t = xs; xs = xs_next; xs_next = t;
+        __syncthreads();   // red is zero and xs is staged before the next item
     }
 }
 
@@ -332,7 +377,11 @@ void decode_typed(const uint32_t* w, long tile_words, int n_tiles, torch::Tensor
 template <int L, int RPL, int MT, typename TBL, bool AG, bool AL, bool AF>
 void launch_typed(const Params& p, int blocks, int threads, size_t smem, cudaStream_t stream) {
     auto k = window_gemv_kernel<L, RPL, MT, TBL, AG, AL, AF>;
-    cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem);
+    static size_t granted = 0;                 // per instantiation: set the opt-in once
+    if (smem > granted) {
+        cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem);
+        granted = smem;
+    }
     k<<<blocks, threads, smem, stream>>>(p);
 }
 
@@ -372,29 +421,31 @@ void launch_mt(const Params& p, int rpl, int mt, int blocks, int threads, size_t
 void window_gemv(
     torch::Tensor words, torch::Tensor items, long tile_words, torch::Tensor perm,
     torch::Tensor table, torch::Tensor scale, torch::Tensor x, torch::Tensor out,
-    int window_bits, int rpl, int warps, int blocks, int ablation)
+    int window_bits, int rpl, int warps, int blocks, int max_cols, int ablation)
 {
     TORCH_CHECK(words.is_cuda() && words.dtype() == torch::kInt32 && words.is_contiguous());
     TORCH_CHECK(items.is_cuda() && items.dtype() == torch::kInt32 && items.is_contiguous() && items.size(1) == 8);
-    TORCH_CHECK(perm.is_cuda() && perm.dtype() == torch::kInt32 && perm.is_contiguous());
+    TORCH_CHECK(perm.numel() == 0 || (perm.is_cuda() && perm.dtype() == torch::kInt32 && perm.is_contiguous()));
     TORCH_CHECK(x.is_cuda() && x.dtype() == torch::kBFloat16 && x.is_contiguous() && x.dim() == 2);
     TORCH_CHECK(out.is_cuda() && out.dtype() == torch::kFloat32 && out.is_contiguous() && out.dim() == 2);
     TORCH_CHECK(scale.is_cuda() && scale.dtype() == torch::kFloat32 && scale.is_contiguous());
     TORCH_CHECK(table.is_cuda() && table.is_contiguous() && table.numel() == (1L << window_bits));
     TORCH_CHECK(window_bits == 14, "this build instantiates L=14 only");
     const int M = (int)x.size(0), K = (int)x.size(1), rows = (int)out.size(1);
-    TORCH_CHECK(out.size(0) == M && perm.numel() == K && scale.numel() == rows);
+    TORCH_CHECK(out.size(0) == M && (perm.numel() == K || perm.numel() == 0) && scale.numel() == rows);
     TORCH_CHECK(M >= 1 && M <= 8);
     const int mt = (M <= 1) ? 1 : (M <= 2) ? 2 : (M <= 4) ? 4 : 8;
     TORCH_CHECK(mt == M, "M must be 1, 2, 4 or 8 here (the host pads)");
-    TORCH_CHECK(warps >= 1 && warps <= 16 && (rpl != 8 || (warps % 2) == 0));
+    TORCH_CHECK(warps >= 8 && warps <= 16 && (rpl != 8 || (warps % 2) == 0), "8..16 warps per block");
+    TORCH_CHECK(max_cols <= max_item_cols(mt), "items hold up to ", max_cols, " columns; the cap at M=", mt, " is ", max_item_cols(mt));
+    TORCH_CHECK(max_cols * mt <= X_PREFETCH * warps * 32, "x prefetch capacity");
 
     Params p;
     p.words = reinterpret_cast<const uint32_t*>(words.data_ptr<int>());
     p.items = reinterpret_cast<const Item*>(items.data_ptr<int>());
     p.n_items = (int)items.size(0);
     p.tile_words = tile_words;
-    p.perm = perm.data_ptr<int>();
+    p.perm = perm.numel() ? perm.data_ptr<int>() : nullptr;
     p.x = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
     p.K = K; p.M = M; p.rows = rows;
     p.scale = scale.data_ptr<float>();
@@ -403,7 +454,7 @@ void window_gemv(
 
     const int threads = warps * 32;
     const size_t tbl_bytes = (size_t)table.numel() * table.element_size();
-    const size_t smem = tbl_bytes + (size_t)mt * 16 * RED_STRIDE * 4 + (size_t)MAX_ITEM_COLS * mt * 4;
+    const size_t smem = tbl_bytes + (size_t)mt * 16 * RED_STRIDE * 4 + 2 * (size_t)max_item_cols(mt) * mt * 4;
     auto stream = at::cuda::getCurrentCUDAStream();
     const int grid = std::min(blocks, p.n_items);
     if (table.dtype() == torch::kBFloat16) launch_mt<14, uint16_t>(p, rpl, mt, grid, threads, smem, stream, ablation);

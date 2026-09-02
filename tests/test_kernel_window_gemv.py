@@ -127,6 +127,17 @@ def test_synthetic_decode_is_the_definition(rates_spec, rows):
     assert torch.equal(scale, (scale_rows.float() * 0.75).cuda())
     # the repack is a bijection: the words carry rows_p*sum(R) bits and nothing else
     assert unit.rep.words.numel() * 32 == unit.rep.rows_p * sum(rates)
+    # and the GEMV agrees with the decoded tile at M=1 and M=4 (both item caps)
+    w = got.view(torch.float8_e4m3fn).float()
+    for M in (1, 4):
+        x = torch.randn(M, cols, device="cuda").bfloat16()
+        if M == 4 and 1 in rates:
+            with pytest.raises(GrammarError, match="rate-1 column"):   # refused, never silent
+                kg.window_gemv(unit, x)
+            continue
+        y = kg.window_gemv(unit, x)
+        ref = (w * scale[:, None]).double() @ x.double().t()
+        assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
 
 
 @cuda
@@ -247,16 +258,18 @@ def test_gemv_m_tiles_within_bound(M):
 
 
 @cuda
-@pytest.mark.parametrize("rpl,warps,cpi", [(16, 16, 64), (16, 8, 16), (8, 16, 32), (8, 4, 4), (16, 4, 256)])
+@pytest.mark.parametrize("rpl,warps,cpi,balanced", [(16, 16, 64, False), (16, 8, 16, False), (8, 16, 32, True),
+                                                      (8, 8, 4, False), (16, 8, 1024, True), (16, 16, 300, True)])
 @pytest.mark.parametrize("table_dtype", [torch.bfloat16, torch.float32])
-def test_gemv_plans_agree(rpl, warps, cpi, table_dtype):
-    """Every launch shape and both table types compute the same GEMV."""
+def test_gemv_plans_agree(rpl, warps, cpi, balanced, table_dtype):
+    """Every launch shape, both planners and both table types compute the same GEMV."""
     kg = _kg()
     rows, cols = 1536, 300
     rates = tuple(2 if c % 5 == 0 else 4 for c in range(cols))
     body, codes = _synthetic(rows, cols, rates, seed=7)
     unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, torch.ones(rows, dtype=torch.float16)))
-    unit = unit.with_plan(kg.Plan(rpl=rpl, warps=warps, blocks=13, cols_per_item=cpi, table_dtype=table_dtype))
+    unit = unit.with_plan(kg.Plan(rpl=rpl, warps=warps, blocks=13, cols_per_item=cpi, table_dtype=table_dtype,
+                                  balanced=balanced))
     tile, scale = kg.decode_fp8(unit)
     w = tile.view(torch.float8_e4m3fn).float()
     x = torch.randn(2, cols, device="cuda").bfloat16()

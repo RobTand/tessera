@@ -199,6 +199,7 @@ def cold_units(rows, cols, target=COLD_BYTES, **kw_):
     n = max(2, int(target // max(1, first.rep.nbytes)) + 1)
     units = [first]
     for _ in range(1, n):
+        # replicas share everything but the wire bytes (and so the item tables)
         units.append(dataclasses.replace(first, rep=dataclasses.replace(first.rep, words=first.rep.words.clone())))
     return Rotor(units)
 
@@ -281,16 +282,25 @@ def _mk(p):
 
 
 def parse_plan(spec: str | None):
-    """``rpl,warps,blocks,cpi,dtype`` -> Plan, or None for the default."""
+    """``rpl,warps,blocks,cpi,dtype[,item_cost|fixed]`` -> Plan, or None for the default."""
     if not spec:
         return None
-    rpl, warps, blocks, cpi, dt = spec.split(",")
+    parts = spec.split(",")
+    rpl, warps, blocks, cpi, dt = parts[:5]
+    balanced, item_cost = True, 24
+    if len(parts) > 5:
+        if parts[5] == "fixed":
+            balanced = False
+        else:
+            item_cost = int(parts[5])
     return kg.Plan(rpl=int(rpl), warps=int(warps), blocks=int(blocks), cols_per_item=int(cpi),
-                   table_dtype=torch.float32 if dt in ("f32", "fp32", "float32") else torch.bfloat16)
+                   table_dtype=torch.float32 if dt in ("f32", "fp32", "float32") else torch.bfloat16,
+                   balanced=balanced, item_cost=item_cost)
 
 
 def plan_str(p: kg.Plan) -> str:
-    return f"rpl{p.rpl}/w{p.warps}/b{p.blocks}/c{p.cols_per_item}/{'f32' if p.table_dtype == torch.float32 else 'bf16'}"
+    tail = f"/i{p.item_cost}" if p.balanced else "/fixed"
+    return f"rpl{p.rpl}/w{p.warps}/b{p.blocks}/c{p.cols_per_item}/{'f32' if p.table_dtype == torch.float32 else 'bf16'}{tail}"
 
 
 # --- arms ---------------------------------------------------------------------------
@@ -313,7 +323,8 @@ def arm_gemv(out: dict, models, batches, plan_spec=None, seconds=2.5, quick=Fals
                  "bf16_bytes": r * c * 2, "fp8_bytes": r * c, "wire_replicas": len(rot.items), "M": {}}
         for m in (batches if not quick else (1,)):
             plan = parse_plan(plan_spec) or kg.default_plan(r, c, m)
-            units = [u.with_plan(plan) for u in rot.items]
+            units = [rot.items[0].with_plan(plan)]
+            units += [u.with_plan(plan, share_from=units[0]) for u in rot.items[1:]]
             urot = Rotor(units)
             x = torch.randn(m, c, dtype=torch.bfloat16, device="cuda")
             xq0, xs0 = _fp8_per_token(x)
@@ -368,7 +379,7 @@ def arm_gemv(out: dict, models, batches, plan_spec=None, seconds=2.5, quick=Fals
             g["speedup_op_vs_bf16"] = round(g["bf16_linear"]["us"] / g["fused_op"]["us"], 3)
             g["lane_quant_is_fused"] = bool(g["fp8_lane_quant_plus_mm"]["us"] < g["fp8_quant_plus_mm"]["us"])
             g["plan"] = plan_str(plan)
-            g["items"] = int(units[0].items.shape[0])
+            g["items"] = int(units[0].items_for(m)[0].shape[0])
             entry["M"][str(m)] = g
             print(f"  {r:6d}x{c:<6d} M={m} [{plan_str(plan)} items={g['items']}] "
                   f"kernel {g['fused_kernel']['us']:8.1f} us ({g['fused_kernel']['GB_per_s']:5.1f} GB/s, "
@@ -430,12 +441,19 @@ def arm_plans(out: dict, shapes, seconds=1.5, M=1):
         for dt in (torch.bfloat16, torch.float32):
             for rpl in (16, 8):
                 for warps in (8, 16):
-                    for blocks in (48, 96, 144, 192):
-                        for cpi in (16, 32, 64, 128):
-                            grid.append(kg.Plan(rpl=rpl, warps=warps, blocks=blocks, cols_per_item=cpi, table_dtype=dt))
+                    for blocks in (48, 96, 144):
+                        for cpi, ic, bal in ((1024, 8, True), (1024, 24, True), (1024, 64, True), (1024, 160, True),
+                                             (256, 24, True), (128, 24, False), (256, 24, False), (1024, 24, False)):
+                            if dt == torch.float32 and blocks > 96:
+                                continue
+                            if rpl == 8 and (dt == torch.float32 or warps == 8):
+                                continue
+                            grid.append(kg.Plan(rpl=rpl, warps=warps, blocks=blocks, cols_per_item=cpi,
+                                                table_dtype=dt, item_cost=ic, balanced=bal))
         best = None
         for plan in grid:
-            units = [u.with_plan(plan) for u in rot.items]
+            units = [rot.items[0].with_plan(plan)]
+            units += [u.with_plan(plan, share_from=units[0]) for u in rot.items[1:]]
             urot = Rotor(units)
 
             def call():
@@ -446,7 +464,7 @@ def arm_plans(out: dict, shapes, seconds=1.5, M=1):
                 rows[plan_str(plan)] = {"error": str(exc)[:200]}
                 continue
             g["GB_per_s"] = round(rot.items[0].rep.nbytes / (g["us"] * 1e-6) / 1e9, 1)
-            g["items"] = int(units[0].items.shape[0])
+            g["items"] = int(units[0].items_for(M)[0].shape[0])
             rows[plan_str(plan)] = g
             if best is None or g["us"] < best[1]:
                 best = (plan_str(plan), g["us"])

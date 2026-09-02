@@ -42,7 +42,7 @@ def main():
     for _ in range(args.launches):
         kg.window_gemv(rot.next(), x, out=scratch, ablation=args.ablation)
     torch.cuda.synchronize()
-    print("done", args.rows, args.cols, args.M, plan, "items", int(rot.items[0].items.shape[0]))
+    print("done", args.rows, args.cols, args.M, plan, "items", int(rot.items[0].items_for(args.M)[0].shape[0]))
 
 
 if __name__ == "__main__":

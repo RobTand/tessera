@@ -11,13 +11,13 @@ PLAN=${PLAN:-}
 mkdir -p "$OUT"
 run() { echo "== $* == $(date -u +%FT%TZ)"; "$@"; }
 if [ "${DO_PLANS:-1}" = 1 ]; then
-  run $PY experiments/bench_kernel_window_gemv.py --arm plans --tag "$TAG" --out "$OUT" 2>&1 | tee "$OUT/plans_$TAG.log"
+  run $PY experiments/bench_kernel_window_gemv.py --arm plans --tag "$TAG" --out "$OUT" ${SHAPES:+--shapes "$SHAPES"} 2>&1 | tee "$OUT/plans_$TAG.log"
 fi
 if [ "${DO_GEMV:-1}" = 1 ]; then
   run $PY experiments/bench_kernel_window_gemv.py --arm gemv --tag "$TAG" --out "$OUT" ${PLAN:+--plan "$PLAN"} 2>&1 | tee "$OUT/gemv_$TAG.log"
 fi
 if [ "${DO_ABLATE:-1}" = 1 ]; then
-  run $PY experiments/bench_kernel_window_gemv.py --arm ablate --tag "$TAG" --out "$OUT" ${PLAN:+--plan "$PLAN"} 2>&1 | tee "$OUT/ablate_$TAG.log"
+  run $PY experiments/bench_kernel_window_gemv.py --arm ablate --tag "$TAG" --out "$OUT" ${PLAN:+--plan "$PLAN"} ${SHAPES:+--shapes "$SHAPES"} 2>&1 | tee "$OUT/ablate_$TAG.log"
 fi
 if [ "${DO_NCU:-1}" = 1 ] && command -v ncu >/dev/null 2>&1; then
   for shape in 4096x2560 1024x2560 2560x4096 9728x2560 2560x9728; do

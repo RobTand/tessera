@@ -58,6 +58,9 @@ __all__ = [
     "GEMV_MAX_M",
     "Plan",
     "Repacked",
+    "max_item_cols",
+    "items_for",
+    "default_plan",
     "WindowGemvUnit",
     "repack_window_body",
     "plan_items",
@@ -75,7 +78,12 @@ TILE_ROWS = 512
 SUPPORTED_RATES = (1, 2, 4)
 WINDOW_BITS_SUPPORTED = (14,)
 GEMV_MAX_M = 8
-MAX_ITEM_COLS = 256
+
+
+def max_item_cols(mt: int) -> int:
+    """Columns a block reduces at once: 1024 at M<=2, 256 above (the x tile in
+    shared memory is ``cols * MT`` fp32, double-buffered)."""
+    return 1024 if mt <= 2 else 256
 
 
 # --------------------------------------------------------------------------
@@ -117,6 +125,7 @@ def _ext():
         build_directory=build,
         extra_cuda_cflags=[
             "-O3", "-lineinfo", "-std=c++17",
+            *(["-Xptxas", "-v"] if os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE") else []),
             "-gencode", f"arch=compute_{major}{minor},code=sm_{major}{minor}",
         ],
         verbose=bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE")),
@@ -211,14 +220,19 @@ def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Rep
 @dataclasses.dataclass(frozen=True)
 class Plan:
     """Launch shape.  ``rpl`` rows per lane (16 for M<=2, 8 above), ``warps``
-    per block, ``blocks`` resident (the grid; blocks loop over items),
-    ``cols_per_item`` columns a block reduces at once (<= 256)."""
+    per block (8..16), ``blocks`` resident (the grid; blocks loop over items),
+    ``cols_per_item`` the most columns a block reduces at once (capped by
+    :func:`max_item_cols`), ``item_cost`` the per-item overhead in column
+    equivalents the balanced planner charges, ``balanced`` whether items are
+    sized so every block gets the same work (else fixed ``cols_per_item``)."""
 
     rpl: int = 16
     warps: int = 16
     blocks: int = 96
-    cols_per_item: int = 64
+    cols_per_item: int = 1024
     table_dtype: torch.dtype = torch.bfloat16
+    item_cost: int = 24
+    balanced: bool = True
 
 
 def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = None,
@@ -227,28 +241,51 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
         sm_count = torch.cuda.get_device_properties(0).multi_processor_count if torch.cuda.is_available() else 48
     rpl = 16 if M <= 2 else 8
     per_sm = 2 if table_dtype == torch.bfloat16 else 1
-    blocks = sm_count * per_sm
-    n_tiles = -(-rows // TILE_ROWS)
-    # ~8 items per resident block; each warp (pair) sees >= 2 columns.
-    target_items = 8 * blocks
-    cpi = max(1, (cols * n_tiles + target_items - 1) // target_items)
-    cpi = max(cpi, warps)
-    cpi = min(MAX_ITEM_COLS, 1 << (cpi - 1).bit_length())
-    return Plan(rpl=rpl, warps=warps, blocks=blocks, cols_per_item=cpi, table_dtype=table_dtype)
+    return Plan(rpl=rpl, warps=warps, blocks=sm_count * per_sm, cols_per_item=max_item_cols(_m_tile(M)),
+                table_dtype=table_dtype)
 
 
-def plan_items(rep: Repacked, cols_per_item: int) -> torch.Tensor:
-    """int32 ``[n_items, 8]``: (tile, rate, col0, ncols, word0, 0, 0, 0), tile-major."""
-    if not 1 <= cols_per_item <= MAX_ITEM_COLS:
-        raise GrammarError(f"cols_per_item {cols_per_item} outside 1..{MAX_ITEM_COLS}")
+def plan_items(rep: Repacked, cols_per_item: int, *, grid: "int | None" = None,
+               item_cost: int = 24, max_cols: "int | None" = None) -> torch.Tensor:
+    """int32 ``[n_items, 8]``: (tile, rate, col0, ncols, word0, 0, 0, 0), tile-major.
+
+    With ``grid`` given, the run's columns are cut into ``S`` equal segments
+    per tile, ``S`` chosen to minimise ``ceil(items / grid) * (cols_per_segment
+    + item_cost)`` -- the time a round-robin persistent grid takes when every
+    item costs its columns plus a fixed overhead -- subject to the segment
+    fitting the shared-memory x tile.  Without ``grid``, fixed-width items.
+    """
+    cap = max_cols if max_cols is not None else cols_per_item
+    if not 1 <= cols_per_item <= cap:
+        raise GrammarError(f"cols_per_item {cols_per_item} outside 1..{cap}")
     runs = rep.runs.tolist()
     items = []
-    for g in range(rep.n_tiles):
-        for rate, col0, n, word0 in runs:
-            for c in range(0, n, cols_per_item):
-                k = min(cols_per_item, n - c)
+    for rate, col0, n, word0 in runs:
+        if grid is None:
+            width = cols_per_item
+        else:
+            best = None
+            for S in range(-(-n // cols_per_item), n + 1):
+                per_block = -(-(rep.n_tiles * S) // grid)
+                cost = per_block * (-(-n // S) + item_cost)
+                if best is None or cost < best[0]:
+                    best = (cost, S)
+                if per_block == 1 and S >= grid:
+                    break
+            width = -(-n // best[1])
+        for g in range(rep.n_tiles):
+            for c in range(0, n, width):
+                k = min(width, n - c)
                 items.append((g, rate, col0 + c, k, word0 + c * 16 * rate, 0, 0, 0))
+    # tile-major order so blocks working at the same time read the same region
+    items.sort(key=lambda t: (t[0], t[2]))
     return torch.tensor(items, dtype=torch.int32, device=rep.words.device).reshape(-1, 8)
+
+
+def items_for(rep: Repacked, plan: Plan, mt: int) -> torch.Tensor:
+    cap = min(plan.cols_per_item, max_item_cols(mt))
+    return plan_items(rep, cap, grid=plan.blocks if plan.balanced else None,
+                      item_cost=plan.item_cost, max_cols=max_item_cols(mt))
 
 
 # --------------------------------------------------------------------------
@@ -261,11 +298,11 @@ class WindowGemvUnit:
     table: torch.Tensor            # [2^L] bf16 or fp32 values (what a state decodes to)
     scale: torch.Tensor            # [rows] fp32 (ones for the value family)
     window_bits: int
-    items: torch.Tensor            # from plan_items
     plan: Plan
     codes_of_state: "torch.Tensor | None" = None   # [2^L] u8 grid codes (E4M3 family)
     native: "torch.Tensor | None" = None           # [256] u8 (E4M3 family)
     family: str = "e4m3"
+    items_by_mt: dict = dataclasses.field(default_factory=dict)   # M tile -> (items, max_cols)
 
     @property
     def rows(self) -> int:
@@ -275,13 +312,31 @@ class WindowGemvUnit:
     def cols(self) -> int:
         return self.rep.cols
 
-    def with_plan(self, plan: Plan) -> "WindowGemvUnit":
+    @property
+    def items(self) -> torch.Tensor:
+        return self.items_for(1)[0]
+
+    @property
+    def uniform(self) -> bool:
+        return len(set(self.rep.rates)) == 1
+
+    def items_for(self, mt: int) -> "tuple[torch.Tensor, int]":
+        """``(items, max_cols)`` for an M tile, planned once and kept (a
+        per-call plan or a device-side ``max`` would cost more than the GEMV)."""
+        key = 1 if mt <= 2 else mt
+        if key not in self.items_by_mt:
+            items = items_for(self.rep, self.plan, key)
+            self.items_by_mt[key] = (items, int(items[:, 3].max()) if items.numel() else 0)
+        return self.items_by_mt[key]
+
+    def with_plan(self, plan: Plan, *, share_from: "WindowGemvUnit | None" = None) -> "WindowGemvUnit":
+        """The same unit under another launch shape.  ``share_from``: a unit of
+        the same shape and plan whose item tables this one reuses (replicas)."""
         table = self.table
         if plan.table_dtype != table.dtype:
             table = self.table.float().to(plan.table_dtype)
-        return dataclasses.replace(
-            self, plan=plan, table=table.contiguous(), items=plan_items(self.rep, plan.cols_per_item),
-        )
+        shared = share_from.items_by_mt if share_from is not None and share_from.plan == plan else {}
+        return dataclasses.replace(self, plan=plan, table=table.contiguous(), items_by_mt=shared)
 
 
 def _check_window_bits(window_bits: int) -> None:
@@ -338,8 +393,7 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
     if plan is None:
         plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
     return WindowGemvUnit(
-        rep=rep, table=table, scale=scale, window_bits=int(unit.window_bits),
-        items=plan_items(rep, plan.cols_per_item), plan=plan,
+        rep=rep, table=table, scale=scale, window_bits=int(unit.window_bits), plan=plan,
         codes_of_state=codes_of_state, native=native, family="e4m3",
     )
 
@@ -364,8 +418,7 @@ def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window
     if plan is None:
         plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
     return WindowGemvUnit(
-        rep=rep, table=table, scale=scale, window_bits=int(window_bits),
-        items=plan_items(rep, plan.cols_per_item), plan=plan, family="value",
+        rep=rep, table=table, scale=scale, window_bits=int(window_bits), plan=plan, family="value",
     )
 
 
@@ -400,17 +453,24 @@ def window_gemv(unit: WindowGemvUnit, x: torch.Tensor, *, out: "torch.Tensor | N
     if K != unit.cols:
         raise GrammarError(f"x has {K} features, the unit {unit.cols} columns")
     mt = _m_tile(M)
+    if mt >= 4 and 1 in unit.rep.rates:
+        raise GrammarError(
+            f"M={M} runs 8 rows per lane, and a rate-1 column has no 8-row lane "
+            "(a byte of history is too short for L=14); the materialised path serves this batch"
+        )
     if mt != M:
         x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
     x = x.contiguous()
     plan = unit.plan
     rpl = plan.rpl if mt <= 2 else 8
+    items, max_cols = unit.items_for(mt)
+    perm = unit.rep.perm if not unit.uniform else unit.rep.perm[:0]     # identity: no gather
     if out is None:
         out = torch.zeros(mt, unit.rows, dtype=torch.float32, device=x.device)
     _ext().window_gemv(
-        unit.rep.words, unit.items, int(unit.rep.tile_words), unit.rep.perm,
+        unit.rep.words, items, int(unit.rep.tile_words), perm,
         unit.table, unit.scale, x, out, int(unit.window_bits), int(rpl), int(plan.warps),
-        int(plan.blocks), int(ablation),
+        int(plan.blocks), max_cols, int(ablation),
     )
     return out if mt == M else out[:M]
 
