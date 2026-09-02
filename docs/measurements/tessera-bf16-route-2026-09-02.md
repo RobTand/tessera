@@ -60,7 +60,14 @@ GPU jobs (sparklina, one GPU, chained so they never contend):
 TESSERA_GIT=fc2c1c1 bash experiments/bf16_export_qwen.sh 1536 1792   # export + twin + twin check, R=6 and R=7
 bash experiments/bf16_weight_space_run.sh                            # the allocator's table, GLM then dense
 bash experiments/bf16_tail_run.sh                                    # W1 identity, structural twin check, stock HF greedy
+bash experiments/bf16_r8_dense_run.sh                                # twin re-check through the renamed folded path, then dense R=8
 ```
+
+`bf16_r8_run.sh` is in the tree beside these and is **superseded**: it ran the
+GLM set at R=8 first, which is 1442 s (E4M3) + 969 s (BF16) per 2048x4096
+tensor -- about four hours for six -- so it was killed after `L5.gate_proj`
+(whose row is in `weight_space_glm_r8.json`, written per tensor) and the dense
+set, where the R=8 question is actually sharp, was run first instead.
 
 ---
 
@@ -631,8 +638,13 @@ width is a function of `_HARDWARE_BASES[base][0]`: 1 if `size <= 256` else 2).
 **(d) The serving route.** `tessera_serving_route` gains a BF16 branch:
 `contract="w16a16"`, `act_bits=16`, `act_dtype_name="bfloat16"`,
 `act_group_size=0`, `activation_source_format=None`, lane `LANE_STOCK`
-(`base in _HARDWARE_BASES` already yields this). The stock materialisation is
-`tessera.decode.materialize_bf16`; the served route is §8's.
+(`base in _HARDWARE_BASES` already yields this). The two renderings are
+**different functions and must not be confused** (§4):
+`tessera.decode.materialize_bf16` returns the *pair* `(bf16 tile, fp32 row
+scale)` and is what a lane consumes; `tessera.decode.materialize_bf16_folded`
+returns the single folded tile and is the **stock/twin** materialisation — the
+one a `materialize_stock`-style path or a plain-BF16 export writes, and the one
+that pays the fold rounding priced in §7b. The served route is §8's.
 
 **(e) Two things to get right in the menu, not in the code.**
 
@@ -655,10 +667,11 @@ a hard sub-question. The two candidates named in the brief resolved by reading
 code rather than by reasoning about it — the table construction is W1's own
 `window_table` with a different grid, and the rate-cap algebra is already in
 `export._plan_for` (`payload_bits` under WINDOW, `payload_bits − 1` under TCQ).
-Two `advisor()` calls were made, one before committing to the grid shape and
-one before declaring done; the second produced four of the checks in this
-document (the encoder-drift diff, the structural twin check, the
-`grid_from_config` hole, and the PrismaQuant accountant line).
+Four `advisor()` calls were made, one before committing to the grid shape and
+three in the endgame; they produced six of the checks in this document (the
+encoder-drift diff, the structural twin check, the `grid_from_config` hole, the
+PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d, and
+this section's contention note).
 
 **What is measured here, and on what.** Weight-space and (on GLM) output-space
 error, on real tensors, both arms through the real wire, priced at the bytes
@@ -696,6 +709,14 @@ outlier work identified as the hard ones.
   2048×4096 encode on this box; the sweep was stopped after L5.gate_proj and
   the dense R = 8 screen was run instead. The six-tensor R = 8 geomean is
   unmeasured.
+- **One timing column is contended, and no error number is.** The tail
+  runner's `pgrep` guard listed the export and the sweep but not
+  `bf16_twin_check.py`, so it started at 14:25:03 while the R=7 twin check was
+  still running, and the W1-identity and structural-twin stages then overlapped
+  the GLM sweep. Every error figure here is deterministic and unaffected; the
+  `secs` columns in `w1_identity.json` and in the first GLM tensor are the only
+  contended numbers, and neither is quoted as a claim. §5's per-unit encode
+  times (9.35 / 10.88 s) were taken with the GPU to itself.
 - **Rates above 8 are untested by measurement.** They are legal to R = 16 and
   the wire round-trip test covers the widening path, but the product range is
   4..8 and that is where every number here lives.

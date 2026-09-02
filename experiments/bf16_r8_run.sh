@@ -2,6 +2,13 @@
 # R = 8 on both tensor sets, plus the twin checks re-run through the renamed
 # folded path.  R=8 is where the alphabet question is sharpest: E4M3 has been
 # saturated since R=6, and W1 measured the BF16 window landing on EXL3 K8.
+#
+# SUPERSEDED by bf16_r8_dense_run.sh (2026-09-02).  This one runs GLM first,
+# and a 2048x4096 GLM expert costs 1442 s (E4M3) + 969 s (BF16) at R=8 -- about
+# four hours for the six -- so it was killed after L5.gate_proj (its row is in
+# weight_space_glm_r8.json, which is written per tensor) and the dense set was
+# run first instead.  Kept only because the GLM R=8 row in the receipt came
+# from it.
 set -euo pipefail
 
 WT=${WT:-/home/rob/tmp/wt-bf16}

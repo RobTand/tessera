@@ -579,15 +579,18 @@ def materialize_bf16_folded(
     Its cost is the twin's, not the route's -- :func:`materialize_bf16` is
     what a lane holding the wire calls, and it pays nothing.
 
-    **The rounding rule, stated once.**  The reconstruction is exactly
-    ``reconstruct_unit``'s -- ``grid_value(code) * scale_rows[row] * global``
-    accumulated in fp32 by ``dequantize`` over ``unit_scale_field`` -- and
-    then **one** round-to-nearest-even to bf16, at the end, by
-    ``Tensor.to(torch.bfloat16)``.  One rounding and not two: rounding the
-    row word or the global separately would fold twice and put the served
-    tile a half-ulp off the tensor the encoder scored.  Equivalently, and
-    asserted in the tests, ``bf16(values.float() * scale[:, None])`` over the
-    pair :func:`materialize_bf16` returns.
+    **The rounding rule, stated once.**  This is ``reconstruct_unit``'s fp32
+    product with **one** round-to-nearest-even to bf16 at the end, and the
+    test asserts exactly that equality.  It holds bit-for-bit, and not by
+    luck: ``unit_scale_field`` on a CHANNEL plane *is*
+    ``scale_rows.float() * float(global)`` (``channel_scale_field``), the
+    expression the pair already carries, and ``dequantize`` multiplies the
+    same fp32 grid value by the same fp32 factor -- so no reassociation of a
+    float product is involved.  The bf16 hop through the pair is free because
+    every entry of this grid is a bf16 word by construction, so
+    ``float(bf16(v)) == v``.  One rounding and not two: rounding the row word
+    or the global separately would fold twice and put the served tile a
+    half-ulp off the tensor the encoder scored.
     """
     values, scale = materialize_bf16(unit, forest, code)
     return (values.float() * scale[:, None]).to(torch.bfloat16)

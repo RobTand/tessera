@@ -601,7 +601,9 @@ dense Linears): the two arms are within 1%, so the menu keeps both.
 
 Built, not just measured: `BF16_GRID` (65 536 codes, the code *is* the bf16 bit
 pattern, `payload_bits=16`), `BF16_RECIPE` (window, span 1, CHANNEL, L=14),
-`materialize_bf16` / `bf16_route.stream_bf16`, a pure-torch streamed decoder,
+`materialize_bf16` / `bf16_route.stream_bf16` (both return the *pair* -- tile
+plus row scale -- and `*_folded` is the twin's single tile), a pure-torch
+streamed decoder,
 `--grid BF16` in the exporter with `--stock-twin`, 29 tests. Qwen3-0.6B is
 exported at R=6 and R=7 (wire 6.129 / 7.129 bpp) with plain-BF16 twins that a
 stock `from_pretrained` loads and generates from; all 196 units are bitwise
