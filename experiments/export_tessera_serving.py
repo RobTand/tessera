@@ -91,6 +91,31 @@ FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
     (re.compile(r"^(.*\.mlp\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
 )
+#: A body Linear, and WHICH decoder layer it belongs to.  Not
+#: ``startswith("model.layers.")``: a multimodal checkpoint roots its decoder
+#: under a sub-model (GLM-5.3-Flash is ``model.language_model.layers.N.``), and
+#: the prefix test silently found NOTHING there -- an "export" that quantized
+#: zero Linears and reported success.  The vision tower is ``model.visual.
+#: blocks.N.``, which this does not match, so it stays BF16 by the same rule
+#: rather than by a second exclusion list.
+BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
+
+#: A ROUTED expert leaf in the unpacked (per-expert 2-D) source layout.  The
+#: ``\d+`` segment is load-bearing: it is what distinguishes a routed expert
+#: from ``mlp.shared_experts.gate_proj``, which is an ordinary dense Linear and
+#: is quantized as one.
+ROUTED_EXPERT_2D = re.compile(
+    r"^(?P<moe>.*\.mlp)\.experts\.(?P<expert>\d+)\.(?P<proj>gate_proj|up_proj|down_proj)\.weight$")
+
+#: A PACKED expert stack: one rank-3 tensor holding every expert of a layer.
+#: Rank alone does NOT identify one -- GLM-5.3-Flash's attention carries
+#: ``k_conv1d.weight [8192, 1, 4]``, and treating that as an expert stack put
+#: ``...self_attn`` (the whole attention block, every Linear in it) into the
+#: checkpoint's ``ignore`` list.  A tensor is a packed expert stack because of
+#: where it sits, not because it has three axes.
+PACKED_EXPERT_ND = re.compile(
+    r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
+
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
 
@@ -144,14 +169,24 @@ def git_hash() -> str:
 
 
 def quantizable(src: Path):
-    """The body's tensors under ``model.layers``, split by RANK.
+    """The body's ``.weight`` tensors, split by WHAT KIND OF LAYER OWNS THEM.
 
-    Returns ``(shards, shapes, expert_shapes)``: ``shapes`` is every 2-D
-    ``.weight`` (a dense Linear, one blob per vLLM module) and
-    ``expert_shapes`` every ``.weight`` of rank 3 or more -- a transformers-5
-    packed expert stack.  The split is explicit because dropping the second
-    kind silently is how an MoE checkpoint would export as "fully quantized"
-    while its experts stayed BF16 and nothing said so.
+    Returns ``(shards, shapes, expert_shapes, routed_shapes)``:
+
+    * ``shapes`` -- every 2-D dense-Linear weight, one blob per vLLM module.
+      Shared experts live here: ``mlp.shared_experts.gate_proj`` is a plain
+      ``Glm5NextMLP`` Linear, not a routed unit.
+    * ``expert_shapes`` -- every ``.weight`` of rank 3 or more, a
+      transformers-5 PACKED expert stack.
+    * ``routed_shapes`` -- 2-D routed-expert leaves, the UNPACKED per-expert
+      layout (``...mlp.experts.7.gate_proj.weight``).
+
+    The third split is the one that has to exist.  These are 2-D, so without
+    it they land in ``shapes`` and are planned as ordinary dense Linears --
+    864 of them per projection on GLM-5.3-Flash -- and the export succeeds,
+    hours later, into a checkpoint whose ``config_groups`` name modules that
+    vLLM does not build, which the plugin then refuses at LOAD.  A refusal
+    that arrives after the encode is not a refusal; it is a bill.
     """
     index = src / "model.safetensors.index.json"
     if index.exists():
@@ -164,17 +199,70 @@ def quantizable(src: Path):
         for path in sorted(src.glob("*.safetensors")):
             with safe_open(str(path), framework="pt") as handle:
                 shards[path.name] = list(handle.keys())
-    shapes, expert_shapes = {}, {}
+    shapes, expert_shapes, routed_shapes = {}, {}, {}
     for shard, names in shards.items():
         with safe_open(str(src / shard), framework="pt") as handle:
             for name in names:
-                if name.startswith("model.layers.") and name.endswith(".weight"):
-                    shape = tuple(handle.get_slice(name).get_shape())
-                    if len(shape) == 2:
-                        shapes[name] = shape
-                    elif len(shape) >= 3:
+                if not (name.endswith(".weight") and BODY_LAYER.match(name)):
+                    continue
+                shape = tuple(handle.get_slice(name).get_shape())
+                if len(shape) >= 3:
+                    # Only an expert stack by NAME; anything else of rank 3 is
+                    # not a Linear at all (a conv1d), so it is not a Linear the
+                    # plugin must be told about and needs no ignore entry.
+                    if PACKED_EXPERT_ND.match(name):
                         expert_shapes[name] = shape
-    return shards, shapes, expert_shapes
+                elif len(shape) == 2:
+                    (routed_shapes if ROUTED_EXPERT_2D.match(name) else shapes)[name] = shape
+    return shards, shapes, expert_shapes, routed_shapes
+
+
+def body_layer(name: str) -> int:
+    """The decoder-layer index owning this tensor."""
+    match = BODY_LAYER.match(name)
+    if match is None:
+        raise SystemExit(f"{name} is not a body tensor; BODY_LAYER should have filtered it out")
+    return int(match.group(1))
+
+
+def packed_expert_orientation(name: str, shape, config: dict):
+    """Which axis of a PACKED expert stack is the output, from the config.
+
+    ``[E, A, B]`` is ambiguous on its face and the conventions genuinely
+    differ across transformers-5 architectures (``gate_up_proj`` appears both
+    as ``[E, hidden, 2*inter]`` and as ``[E, 2*inter, hidden]``).  So the
+    answer is read off ``hidden_size``/``moe_intermediate_size`` rather than
+    assumed -- and REFUSED when the dims cannot decide it.
+
+    That refusal is not hypothetical.  On GLM-5.3-Flash
+    ``hidden_size == 4096`` and ``moe_intermediate_size == 2048``, so a packed
+    ``gate_up_proj`` would be ``[E, 4096, 4096]`` and NO dim comparison can
+    orient it.  A guess there transposes every expert in silence.
+    """
+    text = config.get("text_config", config)
+    hidden = text.get("hidden_size")
+    inter = text.get("moe_intermediate_size", text.get("intermediate_size"))
+    if hidden is None or inter is None:
+        raise SystemExit(f"cannot orient the packed expert stack {name} {list(shape)}: "
+                         "config.json declares no hidden_size/moe_intermediate_size")
+    _experts, a, b = shape
+    gate_up = name.endswith("gate_up_proj.weight") or name.endswith("gate_up_proj")
+    out_dim = 2 * inter if gate_up else hidden
+    in_dim = hidden if gate_up else inter
+    a_is_out, b_is_out = (a == out_dim and b == in_dim), (b == out_dim and a == in_dim)
+    if a_is_out and b_is_out:
+        raise SystemExit(
+            f"cannot orient the packed expert stack {name} {list(shape)}: both axis orders fit "
+            f"(out={out_dim}, in={in_dim}). Re-export this checkpoint unpacked, or teach the "
+            "exporter this architecture's convention explicitly -- guessing transposes every "
+            "expert silently.")
+    if a_is_out:
+        return "out_first"
+    if b_is_out:
+        return "in_first"
+    raise SystemExit(
+        f"cannot orient the packed expert stack {name} {list(shape)}: neither axis order fits "
+        f"hidden_size={hidden} moe_intermediate_size={inter} (expected out={out_dim}, in={in_dim})")
 
 
 def stock_targets(modules):
@@ -255,26 +343,53 @@ def main():
                 g = grid_for(spec["grid"])
                 check_recipe(g, int(spec["q256"]))
                 overrides[name] = (g, int(spec["q256"]))
-    shards, shapes, expert_shapes = quantizable(args.src)
+    src_config = json.loads((args.src / "config.json").read_text())
+    shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
+    if not shapes and not expert_shapes and not routed_shapes:
+        raise SystemExit(
+            f"no body weight tensors found under {args.src}. BODY_LAYER matches "
+            f"``model.<...>.layers.<N>.``; this checkpoint's names do not, so there is nothing "
+            "to export rather than nothing to do.")
+
+    # A routed expert must be refused HERE -- before a single unit is encoded.
+    # These leaves are 2-D, so the only thing standing between them and being
+    # planned as dense Linears is this check.
+    planned_routed = sorted(set(overrides) & set(routed_shapes))
+    if planned_routed:
+        first = planned_routed[0]
+        raise SystemExit(
+            f"the plan names {len(planned_routed)} ROUTED expert tensor(s), e.g. {first} "
+            f"{list(routed_shapes[first])}. A routed expert is not a dense Linear: vLLM builds "
+            "one FusedMoE module per layer, not one Linear per expert, so a checkpoint declaring "
+            f"{module_of(first)} in config_groups names a module vLLM never creates and the "
+            "plugin refuses it at load. Routed-MoE export is declared in its own `moe` block. "
+            "Remove them from the plan to pass them through as BF16.")
     planned_experts = sorted(set(overrides) & set(expert_shapes))
     if planned_experts:
         first = planned_experts[0]
         raise SystemExit(
             f"the plan names {len(planned_experts)} packed expert tensor(s), e.g. {first} "
-            f"{list(expert_shapes[first])}: routed-MoE expert export is a follow-up. The wires, "
-            "the container framing and the scheme's structure field are all in place; what is "
-            "missing is the per-expert encode and the decode to vLLM's packed expert layouts. "
-            "Remove them from the plan to pass them through as BF16.")
+            f"{list(expert_shapes[first])} (orientation "
+            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): routed-MoE "
+            "expert export is a follow-up. The wires, the container framing and the scheme's "
+            "structure field are all in place; what is missing is the per-expert encode and the "
+            "decode to vLLM's packed expert layouts. Remove them from the plan to pass them "
+            "through as BF16.")
     unknown = sorted(set(overrides) - set(shapes))
     if unknown:
         raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}")
     if expert_shapes:
         print(f"  {len(expert_shapes)} packed expert tensors stay BF16 and are named in ignore "
               f"(routed-MoE export is a follow-up); e.g. {sorted(expert_shapes)[0]}", flush=True)
+    if routed_shapes:
+        layers = sorted({body_layer(n) for n in routed_shapes})
+        print(f"  {len(routed_shapes)} routed expert tensors across layers {layers} stay BF16 and "
+              f"are named in ignore (routed-MoE export is a follow-up); "
+              f"e.g. {sorted(routed_shapes)[0]}", flush=True)
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
-        layer = int(name.split(".")[2])
+        layer = body_layer(name)
         if args.layers is not None and layer >= args.layers:
             passthrough.append(name); continue
         if name in overrides and overrides[name] is None:
@@ -451,9 +566,14 @@ def main():
     # A packed expert stack stays BF16; naming its MODULE in ``ignore`` is what
     # lets the plugin serve that MoE layer unquantized instead of refusing it.
     for name in expert_shapes:
-        ignore.append(module_of(name).rsplit(".", 1)[0] if name.endswith(".weight") else name)
+        ignore.append(module_of(name).rsplit(".", 1)[0])
+    # An UNPACKED routed expert is ignored at its own module name: vLLM's
+    # FusedMoE is matched by the leaf its loader walks, and naming the parent
+    # would silently cover the shared experts beside it.
+    for name in routed_shapes:
+        ignore.append(module_of(name))
     ignore = sorted(set(ignore))
-    config = json.loads((args.src / "config.json").read_text())
+    config = src_config
     config["quantization_config"] = {
         # The field that selects Tessera's own vLLM plugin (entry point
         # ``tessera = tessera.serving:register``).  No serve flag enables it.
