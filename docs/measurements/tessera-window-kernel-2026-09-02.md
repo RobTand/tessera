@@ -2,7 +2,8 @@
 
 2026-09-02. `src/tessera/kernel_window.py`, `tests/test_kernel_window.py`,
 `experiments/bench_kernel_window.py`. Commits `1675a1f`, `05558b3`, `793c09d`,
-`3a7d026`, `b1576f0`, `79f9c72` on `worktree-agent-ad5a8f4b23cadfa9f`.
+`3a7d026`, `b1576f0`, `79f9c72`, `289e223`, `4b3a70b`, `76a0539` on
+`worktree-agent-ad5a8f4b23cadfa9f`.
 
 **The headline, stated first because it is the answer to the question that was
 asked.** The fused decoder replaces the pure-torch window reader at **40-202x**
