@@ -37,7 +37,7 @@ from .errors import PlaneLayoutError, SchemaError, TruncationError
 from .footprint import account_terminal, plane_region_bytes
 from .exact import bits_to_bytes
 from .manifest import Manifest, TerminalRecord
-from .planes import CANONICAL_PLANE_ORDER, PlaneDescriptor, Storage
+from .planes import PlaneDescriptor, Storage
 
 __all__ = [
     "MAGIC",
@@ -68,8 +68,13 @@ SCHEMA_MAJOR = 1
 #: minor-1 scale-plane record (one scale per output row on the DIAG_SV plane),
 #: which earlier readers cannot resolve, so a manifest carrying it declares
 #: the minor that can.  Every S6b/LUT artifact keeps the minor it had.
-SCHEMA_MINOR = 3
-SCHEMA_MINORS_READ = (0, 1, 2, 3)
+#: Minor 4 (2026-09-02) appends the shard record -- where a unit sits inside
+#: the unit it was cut from (``layout.slice_unit``) -- and, for a shard cut
+#: below row 0, adds the INITIAL_STATE plane to the wire order ahead of BODY.
+#: A whole unit carries no shard record and writes at the minor it always did,
+#: so every artifact written before this bump is byte-identical.
+SCHEMA_MINOR = 4
+SCHEMA_MINORS_READ = (0, 1, 2, 3, 4)
 
 _HEADER = struct.Struct("<8sHHIII")
 
@@ -108,7 +113,7 @@ def plane_ranges(
     concatenation of each plane's truncated extent.  `content_bytes` excludes
     alignment padding; `total_bytes` includes it.
     """
-    order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
     ranges, offset = [], 0
     for descriptor in manifest.planes:
         if descriptor.storage is Storage.REFERENCE:
@@ -139,7 +144,7 @@ def verify_plane_region(
             f"terminal {terminal.slot_id!r}: plane-region bytes do not match "
             "the declared payload digest"
         )
-    order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
     for descriptor, offset, content, total in plane_ranges(manifest, terminal):
         chunk = plane_region[offset : offset + total]
         if len(chunk) != total:

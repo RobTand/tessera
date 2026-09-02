@@ -26,7 +26,7 @@ from fractions import Fraction
 
 from .errors import FootprintDisagreementError
 from .manifest import Manifest, TerminalRecord
-from .planes import CANONICAL_PLANE_ORDER, Storage
+from .planes import Storage
 
 __all__ = [
     "ByteQuantity",
@@ -93,7 +93,7 @@ def plane_region_bytes(manifest: Manifest, terminal: TerminalRecord) -> int:
     A terminal is a prefix of the canonical plane order; a plane absent from
     this terminal carries a zero count and contributes nothing.
     """
-    order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
     total = 0
     for descriptor in manifest.planes:
         count = terminal.plane_elements[order[descriptor.kind]]

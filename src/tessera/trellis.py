@@ -207,14 +207,27 @@ class TCQ:
             for code in codes
         )
 
-    def decode(self, bits: "list[int]", length: int, span: int = 1) -> "list[int]":
+    def decode(
+        self, bits: "list[int]", length: int, span: int = 1, initial_state: int = 0
+    ) -> "list[int]":
         """Replay the code: input bits -> anchor indices. Exact, no search.
 
         ``span`` is the super-symbol length L.  Each super-symbol is read as
         ``[select | point_0]`` then ``[label_i | point_i]`` for ``i = 1..L-1``;
         the code's output for ``select`` is the super-label, and position 0's
         subset is the super-label minus the stored labels, mod 4.
+
+        ``initial_state`` is the register the stream starts from.  Zero is the
+        pinned start of a whole unit; a **shard** cut below row 0 carries its
+        parent's register on the INITIAL_STATE plane (``layout.slice_unit``),
+        and this scalar walk is the oracle the vectorised replay's closed-form
+        correction is tested against.
         """
+        if not 0 <= initial_state < self.code.states:
+            raise GrammarError(
+                f"initial state {initial_state} outside the code's "
+                f"{self.code.states} states"
+            )
         expected = body_bits(self.rate, length, span)
         if len(bits) != expected:
             raise GrammarError(
@@ -222,7 +235,7 @@ class TCQ:
                 f"{span}, got {len(bits)}"
             )
         subsets = self.subsets
-        state, out, cursor = 0, [], 0
+        state, out, cursor = initial_state, [], 0
         for _ in range(length // span):
             select = bits[cursor]
             cursor += 1
