@@ -170,7 +170,40 @@ with no plugin, which is how a served KL gate will run before the lane exists.
 
 ## 6. W1 identity
 
-<!-- W1 TABLE -->
+W1's BF16 arm ran **in memory**, over a grid built in its script — the finite
+normal bf16 values across a 32-binade window, 8192 codes — snapped by
+`torch.cdist(...).argmin` in float32. The library's grid is the whole of bf16,
+65 536 codes, snapped exactly in float64, and it goes through the real wire.
+Three differences, and each is measured rather than argued away
+(`experiments/bf16_route_w1_identity.py`).
+
+**1. Grid width: no difference at all.** At the shipping `L = 14`, σ = 1.0,
+seed 0, the two grids snap the 16 384 table quantiles to **identical values** —
+`value_mismatches: 0`. Every quantile lies deep inside W1's 32-binade window
+(the table spans 7.6e-5 to 4.05), so the wider grid buys no extra reach here; it
+buys the *cap* (`payload_bits = 16`) and the kernel's table view. Reach 4.00 σ,
+**2116 distinct values** in a 16 384-entry table — W1's §D observation, on this
+grid.
+
+**2. The snap: 30 entries of 16 384, and they are cdist's.** On W1's own grid,
+its float32 `cdist` picks a different code from the exact float64 search on
+**30 of 16 384** entries; the same 30 differ from bf16 round-to-nearest-even.
+The library's table matches bf16 RNE on **all 16 384**. So W1's receipt's
+"snap-vs-RNE differences" were the `x² + y² − 2xy` expansion, not a tie rule —
+which also means the ties W1 worried about never bind at these parameters.
+
+Host-reproducible in a minute, no GPU:
+
+```
+python -c "…window_table(BF16_GRID, 14, sigma=1.0, seed=0, half=16)…"
+grid_width {'library_codes': 65536, 'w1_codes': 8192, 'entries': 16384,
+            'value_mismatches': 0, 'reach': 4.0, 'distinct': 2116}
+snap       {'cdist_vs_exact': 30, 'exact_vs_rne': 0, 'cdist_vs_rne': 30}
+```
+
+**3. Wire vs memory, and what the 30 entries cost.**
+
+<!-- W1 GPU -->
 
 ---
 

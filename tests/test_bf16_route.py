@@ -389,6 +389,25 @@ def test_the_no_fold_pair_refuses_a_block_plane():
         materialize_bf16_unscaled(unit, forests, None)
 
 
+def test_the_stock_helper_routes_this_unit_to_the_tile():
+    """``materialize_stock`` is what a loader dispatching on the wire calls.
+
+    On E2M1 it returns an NVFP4 triple and on E4M3 an FP8 pair; on this grid
+    there is no stock quantized layout to build, because bf16 *is* the stock
+    layout -- so it returns one ``weight``, and it must be the same tensor
+    ``materialize_bf16`` gives, or a checkpoint and a lane disagree about one
+    artifact.
+    """
+    from tessera.stock import materialize_stock
+
+    _, exported, _, _ = _encode(q256=1536)
+    parsed = parse_unit_artifact(exported.blob)
+    got = materialize_stock(parsed.unit, parsed.grid, parsed.code)
+    assert set(got) == {"weight"} and got["weight"].dtype is torch.bfloat16
+    assert torch.equal(
+        got["weight"], materialize_bf16(parsed.unit, parsed.grid, parsed.code))
+
+
 def test_a_checkpoint_config_naming_this_grid_replays_it():
     """``grid_from_config`` resolved grids from a closed two-name map.
 
