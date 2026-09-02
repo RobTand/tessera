@@ -22,6 +22,7 @@ The pass order is forced by what each stage needs:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import torch
@@ -481,6 +482,37 @@ def window_table(
     return table.to(device) if device is not None else table.clone()
 
 
+# The fused step kernel's class-minimum loop is fully unrolled to ``FAN - 1``
+# while its tile is ``2048 // FAN`` lanes wide, so the loop doubles per bit of
+# rate exactly as the tile falls under a warp -- and past a crossover the fast
+# path is slower than the reference it exists to replace.  Measured on one
+# tensor in one process, 1024x1024 at L = 14, identical states and identical
+# sse at every rate (docs/measurements/tessera-bf16-route-2026-09-02.md, 11):
+#
+#     R           6        7         8
+#     reference   6.548    6.544     6.631   s   (flat, as the algebra demands:
+#     fused       0.753    1.474    65.004   s    low * FAN = 2^L per step)
+#                 8.7x     4.4x      0.10x       fused vs reference
+#
+# so ``auto`` stops here.  This is a measured crossover, not a taste: either
+# side of it the two machines return the same answer, and the constant names
+# the rate at which the faster machine stops being faster.  ``TESSERA_WINDOW_
+# FUSED_MAX_RATE`` moves it for a box whose crossover sits elsewhere.
+WINDOW_FUSED_MAX_RATE = 7
+
+
+def _fused_max_rate() -> int:
+    raw = os.environ.get("TESSERA_WINDOW_FUSED_MAX_RATE")
+    if raw is None:
+        return WINDOW_FUSED_MAX_RATE
+    try:
+        return int(raw)
+    except ValueError:
+        raise GrammarError(
+            f"TESSERA_WINDOW_FUSED_MAX_RATE={raw!r} is not an integer rate"
+        ) from None
+
+
 def viterbi_window(
     targets: torch.Tensor,
     vectors: torch.Tensor,
@@ -514,7 +546,10 @@ def viterbi_window(
     ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
     returns identical states and the identical sse float (see that module for
     why that is a contract and not a hope); ``"auto"`` takes the fused path
-    on CUDA inputs when Triton is present and the reference otherwise.
+    on CUDA inputs when Triton is present **and the rate is at or below
+    ``WINDOW_FUSED_MAX_RATE``**, and the reference otherwise.  ``"fused"``
+    asked for explicitly is still honoured above the crossover: the crossover
+    governs the choice ``auto`` makes, not what the caller may demand.
     """
     if impl not in ("auto", "reference", "fused"):
         raise GrammarError(f"unknown viterbi_window impl {impl!r}")
@@ -538,7 +573,8 @@ def viterbi_window(
     if impl != "reference":
         from .window_viterbi import fused_available, viterbi_window_fused
 
-        if targets.is_cuda and fused_available():
+        wanted = impl == "fused" or rate <= _fused_max_rate()
+        if targets.is_cuda and fused_available() and wanted:
             return viterbi_window_fused(targets, vectors, window_bits, rate,
                                         weights=weights, chunk=chunk)
         if impl == "fused":
