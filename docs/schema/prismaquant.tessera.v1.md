@@ -175,6 +175,51 @@ body (E2M1x2 at 8 bits per pair, 4.0 body bits per weight). A reader
 validates a window manifest's schedule against `payload_bits`, a TCQ
 manifest's against `payload_bits − 1`.
 
+### 1d. The ALPHABET plane at the grid's code width (2026-09-02): no new minor
+
+The window body's table is `2^L` **grid codes**, and a grid code is as wide as
+the grid needs. Every grid before BF16 fits in a byte (E2M1 is 16 codes, E4M3
+is 256), so the table was `2^L` bytes and §3 could call the ALPHABET element a
+byte. The BF16 grid is 65 536 codes — its code *is* the bf16 bit pattern — so
+its table is `2^L` **little-endian uint16**, and `PayloadGrid.code_bytes` is
+the one place that width is decided (1 for `size ≤ 256`, 2 for `size ≤ 65536`,
+a `GrammarError` above).
+
+| Grid | codes | ALPHABET element | table at `L = 14` |
+|---|---|---|---|
+| E2M1, E2M1x2, E4M3 | 16 / 256 / 256 | `uint8` | 16 KiB |
+| BF16 | 65 536 | `uint16` LE | 32 KiB |
+
+**Why this is not a minor.** A minor exists so that a reader which cannot
+understand an artifact refuses it instead of misreading it. This width is
+already refused by a mechanism that predates it: the grid is not a manifest
+field but is recovered by digest search over `SERIALISABLE_GRIDS`
+(`unit_artifact.parse_unit_artifact`), so a reader without the BF16 grid never
+reaches the plane — it fails at the profile id with the list of grids it does
+implement. Bumping the minor would make the same artifact refused twice and
+would suggest, wrongly, that a *known* grid could arrive at a new width. It
+cannot: `code_bytes` is a function of the grid alone.
+
+**Reading.** The reader takes the width from the resolved grid and refuses a
+table whose length is not `code_bytes << L` — the same length check as before,
+priced in the grid's own unit. Bytes are little-endian on the wire, not host
+order. Every other refusal is unchanged, including the one that matters most
+here: a table entry at or above the grid's code count.
+
+**Accounting.** `calculator.terminal_rate(..., code_bytes=)` prices the table
+at its true width; the default of 1 reproduces every figure taken before this
+existed. At `L = 14` on a 2048×4096 unit the BF16 table is `0.0312` bpp
+(twice the byte-wide table's `0.0156`), and on a 1024×1024 unit `0.25` bpp —
+which is the number a small-unit budget has to carry, not a rounding.
+
+**Why the plane is exactly the kernel's table.** A bf16 code *is* a bf16 bit
+pattern, so the ALPHABET plane is a `torch.bfloat16` buffer with no
+transformation at all: `plane.view(torch.bfloat16)` is the `2^L`-entry decode
+table a fused kernel wants in shared memory (32 KiB at `L = 14`, within a
+Blackwell SM's budget). On the byte-wide grids the plane is an *index* into
+the grid's value table and the kernel materialises the values; on this grid
+the two coincide.
+
 ## 2. Decisions this schema makes
 
 The design document leaves these open. Deciding them *is* item 1a.
@@ -244,7 +289,7 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 
 | Plane | Element | Bits |
 |---|---|---|
-| ALPHABET / DESCENDANT | byte | 8 |
+| ALPHABET / DESCENDANT | grid code | 8, or 16 on a grid wider than a byte (§1d) |
 | BODY | bit | 1 (count = Σ_col R·rows) |
 | SCALE_BASE | 32-weight group | 8 (E8M0) |
 | COMPLETION | bit | 1 (count = Σ_col c·rows) |

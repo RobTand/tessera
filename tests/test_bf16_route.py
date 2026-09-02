@@ -389,5 +389,23 @@ def test_the_no_fold_pair_refuses_a_block_plane():
         materialize_bf16_unscaled(unit, forests, None)
 
 
+def test_a_checkpoint_config_naming_this_grid_replays_it():
+    """``grid_from_config`` resolved grids from a closed two-name map.
+
+    A BF16 checkpoint written by ``export_checkpoint`` would have failed to
+    replay -- not misread, but refused as an unknown base, which is a hole in
+    the library path rather than in the wire.  The digest check is the point:
+    the name selects a grid and the digest proves it is the same grid.
+    """
+    from tessera.alphabet import grid_digest
+    from tessera.export import grid_from_config
+
+    config = {"grid": {"name": "BF16", "base": "BF16", "arity": 1,
+                       "digest": grid_digest(BF16_GRID)}}
+    assert grid_from_config(config) is BF16_GRID
+    with pytest.raises(GrammarError, match="digest does not match"):
+        grid_from_config({"grid": {**config["grid"], "digest": "0" * 64}})
+
+
 def test_the_family_name_is_spelled_once():
     assert BF16_FAMILY == "TESSERA_BF16"

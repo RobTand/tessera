@@ -1105,10 +1105,10 @@ def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict
 
 def grid_from_config(config: dict) -> PayloadGrid:
     """Resolve the payload grid a config names, and check it against the digest."""
-    from .alphabet import E2M1_GRID, E4M3_GRID, grid_digest, tuple_grid
+    from .alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, grid_digest, tuple_grid
 
     spec = config["grid"]
-    base = {"E2M1": E2M1_GRID, "E4M3": E4M3_GRID}.get(spec.get("base"))
+    base = {"E2M1": E2M1_GRID, "E4M3": E4M3_GRID, "BF16": BF16_GRID}.get(spec.get("base"))
     if base is None:
         raise GrammarError(f"unknown grid base {spec.get('base')!r} in config")
     arity = int(spec.get("arity", 1))

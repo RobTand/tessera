@@ -10,6 +10,13 @@ takes and it must not be a third rendering.
 
 It reads the checkpoints and nothing else: no encoder state is carried over
 from the export, which is what makes this a check rather than a restatement.
+
+With ``--source`` it also checks the twin is *structurally* the source
+checkpoint -- same tensor names, same shapes, every quantised tile back in
+bfloat16 and no ``quantization_config`` -- which is the claim that makes the
+twin servable by a runtime that has never heard of Tessera.  Equal bytes per
+unit is not that claim: a checkpoint can hold the right tiles under the wrong
+names, or under a config that sends a loader looking for scales.
 """
 from __future__ import annotations
 
@@ -44,6 +51,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--wire", type=Path, required=True)
     ap.add_argument("--twin", type=Path, required=True)
+    ap.add_argument("--source", type=Path, default=None,
+                    help="the BF16 checkpoint the export read; enables the "
+                         "structural check (names, shapes, dtypes)")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--streamed-every", type=int, default=8,
                     help="also run the streamed decoder on every Nth unit "
@@ -55,11 +65,36 @@ def main() -> None:
     _wh, wire_index = open_all(args.wire)
     _th, twin_index = open_all(args.twin)
     twin_config = json.loads((args.twin / "config.json").read_text())
+    problems: list[str] = []
+
+    structure: dict[str, object] = {"checked": False}
+    if args.source is not None:
+        _sh, src_index = open_all(args.source)
+        src_keys, twin_keys = set(src_index), set(twin_index)
+        shape_bad, dtype_bad = [], []
+        for key in sorted(src_keys & twin_keys):
+            a, b = src_index[key].get_slice(key), twin_index[key].get_slice(key)
+            if list(a.get_shape()) != list(b.get_shape()):
+                shape_bad.append(key)
+            if b.get_dtype() != "BF16":
+                dtype_bad.append(f"{key}:{b.get_dtype()}")
+        structure = {
+            "checked": True,
+            "source_tensors": len(src_keys),
+            "twin_tensors": len(twin_keys),
+            "missing_from_twin": sorted(src_keys - twin_keys)[:8],
+            "extra_in_twin": sorted(twin_keys - src_keys)[:8],
+            "shape_mismatches": shape_bad[:8],
+            "non_bf16_tensors": dtype_bad[:8],
+        }
+        if src_keys != twin_keys or shape_bad or dtype_bad:
+            problems.append(f"twin is not structurally the source: {structure}")
+        for handle in _sh:
+            del handle
 
     checked = mismatched = streamed_checked = streamed_bad = 0
     worst = None
     started = time.time()
-    problems: list[str] = []
     for module, record in manifest["modules"].items():
         if record["family"] != "TESSERA_BF16":
             continue
@@ -97,6 +132,7 @@ def main() -> None:
         "streamed_checked": streamed_checked, "streamed_mismatched": streamed_bad,
         "worst_abs_diff": worst,
         "twin_has_quantization_config": "quantization_config" in twin_config,
+        "structure": structure,
         "wire_bpp": manifest["totals"]["wire_bpp"],
         "on_disk_bpp": manifest["totals"]["on_disk_bpp"],
         "resident_mode_bpp": manifest["totals"]["resident_mode_bpp"],
@@ -109,7 +145,7 @@ def main() -> None:
     print(json.dumps(out, indent=1))
     if args.out:
         Path(args.out).write_text(json.dumps(out, indent=1))
-    if mismatched or streamed_bad or not checked:
+    if mismatched or streamed_bad or not checked or problems:
         raise SystemExit(1)
 
 
