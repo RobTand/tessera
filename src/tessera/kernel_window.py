@@ -58,6 +58,9 @@ __all__ = [
     "decode_fp8_tile",
     "window_gemv",
     "window_linear",
+    "window_module_decode",
+    "window_module_row_scale",
+    "window_module_linear",
     "window_code_table",
     "window_value_table",
 ]
@@ -442,10 +445,20 @@ def _decode_kernel(
     live = live_c[:, None] & (base[None, :] < rows)
     span = _span_of(words_ptr, anchor // 8, live)                          # [BLOCK_C, LANES]
 
+    # The initial-window term is provably zero above the first row block, and
+    # hoisting it behind `if pid_p == 0` -- a program-uniform branch, so it
+    # looked free -- cost 10.6x: 1024x3072 went 23.9 -> 253.1 us, 1024x1024
+    # 11.4 -> 25.5, 4096x2560 261.5 -> 740.3 (hoist_ab.py, idle GB10, min of 9
+    # rounds).  A branch whose result is a [BLOCK_C, LANES, VEC] tensor makes
+    # Triton carry that tensor across an `scf.if`, and it leaves the register
+    # file to do it.  The arithmetic the branch saves is three integer ops per
+    # code; the spill it buys costs an order of magnitude more.  Compute it
+    # unconditionally.
     code = base[None, :, None].to(tl.int64) + v[None, None, :].to(tl.int64)
     state = _state_of(
         span[:, :, None], (anchor % 8)[:, :, None], code,
-        v[None, None, :].to(tl.int64), rate[:, None, None], init[:, None, None], window,
+        v[None, None, :].to(tl.int64), rate[:, None, None], init[:, None, None],
+        window,
     )                                                                      # [BLOCK_C, LANES, VEC]
     byte = tl.load(table_ptr + state, mask=live[:, :, None], other=0)
 
@@ -473,6 +486,9 @@ def _decode_impl(plane_words, offsets, rates, initial, code_table, rows, cols,
 #: scalar load apiece per column, which is what the first cut spent its time
 #: on: at ``KB = 1`` the same kernel ran 96.7 us where this runs 19.6.
 _KB = 8
+
+#: Warps a GEMV program runs on.  Measured, not guessed; see ``_gemv_impl``.
+_WARPS = 2
 
 
 @triton.jit
@@ -554,16 +570,29 @@ def _gemv_split(rows: int, lanes: int) -> int:
 
 
 def _gemv_impl(x, plane_words, offsets, rates, initial, value_table, row_scale, rows,
-               cols, window_bits, max_rate, lanes: int = 32, split: "int | None" = None):
+               cols, window_bits, max_rate, lanes: int = 32, split: "int | None" = None,
+               kb: "int | None" = None, warps: "int | None" = None):
     m = x.shape[0]
     mblk = 1 if m <= 1 else 1 << (m - 1).bit_length()
+    # Two warps a program, at every M.  The inner temporary is
+    # [MBLK, KB, LANES, VEC] fp32 and the decoded state is [KB, LANES, VEC]
+    # int64, so a program is register-hungry however many warps carry it, and
+    # widening the launch to cover a larger MBLK -- num_warps = min(8, 2*mblk),
+    # which is what this line used to say -- made it worse at every point of a
+    # 3-shape x 3-M x 36-config sweep on an idle box: 1024x3072 at M=8 took
+    # 96.1 us at eight warps against 29.1 at two.  More warps means more live
+    # registers per SM for the same tile, not more parallelism; the parallelism
+    # is in the grid (rows/(LANES*VEC) x SPLIT).  Fewer than two lost on the
+    # large shapes.  The sweep is `experiments/bench_kernel_window.py --arm
+    # gemv` plus /home/rob/tmp/kernel-window/msweep2.py.
+    kb = _KB if kb is None else kb
     split = _gemv_split(rows, lanes) if split is None else split
     out = torch.zeros((m, rows), dtype=torch.float32, device=x.device)
     _gemv_kernel[(triton.cdiv(rows, lanes * _VEC), split)](
         x, plane_words, offsets, rates, initial, value_table, row_scale, out,
         rows, cols, m,
-        window=window_bits, LANES=lanes, VEC=_VEC, MBLK=mblk, KB=_KB, SPLIT=split,
-        num_warps=2,
+        window=window_bits, LANES=lanes, VEC=_VEC, MBLK=mblk, KB=kb, SPLIT=split,
+        num_warps=(_WARPS if warps is None else warps),
     )
     return out
 
@@ -710,3 +739,68 @@ def window_linear(
 def _(x, plane_words, offsets, rates, initial, code_table, value_table, row_scale,
       rows, cols, window_bits, max_rate, gemv_max=GEMV_MAX_M):
     return x.new_empty((*x.shape[:-1], rows), dtype=torch.bfloat16)
+
+
+# --- the seam a serving lane calls ------------------------------------------
+#
+# A vLLM Linear is one *module* of one or more Tessera *units* -- q/k/v are
+# three units behind one `qkv_proj`, gate/up two behind one `gate_up_proj` --
+# stacked along the output-row axis in role order.  The FP8 route's prepared
+# module (`serving/fp8_route.py::prepare_tessera_fp8_module`) holds one
+# packed window per role and concatenates their decoded tiles; these three
+# take the same list of prepared units and do the same thing through the
+# kernels here, so a lane swaps one for the other without changing its own
+# shape logic.
+
+
+def window_module_decode(units) -> torch.Tensor:
+    """The module's whole E4M3 tile, ``uint8 [sum(rows), cols]``, role order.
+
+    Byte-identical to ``torch.cat([materialize_fp8(u)[0] for u in units], 0)``,
+    which is what the route's ``PreparedTesseraFp8Module.decode`` returns.
+    """
+    units = list(units)
+    if not units:
+        raise GrammarError("a module needs at least one unit")
+    if len({u.cols for u in units}) != 1:
+        raise GrammarError(
+            "the units of one module share their input columns; these carry "
+            f"{sorted({u.cols for u in units})}"
+        )
+    if len(units) == 1:
+        return units[0].decode()
+    return torch.cat([u.decode() for u in units], 0)
+
+
+def window_module_row_scale(units) -> torch.Tensor:
+    """The module's per-row fp32 scale, ``[sum(rows)]``, role order."""
+    units = list(units)
+    if len(units) == 1:
+        return units[0].row_scale
+    return torch.cat([u.row_scale for u in units]).contiguous()
+
+
+def window_module_linear(x: torch.Tensor, units, gemv_max: int = GEMV_MAX_M):
+    """``x @ W.T`` for a whole module: ``[..., cols] -> [..., sum(rows)]``.
+
+    Each unit runs its own ``window_linear``, and the results concatenate on
+    the output axis -- which is what the stacked tile would have produced,
+    because the roles do not interact.  One launch per unit, so a three-role
+    ``qkv_proj`` issues three; a single stacked launch is possible (the units
+    would have to share one packed plane) and is not built.
+
+    The activation-contract caveat on ``window_linear`` applies here: below
+    ``gemv_max`` this multiplies bf16 activations directly and above it
+    quantises them per token to E4M3.  A lane that enables the GEMV branch is
+    changing what its ``emit_route`` record must say.
+    """
+    units = list(units)
+    if not units:
+        raise GrammarError("a module needs at least one unit")
+    parts = [
+        window_linear(x, u.plane_words, u.offsets, u.rates, u.initial, u.code_table,
+                      u.value_table, u.row_scale, u.rows, u.cols, u.window_bits,
+                      u.max_rate, gemv_max)
+        for u in units
+    ]
+    return parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)

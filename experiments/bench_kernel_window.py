@@ -57,9 +57,11 @@ REACH = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridboo
 #: the baseline under the measurement.
 TORCH_BASELINE = Path("/home/rob/tmp/kernel-window/window_torch_baseline.py")
 
-#: Rotate over at least this many wire bytes per timed arm so that a call
-#: reads DRAM rather than L2.  256 MB is comfortably past any GB10 L2.
-COLD_BYTES = 256e6
+#: Rotate over at least this many bytes per timed arm so that a call reads
+#: DRAM rather than L2.  GB10 reports a 24 MB L2 over 48 SMs, so 96 MB is 4x
+#: the cache and still small enough not to add page pressure of its own on a
+#: box with ten other CUDA processes resident.
+COLD_BYTES = 96e6
 
 #: `(name, rows, cols, per-layer count)` per model, one entry per *unit* --
 #: the granularity the lane issues a GEMV at, since q/k/v are three members of
@@ -135,32 +137,77 @@ POWER: Power | None = None
 
 
 def bench(fn, n: int = 200, warm: int = 20, seconds: float = 1.5) -> dict:
-    """Milliseconds per call by CUDA events, with the power drawn while timing.
+    """One arm on its own.  Prefer ``bench_group`` when arms are compared."""
+    return bench_group({"only": fn}, n=n, warm=warm, seconds=seconds)["only"]
 
-    The loop runs at least ``seconds`` of wall clock so the power sampler has
-    something to average; a fast kernel just gets more iterations.
+
+def bench_group(fns: dict, n: int = 64, warm: int = 8, seconds: float = 1.5,
+                rounds: int = 0) -> dict:
+    """Time several arms **interleaved**, and report min-of-rounds.
+
+    This box is never quiet -- eleven other CUDA processes were resident
+    during every number in this file -- and under that load a mean is not an
+    estimate of anything: a plain cuBLAS bf16 GEMV measured 10.2 us in one
+    round and 183 us in another.  Two things make the comparison survive it:
+
+    * **Interleaving.**  Each round times every arm back to back, so a
+      contention burst lands on all of them rather than on whichever happened
+      to run while another job was in its heavy phase.  The *ratio* between
+      arms -- which is what the verdict needs -- is then measured against a
+      shared background rather than across two different ones.
+    * **Min of rounds.**  The shortest round is the least-interfered sample
+      and the closest thing to the uncontended time this box can give.  The
+      mean and the spread are reported beside it so the contention is visible
+      rather than hidden.
+
+    Power is sampled across the whole group, since the box's draw is the
+    box's, not one arm's.
     """
-    for _ in range(warm):
-        fn()
+    # A value may be a plain callable or ``(callable, iterations)``: the torch
+    # reader is three orders of magnitude slower than the kernel, so a shared
+    # iteration count would make one arm's round take a third of a second.
+    calls, iters = {}, {}
+    for name, value in fns.items():
+        if isinstance(value, tuple):
+            calls[name], iters[name] = value
+        else:
+            calls[name], iters[name] = value, n
+    fns = calls
+    names = list(fns)
+    for name in names:                                  # warm every arm first
+        for _ in range(min(warm, iters[name])):
+            fns[name]()
     torch.cuda.synchronize()
-    start, end = torch.cuda.Event(True), torch.cuda.Event(True)
+    per = {name: [] for name in names}
+    events = {name: (torch.cuda.Event(True), torch.cuda.Event(True)) for name in names}
     t0 = time.time()
-    total_ms, total_n = 0.0, 0
-    while True:
-        start.record()
-        for _ in range(n):
-            fn()
-        end.record()
-        torch.cuda.synchronize()
-        total_ms += start.elapsed_time(end)
-        total_n += n
-        if time.time() - t0 >= seconds:
+    r = 0
+    while (rounds and r < rounds) or (not rounds and time.time() - t0 < seconds) or r < 3:
+        for name in names:
+            start, end = events[name]
+            start.record()
+            for _ in range(iters[name]):
+                fns[name]()
+            end.record()
+            torch.cuda.synchronize()
+            per[name].append(start.elapsed_time(end) / iters[name] * 1000)
+        r += 1
+        if rounds and r >= rounds:
             break
     t1 = time.time()
-    result = {"us": round(total_ms / total_n * 1000, 3), "iters": total_n}
-    if POWER is not None:
-        result.update(POWER.window(t0, t1))
-    return result
+    power = POWER.window(t0, t1) if POWER is not None else {}
+    out = {}
+    for name in names:
+        v = sorted(per[name])
+        out[name] = {
+            "us": round(v[0], 3),                        # the reported number
+            "median_us": round(v[len(v) // 2], 3),
+            "mean_us": round(sum(v) / len(v), 3),
+            "max_us": round(v[-1], 3),
+            "rounds": len(v), "iters_per_round": iters[name],
+            **power,
+        }
+    return out
 
 
 # --- units ------------------------------------------------------------------
@@ -244,15 +291,35 @@ def cold_tensors(make, nbytes, target=COLD_BYTES):
 
 
 def arm_bandwidth(out: dict):
-    """The measured copy rate, both directions of a 1 GiB buffer."""
-    n = 1 << 30
-    src = torch.empty(n, dtype=torch.uint8, device="cuda")
-    dst = torch.empty(n, dtype=torch.uint8, device="cuda")
-    r = bench(lambda: dst.copy_(src), n=5, warm=3, seconds=2.0)
-    r["GB_per_s_rw"] = round(2 * n / (r["us"] * 1e-6) / 1e9, 1)
-    out["bandwidth"] = r
-    print(f"copy_ 1 GiB: {r['us']:.1f} us  -> {r['GB_per_s_rw']} GB/s read+write"
-          f"  ({r.get('mean_w')} W mean, {r.get('max_w')} W max)")
+    """The denominator: what an SM-issued read (and read+write) actually reaches.
+
+    ``copy_`` on a contiguous same-dtype tensor dispatches to a device-to-device
+    async memcpy, which runs on the copy engine, not on the SM path a kernel
+    runs on -- it measured 38.8 GB/s here while ``torch._scaled_mm`` was
+    reading weights at ~200.  A kernel's bandwidth ceiling is the SM one, so
+    both legs are measured with ordinary elementwise kernels over a warm 256 MB
+    buffer: a read-only reduction (the GEMV's shape -- it only reads the wire)
+    and a read+write add (the decoder's shape -- it reads the wire and writes
+    the tile).  ``sum()`` on int32 is exact and cannot be folded away.
+    """
+    n = 1 << 28
+    src = torch.randint(-(1 << 30), 1 << 30, (n // 4,), dtype=torch.int32, device="cuda")
+    dst = torch.empty_like(src)
+    read = bench_group({"read": (lambda: src.sum(), 32)}, rounds=7)["read"]
+    read["GB_per_s"] = round(n / (read["us"] * 1e-6) / 1e9, 1)
+    rw = bench_group({"read_write": (lambda: torch.add(src, 1, out=dst), 32)},
+                     rounds=7)["read_write"]
+    rw["GB_per_s_rw"] = round(2 * n / (rw["us"] * 1e-6) / 1e9, 1)
+    cp = bench_group({"copy": (lambda: dst.copy_(src), 32)}, rounds=7)["copy"]
+    cp["GB_per_s_rw"] = round(2 * n / (cp["us"] * 1e-6) / 1e9, 1)
+    out["bandwidth"] = {"read_only": read, "read_write": rw, "copy_engine": cp,
+                        "bytes": n, "spec_GB_per_s": 273.0}
+    print(f"SM read-only  256 MiB: {read['us']:.1f} us -> {read['GB_per_s']} GB/s"
+          f"  ({read.get('mean_w')} W)")
+    print(f"SM read+write 256 MiB: {rw['us']:.1f} us -> {rw['GB_per_s_rw']} GB/s"
+          f"  ({rw.get('mean_w')} W)")
+    print(f"copy engine   256 MiB: {cp['us']:.1f} us -> {cp['GB_per_s_rw']} GB/s"
+          f"  ({cp.get('mean_w')} W)")
     del src, dst
     torch.cuda.empty_cache()
 
@@ -274,8 +341,7 @@ def arm_decode(out: dict, quick: bool = False):
     print(f"{len(units)} real units")
     rows = []
 
-    # -- L2-hot, one unit at a time, three representative shapes plus the
-    #    torch reader on the same unit.
+    # -- L2-hot, one unit per distinct shape, the three decoders interleaved.
     seen = set()
     for name, parsed in units:
         shape = tuple(parsed.unit.body_bits.shape)
@@ -284,24 +350,26 @@ def arm_decode(out: dict, quick: bool = False):
         seen.add(shape)
         p = kw.prepare_from_parsed(parsed, device="cuda")
         moved = p.wire_bytes + p.rows * p.cols
-        fused = bench(lambda p=p: p.decode(), n=50, seconds=1.5)
-        fused["GB_per_s"] = round(moved / (fused["us"] * 1e-6) / 1e9, 1)
         base = _torch_baseline(parsed)
-        eager = bench(lambda base=base: base.decode(), n=5, warm=2, seconds=1.5)
         compiled_fn = torch.compile(lambda b: b.decode(), dynamic=False)
-        comp = bench(lambda base=base: compiled_fn(base), n=10, warm=3, seconds=1.5)
+        g = bench_group({
+            "fused": (lambda p=p: p.decode(), 64),
+            "torch_eager": (lambda base=base: base.decode(), 4),
+            "torch_compiled": (lambda base=base: compiled_fn(base), 16),
+        }, seconds=2.0)
+        g["fused"]["GB_per_s"] = round(moved / (g["fused"]["us"] * 1e-6) / 1e9, 1)
         rows.append({
             "unit": name, "rows": p.rows, "cols": p.cols,
             "wire_bytes": p.wire_bytes, "tile_bytes": p.rows * p.cols,
-            "fused_hot": fused, "torch_eager": eager, "torch_compiled": comp,
-            "speedup_vs_eager": round(eager["us"] / fused["us"], 1),
-            "speedup_vs_compiled": round(comp["us"] / fused["us"], 1),
+            "arms": g,
+            "speedup_vs_eager": round(g["torch_eager"]["us"] / g["fused"]["us"], 1),
+            "speedup_vs_compiled": round(g["torch_compiled"]["us"] / g["fused"]["us"], 1),
         })
-        print(f"  {p.rows}x{p.cols}: fused {fused['us']:.2f} us "
-              f"({fused['GB_per_s']} GB/s, {fused.get('mean_w')} W) | "
-              f"torch eager {eager['us']:.1f} | compiled {comp['us']:.1f} us"
-              f"  -> {rows[-1]['speedup_vs_eager']}x / "
-              f"{rows[-1]['speedup_vs_compiled']}x")
+        print(f"  {p.rows}x{p.cols}: fused {g['fused']['us']:.2f} us "
+              f"({g['fused']['GB_per_s']} GB/s, {g['fused'].get('mean_w')} W) | "
+              f"torch eager {g['torch_eager']['us']:.1f} | compiled "
+              f"{g['torch_compiled']['us']:.1f} us  -> "
+              f"{rows[-1]['speedup_vs_eager']}x / {rows[-1]['speedup_vs_compiled']}x")
         del base, compiled_fn
 
     # -- DRAM-cold: rotate through every unit of the checkpoint.
@@ -309,7 +377,8 @@ def arm_decode(out: dict, quick: bool = False):
     total_wire = sum(p.wire_bytes for p in prepared)
     total_tile = sum(p.rows * p.cols for p in prepared)
     rot = Rotor(prepared)
-    cold = bench(lambda: rot.next().decode(), n=len(prepared), seconds=3.0)
+    cold = bench_group({"cold": (lambda: rot.next().decode(), len(prepared))},
+                       seconds=4.0)["cold"]
     per_unit_moved = (total_wire + total_tile) / len(prepared)
     cold["GB_per_s"] = round(per_unit_moved / (cold["us"] * 1e-6) / 1e9, 1)
     cold["units"] = len(prepared)
@@ -328,6 +397,27 @@ def _fp8_pair(rows, cols):
     return tile, scale
 
 
+def _fused_quant():
+    """The A side as the LANE runs it: one fused per-token quantisation kernel.
+
+    The route calls ``native_ops.native_fp8_quant``, a single compiled vLLM CUDA
+    op, from a torch-compiled and graph-captured forward.  The eager python
+    expression in ``kernel_window._fp8_per_token`` is 5-6 separate launches, so
+    timing against it credits the fused GEMV with ~11 us of launch overhead that
+    the real lane does not pay -- which would be selling a screen as a result.
+    vLLM is not importable in this venv, so the honest stand-in is the same
+    expression under ``torch.compile``, which Inductor fuses to one or two
+    kernels.  Both are reported: the gap between them IS the launch overhead.
+    """
+    global _QUANT_C
+    if _QUANT_C is None:
+        _QUANT_C = torch.compile(kw._fp8_per_token, dynamic=False)
+    return _QUANT_C
+
+
+_QUANT_C = None
+
+
 def arm_gemv(out: dict, models=("Qwen3-0.6B", "Qwen3-4B", "27B-assumed"),
              batches=(1, 2, 4, 8), quick: bool = False):
     shapes = {}
@@ -337,58 +427,81 @@ def arm_gemv(out: dict, models=("Qwen3-0.6B", "Qwen3-4B", "27B-assumed"),
     table = []
     for (r, c), used_by in sorted(shapes.items()):
         rot = cold_units(r, c)
-        one = rot.items[0]
-        wire = one.wire_bytes
+        wire = rot.items[0].wire_bytes
         bf16 = cold_tensors(
             lambda: torch.randn(r, c, dtype=torch.bfloat16, device="cuda"), r * c * 2)
         fp8 = cold_tensors(lambda: _fp8_pair(r, c), r * c)
         entry = {"rows": r, "cols": c, "used_by": used_by,
                  "wire_bytes": wire, "bf16_bytes": r * c * 2, "fp8_bytes": r * c,
-                 "replicas": len(rot.items), "M": {}}
+                 "wire_replicas": len(rot.items), "M": {}}
         for m in (batches if not quick else (1,)):
             x = torch.randn(m, c, dtype=torch.bfloat16, device="cuda")
+            xq0, xs0 = kw._fp8_per_token(x)
+            quant = _fused_quant()
+            quant(x)                                   # compile before timing
 
-            fused = bench(lambda: rot.next().gemv(x), n=64, seconds=1.5)
-            fused["GB_per_s"] = round(wire / (fused["us"] * 1e-6) / 1e9, 1)
+            def fused_call():
+                return rot.next().gemv(x)
 
             def bf16_call():
-                w = bf16.next()
-                return torch.nn.functional.linear(x, w)
-            b = bench(bf16_call, n=64, seconds=1.5)
-            b["GB_per_s"] = round(r * c * 2 / (b["us"] * 1e-6) / 1e9, 1)
+                return torch.nn.functional.linear(x, bf16.next())
 
-            def fp8_pair_call():
+            def fp8_eager_call():
                 w, ws = fp8.next()
                 xq, xs = kw._fp8_per_token(x)
                 return torch._scaled_mm(xq, w.t(), scale_a=xs, scale_b=ws.t(),
                                         out_dtype=torch.bfloat16)
 
-            def fp8_mm_only(w=None, ws=None):
+            def fp8_lane_call():
+                w, ws = fp8.next()
+                xq, xs = quant(x)
+                return torch._scaled_mm(xq, w.t(), scale_a=xs, scale_b=ws.t(),
+                                        out_dtype=torch.bfloat16)
+
+            def fp8_mm_only():
                 w, ws = fp8.next()
                 return torch._scaled_mm(xq0, w.t(), scale_a=xs0, scale_b=ws.t(),
                                         out_dtype=torch.bfloat16)
 
-            xq0, xs0 = kw._fp8_per_token(x)
+            arms = {"fused_gemv": fused_call, "bf16_linear": bf16_call,
+                    "fp8_quant_plus_mm": fp8_eager_call,
+                    "fp8_lane_quant_plus_mm": fp8_lane_call,
+                    "fp8_mm_only": fp8_mm_only}
+            n = 64 if r * c <= 4 << 20 else 16
             try:
-                fp = bench(fp8_pair_call, n=64, seconds=1.5)
-                fp["GB_per_s"] = round(r * c / (fp["us"] * 1e-6) / 1e9, 1)
-                fmm = bench(fp8_mm_only, n=64, seconds=1.5)
+                g = bench_group(arms, n=n, seconds=2.5)
             except Exception as exc:                      # pragma: no cover
-                fp = {"us": None, "error": str(exc)[:120]}
-                fmm = {"us": None}
-            entry["M"][m] = {"fused_gemv": fused, "bf16_linear": b,
-                             "fp8_quant_plus_mm": fp, "fp8_mm_only": fmm}
-            print(f"  {r}x{c} M={m}: fused {fused['us']:.2f} us "
-                  f"({fused['GB_per_s']} GB/s of wire, {fused.get('mean_w')} W) | "
-                  f"bf16 {b['us']:.2f} | fp8 quant+mm "
-                  f"{fp['us'] if fp['us'] is None else round(fp['us'], 2)} | "
-                  f"fp8 mm only "
-                  f"{fmm['us'] if fmm.get('us') is None else round(fmm['us'], 2)}")
+                print(f"  {r}x{c} M={m}: FAILED {exc}")
+                continue
+            g["fused_gemv"]["GB_per_s"] = round(
+                wire / (g["fused_gemv"]["us"] * 1e-6) / 1e9, 1)
+            g["bf16_linear"]["GB_per_s"] = round(
+                r * c * 2 / (g["bf16_linear"]["us"] * 1e-6) / 1e9, 1)
+            g["fp8_quant_plus_mm"]["GB_per_s"] = round(
+                r * c / (g["fp8_quant_plus_mm"]["us"] * 1e-6) / 1e9, 1)
+            g["fp8_mm_only"]["GB_per_s"] = round(
+                r * c / (g["fp8_mm_only"]["us"] * 1e-6) / 1e9, 1)
+            g["ratio_fused_over_fp8_lane"] = round(
+                g["fused_gemv"]["us"] / g["fp8_lane_quant_plus_mm"]["us"], 3)
+            g["ratio_fused_over_fp8_eager"] = round(
+                g["fused_gemv"]["us"] / g["fp8_quant_plus_mm"]["us"], 3)
+            g["ratio_fused_over_mm_only"] = round(
+                g["fused_gemv"]["us"] / g["fp8_mm_only"]["us"], 3)
+            g["ratio_fused_over_bf16"] = round(
+                g["fused_gemv"]["us"] / g["bf16_linear"]["us"], 3)
+            entry["M"][m] = g
+            print(f"  {r}x{c} M={m}: fused {g['fused_gemv']['us']:8.2f} us "
+                  f"({g['fused_gemv']['GB_per_s']:5.1f} GB/s wire) | bf16 "
+                  f"{g['bf16_linear']['us']:8.2f} | lane quant+mm "
+                  f"{g['fp8_lane_quant_plus_mm']['us']:8.2f} | mm only "
+                  f"{g['fp8_mm_only']['us']:8.2f} ({g['fp8_mm_only']['GB_per_s']:5.1f}"
+                  f" GB/s) | fused/lane {g['ratio_fused_over_fp8_lane']:.2f}x"
+                  f" | fused/mm {g['ratio_fused_over_mm_only']:.2f}x  "
+                  f"({g['fused_gemv'].get('mean_w')} W)")
         table.append(entry)
         del rot, bf16, fp8
         torch.cuda.empty_cache()
 
-    # per-token totals over each model's Linears
     lookup = {(e["rows"], e["cols"]): e for e in table}
     totals = {}
     for model, (layers, units) in MODELS.items():
@@ -396,21 +509,32 @@ def arm_gemv(out: dict, models=("Qwen3-0.6B", "Qwen3-4B", "27B-assumed"),
             continue
         per = {}
         for m in (batches if not quick else (1,)):
+            if any(m not in lookup[(r, c)]["M"] for _n, r, c in units):
+                continue
             f = sum(lookup[(r, c)]["M"][m]["fused_gemv"]["us"] for _n, r, c in units)
             b = sum(lookup[(r, c)]["M"][m]["bf16_linear"]["us"] for _n, r, c in units)
-            p8 = [lookup[(r, c)]["M"][m]["fp8_quant_plus_mm"]["us"] for _n, r, c in units]
+            p8 = sum(lookup[(r, c)]["M"][m]["fp8_lane_quant_plus_mm"]["us"]
+                     for _n, r, c in units)
+            mm = sum(lookup[(r, c)]["M"][m]["fp8_mm_only"]["us"] for _n, r, c in units)
+            wire = sum(lookup[(r, c)]["wire_bytes"] for _n, r, c in units) * layers
             per[m] = {
                 "fused_us_per_token": round(f * layers, 1),
                 "bf16_us_per_token": round(b * layers, 1),
-                "fp8_resident_us_per_token": (None if any(v is None for v in p8)
-                                              else round(sum(p8) * layers, 1)),
+                "fp8_resident_us_per_token": round(p8 * layers, 1),
+                "fp8_mm_only_us_per_token": round(mm * layers, 1),
+                "fused_over_fp8": round(f / p8, 3),
+                "fused_over_mm_only": round(f / mm, 3),
                 "launches_per_token": len(units) * layers,
+                "wire_MB": round(wire / 1e6, 1),
             }
         totals[model] = {"layers": layers, "per_M": per}
-        print(f"  {model}: " + ", ".join(
-            f"M={m} fused {v['fused_us_per_token']} us/token vs bf16 "
-            f"{v['bf16_us_per_token']} vs fp8 {v['fp8_resident_us_per_token']}"
-            for m, v in per.items()))
+        for m, v in per.items():
+            print(f"  {model} M={m}: fused {v['fused_us_per_token']} us/token | "
+                  f"bf16 {v['bf16_us_per_token']} | fp8 resident "
+                  f"{v['fp8_resident_us_per_token']} | mm only "
+                  f"{v['fp8_mm_only_us_per_token']} | fused/fp8 {v['fused_over_fp8']}x"
+                  f" | fused/mm {v['fused_over_mm_only']}x"
+                  f" over {v['launches_per_token']} launches")
     out["gemv"] = {"shapes": table, "models": totals}
 
 

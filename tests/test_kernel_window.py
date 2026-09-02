@@ -152,6 +152,55 @@ def test_reach_units_match_the_stock_twin_tensors():
             assert torch.equal(prepared.row_scale.cpu(), scale.reshape(-1).float()), name
 
 
+@cuda
+@checkpoint
+@pytest.mark.skipif(not (TWIN / "model.safetensors").exists(), reason="no stock twin")
+def test_a_fused_module_stacks_into_the_twin_tensor():
+    """The seam W2 calls: ``window_module_decode`` over a fused module's roles.
+
+    A fused ``gate_up_proj`` is two units on disk and one tensor in the stock
+    twin, so this is the only place the STACKING is checked -- a helper that
+    decoded every unit right and concatenated them backwards passes every other
+    test here and serves garbage.  ``window_module_linear`` is checked on the
+    same module at both sides of the batch cap against the stacked tile; it
+    returns bf16 (the lane's activation dtype), so its bar is bf16 rounding on
+    the small-M side and the E4M3 activation quantisation on the large-M side.
+    The fp32 GEMV itself is held to 2e-6 per unit elsewhere.
+    """
+    from safetensors import safe_open
+
+    kw = _kw()
+    modules = {}
+    for module, role, parsed in _units():
+        modules.setdefault(module, []).append((role, parsed))
+        if len(modules) > 24:
+            break
+    fused = [(m, r) for m, r in modules.items() if len(r) > 1]
+    assert fused, "the reach checkpoint carries fused modules"
+    module, roles = fused[0]
+    name = module.rsplit(".", 1)[0]
+    with safe_open(str(TWIN / "model.safetensors"), framework="pt") as twin:
+        want = torch.cat(
+            [twin.get_tensor(f"{name}.{role}.weight") for role, _p in roles], 0
+        )
+        want_scale = torch.cat(
+            [twin.get_tensor(f"{name}.{role}.weight_scale").reshape(-1) for role, _p in roles]
+        )
+    units = [kw.prepare_from_parsed(parsed, device="cuda") for _role, parsed in roles]
+    got = kw.window_module_decode(units)
+    assert torch.equal(got.cpu().view(torch.float8_e4m3fn), want), name
+    assert torch.equal(kw.window_module_row_scale(units).cpu(), want_scale.float())
+
+    tile = got.view(torch.float8_e4m3fn).float() * kw.window_module_row_scale(units)[:, None]
+    for m in (1, kw.GEMV_MAX_M + 1):
+        x = torch.randn(m, units[0].cols, device="cuda", dtype=torch.bfloat16)
+        out = kw.window_module_linear(x, units)
+        ref = x.float() @ tile.t()
+        assert out.shape == ref.shape
+        bar = 2.0 ** -8 if m <= kw.GEMV_MAX_M else 8e-2
+        assert float((out.float() - ref).abs().max() / ref.abs().max()) < bar, m
+
+
 # --- synthetic units --------------------------------------------------------
 
 
@@ -223,8 +272,13 @@ def test_gemv_refuses_a_batch_it_cannot_block():
     reaches a caller who asked for the GEMV by name.
     """
     kw = _kw()
-    _module, _role, parsed = next(_units(limit=1))
-    p = kw.prepare_from_parsed(parsed, device="cuda")
+    rows, cols, window_bits, rate = 64, 48, 14, 4
+    torch.manual_seed(11)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    codes = torch.randint(0, 256, (1 << window_bits,), dtype=torch.uint8, device="cuda")
+    scale = torch.rand(rows, device="cuda") + 0.5
+    p = kw.prepare_window_unit(body, (rate,) * cols, window_bits, codes, E4M3_GRID,
+                               scale, device="cuda")
     x = torch.randn(kw.GEMV_MAX_M + 1, p.cols, device="cuda", dtype=torch.bfloat16)
     with pytest.raises(GrammarError, match="small-M"):
         p.gemv(x)
