@@ -180,6 +180,57 @@ def test_synthetic_units_decode_byte_identically(rows, cols):
 
 
 @cuda
+def test_a_mixed_rate_unit_decodes_byte_identically():
+    """Not every column carries the same rate.
+
+    The reach checkpoint is uniform R=4 on all 286,720 columns, so every unit
+    test above exercises one runtime rate.  ``q256=896`` on E4M3 splits the
+    columns half at R=3 and half at R=4, which is both the packer's mixed
+    branch (columns of different bit lengths, each still byte-aligned) and the
+    kernel's per-column ``rate`` load feeding a per-column shift.
+    """
+    kw = _kw()
+    torch.manual_seed(896)
+    weight = torch.randn(200, 176, dtype=torch.float32) * 0.02
+    _exported, unit, forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=896, name="mixed",
+        body=E4M3_RECIPE.body, span=E4M3_RECIPE.span,
+        scale_plane=E4M3_RECIPE.scale_plane, window_bits=E4M3_RECIPE.window_bits,
+        window_seed=E4M3_RECIPE.window_seed,
+    )
+    assert len(set(unit.rates)) > 1, "q256=896 no longer mixes rates on E4M3"
+    reference, scale = materialize_fp8(unit, forests or E4M3_GRID, None)
+    prepared = kw.prepare_window_unit(
+        unit.body_bits, unit.rates, unit.window_bits, unit.window_codes, E4M3_GRID,
+        unit.scale_rows.float() * float(unit.scale_global), device="cuda",
+    )
+    assert torch.equal(prepared.decode(), reference.cuda())
+
+    x = torch.randn(2, prepared.cols, device="cuda", dtype=torch.bfloat16)
+    tile = prepared.decode().view(torch.float8_e4m3fn).float() * prepared.row_scale[:, None]
+    got = prepared.gemv(x)
+    want = x.float() @ tile.t()
+    assert float((got - want).abs().max() / want.abs().max()) < 2e-6
+
+
+@cuda
+def test_gemv_refuses_a_batch_it_cannot_block():
+    """``window_gemv`` is the small-M path and says so.
+
+    The accumulator is ``[MBLK, LANES, VEC]`` fp32 in registers; M past the cap
+    spills instead of running, and the decode-then-GEMM path is faster there
+    anyway.  ``window_linear`` routes large M itself, so the refusal only ever
+    reaches a caller who asked for the GEMV by name.
+    """
+    kw = _kw()
+    _module, _role, parsed = next(_units(limit=1))
+    p = kw.prepare_from_parsed(parsed, device="cuda")
+    x = torch.randn(kw.GEMV_MAX_M + 1, p.cols, device="cuda", dtype=torch.bfloat16)
+    with pytest.raises(GrammarError, match="small-M"):
+        p.gemv(x)
+
+
+@cuda
 def test_a_nonzero_initial_window_decodes_from_the_definition():
     """A TP shard starts mid-column: the kernel must take the initial window.
 
@@ -325,4 +376,9 @@ def test_the_ops_survive_a_compiled_forward():
     x = torch.randn(1, p.cols, device="cuda", dtype=torch.bfloat16) * 0.1
     eager = forward(x)
     compiled = torch.compile(forward, fullgraph=True, dynamic=False)(x)
-    assert torch.equal(eager, compiled)
+    # Not `equal`: the GEMV is split-K over atomics, so two launches of the
+    # same kernel sum the partials in whatever order the blocks retire, and the
+    # bf16 rounding of a differently-ordered fp32 sum can land one ulp apart.
+    # What this test is for is that `fullgraph=True` holds -- the op traced,
+    # nothing broke the graph -- so the values are held to bf16's own step.
+    assert torch.allclose(eager, compiled, rtol=2 ** -7, atol=0.0)

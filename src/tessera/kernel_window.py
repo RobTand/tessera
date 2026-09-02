@@ -50,6 +50,7 @@ from .lane_planes import pack_window_planes
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 
 __all__ = [
+    "GEMV_MAX_M",
     "WINDOW_SPAN_BITS",
     "PreparedWindowUnit",
     "prepare_window_unit",
@@ -60,6 +61,11 @@ __all__ = [
     "window_code_table",
     "window_value_table",
 ]
+
+#: The largest M ``window_gemv`` takes.  The accumulator is ``[MBLK, LANES,
+#: VEC]`` fp32 in registers, so M grows the block linearly; past this the
+#: decode-then-GEMM path is both faster and the contract the lane attests.
+GEMV_MAX_M = 8
 
 #: Bits a lane reads in one span.  A lane covers ``VEC`` consecutive codes,
 #: whose windows together occupy ``window_bits + (VEC - 1) * R + 7`` bits
@@ -147,6 +153,17 @@ class PreparedWindowUnit:
         self.window_bits = int(window_bits)
         self.max_rate = int(max_rate)
         self.device = plane_words.device
+
+    @property
+    def steps(self) -> int:
+        """Codes per column.  At arity 1 that is the unit's output rows -- the
+        name the torch reader's prepared object uses, kept so a lane can swap
+        one for the other without touching the caller."""
+        return self.rows
+
+    def resident_bytes(self) -> int:
+        """Alias of ``wire_bytes_resident`` under the torch reader's name."""
+        return self.wire_bytes_resident()
 
     def wire_bytes_resident(self) -> int:
         """Device bytes held: the packed stream plus the tables and the scale.
@@ -615,6 +632,12 @@ def window_gemv(
     _check_reach(int(window_bits), int(max_rate), _VEC)
     if x.ndim != 2 or x.shape[1] != cols:
         raise GrammarError(f"x is {tuple(x.shape)}, the unit takes [M, {cols}]")
+    if not 1 <= x.shape[0] <= GEMV_MAX_M:
+        raise GrammarError(
+            f"window_gemv is the small-M path: M={x.shape[0]} past {GEMV_MAX_M} grows "
+            "the register accumulator past what the launch holds; decode the tile and "
+            "run the GEMM (window_linear does this on its own)"
+        )
     return _gemv_impl(x.contiguous(), plane_words, offsets, rates, initial, value_table,
                       row_scale, int(rows), int(cols), int(window_bits), int(max_rate))
 
@@ -646,7 +669,7 @@ def window_linear(
     cols: int,
     window_bits: int,
     max_rate: int,
-    gemv_max: int = 8,
+    gemv_max: int = GEMV_MAX_M,
 ) -> torch.Tensor:
     """One Linear over the window wire: ``x @ W.T``, ``[..., cols] -> [..., rows]``.
 
@@ -668,7 +691,7 @@ def window_linear(
     x2 = x.reshape(-1, int(cols))
     if x2.dtype != torch.bfloat16:
         x2 = x2.to(torch.bfloat16)
-    if 0 < x2.shape[0] <= int(gemv_max):
+    if 0 < x2.shape[0] <= min(int(gemv_max), GEMV_MAX_M):
         y = window_gemv(x2, plane_words, offsets, rates, initial, value_table,
                         row_scale, rows, cols, window_bits, max_rate).to(torch.bfloat16)
     else:
@@ -685,5 +708,5 @@ def window_linear(
 
 @window_linear.register_fake
 def _(x, plane_words, offsets, rates, initial, code_table, value_table, row_scale,
-      rows, cols, window_bits, max_rate, gemv_max=8):
+      rows, cols, window_bits, max_rate, gemv_max=GEMV_MAX_M):
     return x.new_empty((*x.shape[:-1], rows), dtype=torch.bfloat16)
