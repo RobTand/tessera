@@ -8,6 +8,7 @@ the reach checkpoint, and the GEMV must land within a bound derived from fp32
 accumulation of ``(tile.float() * scale) @ x``.  A one-hot ``x`` is exact.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -33,9 +34,29 @@ checkpoint = pytest.mark.skipif(
 L = 14
 
 
+def _require_toolchain() -> None:
+    """Skip when this host has a GPU but no CUDA toolkit to build the kernel.
+
+    An ABSENT toolchain is not a failing kernel: sparky serves and encodes but
+    carries no ``nvcc``, so a hard failure here would report a red suite for a
+    box that was never asked to compile.  A toolchain that IS present and then
+    fails to compile is a real failure and is left to raise.
+    """
+    import shutil
+
+    from torch.utils.cpp_extension import CUDA_HOME
+
+    if shutil.which("nvcc"):
+        return
+    if CUDA_HOME and os.path.exists(os.path.join(CUDA_HOME, "bin", "nvcc")):
+        return
+    pytest.skip("no CUDA toolkit on this host; the window GEMV extension cannot be built here")
+
+
 def _kg():
     from tessera import kernel_window_gemv
 
+    _require_toolchain()
     return kernel_window_gemv
 
 
