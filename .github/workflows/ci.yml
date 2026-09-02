@@ -11,6 +11,7 @@ name: ci
 on:
   push:
     branches: [master, main]
+    tags: ["v*"]
   pull_request:
 
 jobs:
@@ -46,3 +47,28 @@ jobs:
                   "silently passing everything is the failure this check exists for"
               )
           PY
+
+  # Publishing rides the same workflow the Trusted Publisher on PyPI names, and
+  # only ever on a version tag, only after the pure job is green.  There is no
+  # token in this repo: `id-token: write` is what PyPI verifies.  The tag must
+  # name the version the package carries -- checked below -- so a wheel can
+  # never claim a version its tag does not.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: pure
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: the tag must match the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(python -c 'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')"
+          test "$tag" = "$ver" || { echo "tag v$tag != pyproject version $ver"; exit 1; }
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
