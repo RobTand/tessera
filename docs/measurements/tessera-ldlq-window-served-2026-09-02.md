@@ -244,10 +244,13 @@ weights-only encode is byte for byte the artifact it always was
 constants are pinned by a test that names this receipt.
 
 **Provenance cost.** An activation-aware encode is not reproducible from the
-weights alone. The exporter writes an `activation_aware` block into the
-Gridbook manifest carrying the settings *and* the Hessian file's own provenance
-(source, text sha, token counts), so a replay knows what it needs and a merge
-can refuse parts built against different activations.
+weights alone. Every exporter writes an `activation_aware` block — into the
+Gridbook manifest and into `tessera_config.json` — carrying the settings *and*
+the Hessian file's own provenance (source, text sha, fit token count, ids sha),
+so a replay knows what it needs and a merge can refuse parts built against
+different activations. The block is built in one place,
+`ActivationSource.config_block`, so the manifest and the config cannot disagree
+about which capture shaped the bytes.
 
 ## Scope, and what is not measured
 
@@ -264,13 +267,28 @@ can refuse parts built against different activations.
   here establishes which way it goes at other rungs.
 * Encode-time numbers are contended on the baseline side. A clean paired
   whole-checkpoint timing on one idle box is not done.
-* **The default lives only in `experiments/export_gridbook_tessera.py`.** The
-  library's `export_checkpoint` / `export_checkpoint_streaming` take no
-  Hessian, and `merge_tessera_parts.py`'s field list and
-  `encode_settings_from_config` do not know the `activation_aware` block — so
-  two shards built against *different* Hessians would merge without refusal.
-  Plumbing that through the library export path and the merge guard is not done
-  here; it is the coordinator's call who takes it.
+* ~~**The default lives only in `experiments/export_gridbook_tessera.py`.**~~
+  **Closed 2026-09-02** (follow-up commit): the recipe now lives in
+  `tessera.export.ActivationSource`, which `export_checkpoint`,
+  `export_checkpoint_streaming` and the experiment driver all take and all
+  call `for_unit` on, so the library and the script cannot carry two copies of
+  it. The exported config records an `activation_aware` block naming the
+  capture (`text_sha256` / `fit_tokens` / `fit_ids_sha256`);
+  `merge_tessera_parts.check_configs` compares every field of it and refuses
+  parts built against different Hessians, at different settings, or one aware
+  and one not; `encode_settings_from_config` refuses to replay an
+  activation-aware config at all. `tests/test_merge_guard.py` gives each field
+  its own failing case and asserts every guarded path resolves in a config the
+  exporter actually wrote — the check that the earlier 8/13 vacuity lacked.
+* **Both levers are CHANNEL-plane only, and now say so.** `refit_metric` and
+  `refit_reach_floor` were read by the CHANNEL branch of the refit alone and
+  were *silently dropped* under a block plane or at `scale_refit=0`;
+  `encode_unit` refuses both cases now, as it already did for LDLQ. The
+  consequence is that `export_glm53_tessera.py` gets **no** `--hessian`: its
+  grid is E2M1_K2, whose recipe is LUT16 below the cap and the coset trellis at
+  it, so the flag could not fire on the only grid that driver uses. The library
+  path takes an `ActivationSource` regardless; the FP8/E4M3 route is what can
+  use one today.
 
 **Fable consultations:** none. The advisor call settled the one design question
 (LDLQ inside `encode_unit` as a block-sequential schedule sharing one plane,

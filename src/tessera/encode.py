@@ -1194,6 +1194,27 @@ def encode_unit(
     # the profile id are untouched.
     if trellis_weighting not in ("none", "scale"):
         raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
+    # The refit metric and the reach floor are read ONLY by the CHANNEL
+    # branch of the refit below, and only when a refit runs at all.  Given
+    # either under a block plane or at ``scale_refit=0`` they would be
+    # silently dropped and the unit would encode as if the caller had passed
+    # nothing -- an activation-aware export would then ship weights-only bytes
+    # and raise nothing, which is the whole failure this plumbing exists to
+    # prevent.  Refuse instead of ignoring.
+    if refit_metric is not None or refit_reach_floor:
+        named = "refit_metric" if refit_metric is not None else "refit_reach_floor"
+        if scale_plane is not ScalePlaneKind.CHANNEL:
+            raise GrammarError(
+                f"{named} is read only by the CHANNEL plane's refit; a block "
+                f"plane fits its scales to within-row column spans and has no "
+                f"row-scale to weight, so this would be silently ignored"
+            )
+        if scale_refit == 0:
+            raise GrammarError(
+                f"{named} shapes the scale refit, and scale_refit=0 runs none: "
+                f"the amax plane is written byte for byte and the argument "
+                f"would be silently ignored"
+            )
     if ldl is not None:
         if ldl.shape != (cols, cols):
             raise GrammarError(

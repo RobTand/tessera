@@ -52,10 +52,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
-from tessera.compensate import block_ldl, regularize_hessian  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
-    encode_linear_planes, wire_recipe)
+    ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
@@ -187,19 +186,25 @@ def main():
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
     args = ap.parse_args()
 
-    hessians, h_provenance = {}, None
-    if args.hessian:
-        payload = torch.load(args.hessian, map_location="cpu", weights_only=False)
-        hessians, h_provenance = payload["H"], payload.get("provenance")
-    if args.ldlq_sigma is not None and args.ldlq_sigma < 0:
-        args.ldlq_sigma = None                      # `--ldlq-sigma -1` turns LDLQ off
     # The activation-aware settings fire when, and only when, a Hessian is
     # here: the encoder cannot invent one, and a weights-only export must stay
     # the byte-for-byte artifact it was.  Given one, the defaults are the
-    # measured recipe (export.DEFAULT_LDLQ_*), overridable per run.
-    activation_aware = bool(hessians)
-    if not activation_aware:
-        args.ldlq_sigma, args.refit_metric, args.refit_reach_floor = None, "plain", False
+    # measured recipe (export.DEFAULT_LDLQ_*), overridable per run.  The recipe
+    # itself lives in ``ActivationSource``, not here: this script and the
+    # library exporters must not carry two copies of it, which is the drift
+    # that let the library path encode weights-only while the script did not.
+    activation = None
+    if args.hessian:
+        payload = torch.load(args.hessian, map_location="cpu", weights_only=False)
+        if args.ldlq_sigma is not None and args.ldlq_sigma < 0:
+            args.ldlq_sigma = None                  # `--ldlq-sigma -1` turns LDLQ off
+        activation = ActivationSource(
+            hessians=payload["H"], provenance=dict(payload.get("provenance") or {},
+                                                   path=str(args.hessian)),
+            ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
+            refit_objective=args.refit_metric,
+            refit_reach_floor=args.refit_reach_floor,
+        )
 
     default_grid = grid_for(args.grid)
     check_recipe(default_grid, args.q256)
@@ -306,27 +311,10 @@ def main():
             stock_tensors: dict[str, dict] = {}
             for member in members:
                 weight = weights_cache.pop(member).to(args.device, torch.float32).contiguous()
-                extra = {}
-                if activation_aware:
-                    key = module_of(member)
-                    if key not in hessians:
-                        # A wrong key renders RTN and raises nothing; refuse instead.
-                        raise SystemExit(
-                            f"no Hessian for {key}: the capture's keys must be the encoder's unit names")
-                    H = hessians[key].to(args.device, torch.float32)
-                    if H.shape[0] != weight.shape[1]:
-                        raise SystemExit(f"{key}: H is {tuple(H.shape)} for {weight.shape[1]} inputs")
-                    if args.ldlq_sigma is not None:
-                        extra["ldl"] = block_ldl(
-                            regularize_hessian(H, sigma_reg=args.ldlq_sigma), args.ldlq_block)
-                        extra["ldl_block"] = args.ldlq_block
-                    if args.refit_metric == "hessian":
-                        extra["refit_metric"] = H
-                    elif args.refit_metric != "plain":
-                        alpha = float(args.refit_metric.removeprefix("h^"))
-                        h = H.diagonal()
-                        extra["refit_metric"] = (h / h.mean()).pow(alpha)
-                    extra["refit_reach_floor"] = args.refit_reach_floor
+                # A missing key renders RTN and raises nothing; ``for_unit``
+                # refuses instead, and is the same call the library exporters make.
+                extra = ({} if activation is None else
+                         activation.for_unit(member, weight.shape[1], args.device))
                 exported, unit, forests = encode_linear_planes(
                     weight, grid=grid, q256=q256, name=member, verify=not args.no_verify, **extra)
                 extra.clear()
@@ -460,13 +448,7 @@ def main():
                + f" -> gridbook {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
-        "activation_aware": None if not activation_aware else {
-            "ldlq_sigma": args.ldlq_sigma, "ldlq_block": args.ldlq_block,
-            "refit_metric": args.refit_metric, "refit_reach_floor": args.refit_reach_floor,
-            "hessian": str(args.hessian), "hessian_provenance": h_provenance,
-            "note": "encoder-side only: the wire, the decoder and the lane are unchanged, "
-                    "but this encode is not reproducible from the weights alone",
-        },
+        "activation_aware": None if activation is None else activation.config_block(),
         "stock_twin": str(twin) if twin is not None else None,
         "totals": totals, "modules": module_records,
     }
