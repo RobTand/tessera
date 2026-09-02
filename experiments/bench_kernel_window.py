@@ -44,6 +44,8 @@ import time
 from pathlib import Path
 
 import torch
+import triton
+import triton.language as tl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -100,7 +102,7 @@ class Power:
     """
 
     def __init__(self, period: float = 0.12):
-        self._samples: list[tuple[float, float]] = []
+        self._samples: list[tuple[float, float, int]] = []
         self._stop = threading.Event()
         self._period = period
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -112,7 +114,16 @@ class Power:
                     ["nvidia-smi", "--query-gpu=power.draw",
                      "--format=csv,noheader,nounits"],
                     capture_output=True, text=True, timeout=5).stdout.strip()
-                self._samples.append((time.time(), float(out.splitlines()[0])))
+                # Who else is on the box, sampled beside the watts: a timing
+                # taken next to five other CUDA processes is a different
+                # number from the same timing taken alone, and the receipt has
+                # to be able to say which one it is.
+                apps = subprocess.run(
+                    ["nvidia-smi", "--query-compute-apps=pid",
+                     "--format=csv,noheader"],
+                    capture_output=True, text=True, timeout=5).stdout.strip()
+                n = len([ln for ln in apps.splitlines() if ln.strip()])
+                self._samples.append((time.time(), float(out.splitlines()[0]), n))
             except Exception:
                 pass
             self._stop.wait(self._period)
@@ -126,11 +137,14 @@ class Power:
         self._thread.join(timeout=2)
 
     def window(self, t0: float, t1: float) -> dict:
-        w = [p for t, p in self._samples if t0 <= t <= t1]
-        if not w:
+        rows = [(p, k) for t, p, k in self._samples if t0 <= t <= t1]
+        if not rows:
             return {"mean_w": None, "max_w": None, "n": 0}
+        w = [p for p, _k in rows]
+        procs = [k for _p, k in rows]
         return {"mean_w": round(sum(w) / len(w), 1), "max_w": round(max(w), 1),
-                "min_w": round(min(w), 1), "n": len(w)}
+                "min_w": round(min(w), 1), "n": len(w),
+                "cuda_procs_max": max(procs), "cuda_procs_min": min(procs)}
 
 
 POWER: Power | None = None
@@ -305,7 +319,28 @@ def arm_bandwidth(out: dict):
     n = 1 << 28
     src = torch.randint(-(1 << 30), 1 << 30, (n // 4,), dtype=torch.int32, device="cuda")
     dst = torch.empty_like(src)
-    read = bench_group({"read": (lambda: src.sum(), 32)}, rounds=7)["read"]
+    acc = torch.zeros(1024, dtype=torch.int32, device="cuda")
+
+    @triton.jit
+    def _read_kernel(src_ptr, acc_ptr, n, BLOCK: tl.constexpr):
+        """Read the buffer and retire the value into a per-program slot.
+
+        ``torch.sum`` is a two-stage reduction whose second stage is a
+        separate launch, so it measures a reduction, not a read; this is one
+        pass with a store per program, which is the shape of every kernel
+        under test.
+        """
+        pid = tl.program_id(0)
+        total = tl.zeros((), dtype=tl.int32)
+        for k in range(pid * BLOCK, n, tl.num_programs(0) * BLOCK):
+            off = k + tl.arange(0, BLOCK)
+            total += tl.sum(tl.load(src_ptr + off, mask=off < n, other=0))
+        tl.store(acc_ptr + pid % 1024, total)
+
+    def read_only():
+        _read_kernel[(2048,)](src, acc, src.numel(), BLOCK=1024, num_warps=4)
+
+    read = bench_group({"read": (read_only, 32)}, rounds=7)["read"]
     read["GB_per_s"] = round(n / (read["us"] * 1e-6) / 1e9, 1)
     rw = bench_group({"read_write": (lambda: torch.add(src, 1, out=dst), 32)},
                      rounds=7)["read_write"]
@@ -329,6 +364,11 @@ def _torch_baseline(parsed):
 
     spec = importlib.util.spec_from_file_location("_wtb", TORCH_BASELINE)
     mod = importlib.util.module_from_spec(spec)
+    # Dynamo resolves a traced function's globals by NAME through
+    # ``importlib.import_module``, so a module that exists only as an object is
+    # a compile error ("No module named '_wtb'") the moment we torch.compile
+    # anything defined in it.  Registering it is the whole fix.
+    sys.modules["_wtb"] = mod
     spec.loader.exec_module(mod)
     unit = parsed.unit
     native = torch.tensor(parsed.grid.native, dtype=torch.uint8, device="cuda")
@@ -352,12 +392,24 @@ def arm_decode(out: dict, quick: bool = False):
         moved = p.wire_bytes + p.rows * p.cols
         base = _torch_baseline(parsed)
         compiled_fn = torch.compile(lambda b: b.decode(), dynamic=False)
+        # The BF16 family on the same shape and the same wire: same body, same
+        # rates, a bf16 value table instead of E4M3 codes, so the tile is twice
+        # the bytes and carries the scale.  Synthetic (that family's encoder is
+        # not merged), which is fine for a WRITE-side cost.
+        vt = (torch.randn(1 << p.window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+        vunit = kw.prepare_window_values(
+            parsed.unit.body_bits.cuda(), parsed.unit.rates, p.window_bits, vt,
+            p.row_scale, device="cuda")
+        vmoved = p.wire_bytes + 2 * p.rows * p.cols
         g = bench_group({
             "fused": (lambda p=p: p.decode(), 64),
+            "fused_bf16_tile": (lambda v=vunit: v.decode(), 64),
             "torch_eager": (lambda base=base: base.decode(), 4),
             "torch_compiled": (lambda base=base: compiled_fn(base), 16),
         }, seconds=2.0)
         g["fused"]["GB_per_s"] = round(moved / (g["fused"]["us"] * 1e-6) / 1e9, 1)
+        g["fused_bf16_tile"]["GB_per_s"] = round(
+            vmoved / (g["fused_bf16_tile"]["us"] * 1e-6) / 1e9, 1)
         rows.append({
             "unit": name, "rows": p.rows, "cols": p.cols,
             "wire_bytes": p.wire_bytes, "tile_bytes": p.rows * p.cols,
@@ -366,11 +418,14 @@ def arm_decode(out: dict, quick: bool = False):
             "speedup_vs_compiled": round(g["torch_compiled"]["us"] / g["fused"]["us"], 1),
         })
         print(f"  {p.rows}x{p.cols}: fused {g['fused']['us']:.2f} us "
-              f"({g['fused']['GB_per_s']} GB/s, {g['fused'].get('mean_w')} W) | "
+              f"({g['fused']['GB_per_s']} GB/s, {g['fused'].get('mean_w')} W, "
+              f"{g['fused'].get('cuda_procs_max')} procs) | bf16 tile "
+              f"{g['fused_bf16_tile']['us']:.2f} us "
+              f"({g['fused_bf16_tile']['GB_per_s']} GB/s) | "
               f"torch eager {g['torch_eager']['us']:.1f} | compiled "
               f"{g['torch_compiled']['us']:.1f} us  -> "
               f"{rows[-1]['speedup_vs_eager']}x / {rows[-1]['speedup_vs_compiled']}x")
-        del base, compiled_fn
+        del base, compiled_fn, vunit, vt
 
     # -- DRAM-cold: rotate through every unit of the checkpoint.
     prepared = [kw.prepare_from_parsed(p, device="cuda") for _, p in units]

@@ -979,8 +979,19 @@ def window_module_decode(units) -> torch.Tensor:
 
 
 def window_module_row_scale(units) -> torch.Tensor:
-    """The module's per-row fp32 scale, ``[sum(rows)]``, role order."""
+    """The module's per-row fp32 scale, ``[sum(rows)]``, role order.
+
+    FP8 family only.  On the value family the row scale is already inside the
+    decoded tile, so handing it back to a caller that will apply it again is a
+    silent factor of ``scale`` -- exactly the mistake this seam exists to stop
+    a lane from making.  Refuse instead.
+    """
     units = list(units)
+    if any(u.family != "fp8" for u in units):
+        raise GrammarError(
+            "the value family's row scale is already applied inside the "
+            "decoded tile; there is no separate scale to hand out"
+        )
     if len(units) == 1:
         return units[0].row_scale
     return torch.cat([u.row_scale for u in units]).contiguous()

@@ -600,3 +600,57 @@ def test_the_ops_survive_a_compiled_forward():
     # What this test is for is that `fullgraph=True` holds -- the op traced,
     # nothing broke the graph -- so the values are held to bf16's own step.
     assert torch.allclose(eager, compiled, rtol=2 ** -7, atol=0.0)
+
+
+@cuda
+def test_the_value_ops_survive_a_compiled_forward():
+    """The BF16 family's two ops trace as well as the FP8 family's.
+
+    Same contract, and it is not implied by the FP8 test: these ops have their
+    own ``register_fake``, and a fake impl that got the output dtype from a
+    real tensor's ``.dtype`` would only fail here, under fake tensors, where
+    the table is a meta tensor and the eager path never runs.
+    """
+    kw = _kw()
+    rows, cols, window_bits, rate = 128, 256, 14, 4
+    torch.manual_seed(11)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+
+    def forward(x):
+        return unit.linear(x) * 2
+
+    x = torch.randn(1, cols, device="cuda", dtype=torch.bfloat16) * 0.1
+    eager = forward(x)
+    compiled = torch.compile(forward, fullgraph=True, dynamic=False)(x)
+    assert compiled.dtype is torch.bfloat16
+    assert torch.allclose(eager, compiled, rtol=2 ** -7, atol=0.0)
+
+    def decode_forward():
+        return unit.decode().float().sum()
+
+    got = torch.compile(decode_forward, fullgraph=True, dynamic=False)()
+    assert torch.allclose(got, decode_forward(), rtol=2 ** -12, atol=0.0)
+
+
+@cuda
+def test_the_value_family_has_no_row_scale_to_hand_out():
+    """``window_module_row_scale`` refuses the value family.
+
+    Its scale is already inside the decoded tile; returning it to a lane that
+    would pass it to ``_scaled_mm`` beside the tile is a silent second
+    multiplication, and this seam exists to stop exactly that.
+    """
+    kw = _kw()
+    rows, cols, window_bits, rate = 64, 64, 14, 4
+    torch.manual_seed(12)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    table = (torch.randn(1 << window_bits, device="cuda") * 0.05).to(torch.bfloat16)
+    scale = torch.rand(rows, device="cuda") + 0.25
+    unit = kw.prepare_window_values(body, (rate,) * cols, window_bits, table, scale,
+                                    device="cuda")
+    with pytest.raises(GrammarError, match="already applied"):
+        kw.window_module_row_scale([unit])
