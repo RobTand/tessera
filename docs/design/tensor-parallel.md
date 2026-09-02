@@ -216,8 +216,19 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
 
 ## What remains
 
-* **The serving plugin's per-rank loader** — W2's package. This document is its
-  contract; nothing here calls into a runtime.
+* ~~**The serving plugin's per-rank loader**~~ — **built 2026-09-02.**
+  `tessera.serving.sharding._shard_unit_for_rank` asks `can_shard` (refusing
+  with the granularity), calls `slice_unit`, and re-derives the parsed view by
+  writing the shard and reading it back, so the route downstream holds a
+  `ParsedUnit` whose manifest describes the rows this rank actually has — the
+  shard record, the restricted release counts and all. `shard_parsed_roles` cuts
+  fused roles independently on the row axis. Unit-tested at tp=2 on both axes
+  and both shipping wires against the parent's own decoded slice
+  (`tests/test_serving_sharding.py`); the E4M3/window route threads the start
+  state into `prepare_window`'s pad, and the span-2 NVFP4 route inherits
+  `pack_unit_for_kernel`'s refusal of a row shard (so it serves column cuts at
+  any TP and row cuts on rank 0 only). What is still missing is the served
+  gate, below; nothing here has run on two ranks.
 * **A served two-box TP=2 gate** — the artifact serving correctly on two ranks,
   KL-vs-BF16 against the same artifact served on one. Until that runs, the
   claim here is "the bytes slice exactly", which is what the tests show, and
