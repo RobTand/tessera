@@ -19,6 +19,10 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
+# TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  The repeated
+# store_true flag is a no-op stand-in so the argv shape does not change.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
+
 echo "serving $MODEL  ($IMAGE)"
 # Mount the model's own directory, not just /mnt/shared: a path the container
 # cannot see is not reported as a missing file, it is reported as a malformed
@@ -35,7 +39,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --max-model-len 4096 --max-num-seqs 8 \
   --gpu-memory-utilization 0.85 \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
-  --enforce-eager --trust-remote-code \
+  $EAGER_FLAG --trust-remote-code \
   >/dev/null
 
 # The serve is the long pole; give it room but fail rather than hang forever.

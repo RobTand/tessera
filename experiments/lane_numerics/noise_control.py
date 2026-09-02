@@ -10,7 +10,7 @@ ck, out = sys.argv[1], sys.argv[2]
 epss = [float(e) for e in sys.argv[3:]] or [0.0, 1e-3, 2.3e-3, 5e-3]
 contract = json.load(open("/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json"))
 chunks = [list(c) for c in contract["chunks"]]
-llm = LLM(model=ck, enforce_eager=True, max_model_len=1024, gpu_memory_utilization=0.4, seed=0)
+llm = LLM(model=ck, enforce_eager=True, max_model_len=1024, gpu_memory_utilization=0.4, seed=0, enable_prefix_caching=False)
 STATE = {"eps": 0.0, "gen": None, "final": None}
 def install(model):
     def noise(mod, inp, outp):
