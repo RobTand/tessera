@@ -506,10 +506,42 @@ def arm_ablate(out: dict, shapes, plan_spec=None, seconds=2.0, M=1):
     out["ablate"] = res
 
 
+def arm_power(out: dict, shapes, launches=2000, M=1, plan_spec=None):
+    """The kernel alone, back to back, no per-call sync: the power the box
+    draws while the GEMV runs -- the interleaved bench's rows read 30 W
+    because seven arms and a sync per round leave the GPU idle most of the
+    time.  Cold by rotation; wall-clock over the run gives a second GB/s."""
+    res = {}
+    for r, c in shapes:
+        plan = parse_plan(plan_spec) or kg.default_plan(r, c, M)
+        rot = cold_units(r, c, plan=plan, M=M)
+        x = torch.randn(M, c, dtype=torch.bfloat16, device="cuda")
+        scratch = torch.zeros(M, r, dtype=torch.float32, device="cuda")
+        for _ in range(20):
+            kg.window_gemv(rot.next(), x, out=scratch)
+        torch.cuda.synchronize()
+        t0 = time.time()
+        s, e = torch.cuda.Event(True), torch.cuda.Event(True)
+        s.record()
+        for _ in range(launches):
+            kg.window_gemv(rot.next(), x, out=scratch)
+        e.record()
+        torch.cuda.synchronize()
+        t1 = time.time()
+        us = s.elapsed_time(e) / launches * 1000
+        row = {"us": round(us, 2), "GB_per_s": round(rot.items[0].rep.nbytes / (us * 1e-6) / 1e9, 1),
+               "launches": launches, "plan": plan_str(plan), **(POWER.window(t0, t1) if POWER else {})}
+        res[f"{r}x{c}"] = row
+        print(f"  {r}x{c} sustained: {row}", flush=True)
+        del rot
+        torch.cuda.empty_cache()
+    out["power"] = res
+
+
 def main(argv=None):
     global POWER
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arm", default="all", choices=["all", "gemv", "plans", "ablate"])
+    ap.add_argument("--arm", default="all", choices=["all", "gemv", "plans", "ablate", "power"])
     ap.add_argument("--out", default="/mnt/shared/tessera-runs/gemv")
     ap.add_argument("--models", default="Qwen3-0.6B,Qwen3-4B,27B-assumed")
     ap.add_argument("--batches", default="1,2,4,8")
@@ -539,6 +571,9 @@ def main(argv=None):
         if args.arm in ("all", "ablate"):
             print("== ablate ==", flush=True)
             arm_ablate(out, shapes, args.plan, seconds=args.seconds)
+        if args.arm in ("all", "power"):
+            print("== power ==", flush=True)
+            arm_power(out, shapes, plan_spec=args.plan)
     tag = f"_{args.tag}" if args.tag else ""
     path = outdir / f"bench_{args.arm}{tag}_{time.strftime('%Y%m%d-%H%M%S')}.json"
     with open(path, "w") as f:

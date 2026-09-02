@@ -324,6 +324,51 @@ def test_value_family_scale_is_applied_on_the_output_not_the_tile():
     assert not torch.allclose(folded, ref, rtol=0, atol=0)
 
 
+def _every_column_through_the_gemv(kg, unit, w, scale, M):
+    """Identity slices ``x = [e_j, ..., e_{j+M-1}]`` over ALL columns: every
+    weight travels through ``run_item``'s own lookback (lane 0, tile
+    boundaries, the RPL=8 half tiles) and must come back exactly."""
+    K = unit.cols
+    for j0 in range(0, K, M):
+        m = min(M, K - j0)
+        x = torch.zeros(M, K, device="cuda", dtype=torch.bfloat16)
+        for m_ in range(m):
+            x[m_, j0 + m_] = 1
+        y = kg.window_gemv(unit, x)
+        want = (w[:, j0:j0 + m] * scale[:, None]).t()
+        if not torch.equal(y[:m], want):
+            bad = (y[:m] != want).nonzero()[0].tolist()
+            raise AssertionError(f"column {j0 + bad[0]} row {bad[1]}: {y[bad[0], bad[1]]} != {want[bad[0], bad[1]]}")
+
+
+@cuda
+@pytest.mark.parametrize("M", [2, 8])
+def test_gemv_every_weight_exact_synthetic(M):
+    """Both lane widths (M=2 -> 16 rows per lane, M=8 -> 8): every weight of a
+    mixed-rate unit with rows off the tile comes back exactly through the GEMV."""
+    kg = _kg()
+    rows, cols = 1000, 640
+    rates = tuple(2 if c % 7 == 0 else 4 for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=21)
+    scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+    unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.75), M=M)
+    tile, scale = kg.decode_fp8(unit)
+    assert torch.equal(tile, _reference_bytes(body, rates, codes))
+    _every_column_through_the_gemv(kg, unit, tile.view(torch.float8_e4m3fn).float(), scale, M)
+
+
+@cuda
+@checkpoint
+@pytest.mark.parametrize("M", [2, 8])
+def test_gemv_every_weight_exact_on_a_reach_unit(M):
+    """One real unit (the first q_proj), every column, both lane widths."""
+    kg = _kg()
+    _module, _role, parsed = next(_units(limit=1))
+    unit = kg.prepare_from_parsed(parsed, M=M)
+    tile, scale = materialize_fp8(parsed.unit, parsed.forests, parsed.code)
+    _every_column_through_the_gemv(kg, unit, tile.cuda().view(torch.float8_e4m3fn).float(), scale.cuda().float(), M)
+
+
 @cuda
 def test_window_linear_seam_and_m_limit():
     kg = _kg()

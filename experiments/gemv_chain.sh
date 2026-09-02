@@ -19,6 +19,9 @@ fi
 if [ "${DO_ABLATE:-1}" = 1 ]; then
   run $PY experiments/bench_kernel_window_gemv.py --arm ablate --tag "$TAG" --out "$OUT" ${PLAN:+--plan "$PLAN"} ${SHAPES:+--shapes "$SHAPES"} 2>&1 | tee "$OUT/ablate_$TAG.log"
 fi
+if [ "${DO_POWER:-1}" = 1 ]; then
+  run $PY experiments/bench_kernel_window_gemv.py --arm power --tag "$TAG" --out "$OUT" ${PLAN:+--plan "$PLAN"} ${SHAPES:+--shapes "$SHAPES"} 2>&1 | tee "$OUT/power_$TAG.log"
+fi
 if [ "${DO_NCU:-1}" = 1 ] && command -v ncu >/dev/null 2>&1; then
   for shape in 4096x2560 1024x2560 2560x4096 9728x2560 2560x9728; do
     rows=${shape%x*}; cols=${shape#*x}
