@@ -349,7 +349,14 @@ def main():
                     twin_payload[name] = tensor
                     passthrough_bytes += tensor.numel() * tensor.element_size()
                     if name in passthrough:
-                        ignore.append(module_of(name))
+                        # ``ignore`` is read against vLLM's OWN Linear names, and
+                        # vLLM builds one Linear per FUSED module: ignoring
+                        # q_proj/k_proj/v_proj leaves ``qkv_proj`` neither
+                        # declared nor ignored, and the plugin refuses that
+                        # checkpoint at load.  A passed-through role therefore
+                        # ignores the fused module it belongs to.
+                        fused_here = fused_module(name)
+                        ignore.append(fused_here[0] if fused_here else module_of(name))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
