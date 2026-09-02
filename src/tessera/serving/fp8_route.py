@@ -150,8 +150,16 @@ def prepare_tessera_fp8_module(parsed_roles, device=None) -> PreparedTesseraFp8M
         elif int(cols) != columns:
             raise ValueError(f"role {name!r} has {cols} input columns, the module {columns}")
         code_map = torch.tensor(grid.native, dtype=torch.uint8)
+        # A ROW shard's first surviving step does not start from the pinned zero
+        # register, and the window body's L-bit pad IS that start state
+        # (``lane_planes.pack_window_planes``).  Threading it is what makes a
+        # tensor-parallel rank decode its own rows rather than a plausible wrong
+        # set; a whole unit carries None and takes exactly the path it always
+        # did.  The ``torch.equal`` check below is against ``materialize_fp8``,
+        # which reads the same field, so a threading error cannot pass here.
         window = prepare_window(unit.body_bits, unit.rates, unit.window_bits, unit.window_codes,
-                                device, code_map=code_map)
+                                device, code_map=code_map,
+                                initial_state=getattr(unit, "initial_state", None))
         reference, scale = materialize_fp8(unit, parsed.forests, parsed.code)
         reference = reference.to(device)
         decoded = window.decode()

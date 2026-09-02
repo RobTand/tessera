@@ -19,13 +19,25 @@ plane, and it is why the cut belongs to ``tessera.layout.slice_unit`` -- a
 wire-format operation with its own exactness proof -- and not to a serving
 route reaching into planes it does not own.
 
-TODAY.  ``tp_size == 1`` is what this plugin serves, and at ``tp_size == 1``
+TODAY.  ``tp_size == 1`` is what this plugin has SERVED, and at ``tp_size == 1``
 the seam returns the whole unit unchanged -- the same object, so the caller's
 parsed view of it stays valid and the served arithmetic is bit-identical to a
-build with no TP support at all.  At ``tp_size > 1`` it refuses by name.  It
-refuses rather than falling back to "every rank holds the whole weight",
-because that would serve correct logits at N times the intended memory and
-look merely disappointing.
+build with no TP support at all.  At ``tp_size > 1`` the seam now CUTS: it asks
+``tessera.layout.can_shard`` first (refusing with the granularity the operator
+can act on), calls ``tessera.layout.slice_unit``, and re-derives the parsed view
+by writing the shard and reading it back -- a shard is a whole artifact, so the
+route downstream sees a unit whose manifest describes the rows it actually
+holds.  It still never falls back to "every rank holds the whole weight": that
+would serve correct logits at N times the intended memory and look merely
+disappointing.
+
+WHAT THE CUT DOES NOT YET REACH is downstream of this module and refuses on its
+own terms: a ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and of the
+two families only the window body threads a start state through its pad
+(``lane_planes.pack_window_planes``).  The span-2 TCQ packer refuses such a unit
+by name (``pack_unit_for_kernel``), so the NVFP4 route serves column cuts
+(RowParallel) at any TP and row cuts only on rank 0.  That is a decoder gap, not
+a seam gap, and it is loud where it bites.
 
 WHICH AXIS.  vLLM's parallel Linears split one of the two axes and tell the
 method by the sizes they ask for, so the axis is DERIVED from the shapes
@@ -38,9 +50,10 @@ rather than sniffed off a class name:
 * ``RowParallelLinear`` splits the INPUT: ``input_size_per_partition * tp ==
   columns``.  One role, cut along columns.
 
-MoE, when it lands: expert parallelism assigns WHOLE units to ranks (no cut at
-all, the granularity is one expert), and tensor parallelism inside an expert is
-the same row/column cut as here.
+MoE: expert parallelism assigns WHOLE units to ranks (no cut at all, the
+granularity is one expert), and tensor parallelism inside an expert is the same
+row/column cut as here -- ``w13`` on rows, ``w2`` on columns -- so a routed
+expert reaches this module through the same two functions.
 """
 from __future__ import annotations
 
@@ -199,6 +212,25 @@ def _bounds(extent: int, tp_rank: int, tp_size: int) -> Tuple[int, int]:
     return tp_rank * per, (tp_rank + 1) * per
 
 
+def _unit_extent(unit) -> Tuple[int, int]:
+    """``(rows, columns)`` in WEIGHT space, from whatever the caller holds.
+
+    A ``ParsedUnit`` says so in its manifest geometry, which is the only place
+    the arity is recorded: a k-tuple grid packs ``arity`` weight rows per
+    trellis step, so ``body_bits.shape[0]`` is a STEP count and reading it as a
+    row count would halve the extent and cut every rank's shard in the wrong
+    place.  A bare ``EncodedUnit`` carries no arity, and arity 1 is then the
+    same assumption ``layout.slice_unit`` itself makes for one.
+    """
+    from tessera.unit_artifact import ParsedUnit
+
+    if isinstance(unit, ParsedUnit):
+        geometry = unit.manifest.geometry
+        return int(geometry.rows), int(geometry.columns)
+    steps, columns = unit.body_bits.shape
+    return int(steps), int(columns)
+
+
 def _shard_unit_for_rank(unit, tp_rank: int, tp_size: int, axis: Optional[str]):
     """THE SEAM.  The unit this rank serves, cut from the whole one.
 
@@ -206,16 +238,25 @@ def _shard_unit_for_rank(unit, tp_rank: int, tp_size: int, axis: Optional[str]):
     caller holding a parsed view of it may keep that view, and so a TP-capable
     build serves byte-identical bytes to one without this function.
 
-    Above one rank this calls ``tessera.layout.slice_unit``, which returns a
-    STANDALONE unit: it decodes through the same ``tessera.decode`` entry
-    points to exactly ``decode(parent)[r0:r1, c0:c1]``, bit for bit, with no
-    re-encoding.  The caller must re-derive its parsed view of what comes back
-    -- a shard's planes are its own, and a stale parse describes the parent's.
+    Above one rank this asks ``tessera.layout.can_shard`` and then calls
+    ``tessera.layout.slice_unit``, which returns a STANDALONE unit: it decodes
+    through the same ``tessera.decode`` entry points to exactly
+    ``decode(parent)[r0:r1, c0:c1]``, bit for bit, with no re-encoding.  The
+    caller must re-derive its parsed view of what comes back -- a shard's planes
+    are its own, and a stale parse describes the parent's.
+
+    ``can_shard`` is asked rather than inferred, and it is asked BEFORE the cut
+    so the refusal can name the granularity: ``slice_unit`` would refuse too,
+    but with an offset the operator cannot map back to a ``tensor_parallel_size``.
 
     Only this rank's shard is cut, so the cost is O(1) in the TP degree.
     """
     if tp_size == 1:
         return unit
+    if axis is None:
+        raise ValueError(
+            f"rank {tp_rank} of {tp_size} asked for a cut with no axis; plan_shard reports "
+            "axis=None only for a module served whole (replicated), which is not cut")
     try:
         from tessera.layout import slice_unit
     except Exception as exc:
@@ -224,7 +265,18 @@ def _shard_unit_for_rank(unit, tp_rank: int, tp_size: int, axis: Optional[str]):
             f"({exc}): rank {tp_rank} of {tp_size} asked for a {axis} slice of a unit this "
             "plugin can only serve whole.  Serve with tensor_parallel_size=1, or install a "
             "Tessera carrying the unit slicer.") from exc
-    rows, columns = unit.body_bits.shape[0], unit.body_bits.shape[1]
+    rows, columns = _unit_extent(unit)
+    if can_shard(unit, tp_size, axis) is not True:
+        granularity = shard_granularity(unit)
+        row_gran, col_gran = granularity if granularity is not None else (None, None)
+        extent = rows if axis == AXIS_ROWS else columns
+        gran = row_gran if axis == AXIS_ROWS else col_gran
+        raise ValueError(
+            f"this unit cannot be cut {tp_size} ways on the {axis} axis ({extent} {axis}s, "
+            f"granularity {gran}).  A row cut lands on a trellis super-symbol and a column cut "
+            "of a unit carrying a RELEASE plane or a mixed rate schedule is confined to whole "
+            "256-column superblocks; serve with a tensor_parallel_size that divides it, or "
+            "with 1.")
     if axis == AXIS_ROWS:
         r0, r1 = _bounds(rows, tp_rank, tp_size)
         return slice_unit(unit, rows=(r0, r1), cols=(0, columns))
@@ -272,23 +324,53 @@ def check_shard_granularity(plan: ShardPlan, unit) -> None:
             f"{col_gran}")
 
 
+def _reparse_shard(parsed, sharded, label: str):
+    """A shard is a whole artifact: write it, and read it back.
+
+    The cheap alternative -- swapping the sliced unit into the parent's
+    ``ParsedUnit`` -- would leave a manifest describing the PARENT: the wrong
+    rows, the wrong columns, no shard record, and a parent digest naming a unit
+    this rank does not hold.  Everything downstream that asks a parse for a
+    shape would then get the whole module's.  Serialising is the same round trip
+    ``tests/test_slice_unit.py::test_shard_round_trips_through_bytes`` proves
+    exact, and it costs one write and one parse per role, once, at load.
+    """
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    manifest = parsed.manifest
+    _m, _region, blob = build_unit_artifact(
+        sharded, label, parsed.forests, int(manifest.branch.root_q256),
+        parsed.code or ConvCode(),
+        superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container)
+    return parse_unit_artifact(blob, device=parsed.unit.body_bits.device)
+
+
 def shard_parsed_roles(parsed_roles, plan: ShardPlan):
     """``[(name, parsed)]`` for the whole module -> this rank's roles.
 
     Fused roles are cut INDEPENDENTLY on the row axis, which is what vLLM does
     with q/k/v and gate/up: rank *r* holds its own slice of each.  On the column
     axis there is one role and the whole of it is cut.
+
+    What comes back is a list of ``ParsedUnit``s again -- re-derived from the
+    shard's own bytes -- because that is what both routes' ``prepare_*_module``
+    consume, and because a shard's planes are its own.
     """
     if plan.is_whole or plan.axis is None:
         return parsed_roles
     out = []
     for name, parsed in parsed_roles:
-        check_shard_granularity(plan, parsed.unit)
-        sharded = _shard_unit_for_rank(parsed.unit, plan.tp_rank, plan.tp_size, plan.axis)
-        if sharded is parsed.unit:
+        # Asked with the PARSE, not with ``parsed.unit``: the superblock and the
+        # arity live on the parse, and the defaults (256, 1) are wrong for a
+        # k-tuple grid -- so a bare unit would be measured against the wrong
+        # granularity and a legal cut refused (or an illegal one allowed).
+        check_shard_granularity(plan, parsed)
+        sharded = _shard_unit_for_rank(parsed, plan.tp_rank, plan.tp_size, plan.axis)
+        if sharded is parsed:                       # pragma: no cover - tp_size == 1 is is_whole
             out.append((name, parsed))
             continue
-        raise NotImplementedError(                       # pragma: no cover - until slice_unit lands
-            f"{plan.prefix}: the unit slicer returned a new unit; re-parsing a sliced unit into a "
-            "role view is the other half of that branch and is not in this build")
+        out.append((name, _reparse_shard(
+            parsed, sharded, f"{plan.prefix}.{name}.rank{plan.tp_rank}of{plan.tp_size}")))
     return out
