@@ -231,15 +231,19 @@ whatever the job count). That is also why the window body pays only ~2x for the
 same schedule: `viterbi_window` is the fused kernel, and the TCQ body's Viterbi
 is not fused.
 
-The consequence is concrete and it is a limit on the route, not a footnote. The
-weights-only Qwen3-0.6B export is 196 units in 3542 s (18 s/unit); the same
-export with LDLQ at block 32 runs at **>120 s/unit**. Costing the model out of
-the sweep's own per-unit times -- ~180 s for the five 1024-column units of a
-layer, ~310 s for `o_proj` (2048) and ~440 s for `down_proj` (3072) -- gives
-~1650 s/layer x 28 layers, i.e. **~12-13 h for a 0.6B model** (236 s/unit
-against the baseline's 18, a ~13x whole-model slowdown at this width mix; the
-factor grows with the row width, so it is 43x on a 4096-column GLM expert). `export_glm53_tessera.py --hessian` at block 32 on 4096-column
-experts is not a practical whole-model export at all. Two follow-ups, neither
+The consequence is concrete and it is a limit on the route, not a footnote.
+Both exports walk the same 196 units in the same order, so their own progress
+lines are the measurement:
+
+| Qwen3-0.6B E2M1x2 @ q896, 196 units | at `[20/196]` | whole model |
+|---|---|---|
+| weights-only | 361 s | 3538 s (18 s/unit) |
+| `--hessian --refit-metric h^1.0` | 3311 s | ~32,500 s extrapolated (166 s/unit) |
+
+**~9.2x, i.e. ~9 h for a 0.6B model.** The factor grows with the row width
+because LDLQ's cost is the segment count, so it is 43x on a 4096-column GLM
+expert: `export_glm53_tessera.py --hessian` at block 32 on those experts is not
+a practical whole-model export at all. Two follow-ups, neither
 done here: shard the export across processes the way `export_glm53_tessera.py`
 already does (the box is launch-bound, so N processes over disjoint layer
 ranges should be close to N times faster, and the merge guard exists to make
@@ -253,8 +257,8 @@ already is.
 ## Served (the gate) -- IN FLIGHT, NOT YET MEASURED
 
 **Unmet at the time of writing.** The arm is exported and served by two
-commands, and the first one takes about half a day on this box for the reason
-the section above measures. This section says exactly where it is so that the
+commands, and the first one takes ~9 h on this box (launched 16:52, `[20/196]`
+at 3311 s, so it lands ~01:55) for the reason the section above measures. This section says exactly where it is so that the
 leg can be finished by anyone, including after this session ends.
 
 | what | value |
@@ -265,6 +269,7 @@ leg can be finished by anyone, including after this session ends.
 | log | `/mnt/shared/tessera-runs/ldlq-lut/export_ldlqH1.log` |
 | output | `/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin` |
 | to finish | `experiments/ldlq_lut_serve.sh ldlqH1` -> `/mnt/shared/tessera-runs/ldlq-lut/kl_ldlqH1.json` |
+| already armed | a detached waiter on sparklina (`/home/rob/tmp/ldlq_arm_serve.sh`, log `serve_ldlqH1_chain.log`) blocks on the export pid and then runs exactly that command, so the leg lands without a session attached. It takes `serve_lock.sh` like every other serve on this box, on port 8001 under `TESSERA_KL_NAME=tessera-kl-ldlqlut`, and refuses rather than serving a partial twin |
 | comparators | **0.640** (`kl_unrot-k2-w4a4-pqcal.json`, `all.kl_lower_mean`; same recipe, weights-only, same A4 scales, same teacher, same box) and **0.511** (PrismaQuant NVFP4 GPTQ+JSO at 4.5 bpp) |
 | the gate | served KL better than 0.640 at matched bytes |
 
@@ -299,7 +304,20 @@ branch.
 
 Code: `src/tessera/encode.py` (`_refit_scales_lut_metric`, the lifted LDLQ
 refusal, the re-scoped `refit_metric`/`refit_reach_floor` refusals),
-`src/tessera/export.py` (`ActivationSource.from_capture`),
-`experiments/ldlq_window_sweep.py` (`--grid`), `experiments/tessera_window_wire.py`
-(the levers now ride the TCQ arm too), `experiments/export_glm53_tessera.py`
-(`--hessian`), `experiments/ldlq_lut_chain.sh`, `tests/test_ldlq_lut_plane.py`.
+`src/tessera/export.py` (`ActivationSource.from_capture`, the per-plane
+`DEFAULT_REFIT_OBJECTIVE` and `objective_for`, and the two library call sites
+that now hand the encode the plane from the same resolved recipe),
+`experiments/export_tessera_serving.py` and `experiments/export_glm53_tessera.py`
+(`--hessian`, `--refit-metric` defaulting to the measured per-plane map rather
+than to a constant).
+
+Measurement: `experiments/ldlq_window_sweep.py` (`--grid`, the `hfit` column),
+`experiments/tessera_window_wire.py` (the levers ride the TCQ arm, `--no-window`,
+`hfit`), and the run scripts that pin each arm's exact flags --
+`ldlq_lut_qwen_hfit.sh`, `ldlq_lut_glm_h1.sh`, `ldlq_lut_glm_hess.sh`,
+`ldlq_lut_chain.sh`, `ldlq_lut_export_arms.sh`, `ldlq_lut_export_base2.sh`,
+`ldlq_lut_serve.sh`.
+
+Tests: `tests/test_ldlq_lut_plane.py` (21), `tests/test_ldlq_window.py` (the
+defaults are the measured ones), `tests/test_merge_guard.py` (a per-plane map
+that disagrees only off its own plane still refuses).
