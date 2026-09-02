@@ -41,13 +41,15 @@ for ARM in nvfp4-prod tessera-k2 tessera-e8 fp8-rtn; do
   [ -f "$DUMP.npz" ] || experiments/serve_and_dump_kl.sh "${ARMS[$ARM]}" "$DUMP" student
   LOG=$R/serve_qwen_stock_$ARM.log
   echo "--- route ($ARM) ---"
-  grep -i "nvfp4.*kernel\|Using .*kernel\|cutlass\|marlin\|scaled_mm\|Fp8LinearOp\|fp8.*backend\|emulation" "$LOG" | grep -iv "warning.*deprecat" | sort | uniq -c | sort -rn | head -12 || true
+  # vLLM 0.28 says "Using X for NVFP4 GEMM" and "Selected X for CompressedTensorsW8A8Fp8".
+  grep -i "Using .* for .*GEMM\|Selected .*Kernel for\|Using .*Kernel\|cutlass\|marlin\|emulation" "$LOG" | grep -iv "warning.*deprecat" | sed 's/.*INFO[^ ]* //' | sort | uniq -c | sort -rn | head -12 || true
 done
 
 echo "=================== compare (KL vs the image-matched BF16 teacher) ==================="
 for ARM in nvfp4-prod tessera-k2 tessera-e8 fp8-rtn; do
   echo "--- $ARM ---"
-  $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$KLDIR/qwen_stock_$ARM.json" \
+  # The loader takes the .json.npz path; a bare .json is looked up as .npz and missed.
+  $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER.npz" "$KLDIR/qwen_stock_$ARM.json.npz" \
       --out "$R/kl_$ARM.json" 2>&1 | tail -12
 done
 echo STOCK_LANE_DONE

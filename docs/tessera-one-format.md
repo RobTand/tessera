@@ -250,6 +250,23 @@ now returns the window body over CHANNEL at L=14 on E4M3 at every rung, the
 window over LUT16 at L=12 on E2M1x2 below its cap, and the coset trellis at
 the E2M1x2 cap and on E2M1.
 
+The same unit has a second, stock, form (`tessera.stock`, 2026-09-02):
+an E2M1/E2M1x2 unit over a LUT plane *is* the compressed-tensors NVFP4
+triple and an E4M3 unit over the CHANNEL plane *is* the per-channel FP8
+pair, bit-exact against the bytes-only reader in vLLM's own arithmetic,
+with fused groups moved onto one `weight_global_scale` by an exact binade
+shift. `experiments/export_stock_compressed.py` writes it and vanilla
+`vllm/vllm-openai` v0.28.0 serves it on native kernels for both formats.
+Its rate is the stock format's — 4.5 or 8.0 bpp resident, the wire's 4.0
+exists on the kernel lane only — and its quality on a dense model is below
+the production encoders at equal residency (1.254× production NVFP4 at 4-bit,
+23× FP8 RTN at 8-bit, Qwen3-0.6B served; the CHANNEL plane's row scale is
+blind to the outlier input columns dense `k_proj`/`down_proj` carry —
+`docs/measurements/tessera-stock-lane-served-2026-09-02.md`). So the
+allocator's product carries three routes per grid, not two: the kernel lane
+at the wire's rate, and the NVFP4 or FP8 materialisation at the stock rate,
+each priced as it serves.
+
 ## 6. What this does not unify, on purpose
 
 * **The TCQ body is not a window table.** A span-2 super-symbol's state

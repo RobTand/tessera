@@ -29,4 +29,4 @@ curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'Content-Type: application/
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
 echo "graph-mode serve: $(grep -c "Capturing\|cudagraph\|CUDA graph" "$LOG" || true) graph lines; kernels:"
-grep -i "Using .* for .*GEMM\|Using .*Kernel\|NVFP4 GEMM\|FP8 GEMM" "$LOG" | sed 's/.*INFO[^ ]* //' | sort | uniq -c | head -8
+grep -i "Using .* for .*GEMM\|Selected .*Kernel for\|Using .*Kernel\|NVFP4 GEMM\|FP8 GEMM" "$LOG" | sed 's/.*INFO[^ ]* //' | sort | uniq -c | head -8

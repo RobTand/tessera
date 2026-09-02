@@ -378,3 +378,31 @@ trellis at the cap (the L=14 window at the cap is 1.227× — per expert
 under the window body. Not shippable yet: `materialize_fp8` is a function,
 not an exporter writing compressed-tensors; no serving lane is attested;
 units are not TP-shardable; LDLQ on the window body is unmeasured.
+
+**2026-09-02 (the stock lane, served).** Four of the five "not shippable"
+items above are closed for the *materialised* form and the fifth is fixed.
+`tessera.stock` (`406e951`) writes an E2M1/E2M1x2 unit over a LUT plane as
+the compressed-tensors NVFP4 triple and an E4M3 unit over the CHANNEL plane
+as the per-channel FP8 pair, bit-exact against the bytes-only reader in
+vLLM's own arithmetic; fused groups share one `weight_global_scale` by an
+exact binade shift (52 of 140 members on Qwen3-0.6B, none refused);
+`experiments/export_stock_compressed.py` writes a checkpoint vanilla
+`vllm/vllm-openai` v0.28.0 loads with no plugin, and served it on native
+kernels for both formats (`FlashInferCutlassNvFp4LinearKernel`,
+`CutlassFP8ScaledMMLinearKernel`); the tensors are ordinary NVFP4/FP8 and
+shard as such; the window Viterbi's graph capture is thread-local behind a
+lock, six threads at once bit-exact. The served A/B on Qwen3-0.6B
+(`docs/measurements/tessera-stock-lane-served-2026-09-02.md`) is the honest
+part: **as an NVFP4 encoder at 4.5 resident, Tessera loses to production
+GPTQ+JSO NVFP4 by 1.254× KL (0.640 vs 0.511, W4A4, same kernel, same input
+scales); as an FP8 encoder at 8.0 resident, Tessera-8's 4.07-bpp wire is 23×
+worse than FP8 RTN (0.470 vs 0.020).** The inversion against the frontier is
+activation structure the encoder never sees: Tessera-8 has 1.6× less plain
+weight error than production NVFP4 and more Hessian-weighted error, carried
+by `layers.2.mlp.down_proj`, whose input channel at 2.2 million × the median
+second moment gets nothing from a per-row scale (1.68e-1 weighted vs 7e-3
+plain). GLM's expert inputs are Gaussian; dense k/down inputs are not.
+Still not shippable at its own rate: 4.0 bpp exists on the kernel lane only,
+which stock vLLM does not run. Next, in order: activation-aware encoding on
+the CHANNEL plane (LDLQ / `col_weights`, the render leg refuses them today),
+then column smoothing folded into the preceding layer.
