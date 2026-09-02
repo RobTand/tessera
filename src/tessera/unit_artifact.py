@@ -285,7 +285,17 @@ def build_unit_artifact(
         quantizable_params=rows * cols,
     )
     if body is BodyKind.WINDOW:
-        alphabet, descendant = bytes(table.to(torch.uint8).numpy().tobytes()), b""
+        # One element per state at the grid's own code width -- one byte
+        # through E4M3, two little-endian bytes on BF16, where the element
+        # then *is* the state's bf16 word.  ``code_bytes`` is derived from
+        # the grid the profile id binds, so writer and reader cannot
+        # disagree about the width, and the plane's element stays a byte:
+        # the count doubles, the grammar does not change.
+        wide = torch.uint8 if grid.code_bytes == 1 else torch.int32
+        alphabet = bytes(
+            table.to(wide).numpy().astype(f"<u{grid.code_bytes}").tobytes()
+        )
+        descendant = b""
     else:
         alphabet, descendant = _forest_planes(rates, forests)
 
@@ -794,10 +804,12 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         return terminal.plane_elements[wire.index(kind)]
 
     table_bytes = chunks[PlaneKind.ALPHABET]
-    if len(table_bytes) != 1 << window_bits:
+    need = grid.code_bytes << window_bits
+    if len(table_bytes) != need:
         raise GrammarError(
             f"ALPHABET holds {len(table_bytes)} bytes; a {window_bits}-bit "
-            f"window body's table is exactly {1 << window_bits}"
+            f"window body's table over {grid.name} is exactly {need} "
+            f"({grid.code_bytes} byte(s) x {1 << window_bits} states)"
         )
     if elements(PlaneKind.DESCENDANT) or elements(PlaneKind.COMPLETION):
         raise GrammarError(
@@ -805,7 +817,18 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
             f"terminal declares {elements(PlaneKind.DESCENDANT)}/"
             f"{elements(PlaneKind.COMPLETION)}"
         )
-    table = torch.frombuffer(bytearray(table_bytes), dtype=torch.uint8)
+    if grid.code_bytes == 1:
+        table = torch.frombuffer(bytearray(table_bytes), dtype=torch.uint8)
+    else:
+        # Explicit little-endian, not the host's order: the wire's byte order
+        # is a property of the format, and a big-endian reader that took the
+        # native one would decode every state to a different code.
+        import numpy as np
+
+        table = torch.from_numpy(
+            np.frombuffer(bytes(table_bytes), dtype=f"<u{grid.code_bytes}")
+            .astype(np.int32)
+        )
     if int(table.max()) >= grid.size:
         raise GrammarError(
             f"the window table names code {int(table.max())}, outside the "

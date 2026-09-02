@@ -60,8 +60,11 @@ __all__ = [
     "HESSIAN_IDENTITY",
     "ActivationSource",
     "E4M3_RECIPE",
+    "BF16_RECIPE",
     "E2M1X2_SUBCAP_RECIPE",
     "E4M3_WINDOW_BITS",
+    "BF16_WINDOW_BITS",
+    "BF16_CHANNEL_SIGMA",
     "E2M1X2_SUBCAP_WINDOW_BITS",
     "tcq_cap_q256",
     "RecipeRange",
@@ -529,6 +532,31 @@ E4M3_RECIPE = WireRecipe(
     window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
 )
 
+#: BF16 (the 16-bit route): the same window body over the same CHANNEL
+#: plane the E4M3 route ships, at the same L.  Only the alphabet the table
+#: snaps to changes, which is the whole point -- the E4M3 *alphabet* floors
+#: the body at ~0.022 out-space from R=6 upward on a GLM expert while the
+#: identical trellis over bf16 keeps halving (~1.93x per bit through R=7),
+#: so the ceiling above ~6 bpp was the grid's and not the trellis's
+#: (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``).  Its
+#: decoded tile is a plain BF16 tensor, so the route is the BF16 GEMM
+#: (W16A16) and there is no weight-side hardware format to satisfy.
+BF16_WINDOW_BITS = E4M3_WINDOW_BITS
+#: The modelled source spread in grid units, **stated rather than searched**.
+#: ``scale_channel.default_channel_sigma`` walks a dyadic ladder for the
+#: spread with the smallest nearest-value error; on a grid with eight
+#: exponent bits that error is scale-free over ~30 binades, so the ladder is
+#: choosing between equals -- and it would build a 4096 x 65536 float64
+#: distance matrix to do it.  1.0 puts the L=14 table's quantiles
+#: [7.6e-5, 4.05] deep inside the format with ~120 binades of margin at each
+#: end and gives the body reach 4.00 sigma, next to E4M3's 4.08.
+BF16_CHANNEL_SIGMA = 1.0
+BF16_RECIPE = WireRecipe(
+    body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.CHANNEL,
+    window_bits=BF16_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
+    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=BF16_CHANNEL_SIGMA,
+)
+
 #: E2M1x2 below the coset trellis's cap: the window body over the same LUT
 #: plane the cap recipe uses.
 E2M1X2_SUBCAP_RECIPE = WireRecipe(
@@ -544,6 +572,27 @@ def tcq_cap_q256(grid: PayloadGrid) -> int:
     return grid.rate_cap * 256 // grid.arity
 
 
+def _window_bits_for(default: int, grid: PayloadGrid, q256: "int | None") -> int:
+    """The table width a window recipe needs at rung ``q256``: ``L >= R``.
+
+    A window position's ``R`` new bits are the low ``R`` bits of the state,
+    so a table narrower than the rate cannot hold them and ``encode_unit``
+    refuses -- correctly, and after the recipe has already claimed a width it
+    cannot honour.  Deciding it here instead means the recipe table states a
+    width that works at every rung it covers, which is what a checkpoint's
+    own ``wire.recipes`` is for.
+
+    A no-op on every grid that ships today: E4M3 and E2M1x2 cap at 8 bits per
+    code against tables of 14 and 12.  It bites only on BF16, whose 16
+    payload bits run past the 14-bit table the route is measured at, and
+    there it widens the table rather than refusing the rung.
+    """
+    if q256 is None:
+        return default
+    rate = min(grid.payload_bits, -(-int(q256) * grid.arity // 256))
+    return max(default, rate)
+
+
 def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     """The wire the exporter writes for a unit on ``grid`` at rung ``q256``.
 
@@ -554,6 +603,12 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     decodes the window body bit-exactly over every plane, and the fused
     Viterbi encodes it 15-26x faster than the reference, bit-exact:
 
+    * **BF16**, every rung: ``BF16_RECIPE`` -- the identical window body
+      over the identical CHANNEL plane at the identical L, with the table
+      snapped to bf16 instead of E4M3 and the source spread stated at 1.0.
+      Its decoded tile is a plain BF16 tensor (W16A16).  The TCQ body is
+      not reachable on this grid at all: a 65536-anchor forest is what the
+      encoder already refuses, and the window body never scores it.
     * **E4M3**, every rung: ``E4M3_RECIPE`` -- the window body over the
       CHANNEL plane, L=14.  0.93x EXL3 K4 at 4.0 bpp and 0.92-0.95x at 5.0
       on the wire (0.985x / 1.016x at L=12), before LDLQ; the coset trellis
@@ -575,6 +630,16 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     """
     if grid.arity == 1 and grid.name == "E4M3":
         return E4M3_RECIPE
+    if grid.arity == 1 and grid.name == "BF16":
+        bits = _window_bits_for(BF16_WINDOW_BITS, grid, q256)
+        if bits == BF16_RECIPE.window_bits:
+            return BF16_RECIPE
+        return WireRecipe(
+            body=BF16_RECIPE.body, span=1, scale_plane=BF16_RECIPE.scale_plane,
+            window_bits=bits, window_seed=BF16_RECIPE.window_seed,
+            window_sigma=BF16_RECIPE.window_sigma,
+            channel_sigma=BF16_RECIPE.channel_sigma,
+        )
     if grid.arity == 2 and grid.name.startswith("E2M1") and q256 is not None \
             and q256 < tcq_cap_q256(grid):
         return E2M1X2_SUBCAP_RECIPE
@@ -1404,10 +1469,10 @@ def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict
 
 def grid_from_config(config: dict) -> PayloadGrid:
     """Resolve the payload grid a config names, and check it against the digest."""
-    from .alphabet import E2M1_GRID, E4M3_GRID, grid_digest, tuple_grid
+    from .alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, grid_digest, tuple_grid
 
     spec = config["grid"]
-    base = {"E2M1": E2M1_GRID, "E4M3": E4M3_GRID}.get(spec.get("base"))
+    base = {"E2M1": E2M1_GRID, "E4M3": E4M3_GRID, "BF16": BF16_GRID}.get(spec.get("base"))
     if base is None:
         raise GrammarError(f"unknown grid base {spec.get('base')!r} in config")
     arity = int(spec.get("arity", 1))

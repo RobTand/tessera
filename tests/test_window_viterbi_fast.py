@@ -300,3 +300,67 @@ def test_graph_capture_survives_other_threads_encoding(monkeypatch):
         for batch in (cases[:3], cases[3:]):
             done = list(pool.map(work, [c[-1] for c in batch]))
             assert sorted(done) == sorted(c[-1] for c in batch)
+
+
+# ---------------------------------------------------------------------------
+# The crossover: past it the fast path is slower than the definition, so
+# ``auto`` must stop taking it -- while an explicit ``impl="fused"`` still gets
+# the machine it asked for.  See ``encode.WINDOW_FUSED_MAX_RATE`` for the
+# measurement that fixes the constant.
+
+
+def test_auto_stops_at_the_crossover_and_fused_asked_for_is_still_honoured(monkeypatch):
+    from tessera import encode as enc
+    from tessera import window_viterbi
+
+    calls = []
+    real = window_viterbi.viterbi_window_fused
+
+    def counted(*a, **k):
+        calls.append(a[3])                                  # the rate
+        return real(*a, **k)
+
+    monkeypatch.setattr(window_viterbi, "viterbi_window_fused", counted)
+
+    torch.manual_seed(0)
+    targets = torch.randn(64, 32, device="cuda")
+    vectors = torch.randn(1 << 10, 1, device="cuda")
+
+    below = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE)
+    assert calls == [enc.WINDOW_FUSED_MAX_RATE], "auto must take the fused path at the crossover"
+
+    calls.clear()
+    above = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1)
+    assert calls == [], "auto must not take the fused path above the crossover"
+
+    calls.clear()
+    asked = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1,
+                               impl="fused")
+    assert calls == [enc.WINDOW_FUSED_MAX_RATE + 1], "an explicit fused request is honoured"
+
+    # The dispatch picks the machine, never the answer.
+    assert torch.equal(asked[0], above[0])
+    assert asked[1] == above[1]
+    assert below[0].shape == above[0].shape
+
+
+
+def test_the_crossover_is_movable_for_a_box_whose_crossover_differs(monkeypatch):
+    from tessera import encode as enc
+    from tessera import window_viterbi
+
+    calls = []
+    real = window_viterbi.viterbi_window_fused
+    monkeypatch.setattr(window_viterbi, "viterbi_window_fused",
+                        lambda *a, **k: (calls.append(a[3]), real(*a, **k))[1])
+    monkeypatch.setenv("TESSERA_WINDOW_FUSED_MAX_RATE", str(enc.WINDOW_FUSED_MAX_RATE + 1))
+
+    torch.manual_seed(0)
+    targets = torch.randn(64, 32, device="cuda")
+    vectors = torch.randn(1 << 10, 1, device="cuda")
+    enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1)
+    assert calls == [enc.WINDOW_FUSED_MAX_RATE + 1]
+
+    monkeypatch.setenv("TESSERA_WINDOW_FUSED_MAX_RATE", "eight")
+    with pytest.raises(GrammarError):
+        enc.viterbi_window(targets, vectors, 10, 4)
