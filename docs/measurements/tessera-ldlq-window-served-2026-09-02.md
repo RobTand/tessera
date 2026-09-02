@@ -254,10 +254,15 @@ about which capture shaped the bytes.
 
 ## Scope, and what is not measured
 
-* Every served number is Qwen3-0.6B, dense, E4M3/CHANNEL/window L=14 at
-  4.07 bpp, one corpus draw. The E2M1x2 sub-cap window arm (the NVFP4 route)
+* Every served number *here* is Qwen3-0.6B, dense, E4M3/CHANNEL/window L=14 at
+  4.07 bpp, one corpus draw. ~~The E2M1x2 sub-cap window arm (the NVFP4 route)
   carries no CHANNEL plane and was not touched; LDLQ under a block plane is
-  refused by `encode_unit`, not merely untested.
+  refused by `encode_unit`, not merely untested.~~ **Closed 2026-09-02:** the
+  refusal's stated reason was wrong — the plane is read once per pass, before
+  the block loop, and refit once after it, so the schedule and the plane never
+  interleave on any plane kind. Both levers now run on the LUT plane, and the
+  4-bit route's own served receipt is
+  `tessera-ldlq-lut-plane-served-2026-09-02.md`.
 * The GLM leg is weight/out-space only. There is no served GLM A/B of these
   levers.
 * The Hessian's token budget (16k) was not swept. `tessera_ldlq_token_scaling`
@@ -280,15 +285,15 @@ about which capture shaped the bytes.
   activation-aware config at all. `tests/test_merge_guard.py` gives each field
   its own failing case and asserts every guarded path resolves in a config the
   exporter actually wrote — the check that the earlier 8/13 vacuity lacked.
-* **Both levers are CHANNEL-plane only, and now say so.** `refit_metric` and
-  `refit_reach_floor` were read by the CHANNEL branch of the refit alone and
-  were *silently dropped* under a block plane or at `scale_refit=0`;
-  `encode_unit` refuses both cases now, as it already did for LDLQ. The
-  consequence is that `export_glm53_tessera.py` gets **no** `--hessian`: its
-  grid is E2M1_K2, whose recipe is LUT16 below the cap and the coset trellis at
-  it, so the flag could not fire on the only grid that driver uses. The library
-  path takes an `ActivationSource` regardless; the FP8/E4M3 route is what can
-  use one today.
+* ~~**Both levers are CHANNEL-plane only, and now say so.**~~ **Superseded
+  2026-09-02.** `refit_metric` and `refit_reach_floor` were being *silently
+  dropped* under a block plane or at `scale_refit=0`, and `encode_unit` began
+  refusing both. The refusals are now scoped to what is actually unimplemented:
+  `refit_metric` runs on CHANNEL and on LUT (`_refit_scales_lut_metric`) and is
+  refused only under S6b; `refit_reach_floor` stays CHANNEL-only because it
+  raises a *row* scale and a block scale already tracks its own sixteen
+  weights. `export_glm53_tessera.py` regained `--hessian` with the LUT
+  implementation.
 
 **Fable consultations:** none. The advisor call settled the one design question
 (LDLQ inside `encode_unit` as a block-sequential schedule sharing one plane,

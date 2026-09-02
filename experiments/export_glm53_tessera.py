@@ -27,14 +27,16 @@ second code path -- there is no branch that can disagree with the census.
 accepted.  The bytes are the claim (today's lesson: never a formula where an
 accountant exists), and the accountant is the thing that writes them.
 
-**No ``--hessian`` here, on purpose.**  ``export_checkpoint_streaming`` takes an
-``ActivationSource`` and this driver could pass one, but the activation-aware
-recipe (LDLQ plus the full-Hessian row-scale refit) is implemented for the
-CHANNEL scale plane and this grid is E2M1_K2, whose recipe is LUT16 below the
-cap and the coset trellis at it.  ``encode_unit`` refuses both levers under a
-block plane rather than ignoring them, so the flag would abort on the first
-unit.  A flag that cannot fire on the one grid its driver uses is worse than no
-flag; when a CHANNEL-plane GLM wire exists, add it here.
+``--hessian`` takes a ``capture_h_full.py`` payload keyed by unit name and turns
+on the activation-aware recipe (LDLQ cross-column feedback plus the H-weighted
+scale refit) at ``export.DEFAULT_LDLQ_*``.  It was withheld while both levers
+were CHANNEL-plane-only -- this grid is E2M1_K2, whose recipe is LUT16 below
+the cap and the coset trellis at it -- and lands now that the LUT plane
+implements them (``tessera-ldlq-lut-plane-served-2026-09-02``).  A missing key
+is refused rather than encoded weights-only, and the capture's identity is
+written into ``tessera_config.json``, so a shard-split export cannot be merged
+across two different Hessians.  Without the flag the bytes are what they always
+were.
 """
 import argparse
 import json, sys, time
@@ -43,7 +45,9 @@ from pathlib import Path
 import torch
 
 from tessera.alphabet import E2M1_GRID, tuple_grid
-from tessera.export import export_checkpoint_streaming
+from tessera.export import (
+    DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
+    ActivationSource, export_checkpoint_streaming)
 from tessera.manifest import RotationState
 
 SRC = "/mnt/shared/models/GLM-5.3-Flash-BF16"
@@ -58,7 +62,27 @@ def main():
                     help="inclusive 1-based input-shard range, e.g. 61-120; "
                          "empty means all of them")
     ap.add_argument("--out", default=OUT)
+    ap.add_argument("--hessian", type=Path, default=None,
+                    help="capture_h_full.py payload: full input Hessians keyed by unit name. "
+                         "Turns on the activation-aware recipe below; the bytes then depend on "
+                         "this capture and its identity is recorded in the config.")
+    ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
+                    help="Hessian regulariser for LDLQ; a negative value turns LDLQ off")
+    ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK)
+    ap.add_argument("--refit-metric", default=None,
+                    help="error the scale refit minimises: plain | hessian | h^ALPHA. "
+                         "Default: the measured objective for each unit's own scale "
+                         "plane (export.DEFAULT_REFIT_OBJECTIVE)")
     args = ap.parse_args()
+
+    # One loader for every driver's --hessian, so no two of them can disagree
+    # about what a capture file means (``ActivationSource.from_capture``).
+    activation = None
+    if args.hessian:
+        activation = ActivationSource.from_capture(
+            args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
+            **({} if args.refit_metric is None
+               else {"refit_objective": args.refit_metric}))
 
     plan = {k: int(v) for k, v in json.load(open(PLAN)).items()}
     shard_filter = None
@@ -84,7 +108,7 @@ def main():
     report = export_checkpoint_streaming(
         SRC, args.out, plan, grid=grid, rotation=RotationState.NONE,
         with_diagonals=False, device="cuda", verify=True, copy_aux=True,
-        progress=progress, shard_filter=shard_filter,
+        progress=progress, shard_filter=shard_filter, activation=activation,
         extra_config={"prismaquant_plan": "everything-eligible",
                       "source_model": SRC,
                       "inherits": {"vision": "bf16 passthrough (Mia)",

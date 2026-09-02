@@ -32,6 +32,7 @@ from fractions import Fraction
 import json
 from functools import lru_cache
 from pathlib import Path
+from types import MappingProxyType
 from typing import Mapping
 
 import torch
@@ -152,7 +153,40 @@ DEFAULT_CHANNEL_SIGMA: "float | None" = None
 #: a diagonal power, because the row's true proxy loss has a closed form.
 DEFAULT_LDLQ_SIGMA = 1.0
 DEFAULT_LDLQ_BLOCK = 32
-DEFAULT_REFIT_OBJECTIVE = "hessian"
+
+#: The config's spelling of each scale plane.  Defined here rather than beside
+#: the other config helpers because the refit objective is keyed by it.
+_PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
+                ScalePlaneKind.CHANNEL: "channel"}
+
+#: The refit objective is per **scale plane**, and that is a measurement, not a
+#: taste.  What decides it is not which objective is more faithful but which one
+#: the plane's refit can *solve*:
+#:
+#: * ``channel`` -- one scalar per output row, rows independent under H, so the
+#:   exact ``hessian`` quadratic has a closed-form minimiser and there is no
+#:   table to fit.  It wins: 0.5982x vs h^1.0's 0.6376x out-space on the FP8
+#:   wire, and served KL 0.1512 -> 0.1046
+#:   (``tessera-ldlq-window-served-2026-09-02.md``).
+#: * ``lut16`` -- one scale per sixteen input columns, all coupled by H, and
+#:   sixteen shared table entries.  Under a **diagonal** metric the blocks
+#:   decouple and both the coordinate step and the table fit are exact; under
+#:   the full H neither is (Jacobi + one row step length, separable table fit),
+#:   and the full-H arm converges to a worse point of *its own* quadratic --
+#:   0.05541 vs h^1.0's 0.05393 on the fit rows, 0.05584 vs 0.05417 held out
+#:   (``tessera-ldlq-lut-plane-served-2026-09-02.md``).
+#: * ``s6b`` -- grouped ``(base, refine)`` words with no metric-aware refit at
+#:   all, so LDLQ runs alone.  This one is a statement about the code, not a
+#:   measurement.
+#:
+#: A plain string still means "this objective on every plane".  ``sigma`` and
+#: ``block`` are the pair the held-out weight-space sweep chose over
+#: {0.3, 1, 3, 10} x {32, 128}.
+DEFAULT_REFIT_OBJECTIVE = MappingProxyType({
+    "channel": "hessian",
+    "lut16": "h^1.0",
+    "s6b": "plain",
+})
 
 
 #: The three provenance fields that name *which* Hessian shaped the bytes.
@@ -164,6 +198,22 @@ DEFAULT_REFIT_OBJECTIVE = "hessian"
 #: ``.get`` -- an identity of ``None`` compares equal to another ``None``,
 #: which is exactly how a merge guard goes vacuous.
 HESSIAN_IDENTITY = ("text_sha256", "fit_tokens", "fit_ids_sha256")
+
+
+def _check_refit_objective(obj: str) -> None:
+    """One refit objective spelling, checked where every path can reach it."""
+    if not isinstance(obj, str):
+        raise GrammarError(f"a refit objective is a string, got {obj!r}")
+    if obj not in ("hessian", "plain") and not obj.startswith("h^"):
+        raise GrammarError(
+            f"unknown refit objective {obj!r}: 'hessian' (the exact quadratic), "
+            "'plain' (unweighted) or 'h^ALPHA' (a diagonal power)"
+        )
+    if obj.startswith("h^"):
+        try:
+            float(obj.removeprefix("h^"))
+        except ValueError:
+            raise GrammarError(f"{obj!r} is not a diagonal power h^ALPHA") from None
 
 
 @dataclass(frozen=True)
@@ -191,9 +241,13 @@ class ActivationSource:
     ``HESSIAN_IDENTITY``; anything else it holds (model, seqlen, source split)
     rides along unread.
 
-    The defaults are the measured recipe -- see ``DEFAULT_LDLQ_SIGMA``.
-    ``refit_objective`` is ``"hessian"`` (the exact quadratic), ``"plain"``
-    (no metric, the weights-only refit) or ``"h^ALPHA"`` for a diagonal power.
+    The defaults are the measured recipe -- see ``DEFAULT_LDLQ_SIGMA`` and
+    ``DEFAULT_REFIT_OBJECTIVE``.  An objective is ``"hessian"`` (the exact
+    quadratic), ``"plain"`` (no metric, the weights-only refit) or
+    ``"h^ALPHA"`` for a diagonal power; ``refit_objective`` is either one of
+    those, meaning every plane, or a ``{plane: objective}`` map, because the
+    two planes that have a metric-aware refit were measured to want different
+    ones.
     """
 
     hessians: "Mapping[str, torch.Tensor]"
@@ -225,29 +279,76 @@ class ActivationSource:
             raise GrammarError(f"the LDLQ block must be at least one column, got "
                                f"{self.ldlq_block}")
         obj = self.refit_objective
-        if obj not in ("hessian", "plain") and not obj.startswith("h^"):
-            raise GrammarError(
-                f"unknown refit objective {obj!r}: 'hessian' (the exact quadratic), "
-                "'plain' (unweighted) or 'h^ALPHA' (a diagonal power)"
-            )
-        if obj.startswith("h^"):
+        if isinstance(obj, str):
+            _check_refit_objective(obj)
+        else:
             try:
-                float(obj.removeprefix("h^"))
-            except ValueError:
-                raise GrammarError(f"{obj!r} is not a diagonal power h^ALPHA") from None
+                items = dict(obj)
+            except TypeError:
+                raise GrammarError(
+                    f"refit_objective must be an objective or a plane -> objective "
+                    f"mapping, got {obj!r}") from None
+            if not items:
+                raise GrammarError(
+                    "an empty refit-objective map names no plane, so every export "
+                    "through it would refuse; pass an objective string instead")
+            unknown = sorted(set(items) - set(_PLANE_NAMES.values()))
+            if unknown:
+                raise GrammarError(
+                    f"{unknown} are not scale planes: the map is keyed by the "
+                    f"config's own plane spelling, one of "
+                    f"{sorted(_PLANE_NAMES.values())}")
+            for value in items.values():
+                _check_refit_objective(value)
+            object.__setattr__(self, "refit_objective", MappingProxyType(items))
 
     @staticmethod
     def unit_name(tensor_name: str) -> str:
         """The Hessian key for a tensor name: one trailing ``.weight`` removed."""
         return tensor_name.removesuffix(".weight")
 
+    def objective_for(self, scale_plane: "ScalePlaneKind | None") -> str:
+        """The refit objective this unit's **scale plane** was measured with.
+
+        A plain ``refit_objective`` string applies everywhere.  A map is keyed
+        by the plane, because what the refit can solve exactly is a property of
+        the plane (see ``DEFAULT_REFIT_OBJECTIVE``) -- and then a caller that
+        does not say which plane it is encoding on cannot be served a default,
+        because the two measured answers disagree.
+        """
+        obj = self.refit_objective
+        if isinstance(obj, str):
+            return obj
+        if scale_plane is None:
+            raise GrammarError(
+                "this ActivationSource carries a per-plane refit objective, so it "
+                "needs the scale plane the unit is actually encoded on. Pass the "
+                "plane from the SAME resolved recipe the encode uses "
+                "(`resolve(q256).scale_plane`), never a re-derived one: an "
+                "override the encode honoured and this call did not would price a "
+                "different artifact than it ships"
+            )
+        key = _PLANE_NAMES[ScalePlaneKind(scale_plane)]
+        if key not in obj:
+            raise GrammarError(
+                f"no refit objective for the {key!r} scale plane in {dict(obj)!r}. "
+                f"Falling back to another plane's value would apply a measurement "
+                f"made somewhere else, so the export refuses; name the plane, or "
+                f"pass a single objective string to mean all of them"
+            )
+        return obj[key]
+
     def for_unit(self, tensor_name: str, in_features: int,
-                 device: "str | torch.device" = "cpu") -> dict:
+                 device: "str | torch.device" = "cpu",
+                 scale_plane: "ScalePlaneKind | None" = None) -> dict:
         """The ``encode_linear`` keyword arguments this unit's Hessian implies.
 
         Refuses a missing key and a shape mismatch.  Both would otherwise be
         silent: a wrong key encodes the unit weights-only, and a Hessian of the
         wrong width would either broadcast or fail somewhere far from here.
+
+        ``scale_plane`` is the plane the unit is encoded on, and it selects the
+        refit objective when this source carries the per-plane map.
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -272,13 +373,42 @@ class ActivationSource:
                 self.ldlq_block,
             )
             kwargs["ldl_block"] = self.ldlq_block
-        if self.refit_objective == "hessian":
+        objective = self.objective_for(scale_plane)
+        if objective == "hessian":
             kwargs["refit_metric"] = H
-        elif self.refit_objective != "plain":
-            alpha = float(self.refit_objective.removeprefix("h^"))
+        elif objective != "plain":
+            alpha = float(objective.removeprefix("h^"))
             h = H.diagonal()
             kwargs["refit_metric"] = (h / h.mean()).pow(alpha)
         return kwargs
+
+    @classmethod
+    def from_capture(cls, path, **settings) -> "ActivationSource":
+        """Load a ``capture_h_full.py`` payload and wrap it at ``settings``.
+
+        Every driver that offers a ``--hessian`` flag comes through here, so
+        the one thing they cannot disagree about is what a capture file means:
+        ``H`` keyed by unit name, the capture's own provenance carried forward
+        with the file's path stamped on it (a reader needs to know *which*
+        file, not only which text), and the measured recipe filling in every
+        setting the caller left out.  ``ldlq_sigma`` below zero is spelled by
+        the CLIs as "LDLQ off" and lands here as ``None``.
+        """
+        import torch as _torch
+
+        payload = _torch.load(str(path), map_location="cpu", weights_only=False)
+        if "H" not in payload:
+            raise GrammarError(
+                f"{path} carries no 'H': a capture payload is "
+                "{'H': {unit: [cols, cols]}, 'provenance': {...}}")
+        sigma = settings.pop("ldlq_sigma", DEFAULT_LDLQ_SIGMA)
+        if sigma is not None and float(sigma) < 0:
+            sigma = None
+        return cls(
+            hessians=payload["H"],
+            provenance=dict(payload.get("provenance") or {}, path=str(path)),
+            ldlq_sigma=sigma, **settings,
+        )
 
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.
@@ -290,7 +420,9 @@ class ActivationSource:
         return {
             "ldlq_sigma": self.ldlq_sigma,
             "ldlq_block": self.ldlq_block,
-            "refit_objective": self.refit_objective,
+            "refit_objective": (self.refit_objective
+                                if isinstance(self.refit_objective, str)
+                                else dict(self.refit_objective)),
             "refit_reach_floor": bool(self.refit_reach_floor),
             "hessian": dict(self.provenance),
             "note": "encoder-side only: the wire, the decoder and the lane are "
@@ -299,8 +431,6 @@ class ActivationSource:
         }
 
 
-_PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
-                ScalePlaneKind.CHANNEL: "channel"}
 _BODY_NAMES = {BodyKind.TCQ: "tcq", BodyKind.WINDOW: "window"}
 #: The config's spelling of a projected field whose value varies with the
 #: rung: the truth is then in ``wire.recipes``, and a reader that does not
@@ -856,7 +986,9 @@ def export_checkpoint(
                 with_diagonals=with_diagonals, verify=verify,
                 scale_refit=scale_refit, trellis_weighting=trellis_weighting,
                 **_recipe_kwargs(resolve(plan[name])),
-                **(activation.for_unit(name, tensor.shape[1], tensor.device)
+                **(activation.for_unit(
+                    name, tensor.shape[1], tensor.device,
+                    scale_plane=resolve(plan[name]).scale_plane)
                    if activation is not None else {}),
             )
             units.append(unit)
@@ -1190,7 +1322,9 @@ def export_checkpoint_streaming(
                         scale_refit=scale_refit,
                         trellis_weighting=trellis_weighting,
                         **_recipe_kwargs(resolve(plan[name])),
-                        **(activation.for_unit(name, tensor.shape[1], device)
+                        **(activation.for_unit(
+                            name, tensor.shape[1], device,
+                            scale_plane=resolve(plan[name]).scale_plane)
                            if activation is not None else {}),
                     )
                     units.append(unit)

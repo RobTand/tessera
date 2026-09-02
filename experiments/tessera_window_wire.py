@@ -53,6 +53,10 @@ def main():
     ap.add_argument("--exl3", type=int, nargs="+", default=[3, 4, 5])
     ap.add_argument("--slice", type=int, nargs=2, default=None, metavar=("ROWS", "COLS"))
     ap.add_argument("--no-tcq", action="store_true")
+    ap.add_argument("--no-window", action="store_true",
+                    help="TCQ arms only.  The 4-bit route ships the TCQ *cap* at 4.0 bpp, so a "
+                         "cross-check of that rate does not need the window rung beside it, and "
+                         "the levered arms are the expensive ones.")
     ap.add_argument("--ldlq-sigma", type=float, nargs="*", default=None,
                     help="also run each window arm with LDLQ at these Hessian regularisers; "
                          "H is x_fit^T x_fit, the same fit rows the plane and the NVFP4 input "
@@ -105,18 +109,28 @@ def main():
             tname = f"L{layer}.{proj}"
             y = x_ev @ w.T
             ny, nw = y.norm(), w.norm()
+            # ``hfit`` is the quantity the H-aware levers are provably monotone
+            # in -- the FIT-row quadratic ``E H E^T``.  ``out`` is the held-out
+            # score that decides.  Reporting only ``out`` cannot separate a
+            # generalisation gap (hfit falls, out rises) from a broken accept
+            # guard (both rise), so carry both.
+            den_hf = float(((w @ H) * w).sum()) if H is not None else 0.0
             res = {}
             log(f"\n== {tname} {tuple(w.shape)}")
-            log(f"    {'arm':<52} {'bpp':>6} {'wt':>8} {'out':>8} {'a4':>8} {'a8':>8} {'s':>6}")
+            log(f"    {'arm':<52} {'bpp':>6} {'wt':>8} {'out':>8} {'a4':>8} {'a8':>8} "
+                f"{'hfit':>8} {'s':>6}")
 
             def rec(arm, hat, bpp, secs=0.0):
-                r = {"bpp": bpp, "wt": float((hat - w).norm() / nw),
+                e = hat - w
+                r = {"bpp": bpp, "wt": float(e.norm() / nw),
                      "out": float((x_ev @ hat.T - y).norm() / ny),
                      "a4": float((xq4 @ hat.T - y).norm() / ny),
                      "a8": float((xq8 @ hat.T - y).norm() / ny), "secs": secs}
+                if den_hf > 0:
+                    r["hfit"] = float(((e @ H) * e).sum() / den_hf) ** 0.5
                 res[arm] = r
                 log(f"    {arm:<52} {bpp:6.3f} {r['wt']:8.5f} {r['out']:8.5f} "
-                    f"{r['a4']:8.5f} {r['a8']:8.5f} {secs:6.0f}")
+                    f"{r['a4']:8.5f} {r['a8']:8.5f} {r.get('hfit', 0.0):8.5f} {secs:6.0f}")
 
             if not a.slice:
                 for Kx in a.exl3:
@@ -131,37 +145,49 @@ def main():
                 hat = read_unit_artifact(unit.blob, device=dev)
                 rec(arm, hat, 8 * len(unit.blob) / w.numel(), time.time() - t0)
 
+            # The activation-aware levers, resolved once per unit.  They ride
+            # the TCQ arm as well as the window arm: on the 4-bit route the
+            # wire that ships at 4.0 bpp is the TCQ *cap*, so a cross-check
+            # that levered only the window body would not be checking the wire.
+            metric = None
+            if H is not None and H.shape[0] == w.shape[1]:
+                if a.refit_metric == "hessian":
+                    metric = H
+                elif a.refit_metric:
+                    hd = H.diagonal()
+                    metric = (hd / hd.mean()).pow(float(a.refit_metric.removeprefix("h^")))
+            combos = ([] if H is None or H.shape[0] != w.shape[1] else
+                      [(sigma, None) for sigma in (a.ldlq_sigma or [])])
+            if metric is not None:
+                combos.append((None, metric))
+                combos += [(sigma, metric) for sigma in (a.ldlq_sigma or [])]
+            factors: dict = {}
+
+            def levered(arm, **kw):
+                """The plain arm, then each lever alone and the two together,
+                so the cross term is visible rather than assumed."""
+                wire(arm, **kw)
+                for sigma, m in combos:
+                    ldl = None
+                    if sigma is not None:
+                        if sigma not in factors:
+                            factors[sigma] = block_ldl(
+                                regularize_hessian(H, sigma_reg=sigma), a.ldlq_block)
+                        ldl = factors[sigma]
+                    tag = ("" if sigma is None else f" LDLQ{sigma}") + \
+                          ("" if m is None else f" refit-{a.refit_metric}")
+                    wire(f"{arm}{tag}", ldl=ldl, ldl_block=a.ldlq_block,
+                         refit_metric=m, **kw)
+
             for gname in a.grids:
                 grid = GRIDS[gname]
                 for q_tcq, q_win in rungs[gname]:
                     if not a.no_tcq:
-                        wire(f"{gname} TCQ q{q_tcq} (exporter default)", grid=grid, q256=q_tcq)
-                    for L in a.window_bits:
-                        wire(f"{gname} window q{q_win} L={L}", grid=grid, q256=q_win,
-                             body=BodyKind.WINDOW, window_bits=L)
-                        if H is None or H.shape[0] != w.shape[1]:
-                            continue
-                        metric = None
-                        if a.refit_metric == "hessian":
-                            metric = H
-                        elif a.refit_metric:
-                            hd = H.diagonal()
-                            metric = (hd / hd.mean()).pow(float(a.refit_metric.removeprefix("h^")))
-                        # Each lever alone and the two together, so the cross
-                        # term is visible rather than assumed.
-                        combos = [(sigma, None) for sigma in (a.ldlq_sigma or [])]
-                        if metric is not None:
-                            combos.append((None, metric))
-                            combos += [(sigma, metric) for sigma in (a.ldlq_sigma or [])]
-                        for sigma, m in combos:
-                            ldl = None
-                            if sigma is not None:
-                                ldl = block_ldl(regularize_hessian(H, sigma_reg=sigma), a.ldlq_block)
-                            tag = ("" if sigma is None else f" LDLQ{sigma}") + \
-                                  ("" if m is None else f" refit-{a.refit_metric}")
-                            wire(f"{gname} window q{q_win} L={L}{tag}", grid=grid, q256=q_win,
-                                 body=BodyKind.WINDOW, window_bits=L, ldl=ldl,
-                                 ldl_block=a.ldlq_block, refit_metric=m)
+                        levered(f"{gname} TCQ q{q_tcq} (exporter default)",
+                                grid=grid, q256=q_tcq)
+                    for L in ([] if a.no_window else a.window_bits):
+                        levered(f"{gname} window q{q_win} L={L}", grid=grid,
+                                q256=q_win, body=BodyKind.WINDOW, window_bits=L)
             out["experts"][tname] = res
             out_path.write_text(json.dumps(out, indent=1))
         del x_ev, xq4, xq8

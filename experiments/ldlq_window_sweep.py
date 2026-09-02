@@ -1,9 +1,14 @@
 #!/usr/bin/env python
-"""LDLQ and the h-weighted refit on the FP8 route's window body, in weight space.
+"""LDLQ and the h-weighted refit on a Tessera wire, in weight space.
 
 The two encoder-side levers of ``tessera-ldlq-window-served-2026-09-02``, swept
 on a handful of dense Qwen3-0.6B Linears before either is put in front of a
-served KL:
+served KL.  ``--grid``/``--q256`` choose the wire: ``E4M3 1024`` is the FP8
+route's window body over the CHANNEL plane, where both levers were measured
+first; ``E2M1x2 896`` is the 4-bit route's TCQ cap wire over the LUT plane,
+where the same two levers had to be implemented rather than bypassed
+(``tessera-ldlq-lut-plane-served-2026-09-02``).  The arms follow the wire: the
+reach floor is a CHANNEL mechanism and is not offered on a block plane.
 
 * **LDLQ** -- cross-column error feedback over input-feature blocks, the only
   coupling the trellis leaves on the table (``compensate.py``).  ``--sigmas``
@@ -12,10 +17,9 @@ served KL:
   ``h^alpha`` or under the full Hessian's exact quadratic instead of the plain
   squared error.
 
-Every arm is the shipping FP8 wire (``wire_recipe(E4M3, q256)``: window body
-L=14, CHANNEL plane, span 1, four refit passes) materialised the way the stock
-twin materialises it, so the number here is a number about the bytes that
-would be served.
+Every arm is the shipping wire for that grid and rung (``wire_recipe``),
+materialised the way the stock twin materialises it, so the number here is a
+number about the bytes that would be served.
 
 The score is **out-space on held-out rows**: ``||X_ev (W - What)^T|| / ||X_ev
 W^T||`` with ``X_ev`` the activations of ``capture_h_full.py``'s eval slice,
@@ -41,10 +45,20 @@ from safetensors import safe_open
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from tessera.alphabet import E4M3_GRID                       # noqa: E402
+from tessera.alphabet import SERIALISABLE_GRIDS              # noqa: E402
 from tessera.compensate import block_ldl, regularize_hessian  # noqa: E402
-from tessera.export import DEFAULT_CODE, encode_linear_planes  # noqa: E402
-from tessera.stock import materialize_stock                  # noqa: E402
+from tessera.export import (                                 # noqa: E402
+    DEFAULT_CODE, encode_linear_planes, wire_recipe)
+from tessera.manifest import ScalePlaneKind                  # noqa: E402
+from tessera.stock import materialize_stock, stock_dequant   # noqa: E402
+
+
+def grid_by_name(name: str):
+    for g in SERIALISABLE_GRIDS.values():
+        if g.name == name:
+            return g
+    raise SystemExit(f"unknown grid {name!r}; one of "
+                     f"{[g.name for g in SERIALISABLE_GRIDS.values()]}")
 
 
 def rel(num: torch.Tensor, den: torch.Tensor) -> float:
@@ -56,6 +70,7 @@ def main() -> None:
     ap.add_argument("--model", default="/home/rob/models/Qwen3-0.6B")
     ap.add_argument("--h", default="/home/rob/tessera-runs/ldlq/h_full_qwen06b.pt")
     ap.add_argument("--acts", default="/home/rob/tessera-runs/ldlq/x_eval_qwen06b.pt")
+    ap.add_argument("--grid", default="E4M3", help="E4M3 (FP8 route) or E2M1x2 (4-bit route)")
     ap.add_argument("--q256", type=int, default=1024)
     ap.add_argument("--block", type=int, nargs="+", default=[128])
     ap.add_argument("--sigmas", type=float, nargs="+", default=[0.3, 1.0, 3.0, 10.0])
@@ -69,6 +84,9 @@ def main() -> None:
     ap.add_argument("--out", default="experiments/results/tessera_ldlq_window_sweep.json")
     a = ap.parse_args()
 
+    grid = grid_by_name(a.grid)
+    recipe = wire_recipe(grid, a.q256)
+    channel = recipe.scale_plane is ScalePlaneKind.CHANNEL
     payload = torch.load(a.h, map_location="cpu", weights_only=False)
     acts = torch.load(a.acts, map_location="cpu", weights_only=False)
     Hall, prov = payload["H"], payload["provenance"]
@@ -81,6 +99,8 @@ def main() -> None:
         print(s, flush=True)
         lines.append(s)
 
+    log(f"wire: {grid.name} q256={a.q256} -> body {recipe.body.name} plane "
+        f"{recipe.scale_plane.name} span {recipe.span} L={recipe.window_bits}")
     log(f"H from {prov['source']}  fit {prov['fit_tokens']} tok "
         f"(sha {prov['fit_ids_sha256'][:12]})  eval {prov['eval_tokens']} tok "
         f"(sha {prov['eval_ids_sha256'][:12]})")
@@ -99,9 +119,16 @@ def main() -> None:
             hn = h / h.mean()
             den_w = W.norm()
             den_h = float(((W * W).sum(0) * hn).sum())
+            # The refit is provably monotone in ``E H E^T`` -- the FIT metric.
+            # Reporting only ``out`` (the held-out eval rows) cannot tell a
+            # generalisation gap from a broken accept guard, so carry the
+            # quantity the guard claims to lower, next to the one that decides.
+            den_hf = float(((W @ H) * W).sum())
             res = {}
+            seen_bytes: dict = {}
             log(f"\n== {name} {tuple(W.shape)}  eval rows {X.shape[0]}")
-            log(f"    {'arm':<44} {'out':>9} {'plain':>9} {'hwt':>9} {'clip%':>7} {'s':>6}")
+            log(f"    {'arm':<44} {'out':>9} {'plain':>9} {'hwt':>9} {'hfit':>9} "
+                f"{'clip%':>7} {'s':>6}")
 
             def score(arm, What, secs):
                 E = What - W
@@ -109,20 +136,30 @@ def main() -> None:
                     "out": rel(X @ E.T, Y),
                     "plain": float(E.norm() / den_w),
                     "hweighted": math.sqrt(float(((E * E).sum(0) * hn).sum()) / den_h),
+                    "hfit": math.sqrt(float(((E @ H) * E).sum()) / den_hf),
                     "secs": secs,
                 }
                 res[arm] = r
                 log(f"    {arm:<44} {r['out']:9.5f} {r['plain']:9.5f} "
-                    f"{r['hweighted']:9.5f} {'':>7} {secs:6.1f}")
+                    f"{r['hweighted']:9.5f} {r['hfit']:9.5f} {'':>7} {secs:6.1f}")
                 return r
 
             def run(arm, **kw):
                 t0 = time.time()
                 _, unit, forests = encode_linear_planes(
-                    W, grid=E4M3_GRID, q256=a.q256, name=name, verify=False, **kw)
+                    W, grid=grid, q256=a.q256, name=name, verify=False, **kw)
                 secs = time.time() - t0
                 st = materialize_stock(unit, forests, DEFAULT_CODE)
-                What = st["weight"].to(dev).float() * st["weight_scale"].to(dev).float()
+                What = stock_dequant(st).to(dev).float()
+                # A lever that encodes to the same bytes as an arm without it
+                # is a silent no-op -- exactly what a named arm hides.  Say so,
+                # loudly, next to the number.
+                key = hash(What.cpu().numpy().tobytes())
+                if key in seen_bytes:
+                    log(f"    !! IDENTICAL BYTES: {arm!r} == {seen_bytes[key]!r} "
+                        f"-- that lever did nothing on this unit")
+                else:
+                    seen_bytes[key] = arm
                 return score(arm, What, secs)
 
             run("baseline (no LDLQ, plain refit)")
@@ -150,8 +187,9 @@ def main() -> None:
             log(f"    -- best LDLQ: sigma={best[0]} block={best[1]}")
             res["_best_ldlq"] = {"sigma": best[0], "block": best[1]}
 
-            run(f"LDLQ {best[0]}/{best[1]} + reach floor",
-                ldl=L, ldl_block=best[1], refit_reach_floor=True)
+            if channel:
+                run(f"LDLQ {best[0]}/{best[1]} + reach floor",
+                    ldl=L, ldl_block=best[1], refit_reach_floor=True)
             for alpha in a.alphas:
                 m = hn.pow(alpha)
                 run(f"refit h^{alpha} only", refit_metric=m)
@@ -160,8 +198,9 @@ def main() -> None:
             run("refit full-H only", refit_metric=H)
             run(f"LDLQ {best[0]}/{best[1]} + refit full-H",
                 ldl=L, ldl_block=best[1], refit_metric=H)
-            run(f"LDLQ {best[0]}/{best[1]} + refit full-H + reach floor",
-                ldl=L, ldl_block=best[1], refit_metric=H, refit_reach_floor=True)
+            if channel:
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H + reach floor",
+                    ldl=L, ldl_block=best[1], refit_metric=H, refit_reach_floor=True)
 
             out["units"][name] = res
             Path(a.out).write_text(json.dumps(out, indent=1))
