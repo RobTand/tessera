@@ -1,0 +1,1 @@
+{"impl": "fused", "L": 16, "R": 4, "arity": 1, "rows": 2048, "cols": 4096, "chunk": 512, "seconds": 5.591, "seconds_cold": 5.862, "sse": 1712574192.0, "start_ts": 1788320732.7241025, "end_ts": 1788320738.3151217, "power_w": {"n": 6, "mean": 61.0, "max": 62.62, "min": 59.8}, "neighbours": [], "states_identical": true, "sse_identical": true}
