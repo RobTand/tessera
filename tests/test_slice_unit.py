@@ -622,6 +622,90 @@ def test_the_window_kernel_lane_decodes_a_shard(units):
         assert torch.allclose(got.float(), reference, rtol=1e-4, atol=1e-4)
 
 
+# ------------------------------------------------- the serving materialisers
+
+
+@needs_cuda
+@pytest.mark.parametrize("label", [c[0] for c in CASES])
+@pytest.mark.parametrize("axis", ["row", "column"])
+def test_stock_materialisation_of_a_shard_is_the_parent_sliced(units, label, axis):
+    """The tensors a runtime is handed slice with the unit.
+
+    ``materialize_stock`` is what the resident serving route calls -- the
+    NVFP4 triple on an E2M1 unit, the per-channel FP8 pair on an E4M3 one --
+    and the plugin calls it on the *shard*, never on the parent.  Decoding
+    correctly is not enough on its own: the packed nibble pairs and the
+    per-16 scale bytes are a second layout over the same values, and a
+    column cut that landed off a nibble pair or off a scale group would
+    still decode right and pack wrong.
+    """
+    from tessera.stock import materialize_stock, stock_kind
+
+    unit, forests, grid, blob = units[label]
+    parsed = parse_unit_artifact(blob, device=DEVICE)
+    geometry = parsed.manifest.geometry
+    if not can_shard(parsed, 2, axis):
+        pytest.skip(f"{label} does not cut two ways along {axis}s")
+    whole = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    #: Columns per element of each tensor's second axis, or ``None`` where the
+    #: second axis is not columns at all: the FP8 pair's scale is one word per
+    #: output ROW, so a column cut keeps every row's scale untouched.
+    strides = (
+        {"weight": 1, "weight_scale": None}
+        if stock_kind(whole) == "fp8"
+        else {"weight_packed": 2, "weight_scale": parsed.unit.half,
+              "weight_global_scale": None}
+    )
+    extent = geometry.rows if axis == "row" else geometry.columns
+    for lo, hi in _tp_ranges(extent, 2):
+        kwargs = {"rows": (lo, hi)} if axis == "row" else {"cols": (lo, hi)}
+        shard = materialize_stock(
+            slice_unit(parsed, **kwargs), parsed.forests, parsed.code
+        )
+        assert set(shard) == set(whole)
+        for name, got in shard.items():
+            want = whole[name]
+            stride = strides[name]
+            if want.ndim == 2 and axis == "row":
+                want = want[lo:hi]
+            elif want.ndim == 2 and axis == "column" and stride is not None:
+                want = want[:, lo // stride : hi // stride]
+            assert torch.equal(got.view(torch.uint8), want.view(torch.uint8)), (
+                f"{label} {axis} [{lo}, {hi}) {name}"
+            )
+
+
+@needs_cuda
+@pytest.mark.parametrize("axis", ["row", "column"])
+def test_materialize_fp8_of_a_shard_is_the_parent_sliced(units, axis):
+    """``materialize_fp8`` is the FP8 route's entry point, called directly.
+
+    Both returns have to slice: the byte plane on both axes, and the
+    per-output-row scale on rows only -- a column shard keeps every row's
+    scale, because a column cut does not change which rows exist.
+    """
+    from tessera.decode import materialize_fp8
+
+    unit, forests, grid, blob = units["e4m3-window-channel"]
+    parsed = parse_unit_artifact(blob, device=DEVICE)
+    geometry = parsed.manifest.geometry
+    bytes_whole, scale_whole = materialize_fp8(
+        parsed.unit, parsed.forests, parsed.code
+    )
+    extent = geometry.rows if axis == "row" else geometry.columns
+    for lo, hi in _tp_ranges(extent, 4):
+        kwargs = {"rows": (lo, hi)} if axis == "row" else {"cols": (lo, hi)}
+        got, scale = materialize_fp8(
+            slice_unit(parsed, **kwargs), parsed.forests, parsed.code
+        )
+        if axis == "row":
+            assert torch.equal(got, bytes_whole[lo:hi])
+            assert torch.equal(scale, scale_whole[lo:hi])
+        else:
+            assert torch.equal(got, bytes_whole[:, lo:hi])
+            assert torch.equal(scale, scale_whole)
+
+
 # ------------------------------------------------------------- granularity
 
 

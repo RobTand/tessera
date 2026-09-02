@@ -1,6 +1,7 @@
 # Slicing a Tessera unit into the shard a rank loads
 
-**Date** 2026-09-02 · **Branch** `agent-a5d4cf4818e8e77ba` off `3d419e7` ·
+**Date** 2026-09-02 · **Branch** `worktree-agent-a5d4cf4818e8e77ba` off
+`3d419e7`, commits `dee75d9` + `1ce9b70` ·
 **Design** [`docs/design/tensor-parallel.md`](../design/tensor-parallel.md) ·
 **Schema** `docs/schema/prismaquant.tessera.v1.md` §1d (minor 4)
 
@@ -51,6 +52,15 @@ equals `decode(parent)[r0:r1, c0:c1]` **bit for bit** (integer codes and the
 dequantised tensor), the shard survives a wire round-trip, and a shard of a
 shard equals the direct slice.
 
+On top of the decode, the two materialisers a serving route actually calls:
+`stock.materialize_stock` on every case (the NVFP4 triple's packed nibble pairs
+and per-16 scale bytes; the FP8 pair's byte plane and per-row scale) and
+`decode.materialize_fp8` on the E4M3 case, each compared against the parent's
+materialisation sliced, on both axes. Decoding correctly is not sufficient for
+these: the packed layouts are a second layout over the same values, and a
+column cut landing off a nibble pair or off a scale group would decode right
+and pack wrong.
+
 **Nothing at row offset 0 moved.** Two golden-byte tests hold the parent bytes
 against hashes recorded from an archive of `src/` and `tests/` taken at
 `3d419e7` (`/home/rob/tmp/tp-slice/head_src`, scripts `head_golden.py`,
@@ -91,11 +101,20 @@ unbounded-prefix replay), run back to back with *after* on the same box.
 | slice **all** tp=2 shards | 14.92 ms | 14.52 ms |
 | slice **all** tp=4 shards | 35.31 ms | 33.62 ms |
 
-A rank's own cut is **36% of the parse it follows and 44% of the decode**, and
-a rank cuts one shard, not `tp` of them. The absolute win from the bounded tail
-is small here because these units are 1024–2048 rows; what changes is the
-*shape*: before, one shard costs more the further down the unit it sits
+A rank's own cut is roughly a third of the parse it follows, and a rank cuts
+one shard, not `tp` of them. The absolute win from the bounded tail is small
+here because these units are 1024–2048 rows; what changes is the *shape*:
+before, one shard costs more the further down the unit it sits
 (14.86 → 15.42 → 16.91 ms as tp rises); after, it is flat.
+
+**How much of this table to believe.** Every number lands near a multiple of
+~4.9 ms, and "slice all tp=2 shards" (14.52) is not measurably more than
+"slice one" (14.51) even though it does a second cut. That is host-device sync
+granularity under GPU time-slicing with six other workers, and a min-of-3
+picks the luckiest alignment. So read the *shapes* as the claims -- flat versus
+growing in the prefix, a column cut cheaper than a row cut, a cut cheaper than
+the parse it follows -- and read "36%" or "3.0x" as approximate. A precise
+per-rank load budget needs an unshared box.
 
 The scaling itself, on one 12288×256 E4M3/WINDOW/CHANNEL unit — 12288 rows is
 a GLM-5.3-Flash expert `w2`, and the narrow column count keeps the encode
@@ -117,9 +136,10 @@ Rank 0 is 4.8 ms either way — it stores no state, so it never enters the path.
 
 Where the remaining ~10 ms goes: it is the state computation's own fixed cost
 (one bounded replay per rate group, plus the plane), not the prefix. It is
-launch-overhead-bound — the box sat at 35 W of a ~140 W envelope through these
-runs — and batching the per-rate-group replays is the obvious thing to cut if a
-rank's load time ever matters. It has not been cut, because 14 ms against a
+launch-overhead-bound — a spot `nvidia-smi` sample during these runs read 35 W
+of a ~140 W envelope, which is a sample and not a series — and batching the
+per-rate-group replays is the obvious thing to cut if a rank's load time ever
+matters. It has not been cut, because 14 ms against a
 40 ms parse and a 33 ms decode is not where load time goes.
 
 TCQ and window bodies at 512×512 (`/home/rob/tmp/tp-slice/measure_tcq.py`),

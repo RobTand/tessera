@@ -109,9 +109,9 @@ supposed to imply it: `slice_unit` refuses a cut whose rates do not sum to
 `root × width` exactly.
 
 **Rotation is refused.** An `R_in`-only unit's rotation blocks are a
-128-column structure a cut would break silently. Nothing ships rotation
-(`tessera-w4a4-changes-the-lever`: measured dead), so this costs nothing, but a
-silent slice of a rotated unit would be garbage.
+128-column structure a cut would break silently. Nothing ships rotation — it
+measured dead at 1.003x on the GLM experts, whose inputs are already Gaussian —
+so this costs nothing, but a silent slice of a rotated unit would be garbage.
 
 ## The loader contract
 
@@ -129,7 +129,7 @@ shard = slice_unit(parsed, cols=(lo, hi))           # row-parallel Linear
 | vLLM layer | what is split | the call | note |
 |---|---|---|---|
 | `ColumnParallelLinear` | output features = **rows** | `rows=(lo, hi)` | |
-| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by heads, so the row range is the member's own head range, not an even split of the container |
+| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect |
 | `RowParallelLinear` (`o_proj`, `down_proj`) | input features = **columns** | `cols=(lo, hi)` | |
 | `FusedMoE` with expert parallelism | whole experts | no slicing | EP moves units, it does not cut them |
 | `FusedMoE` with tensor parallelism inside an expert | as the dense cases | `rows=` for w1/w3, `cols=` for w2 | |
@@ -146,8 +146,14 @@ superblock and arity off the parse, which is what a loader holds) or a bare
 **Both residency modes.** Slicing is a layout operation on planes, so it is
 mode-agnostic:
 
-* *Resident* — parse the unit, slice, decode the shard, keep the decoded tile.
-  The parent's planes are dropped after the cut.
+* *Resident* — parse the unit, slice, then hand the shard to the materialiser
+  the route wants: `stock.materialize_stock` for the NVFP4 triple or the
+  per-channel FP8 pair, `decode.materialize_fp8` for the pair directly, or
+  `decode.reconstruct_unit` for the dequantised tile. Each returns the
+  parent's own output restricted to the shard — including the packed-nibble
+  and per-16-scale layouts, which are a second layout over the same values and
+  are tested on shards on both axes. The parent's planes are dropped after the
+  cut.
 * *Streamed* — parse the unit, slice, keep the **shard's** planes resident and
   decode per forward. The shard is an ordinary unit, so the streamed decoder
   needs no new path; what it needs is to carry the shard's `initial_state`,
