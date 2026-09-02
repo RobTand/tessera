@@ -214,6 +214,16 @@ def build_unit_artifact(
         scale_plane = ScalePlane.lut(
             bytes(unit.scale_lut.detach().cpu().numpy().tobytes()), unit.scale_global
         )
+    elif plane_kind is ScalePlaneKind.CHANNEL:
+        # The row scale IS the DIAG_SV field, so segment 2a cannot also be
+        # present: a unit carrying both was not written by this encoder.
+        if unit.scale_rows is None or unit.scale_rows.numel() != rows:
+            raise GrammarError("a CHANNEL scale plane needs one row word per output row")
+        if unit.diagonals is not None:
+            raise GrammarError("a CHANNEL scale plane cannot carry segment 2a diagonals")
+        if unit.scale_base.numel() or unit.scale_refine.numel():
+            raise GrammarError("a CHANNEL scale plane carries no block-scale words")
+        scale_plane = ScalePlane.channel(unit.scale_global)
     else:
         scale_plane = ScalePlane.s6b()
     # The depth the encoder *used*, not the depth the rate leaves room for.
@@ -245,6 +255,10 @@ def build_unit_artifact(
         widths = (0,) * cols
     else:
         widths = completion_widths_for(rates, grid.rate_cap, unit.completion_limit)
+    # The window body's shaping is shared history, not a code bit, so its
+    # rate ceiling is the grid's whole width; the TCQ trellis spends one bit
+    # of the payload on its code and caps one lower (``export._plan_for``).
+    cap = grid.payload_bits if body is BodyKind.WINDOW else grid.rate_cap
     geometry = Geometry(
         rows=rows,
         columns=cols,
@@ -271,15 +285,20 @@ def build_unit_artifact(
     if has_diagonals:
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
+    row_scale = plane_kind is ScalePlaneKind.CHANNEL
+    if row_scale:
+        payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.scale_rows)
     spec = TerminalSpec(
         "t-nvfp4",
         widths,
         released_positions=unit.released_positions,
         # A LUT plane has no base plane: its count is zero, exactly as a
-        # T-po2 terminal omits the refinement.  The nibble plane stays.
+        # T-po2 terminal omits the refinement.  The nibble plane stays.  A
+        # CHANNEL plane has neither block plane; its rows ride DIAG_SV.
         with_scale_base=plane_kind is ScalePlaneKind.S6B,
-        with_scale_refine=True,
+        with_scale_refine=not row_scale,
         with_diagonals=has_diagonals,
+        with_row_scale=row_scale,
     )
     # The spec is built first and handed to the layout on purpose: the plane
     # extent, the bytes packed into it and the terminal that describes it are
@@ -295,15 +314,16 @@ def build_unit_artifact(
         max_released=unit.released_positions,
         payloads=payloads,
         with_diagonals=has_diagonals,
-        cap=grid.rate_cap,
+        cap=cap,
         arity=grid.arity,
         spec=spec,
         span=span,
+        with_row_scale=row_scale,
     )
     region = build_plane_region(planes, payloads)
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
-        plane_region=region, cap=grid.rate_cap, arity=grid.arity, span=span,
+        plane_region=region, cap=cap, arity=grid.arity, span=span,
     )
     manifest = Manifest(
         encoder_profile_id=encoder_profile_id(
@@ -441,21 +461,7 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     n_released = terminal.plane_elements[
         CANONICAL_PLANE_ORDER.index(PlaneKind.RELEASE)
     ]
-    n_base = terminal.plane_elements[CANONICAL_PLANE_ORDER.index(PlaneKind.SCALE_BASE)]
-    if plane.kind is ScalePlaneKind.LUT:
-        if n_base:
-            raise GrammarError(
-                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
-                f"declares {n_base} base elements"
-            )
-        scale_base = torch.zeros(0, dtype=torch.uint8, device=device)
-        scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
-    else:
-        scale_base = unpack_uniform(
-            chunks[PlaneKind.SCALE_BASE],
-            geometry.positions // geometry.group_weights, 8, device,
-        )
-        scale_lut = None
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device)
     unit = EncodedUnit(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -468,31 +474,17 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         completion_bits=unpack_body(
             chunks[PlaneKind.COMPLETION], widths, steps, device
         ).long(),
-        scale_base=scale_base,
-        scale_refine=unpack_uniform(
-            chunks[PlaneKind.SCALE_REFINE],
-            geometry.positions // geometry.half_weights, 4, device,
-        ),
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,
         completion_limit=completion_limit,
         rotation=manifest.branch.rotation,
         rotation_block=128,
-        diagonals=(
-            Diagonals(
-                sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
-                su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
-            )
-            if chunks.get(PlaneKind.DIAG_SU)
-            else None
-        ),
+        diagonals=_read_diagonals(plane, chunks, rows, cols, device),
         group=geometry.group_weights,
         half=geometry.half_weights,
         span=span,
-        scale_plane=plane.kind,
-        scale_lut=scale_lut,
-        scale_global=float(plane.global_scale),
+        **scales,
     )
     if n_released and grid.arity > 1:
         raise GrammarError(
@@ -505,11 +497,11 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
         # §9's placement is *derived*, not stored: decode without release,
         # rank by descending decoded magnitude per superblock, and the RELEASE
         # plane's codes land on those positions in that order.
-        from .decode import decode_codes_mixed, unit_half_scales
+        from .decode import decode_codes_mixed, unit_scale_field
         from .encode import _canonical_release_order, e2m1_value_table
 
         pre = decode_codes_mixed(unit, forests, code, apply_release=False)
-        scale = torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
+        scale = unit_scale_field(unit, rows, cols)
         decoded = e2m1_value_table(device)[pre.int()] * scale
         unit.release_index = _canonical_release_order(
             decoded, cols, geometry.superblock_columns, n_released
@@ -518,6 +510,81 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
             chunks[PlaneKind.RELEASE], n_released, 4, device
         )
     return reconstruct_unit(unit, forests, code)
+
+
+def _read_scale_planes(plane, chunks, terminal, geometry, device) -> dict:
+    """Segment 2b off the wire, for every plane kind: the unit's scale fields.
+
+    Refuses, before any scale is derived, a terminal whose declared plane
+    counts disagree with the kind: a LUT or CHANNEL plane carries no
+    SCALE_BASE, a CHANNEL plane carries no SCALE_REFINE and no DIAG_SU, and
+    its DIAG_SV holds exactly one word per output row.
+    """
+    from .planes import CANONICAL_PLANE_ORDER
+
+    def elements(kind: PlaneKind) -> int:
+        return terminal.plane_elements[CANONICAL_PLANE_ORDER.index(kind)]
+
+    rows = geometry.rows
+    n_base, n_refine = elements(PlaneKind.SCALE_BASE), elements(PlaneKind.SCALE_REFINE)
+    empty = torch.zeros(0, dtype=torch.uint8, device=device)
+    if plane.kind is ScalePlaneKind.CHANNEL:
+        if n_base or n_refine:
+            raise GrammarError(
+                "a CHANNEL scale plane carries no block-scale planes; the terminal "
+                f"declares {n_base} base and {n_refine} refinement elements"
+            )
+        if elements(PlaneKind.DIAG_SU):
+            raise GrammarError(
+                "a CHANNEL scale plane's row field is DIAG_SV alone; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SU)} DIAG_SU elements"
+            )
+        if elements(PlaneKind.DIAG_SV) != rows:
+            raise GrammarError(
+                f"a CHANNEL scale plane holds one word per output row; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SV)} for {rows} rows"
+            )
+        return dict(
+            scale_base=empty, scale_refine=empty, scale_plane=plane.kind,
+            scale_lut=None, scale_global=float(plane.global_scale),
+            scale_rows=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
+        )
+    if plane.kind is ScalePlaneKind.LUT:
+        if n_base:
+            raise GrammarError(
+                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
+                f"declares {n_base} base elements"
+            )
+        scale_base = empty
+        scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
+    else:
+        scale_base = unpack_uniform(
+            chunks[PlaneKind.SCALE_BASE],
+            geometry.positions // geometry.group_weights, 8, device,
+        )
+        scale_lut = None
+    return dict(
+        scale_base=scale_base,
+        scale_refine=unpack_uniform(
+            chunks[PlaneKind.SCALE_REFINE],
+            geometry.positions // geometry.half_weights, 4, device,
+        ),
+        scale_plane=plane.kind, scale_lut=scale_lut,
+        scale_global=float(plane.global_scale), scale_rows=None,
+    )
+
+
+def _read_diagonals(plane, chunks, rows, cols, device):
+    """Segment 2a, present only when DIAG_SU is: under a CHANNEL plane DIAG_SV
+    is the row scale and there is no rank-1 pair to build."""
+    from .diagonals import Diagonals
+
+    if plane.kind is ScalePlaneKind.CHANNEL or not chunks.get(PlaneKind.DIAG_SU):
+        return None
+    return Diagonals(
+        sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
+        su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
+    )
 
 
 def _read_window_unit(art, grid: PayloadGrid, device) -> torch.Tensor:
@@ -537,7 +604,8 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> torch.Tensor:
     rows, cols = geometry.rows, geometry.columns
     window_bits = manifest.window_bits
     plane = manifest.scale_plane
-    validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap)
+    # A window position may spend the grid's whole width (``_plan_for``).
+    validate_rate_schedule(rates, manifest.branch.root, grid.payload_bits)
     if rows % grid.arity:
         raise GrammarError(
             f"geometry declares {rows} rows, not a whole number of arity-"
@@ -571,64 +639,36 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> torch.Tensor:
             f"{grid.size}-code {grid.name} grid: refusing to decode"
         )
     n_released = elements(PlaneKind.RELEASE)
-    n_base = elements(PlaneKind.SCALE_BASE)
-    if plane.kind is ScalePlaneKind.LUT:
-        if n_base:
-            raise GrammarError(
-                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
-                f"declares {n_base} base elements"
-            )
-        scale_base = torch.zeros(0, dtype=torch.uint8, device=device)
-        scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
-    else:
-        scale_base = unpack_uniform(
-            chunks[PlaneKind.SCALE_BASE],
-            geometry.positions // geometry.group_weights, 8, device,
-        )
-        scale_lut = None
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device)
     unit = EncodedUnit(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
         codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
         body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device, 1),
         completion_bits=torch.zeros(steps, cols, dtype=torch.long, device=device),
-        scale_base=scale_base,
-        scale_refine=unpack_uniform(
-            chunks[PlaneKind.SCALE_REFINE],
-            geometry.positions // geometry.half_weights, 4, device,
-        ),
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,
         completion_limit=0,
         rotation=manifest.branch.rotation,
         rotation_block=128,
-        diagonals=(
-            Diagonals(
-                sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
-                su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
-            )
-            if chunks.get(PlaneKind.DIAG_SU)
-            else None
-        ),
+        diagonals=_read_diagonals(plane, chunks, rows, cols, device),
         group=geometry.group_weights,
         half=geometry.half_weights,
         span=1,
-        scale_plane=plane.kind,
-        scale_lut=scale_lut,
-        scale_global=float(plane.global_scale),
         body=BodyKind.WINDOW,
         window_bits=window_bits,
         window_codes=table.to(device),
+        **scales,
     )
     if n_released and grid.arity > 1:
         raise GrammarError("release is not defined at arity > 1")
     if n_released:
-        from .decode import decode_codes_mixed, unit_half_scales
+        from .decode import decode_codes_mixed, unit_scale_field
         from .encode import _canonical_release_order, e2m1_value_table
 
         pre = decode_codes_mixed(unit, grid, None, apply_release=False)
-        scale = torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
+        scale = unit_scale_field(unit, rows, cols)
         decoded = e2m1_value_table(device)[pre.int()] * scale
         unit.release_index = _canonical_release_order(
             decoded, cols, geometry.superblock_columns, n_released

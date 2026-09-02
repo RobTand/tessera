@@ -117,6 +117,64 @@ convolutional trellis and beats EXL3 K4 in output space at 4.0 bpp. At the
 E2M1x2 cap the structured coset table remains better until `L ≥ 14`, so the
 body is a per-unit choice, not a replacement.
 
+### 1c. Schema minor 3 (2026-09-02): the per-channel scale plane
+
+Minor 3 adds **no manifest field**. It adds the value `2` = CHANNEL to the
+minor-1 `scale_plane.kind` record, which a minor-1 or minor-2 reader cannot
+resolve, so a manifest carrying it declares the minor that can.
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `scale_plane.kind` | uint | `2` = CHANNEL: one scale per output channel. |
+| `scale_plane.global_scale` | ratio | Exact rational, representable as an fp32; the encoder writes a power of two. No `table`. |
+
+**Planes under a CHANNEL plane.** The row scale rides the **DIAG_SV** plane
+— one fp16 per output row, the element segment 2a already declares — and
+nothing else: SCALE_BASE, SCALE_REFINE and DIAG_SU hold no elements. A
+weight is `grid_value(code) × global_scale × sv[row]`. No plane kind,
+element width or order changes, which is why this is a minor. Segment 2a
+cannot be present under it: the row field *is* the plane, and a unit
+declaring DIAG_SU elements is refused.
+
+**Why it exists.** The block planes carry the column structure an E2M1 tile
+cannot express (`tessera-scale-plane-buys-column-structure`). An E4M3 tile
+carries its own exponent, and the FP8 tensor core that executes it takes a
+per-channel scale (`compressed-tensors` `strategy: channel`), so on that
+grid the block plane is redundant twice over — it spends a quarter-bit per
+weight the tile does not need, and it is not the layout the kernel reads.
+Measured on six GLM experts at 4.0 bpp
+(`docs/measurements/tessera-window-body-2026-09-02.md`): the window body
+over a per-channel plane is 1.07× better than over the LUT plane at the
+same bytes, and pinned at L=14 is 0.94× of EXL3 K4 in output space. An
+E4M3 unit over this plane materialises into the stock per-channel FP8
+tensor (`decode.materialize_fp8`) exactly as an E2M1 unit materialises into
+NVFP4 — the same plane Gridbook's FP8-CB family carries.
+
+**Reading.** A minor-3 reader takes the kind off the record and, before any
+scale is derived, refuses a terminal that declares SCALE_BASE, SCALE_REFINE
+or DIAG_SU elements, or whose DIAG_SV count is not exactly `rows`. A header
+below minor 3 carrying kind `2` is refused at the manifest.
+
+**Writing.** `serialize` writes the lowest minor a manifest needs: an S6b or
+LUT manifest keeps the minor it had, byte for byte, whatever its body.
+
+**Identity.** The profile id binds `scale:channel` exactly as it binds
+`scale:lut`; the global is manifest bytes under the manifest digest, the
+row words are plane bytes under the payload digest.
+
+**Accounting.** 16 bits per output row on the DIAG_SV plane, inline:
+`0.0039` bpp on a 2048×4096 unit, plus the ratio's manifest bytes. No
+block-scale planes.
+
+**The window body's rate ceiling (a minor-2 clarification).** The TCQ
+trellis spends one bit of the payload on its code, so its per-code rate is
+capped at `payload_bits − 1`. The window body's shaping is the `L − R` bits
+of shared history, not a code bit, so a window position may spend the
+grid's whole width: `R = payload_bits` is an ordinary rung under a window
+body (E2M1x2 at 8 bits per pair, 4.0 body bits per weight). A reader
+validates a window manifest's schedule against `payload_bits`, a TCQ
+manifest's against `payload_bits − 1`.
+
 ## 2. Decisions this schema makes
 
 The design document leaves these open. Deciding them *is* item 1a.

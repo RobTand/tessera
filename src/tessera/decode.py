@@ -446,11 +446,67 @@ def unit_half_scales(unit: "EncodedUnit") -> torch.Tensor:
     """
     from .wire import scales_from_lut, scales_from_planes
 
-    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is ScalePlaneKind.LUT:
+    kind = getattr(unit, "scale_plane", ScalePlaneKind.S6B)
+    if kind is ScalePlaneKind.CHANNEL:
+        raise GrammarError(
+            "a CHANNEL scale plane has no per-half scales: one word per output "
+            "row; use unit_scale_field"
+        )
+    if kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
             raise GrammarError("a LUT scale plane needs the unit's table")
         return scales_from_lut(unit.scale_refine, unit.scale_lut, unit.scale_global)
     return scales_from_planes(unit.scale_base, unit.scale_refine, unit.group, unit.half)
+
+
+def unit_scale_field(unit: "EncodedUnit", rows: int, cols: int) -> torch.Tensor:
+    """The per-position scale ``[rows, cols]`` a decoder derives from the planes.
+
+    One dispatch for every plane kind: a block plane's halves repeated along
+    the row (``unit_half_scales``), a CHANNEL plane's row word times the
+    global broadcast along it.  ``rows`` is weight rows -- a caller holding a
+    k-tuple unit passes ``steps * arity``.
+    """
+    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is ScalePlaneKind.CHANNEL:
+        from .scale_channel import channel_scale_field
+
+        if unit.scale_rows is None:
+            raise GrammarError("a CHANNEL scale plane needs the unit's row words")
+        return channel_scale_field(unit.scale_rows, unit.scale_global, rows, cols)
+    return torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
+
+
+def materialize_fp8(
+    unit: "EncodedUnit",
+    forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
+    code: "ConvCode | None",
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """An E4M3 unit over a CHANNEL plane as the stock per-channel FP8 tensor.
+
+    Returns ``(bytes uint8 [rows, cols], scale fp32 [rows])`` -- the
+    ``weight`` / ``weight_scale`` pair a ``compressed-tensors`` FP8 checkpoint
+    at ``strategy: channel`` carries, so a runtime that has never heard of
+    Tessera serves the artifact W8A8 exactly as ``materialize_nvfp4`` lets
+    one serve an E2M1 unit as NVFP4.  Codes map through the grid's ``native``
+    bytes, so the two former-NaN slots land on their legal neighbour.
+    """
+    grid, forests = _grid_and_forests(forest)
+    if grid.arity != 1 or grid.native is None or grid.size != 256:
+        raise GrammarError(
+            f"materialize_fp8 needs a scalar 256-code hardware grid, got {grid.name}"
+        )
+    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is not ScalePlaneKind.CHANNEL:
+        raise GrammarError(
+            "an FP8 per-channel tensor takes one scale per output row: the unit "
+            f"carries a {unit.scale_plane.name} plane, which is a block layout"
+        )
+    codes = decode_codes_mixed(unit, forest, code)
+    native = torch.tensor(grid.native, dtype=torch.long, device=codes.device)
+    rows, cols = codes.shape
+    return (
+        native[codes.long()].to(torch.uint8),
+        (unit.scale_rows.to(codes.device).float() * float(unit.scale_global)).reshape(rows),
+    )
 
 
 def decode_codes_mixed(
@@ -592,7 +648,7 @@ def reconstruct_unit(
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity
     if scale is None:
-        scale = torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
+        scale = unit_scale_field(unit, rows, cols)
     out = dequantize(codes, scale, grid)
     if unit.diagonals is not None:
         out = undo_diagonals(out, unit.diagonals)

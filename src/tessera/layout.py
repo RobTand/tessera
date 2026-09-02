@@ -88,6 +88,10 @@ class TerminalSpec:
     with_scale_refine: bool = False
     with_diagonals: bool = False
     clip_exponent_code: int = 0
+    #: A CHANNEL scale plane (schema minor 3): the row scale rides DIAG_SV
+    #: alone -- one fp16 per output row -- with DIAG_SU absent.  Distinct from
+    #: ``with_diagonals``, which declares the rank-1 pair.
+    with_row_scale: bool = False
 
 
 def _counts_for(
@@ -137,10 +141,14 @@ def _counts_for(
         if spec is None:
             return sum(completion_capacity(rate, cap) for rate in rates) * steps
         return sum(spec.completion_bits) * steps
-    if kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
+    if kind is PlaneKind.DIAG_SU:
         if spec is not None and not spec.with_diagonals:
             return 0
-        return geometry.columns if kind is PlaneKind.DIAG_SU else rows
+        return geometry.columns
+    if kind is PlaneKind.DIAG_SV:
+        if spec is not None and not (spec.with_diagonals or spec.with_row_scale):
+            return 0
+        return rows
     if kind is PlaneKind.SCALE_REFINE:
         if spec is not None and not spec.with_scale_refine:
             return 0
@@ -196,8 +204,12 @@ def build_planes(
     arity: int = 1,
     spec: "TerminalSpec | None" = None,
     span: int = 1,
+    with_row_scale: bool = False,
 ) -> tuple[PlaneDescriptor, ...]:
     """Full-extent descriptors, one per plane, in canonical order.
+
+    ``with_row_scale=True`` declares a CHANNEL scale plane's row field: the
+    DIAG_SV plane is present at ``rows`` fp16 words with DIAG_SU absent.
 
     Counts are per-superblock granules for position-domain planes, which is the
     granularity a legal truncation respects.  ``max_released`` declares the
@@ -235,7 +247,9 @@ def build_planes(
             arity=arity,
             span=span,
         )
-        if not with_diagonals and kind in (PlaneKind.DIAG_SU, PlaneKind.DIAG_SV):
+        if kind is PlaneKind.DIAG_SU and not with_diagonals:
+            total = 0
+        if kind is PlaneKind.DIAG_SV and not (with_diagonals or with_row_scale):
             total = 0
         if kind in (PlaneKind.BODY, PlaneKind.COMPLETION):
             granularity = CountGranularity.PER_SUPERBLOCK

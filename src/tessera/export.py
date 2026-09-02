@@ -35,7 +35,7 @@ from pathlib import Path
 
 import torch
 
-from .alphabet import PayloadGrid, build_forest, grid_digest
+from .alphabet import GAUSSIAN_SOURCE, PayloadGrid, build_forest, grid_digest
 from .decode import reconstruct_unit
 from .encode import encode_unit
 from .errors import GrammarError
@@ -50,6 +50,8 @@ __all__ = [
     "DEFAULT_SCALE_PLANE",
     "ExportReport",
     "ExportedUnit",
+    "WireRecipe",
+    "wire_recipe",
     "encode_linear",
     "encode_settings_from_config",
     "export_checkpoint",
@@ -114,6 +116,77 @@ DEFAULT_BODY = BodyKind.TCQ
 DEFAULT_WINDOW_BITS = 0
 DEFAULT_WINDOW_SEED = 0
 DEFAULT_WINDOW_SIGMA: "float | None" = None
+DEFAULT_CHANNEL_SIGMA: "float | None" = None
+
+
+@dataclass(frozen=True)
+class WireRecipe:
+    """The wire-level choices the exporter makes for a unit: body and plane.
+
+    Tessera's grammar has five axes -- grid (tile x tuple), body (the
+    shaping machine), rate, scale plane, and the route the decoded tile
+    executes on -- and the first three and the plane are one grammar for
+    the 4-bit and 8-bit tiles alike.  What differs per grid is which point of
+    it the exporter writes, and that is a *recipe*: a function of the grid
+    and the rung, spelled once here, read by the exporter, by PrismaQuant's
+    render leg and accountant, and by the calculator, so that no consumer
+    carries its own copy of a default that can drift.
+
+    ``window_sigma`` / ``channel_sigma`` are the modelled source spreads in
+    grid units (``None``: the amax-bounded source for a block plane, and
+    ``scale_channel.default_channel_sigma`` for a CHANNEL plane).
+    """
+
+    body: BodyKind
+    span: int
+    scale_plane: ScalePlaneKind
+    window_bits: int = 0
+    window_seed: int = 0
+    window_sigma: "float | None" = None
+    channel_sigma: "float | None" = None
+
+    def __post_init__(self) -> None:
+        body = BodyKind(self.body)
+        if body is BodyKind.WINDOW and self.window_bits < 1:
+            raise GrammarError("a window recipe names its window_bits")
+        if body is BodyKind.WINDOW and self.span != 1:
+            raise GrammarError("a window recipe is span 1")
+        if body is BodyKind.TCQ and self.window_bits:
+            raise GrammarError("a TCQ recipe has no window_bits")
+
+
+#: The shipping recipe today, on every grid: the span-2 coset trellis over
+#: the LUT scale plane (schema minor 1).
+TCQ_RECIPE = WireRecipe(
+    body=DEFAULT_BODY, span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE,
+    window_bits=DEFAULT_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
+    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
+)
+
+
+def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
+    """The wire the exporter writes for a unit on ``grid`` at rung ``q256``.
+
+    Today every grid gets ``TCQ_RECIPE``.  The measured targets, each held
+    behind a mechanical gate rather than a doubt
+    (``docs/measurements/tessera-window-body-2026-09-02.md``):
+
+    * **E4M3**: the window body over the CHANNEL plane -- at 4.0 bpp L=14
+      is 1.235x better than this recipe in output space and 0.94x of EXL3
+      K4 pinned, and its decoded tile is a stock per-channel FP8 tensor.
+      Gates: a window decode in the kernel lane and an encoder faster than
+      the O(2^L) reference.
+    * **E2M1x2 below the cap** (``q256 < 896``): the window body over the
+      LUT plane, 1.3x better than the coset trellis at 3.0-3.5 bpp.  Same
+      gates, plus the measurement on the true wire (LUT plane, mixed rates).
+    * **E2M1x2 at the cap**: this recipe.  The structured coset table is not
+      beaten by a random window until L >= 14-16, and then by too little to
+      pay for the table.
+
+    ``q256`` is accepted so the sub-cap flip is a one-line change here and
+    nowhere else; it is unused while the recipe is rung-independent.
+    """
+    return TCQ_RECIPE
 
 
 @dataclass(frozen=True)
@@ -165,7 +238,10 @@ class ExportReport:
 
 
 @lru_cache(maxsize=256)
-def _plan_for(grid: PayloadGrid, q256: int, columns: int, body: BodyKind = BodyKind.TCQ):
+def _plan_for(
+    grid: PayloadGrid, q256: int, columns: int, body: BodyKind = BodyKind.TCQ,
+    source_sigma: "float | None" = None,
+):
     """Rate schedule and forests for one (grid, rung, width).
 
     Cached because the forests are an exhaustive per-rate optimisation and are
@@ -174,12 +250,27 @@ def _plan_for(grid: PayloadGrid, q256: int, columns: int, body: BodyKind = BodyK
     rebuilding it per tensor is the export's largest avoidable cost.  A
     window body has no forests: the second element is then the grid itself,
     which is what every decode-side entry point accepts in their place.
+
+    The rate ceiling depends on the body.  The TCQ trellis spends one bit of
+    the payload on its code, so its cap is ``payload_bits - 1``; the window
+    body's shaping is the ``L - R`` bits of shared history, not a code bit,
+    so a position may spend the grid's whole width -- ``R = payload_bits``
+    is an ordinary rung there (E2M1x2 at 4.0 body bits per weight).
+
+    ``source_sigma`` is the spread, in grid units, of the Gaussian a TCQ
+    forest is optimised against -- the CHANNEL plane's rows are scaled to it
+    -- and ``None`` is the amax-bounded source a block plane delivers.
     """
     root = Fraction(q256 * grid.arity, 256)
-    rates = bresenham_rate_schedule(root, columns, cap=grid.rate_cap)
-    if BodyKind(body) is BodyKind.WINDOW:
+    body = BodyKind(body)
+    cap = grid.payload_bits if body is BodyKind.WINDOW else grid.rate_cap
+    rates = bresenham_rate_schedule(root, columns, cap=cap)
+    if body is BodyKind.WINDOW:
         return rates, grid
-    forests = {rate: build_forest(rate, grid=grid) for rate in sorted(set(rates))}
+    samples = None if source_sigma is None else GAUSSIAN_SOURCE(1 << 14, float(source_sigma))
+    forests = {
+        rate: build_forest(rate, samples=samples, grid=grid) for rate in sorted(set(rates))
+    }
     return rates, forests
 
 
@@ -197,20 +288,23 @@ def encode_linear(
     completion: "int | None" = 0,
     verify: bool = True,
     scale_refit: int = DEFAULT_SCALE_REFIT,
-    span: int = DEFAULT_SPAN,
-    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    span: "int | None" = None,
+    scale_plane: "ScalePlaneKind | None" = None,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
-    body: BodyKind = DEFAULT_BODY,
-    window_bits: int = DEFAULT_WINDOW_BITS,
-    window_seed: int = DEFAULT_WINDOW_SEED,
+    body: "BodyKind | None" = None,
+    window_bits: "int | None" = None,
+    window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
+    channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
-    ``body``/``window_bits``/``window_seed``/``window_sigma`` select and
-    parameterise the window body (schema minor 2, ``encode_unit``); the
-    defaults are the TCQ body, so a caller that names none of them gets the
-    shipping wire.
+    ``span``, ``scale_plane``, ``body``, ``window_bits`` and ``window_seed``
+    default to ``None``, which means *the recipe*: ``wire_recipe(grid,
+    q256)`` resolves each one the caller left unset, so a caller that names
+    none of them gets the shipping wire for its grid, and one that names
+    some overrides only those.  ``window_sigma``/``channel_sigma`` are the
+    modelled source spreads (``encode_unit``).
 
     ``completion`` is the second rate axis and it was previously nailed shut at
     zero here.  A column at body rate ``R`` may spend up to ``cap - R`` further
@@ -235,8 +329,25 @@ def encode_linear(
         raise GrammarError(
             f"{name}: {rows} rows is not divisible by the grid arity {grid.arity}"
         )
-    body = BodyKind(body)
-    rates, forests = _plan_for(grid, q256, columns, body)
+    recipe = wire_recipe(grid, q256)
+    span = recipe.span if span is None else int(span)
+    scale_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
+    body = BodyKind(recipe.body if body is None else body)
+    window_bits = recipe.window_bits if window_bits is None else int(window_bits)
+    window_seed = recipe.window_seed if window_seed is None else int(window_seed)
+    if window_sigma is None:
+        window_sigma = recipe.window_sigma
+    if channel_sigma is None:
+        channel_sigma = recipe.channel_sigma
+    if scale_plane is ScalePlaneKind.CHANNEL:
+        # Resolved here so the TCQ forest and the encoder's rows model the
+        # same Gaussian; ``encode_unit`` resolves it identically.
+        from .scale_channel import default_channel_sigma
+
+        if channel_sigma is None:
+            channel_sigma = default_channel_sigma(grid)
+    source_sigma = channel_sigma if scale_plane is ScalePlaneKind.CHANNEL else None
+    rates, forests = _plan_for(grid, q256, columns, body, source_sigma)
     if body is BodyKind.WINDOW and completion not in (None, 0):
         raise GrammarError(f"{name}: a window body has no completion axis")
     # A window body has no super-symbols.  The span is a TCQ setting whose
@@ -253,7 +364,7 @@ def encode_linear(
         scale_refit=scale_refit, span=span, scale_plane=scale_plane,
         trellis_weighting=trellis_weighting,
         body=body, window_bits=window_bits, window_seed=window_seed,
-        window_sigma=window_sigma,
+        window_sigma=window_sigma, channel_sigma=channel_sigma,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -293,15 +404,19 @@ def export_checkpoint(
     extra_config: "dict | None" = None,
     verify: bool = True,
     scale_refit: int = DEFAULT_SCALE_REFIT,
-    span: int = DEFAULT_SPAN,
-    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    span: "int | None" = None,
+    scale_plane: "ScalePlaneKind | None" = None,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
-    body: BodyKind = DEFAULT_BODY,
-    window_bits: int = DEFAULT_WINDOW_BITS,
-    window_seed: int = DEFAULT_WINDOW_SEED,
+    body: "BodyKind | None" = None,
+    window_bits: "int | None" = None,
+    window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
+    channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
+
+    The wire fields left ``None`` resolve to ``wire_recipe(grid, ...)``
+    exactly as in ``encode_linear``; the config records the resolved recipe.
 
     ``plan`` maps tensor name -> per-position body rate in q256 units.  A name
     in ``plan`` that is absent from ``tensors`` is an error rather than a
@@ -318,6 +433,11 @@ def export_checkpoint(
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
+    resolved = _resolve_recipe(
+        grid, plan, span, scale_plane, body, window_bits, window_seed, window_sigma,
+        channel_sigma,
+    )
+    span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma = resolved
 
     payload: "dict[str, torch.Tensor]" = {}
     units: "list[ExportedUnit]" = []
@@ -331,7 +451,7 @@ def export_checkpoint(
                 scale_refit=scale_refit, span=span, scale_plane=scale_plane,
                 trellis_weighting=trellis_weighting,
                 body=body, window_bits=window_bits, window_seed=window_seed,
-                window_sigma=window_sigma,
+                window_sigma=window_sigma, channel_sigma=channel_sigma,
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -355,8 +475,40 @@ def export_checkpoint(
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting, body, window_bits, window_seed, window_sigma)
+                  trellis_weighting, body, window_bits, window_seed, window_sigma,
+                  channel_sigma)
     return report
+
+
+def _resolve_recipe(grid, plan, span, scale_plane, body, window_bits, window_seed,
+                    window_sigma, channel_sigma):
+    """One recipe for a checkpoint: the fields the caller left unset, from
+    ``wire_recipe``.  A plan whose rungs resolve to different recipes is
+    refused -- the config records one body and one plane, and a checkpoint
+    that mixed them would be described by neither."""
+    recipes = {wire_recipe(grid, q) for q in set(plan.values())} or {wire_recipe(grid)}
+    if len(recipes) != 1:
+        raise GrammarError(
+            f"the plan's rungs resolve to {len(recipes)} different wire recipes on "
+            f"{grid.name}; export one recipe per checkpoint"
+        )
+    recipe = next(iter(recipes))
+    span = recipe.span if span is None else int(span)
+    scale_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
+    body = BodyKind(recipe.body if body is None else body)
+    window_bits = recipe.window_bits if window_bits is None else int(window_bits)
+    window_seed = recipe.window_seed if window_seed is None else int(window_seed)
+    window_sigma = recipe.window_sigma if window_sigma is None else float(window_sigma)
+    channel_sigma = recipe.channel_sigma if channel_sigma is None else float(channel_sigma)
+    if scale_plane is ScalePlaneKind.CHANNEL and channel_sigma is None:
+        from .scale_channel import default_channel_sigma
+
+        channel_sigma = default_channel_sigma(grid)
+    return span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma
+
+
+_PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
+                ScalePlaneKind.CHANNEL: "channel"}
 
 
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
@@ -366,7 +518,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
                   trellis_weighting: str = "none",
                   body: BodyKind = BodyKind.TCQ, window_bits: int = 0,
-                  window_seed: int = 0, window_sigma: "float | None" = None) -> None:
+                  window_seed: int = 0, window_sigma: "float | None" = None,
+                  channel_sigma: "float | None" = None) -> None:
     plane = ScalePlaneKind(scale_plane)
     body = BodyKind(body)
     if body is BodyKind.WINDOW:
@@ -417,11 +570,15 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
         # interleave, because the same count meant a different encoder before
         # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
-        # ``plane`` is the segment-2b kind: ``s6b`` (E8M0 base + nibble) or
-        # ``lut16`` (nibble into a per-unit sixteen-entry E4M3 table).
+        # ``plane`` is the segment-2b kind: ``s6b`` (E8M0 base + nibble),
+        # ``lut16`` (nibble into a per-unit sixteen-entry E4M3 table) or
+        # ``channel`` (schema minor 3: one fp16 word per output row on
+        # DIAG_SV times a global; ``sigma`` is the source spread, in grid
+        # units, the rows were scaled to and the table/forest modelled).
         "scale": {"group": group, "half": half, "refit": scale_refit,
                   "schedule": "amax" if scale_refit == 0 else "trailing-refit",
-                  "plane": "s6b" if plane is ScalePlaneKind.S6B else "lut16"},
+                  "plane": _PLANE_NAMES[plane],
+                  "sigma": None if channel_sigma is None else float(channel_sigma)},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
@@ -466,13 +623,14 @@ def export_checkpoint_streaming(
     copy_aux: bool = True,
     progress=None,
     shard_filter: "set[str] | None" = None,
-    span: int = DEFAULT_SPAN,
-    scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
+    span: "int | None" = None,
+    scale_plane: "ScalePlaneKind | None" = None,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
-    body: BodyKind = DEFAULT_BODY,
-    window_bits: int = DEFAULT_WINDOW_BITS,
-    window_seed: int = DEFAULT_WINDOW_SEED,
+    body: "BodyKind | None" = None,
+    window_bits: "int | None" = None,
+    window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
+    channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -529,6 +687,11 @@ def export_checkpoint_streaming(
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
+    resolved = _resolve_recipe(
+        grid, plan, span, scale_plane, body, window_bits, window_seed, window_sigma,
+        channel_sigma,
+    )
+    span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma = resolved
 
     units: "list[ExportedUnit]" = []
     passthrough_bytes = 0
@@ -549,6 +712,7 @@ def export_checkpoint_streaming(
                         trellis_weighting=trellis_weighting,
                         body=body, window_bits=window_bits,
                         window_seed=window_seed, window_sigma=window_sigma,
+                        channel_sigma=channel_sigma,
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -579,7 +743,8 @@ def export_checkpoint_streaming(
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting, body, window_bits, window_seed, window_sigma)
+                  trellis_weighting, body, window_bits, window_seed, window_sigma,
+                  channel_sigma)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
@@ -613,8 +778,10 @@ def encode_settings_from_config(config: dict) -> dict:
     scale = config.get("scale", {})
     trellis = config.get("trellis", {})
     plane = scale.get("plane", "s6b")
-    if plane not in ("s6b", "lut16"):
+    planes = {name: kind for kind, name in _PLANE_NAMES.items()}
+    if plane not in planes:
         raise GrammarError(f"unknown scale plane {plane!r} in config")
+    channel_sigma = scale.get("sigma")
     body = config.get("body", {"kind": "tcq"})
     kind = body.get("kind", "tcq")
     if kind not in ("tcq", "window"):
@@ -628,12 +795,13 @@ def encode_settings_from_config(config: dict) -> dict:
         with_diagonals=bool(config.get("with_diagonals", False)),
         scale_refit=int(scale.get("refit", 0)),
         span=int(trellis.get("span", 1)),
-        scale_plane=ScalePlaneKind.S6B if plane == "s6b" else ScalePlaneKind.LUT,
+        scale_plane=planes[plane],
         trellis_weighting=str(trellis.get("weighting", "none")),
         body=BodyKind.WINDOW if kind == "window" else BodyKind.TCQ,
         window_bits=int(body.get("window_bits", 0)),
         window_seed=int(body.get("seed", 0)),
         window_sigma=None if sigma is None else float(sigma),
+        channel_sigma=None if channel_sigma is None else float(channel_sigma),
     )
 
 

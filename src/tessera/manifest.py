@@ -183,6 +183,16 @@ class ScalePlaneKind(IntEnum):
     #: scale is ``e4m3(table[nibble]) * global``.  Same index granularity as
     #: S6b at half the bytes; the table is chosen per unit by the encoder.
     LUT = 1
+    #: One scale per output channel (schema minor 3): the layout an FP8
+    #: tensor core consumes.  No SCALE_BASE, no SCALE_REFINE and no DIAG_SU;
+    #: the row scale is the DIAG_SV plane -- one fp16 per output row, the
+    #: field segment 2a already declares -- times the unit's fp32 global.  A
+    #: weight is ``grid_value(code) * global * sv[row]``.  The block planes
+    #: carry column structure an E2M1 tile cannot express; an E4M3 tile has
+    #: its own exponent and the FP8 MMA takes a per-channel scale, so on that
+    #: grid this plane is both cheaper and the served layout
+    #: (``scale_channel.py``).
+    CHANNEL = 2
 
 
 class BodyKind(IntEnum):
@@ -231,6 +241,14 @@ class ScalePlane:
             if self.table or self.global_scale != 1:
                 raise ManifestError("an S6b scale plane carries no table or global")
             return
+        if self.kind is ScalePlaneKind.CHANNEL:
+            if self.table:
+                raise ManifestError("a CHANNEL scale plane carries no table; its rows are the DIAG_SV plane")
+            if self.global_scale <= 0:
+                raise ManifestError("the CHANNEL global scale must be positive")
+            if Fraction(float(self.global_scale)) != self.global_scale:
+                raise ManifestError("the CHANNEL global scale must be exactly representable as a float")
+            return
         if not 2 <= len(self.table) <= 16:
             raise ManifestError(
                 f"a LUT scale plane holds 2..16 entries, got {len(self.table)}"
@@ -262,16 +280,28 @@ class ScalePlane:
     def lut(cls, table: bytes, global_scale: float) -> "ScalePlane":
         return cls(ScalePlaneKind.LUT, bytes(table), Fraction(float(global_scale)))
 
+    @classmethod
+    def channel(cls, global_scale: float) -> "ScalePlane":
+        return cls(ScalePlaneKind.CHANNEL, b"", Fraction(float(global_scale)))
+
     def encode(self, writer: Writer) -> None:
         writer.uint(int(self.kind))
         if self.kind is ScalePlaneKind.LUT:
             writer.blob(self.table).ratio(self.global_scale)
+        elif self.kind is ScalePlaneKind.CHANNEL:
+            writer.ratio(self.global_scale)
 
     @classmethod
     def decode(cls, reader: Reader) -> "ScalePlane":
-        kind = ScalePlaneKind(reader.uint())
+        raw = reader.uint()
+        try:
+            kind = ScalePlaneKind(raw)
+        except ValueError:
+            raise ManifestError(f"unknown scale-plane kind {raw}") from None
         if kind is ScalePlaneKind.S6B:
             return cls(kind)
+        if kind is ScalePlaneKind.CHANNEL:
+            return cls(kind, b"", reader.ratio())
         table = reader.blob()
         return cls(kind, bytes(table), reader.ratio())
 
@@ -386,7 +416,15 @@ class Manifest:
 
     @property
     def schema_minor(self) -> int:
-        """The lowest schema minor that expresses this manifest."""
+        """The lowest schema minor that expresses this manifest.
+
+        Minor 3 (2026-09-02) adds no field: it is the ``CHANNEL`` value of
+        the minor-1 scale-plane record, which a minor-1 or minor-2 reader
+        cannot resolve, so a manifest carrying it declares the minor that
+        can.
+        """
+        if self.scale_plane.kind is ScalePlaneKind.CHANNEL:
+            return 3
         if self.body is BodyKind.WINDOW:
             return 2
         legacy = self.span == 1 and self.scale_plane.kind is ScalePlaneKind.S6B
@@ -597,6 +635,10 @@ class Manifest:
         if schema_minor >= 1:
             span = reader.uint()
             scale_plane = ScalePlane.decode(reader)
+            if scale_plane.kind is ScalePlaneKind.CHANNEL and schema_minor < 3:
+                raise ManifestError(
+                    f"a CHANNEL scale plane needs schema minor 3; the header says {schema_minor}"
+                )
         if schema_minor >= 2:
             body = BodyKind(reader.uint())
             window_bits = reader.uint()

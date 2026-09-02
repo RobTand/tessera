@@ -70,11 +70,11 @@ kernel. At 5.0 bpp the weight leg beats EXL3 K5 by 1.017×, but under A8
 EXL3's W4A16 is 1.206× better as served: the activation leg dominates at 5
 bits and the FP8 activation error is the floor (`tessera8-targets`).
 
-**L=16** (sparklina, four of six tensors so far, free start): R=4 `out`
-L5.gate 0.06484 (today 0.08298, EXL3 0.07237), L5.up 0.06686 (0.08526,
-0.07465), L20.gate 0.06227 (0.07896, 0.06925), L20.up 0.06519 (0.08303);
-R=5 L5.gate 0.03489, L5.up 0.03600, L20.gate 0.03304, L20.up 0.03507.
-About 3% over L=14 per tensor, for four times the table and the encode.
+**L=16** (sparklina, all six tensors, free start, table not charged): R=4
+`out` 0.06079 / `a8` 0.06532 at 4.016 bpp — 0.909× of EXL3 K4 before its
+0.0625 bpp table, which EXL3's slope prices at ~4%; R=5 `out` 0.03264 /
+`a8` 0.04048. About 3% over L=14 per tensor, for four times the table and
+the encode, and most of it given back to the table.
 
 ### Three caveats, each measured
 
@@ -82,9 +82,19 @@ About 3% over L=14 per tensor, for four times the table and the encode.
    charged `L/rows` bpp). The wire pins state 0, as the decoder assumes.
    Pinned re-run (`--pinned-start`, table charged in `bpp`): L5.gate R=4
    L=14 `out` 0.06734 / `a8` 0.07200 at 4.023 bpp; L5.up 0.06963 / 0.07448;
-   L5.gate R=5 L=14 0.03633 / 0.04438. The per-tensor pinned/free ratio and
-   the six-tensor pinned geomeans are **pending** the run's end and are
-   appended below; the headline is quoted free-start until then.
+   L5.gate R=5 L=14 0.03633 / 0.04438. **Pinned six-tensor geomeans, table
+   charged** (`tessera_bitshift_tile_pinned.json`, run complete):
+
+   | arm | bpp | out | a8 | vs EXL3 out | as served, a8 vs EXL3 W4A16 |
+   |---|---|---|---|---|---|
+   | window L=12 pinned, R=4 | 4.012 | 0.06640 | 0.07059 | **0.986×** | 1.048× |
+   | window L=14 pinned, R=4 | 4.023 | 0.06321 | 0.06759 | **0.938×** | 1.003× |
+   | window L=12 pinned, R=5 | 5.012 | 0.03632 | 0.04350 | 1.059× | — |
+   | window L=14 pinned, R=5 | 5.023 | 0.03392 | 0.04151 | **0.989×** | — |
+
+   The pinned start costs 0.6–0.8% against the free start: the headline
+   is now quoted pinned — **0.938× of EXL3 K4 at L=14**, W8A8 level with
+   EXL3's W4A16 at the same bytes.
 2. **Table cost.** The `2^L` table is charged on the ALPHABET plane, per
    unit: 0.0039 bpp at L=12, 0.0156 at L=14, 0.0625 at L=16 on a 2048×4096
    unit. Against EXL3's rate–distortion slope (~3.3% per 0.05 bpp) the L=16
@@ -190,11 +200,19 @@ principle 15 its acceptance is profiler evidence, not a bench number.
 
 ## What is not established
 
-* The E4M3 headline is under a per-channel plane that the wire does not
-  yet spell; on the per-16 LUT plane the gain is smaller (level at L=12 on
-  a Gaussian smoke). Measure the window body on the true wire — E2M1x2 at
-  K=5/6 over the LUT16 plane, E4M3 at R=4/5 over LUT16 and over the
-  per-channel plane once it exists — before any default moves.
+* ~~The E4M3 headline is under a per-channel plane that the wire does not
+  yet spell~~ — it does now (schema minor 3, `ScalePlaneKind.CHANNEL`,
+  `docs/schema/prismaquant.tessera.v1.md` §1c). **On the true wire**
+  (`experiments/tessera_window_wire.py`, production `encode_linear` →
+  `read_unit_artifact`, six-tensor geomeans, `tessera_window_wire_e4m3.json`):
+  E4M3 window L=12 over the LUT16 plane at 4.0 bpp (q960) is `out` 0.07573
+  against the span-2 TCQ default's 0.08123 (1.073× better, 25 s vs 4 s per
+  tensor) and at 5.0 bpp 0.04056 vs 0.04252 (1.048×). Against the same body
+  over the per-channel plane at the same bytes (0.06640 pinned L=12), the
+  block plane costs **1.14×** on E4M3: on this tile the plane is worth as
+  much as the body, and the CHANNEL plane is the E4M3 recipe's. The E2M1x2
+  true-wire arms (K=5/6/7 over LUT16, mixed rates) run in
+  `experiments/tessera_frontier.py`.
 * Mixed rates over one table (a Bresenham unit mixing K=4/5 columns) were
   not measured; the arms above are single-rate. The refit should absorb it;
   that is a prediction.
@@ -207,8 +225,9 @@ principle 15 its acceptance is profiler evidence, not a bench number.
 
 ## Next
 
-1. `ScalePlaneKind.CHANNEL` (one scale per output row, fp16 or E4M3×global):
-   the served W8A8 layout, and the plane the headline was measured under.
+1. ~~`ScalePlaneKind.CHANNEL`~~ **Done** (schema minor 3): one fp16 per
+   output row on the DIAG_SV plane times an fp32 global, the served W8A8
+   layout (`decode.materialize_fp8`), refit landed on the stored word.
 2. Window GEMV in the kernel lane; then the default flips **per grid**:
    E4M3 (window) and E2M1x2 below the cap (window), E2M1x2 at the cap
    (coset trellis, span 2) — a per-unit choice the wire already expresses.

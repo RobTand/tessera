@@ -163,6 +163,10 @@ class EncodedUnit:
     body: BodyKind = BodyKind.TCQ
     window_bits: int = 0
     window_codes: "torch.Tensor | None" = None   # [2^window_bits] uint8 grid codes
+    # A CHANNEL scale plane (schema minor 3): one fp16 word per output row,
+    # times ``scale_global``; ``scale_base`` and ``scale_refine`` are empty.
+    # Travels on the DIAG_SV plane (``scale_channel.py``).
+    scale_rows: "torch.Tensor | None" = None     # [rows] fp16
 
     @property
     def released_positions(self) -> int:
@@ -884,8 +888,16 @@ def encode_unit(
     window_bits: int = 0,
     window_seed: int = 0,
     window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
+
+    ``scale_plane=CHANNEL`` (schema minor 3) sets one scale per output row
+    instead of a block plane: rows start at ``channel_sigma`` grid units of
+    RMS (``scale_channel.default_channel_sigma`` when ``None``), the window
+    table -- or the TCQ forest the caller built -- models that Gaussian, and
+    ``scale_refit`` least-squares refits every row to its codes.  Segment 2a
+    cannot be fitted under it: the row field *is* the plane.
 
     ``body`` selects the trellis (schema minor 2): ``TCQ`` is the shaped
     convolutional trellis over the anchor forests; ``WINDOW`` is the bitshift
@@ -977,7 +989,22 @@ def encode_unit(
     peak = max(abs(v) for v in grid.values)
     scale_plane = ScalePlaneKind(scale_plane)
     table_bytes, global_scale = None, 1.0
-    if scale_plane is ScalePlaneKind.LUT:
+    channel_rows = effective_rows = None
+    if scale_plane is ScalePlaneKind.CHANNEL:
+        from .scale_channel import default_channel_sigma, initial_channel_scale
+
+        if fitted is not None:
+            raise GrammarError(
+                "a CHANNEL scale plane carries its row scale on the DIAG_SV field; "
+                "segment 2a diagonals cannot also be fitted under it"
+            )
+        if channel_sigma is None:
+            channel_sigma = default_channel_sigma(grid)
+        channel_rows, effective_rows, global_scale = initial_channel_scale(work, channel_sigma)
+        base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
+        refine = torch.zeros(0, dtype=torch.uint8, device=device)
+        effective = None
+    elif scale_plane is ScalePlaneKind.LUT:
         table_bytes, refine, effective, global_scale = _pack_scales_lut(
             work, half, peak=peak, headroom=scale_headroom,
         )
@@ -1008,10 +1035,26 @@ def encode_unit(
     rate_vector = torch.tensor(rates, device=device)
     window_codes = window_vectors = None
     if body is BodyKind.WINDOW:
+        # Under a CHANNEL plane the table models the Gaussian the rows were
+        # scaled to; under a block plane ``None`` models the amax-bounded
+        # source the half's scale delivers.
+        table_sigma = window_sigma
+        if table_sigma is None and scale_plane is ScalePlaneKind.CHANNEL:
+            table_sigma = channel_sigma
         window_codes = window_table(
-            grid, window_bits, sigma=window_sigma, seed=window_seed, half=half, device=device,
+            grid, window_bits, sigma=table_sigma, seed=window_seed, half=half, device=device,
         )
         window_vectors = vectors[window_codes.long()]           # [2^L, arity]
+
+    def current_scale() -> torch.Tensor:
+        # The per-position scale the trellis quantises against, ``[rows,
+        # cols]``: a block plane's halves repeated along the row, or a
+        # CHANNEL plane's row word broadcast along it.
+        if scale_plane is ScalePlaneKind.CHANNEL:
+            from .scale_channel import channel_scale_field
+
+            return channel_scale_field(channel_rows, global_scale, rows, cols)
+        return torch.repeat_interleave(effective, half).reshape(rows, cols)
 
     def trellis_pass(targets: torch.Tensor, weights: "torch.Tensor | None" = None) -> float:
         # One Viterbi per rate: columns are independent, so a mixed-rate
@@ -1064,7 +1107,7 @@ def encode_unit(
     if trellis_weighting not in ("none", "scale"):
         raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
     for _ in range(max(scale_refit, 1)):
-        scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
+        scale = current_scale()
         targets = work / scale
         weights = None
         if trellis_weighting == "scale":
@@ -1077,7 +1120,13 @@ def encode_unit(
         if scale_refit == 0:
             break
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
-        if scale_plane is ScalePlaneKind.LUT:
+        if scale_plane is ScalePlaneKind.CHANNEL:
+            from .scale_channel import refit_channel_scale
+
+            channel_rows, effective_rows = refit_channel_scale(
+                work, units, channel_rows, global_scale
+            )
+        elif scale_plane is ScalePlaneKind.LUT:
             table_bytes, refine, effective = _refit_scales_lut(
                 work, units, half, table_bytes, refine, effective, global_scale
             )
@@ -1089,7 +1138,7 @@ def encode_unit(
         # The plane moved after the last pass; the codes are unchanged and
         # decode against the new plane.  Report the error in ITS target units
         # so ``sse`` means one thing at every setting.
-        scale = torch.repeat_interleave(effective, half).reshape(rows, cols)
+        scale = current_scale()
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
         sse = float(((work / scale - units) ** 2).sum())
 
@@ -1142,6 +1191,7 @@ def encode_unit(
         body=body,
         window_bits=window_bits,
         window_codes=window_codes,
+        scale_rows=channel_rows,
     )
 
 

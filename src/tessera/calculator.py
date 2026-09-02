@@ -143,8 +143,13 @@ def terminal_rate(
     arity: int = 1,
     span: int = 1,
     window_bits: int = 0,
+    with_row_scale: bool = False,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
+
+    A CHANNEL scale plane (schema minor 3) is spelled ``with_scale_base=False,
+    with_scale_refine=False, with_row_scale=True``: no block planes, one fp16
+    per output row on DIAG_SV, priced here exactly as the wire charges it.
 
     ``window_bits > 0`` prices a **window body** (schema minor 2): the
     ALPHABET plane is its ``2^window_bits``-byte table, DESCENDANT and
@@ -197,6 +202,7 @@ def terminal_rate(
         with_scale_base=with_scale_base,
         with_scale_refine=with_scale_refine,
         with_diagonals=with_diagonals,
+        with_row_scale=with_row_scale,
     )
     # ``spec`` is what sizes the COMPLETION plane, so the layout is built with
     # it rather than without it: ``unit_artifact`` passes it and this is the
@@ -211,7 +217,7 @@ def terminal_rate(
     # divergence between the two accountants is exactly the bug class this
     # function keeps having, not because a rung was ever mispriced here.
     planes = build_planes(geometry, rates, alphabet, b"", cap=cap, arity=arity,
-                          spec=spec, span=span)
+                          spec=spec, span=span, with_row_scale=with_row_scale)
     return build_terminal(
         geometry, rates, spec, planes, len(alphabet), 0, cap=cap, arity=arity, span=span
     ).exact_bpp

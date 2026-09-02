@@ -64,8 +64,12 @@ SCHEMA_MAJOR = 1
 #: minor-1 fields.  A TCQ manifest still writes at minor 0 or 1, so every
 #: artifact written before either bump is byte-identical; the plane grammar is
 #: unchanged (the window body's table travels on the ALPHABET plane).
-SCHEMA_MINOR = 2
-SCHEMA_MINORS_READ = (0, 1, 2)
+#: Minor 3 (2026-09-02) adds no manifest field: it is the CHANNEL value of the
+#: minor-1 scale-plane record (one scale per output row on the DIAG_SV plane),
+#: which earlier readers cannot resolve, so a manifest carrying it declares
+#: the minor that can.  Every S6b/LUT artifact keeps the minor it had.
+SCHEMA_MINOR = 3
+SCHEMA_MINORS_READ = (0, 1, 2, 3)
 
 _HEADER = struct.Struct("<8sHHIII")
 

@@ -232,6 +232,30 @@ L=14). The per-channel scale plane the E4M3 headline used is not yet a
 `ScalePlaneKind`; it is the next wire addition, and it is also the layout
 the served W8A8 path consumes.
 
+**2026-09-02 (later) — the cohesive view, and the per-channel plane.**
+Rob: *"homogenize things where possible between 4-bit and 8-bit so that we
+have a grand cohesive view of things instead of piecewise."* The view is
+`docs/tessera-one-format.md`: five axes (grid, body, rate, scale plane,
+route), the 4-bit and 8-bit tiles two points of the first, EXL3, Gridbook
+and NVFP4 placed in the same grammar. Built for it (schema minor 3,
+`docs/schema/prismaquant.tessera.v1.md` §1c): **`ScalePlaneKind.CHANNEL`**
+— one fp16 per output row on the DIAG_SV plane times an fp32 global, no
+block planes, the layout the FP8 tensor core consumes and the plane the
+8-bit headline was measured under; `decode.materialize_fp8` yields the
+stock per-channel FP8 pair, so E4M3 has a stock lane exactly as E2M1 has
+NVFP4. **`export.wire_recipe(grid, q256)`** replaces three global defaults
+as the one statement of which body/plane a grid ships (today `TCQ_RECIPE`
+everywhere; the E4M3 and sub-cap flips are one line each, gated on the two
+workers). The window body's rate cap is now the grid's whole width. The
+pinned six-tensor re-run makes the headline **0.938× of EXL3 K4 at L=14**,
+and on the true wire the E4M3 plane is worth 1.14× at equal bytes
+(`tessera-window-body-2026-09-02.md`). `experiments/tessera_frontier.py`
+scores every (grid, body, plane, rate) point through the production
+encoder on one protocol; its first run is in progress. In flight: the fused
+window Viterbi and the kernel-lane window decode (two worktree workers),
+and the PrismaQuant seam (recipe-aware pricing, activation contract per
+grid × plane).
+
 1. ~~**Kernel lane: span-2 decode.**~~ **Done** (`docs/measurements/tessera-kernel-span2-2026-09-01.md`):
    the tuple GEMV decodes the minor-1 wire bit-exactly at the wire's own
    4.0 b/wt (the LUT plane is read as nibbles, not materialised), and with
