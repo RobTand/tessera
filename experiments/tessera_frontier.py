@@ -80,6 +80,25 @@ def git_hash() -> str:
         return "unknown"
 
 
+def encoder_digest() -> str:
+    """A content hash of the encoder this run actually executed.
+
+    Every frontier JSON so far records ``git: unknown``, because these runs
+    happen on a box that holds an rsync of the working tree and no checkout --
+    and a result whose tree cannot be named is a result that cannot be
+    reproduced.  A digest over the sources needs no repository: two runs that
+    print the same twelve characters ran the same encoder, wherever the bytes
+    came from.
+    """
+    import hashlib
+    root = Path(__file__).resolve().parent.parent / "src" / "tessera"
+    h = hashlib.sha256()
+    for f in sorted(root.rglob("*.py")):
+        h.update(f.relative_to(root).as_posix().encode())
+        h.update(f.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def exl3_at(rows: "dict[float, dict]", bpp: float, leg: str) -> "float | None":
     """EXL3's leg at ``bpp`` by log-linear interpolation between its rungs."""
     pts = sorted((b, r[leg]) for b, r in rows.items())
@@ -118,7 +137,8 @@ def main():
 
     arms = [arm for arm in ARMS if not a.arms or any(f in arm[0] for f in a.arms)]
     out_path = Path(a.out)
-    out = {"args": vars(a), "git": git_hash(), "experts": {}}
+    out = {"args": vars(a), "git": git_hash(), "encoder_digest": encoder_digest(),
+           "experts": {}}
     lines = []
 
     def log(s):
@@ -128,15 +148,42 @@ def main():
     for path, prefixes in COPY_FROM.items():
         p = Path(path)
         if not p.exists():
+            log(f"    COPY_FROM {p.name}: absent")
             continue
-        try:
-            src = json.load(open(p)).get("experts", {})
-        except Exception:
+        src = json.load(open(p))
+        # Both source files key their comparators as ``arms[name] -> [row, ...]``
+        # with the tensor named inside each row; this script keys everything as
+        # ``experts[tensor][arm]``.  Reading ``.get("experts")`` here returned an
+        # empty dict from both files and copied nothing -- silently, because a
+        # missing comparator looks exactly like a comparator that was not asked
+        # for.  Transpose, and *say* how many arms crossed over, so the next
+        # silent zero is visible in the log.
+        arms = src.get("arms")
+        if not isinstance(arms, dict):
+            log(f"    COPY_FROM {p.name}: no 'arms' object; copied 0")
             continue
-        for tname, res in src.items():
-            for name, v in res.items():
-                if any(name.startswith(pre) for pre in prefixes) and isinstance(v, dict) and "out" in v:
-                    copied.setdefault(tname, {})[name] = dict(v, copied_from=p.name)
+        # And the two sources do not even agree with each other: one names the
+        # tensor inside every row, the other leaves rows positional against the
+        # file's own top-level ``tensors`` list.  Take the name where it is
+        # written and the position where it is not.
+        order = src.get("tensors") or []
+        n = 0
+        for name, rows in arms.items():
+            if not any(name.startswith(pre) for pre in prefixes):
+                continue
+            if not isinstance(rows, list):
+                continue
+            for i, row in enumerate(rows):
+                if not isinstance(row, dict) or "out" not in row:
+                    continue
+                tname_src = row.get("tensor") or (order[i] if i < len(order) else None)
+                if tname_src is None:
+                    continue
+                v = {k: row[k] for k in row if k != "tensor"}
+                copied.setdefault(tname_src, {})[name] = dict(v, copied_from=p.name)
+                n += 1
+        log(f"    COPY_FROM {p.name}: {n} rows over "
+            f"{len({a for t in copied.values() for a in t})} arms")
 
     index = json.load(open(f"{SRC}/model.safetensors.index.json"))["weight_map"]
     dev = "cuda"

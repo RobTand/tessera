@@ -73,7 +73,7 @@ space where the window body at L=14 is 0.94× of it
 | **Kernel lane** | decodes the span-2 TCQ wire over LUT16 (bit-exact, 0.0524 ms) **and the window body over LUT16, S6b and CHANNEL** (bit-exact against `read_unit_artifact`; `f274b8d`, `8489634`). The window GEMV costs the same as span-2 through L=14 and 1.83–1.86× at L=16, where the per-unit 2^L table stops fitting (`experiments/results/tessera_kernel_window_table_sweep.json`) | an FP8-tile GEMM path (decode to E4M3 bytes + per-row scale, feed the FP8 MMA); for L=16, shared-memory table residency or one table per layer |
 | **Encoder speed** | reference window Viterbi ~30 s / 150 s / 13 min per 2048×4096 at L=12/14/16 | fused Triton Viterbi in flight (worker `a812f218`), bit-exact against the reference, accepted on profiler + power evidence |
 | **PrismaQuant spec** | reads `wire_recipe` (PrismaQuant `b02d8b2`): every accountant takes the recipe; the route is derived from (grid base, plane) with the activation quantiser and capability floor taken by reference from the NVFP4 / FP8_E4M3 registry rows; family bounds follow the body's cap. Shape-dependent terms (CHANNEL rows, window table) are priced exactly where a shape exists and **refused** in the shape-free `FormatSpec` rate | shape-aware `bits_for_shape` on the spec and in every byte gate, so a shape-dependent recipe synthesizes (in flight); then the E4M3 flip |
-| **Measurement** | four harnesses, three protocols (per-channel and per-16 fp32 arms re-implement the encoder) | `experiments/tessera_frontier.py`: every (grid, body, plane, rate) point through the production encoder, one JSON, one table, EXL3/Gridbook/NVFP4/FP8 comparators at matched bpp |
+| **Measurement** | four harnesses, three protocols (per-channel and per-16 fp32 arms re-implement the encoder). `tessera_frontier.py` carries the Tessera and EXL3 arms; its `COPY_FROM` read the wrong key and silently copied **zero** Gridbook/NVFP4 arms into every frontier JSON on disk — fixed, but not yet re-run, so those comparators are still absent from the stored results | `experiments/tessera_frontier.py`: every (grid, body, plane, rate) point through the production encoder, one JSON, one table, EXL3/Gridbook/NVFP4/FP8 comparators at matched bpp |
 | **Per-grid defaults** | `wire_recipe(grid, q256)`: E4M3 → window over CHANNEL, L=14, every rung; E2M1x2 → window over LUT16, L=12, below its cap (q256 < 896) and the coset trellis at it; E2M1 → the coset trellis. Flipped 2026-09-02 once the kernel lane decoded the body and the fused Viterbi encoded it. | E2M1 under the window body, and L=14 below the E2M1x2 cap, are measurements to run |
 
 ## 4. The frontier
@@ -105,13 +105,33 @@ construction, its own plane code).
 | 4.0 | E4M3 window L=12 | CHANNEL | wire | 0.0665 | **0.985×** | a8 0.0707 | **0.987×** | **1.047×** |
 | 4.0 | E4M3 window L=14 | CHANNEL | exp, pinned | 0.0632 | 0.938× | a8 0.0676 | 0.946× | 1.003× |
 | 4.0 | E4M3 window L=14 | CHANNEL | **wire, the default** | 0.0629 | **0.940×** | a8 0.0673 | **0.946×** | **1.005×** |
-| 4.5 | NVFP4 GPTQ+JSO | per-16 | exp | — | — | a4 0.1188 | — | 1.53× (at 4.0 bytes) |
 | 5.0 | E4M3 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.0425 | 1.232× | a8 0.0488 | 1.161× | 1.413× |
 | 5.0 | E4M3 window L=12 | LUT16 | wire | 0.0406 | 1.177× | a8 0.0471 | 1.122× | 1.367× |
 | 5.0 | E4M3 window L=12 | CHANNEL | wire | 0.0349 | **1.016×** | a8 0.0423 | 1.011× | 1.232× |
 | 5.0 | E4M3 window L=14 | CHANNEL | **wire, the default** | 0.0323 | **0.947×** | a8 0.0402 | **0.964×** | 1.179× |
 | 6.0 | E4M3 window L=12 | CHANNEL | wire | 0.0218 | 1.240× | a8 0.0324 | 1.090× | 1.842× |
+| 6.0 as priced (4.5 as served) | NVFP4 RTN per-16, fp32 scale | per-16 | exp | 0.0811 | 4.63× at 6.0 / 1.68× at 4.5 | a4 0.1181 | 1.35× at 6.0 / 1.17× at 4.5 | 6.74× / 2.44× |
 | 8.0 | FP8 per-channel RTN (E4M3 floor) | per-row | wire | 0.0215 | (EXL3 K8 0.0048) | a8 0.0322 | 1.318× | — |
+
+**The NVFP4 row is a weak comparator and is labelled as one.** It said
+`4.5 | NVFP4 GPTQ+JSO | ... a4 0.1188 | 1.53×` and three of those four fields
+were wrong. The only NVFP4 measurement that exists on these six experts is
+`NVFP4 RTN per-16 amax (fp32 scale)` in
+`experiments/results/tessera8_targets.json` — **RTN, not GPTQ+JSO**, so it
+carries none of the production recipe's error compensation; and it was measured
+with an **fp32** per-16 scale, which prices at 6.0 bpp, while a real NVFP4 pays
+an E4M3 scale and serves at 4.5. The two framings pull in opposite directions —
+priced honestly at 6.0 it is 4.63× behind EXL3, credited the 4.5 bpp it would
+actually serve at it is 1.68× — so both are given and neither is chosen. The
+`1.53×` was derivable from nothing: the reachable neighbours are 1.75× (against
+the E4M3 window default's `a8`), 1.01× (against the E2M1x2 cap's `a4`) and
+2.44× (`W4A16` at 4.5).
+
+**Against the production NVFP4 recipe there is no weight-space number here at
+all.** GPTQ+JSO has never been run on this harness; the comparison against it
+exists only as the served KL A/B (Tessera W4A4 0.640 against NVFP4 GPTQ+JSO
+0.511 at 4.5 bpp, and 0.531 after LDLQ). Quote that, not this row, when the
+question is how Tessera does against what PrismaQuant ships.
 
 The *wire* rows are `experiments/tessera_frontier.py` on the six experts
 (`experiments/results/tessera_frontier.{json,log,stdout}`, run 2026-09-02
@@ -204,13 +224,22 @@ independent given the frozen row scale (slice-exactness asserted to 0.0),
 so 1.147× → 1.059× at R=4 and 1.184× → 1.094× at R=5 are the protocol's
 own numbers; under EXL3@A4 both LDLQ'd per-channel arms sit at 1.01–1.02×.
 Gridbook's production imatrix (`moe_imatrix.py` E[x²] per column) is
-worth ≤0.5% on every rung, so the earlier "as Gridbook ships it would be
-better than this" caveat is null; its LDLQ arm *as the gate ships it*
-regresses every rung (K32 out 0.0869 → 0.1069) because the gate's
-hold-out is a random half of the same 7168 fit rows — it certifies fit
-error, not generalisation — and the fit is 3584 rows of a 4096-column
-Hessian at 1% damping: +53% weight error, the regime
-`tessera-ldlq-regulariser` already measured harmful. Production runs
+worth **0.00–0.51% as a rung geomean** — the largest is FP4-CB K16 at
+0.514%, and per tensor it reaches 1.7%, always on L42 — so the earlier
+"as Gridbook ships it would be better than this" caveat is null. (An
+earlier version of this line said "≤0.5% on every rung"; K16's rung mean
+and seven per-tensor deltas exceed that, so the bound is stated as
+measured rather than rounded to a rule.) Its LDLQ arm *as the gate ships
+it* regresses **every one of the six rungs**: weight error +15.4% to
++34.0%, output-space error +9.9% to +22.5% (FP8-CB K32 `out` 0.0864 →
+0.1057, `wt` 0.0958 → 0.1281). The reason is that the gate's hold-out is
+a random half of the same 7168 fit rows — it certifies fit error, not
+generalisation — and the fit is 3584 rows of a 4096-column Hessian at 1%
+damping, the regime `tessera-ldlq-regulariser` already measured harmful.
+(An earlier version said "+53% weight error"; that figure is derivable
+from nothing here. The measured weight-error regression is +33.7% on
+K32, and squaring an error ratio into an MSE ratio without saying so is
+how a 1.22× became a "+53%".) Production runs
 `PRISMAQUANT_CB_LDLQ=0`, so the imatrix rows are Gridbook as it ships.
 Against the window body over CHANNEL (0.957× / 0.985× / 1.016× / 1.240× at
 3/4/5/6 bpp, before compensation) Gridbook FP8-CB is 1.28× / 1.33× / 1.35×
@@ -259,10 +288,14 @@ shift. `experiments/export_stock_compressed.py` writes it and vanilla
 `vllm/vllm-openai` v0.28.0 serves it on native kernels for both formats.
 Its rate is the stock format's — 4.5 or 8.0 bpp resident, the wire's 4.0
 exists on the kernel lane only — and its quality on a dense model is below
-the production encoders at equal residency (1.254× production NVFP4 at 4-bit,
-23× FP8 RTN at 8-bit, Qwen3-0.6B served; the CHANNEL plane's row scale is
-blind to the outlier input columns dense `k_proj`/`down_proj` carry —
-`docs/measurements/tessera-stock-lane-served-2026-09-02.md`). So the
+the production encoders at equal residency (1.254× production NVFP4 at 4-bit;
+23× FP8 RTN at 8-bit **before** the reach-aware row start and 7.4× after it
+— 0.470 → 0.151 against 0.0205, same bytes, Qwen3-0.6B served; the CHANNEL
+plane's window table reached only 4.08 σ₀ and a quarter of dense Qwen's rows
+exceed it, which is what the outlier input columns in `k_proj`/`down_proj`
+were —
+`docs/measurements/tessera-stock-lane-served-2026-09-02.md`,
+`docs/measurements/tessera-dense-reach-fix-2026-09-02.md`). So the
 allocator's product carries three routes per grid, not two: the kernel lane
 at the wire's rate, and the NVFP4 or FP8 materialisation at the stock rate,
 each priced as it serves.
