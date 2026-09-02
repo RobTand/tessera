@@ -28,6 +28,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
   -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+  ${TESSERA_KL_DOCKER_EXTRA:-} \
   "$IMAGE" \
   "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
