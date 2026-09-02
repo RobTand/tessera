@@ -25,6 +25,8 @@ LOG=$R/serve_qwen_gridbook_$ARM.log
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # TESSERA_LANE_EAGER=0 serves under CUDA graphs (vLLM's default); the eager
 # serve is the numerics arm, the graph serve is principle 9's second leg.
+# TESSERA_LANE_DOCKER_EXTRA adds docker-run arguments (e.g. -e CUDA_LAUNCH_BLOCKING=1
+# to make an asynchronous kernel fault name its kernel instead of the next cuBLAS call).
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code  # repeated store_true = no-op: graph mode is vLLM's default
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
@@ -35,6 +37,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -e TORCH_EXTENSIONS_DIR=/ext -e PRISMAQUANT_CB_EXT_DIR=/ext -e TMPDIR=/ext \
   -e PYTHONPATH=/tessera/src \
   -e GRIDBOOK_TESSERA_NVFP4=1 -e GRIDBOOK_TESSERA_NVFP4_MODE="$MODE" \
+  ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done

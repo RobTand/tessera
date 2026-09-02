@@ -263,7 +263,7 @@ def main():
         "wire_bytes": wire, "wire_bpp": float(Fraction(wire * 8, params)) if params else None,
         "on_disk_bytes": on_disk, "on_disk_bpp": float(Fraction(on_disk * 8, params)) if params else None,
         "resident_mode_bytes": resident, "resident_mode_bpp": float(Fraction(resident * 8, params)) if params else None,
-        "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one shared decode tile per device",
+        "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one transient decoded tile per forward",
         "passthrough_bytes": passthrough_bytes,
         "checkpoint_bytes": sum((args.out / s).stat().st_size for s in shards),
     }

@@ -459,3 +459,52 @@ same oracle; (4) the routed-MoE cell, which is where Tessera 4.0 beats NVFP4
 still 1.25× behind production NVFP4 at 4.5 on Qwen; the allocator decides
 where the rung is worth its bytes, and the activation-aware CHANNEL lead is
 unchanged.
+
+## 2026-09-02 (served and attested: both residency modes, eager and under the compiled forward)
+
+The lane is real. The Qwen3-0.6B Tessera checkpoint (4.0018 bpp on the
+wire) serves through Gridbook's `TESSERA_NVFP4` family on vanilla vLLM
+0.28.0, and its numbers are the stock arm's: served KL-vs-BF16 0.6316 in
+both residency modes eager (stock NVFP4 kernel on the same tile 0.6404),
+0.6271 in both modes under vLLM's default compiled forward with CUDA graphs
+(stock 0.6220), the two modes bit-identical to each other in both regimes.
+Every cross-kernel mutual (0.245-0.257) sits where the stock kernel's own
+eager-vs-compiled mutual sits (0.247); the fp64 per-Linear reference says
+every module computes its input times its tile. Route census: 112 / 112
+modules on `torch._scaled_mm` in both modes, eager and compiled. Full
+numbers, floors and files: `docs/measurements/tessera-gridbook-lane-served-2026-09-02.md`.
+
+Attested: Gridbook runtime contract v13 carries the family
+`TESSERA_E2M1_K2` (rung 896 q256, the E2M1x2 cap, the one rate the receipt
+covers) with two `device_qualified` sm_121 dense cells,
+`backed_with_serve_flag` on the two lane env flags, TP=1. PrismaQuant's
+admission (`tessera_render.tessera_lane_attested`) is now a lookup in the
+pinned contract's cells, not a constant; it flips to True when PrismaQuant
+re-pins to a Gridbook release that packages v13. Cutting that release is
+Rob's call (the pin scripts refuse unreleased commits), so today the rung is
+priceable and serveable but not yet exportable through PrismaQuant.
+
+Six findings on the way to the compiled forward, all in Gridbook
+`tessera/family` (`a1bcd06`, `5b176eb`, `c9219a4`, `fe5b8f8`, `11d3a20`,
+`5f70798`; the contract is `4fbc543`): the route record specialised the token
+dimension; the fingerprint guard compared `data_ptr`; the extension was
+looked up lazily behind a lock; the decode called a pybind symbol directly
+(now a custom op); the streamed decode mutated a per-device pool every
+layer aliased, which Inductor's functionalisation turned into an illegal
+memory access (now a functional op that owns its tile; the Tessera lane
+holds no pool); and vLLM's compile cache is keyed without the residency
+mode, so two modes in one `~/.cache/vllm` loaded each other's AOT-compiled
+forward and died at the first forward (every lane now folds its mode and
+release into `VllmConfig.additional_config`, the one hash input a plugin
+reaches). Every lane receipt before today was eager-only; the trellis
+siblings keep their pools and their streamed compiled mode is untested.
+
+Scope of what is attested: one rung, dense Linears, TP=1, the E2M1x2 cap
+wire decoded to the stock NVFP4 tile. Not in the lane: the window body
+(sub-cap rates), the E4M3/CHANNEL family (the FP8 W8A8 route), routed MoE
+experts (where Tessera 4.0 beats NVFP4 4.5 on GLM and the rung earns its
+place), an 8-bit family. Next, in order: (1) the Gridbook release and the
+PrismaQuant re-pin (Rob); (2) the window-body decoder and the E4M3/CHANNEL
+family behind the same byte-exact oracle; (3) the routed-MoE cell; (4) the
+trellis siblings' streamed mode under compile, on the functional-decode
+pattern.
