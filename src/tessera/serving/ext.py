@@ -150,6 +150,107 @@ def _adopt_cuda_home(root: str) -> None:
         cpp_extension.CUDA_HOME = root
 
 
+#: Headers ``ATen/cuda/CUDAContextLight.h`` includes unconditionally.  If the
+#: toolkit's own include tree is missing one of these, no torch CUDA extension
+#: can compile against it, whatever else is installed.
+_ATEN_CUDA_HEADERS = ("cusparse.h", "cublas_v2.h", "cusolverDn.h")
+
+
+def _vendored_cuda_includes() -> list[str]:
+    """Include dirs from the pip CUDA packages installed BESIDE this torch.
+
+    The wheels (``nvidia-cu13`` and friends) ship the headers under
+    ``<site-packages>/nvidia/*/include``, and they are installed as torch's own
+    dependency, so they match the CUDA torch was built against by
+    construction -- which is exactly the property that makes them safe to
+    compile ATen's headers with.
+    """
+    try:
+        import torch
+    except Exception:  # noqa: BLE001
+        return []
+    site = os.path.dirname(os.path.dirname(os.path.abspath(torch.__file__)))
+    import glob as _glob
+    return sorted(d for d in _glob.glob(os.path.join(site, "nvidia", "*", "include"))
+                  if os.path.isdir(d))
+
+
+def _include_shim_root() -> str:
+    """A writable directory to hang the header shim off, beside the builds."""
+    root = (os.environ.get("TESSERA_EXT_DIR")
+            or os.environ.get("TORCH_EXTENSIONS_DIR")
+            or os.path.join(os.path.expanduser("~"), ".cache", "torch_extensions"))
+    return os.path.join(root, "tessera_include_shim")
+
+
+def _repair_include_path(cuda_home: str | None) -> list[str]:
+    """One include dir holding ONLY the headers the toolkit is missing.
+
+    The shim holds exactly the headers the toolkit LACKS, which makes
+    shadowing impossible by construction rather than by care.  That is the
+    whole design: ``load`` places user includes BEFORE its system includes, so
+    adding ``nvidia/cu13/include`` wholesale does not "add cusparse.h" -- it
+    shadows the toolkit's entire runtime header tree with the pip one, and the
+    build fails further in, on ``__cudaLaunch`` (measured, not feared).  Nor
+    is a hand-listed set enough: ``cusolverDn.h`` includes
+    ``cusolver_common.h``, so the gap has to be closed by the rule "absent
+    from the toolkit", not by naming headers.  Everything the toolkit does
+    have still resolves from the toolkit.
+
+    Gated on the fact that provokes it: a header ATen includes is genuinely
+    absent from ``$CUDA_HOME/include``.  A complete toolkit gets an empty list
+    and compiles exactly as it did before.
+
+    Measured cause: the pinned GLM serving image (``glm53-mia-sm121``) ships
+    ``nvcc`` and ``ninja`` but no ``cusparse.h`` under ``/usr/local/cuda``,
+    while a matching one sits in ``nvidia/cu13/include`` -- so the STREAMED
+    NVFP4 residency, which has no pure-torch fallback by design, could not
+    build on the very image that serves it.
+    """
+    if not cuda_home:
+        return []
+    include = os.path.join(cuda_home, "include")
+    missing = [h for h in _ATEN_CUDA_HEADERS if not os.path.isfile(os.path.join(include, h))]
+    if not missing:
+        return []
+    # Every header the pip packages have and the toolkit does not.  Scoped to
+    # the top level of each include dir: a vendored SUBDIRECTORY would shadow
+    # a toolkit subdirectory of the same name, which is the failure above.
+    sources: dict[str, str] = {}
+    for directory in _vendored_cuda_includes():
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for header in entries:
+            if not header.endswith((".h", ".hpp", ".inl")):
+                continue
+            if header in sources or os.path.exists(os.path.join(include, header)):
+                continue
+            candidate = os.path.join(directory, header)
+            if os.path.isfile(candidate):
+                sources[header] = candidate
+    if not any(h in sources for h in missing):
+        return []
+    shim = _include_shim_root()
+    try:
+        os.makedirs(shim, exist_ok=True)
+        for header, src in sources.items():
+            link = os.path.join(shim, header)
+            if os.path.realpath(link) != os.path.realpath(src):
+                if os.path.lexists(link):
+                    os.unlink(link)
+                os.symlink(src, link)
+    except OSError as exc:
+        print(f"[tessera-serving] WARNING: cannot build a header shim at {shim} ({exc}); "
+              f"{include} is missing {missing}", file=sys.stderr, flush=True)
+        return []
+    print(f"[tessera-serving] {include} is missing {missing}; filling {len(sources)} absent "
+          f"headers from the pip CUDA packages beside torch, via {shim}",
+          file=sys.stderr, flush=True)
+    return [shim]
+
+
 def _resolve_ninja() -> str | None:
     """``ninja`` on PATH, or the one beside this interpreter (put on PATH)."""
     found = shutil.which("ninja")
@@ -168,6 +269,12 @@ def toolchain_report(torch=None) -> dict[str, object]:
     Public because a test that SKIPS on a missing toolchain has to be able to
     tell "no compiler on this box" from "the compiler is here and the build
     broke".  Only the first is a skip; the second is a failure.
+
+    NOT a pure probe, despite the name: asking the question is how the answer
+    becomes true.  It ADOPTS what it finds -- ``os.environ["CUDA_HOME"]``,
+    ``cpp_extension.CUDA_HOME`` and ``PATH`` -- because a report that a
+    compiler exists somewhere the build will not look is worth nothing.  Call
+    it before :func:`get_tessera_ext`, which is where that matters.
     """
     if torch is None:
         try:
@@ -180,6 +287,7 @@ def toolchain_report(torch=None) -> dict[str, object]:
         "cuda_home": cuda_home,
         "nvcc": os.path.join(cuda_home, "bin", "nvcc") if cuda_home else None,
         "ninja": ninja,
+        "extra_includes": _repair_include_path(cuda_home),
         "complete": bool(cuda_home and ninja),
     }
 
@@ -284,9 +392,11 @@ def _compiler_identity(command: str | None) -> dict[str, object]:
     return {"argv": argv, "path": os.path.realpath(resolved), "version": version}
 
 
-def _build_identity(torch, *, source: str, capability: tuple[int, int]):
+def _build_identity(torch, *, source: str, capability: tuple[int, int],
+                    extra_includes: list[str] | None = None):
     """Source/toolchain identity for this module's JIT build."""
     payload = {
+        "extra_includes": list(extra_includes or []),
         "abi_schema": TESSERA_NVFP4_ABI_SCHEMA,
         "source_sha256": _sha256_file(source),
         "capability": list(capability),
@@ -337,12 +447,14 @@ def _load_locked():
         # complete CUDA one directory off torch's guess used to report the
         # kernel "unavailable", which is a claim about the FORMAT made from a
         # fact about a symlink.
-        _resolve_cuda_home(torch)
+        cuda_home = _resolve_cuda_home(torch)
         _resolve_ninja()
+        extra_includes = _repair_include_path(cuda_home)
         src_dir = _require_csrc("tessera_nvfp4.cu")
         source = os.path.join(src_dir, "tessera_nvfp4.cu")
         cc = _target_capability("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
-        identity, _payload = _build_identity(torch, source=source, capability=cc)
+        identity, _payload = _build_identity(torch, source=source, capability=cc,
+                                             extra_includes=extra_includes)
         module_name = f"tessera_nvfp4_{identity}"
         root = os.environ.get("TESSERA_EXT_DIR")
         kwargs = {}
@@ -350,6 +462,8 @@ def _load_locked():
             build_dir = os.path.join(root, "tessera_nvfp4", identity)
             os.makedirs(build_dir, exist_ok=True)
             kwargs["build_directory"] = build_dir
+        if extra_includes:
+            kwargs["extra_include_paths"] = extra_includes
         mod = load(name=module_name, sources=[source],
                    extra_cuda_cflags=["-O3", _gencode_flag(cc)], verbose=False, **kwargs)
         missing = [s for s in _SYMBOLS if not hasattr(mod, s)]
