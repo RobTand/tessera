@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tessera"
+name = "tessera-quant"
 version = "0.1.0"
 description = "Tessera: continuous-rate trellis-coded quantization of LLM weights onto hardware-native NVFP4, FP8 and BF16 tiles, with its own vLLM serving plugin"
 readme = "README.md"

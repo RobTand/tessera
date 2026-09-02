@@ -156,3 +156,12 @@ size arithmetic: no shipped format reaches the sub-4.5 bpp band where 89% of
 that checkpoint's bytes live, so an NVFP4 GLM build is 4.5% *larger* than the
 EXL3 one. The size win and the comparison are the same blocked item — a
 `glm5_next` routed-MoE cell.
+
+## Install
+
+```
+pip install tessera-quant            # the library and the vLLM plugin entry point
+pip install "tessera-quant[serve]"   # plus vLLM
+```
+
+The distribution is `tessera-quant`; the import name is `tessera`.
