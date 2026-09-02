@@ -35,22 +35,22 @@ L = 14
 
 
 def _require_toolchain() -> None:
-    """Skip when this host has a GPU but no CUDA toolkit to build the kernel.
+    """Skip only when this host holds no ``nvcc`` ANYWHERE.
 
-    An ABSENT toolchain is not a failing kernel: sparky serves and encodes but
-    carries no ``nvcc``, so a hard failure here would report a red suite for a
-    box that was never asked to compile.  A toolchain that IS present and then
-    fails to compile is a real failure and is left to raise.
+    An absent toolchain is not a failing kernel, so it skips.  But the search
+    has to be the same one the module itself performs, or the skip lies: the
+    first version of this guard read ``cpp_extension.CUDA_HOME``, which on
+    sparky points at an alternatives symlink to a toolkit with no compiler,
+    and so skipped 50 tests on a box where the kernel builds and all 51 pass.
+    A toolkit that IS found and then fails to compile is a real failure and is
+    left to raise.
     """
-    import shutil
+    from tessera.kernel_window_gemv import cuda_home_with_nvcc
 
-    from torch.utils.cpp_extension import CUDA_HOME
-
-    if shutil.which("nvcc"):
+    if cuda_home_with_nvcc():
         return
-    if CUDA_HOME and os.path.exists(os.path.join(CUDA_HOME, "bin", "nvcc")):
-        return
-    pytest.skip("no CUDA toolkit on this host; the window GEMV extension cannot be built here")
+    pytest.skip("no nvcc under CUDA_HOME, PATH or any /usr/local/cuda-* root; "
+                "the window GEMV extension cannot be built here")
 
 
 def _kg():

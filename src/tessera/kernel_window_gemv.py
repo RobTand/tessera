@@ -90,9 +90,26 @@ def max_item_cols(mt: int) -> int:
 # extension
 # --------------------------------------------------------------------------
 
+def cuda_home_with_nvcc() -> "str | None":
+    """The toolkit root that actually holds ``bin/nvcc``, or ``None``.
+
+    Delegates to the serving lane's resolver, which is the one place that
+    knows ``/usr/local/cuda`` can be an alternatives symlink to a toolkit
+    WITHOUT an ``nvcc`` while a complete one sits beside it under
+    ``/usr/local/cuda-<version>``.  That is not hypothetical: on sparky
+    ``/usr/local/cuda -> cuda-13.3`` has no compiler and ``cuda-13.0`` does,
+    so trusting ``cpp_extension.CUDA_HOME`` reported "no CUDA toolkit on this
+    host" for a host that builds this kernel and passes every test on it.
+    """
+    from .serving.ext import _resolve_cuda_home
+
+    return _resolve_cuda_home(torch)
+
+
 def _ensure_toolchain_on_path() -> None:
     """``cpp_extension.load`` shells out to ninja and nvcc; a venv keeps ninja
-    in its bin and CUDA lives in ``/usr/local/cuda`` -- put both on PATH."""
+    in its bin and the CUDA toolkit may be under a versioned root -- put both
+    on PATH."""
     import shutil
     extra = []
     if shutil.which("ninja") is None:
@@ -102,9 +119,9 @@ def _ensure_toolchain_on_path() -> None:
         except Exception:
             extra.append(os.path.join(sys.prefix, "bin"))
     if shutil.which("nvcc") is None:
-        from torch.utils.cpp_extension import CUDA_HOME
-        if CUDA_HOME:
-            extra.append(os.path.join(CUDA_HOME, "bin"))
+        root = cuda_home_with_nvcc()
+        if root:
+            extra.append(os.path.join(root, "bin"))
     if extra:
         os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "")])
 
