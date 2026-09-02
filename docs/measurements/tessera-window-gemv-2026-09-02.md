@@ -708,3 +708,47 @@ percentage as a DRAM fraction -- and its final-check asks -- correct the
 fused / 27B headline for time-slicing, mark the bf16 column as sliced and
 prove the fp8 column clean, add min against median, fill the ncu waves row,
 wait for the default-build test run -- are all in this receipt.
+
+---
+
+## Addendum: the same measurement on an idle box (coordinator, 2026-09-02)
+
+The tables above were taken while 6-8 CUDA processes shared the GPU, which is
+why one headline had to be corrected from 2.59x to ~1.95x. sparky went quiet
+while the release waited on another box, so the arm was re-taken there with
+`procs 1-1` throughout (43-56 W of the ~140 W envelope):
+
+```
+PYTHONPATH=src python experiments/bench_kernel_window_gemv.py --arm gemv \
+  --models Qwen3-4B,Qwen3-4B-fused,Qwen3-0.6B --batches 1,2,4,8 --tag quietbox
+```
+
+Per-token, per-layer totals over the model's Linear list, kernel and whole-op
+against the resident FP8 lane (`quant + torch._scaled_mm`):
+
+| model | M | kernel vs fp8 lane | op vs fp8 lane | op vs bf16 |
+|---|---:|---:|---:|---:|
+| Qwen3-4B-fused | 1 | **1.955x** | 1.818x | 3.975x |
+| Qwen3-4B | 1 | **1.865x** | 1.651x | 3.414x |
+| Qwen3-4B-fused | 2 | 1.512x | 1.479x | 2.553x |
+| Qwen3-4B-fused | 4 | 1.455x | 1.379x | 2.370x |
+| Qwen3-4B-fused | 8 | 1.120x | 1.086x | 1.864x |
+| Qwen3-0.6B | 1 | 2.189x | 1.400x | 1.118x |
+
+**The contended headline stands.** 1.955x (kernel) / 1.818x (op) on the fused
+4B list against the shared-box 1.953x / 1.855x -- the op figure is 2% lower
+here, the kernel figure identical to three digits. Nothing in the claim moves.
+
+Two things the quiet box shows more clearly than the shared one:
+
+- **The bandwidth story is confirmed at the top end.** 19456x2560 at M=1 reads
+  220.0 GB/s against a 253.7 GB/s plain-read probe in the same process --
+  **0.87 of the achievable ceiling**, the same fraction reported above.
+- **The advantage is a decode-regime advantage and it ends where arithmetic
+  intensity begins.** M=8 is 1.12x on the fused 4B list and *below* parity on
+  0.6B (0.69x vs mm-only): the kernel wins by reading 4 bits where the FP8
+  lane reads 8, and that stops paying once the GEMM is no longer bound by the
+  weight stream. The materialised path serving prefill is not a fallback, it
+  is the right machine above M~8.
+
+Raw: `/home/rob/tessera-runs/gemv/quiet_sparky.json/bench_gemv_quietbox_20260902-185032.json`.
