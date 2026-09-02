@@ -220,22 +220,68 @@ the **TCQ** body it is far worse, and it scales with the row's width:
 | GLM `L5.gate_proj` | 4096 | 12 s | 519 s | 43x |
 
 The refit is cheap by comparison (20 s on the GLM expert): the cost is the
-**body**, not the plane. LDLQ splits a row into `cols/block` sequential
-segments and calls the trellis once per segment, so the TCQ branch pays its
-per-call overhead -- forest tensors, the completion argmin -- 128 times per
-pass on a 4096-column row instead of once. That is a lead for a follow-up, not
-a result here; what it means today is that `export_glm53_tessera.py --hessian`
-at block 32 is not a practical whole-model export on a 4096-column MoE, and
-the flag it just regained should be read with that beside it. The 0.6B export
-below is 196 units of 1024-3072 columns and takes ~1 h.
+**body**, not the plane, and the mechanism is the box. LDLQ splits a row into
+`cols/block` sequential segments and calls the trellis once per segment
+(`trellis_pass(span_cols=...)`), so a pass that made one `viterbi_columns` call
+per distinct rate now makes one per rate *per segment* -- 32 times on a
+1024-column row, 128 on a 4096-column one. The columns are independent, so the
+total *work* is unchanged; what multiplies is the per-call launch overhead, and
+this box is launch-bound (34.5 W of a ~140 W envelope at 96% "utilization",
+whatever the job count). That is also why the window body pays only ~2x for the
+same schedule: `viterbi_window` is the fused kernel, and the TCQ body's Viterbi
+is not fused.
+
+The consequence is concrete and it is a limit on the route, not a footnote. The
+weights-only Qwen3-0.6B export is 196 units in 3542 s (18 s/unit); the same
+export with LDLQ at block 32 runs at **>120 s/unit**. Costing the model out of
+the sweep's own per-unit times -- ~180 s for the five 1024-column units of a
+layer, ~310 s for `o_proj` (2048) and ~440 s for `down_proj` (3072) -- gives
+~1650 s/layer x 28 layers, i.e. **~12-13 h for a 0.6B model** (236 s/unit
+against the baseline's 18, a ~13x whole-model slowdown at this width mix; the
+factor grows with the row width, so it is 43x on a 4096-column GLM expert). `export_glm53_tessera.py --hessian` at block 32 on 4096-column
+experts is not a practical whole-model export at all. Two follow-ups, neither
+done here: shard the export across processes the way `export_glm53_tessera.py`
+already does (the box is launch-bound, so N processes over disjoint layer
+ranges should be close to N times faster, and the merge guard exists to make
+the halves provably one artifact), or fuse the TCQ Viterbi as the window body's
+already is.
 
 ## Weight space: the sweep
 
 *(table)*
 
-## Served (the gate)
+## Served (the gate) -- IN FLIGHT, NOT YET MEASURED
 
-*(table)*
+**Unmet at the time of writing.** The arm is exported and served by two
+commands, and the first one takes about half a day on this box for the reason
+the section above measures. This section says exactly where it is so that the
+leg can be finished by anyone, including after this session ends.
+
+| what | value |
+|---|---|
+| arm | `ldlqH1` -- `export_tessera_serving.py <src> --grid E2M1x2 --q256 896 --input-scales scales_pqcal.safetensors --stock-twin ... --hessian h_full_qwen06b.pt --refit-metric h^1.0` |
+| why the flag is explicit | the per-plane default was set by *this* receipt; naming the objective keeps the arm meaning the same before and after that change. `test_the_default_on_this_plane_is_the_arm_that_was_measured` pins that the default now writes the same bytes |
+| launched by | `experiments/ldlq_lut_export_arms.sh` (it also launched a full-H arm, killed once the weight-space screen had chosen -- the task asks for ONE export) |
+| log | `/mnt/shared/tessera-runs/ldlq-lut/export_ldlqH1.log` |
+| output | `/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin` |
+| to finish | `experiments/ldlq_lut_serve.sh ldlqH1` -> `/mnt/shared/tessera-runs/ldlq-lut/kl_ldlqH1.json` |
+| comparators | **0.640** (`kl_unrot-k2-w4a4-pqcal.json`, `all.kl_lower_mean`; same recipe, weights-only, same A4 scales, same teacher, same box) and **0.511** (PrismaQuant NVFP4 GPTQ+JSO at 4.5 bpp) |
+| the gate | served KL better than 0.640 at matched bytes |
+
+The baseline leg is already controlled: `base` (weights-only, the pre-merge
+exporter) and `base2` (weights-only, the *arm's own* post-merge exporter) are
+byte-compared against each other and against the served comparator, so the
+served delta is attributable to the Hessian and not to the merge that landed
+between them. That compare is measured, not assumed:
+
+```
+base2-stock-twin vs base-stock-twin           784 shared, 784 identical, 0 different
+base2-stock-twin vs unrot-k2-w4a4-pqcal       784 shared, 784 identical, 0 different
+```
+
+so the served **0.640** is the baseline arm's own number under the arm's own
+code, and byte identity for a weights-only encode survives every change in this
+branch.
 
 ## GLM cross-check
 
