@@ -77,9 +77,11 @@ SUBSET_COUNT = 4
 __all__ = [
     "E2M1_VALUES",
     "E4M3_VALUES",
+    "BF16_VALUES",
     "PayloadGrid",
     "E2M1_GRID",
     "E4M3_GRID",
+    "BF16_GRID",
     "value_order",
     "AnchorForest",
     "build_forest",
@@ -156,6 +158,28 @@ class PayloadGrid:
     def rate_cap(self) -> int:
         """Highest trellis rate: one bit of the payload is the code's redundancy."""
         return self.payload_bits - 1
+
+    @property
+    def code_bytes(self) -> int:
+        """Bytes one stored code occupies on a code-carrying plane.
+
+        The ALPHABET and DESCENDANT planes store codes, and a code is as wide
+        as the grid.  Three grids fit in a byte and one does not: BF16's code
+        *is* a bf16 bit pattern, sixteen bits of it, so its window table is
+        two bytes an entry.  Derived from the grid rather than declared, so
+        the writer, the reader and the accountant cannot disagree about it --
+        and little-endian on the wire, which makes the ALPHABET plane of a
+        BF16 window body literally a ``torch.bfloat16`` buffer.
+        """
+        if self.size <= 1 << 8:
+            return 1
+        if self.size <= 1 << 16:
+            return 2
+        raise GrammarError(
+            f"grid {self.name} has {self.size} codes: a code plane element is "
+            "one or two bytes, and a wider code space is a schema change "
+            "(a third element width), not a cast."
+        )
 
     @property
     def bits_per_position(self) -> float:
@@ -344,6 +368,61 @@ E4M3_GRID = PayloadGrid(
 )
 
 
+def _bf16_legal(bits: int) -> int:
+    """``bits`` if it is a finite bf16 pattern, else its finite neighbour.
+
+    Exponent 255 is Inf/NaN -- 256 of the 65536 patterns, a 7-bit mantissa
+    over each sign.  Dropping them would leave 65280 slots and no exact
+    dyadic partition, so, exactly as
+    E4M3FN's two NaN bytes do, they carry the value of the largest finite
+    magnitude of their own sign and ``native`` maps them back to it.  A
+    duplicate is never *preferred*: ties break to the lower code and the
+    lower code is the legal one.
+    """
+    return (0x7F7F if 0x7F80 <= bits <= 0x7FFF
+            else 0xFF7F if bits >= 0xFF80 else bits)
+
+
+def _bf16_value(bits: int) -> float:
+    """One bf16 bit pattern -> its value.  Sign 1, exponent 8, mantissa 7."""
+    bits = _bf16_legal(bits)
+    sign = -1.0 if bits >> 15 else 1.0
+    exponent = (bits >> 7) & 0xFF
+    mantissa = bits & 0x7F
+    if exponent == 0:                       # subnormal (and the signed zeros)
+        return sign * (mantissa / 128.0) * 2.0 ** -126
+    return sign * (1.0 + mantissa / 128.0) * 2.0 ** (exponent - 127)
+
+
+#: Every bf16 bit pattern by value, **code == the pattern**.
+BF16_VALUES: tuple[float, ...] = tuple(_bf16_value(bits) for bits in range(1 << 16))
+
+#: The 16-bit alphabet: 65536 codes, ``payload_bits`` 16, and a code that is
+#: its own bf16 word.
+#:
+#: **Why the whole of bf16 and not a window.**  The window body's table is
+#: ``2^L`` Gaussian quantiles snapped to the grid, and at L=14, sigma=1 those
+#: span [7.6e-5, 4.05] -- 15 binades of bf16 would hold them.  Taking the
+#: whole format instead removes the two constants that a window needs (which
+#: binades, and where) and buys an identity nothing else has: **the code IS
+#: the bf16 bit pattern**, so the ALPHABET plane of a BF16 window body is
+#: literally the ``2^L``-entry bf16 table a kernel gathers from, and the snap
+#: the table builder performs *is* bf16 rounding over the reals (nearest
+#: value; it differs from round-to-nearest-even only on exact midpoints,
+#: where the tie goes to the lower code, i.e. toward zero).
+#:
+#: **Why 16 payload bits is not an encode cost.**  The TCQ trellis scores
+#: ``2^payload_bits`` anchors per step and could not afford this grid.  The
+#: window body scores ``2^window_bits`` states per step -- 16384 at L=14 --
+#: whatever the grid's width; the grid is read once, when the table is built.
+#: The BF16 recipe is a window recipe for that reason and not by preference.
+BF16_GRID = PayloadGrid(
+    "BF16",
+    BF16_VALUES,
+    tuple(_bf16_legal(bits) for bits in range(1 << 16)),
+)
+
+
 def value_order(grid: PayloadGrid = E2M1_GRID) -> tuple[int, ...]:
     """The grid's codes ascending by decoded value, ties broken by code.
 
@@ -414,11 +493,22 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #:     on.  Its absence left the menu with **nothing between Tessera-4's 4.0
 #:     bpp ceiling and FP8's 8.0**, so an allocator wanting 5 or 6 bits had to
 #:     buy 8.  Round-trips at every rung (``test_e4m3_ladder_serialises``).
+#:   * ``BF16`` -- arity 1, 65536 codes, payload 16: **the 16-bit route**,
+#:     window body only.  Its values come from the bit pattern
+#:     (``_bf16_value``) exactly as E4M3's come from the byte, so a reader
+#:     rebuilds them from the name; the code plane is two bytes an element
+#:     (``PayloadGrid.code_bytes``), which is the only thing about it the
+#:     wire had to learn.  It exists because the E4M3 *alphabet* -- not the
+#:     trellis -- floors the window body's error at ~0.022 out-space from
+#:     R=6 upward on a GLM expert, while the same trellis over bf16 keeps
+#:     halving (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``).
 #:
-#: ``E4M3^2`` is **not** here and its absence is structural, not an oversight:
-#: 65536 codes, and the ALPHABET/DESCENDANT planes are one byte per code.  256
-#: codes is the wire's ceiling, which is why the serialisable set is exactly
-#: the three grids that fit in a byte.
+#: ``E4M3^2`` is **not** here and its absence is a cost refusal, not a plane
+#: one: 65536 codes is exactly what the *TCQ* encoder already refuses to score
+#: per step (``tuple_grid``'s own limit), and the tuple grids have no window
+#: recipe that would dodge it.  BF16 reaches the same code count and is
+#: admitted because the window body never scores the grid -- it scores
+#: ``2^window_bits`` states -- so the two are not the same question.
 #:
 #: **Free (Lloyd-Max) grids are deliberately absent.**  Their values are fitted
 #: to the tensor and are not reproducible by a reader from any identifier, so
@@ -426,7 +516,7 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #: second schema change.  That is a deferral, not an oversight.
 SERIALISABLE_GRIDS: "dict[str, PayloadGrid]" = {
     grid_digest(grid): grid
-    for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2), E4M3_GRID)
+    for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2), E4M3_GRID, BF16_GRID)
 }
 
 

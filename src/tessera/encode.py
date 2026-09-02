@@ -22,6 +22,7 @@ The pass order is forced by what each stage needs:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import torch
@@ -400,8 +401,51 @@ def _window_table_cpu(
     vectors = grid_vector_table(grid).float()                   # [codes, arity]
     # Nearest grid vector, ties to the lower code: E4M3's duplicate slots
     # (the two former NaNs, the negative zero) sit above the legal byte.
-    codes = torch.cdist(points, vectors).argmin(dim=1)
+    if grid.arity == 1 and grid.size > 256:
+        codes = _nearest_scalar_code(points[:, 0], grid)
+    else:
+        codes = torch.cdist(points, vectors).argmin(dim=1)
     return codes.to(torch.uint8) if grid.size <= 256 else codes.to(torch.int32)
+
+
+def _nearest_scalar_code(points: torch.Tensor, grid: PayloadGrid) -> torch.Tensor:
+    """``argmin_c |points - value(c)|``, ties to the lower code, exactly.
+
+    The same answer ``cdist(...).argmin`` gives, computed the way a sorted
+    one-dimensional grid allows -- and computed in float64, which matters at
+    this width for two separate reasons.  BF16 is 65536 codes: the pairwise
+    matrix is 4 GB at L=14, and ``cdist``'s ``x^2 + y^2 - 2xy`` expansion is
+    not the exact ``|x - y|``, so a quantile a hair from a midpoint can land
+    on the wrong side of it in float32.  Neither is a problem a byte-wide
+    grid has, which is why the narrow path is left exactly as it was.
+
+    "Ties to the lower code" is a statement about *codes*, not values, so
+    duplicate values are collapsed to the lowest code carrying them before
+    the search and the two candidates are compared as codes at an exact
+    midpoint.  On BF16 that makes the snap round-half-toward-zero, next to
+    bf16 hardware's round-half-to-even; they differ only on exact midpoints
+    of the table's Gaussian quantiles, which the receipt counts.
+    """
+    values = torch.tensor(grid.values, dtype=torch.float64)
+    order = torch.argsort(values, stable=True)
+    ordered = values[order]
+    # First code of each distinct value, in ascending value order.
+    keep = torch.ones(ordered.numel(), dtype=torch.bool)
+    keep[1:] = ordered[1:] != ordered[:-1]
+    uniq, ucode = ordered[keep], torch.zeros(int(keep.sum()), dtype=torch.long)
+    # ``order`` is a stable sort, so among equal values the lowest code comes
+    # first -- but only within the sort's own tie order, which is code order.
+    ucode.scatter_reduce_(
+        0, torch.cumsum(keep.long(), 0) - 1, order, reduce="amin", include_self=False
+    )
+    p = points.double()
+    right = torch.searchsorted(uniq, p).clamp(0, uniq.numel() - 1)
+    left = (right - 1).clamp_min(0)
+    dl, dr = (p - uniq[left]).abs(), (p - uniq[right]).abs()
+    take_left = torch.where(
+        dl == dr, ucode[left] < ucode[right], dl < dr
+    )
+    return torch.where(take_left, ucode[left], ucode[right])
 
 
 def window_table(
@@ -438,6 +482,37 @@ def window_table(
     return table.to(device) if device is not None else table.clone()
 
 
+# The fused step kernel's class-minimum loop is fully unrolled to ``FAN - 1``
+# while its tile is ``2048 // FAN`` lanes wide, so the loop doubles per bit of
+# rate exactly as the tile falls under a warp -- and past a crossover the fast
+# path is slower than the reference it exists to replace.  Measured on one
+# tensor in one process, 1024x1024 at L = 14, identical states and identical
+# sse at every rate (docs/measurements/tessera-bf16-route-2026-09-02.md, 11):
+#
+#     R           6        7         8
+#     reference   6.548    6.544     6.631   s   (flat, as the algebra demands:
+#     fused       0.753    1.474    65.004   s    low * FAN = 2^L per step)
+#                 8.7x     4.4x      0.10x       fused vs reference
+#
+# so ``auto`` stops here.  This is a measured crossover, not a taste: either
+# side of it the two machines return the same answer, and the constant names
+# the rate at which the faster machine stops being faster.  ``TESSERA_WINDOW_
+# FUSED_MAX_RATE`` moves it for a box whose crossover sits elsewhere.
+WINDOW_FUSED_MAX_RATE = 7
+
+
+def _fused_max_rate() -> int:
+    raw = os.environ.get("TESSERA_WINDOW_FUSED_MAX_RATE")
+    if raw is None:
+        return WINDOW_FUSED_MAX_RATE
+    try:
+        return int(raw)
+    except ValueError:
+        raise GrammarError(
+            f"TESSERA_WINDOW_FUSED_MAX_RATE={raw!r} is not an integer rate"
+        ) from None
+
+
 def viterbi_window(
     targets: torch.Tensor,
     vectors: torch.Tensor,
@@ -471,7 +546,10 @@ def viterbi_window(
     ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
     returns identical states and the identical sse float (see that module for
     why that is a contract and not a hope); ``"auto"`` takes the fused path
-    on CUDA inputs when Triton is present and the reference otherwise.
+    on CUDA inputs when Triton is present **and the rate is at or below
+    ``WINDOW_FUSED_MAX_RATE``**, and the reference otherwise.  ``"fused"``
+    asked for explicitly is still honoured above the crossover: the crossover
+    governs the choice ``auto`` makes, not what the caller may demand.
     """
     if impl not in ("auto", "reference", "fused"):
         raise GrammarError(f"unknown viterbi_window impl {impl!r}")
@@ -495,7 +573,8 @@ def viterbi_window(
     if impl != "reference":
         from .window_viterbi import fused_available, viterbi_window_fused
 
-        if targets.is_cuda and fused_available():
+        wanted = impl == "fused" or rate <= _fused_max_rate()
+        if targets.is_cuda and fused_available() and wanted:
             return viterbi_window_fused(targets, vectors, window_bits, rate,
                                         weights=weights, chunk=chunk)
         if impl == "fused":
