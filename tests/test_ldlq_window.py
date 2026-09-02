@@ -19,7 +19,9 @@ import torch
 from tessera.alphabet import E4M3_GRID
 from tessera.compensate import block_ldl, regularize_hessian
 from tessera.encode import encode_unit, window_table
-from tessera.export import DEFAULT_CODE, encode_linear_planes
+from tessera.export import (
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
+    encode_linear_planes)
 from tessera.manifest import BodyKind, ScalePlaneKind
 from tessera.scale_channel import (
     default_channel_sigma, land_at_least, refit_channel_scale)
@@ -143,3 +145,27 @@ def test_reach_floor_keeps_the_target_inside_the_body():
         over = (w.abs().amax(dim=1) / scale > reach * (1 + 1e-6))
         if floor_on:
             assert not bool(over.any()), f"{int(over.sum())} rows clip after a floored refit"
+
+
+def test_the_activation_aware_defaults_are_the_measured_ones():
+    """The recipe an exporter applies when it is handed a Hessian.
+
+    Pinned because these three numbers are a measurement, not a taste: on
+    Qwen3-0.6B's 4.07-bpp FP8 wire they take served KL-vs-BF16 from 0.1512 to
+    0.1046 at identical bytes, and on six GLM experts the out-space geomean to
+    0.932x (docs/measurements/tessera-ldlq-window-served-2026-09-02.md).
+    Changing one means re-running that gate.
+    """
+    assert (DEFAULT_LDLQ_SIGMA, DEFAULT_LDLQ_BLOCK, DEFAULT_REFIT_OBJECTIVE) == (1.0, 32, "hessian")
+
+
+@cuda
+def test_a_weights_only_encode_is_untouched_by_the_defaults():
+    """No Hessian, no change: the levers default off inside the encoder, so an
+    export that was not given activations is the artifact it always was."""
+    w = _weights(seed=7)
+    a = encode_linear_planes(w, grid=E4M3_GRID, q256=1024, name="u")[0]
+    b = encode_linear_planes(
+        w, grid=E4M3_GRID, q256=1024, name="u",
+        ldl=None, refit_metric=None, refit_reach_floor=False)[0]
+    assert a.blob == b.blob

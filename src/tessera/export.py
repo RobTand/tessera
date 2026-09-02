@@ -52,6 +52,9 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "DEFAULT_LDLQ_SIGMA",
+    "DEFAULT_LDLQ_BLOCK",
+    "DEFAULT_REFIT_OBJECTIVE",
     "E4M3_RECIPE",
     "E2M1X2_SUBCAP_RECIPE",
     "E4M3_WINDOW_BITS",
@@ -128,6 +131,22 @@ DEFAULT_WINDOW_BITS = 0
 DEFAULT_WINDOW_SEED = 0
 DEFAULT_WINDOW_SIGMA: "float | None" = None
 DEFAULT_CHANNEL_SIGMA: "float | None" = None
+#: What to do with an input Hessian when a caller supplies one.  These are
+#: not encoder defaults -- ``encode_unit`` cannot invent a Hessian, so its own
+#: ``ldl``/``refit_metric`` stay ``None`` and a weights-only encode is byte for
+#: byte what it always was.  They are the ANSWER to "an exporter has H; now
+#: what", and every one of them is measured
+#: (``docs/measurements/tessera-ldlq-window-served-2026-09-02.md``): on
+#: Qwen3-0.6B's FP8 wire at 4.07 bpp, served KL-vs-BF16 on vanilla vLLM goes
+#: 0.1512 -> 0.1129 with LDLQ and -> 0.1046 with the full-Hessian row-scale
+#: refit as well (top-1 agreement 78.1% -> 81.5%), at identical bytes; on six
+#: GLM experts the out-space geomean is 0.932x at the same settings.
+#: ``sigma`` and ``block`` are the pair the held-out weight-space sweep chose
+#: over {0.3, 1, 3, 10} x {32, 128}; ``"hessian"`` is the exact quadratic, not
+#: a diagonal power, because the row's true proxy loss has a closed form.
+DEFAULT_LDLQ_SIGMA = 1.0
+DEFAULT_LDLQ_BLOCK = 32
+DEFAULT_REFIT_OBJECTIVE = "hessian"
 
 
 _PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",

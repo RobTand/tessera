@@ -147,15 +147,21 @@ def main():
                         elif a.refit_metric:
                             hd = H.diagonal()
                             metric = (hd / hd.mean()).pow(float(a.refit_metric.removeprefix("h^")))
-                        for sigma in (a.ldlq_sigma or [None]):
+                        # Each lever alone and the two together, so the cross
+                        # term is visible rather than assumed.
+                        combos = [(sigma, None) for sigma in (a.ldlq_sigma or [])]
+                        if metric is not None:
+                            combos.append((None, metric))
+                            combos += [(sigma, metric) for sigma in (a.ldlq_sigma or [])]
+                        for sigma, m in combos:
                             ldl = None
                             if sigma is not None:
                                 ldl = block_ldl(regularize_hessian(H, sigma_reg=sigma), a.ldlq_block)
                             tag = ("" if sigma is None else f" LDLQ{sigma}") + \
-                                  ("" if metric is None else f" refit-{a.refit_metric}")
+                                  ("" if m is None else f" refit-{a.refit_metric}")
                             wire(f"{gname} window q{q_win} L={L}{tag}", grid=grid, q256=q_win,
                                  body=BodyKind.WINDOW, window_bits=L, ldl=ldl,
-                                 ldl_block=a.ldlq_block, refit_metric=metric)
+                                 ldl_block=a.ldlq_block, refit_metric=m)
             out["experts"][tname] = res
             out_path.write_text(json.dumps(out, indent=1))
         del x_ev, xq4, xq8

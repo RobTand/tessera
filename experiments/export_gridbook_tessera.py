@@ -53,7 +53,9 @@ from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
 from tessera.compensate import block_ldl, regularize_hessian  # noqa: E402
-from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # noqa: E402
+from tessera.export import (  # noqa: E402
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
+    encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
@@ -176,10 +178,10 @@ def main():
                          "name.  Enables the activation-aware encoder settings below; an encode that "
                          "uses them is not reproducible from the weights alone, so the file's own "
                          "provenance is copied into the manifest.")
-    ap.add_argument("--ldlq-sigma", type=float, default=None,
-                    help="Hessian regulariser for LDLQ cross-column feedback; unset means no LDLQ")
-    ap.add_argument("--ldlq-block", type=int, default=128, help="LDLQ input-feature block")
-    ap.add_argument("--refit-metric", default="plain",
+    ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
+                    help="Hessian regulariser for LDLQ cross-column feedback; a negative value turns LDLQ off")
+    ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK, help="LDLQ input-feature block")
+    ap.add_argument("--refit-metric", default=DEFAULT_REFIT_OBJECTIVE,
                     help="error the row-scale refit minimises: plain | hessian | h^ALPHA")
     ap.add_argument("--refit-reach-floor", action="store_true",
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
@@ -189,9 +191,15 @@ def main():
     if args.hessian:
         payload = torch.load(args.hessian, map_location="cpu", weights_only=False)
         hessians, h_provenance = payload["H"], payload.get("provenance")
-    activation_aware = args.ldlq_sigma is not None or args.refit_metric != "plain" or args.refit_reach_floor
-    if activation_aware and not hessians:
-        raise SystemExit("--ldlq-sigma / --refit-metric / --refit-reach-floor need --hessian")
+    if args.ldlq_sigma is not None and args.ldlq_sigma < 0:
+        args.ldlq_sigma = None                      # `--ldlq-sigma -1` turns LDLQ off
+    # The activation-aware settings fire when, and only when, a Hessian is
+    # here: the encoder cannot invent one, and a weights-only export must stay
+    # the byte-for-byte artifact it was.  Given one, the defaults are the
+    # measured recipe (export.DEFAULT_LDLQ_*), overridable per run.
+    activation_aware = bool(hessians)
+    if not activation_aware:
+        args.ldlq_sigma, args.refit_metric, args.refit_reach_floor = None, "plain", False
 
     default_grid = grid_for(args.grid)
     check_recipe(default_grid, args.q256)
