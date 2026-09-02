@@ -2,8 +2,10 @@
 
 2026-09-02. `src/tessera/kernel_window.py`, `tests/test_kernel_window.py`,
 `experiments/bench_kernel_window.py`. Commits `1675a1f`, `05558b3`, `793c09d`,
-`3a7d026`, `b1576f0`, `79f9c72`, `289e223`, `4b3a70b`, `76a0539` on
-`worktree-agent-ad5a8f4b23cadfa9f`.
+`3a7d026`, `b1576f0`, `79f9c72`, `289e223`, `4b3a70b`, `76a0539`, `08a4514`, `4a59e7d` and the
+commit carrying this line, on `worktree-agent-ad5a8f4b23cadfa9f` — i.e.
+`1675a1f..HEAD`, which is the form to trust, since a list inside the file
+cannot name the commit that writes it.
 
 **The headline, stated first because it is the answer to the question that was
 asked.** The fused decoder replaces the pure-torch window reader at **50-277x**
