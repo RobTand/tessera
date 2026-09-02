@@ -466,15 +466,26 @@ def build_subset_nibbles(forest: AnchorForest, code: ConvCode, device: str = "cu
     """``(label, point, position) -> E2M1 nibble``, uint8, in the same subset
     order as ``build_subset_values``: a decoder that emits the stock NVFP4 tile
     writes codes, not values, and this is the code of every value in that
-    table.  Refuses a value the E2M1 alphabet cannot spell."""
-    from .stock import E2M1_GRID, e2m1_nibbles
+    table.
 
-    values = build_subset_values(forest, code, device)
-    lookup = {float(v): i for i, v in enumerate(E2M1_GRID.values)}
-    codes = torch.tensor([lookup.get(float(v), -1) for v in values.tolist()], dtype=torch.long)
-    if int(codes.min()) < 0:
-        raise GrammarError("a subset value is not an E2M1 value; the grid is not E2M1-based")
-    return e2m1_nibbles(codes, E2M1_GRID).to(torch.uint8).to(device)
+    Built from the anchor's CODE (``blocks[anchor][0]``, split into its E2M1
+    digits by ``stock.e2m1_nibbles`` -- the one tuple layout), never from its
+    value: E2M1 spells zero twice (+0.0 at nibble 0, -0.0 at nibble 8) and a
+    value lookup collapses the pair, so every zero anchor came back as nibble
+    8 where ``materialize_stock`` writes 0 -- 32 of 512 entries on the
+    shipping E2M1x2 forest, numerically inert and still a byte difference from
+    the attested stock tile (found by the CUDA decoder's byte-identity test).
+    """
+    from .stock import e2m1_nibbles
+
+    subsets, _table_next, _table_sub = _replay_tables(forest, code, device)
+    anchors = subsets.reshape(-1).tolist()
+    codes = torch.tensor(
+        [int(forest.blocks[anchor][0]) for anchor in anchors], dtype=torch.long
+    ).reshape(-1, 1)
+    # [n * arity, 1]: the tuple's slowest digit on row 0, as ``dequantize`` lays it.
+    nibbles = e2m1_nibbles(codes, forest.grid)
+    return nibbles.reshape(-1).to(torch.uint8).to(device)
 
 
 def lut_scale_bytes(scale_lut: torch.Tensor, device: str = "cuda") -> torch.Tensor:

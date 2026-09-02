@@ -40,7 +40,19 @@ def test_subset_nibbles_spell_the_subset_values():
     values = build_subset_values(forest, DEFAULT_CODE, "cuda")
     nibbles = build_subset_nibbles(forest, DEFAULT_CODE, "cuda")
     assert nibbles.dtype == torch.uint8 and nibbles.shape == values.shape
-    assert torch.equal(_nvfp4_values(nibbles.long()).float(), values)
+    spelled = _nvfp4_values(nibbles.long()).float()
+    assert torch.equal(spelled, values)
+    # E2M1 spells zero twice (+0.0 at 0, -0.0 at 8); equality cannot tell them
+    # apart, the sign bit can.  The table carries the anchor's code, so a zero
+    # anchor is nibble 0 exactly as ``materialize_stock`` writes it.
+    assert torch.equal(torch.signbit(spelled), torch.signbit(values))
+    from tessera.decode import _replay_tables
+    subsets, _n, _s = _replay_tables(forest, DEFAULT_CODE, "cuda")
+    digits = []
+    for anchor in subsets.reshape(-1).tolist():
+        c = int(forest.blocks[anchor][0])
+        digits.extend([c // 16, c % 16])
+    assert torch.equal(nibbles.cpu(), torch.tensor(digits, dtype=torch.uint8))
 
 
 @pytest.mark.parametrize("rows,cols", [(256, 512), (192, 1024)])
