@@ -493,8 +493,9 @@ looked up lazily behind a lock; the decode called a pybind symbol directly
 layer aliased, which Inductor's functionalisation turned into an illegal
 memory access (now a functional op that owns its tile; the Tessera lane
 holds no pool); and vLLM's compile cache is keyed without the residency
-mode, so two modes in one `~/.cache/vllm` loaded each other's AOT-compiled
-forward and died at the first forward (every lane now folds its mode and
+mode, so a resident load after a streamed one in one `~/.cache/vllm` took
+the streamed AOT-compiled forward and died at the first forward (the other
+order was not run; every lane now folds its mode and
 release into `VllmConfig.additional_config`, the one hash input a plugin
 reaches). Every lane receipt before today was eager-only; the trellis
 siblings keep their pools and their streamed compiled mode is untested.

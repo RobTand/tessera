@@ -92,7 +92,12 @@ release into `VllmConfig.additional_config`, the one hash input a plugin
 can reach, before any cache key is computed. Verification: both compiled
 censuses back to back in one cache
 (`route_census_{streamed,resident}_compiled_shared_11d3a20+identity.json`),
-each on its own AOT key, both `served`. The chain7 serves were never
+each on its own AOT key, both `served`. Those receipts record
+`gridbook_commit: 11d3a20+identity`, a label: they were taken from the
+working tree before the commit, whose lane and identity code is
+byte-identical to what ran (`5f70798`; only documentation changed between
+the run and the commit). The other cache order, resident then streamed,
+was not run. The chain7 serves were never
 exposed: each ran in its own container with a fresh cache and traced itself
 (their logs show a Dynamo transform and a full compile, no AOT load).
 
