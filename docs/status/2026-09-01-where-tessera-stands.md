@@ -582,3 +582,46 @@ a no-op by construction (columns are independent trellises); h enters through
 the refit (h^0.75 beats NVFP4 on plain and weighted error on the worst unit)
 and LDLQ. Receipt: `docs/measurements/tessera-dense-reach-fix-2026-09-02.md`.
 The "23x / 25x / best ~4-bit point" framing above is the pre-fix table.
+
+## 2026-09-02 (the third family): a 16-bit route, because the ceiling was the alphabet
+
+The window body stops improving above ~6 bpp because the **E4M3 alphabet** runs
+out of values, not because the trellis runs out of shaping. Snap the identical
+table to bf16 instead and the same trellis keeps halving: on six GLM routed
+experts, output space, geomean, the BF16 window is **0.797x** of the E4M3
+window at R=6 and **0.433x** at R=7, and **0.828x of E4M3 one whole rung
+above it** — the 16-bit route at R buys more than the 8-bit route at R+1, on
+every one of the six. Against EXL3 it holds **0.932-0.955x across R=4..7**,
+where E4M3 inverts at 6 (1.198x) and collapses at 7 (2.318x). At R=8 on
+L5.gate_proj it is **0.231x of E4M3 and 1.002x of EXL3 K8** — it lands *on*
+EXL3's 8-bit point. On six dense Qwen Linears (H-weighted) the same shape:
+0.784x at R=6, 0.511x at R=7, and **0.518x of a full FP8 RTN tile at 0.9 bpp
+less**. Below R=6 the alphabet is free and costs 0.016 bpp (0.049 on small
+dense Linears): the two arms are within 1%, so the menu keeps both.
+
+Built, not just measured: `BF16_GRID` (65 536 codes, the code *is* the bf16 bit
+pattern, `payload_bits=16`), `BF16_RECIPE` (window, span 1, CHANNEL, L=14),
+`materialize_bf16` / `bf16_route.stream_bf16`, a pure-torch streamed decoder,
+`--grid BF16` in the exporter with `--stock-twin`, 29 tests. Qwen3-0.6B is
+exported at R=6 and R=7 (wire 6.129 / 7.129 bpp) with plain-BF16 twins that a
+stock `from_pretrained` loads and generates from; all 196 units are bitwise
+`materialize_bf16_folded` of the wire and the twins are structurally the source
+checkpoint (311/311 tensors). Two format-level fixes fell out: the ALPHABET
+plane now carries the grid's code width (schema §1d, no minor — the grid is
+recovered by digest, so an old reader fails closed), and
+`calculator.terminal_rate` was charging one byte per table entry for every
+grid.
+
+**The route does not fold its row scale, and the twin's fold is priced as the
+twin's.** A CHANNEL scale is an output-row factor, so it commutes with the
+matmul: the route runs the stock BF16 GEMM on the exact code tile and scales
+the output in fp32 (4.04e-7 relative) instead of folding (1.65e-3). Measured on
+the six experts the fold is a rate-independent 0.0013-0.0018 on *every* arm
+including EXL3's and RTN's — 2.0% of the error at R=4, **15.4% at R=7** — so a
+served number taken on the twin is a ceiling, not the route's value.
+
+Not served, not selectable: no lane carries `TESSERA_BF16` yet, and
+PrismaQuant's `ANCHOR_BUDGET_BITS` refuses `payload_bits >= 16` on a premise
+that is TCQ's alone (a window body has no forest). Receipt, with the hand-offs
+for the plugin, the fused kernel's 32 KiB bf16 table, and PrismaQuant's three
+changes: `docs/measurements/tessera-bf16-route-2026-09-02.md`.

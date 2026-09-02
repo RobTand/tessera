@@ -12,12 +12,28 @@ L5.gate_proj, against the same trellis over a bf16 alphabet still halving
 document builds that alphabet into the format: a grid, a wire recipe, a decode,
 an exporter, tests, and the numbers PrismaQuant's allocator will see.
 
-The one-line result: **`TESSERA_BF16` is a real third family** — it writes,
-reads back bit-exactly, decodes three ways that agree to the bit, exports a
-checkpoint plus a plain-BF16 twin that a stock loader serves, and it is priced
-by the accountant at its true width. It is not yet served by a lane and not yet
-selectable by the allocator; those hand-offs are §8 and §10, and each names the
-exact change its owner has to make.
+**The result, in one table** — six GLM routed experts, output space, geomean,
+both arms through the real wire at the bytes actually written:
+
+| R | BF16 / E4M3 at the same R | BF16 / E4M3 **one rung up** | BF16 / EXL3 K=R |
+|---|---:|---:|---:|
+| 4 | 1.000 | 1.94 | **0.932** |
+| 5 | 0.993 | 1.53 | **0.939** |
+| 6 | **0.797** | **0.828** | **0.955** |
+| 7 | **0.433** | — | — |
+| 8 (one tensor) | **0.231** | — | **1.002** |
+
+Below 6 bits the alphabet is free and costs 0.016 bpp. At 6 it is worth a
+whole bit. At 7 the E4M3 arm has stopped being a rung. And the BF16 arm holds
+0.93-0.96x of EXL3 across the range where the E4M3 arm inverts at 6 and
+collapses at 7. §7.
+
+`TESSERA_BF16` is a real third family: it writes, reads back bit-exactly,
+decodes four ways that agree to the bit, exports a checkpoint plus a plain-BF16
+twin a stock loader serves, and is priced by the accountant at its true width.
+It is not yet served by a lane and not yet selectable by the allocator; those
+hand-offs are §8 and §10, and each names the exact change its owner has to
+make.
 
 ---
 
@@ -312,7 +328,160 @@ to **both arms of every table below equally**, which is why leaving it out does
 not tilt the comparison. Absolute errors here will fall when it lands; the
 BF16-vs-E4M3 ratios are what this section is for.
 
-<!-- WEIGHT SPACE TABLES -->
+### 7a. Six GLM routed experts, output space
+
+Layers 5 / 20 / 42 x `gate_proj` / `up_proj`, 2048x4096, real captured
+activations, the 1024 held-out rows every other Tessera measurement uses.
+`out` is `|x(W - Ŵ)ᵀ| / |xWᵀ|`; geomean over the six, bpp is the arithmetic
+mean of what was actually written. EXL3 reconstructions come from
+`/home/rob/dq-runs/exl3-ref`, quantized by its own quantizer.
+
+| arm | bpp | `wt` | `out` |
+|---|---:|---:|---:|
+| EXL3 K=4 | 4.0117 | 0.08629 | 0.06736 |
+| EXL3 K=5 | 5.0117 | 0.04387 | 0.03429 |
+| EXL3 K=6 | 6.0117 | 0.02246 | 0.01753 |
+| EXL3 K=8 | 8.0117 | 0.00608 | 0.00475 |
+| FP8 RTN per-channel, LS-refit | 8.0078 | 0.02080 | 0.01881 |
+| E4M3 window R=4 | 4.0195 | 0.06940 | 0.06273 |
+| **BF16 window R=4** | 4.0352 | 0.06924 | **0.06276** |
+| E4M3 window R=5 | 5.0195 | 0.03580 | 0.03242 |
+| **BF16 window R=5** | 5.0352 | 0.03560 | **0.03219** |
+| E4M3 window R=6 | 6.0195 | 0.02323 | 0.02100 |
+| **BF16 window R=6** | 6.0352 | 0.01851 | **0.01673** |
+| E4M3 window R=7 | 7.0195 | 0.02233 | 0.02020 |
+| **BF16 window R=7** | 7.0352 | 0.00968 | **0.00874** |
+
+**The ratios, which are the answer.** Lower is better; `< 1` means BF16 wins.
+
+| R | BF16 / E4M3 same R | BF16 / E4M3 **one rung up** | BF16 / EXL3 K=R | BF16 / FP8 RTN (8.008) |
+|---|---:|---:|---:|---:|
+| 4 | 1.0004 | 1.936 | **0.932** | 3.337 |
+| 5 | 0.9929 | 1.533 | **0.939** | 1.712 |
+| 6 | **0.797** | **0.828** | **0.955** | 0.890 |
+| 7 | **0.433** | — | — | **0.465** |
+
+Read it as three statements:
+
+- **Below 6 bits the alphabet is free and costs 0.016 bpp.** BF16 and E4M3
+  are the same encoder there, to 0.1-0.7%, and the wide table's second byte is
+  the only difference. Nobody should pay it below R = 6.
+- **At 6 bits the alphabet is worth a whole bit.** BF16 at 6.035 bpp is
+  **0.828x** of E4M3 at 7.020 bpp — the 16-bit route at R buys more than the
+  8-bit route at R+1, on every one of the six units (0.806-0.855). That is the
+  allocator's question, and it changes the answer.
+- **At 7 bits E4M3 is not a rung any more.** 0.433x, because the E4M3 arm
+  stopped improving (0.02100 -> 0.02020 from R=6 to R=7, a 4% gain for a whole
+  bit) while the BF16 arm halved. And BF16 R=7 at 7.035 bpp is **0.465x** of a
+  full FP8 RTN tile at 8.008 — better than 8-bit, at a bit less.
+
+**And BF16 holds against EXL3 across the whole range**, 0.932-0.955x, where
+the E4M3 arm inverts at 6 (1.198x) and collapses at 7 (2.318x). This is W1's
+headline, reproduced through the wire.
+
+**R = 8, one tensor.** R=8 costs ~24 min per 2048x4096 encode on this box, so
+only L5.gate_proj was carried there (the sweep was stopped after it; the dense
+R=8 screen below is the cheaper form of the same question):
+
+| arm | bpp | `out` |
+|---|---:|---:|
+| E4M3 window R=8 | 8.0195 | 0.02217 |
+| **BF16 window R=8** | 8.0352 | **0.00512** |
+| EXL3 K=8 | 8.0117 | 0.00511 |
+| FP8 RTN | 8.0078 | 0.01844 |
+
+**0.231x of E4M3 at the same rate, and 1.002x of EXL3 K8** — the 16-bit route
+lands *on* EXL3's 8-bit point, which the 8-bit alphabet misses by 4.3x. The
+E4M3 arm's 0.02217 is its saturation value from R=6 (0.02309 / 0.02218 /
+0.02217 at R=6/7/8 in W1's deeper run): the alphabet, not the trellis.
+
+### 7b. The twin's fold, priced
+
+Every arm above was also scored after folding to bf16 (`out_bf16`), which is
+what the stock twin ships. `fold = sqrt(out_bf16² − out²)`, geomean over the
+six units:
+
+| arm | fold | as % of `out` |
+|---|---:|---:|
+| BF16 window R=4 | 0.00126 | 2.0% |
+| BF16 window R=5 | 0.00144 | 4.5% |
+| BF16 window R=6 | 0.00135 | 8.1% |
+| BF16 window R=7 | 0.00134 | **15.4%** |
+| E4M3 window R=4..7 | 0.00145-0.00182 | 2.4-6.2% |
+| EXL3 K=4 / K=6 / K=8 | 0.00128 / 0.00143 / 0.00136 | 2.0% / 8.2% / **28.6%** |
+| FP8 RTN | 0.00143 | 7.8% |
+
+**It is a constant, not a tax on this format.** 0.0013-0.0018 in absolute
+terms on every arm at every rate, including EXL3's and RTN's, because it is
+bf16's 7-bit mantissa meeting these activations. Its *share* grows only
+because the coding error shrinks underneath it. **This is the twin's cost, not
+the route's** — `materialize_bf16` returns the pair and pays none of it (§4),
+and a served number taken on the twin is therefore a ceiling: at R = 7 the
+route is ~15% better than its own twin, before anything else is measured.
+
+### 7c. Six dense Qwen3-0.6B Linears, H-weighted
+
+`layers.2` {`down_proj`, `gate_proj`, `q_proj`, `o_proj`} plus
+`layers.14.mlp.down_proj` and `layers.27.mlp.down_proj` — the three `down_proj`
+being the units the dense-outlier work identified as the hard ones. `h` weights
+each input column by the diagonal H the stock census captured; geomean over
+the six.
+
+| arm | bpp | `wt` | `h` |
+|---|---:|---:|---:|
+| FP8 RTN per-channel, LS-refit | 8.0182 | 0.02622 | 0.02341 |
+| NVFP4 GPTQ+JSO (production export) | 4.5000 | 0.09237 | 0.08374 |
+| E4M3 window R=4 | 4.0577 | 0.07211 | 0.07374 |
+| **BF16 window R=4** | 4.1063 | 0.07188 | **0.07339** |
+| E4M3 window R=5 | 5.0577 | 0.03924 | 0.04044 |
+| **BF16 window R=5** | 5.1063 | 0.03744 | **0.03898** |
+| E4M3 window R=6 | 6.0577 | 0.02803 | 0.02744 |
+| **BF16 window R=6** | 6.1063 | 0.01997 | **0.02150** |
+| E4M3 window R=7 | 7.0577 | 0.02665 | 0.02375 |
+| **BF16 window R=7** | 7.1063 | 0.01078 | **0.01214** |
+
+| R | BF16 / E4M3 same R | BF16 / E4M3 one rung up | BF16 / NVFP4 4.5 | BF16 / FP8 RTN 8.02 |
+|---|---:|---:|---:|---:|
+| 4 | 0.995 | 1.815 | **0.876** | 3.134 |
+| 5 | 0.964 | 1.421 | 0.465 | 1.665 |
+| 6 | **0.784** | **0.905** | 0.257 | 0.918 |
+| 7 | **0.511** | — | 0.145 | **0.518** |
+
+The same three statements hold on dense weights, and the table costs more here
+(+0.049 bpp, not +0.016, because these Linears are 1024x3072 and smaller). Two
+additions:
+
+- **At R = 6, 6.11 bpp, the 16-bit route is already better than a full FP8
+  tile at 8.02** (0.918x) and better than the 8-bit route a whole bit above it
+  (0.905x). At R = 7 it is **1.93x better than FP8 RTN at 0.9 bpp less**.
+- Both Tessera arms beat the *production* NVFP4 GPTQ+JSO export at 4.5 bpp
+  while being smaller (4.06-4.11 bpp), which is the already-known Tessera
+  result and is here only as a sanity rail.
+
+**Per-unit crossover — and the one unit that does not.** The crossover rate
+(lowest R where BF16 beats E4M3 at the *same* R, the conservative reading
+since BF16 is paying more there):
+
+| unit | shape | `wt` | `h` | BF16 R=6 / E4M3 R=7, `h` |
+|---|---|---|---|---:|
+| `layers.2.mlp.down_proj` | 1024x3072 | R=4 (0.9988x) | **never in R=4..7** | 1.541 |
+| `layers.2.mlp.gate_proj` | 3072x1024 | R=4 (0.9975x) | R=4 (0.9935x) | 0.694 |
+| `layers.2.self_attn.q_proj` | 2048x1024 | R=4 (0.9920x) | R=4 (0.9880x) | 0.868 |
+| `layers.2.self_attn.o_proj` | 1024x2048 | R=4 (0.9967x) | R=4 (0.9955x) | 0.759 |
+| `layers.14.mlp.down_proj` | 1024x3072 | R=4 (0.9980x) | R=5 (0.9626x) | 0.801 |
+| `layers.27.mlp.down_proj` | 1024x3072 | R=4 (0.9979x) | R=4 (0.9849x) | 0.975 |
+
+Five of six cross at R = 4 on both axes. **`layers.2.mlp.down_proj` never
+crosses on the H-weighted axis** — 1.010x / 1.019x / 1.018x / 1.044x at
+R = 4..7 — while on plain Frobenius it is 0.72x at R = 6 and 0.41x at R = 7.
+The residual is concentrated in its high-H columns, and this is the unit whose
+rows the reach fix was written for. The likely mechanism is the σ: at the same
+L and seed the BF16 table reaches **4.00 σ** where E4M3's reaches 4.08, and
+`BF16_CHANNEL_SIGMA` is **stated, not searched** (§3). Do not read this row as
+an alphabet result; read it as the measurement that says searching σ (and L)
+for this grid is the first experiment, not an optional one. It is also why the
+menu should keep both alphabets below R = 6, where they are within 1%
+anyway.
 
 ---
 
@@ -508,14 +677,25 @@ outlier work identified as the hard ones.
   economics do not transfer unchanged.
 - **No fused kernel.** §9 states the one change needed; nothing was built or
   benchmarked.
-- **No allocator wiring.** §10 states the three changes PrismaQuant needs, one
-  of which (`ANCHOR_BUDGET_BITS`) currently refuses the family outright.
-- **L = 14 was inherited, not searched, for this grid.** It is E4M3's measured
-  default. A wider table costs 2 bytes an entry here rather than 1, so the
-  L-vs-rate frontier is *not* the same curve as E4M3's and re-measuring it is
-  the obvious next experiment. W1's own reasoning about L = 16 (its §"L = 16:
-  not run") applies with the table cost doubled.
-- **`channel_sigma = 1.0` is stated, not searched** (§3).
+- **No allocator wiring.** §10 states the changes PrismaQuant needs, one of
+  which (`ANCHOR_BUDGET_BITS`) currently refuses the family outright.
+- **Both arms are weights-only**, and the H-aware encoder (LDLQ + full-H
+  CHANNEL refit) landing on another branch applies to both equally — see §7's
+  preamble. Absolute errors here will fall when it lands; the ratios are the
+  claim.
+- **L = 14 and σ = 1.0 were inherited and stated, not searched, for this
+  grid** (§3). This is not a formality: at the same L and seed the BF16 table
+  reaches **4.00 σ** where E4M3's reaches 4.08, and on the one dense unit whose
+  rows are outlier-heavy (`layers.2.mlp.down_proj`) the H-weighted error tracks
+  that reach — BF16 is 1.01-1.04× *behind* E4M3 there at every rate, while
+  being 0.41-0.72× ahead on plain Frobenius (§7c). Searching (L, σ) for this
+  grid is the first experiment, and a wider table costs two bytes an entry
+  here, so the L-vs-rate frontier is a different curve from E4M3's. W1's
+  reasoning about L = 16 (its "L = 16: not run") applies with the cost doubled.
+- **The R = 8 GLM point is one tensor, not six.** R = 8 costs ~24 min per
+  2048×4096 encode on this box; the sweep was stopped after L5.gate_proj and
+  the dense R = 8 screen was run instead. The six-tensor R = 8 geomean is
+  unmeasured.
 - **Rates above 8 are untested by measurement.** They are legal to R = 16 and
   the wire round-trip test covers the widening path, but the product range is
   4..8 and that is where every number here lives.
