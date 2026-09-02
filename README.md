@@ -165,3 +165,7 @@ pip install "tessera-quant[serve]"   # plus vLLM
 ```
 
 The distribution is `tessera-quant`; the import name is `tessera`.
+
+## License
+
+MIT.  See [LICENSE](LICENSE).
