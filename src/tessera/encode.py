@@ -400,8 +400,51 @@ def _window_table_cpu(
     vectors = grid_vector_table(grid).float()                   # [codes, arity]
     # Nearest grid vector, ties to the lower code: E4M3's duplicate slots
     # (the two former NaNs, the negative zero) sit above the legal byte.
-    codes = torch.cdist(points, vectors).argmin(dim=1)
+    if grid.arity == 1 and grid.size > 256:
+        codes = _nearest_scalar_code(points[:, 0], grid)
+    else:
+        codes = torch.cdist(points, vectors).argmin(dim=1)
     return codes.to(torch.uint8) if grid.size <= 256 else codes.to(torch.int32)
+
+
+def _nearest_scalar_code(points: torch.Tensor, grid: PayloadGrid) -> torch.Tensor:
+    """``argmin_c |points - value(c)|``, ties to the lower code, exactly.
+
+    The same answer ``cdist(...).argmin`` gives, computed the way a sorted
+    one-dimensional grid allows -- and computed in float64, which matters at
+    this width for two separate reasons.  BF16 is 65536 codes: the pairwise
+    matrix is 4 GB at L=14, and ``cdist``'s ``x^2 + y^2 - 2xy`` expansion is
+    not the exact ``|x - y|``, so a quantile a hair from a midpoint can land
+    on the wrong side of it in float32.  Neither is a problem a byte-wide
+    grid has, which is why the narrow path is left exactly as it was.
+
+    "Ties to the lower code" is a statement about *codes*, not values, so
+    duplicate values are collapsed to the lowest code carrying them before
+    the search and the two candidates are compared as codes at an exact
+    midpoint.  On BF16 that makes the snap round-half-toward-zero, next to
+    bf16 hardware's round-half-to-even; they differ only on exact midpoints
+    of the table's Gaussian quantiles, which the receipt counts.
+    """
+    values = torch.tensor(grid.values, dtype=torch.float64)
+    order = torch.argsort(values, stable=True)
+    ordered = values[order]
+    # First code of each distinct value, in ascending value order.
+    keep = torch.ones(ordered.numel(), dtype=torch.bool)
+    keep[1:] = ordered[1:] != ordered[:-1]
+    uniq, ucode = ordered[keep], torch.zeros(int(keep.sum()), dtype=torch.long)
+    # ``order`` is a stable sort, so among equal values the lowest code comes
+    # first -- but only within the sort's own tie order, which is code order.
+    ucode.scatter_reduce_(
+        0, torch.cumsum(keep.long(), 0) - 1, order, reduce="amin", include_self=False
+    )
+    p = points.double()
+    right = torch.searchsorted(uniq, p).clamp(0, uniq.numel() - 1)
+    left = (right - 1).clamp_min(0)
+    dl, dr = (p - uniq[left]).abs(), (p - uniq[right]).abs()
+    take_left = torch.where(
+        dl == dr, ucode[left] < ucode[right], dl < dr
+    )
+    return torch.where(take_left, ucode[left], ucode[right])
 
 
 def window_table(

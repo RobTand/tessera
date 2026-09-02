@@ -34,6 +34,7 @@ __all__ = [
     "decode_codes_mixed",
     "dequantize",
     "materialize_nvfp4",
+    "materialize_bf16",
     "reconstruct_unit",
     "unit_half_scales",
 ]
@@ -507,6 +508,47 @@ def materialize_fp8(
         native[codes.long()].to(torch.uint8),
         (unit.scale_rows.to(codes.device).float() * float(unit.scale_global)).reshape(rows),
     )
+
+
+def materialize_bf16(
+    unit: "EncodedUnit",
+    forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
+    code: "ConvCode | None",
+) -> torch.Tensor:
+    """A BF16 unit as the plain ``[rows, cols]`` bf16 tile a stock GEMM takes.
+
+    The 16-bit route's analogue of ``materialize_fp8`` -- and it is simpler,
+    because there is no scale tensor to hand the runtime: an A16 tile carries
+    its own exponent per weight, so the row scale is *folded into the value*
+    and what ships is an ordinary BF16 tensor that vanilla vLLM (or anything
+    else) serves with no plugin and no knowledge of Tessera.
+
+    **The rounding rule, stated once.**  The reconstruction is exactly
+    ``reconstruct_unit``'s -- ``grid_value(code) * scale_rows[row] * global``
+    accumulated in fp32 by ``dequantize`` over ``unit_scale_field`` -- and
+    then **one** round-to-nearest-even to bf16, at the end, by
+    ``Tensor.to(torch.bfloat16)``.  One rounding and not two: rounding the
+    row word or the global separately would fold twice and put the served
+    tile a half-ulp off the tensor the encoder scored.  The streamed decoder
+    (``tessera.bf16_route``) and the exported stock twin both call *this*
+    function rather than reproducing the expression, so the three paths are
+    bit-identical by construction rather than by three code paths agreeing.
+
+    The fold is not free and is not hidden: it is the ``out_bf16`` column of
+    the alphabet-floor measurement, and it is the same fold any BF16
+    checkpoint pays.  A caller that wants the unrounded product -- a streamed
+    decode that keeps the fp16 row word and multiplies in fp32 inside its own
+    GEMV -- asks ``reconstruct_unit`` for it.
+    """
+    grid, _forests = _grid_and_forests(forest)
+    if grid.arity != 1 or grid.name != "BF16":
+        raise GrammarError(
+            f"materialize_bf16 needs the scalar BF16 grid, got {grid.name} "
+            f"(arity {grid.arity}). Another grid's codes are not bf16 words: "
+            "materialise E4M3 with materialize_fp8 and E2M1 with "
+            "materialize_nvfp4."
+        )
+    return reconstruct_unit(unit, forest, code).to(torch.bfloat16)
 
 
 def decode_codes_mixed(

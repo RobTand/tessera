@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 """Export a dense checkpoint as Tessera wires for Gridbook's Tessera lane.
 
-TWO FAMILIES, ONE LANE.  Gridbook's ``tessera_scheme`` names a family by the
+THREE FAMILIES, ONE LANE.  Gridbook's ``tessera_scheme`` names a family by the
 stock tile a module decodes to: ``TESSERA_NVFP4`` (an E2M1-based grid over the
-LUT plane, span-2 TCQ body -> the NVFP4 tile, W4A4) or ``TESSERA_FP8`` (the
+LUT plane, span-2 TCQ body -> the NVFP4 tile, W4A4), ``TESSERA_FP8`` (the
 E4M3 grid over the CHANNEL plane, window body -> the per-channel FP8 pair,
-W8A8).  ``--grid``/``--q256`` set the default per Linear and ``--plan-json``
-overrides it per tensor, so one checkpoint may carry both families and a
-single serve executes each on its own tensor-core path: that is the product
-an allocator targets.
+W8A8), or ``TESSERA_BF16`` (the BF16 grid over the CHANNEL plane, window body
+-> a plain bfloat16 tile, W16A16).  ``--grid``/``--q256`` set the default per
+Linear and ``--plan-json`` overrides it per tensor, so one checkpoint may
+carry all three and a single serve executes each on its own path: that is the
+product an allocator targets.  The 16-bit route exists because the E4M3
+*alphabet* -- not the trellis -- floors the window body's error from R=6
+upward, so above ~6 bpp an 8-bit tile has nothing left to buy
+(``docs/measurements/tessera-bf16-route-2026-09-02.md``).
 
 ONE BLOB PER vLLM MODULE.  Every role a vLLM fusion stacks (q/k/v, gate/up)
 is encoded as its own Tessera unit and framed into a ``tessera.fused``
@@ -18,11 +22,15 @@ module); an NVFP4 module's roles are checked at export for the exact binade
 shift the lane applies at load (``shared_lut_global``), so an unserveable
 group is refused here, not there.
 
-THE STOCK TWIN.  ``--stock-twin DIR`` also writes the compressed-tensors
-materialisation of the SAME wires (``tessera.stock.materialize_stock``; NVFP4
-groups moved onto one shared global) that vanilla vLLM serves with no plugin,
-so a served comparison is between one encode and its two servings rather than
-between two encodes.
+THE STOCK TWIN.  ``--stock-twin DIR`` also writes the materialisation of the
+SAME wires (``tessera.stock.materialize_stock``; NVFP4 groups moved onto one
+shared global) that vanilla vLLM serves with no plugin, so a served
+comparison is between one encode and its two servings rather than between two
+encodes.  A BF16 module's twin tensor is a plain ``<module>.weight`` bfloat16
+tile and rides no config group; a twin all of whose modules are BF16 carries
+**no** ``quantization_config`` at all, because it is then an ordinary BF16
+checkpoint and declaring one would only invite a runtime to look for
+tensors that are not there.
 
 The manifest states what is on disk and what the lane holds resident per
 mode.  ``lm_head`` and the embeddings stay BF16 (PrismaQuant's body-only
@@ -51,7 +59,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
-from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
+from tessera.alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
+from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # noqa: E402
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
@@ -63,18 +72,25 @@ FUSED = (
 )
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
+BF16 = BF16_FAMILY
 
 
 def grid_for(name: str):
     if name == "E4M3":
         return E4M3_GRID
+    if name == "BF16":
+        return BF16_GRID
     match = re.fullmatch(r"(E2M1)(?:x(\d+))?", name)
     if not match:
-        raise SystemExit(f"unknown grid {name!r}; one of E2M1, E2M1x2 (NVFP4 route) or E4M3 (FP8 route)")
+        raise SystemExit(
+            f"unknown grid {name!r}; one of E2M1, E2M1x2 (NVFP4 route), E4M3 "
+            "(FP8 route) or BF16 (the 16-bit route)")
     return tuple_grid(E2M1_GRID, int(match.group(2) or 1))
 
 
 def family_for(grid) -> str:
+    if grid.name == "BF16":
+        return BF16
     return FP8 if grid.name == "E4M3" else NVFP4
 
 
@@ -86,9 +102,9 @@ def check_recipe(grid, q256: int):
         raise SystemExit(
             f"the NVFP4 route decodes the span-2 TCQ body over the LUT plane today; "
             f"{grid.name} q256={q256} is {recipe.body.name} span {recipe.span} over {recipe.scale_plane.name}")
-    if family == FP8 and not (recipe.body.name == "WINDOW" and recipe.scale_plane.name == "CHANNEL"):
+    if family in (FP8, BF16) and not (recipe.body.name == "WINDOW" and recipe.scale_plane.name == "CHANNEL"):
         raise SystemExit(
-            f"the FP8 route decodes the window body over the CHANNEL plane; "
+            f"the {family} route decodes the window body over the CHANNEL plane; "
             f"{grid.name} q256={q256} is {recipe.body.name} over {recipe.scale_plane.name}")
     return recipe
 
@@ -158,10 +174,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("src", type=Path)
     ap.add_argument("out", type=Path)
-    ap.add_argument("--grid", default="E2M1x2", help="default grid per Linear: E2M1, E2M1x2 (NVFP4) or E4M3 (FP8)")
+    ap.add_argument("--grid", default="E2M1x2",
+                    help="default grid per Linear: E2M1, E2M1x2 (NVFP4), E4M3 (FP8) or BF16 (W16A16)")
     ap.add_argument("--q256", type=int, default=896, help="default body bits per 256 weights")
     ap.add_argument("--plan-json", type=Path, default=None,
-                    help='{"tensor.weight": {"grid": "E4M3", "q256": 1024} | "BF16", ...} per-tensor overrides')
+                    help='{"tensor.weight": {"grid": "E4M3"|"BF16", "q256": 1024} | "PASSTHROUGH", ...} per-tensor overrides')
     ap.add_argument("--input-scales", type=Path, default=None,
                     help="safetensors carrying <module>.input_global_scale per NVFP4 Linear (a stock NVFP4 "
                          "export); required when any module takes the NVFP4 route")
@@ -177,7 +194,13 @@ def main():
     overrides = {}
     if args.plan_json:
         for name, spec in json.loads(args.plan_json.read_text()).items():
-            if spec == "BF16":
+            if spec in ("BF16", "PASSTHROUGH"):
+                # The bare string is PASSTHROUGH -- copy the source tensor,
+                # quantise nothing.  ``{"grid": "BF16", "q256": N}`` is the
+                # opposite: the 16-bit trellis route at rate N, whose tile is
+                # bf16 but whose wire is 4-8 bpp.  ``"BF16"`` is kept as a
+                # spelling of passthrough because plans were written with it;
+                # ``"PASSTHROUGH"`` is the one that cannot be misread.
                 overrides[name] = None
             else:
                 g = grid_for(spec["grid"])
@@ -243,7 +266,7 @@ def main():
     config_groups: dict[str, dict] = {}
     units: dict[str, dict] = {}
     module_records: dict[str, dict] = {}
-    twin_modules: dict[str, list[str]] = {NVFP4: [], FP8: []}
+    twin_modules: dict[str, list[str]] = {NVFP4: [], FP8: [], BF16: []}
     twin_records: dict[str, dict] = {}
     ignore = ["lm_head", "model.embed_tokens"]
     passthrough_bytes = 0
@@ -323,6 +346,17 @@ def main():
                         twin_payload[f"{module_of(m)}.input_global_scale"] = torch.tensor(
                             [input_scales[f"{module_of(m)}.input_global_scale"]], dtype=torch.float32)
                     record["twin_shared_divisor"] = divisor
+            elif family == BF16:
+                # Resident here is the DECODED tile -- 16 bits a weight, the
+                # source precision.  It is the correctness path and not a size
+                # claim; the product mode is streamed, and the wire it streams
+                # is ``wire_bytes`` above.
+                record["resident_bytes_resident_mode"] = rows_total * cols * 2
+                if twin is not None:
+                    for m in members:
+                        # One tensor, under the ORIGINAL name: the twin is an
+                        # ordinary BF16 checkpoint, not a compressed one.
+                        twin_payload[m] = stock_tensors[m]["weight"].cpu()
             else:
                 record["resident_bytes_resident_mode"] = rows_total * cols + rows_total * 4
                 if twin is not None:
@@ -376,7 +410,7 @@ def main():
                 shutil.copy2(aux, twin / aux.name)
 
     by_family = {}
-    for fam in (NVFP4, FP8):
+    for fam in (NVFP4, FP8, BF16):
         recs = [m for m in module_records.values() if m["family"] == fam]
         if not recs:
             continue
@@ -425,10 +459,21 @@ def main():
                 "format": "float-quantized", "weights": dict(FP8_WEIGHTS),
                 "input_activations": dict(FP8_INPUTS), "targets": stock_targets(twin_modules[FP8])}
         twin_config = json.loads((args.src / "config.json").read_text())
-        twin_config["quantization_config"] = {
-            "quant_method": "compressed-tensors", "format": "mixed-precision",
-            "config_groups": twin_groups, "ignore": ignore, "quantization_status": "compressed",
-        }
+        if twin_groups:
+            # A BF16 module is in no group: its twin tensor is the ordinary
+            # ``<module>.weight``, so it is ignored by the quantization config
+            # exactly as ``lm_head`` is.
+            twin_config["quantization_config"] = {
+                "quant_method": "compressed-tensors", "format": "mixed-precision",
+                "config_groups": twin_groups,
+                "ignore": sorted(set(ignore) | set(twin_modules[BF16])),
+                "quantization_status": "compressed",
+            }
+        else:
+            # Every module decoded to a plain bf16 tile: this IS a BF16
+            # checkpoint.  Declaring an empty config would tell a runtime to
+            # look for compressed tensors that do not exist.
+            twin_config.pop("quantization_config", None)
         (twin / "config.json").write_text(json.dumps(twin_config, indent=2))
         if len(shards) > 1:
             size = sum((twin / s).stat().st_size for s in shards)
