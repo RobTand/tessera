@@ -141,7 +141,8 @@ row-parallel one. It answers with the same rule `slice_unit` enforces, and a
 `shard_granularity` accept an `EncodedUnit`, a `ParsedUnit` (taking the
 superblock and arity off the parse, which is what a loader holds) or a bare
 `Manifest` (what a reader holding only the header has). PrismaQuant's
-`check_serving_shape` consumes the same pair.
+`check_serving_shape` is to consume the same pair; nothing consumes it yet
+(see *What remains*).
 
 **Both residency modes.** Slicing is a layout operation on planes, so it is
 mode-agnostic:

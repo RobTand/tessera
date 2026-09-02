@@ -1,8 +1,8 @@
 # Slicing a Tessera unit into the shard a rank loads
 
 **Date** 2026-09-02 · **Branch** `worktree-agent-a5d4cf4818e8e77ba` off
-`3d419e7`, commits `dee75d9`, `1ce9b70`, `d8cc017` and the one this line lands
-in ·
+`3d419e7`, commits `dee75d9`, `1ce9b70`, `d8cc017`, `43ce109`, `c36b471` and
+the one this line lands in ·
 **Design** [`docs/design/tensor-parallel.md`](../design/tensor-parallel.md) ·
 **Schema** `docs/schema/prismaquant.tessera.v1.md` §1d (minor 4)
 
@@ -26,16 +26,17 @@ time as an upper bound and every *ratio measured within one run* as the claim.
 
 ```
 $PY -m pytest tests/test_slice_unit.py -q
-# 75 passed, 2 skipped in 43.25s
+# 85 passed, 4 skipped in 24.37s
 
 $PY -m pytest tests/ -q
-# 616 passed, 2 skipped in 1122.87s
+# 626 passed, 4 skipped in 964.98s
 ```
 
-The two skips are correct refusals, not gaps: the released unit is 512 columns
-and a released unit cuts columns only on 256-column superblocks, so tp=4 and
-tp=8 along columns do not exist for it. `can_shard` says so, and the test
-skips on its answer.
+The four skips are correct refusals, not gaps, and they are all one fact
+twice: the released unit is 512 columns and a released unit cuts columns only
+on 256-column superblocks, so tp=4 and tp=8 along columns do not exist for it —
+once in the decode property test, once in the `decode_codes` one. `can_shard`
+says so, and the tests skip on its answer.
 
 Coverage, per the brief:
 
@@ -55,6 +56,16 @@ What the property test asserts, for every case × axis × tp: the shard's decode
 equals `decode(parent)[r0:r1, c0:c1]` **bit for bit** (integer codes and the
 dequantised tensor), the shard survives a wire round-trip, and a shard of a
 shard equals the direct slice.
+
+Both public trellis entry points, not one. `reconstruct_unit` reaches the
+trellis through `decode_codes_mixed`, which prefers a fused kernel and reaches
+`replay_body` only as its fallback; the uniform-rate `decode_codes` calls
+`replay_body` directly and threads the start state itself. A shard whose state
+reached one path and not the other would decode to plausible wrong weights on
+whichever caller happened to hold a single forest, so the two TCQ cases are
+held to the same property through `decode_codes` as well
+(`test_decode_codes_of_a_shard_is_the_parent_sliced`). `decode_codes` refuses a
+window body by design, so the window cases stay on `reconstruct_unit`.
 
 On top of the decode, the two materialisers a serving route actually calls:
 `stock.materialize_stock` on every case (the NVFP4 triple's packed nibble pairs
@@ -242,8 +253,9 @@ degree — costs 100% of the wire per additional degree, plus the encode.
 
 ## 5. Provenance
 
-* Base commit `3d419e7`; the work is `dee75d9` plus the commit this receipt
-  lands in.
+* Base commit `3d419e7`; the work is `dee75d9` (the mechanism), `1ce9b70`
+  (bounded tail + docs), `d8cc017` (the materialiser tests), `43ce109` (the
+  normative-width invariant), `c36b471` and the commit this receipt lands in.
 * Scratch scripts, golden blobs and the archived base source:
   `/home/rob/tmp/tp-slice/`.
 * **Fable consultations: none.** The advisor's read was that the shift-register

@@ -38,6 +38,7 @@ import torch
 from tessera.alphabet import SERIALISABLE_GRIDS
 from tessera.decode import (
     bresenham_release_counts,
+    decode_codes,
     decode_codes_mixed,
     reconstruct_unit,
     release_order,
@@ -266,6 +267,42 @@ def test_shard_decode_is_the_parent_decode_sliced(units, label, axis, tp):
         assert torch.equal(
             reconstruct_unit(shard, parsed.forests, parsed.code), want
         ), f"{label} {axis} shard [{lo}, {hi})"
+
+
+@needs_cuda
+@pytest.mark.parametrize("label", ["e2m1-tcq-lut-release", "e2m1x2-cap-tcq-lut"])
+@pytest.mark.parametrize("axis", ["row", "column"])
+@pytest.mark.parametrize("tp", [2, 4, 8])
+def test_decode_codes_of_a_shard_is_the_parent_sliced(units, label, axis, tp):
+    """The single-forest TCQ wrapper is an entry point too, and it is public.
+
+    ``reconstruct_unit`` reaches the trellis through ``decode_codes_mixed``,
+    which prefers a fused kernel and only falls back to ``replay_body``; the
+    uniform-rate ``decode_codes`` calls ``replay_body`` directly and threads
+    the start state itself.  A shard whose state reached one path and not the
+    other would decode to plausible wrong weights on whichever caller happened
+    to hold a single forest, so both paths are held to the same property here.
+    Only the two TCQ cases: ``decode_codes`` refuses a window body by design.
+    """
+    unit, forests, grid, blob = units[label]
+    parsed = parse_unit_artifact(blob, device=DEVICE)
+    geometry = parsed.manifest.geometry
+    rates = sorted(parsed.forests)
+    assert len(rates) == 1, f"{label} is not uniform-rate: {rates}"
+    forest = parsed.forests[rates[0]]
+    if not can_shard(parsed.unit, tp, axis,
+                     geometry.superblock_columns, grid.arity):
+        pytest.skip(f"{label} does not cut {tp} ways along {axis}s")
+    whole = decode_codes(parsed.unit, forest, parsed.code)
+    extent = geometry.rows if axis == "row" else geometry.columns
+    for lo, hi in _tp_ranges(extent, tp):
+        kwargs = {"rows": (lo, hi)} if axis == "row" else {"cols": (lo, hi)}
+        shard = slice_unit(parsed, **kwargs)
+        want = (whole[lo // grid.arity : hi // grid.arity]
+                if axis == "row" else whole[:, lo:hi])
+        assert torch.equal(decode_codes(shard, forest, parsed.code), want), (
+            f"{label} {axis} shard [{lo}, {hi})"
+        )
 
 
 @needs_cuda
