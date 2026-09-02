@@ -1,0 +1,498 @@
+
+##### tessera_vs_exl3_followups 2026-09-01 20:18:14 args={'layers': [5, 20, 42], 'projs': ['gate_proj', 'up_proj'], 'eval_rows': 1024, 'exl3': [2, 3, 4, 5, 6, 8], 'sigmas': [1.0, 3.0], 'ldlq_block': 32, 'q256': 896, 'rates': [4, 5], 'sigma_units': 64.0, 'refits': 2, 'fp4cb': [24, 20, 16], 'fp8cb': [32, 40, 48], 'cb_ldlq': 1, 's6b_inner': 1, 'out': 'experiments/results/tessera_vs_exl3_followups.json'}
+
+== L5.gate_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.09170  A8 0.02550
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.34116  0.28124  0.29498  0.28224    0.0
+    EXL3 K=3                                                            3.012  0.17384  0.14260  0.16927  0.14482    0.0
+    EXL3 K=4                                                            4.012  0.08816  0.07237  0.11671  0.07672    0.0
+    EXL3 K=5                                                            5.012  0.04482  0.03674  0.09877  0.04470    0.0
+    EXL3 K=6                                                            6.012  0.02294  0.01877  0.09360  0.03166    0.0
+    EXL3 K=8                                                            8.012  0.00623  0.00511  0.09184  0.02602    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09552  0.09222  0.12979  0.09565    1.1
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09564  0.09193  0.12960  0.09537    0.9
+    Gridbook FP8-CB K40                                                 5.008  0.05044  0.04861  0.10369  0.05486    1.3
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05050  0.04856  0.10366  0.05483    1.5
+    Gridbook FP8-CB K48                                                 6.008  0.02733  0.02641  0.09540  0.03671    1.9
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02731  0.02638  0.09539  0.03670    2.0
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15563  0.15013  0.17555  0.15221    3.8
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15599  0.14976  0.17525  0.15183    4.3
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21554  0.20762  0.22622  0.20911    1.3
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21606  0.20780  0.22637  0.20929    1.4
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30237  0.29220  0.30505  0.29319    1.1
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30313  0.29179  0.30467  0.29278    1.0
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.09564  0.09193  0.12960  0.09537    1.0
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.05050  0.04856  0.10366  0.05483    2.8
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.02731  0.02638  0.09539  0.03670   11.1
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.15599  0.14976  0.17525  0.15183   17.3
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.21606  0.20780  0.22637  0.20929    5.0
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.30313  0.29179  0.30467  0.29278    1.7
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08728  0.08410  0.12424  0.08786    2.2
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09187  0.08098  0.12218  0.08489   93.2
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09186  0.07925  0.12105  0.08323    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09313  0.09078  0.12870  0.09423   78.0
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10417  0.08999  0.12812  0.09350    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08879  0.07994  0.12156  0.08388   93.6
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08876  0.07850  0.12058  0.08251    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08586  0.08298  0.12345  0.08680    2.1
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08995  0.07741  0.11976  0.08147   77.7
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08725  0.07715  0.11957  0.08123   38.8
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04520  0.04358  0.10136  0.05048    2.2
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04736  0.04090  0.10026  0.04817   77.4
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04593  0.04056  0.10008  0.04791   38.7
+
+== L5.up_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.09474  A8 0.02638
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.34131  0.29097  0.30520  0.29199    0.0
+    EXL3 K=3                                                            3.012  0.17395  0.14759  0.17504  0.14987    0.0
+    EXL3 K=4                                                            4.012  0.08816  0.07465  0.12055  0.07915    0.0
+    EXL3 K=5                                                            5.012  0.04483  0.03800  0.10204  0.04623    0.0
+    EXL3 K=6                                                            6.012  0.02295  0.01944  0.09674  0.03276    0.0
+    EXL3 K=8                                                            8.012  0.00617  0.00523  0.09489  0.02689    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09556  0.09526  0.13407  0.09883    0.4
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09568  0.09519  0.13406  0.09877    0.5
+    Gridbook FP8-CB K40                                                 5.008  0.05044  0.05031  0.10715  0.05678    0.7
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05051  0.05033  0.10715  0.05682    0.7
+    Gridbook FP8-CB K48                                                 6.008  0.02727  0.02726  0.09857  0.03793    1.9
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02727  0.02720  0.09855  0.03790    2.0
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15560  0.15443  0.18070  0.15662    3.3
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15596  0.15423  0.18052  0.15643    3.7
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21560  0.21532  0.23433  0.21684    1.3
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21613  0.21521  0.23424  0.21674    1.4
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30241  0.30090  0.31421  0.30195    1.1
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30318  0.30052  0.31386  0.30158    1.0
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.09568  0.09519  0.13406  0.09877    1.0
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.05051  0.05033  0.10715  0.05682    2.8
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.02727  0.02720  0.09855  0.03790   11.1
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.15596  0.15423  0.18052  0.15643   17.4
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.21613  0.21521  0.23424  0.21674    5.0
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.30318  0.30052  0.31386  0.30158    1.7
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08733  0.08693  0.12829  0.09077    2.2
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09191  0.08387  0.12631  0.08786  107.4
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09191  0.08215  0.12516  0.08622    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09316  0.09354  0.13296  0.09712  304.6
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10415  0.09299  0.13251  0.09661    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08887  0.08275  0.12555  0.08680 1138.2
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08883  0.08138  0.12467  0.08549    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08580  0.08526  0.12724  0.08922   12.2
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08989  0.07994  0.12373  0.08415  189.0
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08717  0.07976  0.12352  0.08398  194.9
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04524  0.04513  0.10477  0.05228   13.0
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04741  0.04217  0.10359  0.04975  190.7
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04597  0.04199  0.10347  0.04959  195.4
+
+== L20.gate_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.08769  A8 0.02442
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.32959  0.27085  0.28388  0.27184    0.0
+    EXL3 K=3                                                            3.012  0.16769  0.13674  0.16216  0.13886    0.0
+    EXL3 K=4                                                            4.012  0.08495  0.06925  0.11155  0.07340    0.0
+    EXL3 K=5                                                            5.012  0.04317  0.03530  0.09450  0.04289    0.0
+    EXL3 K=6                                                            6.012  0.02211  0.01799  0.08952  0.03034    0.0
+    EXL3 K=8                                                            8.012  0.00608  0.00495  0.08783  0.02490    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09560  0.08812  0.12405  0.09145    1.5
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09575  0.08801  0.12397  0.09134    1.6
+    Gridbook FP8-CB K40                                                 5.008  0.05040  0.04657  0.09917  0.05255    2.3
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05048  0.04662  0.09922  0.05259    2.5
+    Gridbook FP8-CB K48                                                 6.008  0.02553  0.02349  0.09075  0.03386    6.7
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02557  0.02352  0.09075  0.03389    7.1
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15705  0.14467  0.16879  0.14665   11.3
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15747  0.14481  0.16890  0.14680   12.5
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21664  0.20044  0.21812  0.20188    4.5
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21724  0.19945  0.21717  0.20089    4.7
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30347  0.28213  0.29448  0.28310    3.8
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30437  0.28180  0.29422  0.28278    3.4
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.14963  0.12269  0.15069  0.12505    3.3
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.07919  0.06490  0.10905  0.06931   10.0
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.02557  0.02352  0.09075  0.03389   38.0
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.15747  0.14481  0.16890  0.14680   55.3
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.21724  0.19945  0.21717  0.20089   11.5
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.46315  0.38147  0.39058  0.38207    3.9
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08767  0.08064  0.11903  0.08427    9.2
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09179  0.07799  0.11725  0.08172  566.9
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09179  0.07674  0.11646  0.08051    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09295  0.08666  0.12308  0.09002  377.0
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10404  0.08691  0.12321  0.09023    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08911  0.07672  0.11645  0.08050  859.2
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08913  0.07579  0.11581  0.07960    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08555  0.07894  0.11783  0.08262   12.5
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08931  0.07522  0.11525  0.07908  197.6
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08690  0.07392  0.11440  0.07780  198.3
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04493  0.04136  0.09696  0.04799   13.0
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04691  0.03928  0.09601  0.04622  195.0
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04564  0.03886  0.09591  0.04589  197.5
+
+== L20.up_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.09242  A8 0.02571
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.32934  0.28421  0.29811  0.28524    0.0
+    EXL3 K=3                                                            3.012  0.16760  0.14411  0.17086  0.14632    0.0
+    EXL3 K=4                                                            4.012  0.08492  0.07293  0.11761  0.07732    0.0
+    EXL3 K=5                                                            5.012  0.04315  0.03726  0.09967  0.04524    0.0
+    EXL3 K=6                                                            6.012  0.02205  0.01908  0.09437  0.03202    0.0
+    EXL3 K=8                                                            8.012  0.00588  0.00505  0.09257  0.02620    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09561  0.09278  0.13068  0.09626    1.5
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09576  0.09279  0.13068  0.09627    1.6
+    Gridbook FP8-CB K40                                                 5.008  0.05039  0.04905  0.10450  0.05539    2.4
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05047  0.04894  0.10443  0.05527    2.5
+    Gridbook FP8-CB K48                                                 6.008  0.02578  0.02497  0.09573  0.03585    6.7
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02584  0.02507  0.09577  0.03591    7.1
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15687  0.15289  0.17823  0.15500   11.3
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15729  0.15264  0.17801  0.15475   12.6
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21642  0.21110  0.22971  0.21262    4.5
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21702  0.21059  0.22932  0.21211    4.8
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30323  0.29620  0.30913  0.29722    3.9
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30413  0.29596  0.30889  0.29698    3.8
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.14952  0.12885  0.15838  0.13136    3.4
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.07912  0.06826  0.11481  0.07294    9.9
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.02584  0.02507  0.09577  0.03591   38.5
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.15729  0.15264  0.17801  0.15475   59.1
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.21702  0.21059  0.22932  0.21211   17.1
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.46295  0.40334  0.41287  0.40398    5.8
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08757  0.08508  0.12545  0.08884   14.8
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09169  0.08256  0.12371  0.08644 1323.6
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09167  0.08102  0.12271  0.08497    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09286  0.09072  0.12924  0.09423  585.6
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10401  0.09178  0.12996  0.09528    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08901  0.08098  0.12271  0.08491  604.0
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08898  0.08000  0.12205  0.08399    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08552  0.08306  0.12404  0.08694    7.4
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08928  0.07856  0.12100  0.08263  181.0
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08687  0.07801  0.12068  0.08211  199.1
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04520  0.04402  0.10233  0.05095   15.8
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04721  0.04166  0.10133  0.04892  279.8
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04592  0.04117  0.10114  0.04852  287.9
+
+== L42.gate_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.06653  A8 0.01850
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.33297  0.20014  0.21044  0.20089    0.1
+    EXL3 K=3                                                            3.012  0.16925  0.10115  0.12084  0.10277    0.0
+    EXL3 K=4                                                            4.012  0.08580  0.05132  0.08395  0.05453    0.0
+    EXL3 K=5                                                            5.012  0.04361  0.02610  0.07145  0.03198    0.0
+    EXL3 K=6                                                            6.012  0.02232  0.01333  0.06785  0.02278    0.0
+    EXL3 K=8                                                            8.012  0.00600  0.00359  0.06662  0.01885    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09563  0.06706  0.09448  0.06957    2.0
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09604  0.06689  0.09430  0.06940    2.1
+    Gridbook FP8-CB K40                                                 5.008  0.05058  0.03563  0.07550  0.04015    3.1
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05080  0.03539  0.07533  0.03992    3.4
+    Gridbook FP8-CB K48                                                 6.008  0.02561  0.01802  0.06891  0.02580    9.0
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02571  0.01808  0.06893  0.02586    9.5
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15567  0.11054  0.12910  0.11211   15.0
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15682  0.10914  0.12784  0.11072   16.7
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21571  0.15390  0.16772  0.15505    6.0
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21738  0.15207  0.16589  0.15322    6.3
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30278  0.22154  0.23131  0.22238    5.1
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30521  0.21786  0.22764  0.21869    4.6
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.14686  0.08831  0.11047  0.09019    4.4
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.07799  0.04678  0.08129  0.05029   13.2
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.04052  0.02428  0.07082  0.03051   46.9
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.24316  0.14600  0.16025  0.14711   78.4
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.33408  0.20108  0.21141  0.20184   22.5
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.45744  0.27653  0.28373  0.27702    7.4
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08842  0.06217  0.09105  0.06487   24.4
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09231  0.05806  0.08815  0.06090 1168.8
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09225  0.05659  0.08720  0.05950    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09334  0.06717  0.09424  0.06961  608.5
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10363  0.06361  0.09185  0.06622    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08980  0.05741  0.08768  0.06026  394.8
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08974  0.05589  0.08672  0.05883    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08521  0.05996  0.08966  0.06277    2.1
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08871  0.05456  0.08587  0.05757   39.6
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08647  0.05385  0.08545  0.05690   39.3
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04462  0.03109  0.07347  0.03619    2.2
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04646  0.02849  0.07237  0.03397   39.2
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04528  0.02814  0.07224  0.03370   39.1
+
+== L42.up_proj (2048, 4096)  H 7168 rows  held-out 1024 rows  act legs: A4 0.08633  A8 0.02401
+    arm                                                                   bpp       wt      out     W?A4     W?A8      s
+    EXL3 K=2                                                            2.012  0.33275  0.25850  0.27177  0.25951    0.0
+    EXL3 K=3                                                            3.012  0.16932  0.13129  0.15683  0.13339    0.0
+    EXL3 K=4                                                            4.012  0.08580  0.06673  0.10897  0.07088    0.0
+    EXL3 K=5                                                            5.012  0.04366  0.03389  0.09269  0.04153    0.0
+    EXL3 K=6                                                            6.012  0.02238  0.01736  0.08803  0.02963    0.0
+    EXL3 K=8                                                            8.012  0.00615  0.00479  0.08647  0.02448    0.0
+    Gridbook FP8-CB K32                                                 4.008  0.09559  0.08728  0.12257  0.09052    0.4
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09601  0.08682  0.12222  0.09008    0.5
+    Gridbook FP8-CB K40                                                 5.008  0.05050  0.04592  0.09770  0.05181    0.7
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05071  0.04599  0.09772  0.05186    0.7
+    Gridbook FP8-CB K48                                                 6.008  0.02600  0.02370  0.08950  0.03375    1.9
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02605  0.02357  0.08947  0.03366    2.1
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15545  0.14209  0.16603  0.14407    3.4
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15659  0.14106  0.16517  0.14305    3.8
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21552  0.19625  0.21388  0.19768    1.3
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21717  0.19550  0.21308  0.19692    1.5
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30267  0.27699  0.28934  0.27798    1.1
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30511  0.27435  0.28671  0.27534    1.0
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.14682  0.11413  0.14287  0.11659    1.0
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.07785  0.06069  0.10549  0.06523    2.9
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.04103  0.03202  0.09200  0.04002   11.3
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.24280  0.19043  0.20879  0.19183   17.9
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.33353  0.26048  0.27384  0.26147    5.2
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.45729  0.35818  0.36750  0.35882    1.7
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08814  0.08004  0.11760  0.08349    3.6
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09196  0.07543  0.11441  0.07908  227.2
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09194  0.07342  0.11311  0.07718    0.0
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09304  0.08765  0.12272  0.09078  218.6
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10359  0.08245  0.11905  0.08584    0.0
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08942  0.07453  0.11378  0.07824  118.7
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08941  0.07250  0.11250  0.07629    0.0
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08541  0.07785  0.11610  0.08143    6.7
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08892  0.07079  0.11150  0.07469  114.7
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08667  0.07003  0.11098  0.07400   82.6
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04504  0.04089  0.09549  0.04740    2.2
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04689  0.03726  0.09393  0.04432   39.2
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04571  0.03689  0.09378  0.04401   51.7
+
+== mean over 6 tensors   act legs: A4 0.08657  A8 0.02409
+    arm                                                                   bpp       wt      out     W?A4     W?A8
+    EXL3 K=2                                                            2.012  0.33452  0.26432  0.27740  0.26529
+    EXL3 K=3                                                            3.012  0.17027  0.13391  0.15917  0.13600
+    EXL3 K=4                                                            4.012  0.08630  0.06787  0.10989  0.07200
+    EXL3 K=5                                                            5.012  0.04387  0.03455  0.09319  0.04210
+    EXL3 K=6                                                            6.012  0.02246  0.01766  0.08835  0.02987
+    EXL3 K=8                                                            8.012  0.00608  0.00478  0.08670  0.02456
+    Gridbook FP8-CB K32                                                 4.008  0.09558  0.08712  0.12261  0.09038
+    Gridbook FP8-CB K32 +imatrix                                        4.008  0.09581  0.08694  0.12247  0.09021
+    Gridbook FP8-CB K40                                                 5.008  0.05046  0.04602  0.09795  0.05192
+    Gridbook FP8-CB K40 +imatrix                                        5.008  0.05058  0.04597  0.09792  0.05188
+    Gridbook FP8-CB K48                                                 6.008  0.02625  0.02397  0.08981  0.03398
+    Gridbook FP8-CB K48 +imatrix                                        6.008  0.02629  0.02397  0.08981  0.03398
+    Gridbook FP4-CB K24 (v2 two-tier)                                   3.281  0.15604  0.14246  0.16640  0.14444
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                          3.281  0.15669  0.14194  0.16595  0.14393
+    Gridbook FP4-CB K20 (v2 two-tier)                                   2.781  0.21590  0.19744  0.21500  0.19886
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                          2.781  0.21683  0.19677  0.21434  0.19819
+    Gridbook FP4-CB K16 (v2 two-tier)                                   2.281  0.30282  0.27833  0.29059  0.27930
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                          2.281  0.30419  0.27705  0.28933  0.27802
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                           4.008  0.13069  0.10685  0.13768  0.10955
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                           5.008  0.06919  0.05659  0.10357  0.06157
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                           6.008  0.03126  0.02641  0.09055  0.03582
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)             3.281  0.18544  0.15631  0.17862  0.15812
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)             2.781  0.25568  0.21577  0.23206  0.21706
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)             2.281  0.40786  0.33530  0.34553  0.33604
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                      4.000  0.08774  0.07983  0.11761  0.08335
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                            4.000  0.09192  0.07648  0.11533  0.08015
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                       4.000  0.09190  0.07486  0.11428  0.07860
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                 4.000  0.09308  0.08609  0.12182  0.08933
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)            4.000  0.10393  0.08462  0.12078  0.08795
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                            4.000  0.08917  0.07539  0.11462  0.07910
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                       4.000  0.08914  0.07401  0.11372  0.07779
+    Tessera-8 R=4 per-channel (s=64)                                    4.008  0.08556  0.07801  0.11639  0.08163
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)           4.008  0.08934  0.07275  0.11285  0.07660
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)           4.008  0.08689  0.07212  0.11243  0.07600
+    Tessera-8 R=5 per-channel (s=64)                                    5.008  0.04504  0.04101  0.09573  0.04755
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)           5.008  0.04704  0.03829  0.09458  0.04523
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)           5.008  0.04574  0.03794  0.09444  0.04494
+
+| arm | bpp | out | vs EXL3 out | W?A4 | vs EXL3 A4 | W?A8 | vs EXL3 A8 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| EXL3 K=2 | 2.012 | 0.26432 | - | 0.27740 | - | 0.26529 | - |
+| EXL3 K=3 | 3.012 | 0.13391 | - | 0.15917 | - | 0.13600 | - |
+| EXL3 K=4 | 4.012 | 0.06787 | - | 0.10989 | - | 0.07200 | - |
+| EXL3 K=5 | 5.012 | 0.03455 | - | 0.09319 | - | 0.04210 | - |
+| EXL3 K=6 | 6.012 | 0.01766 | - | 0.08835 | - | 0.02987 | - |
+| EXL3 K=8 | 8.012 | 0.00478 | - | 0.08670 | - | 0.02456 | - |
+| Gridbook FP8-CB K32 | 4.008 | 0.08712 | 1.281x (1.269-1.305) | 0.12261 | 1.115x (1.109-1.124) | 0.09038 | 1.253x (1.242-1.274) |
+| Gridbook FP8-CB K32 +imatrix | 4.008 | 0.08694 | 1.279x (1.267-1.300) | 0.12247 | 1.113x (1.109-1.122) | 0.09021 | 1.251x (1.240-1.270) |
+| Gridbook FP8-CB K40 | 5.008 | 0.04602 | 1.330x (1.313-1.362) | 0.09795 | 1.051x (1.048-1.056) | 0.05192 | 1.232x (1.222-1.253) |
+| Gridbook FP8-CB K40 +imatrix | 5.008 | 0.04597 | 1.329x (1.310-1.354) | 0.09792 | 1.050x (1.047-1.054) | 0.05188 | 1.231x (1.219-1.246) |
+| Gridbook FP8-CB K48 | 6.008 | 0.02397 | 1.353x (1.302-1.403) | 0.08981 | 1.016x (1.013-1.019) | 0.03398 | 1.136x (1.115-1.158) |
+| Gridbook FP8-CB K48 +imatrix | 6.008 | 0.02397 | 1.353x (1.304-1.401) | 0.08981 | 1.016x (1.013-1.019) | 0.03398 | 1.136x (1.115-1.157) |
+| Gridbook FP4-CB K24 (v2 two-tier) | 3.281 | 0.14246 | 1.280x (1.257-1.312) | 0.16640 | 1.157x (1.141-1.179) | 0.14444 | 1.263x (1.241-1.294) |
+| Gridbook FP4-CB K24 (v2 two-tier) +imatrix | 3.281 | 0.14194 | 1.274x (1.256-1.295) | 0.16595 | 1.153x (1.140-1.167) | 0.14393 | 1.258x (1.240-1.278) |
+| Gridbook FP4-CB K20 (v2 two-tier) | 2.781 | 0.19744 | 1.263x (1.245-1.300) | 0.21500 | 1.190x (1.176-1.221) | 0.19886 | 1.256x (1.238-1.293) |
+| Gridbook FP4-CB K20 (v2 two-tier) +imatrix | 2.781 | 0.19677 | 1.258x (1.246-1.285) | 0.21434 | 1.186x (1.177-1.208) | 0.19819 | 1.251x (1.239-1.277) |
+| Gridbook FP4-CB K16 (v2 two-tier) | 2.281 | 0.27833 | 1.268x (1.242-1.330) | 0.29059 | 1.220x (1.196-1.276) | 0.27930 | 1.264x (1.238-1.326) |
+| Gridbook FP4-CB K16 (v2 two-tier) +imatrix | 2.281 | 0.27705 | 1.262x (1.240-1.308) | 0.28933 | 1.214x (1.195-1.256) | 0.27802 | 1.257x (1.236-1.304) |
+| Gridbook FP8-CB K32 +imatrix +LDLQ(gated) | 4.008 | 0.10685 | 1.582x (1.267-1.767) | 0.13768 | 1.256x (1.109-1.349) | 0.10955 | 1.528x (1.240-1.699) |
+| Gridbook FP8-CB K40 +imatrix +LDLQ(gated) | 5.008 | 0.05659 | 1.646x (1.318-1.834) | 0.10357 | 1.113x (1.049-1.153) | 0.06157 | 1.468x (1.224-1.613) |
+| Gridbook FP8-CB K48 +imatrix +LDLQ(gated) | 6.008 | 0.02641 | 1.511x (1.304-1.840) | 0.09055 | 1.026x (1.013-1.045) | 0.03582 | 1.206x (1.115-1.349) |
+| Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated) | 3.281 | 0.15631 | 1.423x (1.256-1.741) | 0.17862 | 1.253x (1.140-1.469) | 0.15812 | 1.400x (1.240-1.705) |
+| Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated) | 2.781 | 0.21577 | 1.397x (1.246-1.699) | 0.23206 | 1.298x (1.177-1.540) | 0.21706 | 1.388x (1.239-1.683) |
+| Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated) | 2.281 | 0.33530 | 1.535x (1.240-1.704) | 0.34553 | 1.456x (1.195-1.609) | 0.33604 | 1.527x (1.236-1.695) |
+| Tessera-4 q256=896 (span2 LUT refit4 scale-wt) | 4.000 | 0.07983 | 1.169x (1.153-1.202) | 0.11761 | 1.066x (1.060-1.080) | 0.08335 | 1.151x (1.137-1.181) |
+| Tessera-4 + LDLQ s=1.0 (whole re-encode) | 4.000 | 0.07648 | 1.118x (1.110-1.123) | 0.11533 | 1.045x (1.042-1.047) | 0.08015 | 1.105x (1.098-1.110) |
+| Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic) | 4.000 | 0.07486 | 1.094x (1.087-1.102) | 0.11428 | 1.035x (1.033-1.039) | 0.07860 | 1.084x (1.077-1.091) |
+| Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner) | 4.000 | 0.08609 | 1.261x (1.234-1.303) | 0.12182 | 1.105x (1.094-1.121) | 0.08933 | 1.234x (1.210-1.271) |
+| Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner) | 4.000 | 0.08462 | 1.236x (1.226-1.248) | 0.12078 | 1.094x (1.088-1.100) | 0.08795 | 1.212x (1.202-1.223) |
+| Tessera-4 + LDLQ s=3.0 (whole re-encode) | 4.000 | 0.07539 | 1.102x (1.096-1.110) | 0.11462 | 1.039x (1.037-1.040) | 0.07910 | 1.091x (1.085-1.097) |
+| Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic) | 4.000 | 0.07401 | 1.082x (1.076-1.088) | 0.11372 | 1.030x (1.028-1.034) | 0.07779 | 1.072x (1.067-1.078) |
+| Tessera-8 R=4 per-channel (s=64) | 4.008 | 0.07801 | 1.147x (1.136-1.165) | 0.11639 | 1.058x (1.053-1.067) | 0.08163 | 1.132x (1.122-1.148) |
+| Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale) | 4.008 | 0.07275 | 1.068x (1.058-1.083) | 0.11285 | 1.025x (1.021-1.032) | 0.07660 | 1.061x (1.051-1.075) |
+| Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale) | 4.008 | 0.07212 | 1.059x (1.046-1.067) | 0.11243 | 1.021x (1.016-1.025) | 0.07600 | 1.052x (1.041-1.059) |
+| Tessera-8 R=5 per-channel (s=64) | 5.008 | 0.04101 | 1.184x (1.169-1.203) | 0.09573 | 1.027x (1.025-1.029) | 0.04755 | 1.127x (1.117-1.139) |
+| Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale) | 5.008 | 0.03829 | 1.105x (1.089-1.115) | 0.09458 | 1.014x (1.012-1.016) | 0.04523 | 1.071x (1.060-1.079) |
+| Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale) | 5.008 | 0.03794 | 1.094x (1.075-1.102) | 0.09444 | 1.013x (1.010-1.014) | 0.04494 | 1.064x (1.052-1.070) |
+
+(* = the arm's bpp is outside the EXL3 ladder and the nearest pair was extended.)
+
+EXL3 K=4 leg check (must match tessera8_targets.json): out got 0.06787 want 0.06787, a4 got 0.10989 want 0.10989, a8 got 0.07200 want 0.07200  -> PASS
+reproduction Gridbook FP8-CB K32                                  got 0.08712 want 0.08712 -> PASS
+reproduction Gridbook FP8-CB K40                                  got 0.04602 want 0.04602 -> PASS
+reproduction Gridbook FP8-CB K48                                  got 0.02397 want 0.02397 -> PASS
+reproduction Gridbook FP4-CB K24 (v2 two-tier)                    got 0.14246 want 0.14246 -> PASS
+reproduction Gridbook FP4-CB K20 (v2 two-tier)                    got 0.19744 want 0.19744 -> PASS
+reproduction Gridbook FP4-CB K16 (v2 two-tier)                    got 0.27833 want 0.27833 -> PASS
+reproduction Tessera-4 q256=896 (span2 LUT refit4 scale-wt)       got 0.07983 want 0.07983 -> PASS
+reproduction Tessera-8 R=4 per-channel (s=64)                     got 0.07801 want 0.07800 -> FAIL
+reproduction Tessera-8 R=5 per-channel (s=64)                     got 0.04101 want 0.04101 -> PASS
+
+CB LDLQ gate verdicts (research arm; production sets PRISMAQUANT_CB_LDLQ=0):
+  Gridbook FP8-CB K32: L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=True/ldlq_kept; L20.up_proj=True/ldlq_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+  Gridbook FP8-CB K40: L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=True/ldlq_kept; L20.up_proj=True/ldlq_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+  Gridbook FP8-CB K48: L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=False/raw_kept; L20.up_proj=False/raw_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+  Gridbook FP4-CB K24 (v2 two-tier): L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=False/raw_kept; L20.up_proj=False/raw_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+  Gridbook FP4-CB K20 (v2 two-tier): L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=False/raw_kept; L20.up_proj=False/raw_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+  Gridbook FP4-CB K16 (v2 two-tier): L5.gate_proj=False/raw_kept; L5.up_proj=False/raw_kept; L20.gate_proj=True/ldlq_kept; L20.up_proj=True/ldlq_kept; L42.gate_proj=True/ldlq_kept; L42.up_proj=True/ldlq_kept
+
+wrote experiments/results/tessera_vs_exl3_followups.json
+
+##### tessera_vs_exl3_followups 2026-09-01 23:57:51 args={'layers': [5, 20, 42], 'projs': ['gate_proj', 'up_proj'], 'eval_rows': 1024, 'exl3': [2, 3, 4, 5, 6, 8], 'sigmas': [1.0, 3.0], 'ldlq_block': 32, 'q256': 896, 'rates': [4, 5], 'sigma_units': 64.0, 'refits': 2, 'fp4cb': [24, 20, 16], 'fp8cb': [32, 40, 48], 'cb_ldlq': 1, 's6b_inner': 1, 'out': 'experiments/results/tessera_vs_exl3_followups.json', 'summarize_only': True}
+
+imported 2 arms from experiments/results/tessera8_targets.json (witness arm identical to 0)
+
+== mean over 6 tensors   act legs: A4 0.08657  A8 0.02409
+    arm                                                                       bpp       wt      out     W?A4     W?A8
+    EXL3 K=2                                                                2.012  0.33452  0.26432  0.27740  0.26529
+    EXL3 K=3                                                                3.012  0.17027  0.13391  0.15917  0.13600
+    EXL3 K=4                                                                4.012  0.08630  0.06787  0.10989  0.07200
+    EXL3 K=5                                                                5.012  0.04387  0.03455  0.09319  0.04210
+    EXL3 K=6                                                                6.012  0.02246  0.01766  0.08835  0.02987
+    EXL3 K=8                                                                8.012  0.00608  0.00478  0.08670  0.02456
+    Gridbook FP8-CB K32                                                     4.008  0.09558  0.08712  0.12261  0.09038
+    Gridbook FP8-CB K32 +imatrix                                            4.008  0.09581  0.08694  0.12247  0.09021
+    Gridbook FP8-CB K40                                                     5.008  0.05046  0.04602  0.09795  0.05192
+    Gridbook FP8-CB K40 +imatrix                                            5.008  0.05058  0.04597  0.09792  0.05188
+    Gridbook FP8-CB K48                                                     6.008  0.02625  0.02397  0.08981  0.03398
+    Gridbook FP8-CB K48 +imatrix                                            6.008  0.02629  0.02397  0.08981  0.03398
+    Gridbook FP4-CB K24 (v2 two-tier)                                       3.281  0.15604  0.14246  0.16640  0.14444
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix                              3.281  0.15669  0.14194  0.16595  0.14393
+    Gridbook FP4-CB K20 (v2 two-tier)                                       2.781  0.21590  0.19744  0.21500  0.19886
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix                              2.781  0.21683  0.19677  0.21434  0.19819
+    Gridbook FP4-CB K16 (v2 two-tier)                                       2.281  0.30282  0.27833  0.29059  0.27930
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix                              2.281  0.30419  0.27705  0.28933  0.27802
+    Gridbook FP8-CB K32 +imatrix +LDLQ(gated)                               4.008  0.13069  0.10685  0.13768  0.10955
+    Gridbook FP8-CB K40 +imatrix +LDLQ(gated)                               5.008  0.06919  0.05659  0.10357  0.06157
+    Gridbook FP8-CB K48 +imatrix +LDLQ(gated)                               6.008  0.03126  0.02641  0.09055  0.03582
+    Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated)                 3.281  0.18544  0.15631  0.17862  0.15812
+    Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated)                 2.781  0.25568  0.21577  0.23206  0.21706
+    Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated)                 2.281  0.40786  0.33530  0.34553  0.33604
+    Tessera-4 q256=896 (span2 LUT refit4 scale-wt)                          4.000  0.08774  0.07983  0.11761  0.08335
+    Tessera-4 + LDLQ s=1.0 (whole re-encode)                                4.000  0.09192  0.07648  0.11533  0.08015
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic)                           4.000  0.09190  0.07486  0.11428  0.07860
+    Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner)                     4.000  0.09308  0.08609  0.12182  0.08933
+    Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner)                4.000  0.10393  0.08462  0.12078  0.08795
+    Tessera-4 + LDLQ s=3.0 (whole re-encode)                                4.000  0.08917  0.07539  0.11462  0.07910
+    Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic)                           4.000  0.08914  0.07401  0.11372  0.07779
+    Tessera-8 R=4 per-channel (s=64)                                        4.008  0.08556  0.07801  0.11639  0.08163
+    Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale)               4.008  0.08934  0.07275  0.11285  0.07660
+    Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale)               4.008  0.08689  0.07212  0.11243  0.07600
+    Tessera-8 R=5 per-channel (s=64)                                        5.008  0.04504  0.04101  0.09573  0.04755
+    Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale)               5.008  0.04704  0.03829  0.09458  0.04523
+    Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale)               5.008  0.04574  0.03794  0.09444  0.04494
+    Tessera-4 q256=768 (span2 LUT refit4 scale-wt) [imported from tessera8_targets.json]  3.500  0.15069  0.13730  0.16183  0.13937
+    Tessera-4 q256=640 (span2 LUT refit4 scale-wt) [imported from tessera8_targets.json]  3.000  0.19962  0.18282  0.20164  0.18437
+
+| arm | bpp | out | vs EXL3 out | W?A4 | vs EXL3 A4 | W?A8 | vs EXL3 A8 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| EXL3 K=2 | 2.012 | 0.26432 | - | 0.27740 | - | 0.26529 | - |
+| EXL3 K=3 | 3.012 | 0.13391 | - | 0.15917 | - | 0.13600 | - |
+| EXL3 K=4 | 4.012 | 0.06787 | - | 0.10989 | - | 0.07200 | - |
+| EXL3 K=5 | 5.012 | 0.03455 | - | 0.09319 | - | 0.04210 | - |
+| EXL3 K=6 | 6.012 | 0.01766 | - | 0.08835 | - | 0.02987 | - |
+| EXL3 K=8 | 8.012 | 0.00478 | - | 0.08670 | - | 0.02456 | - |
+| Gridbook FP8-CB K32 | 4.008 | 0.08712 | 1.281x (1.269-1.305) | 0.12261 | 1.115x (1.109-1.124) | 0.09038 | 1.253x (1.242-1.274) |
+| Gridbook FP8-CB K32 +imatrix | 4.008 | 0.08694 | 1.279x (1.267-1.300) | 0.12247 | 1.113x (1.109-1.122) | 0.09021 | 1.251x (1.240-1.270) |
+| Gridbook FP8-CB K40 | 5.008 | 0.04602 | 1.330x (1.313-1.362) | 0.09795 | 1.051x (1.048-1.056) | 0.05192 | 1.232x (1.222-1.253) |
+| Gridbook FP8-CB K40 +imatrix | 5.008 | 0.04597 | 1.329x (1.310-1.354) | 0.09792 | 1.050x (1.047-1.054) | 0.05188 | 1.231x (1.219-1.246) |
+| Gridbook FP8-CB K48 | 6.008 | 0.02397 | 1.353x (1.302-1.403) | 0.08981 | 1.016x (1.013-1.019) | 0.03398 | 1.136x (1.115-1.158) |
+| Gridbook FP8-CB K48 +imatrix | 6.008 | 0.02397 | 1.353x (1.304-1.401) | 0.08981 | 1.016x (1.013-1.019) | 0.03398 | 1.136x (1.115-1.157) |
+| Gridbook FP4-CB K24 (v2 two-tier) | 3.281 | 0.14246 | 1.280x (1.257-1.312) | 0.16640 | 1.157x (1.141-1.179) | 0.14444 | 1.263x (1.241-1.294) |
+| Gridbook FP4-CB K24 (v2 two-tier) +imatrix | 3.281 | 0.14194 | 1.274x (1.256-1.295) | 0.16595 | 1.153x (1.140-1.167) | 0.14393 | 1.258x (1.240-1.278) |
+| Gridbook FP4-CB K20 (v2 two-tier) | 2.781 | 0.19744 | 1.263x (1.245-1.300) | 0.21500 | 1.190x (1.176-1.221) | 0.19886 | 1.256x (1.238-1.293) |
+| Gridbook FP4-CB K20 (v2 two-tier) +imatrix | 2.781 | 0.19677 | 1.258x (1.246-1.285) | 0.21434 | 1.186x (1.177-1.208) | 0.19819 | 1.251x (1.239-1.277) |
+| Gridbook FP4-CB K16 (v2 two-tier) | 2.281 | 0.27833 | 1.268x (1.242-1.330) | 0.29059 | 1.220x (1.196-1.276) | 0.27930 | 1.264x (1.238-1.326) |
+| Gridbook FP4-CB K16 (v2 two-tier) +imatrix | 2.281 | 0.27705 | 1.262x (1.240-1.308) | 0.28933 | 1.214x (1.195-1.256) | 0.27802 | 1.257x (1.236-1.304) |
+| Gridbook FP8-CB K32 +imatrix +LDLQ(gated) | 4.008 | 0.10685 | 1.582x (1.267-1.767) | 0.13768 | 1.256x (1.109-1.349) | 0.10955 | 1.528x (1.240-1.699) |
+| Gridbook FP8-CB K40 +imatrix +LDLQ(gated) | 5.008 | 0.05659 | 1.646x (1.318-1.834) | 0.10357 | 1.113x (1.049-1.153) | 0.06157 | 1.468x (1.224-1.613) |
+| Gridbook FP8-CB K48 +imatrix +LDLQ(gated) | 6.008 | 0.02641 | 1.511x (1.304-1.840) | 0.09055 | 1.026x (1.013-1.045) | 0.03582 | 1.206x (1.115-1.349) |
+| Gridbook FP4-CB K24 (v2 two-tier) +imatrix +LDLQ(gated) | 3.281 | 0.15631 | 1.423x (1.256-1.741) | 0.17862 | 1.253x (1.140-1.469) | 0.15812 | 1.400x (1.240-1.705) |
+| Gridbook FP4-CB K20 (v2 two-tier) +imatrix +LDLQ(gated) | 2.781 | 0.21577 | 1.397x (1.246-1.699) | 0.23206 | 1.298x (1.177-1.540) | 0.21706 | 1.388x (1.239-1.683) |
+| Gridbook FP4-CB K16 (v2 two-tier) +imatrix +LDLQ(gated) | 2.281 | 0.33530 | 1.535x (1.240-1.704) | 0.34553 | 1.456x (1.195-1.609) | 0.33604 | 1.527x (1.236-1.695) |
+| Tessera-4 q256=896 (span2 LUT refit4 scale-wt) | 4.000 | 0.07983 | 1.169x (1.153-1.202) | 0.11761 | 1.066x (1.060-1.080) | 0.08335 | 1.151x (1.137-1.181) |
+| Tessera-4 + LDLQ s=1.0 (whole re-encode) | 4.000 | 0.07648 | 1.118x (1.110-1.123) | 0.11533 | 1.045x (1.042-1.047) | 0.08015 | 1.105x (1.098-1.110) |
+| Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic) | 4.000 | 0.07486 | 1.094x (1.087-1.102) | 0.11428 | 1.035x (1.033-1.039) | 0.07860 | 1.084x (1.077-1.091) |
+| Tessera-4 + LDLQ s=1.0 (whole re-encode, S6b inner) | 4.000 | 0.08609 | 1.261x (1.234-1.303) | 0.12182 | 1.105x (1.094-1.121) | 0.08933 | 1.234x (1.210-1.271) |
+| Tessera-4 + LDLQ s=1.0 (STITCHED, diagnostic, S6b inner) | 4.000 | 0.08462 | 1.236x (1.226-1.248) | 0.12078 | 1.094x (1.088-1.100) | 0.08795 | 1.212x (1.202-1.223) |
+| Tessera-4 + LDLQ s=3.0 (whole re-encode) | 4.000 | 0.07539 | 1.102x (1.096-1.110) | 0.11462 | 1.039x (1.037-1.040) | 0.07910 | 1.091x (1.085-1.097) |
+| Tessera-4 + LDLQ s=3.0 (STITCHED, diagnostic) | 4.000 | 0.07401 | 1.082x (1.076-1.088) | 0.11372 | 1.030x (1.028-1.034) | 0.07779 | 1.072x (1.067-1.078) |
+| Tessera-8 R=4 per-channel (s=64) | 4.008 | 0.07801 | 1.147x (1.136-1.165) | 0.11639 | 1.058x (1.053-1.067) | 0.08163 | 1.132x (1.122-1.148) |
+| Tessera-8 R=4 per-channel + LDLQ s=1.0 (frozen row scale) | 4.008 | 0.07275 | 1.068x (1.058-1.083) | 0.11285 | 1.025x (1.021-1.032) | 0.07660 | 1.061x (1.051-1.075) |
+| Tessera-8 R=4 per-channel + LDLQ s=3.0 (frozen row scale) | 4.008 | 0.07212 | 1.059x (1.046-1.067) | 0.11243 | 1.021x (1.016-1.025) | 0.07600 | 1.052x (1.041-1.059) |
+| Tessera-8 R=5 per-channel (s=64) | 5.008 | 0.04101 | 1.184x (1.169-1.203) | 0.09573 | 1.027x (1.025-1.029) | 0.04755 | 1.127x (1.117-1.139) |
+| Tessera-8 R=5 per-channel + LDLQ s=1.0 (frozen row scale) | 5.008 | 0.03829 | 1.105x (1.089-1.115) | 0.09458 | 1.014x (1.012-1.016) | 0.04523 | 1.071x (1.060-1.079) |
+| Tessera-8 R=5 per-channel + LDLQ s=3.0 (frozen row scale) | 5.008 | 0.03794 | 1.094x (1.075-1.102) | 0.09444 | 1.013x (1.010-1.014) | 0.04494 | 1.064x (1.052-1.070) |
+| Tessera-4 q256=768 (span2 LUT refit4 scale-wt) [imported from tessera8_targets.json] | 3.500 | 0.13730 | 1.430x (1.419-1.453) | 0.16183 | 1.219x (1.214-1.232) | 0.13937 | 1.399x (1.389-1.421) |
+| Tessera-4 q256=640 (span2 LUT refit4 scale-wt) [imported from tessera8_targets.json] | 3.000 | 0.18282 | 1.357x (1.339-1.392) | 0.20164 | 1.260x (1.247-1.288) | 0.18437 | 1.347x (1.330-1.383) |
+
+(* = the arm's bpp is outside the EXL3 ladder and the nearest pair was extended.)
+
+EXL3 K=4 leg check (must match tessera8_targets.json): out got 0.06787 want 0.06787, a4 got 0.10989 want 0.10989, a8 got 0.07200 want 0.07200  -> PASS
+reproduction Gridbook FP8-CB K32                                  got 0.08712 want 0.08712 drift -2.7e-06 -> PASS
+reproduction Gridbook FP8-CB K40                                  got 0.04602 want 0.04602 drift -4.3e-06 -> PASS
+reproduction Gridbook FP8-CB K48                                  got 0.02397 want 0.02397 drift +3.2e-06 -> PASS
+reproduction Gridbook FP4-CB K24 (v2 two-tier)                    got 0.14246 want 0.14246 drift -9.8e-07 -> PASS
+reproduction Gridbook FP4-CB K20 (v2 two-tier)                    got 0.19744 want 0.19744 drift -2.0e-06 -> PASS
+reproduction Gridbook FP4-CB K16 (v2 two-tier)                    got 0.27833 want 0.27833 drift -3.6e-06 -> PASS
+reproduction Tessera-4 q256=896 (span2 LUT refit4 scale-wt)       got 0.07983 want 0.07983 drift -3.9e-06 -> PASS
+reproduction Tessera-8 R=4 per-channel (s=64)                     got 0.07801 want 0.07800 drift +6.3e-06 -> PASS
+reproduction Tessera-8 R=5 per-channel (s=64)                     got 0.04101 want 0.04101 drift -1.6e-07 -> PASS
+
+slice-exactness (C.2, L = I must reproduce the whole encode): L5.gate_proj R=4 slice_exactness_max_abs=0; L5.gate_proj R=5 slice_exactness_max_abs=0
+
+CB LDLQ gate verdicts (research arm; production sets PRISMAQUANT_CB_LDLQ=0, run-pipeline.sh:209):
+  Gridbook FP8-CB K32: L5.gate_proj=raw_kept(holdout 1.109); L5.up_proj=raw_kept(holdout 1.106); L20.gate_proj=ldlq_kept(holdout 0.964); L20.up_proj=ldlq_kept(holdout 0.958); L42.gate_proj=ldlq_kept(holdout 0.728); L42.up_proj=ldlq_kept(holdout 0.739)
+  Gridbook FP8-CB K40: L5.gate_proj=raw_kept(holdout 1.111); L5.up_proj=raw_kept(holdout 1.106); L20.gate_proj=ldlq_kept(holdout 0.966); L20.up_proj=ldlq_kept(holdout 0.970); L42.gate_proj=ldlq_kept(holdout 0.741); L42.up_proj=ldlq_kept(holdout 0.739)
+  Gridbook FP8-CB K48: L5.gate_proj=raw_kept(holdout 1.168); L5.up_proj=raw_kept(holdout 1.170); L20.gate_proj=raw_kept(holdout 1.038); L20.up_proj=raw_kept(holdout 1.024); L42.gate_proj=ldlq_kept(holdout 0.793); L42.up_proj=ldlq_kept(holdout 0.796)
+  Gridbook FP4-CB K24 (v2 two-tier): L5.gate_proj=raw_kept(holdout 1.191); L5.up_proj=raw_kept(holdout 1.193); L20.gate_proj=raw_kept(holdout 1.015); L20.up_proj=raw_kept(holdout 1.016); L42.gate_proj=ldlq_kept(holdout 0.785); L42.up_proj=ldlq_kept(holdout 0.789)
+  Gridbook FP4-CB K20 (v2 two-tier): L5.gate_proj=raw_kept(holdout 1.173); L5.up_proj=raw_kept(holdout 1.179); L20.gate_proj=raw_kept(holdout 1.004); L20.up_proj=raw_kept(holdout 1.005); L42.gate_proj=ldlq_kept(holdout 0.770); L42.up_proj=ldlq_kept(holdout 0.790)
+  Gridbook FP4-CB K16 (v2 two-tier): L5.gate_proj=raw_kept(holdout 1.144); L5.up_proj=raw_kept(holdout 1.146); L20.gate_proj=ldlq_kept(holdout 0.969); L20.up_proj=ldlq_kept(holdout 0.980); L42.gate_proj=ldlq_kept(holdout 0.720); L42.up_proj=ldlq_kept(holdout 0.772)
+  the holdout ratio is ldlq/raw output MSE on a content-keyed random half of the SAME first-7168 rows the Hessian was fit on (_ldlq_holdout_split, nvfp4_cb_formats.py:2635); the +LDLQ(gated) rows above are scored on the last 1024 rows, a disjoint later window.
+
+rewrote experiments/results/tessera_vs_exl3_followups.json (summary only)
+
+##### notes on this file, 2026-09-02
+The SECOND summary block above (from --summarize-only) is authoritative and
+supersedes the first: it keys the EXL3 ladder by tensor rather than by row
+position (identical here -- every arm has all six rows, verified -- but the
+positional form was a latent misalignment bug), it adds the two sub-cap
+Tessera-4 rungs imported from tessera8_targets.json after proving the shared
+witness arm agrees to 0.0 per tensor, and it compares the reproduction arms at
+the precision that document publishes (4 decimals) with the drift recorded.
+The first block's "Tessera-8 R=4 per-channel FAIL" is that drift: +6.3e-6 on
+the mean out leg, at most 5.4e-5 per tensor, 1.3e-7 in weight space -- the
+encoders are deterministic within a process (the per-channel arm is asserted
+bit-identical to per_channel_tcq at run time) but not across processes, and the
+R=4 alternating LS/Viterbi refit lands a few ties the other way.  R=5 and every
+other reproduction arm agree to <= 4.3e-6.  The EXL3 K=4 acceptance check was
+never loosened and passes at 5 decimals on all three legs.
+
+##### Gridbook +LDLQ(gated): the certificate is an in-window win (2026-09-02)
+experiments/cb_ldlq_window_diagnostic.py, L42.gate_proj FP8-CB K32, same fields, same
+nvfp4_cb_reconstruct call the gate itself uses:
+
+    weight rel-err     raw 0.09604   ldlq 0.14686      (+53%)
+    first 7168 rows    raw 0.06229   ldlq 0.04260      ratio 0.684
+    last  1024 rows    raw 0.06689   ldlq 0.08831      ratio 1.320
+
+so the gate is not lying -- its 0.728 holdout ratio is reproduced (0.684 on the
+whole fit window) -- but its holdout is a content-keyed random half of the SAME
+first-7168 rows (_ldlq_holdout_split, nvfp4_cb_formats.py:2635), which shares
+the fit window's column space and cannot see window shift.  The candidate it
+ships is fit on 3584 rows of a 4096-column Hessian, i.e. rank-deficient by
+>= 512 directions with only LDLQ_DAMPING_FRACTION = 0.01 (nvfp4_cb_formats.py:
+1965) holding it together, and the 53% weight-space blowup is the signature.
+This is the same regime tessera-ldlq-regulariser already measured: too little
+regularisation is harmful.  The Tessera C-arms in this file take H from all
+7168 rows at sigma in {1, 3} and DO travel to the last-1024 window.
+Production is unaffected: run-pipeline.sh:209 sets PRISMAQUANT_CB_LDLQ:=0,
+passed at :1984 as --cb-ldlq 0; with no CB_LDLQ_SCOPE default the scope derives
+from that bool (export_nvfp4_cb.py:1378) to "none", and
+nvfp4_cb_footprint.py:680 _ldlq_for_format returns False for every rung.

@@ -340,3 +340,19 @@ grid × plane).
    lacking a SHARED key, and the parts predate `conv_generators`, written
    only since `efa1b9e`; the 151 GiB merged artifact is their only
    mergeable form); ladder probe dispatch; box chores.
+
+## 2026-09-02 (follow-ups: compensation, sub-4 EXL3 rungs, Gridbook as it ships)
+
+`experiments/tessera_vs_exl3_followups.py` (37 arms × 6 experts, same
+held-out rows; EXL3 K4 reproduces `tessera8_targets.json` bit-identically;
+EXL3 K=2/3 added so sub-4 ratios are bracketed, not extrapolated).
+LDLQ σ=3 on the default TCQ wire: 1.169× → 1.102× vs EXL3 (lower bound);
+on scalar per-channel Tessera-8: 1.147× → 1.059× at R=4, 1.184× → 1.094×
+at R=5 (1.01–1.02× under EXL3@A4). Gridbook: the production imatrix is
+worth ≤0.5% on every rung; its gated LDLQ regresses every rung (K32 out
+0.0869 → 0.1069; the gate's hold-out is half of its own fit rows and the
+fit is rank-deficient at 1% damping) — production runs it off, so the
+imatrix rows are Gridbook as it ships: FP8-CB 1.28×/1.33×/1.35× at 4/5/6,
+FP4-CB 1.26–1.27× at 2.3–3.3, all behind the window body over CHANNEL
+(0.957×/0.985×/1.016×/1.240× at 3/4/5/6). Open: LDLQ on the window body.
+Full suite on the merged tree: 471 passed.

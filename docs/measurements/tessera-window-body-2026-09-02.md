@@ -412,3 +412,17 @@ is producing.
 3. A fast encoder (Triton or survivor-limited), timed on a full expert
    layer under `torch.profiler` and Netdata before it is trusted.
 4. LDLQ on the window body; the held-out served A/B.
+
+## LDLQ, measured beside the window body (2026-09-02, follow-ups harness)
+
+`experiments/tessera_vs_exl3_followups.py` measured `compensate.py`'s
+LDLQ (H from the first 7168 capture rows, σ ∈ {1, 3}, block 32) on the
+default TCQ wire and on scalar per-channel Tessera-8 — not on the window
+body. σ=3 wins everywhere: TCQ wire 1.169× → 1.102× (whole-unit re-encode,
+a lower bound: the LUT16 plane refits over what it is handed), per-channel
+R=4 1.147× → 1.059×, R=5 1.184× → 1.094× (slice-exact, row scale frozen).
+Gridbook's gated LDLQ regresses every rung (its hold-out shares the fit
+rows). The window body + LDLQ arm is still unmeasured on both tiles; its
+block structure (trellis state across columns) needs the compensation
+block aligned to the trellis restart, or a whole-row re-encode as on the
+TCQ wire. Full table: `docs/tessera-one-format.md` §4.
