@@ -13,8 +13,12 @@ measured, see section 4) and 0.74-0.76 of spec. The debug decode and
 the GEMV path are both bit-exact against `materialize_fp8` on all 196
 reach-checkpoint units. At the granularity the lane actually issues GEMVs
 (fused `qkv_proj` / `gate_up_proj`, as the reach checkpoint stores them) the
-4B per-token ratio is 2.59x, and on the assumed 27B list 2.42x; the 0.6B
-list, launch-bound at 0.5-1.5 MB per unit, is 1.41x (1.61x fused). At M=2 /
+4B per-token ratio is **~1.95x** (the run measured 2.59x, but its
+19456x2560 fp8 arm was time-sliced at 121 GB/s; corrected to the clean
+203 GB/s fp8 rate the fp8 lane is 18.2 ms against 9.32 ms, section 5 /
+9b). The assumed-27B rows were sliced on every arm and are not a kernel
+claim (section 9b). The 0.6B list, launch-bound at 0.5-1.5 MB per unit,
+is 1.41x (1.61x fused). At M=2 /
 4 / 8 the 4B ratios are 1.43x / 1.56x / 1.09x (section 11). Everything
 below was measured on **sparklina** while four foreign CUDA jobs were
 running on it (6-8 CUDA processes including mine); the box state is
@@ -112,8 +116,9 @@ transforms, M > 8.
 ## 3. Bit-exactness
 
 All on sparklina, `PYTHONPATH=src python -m pytest tests/test_kernel_window_gemv.py`:
-51 passed (`/mnt/shared/tessera-runs/gemv/tests_v2.log` for the 47 of v2,
-plus the 4 every-weight tests, 41.8 s).
+51 passed in 70.9 s on the default PF=1 build
+(`/mnt/shared/tessera-runs/gemv/tests_v2final.log`); 51 passed in 84 s on the
+PF=2 build (`tests_v2pf2.log`).
 
 - **Decode kernel vs `materialize_fp8`:** byte-identical E4M3 tiles and
   exact scales on all 196 units of the reach checkpoint
@@ -147,7 +152,7 @@ box (mine):
 | streaming read, best launch shape (GB/s) | 244 | 253 | 246 | 234 |
 | copy, GB/s moved (read + write) | 119 | 218 | 109 | 111 |
 | `torch.clone` 256 MB, GB/s moved | | | | 115 |
-| `torch._scaled_mm` fp8 5120x5120 M=1 cold, GB/s read | | | 203 | |
+| `torch._scaled_mm` fp8 5120x5120 M=1 cold, GB/s read | | 203 | | |
 
 The best any reader gets is **~250 GB/s = 0.92 of the 273 GB/s spec**; the
 sustained read power was 84-91 W. So "bandwidth-bound" on this box means
@@ -157,7 +162,30 @@ sustained read power was 84-91 W. So "bandwidth-bound" on this box means
 
 Read the 27B-assumed rows and the fused 19456x2560 row's fp8 column with
 section 9b: rounds longer than a GPU time slice measure a share of the GPU.
-The Qwen3-4B / 0.6B rows are clean.
+On the Qwen3-4B / 0.6B rows the kernel and fp8 columns are clean and the
+bf16 column is not:
+
+- **fp8, clean.** The mm-only rate on the >= 10 MB 4B shapes is 213 / 206 /
+  202 GB/s (4096x2560 / 9728x2560 / 2560x9728; 188 on 2560x4096), the same
+  203 GB/s the quiet-box `_scaled_mm` probe reads (section 4). A sliced fp8
+  arm reads at ~121 GB/s (19456x2560, 27B rows). This is the check that
+  makes the 1.855x trustworthy.
+- **kernel, clean.** Rounds are 0.2-1.0 ms (16-64 launches) and min is
+  within 4% of median on every 4B shape (table below).
+- **bf16, sliced.** cuBLAS bf16 rounds run 4.7-10 ms (1024x2560: 64 x 74 us;
+  9728x2560: 16 x 635 us; 2560x9728: 16 x 382 us); v1 on a quieter box
+  measured 1024x2560 bf16 at 32.7 us against 74.2 here. Read every
+  "vs bf16" ratio on the 4B list (7.33x at M=1) as an upper bound.
+
+Min against median, 4B list at M=1 (us; `median_us` from the same JSON):
+
+| shape | kernel min | kernel median | rounds x launches | fp8 lane min | fp8 lane median | fp8 mm-only min | mm-only GB/s | bf16 min | bf16 median |
+|---|---|---|---|---|---|---|---|---|---|
+| 1024x2560 | 11.5 | 11.5 | 70x64 | 19.8 | 20.0 | 18.4 | 142 | 74.2 | 80.5 |
+| 2560x4096 | 30.7 | 31.2 | 54x16 | 57.2 | 57.7 | 55.6 | 188 | 130.8 | 441.8 |
+| 2560x9728 | 61.4 | 61.8 | 42x16 | 126.8 | 127.6 | 123.4 | 202 | 382.3 | 519.4 |
+| 4096x2560 | 30.7 | 31.2 | 83x16 | 51.8 | 55.9 | 49.3 | 213 | 120.1 | 120.7 |
+| 9728x2560 | 60.0 | 62.3 | 54x16 | 121.9 | 122.8 | 120.9 | 206 | 635.1 | 672.2 |
 
 ### M=1: per shape (us, min over interleaved rounds)
 
@@ -275,6 +303,13 @@ The Qwen3-4B / 0.6B rows are clean.
 | 27B-assumed | 2 | 139804 | 141106 | 204480 | 202902 | 412362 | 79229 | **1.449x** | 1.463x | 1.451x | 2.92x |
 | 27B-assumed | 4 | 119783 | 118786 | 204573 | 203298 | 413882 | 78420 | **1.722x** | 1.708x | 1.697x | 3.48x |
 | 27B-assumed | 8 | 202773 | 201943 | 206167 | 204351 | 414662 | 79588 | **1.021x** | 1.017x | 1.008x | 2.05x |
+
+Qwen3-4B-fused at M=1, corrected: the 19456x2560 fp8 lane arm measured
+414.5 us = 121 GB/s (sliced, section 9b); at the clean 203 GB/s it is
+~249.5 us (49.8 MB / 203 GB/s + the measured 4.2 us quant), so the fp8
+lane per token is ~18186 us and the ratio **~1.95x op / ~2.01x kernel**,
+not 2.59x / 2.67x. The 27B-assumed rows have every arm sliced and are not
+corrected (section 9b).
 
 ## 6. Launch-shape sweep (v2, chain `v2plans`) and the v1 -> v2 delta
 
@@ -486,7 +521,7 @@ v2 (box shared):
 | Registers Per Thread | 64 register/thread | 64 register/thread | 64 register/thread | 64 register/thread | 64 register/thread |
 | Theoretical Occupancy | 66.67 % | 66.67 % | 66.67 % | 66.67 % | 66.67 % |
 | Achieved Occupancy | 65.34 % | 65.07 % | 65.11 % | 65.96 % | 65.57 % |
-| Waves Per SM | - | - | - | - | - |
+| Waves Per SM | 1 | 0.99 | 1 | 1 | 1 |
 | Memory Throughput | 28.16 % | 35.88 % | 39.37 % | 40.49 % | 38.72 % |
 | Compute (SM) Throughput | 23.40 % | 26.13 % | 28.43 % | 29.47 % | 27.93 % |
 | L1/TEX Cache Throughput | 42.91 % | 47.00 % | 42.50 % | 47.86 % | 41.52 % |
@@ -593,7 +628,11 @@ table build is the slower one, section 6).
 Measured M = 1, 2, 4, 8 on every shape (section 5 tables); per token on
 the Qwen3-4B list the op is **1.855x / 1.433x / 1.556x / 1.088x** the fp8
 lane at M = 1 / 2 / 4 / 8 (27B-assumed: 2.42x / 1.45x / 1.72x / 1.02x; 4B
-fused: 2.59x / 1.31x / 1.36x / 1.06x). The lane's cost is flat in M (its
+fused: 2.59x / 1.31x / 1.36x / 1.06x -- both lists carry the section 9b
+caveat: at M=2 the fused 19456x2560 kernel row, 330.7 us = 2.85x its M=1
+time, is a 5.3 ms round and sliced, while the unfused 4B M=2 rows are
+1.3 ms rounds and clean, so the M=2 / M=4 finding below stands on the
+unfused list). The lane's cost is flat in M (its
 bytes are the weights), the wire GEMV's grows: each extra batch row is one
 more FMA and one more x value per weight, and the reduction and output
 grow with M. Two things in the numbers:
@@ -662,7 +701,10 @@ python experiments/gemv_receipt_tables.py --dir $OUT --gemv 'bench_gemv_v2_*.jso
 ## 14. Consultations
 
 No fable-* or opus-* workers were spawned. The `advisor` reviewer was
-consulted twice (design/result review before the receipt; final check); its
+consulted twice (design/result review before the receipt; final check). Its
 first-round asks -- prove every weight through the GEMV path, add a sustained-power
 measurement, state contention per row, do not present ncu's memory
-percentage as a DRAM fraction -- are all in this receipt.
+percentage as a DRAM fraction -- and its final-check asks -- correct the
+fused / 27B headline for time-slicing, mark the bf16 column as sliced and
+prove the fp8 column clean, add min against median, fill the ncu waves row,
+wait for the default-build test run -- are all in this receipt.
