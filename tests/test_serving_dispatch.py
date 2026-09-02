@@ -365,3 +365,110 @@ def test_an_unknown_family_is_still_refused_by_name():
     from tessera.serving import lane
     with pytest.raises(ValueError, match="family must be one of"):
         lane.build_tessera_method({"family": "TESSERA_NOPE"}, "m", mode="resident")
+
+
+# --------------------------------------------------------------------------
+# A checkpoint's module names are not vLLM's module names.
+#
+# vLLM hands every quantization config the model's ``hf_to_vllm_mapper`` and
+# expects the config to translate its own target lists
+# (``model_loader/utils.py:277-279``; ``models/interfaces.py:1160`` for a
+# ``SupportsQuant`` class).  The base method is a no-op
+# (``base_config.py:229-241``), so inheriting it meant every target stayed in
+# checkpoint space.  On ``Glm5NextForConditionalGeneration`` -- mapper
+# ``{"model.language_model." -> "language_model.model.", "model.visual." ->
+# "visual.", "lm_head." -> "language_model.lm_head."}`` -- not one target would
+# have matched, and every Linear would have been refused at load.
+#
+# It never showed because every Tessera artifact served so far is Qwen3-0.6B,
+# whose class declares no mapper at all.
+# --------------------------------------------------------------------------
+
+class _Mapper:
+    """The one method of ``WeightsMapper`` this contract uses."""
+
+    def __init__(self, prefixes, drop=()):
+        self.prefixes = dict(prefixes)
+        self.drop = set(drop)
+
+    def apply_list(self, values):
+        out = []
+        for value in values:
+            if value in self.drop:
+                continue
+            for old, new in self.prefixes.items():
+                if value.startswith(old):
+                    value = new + value[len(old):]
+                    break
+            out.append(value)
+        return out
+
+
+GLM = {"model.language_model.": "language_model.model.", "model.visual.": "visual."}
+
+
+def test_targets_and_ignores_move_into_the_module_namespace(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    declared = "model.language_model.layers.0.self_attn.qkv_proj"
+    passed = "model.language_model.layers.1.mlp.experts"
+    config = _resolved(_config(targets=(declared,), ignore=(passed, "lm_head")))
+
+    config.apply_vllm_mapper(_Mapper(GLM))
+
+    assert "language_model.model.layers.0.self_attn.qkv_proj" in config.target_scheme
+    assert declared not in config.target_scheme, "the checkpoint name survived the mapping"
+    assert "language_model.model.layers.1.mlp.experts" in config.ignore
+    assert "lm_head" in config.ignore, "a bare module name is not a path and is left alone"
+
+
+def test_the_mapped_target_is_the_one_that_dispatches(monkeypatch):
+    """The point of the whole exercise."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("model.language_model.layers.0.mlp.gate_up_proj",)))
+    config.apply_vllm_mapper(_Mapper(GLM))
+
+    layer = _layer()
+    assert config.get_quant_method(
+        layer, "language_model.model.layers.0.mlp.gate_up_proj") is not None
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(layer, "model.language_model.layers.0.mlp.gate_up_proj")
+
+
+def test_a_regex_target_is_left_alone(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("re:.*gate_up_proj$",)))
+    config.apply_vllm_mapper(_Mapper(GLM))
+    assert "re:.*gate_up_proj$" in config.target_scheme
+
+
+def test_a_dropped_target_refuses_rather_than_vanishing(monkeypatch):
+    """compressed-tensors drops it silently; a dead wire is worse than a stop."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    gone = "model.language_model.layers.0.mlp.gate_up_proj"
+    config = _resolved(_config(targets=(gone,)))
+    with pytest.raises(ValueError, match="drops"):
+        config.apply_vllm_mapper(_Mapper(GLM, drop=(gone,)))
+
+
+def test_two_checkpoint_modules_cannot_share_one_vllm_module(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("a.x.proj", "b.x.proj")))
+    with pytest.raises(ValueError, match="both map to the module"):
+        config.apply_vllm_mapper(_Mapper({"a.": "c.", "b.": "c."}))
+
+
+def test_an_overlap_created_by_the_mapping_is_still_refused(monkeypatch):
+    """The declared/ignored check has to run again on the mapped names."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("a.x.proj",), ignore=("b.x.proj",)))
+    with pytest.raises(ValueError, match="both declared and ignored"):
+        config.apply_vllm_mapper(_Mapper({"a.": "c.", "b.": "c."}))
+
+
+def test_a_model_with_no_mapper_is_untouched(monkeypatch):
+    """Qwen3-0.6B: vLLM never calls the hook, and nothing may change if it does."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=(TARGET,), ignore=("model.embed_tokens",)))
+    before = dict(config.target_scheme), tuple(config.ignore)
+    config.apply_vllm_mapper(_Mapper({}))
+    assert (config.target_scheme, config.ignore) == before
