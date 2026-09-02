@@ -89,7 +89,15 @@ from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
-    (re.compile(r"^(.*\.mlp\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
+    # NOT scoped to ``.mlp.``: a shared expert is its own MLP module
+    # (``...mlp.shared_experts.{gate,up,down}_proj`` in the checkpoint) and vLLM
+    # merges ITS gate/up too -- ``Glm5NextMLP`` takes ``prefix=f"{prefix}.gate_up_proj"``
+    # for whatever prefix it is built at (glm5next/nvidia/model.py:124, :216).
+    # Naming the unmerged leaves there declares two modules vLLM never builds
+    # and leaves the one it does build undeclared, which the plugin refuses at
+    # load.  The lookahead keeps ROUTED experts out: their gate/up merge into
+    # ``w13`` inside the FusedMoE, which is a different mechanism entirely.
+    (re.compile(r"^(?!.*\.experts\.\d+\.)(.*\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
 )
 #: A body Linear, and WHICH decoder layer it belongs to.  Not
 #: ``startswith("model.layers.")``: a multimodal checkpoint roots its decoder
@@ -464,7 +472,12 @@ def main():
                     twin_payload[name] = tensor
                     passthrough_bytes += tensor.numel() * tensor.element_size()
                     if name in passthrough:
-                        ignore.append(module_of(name))
+                        # ...at the name vLLM BUILDS.  The plugin's ignore test
+                        # is exact membership against the module prefix vLLM
+                        # constructs, so a passed-through ``gate_proj`` has to be
+                        # ignored as its fused ``gate_up_proj``, not as itself.
+                        fused = fused_module(name)
+                        ignore.append(fused[0] if fused else module_of(name))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
@@ -567,11 +580,20 @@ def main():
     # lets the plugin serve that MoE layer unquantized instead of refusing it.
     for name in expert_shapes:
         ignore.append(module_of(name).rsplit(".", 1)[0])
-    # An UNPACKED routed expert is ignored at its own module name: vLLM's
-    # FusedMoE is matched by the leaf its loader walks, and naming the parent
-    # would silently cover the shared experts beside it.
+    # An UNPACKED routed expert is ignored at the FusedMoE's OWN prefix, not at
+    # its 2592 checkpoint leaves.  Attested against the pinned build
+    # ``prismaquant/glm53-mia-sm121:487ecf187``, three hops:
+    #   models/glm5next/nvidia/model.py:239  FusedMoEFactory(prefix=f"{prefix}.experts")
+    #   layers/fused_moe/layer.py:221        layer_name = prefix
+    #   layers/fused_moe/routed_experts.py:122,:201
+    #                                        quant_config.get_quant_method(self, self.layer_name)
+    # So the string the plugin tests is ``<layer>.mlp.experts`` and no leaf name
+    # is ever offered to it.  Naming the parent cannot reach the shared experts
+    # beside it: ``shared_experts`` is a SIBLING of ``experts``, and both the
+    # plugin's test and compressed-tensors' are exact/fnmatch, not prefix
+    # subsumption.
     for name in routed_shapes:
-        ignore.append(module_of(name))
+        ignore.append(ROUTED_EXPERT_2D.match(name).group("moe") + ".experts")
     ignore = sorted(set(ignore))
     config = src_config
     config["quantization_config"] = {

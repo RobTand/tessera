@@ -14,7 +14,14 @@ expensive later:
    have been encoded -- hours of GPU -- into a checkpoint whose
    ``config_groups`` name modules vLLM never builds, which the plugin refuses
    at LOAD.  The refusal has to arrive before the encode, not after it.
-3. **A conv1d called an expert stack.**  ``len(shape) >= 3`` was the whole
+3. **The ignore list named modules vLLM never builds.**  ``ignore`` is tested by
+   EXACT membership against the prefix vLLM constructs a module at, so a name
+   that is one character off is not a near miss -- it is a load-time refusal
+   (or, for the MoE module, a refusal that no ignore entry can lift).  Two ways
+   to get it wrong live here: naming a routed expert's 2592 leaves instead of
+   the one FusedMoE prefix, and naming an unmerged ``gate_proj``/``up_proj``
+   pair instead of the ``gate_up_proj`` vLLM merges them into.
+4. **A conv1d called an expert stack.**  ``len(shape) >= 3`` was the whole
    test for "packed expert stack", and GLM-5.3-Flash's attention carries
    ``k_conv1d.weight [8192, 1, 4]``.  That put ``...self_attn`` -- the parent
    of every attention Linear in the layer -- into the checkpoint's ``ignore``
@@ -219,3 +226,87 @@ def test_a_packed_stack_is_recognised_by_name(tmp_path):
         "model.language_model.layers.1.mlp.experts.gate_up_proj.weight"], sorted(packed)
     assert routed == {}, sorted(routed)
     assert not any(".mlp.experts." in n for n in shapes), sorted(shapes)
+
+
+# --------------------------------------------------------------------------
+# ``ignore`` must name the modules vLLM BUILDS.
+#
+# The plugin's test is ``prefix in self.ignore`` -- exact membership against
+# the string vLLM passes to ``get_quant_method``.  Both names below were read
+# off the pinned build ``prismaquant/glm53-mia-sm121:487ecf187``:
+#
+#   models/glm5next/nvidia/model.py:239   FusedMoEFactory(prefix=f"{prefix}.experts")
+#   models/glm5next/nvidia/model.py:124   Glm5NextMLP -> prefix=f"{prefix}.gate_up_proj"
+#   models/glm5next/nvidia/model.py:216   shared_experts = Glm5NextMLP(prefix=f"{prefix}.shared_experts")
+#   layers/fused_moe/layer.py:221         layer_name = prefix
+#   layers/fused_moe/routed_experts.py:122,:201
+#                                         quant_config.get_quant_method(self, self.layer_name)
+# --------------------------------------------------------------------------
+
+def test_a_shared_expert_fuses_its_gate_and_up_like_any_other_mlp():
+    """``mlp.shared_experts`` is an MLP, and vLLM merges ITS gate/up too.
+
+    The rule used to be scoped to ``.mlp.``, so these two leaves were declared
+    as themselves -- two modules vLLM never builds -- while
+    ``...shared_experts.gate_up_proj``, the one it does build, went undeclared
+    and the plugin refused the load.
+    """
+    P = "model.language_model.layers.1.mlp"
+    got = export.fused_module(f"{P}.shared_experts.gate_proj.weight")
+    assert got is not None, "the shared expert's gate/up are not being fused"
+    assert got[0] == f"{P}.shared_experts.gate_up_proj", got[0]
+    assert got[1] == (f"{P}.shared_experts.gate_proj.weight",
+                      f"{P}.shared_experts.up_proj.weight"), got[1]
+
+    # ...and the ordinary dense case is unchanged.
+    dense = export.fused_module("model.layers.0.mlp.up_proj.weight")
+    assert dense[0] == "model.layers.0.mlp.gate_up_proj", dense[0]
+    assert export.fused_module("model.layers.0.self_attn.k_proj.weight")[0] == \
+        "model.layers.0.self_attn.qkv_proj"
+
+
+def test_a_routed_expert_leaf_is_never_fused_as_a_dense_pair():
+    """Their gate/up merge into ``w13`` INSIDE the FusedMoE, not into a Linear.
+
+    Widening the fused rule off ``.mlp.`` would otherwise invent
+    ``...mlp.experts.7.gate_up_proj``.
+    """
+    routed = "model.language_model.layers.1.mlp.experts.7.gate_proj.weight"
+    assert export.fused_module(routed) is None, export.fused_module(routed)
+
+
+@pytest.mark.parametrize("leaf", ["gate_proj", "up_proj", "down_proj"])
+def test_the_routed_ignore_entry_is_the_fused_moe_prefix(leaf):
+    """One entry per LAYER at ``...mlp.experts``, not one per checkpoint leaf."""
+    name = f"model.language_model.layers.2.mlp.experts.13.{leaf}.weight"
+    match = export.ROUTED_EXPERT_2D.match(name)
+    assert match is not None, name
+    assert match.group("moe") + ".experts" == "model.language_model.layers.2.mlp.experts"
+
+
+def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
+    """End to end: run the exporter and read the ignore list it writes."""
+    src = _write(tmp_path, _unpacked_checkpoint())
+    out = tmp_path / "out"
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
+                                     "--grid", "E4M3", "--q256", "1024"])
+    export.main()
+
+    written = json.loads((out / "config.json").read_text())["quantization_config"]
+    ignore = written["ignore"]
+    declared = {t for g in written["config_groups"].values() for t in g["targets"]}
+
+    P = "model.language_model.layers.1.mlp"
+    assert f"{P}.experts" in ignore, (
+        f"the FusedMoE prefix vLLM builds is absent from ignore, so the plugin refuses the "
+        f"whole MoE layer at load: {sorted(ignore)}")
+    leaves = [i for i in ignore if ".experts." in i]
+    assert not leaves, f"ignore names routed expert LEAVES, which vLLM never asks about: {leaves[:3]}"
+
+    # the shared experts are quantized, so they are DECLARED -- at gate_up_proj
+    shared = sorted(t for t in declared if "shared_experts" in t)
+    assert any("gate_up_proj" in t for t in shared), (
+        f"the shared expert's merged module is not declared: {shared}")
+    assert not any(t.rstrip("$").endswith("shared_experts.gate_proj")
+                   or t.rstrip("$").endswith("shared_experts.up_proj") for t in declared), (
+        "the shared expert's UNMERGED leaves are declared; vLLM builds no such module")
