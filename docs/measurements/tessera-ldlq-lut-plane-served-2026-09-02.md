@@ -18,11 +18,10 @@ and 0.813x on the confident subset, with top-1 agreement up from 58.76% to
 4.0 bpp wire is 1.039x behind on **11% fewer bits**, closing most of a gap that
 was 1.253x before this work.
 
-**Cost.** An H-aware whole-model export is **1.34x** the weights-only one on a
-quiet box (7949 s for Qwen3-0.6B). The encode itself is ~10x more GPU work, but
-the encode is only a few seconds of an ~18 s unit. Earlier versions of this
-receipt said 9.2x and then 1.72x; both were contended measurements and are
-retracted below.
+**Cost.** An H-aware encode is **19.2x** the weights-only one, measured as a
+matched pair on a quiet box. Three earlier figures in this receipt -- 9.2x,
+1.72x, 1.34x -- were each a ratio between two exports run at different times
+under different background load, and all three are retracted below.
 
 Commit: see `git log` for this file. Tests: `tests/test_ldlq_lut_plane.py`,
 `tests/test_ldlq_window.py`, `tests/test_merge_guard.py`.
@@ -232,46 +231,68 @@ matched bytes.
 
 ## What an H-aware encode costs on this body
 
-Every number in the first version of this section was measured on a box running
-three other jobs, and every one of them was wrong in the same direction. What
-follows is the corrected measurement, then what is still unmeasured.
+**19.2x, measured as a matched pair on a quiet box.** Three earlier figures in
+this receipt -- 9.2x, then 1.72x, then 1.34x -- were all wrong, and all wrong
+the same way: every one of them divided one export by a *different* export that
+had run at a different time against a different background load. I never ran
+the control. `base3`, which the coordinator scheduled after reading the 1.34x,
+was the first weights-only export on a quiet box, and it broke everything
+downstream of it.
 
-**Retraction, twice.** The first version of this section said 9.2x; the
-second said 1.72x. Both were contended, and the whole export has since run to
-completion, so the full series settles it. Both exports walk the same 196 units
-in the same order, so their progress lines are matched by unit -- but not by
-what else was on the box:
+The control, run afterwards on one box minutes apart, identical flags, two
+layers (14 units), with the weights-only arm repeated *after* the H-aware one
+so that box drift would show up as disagreement between the two rather than as
+a factor:
 
-| units | box during the H-aware stretch | weights-only | H-aware | factor |
-|---|---|---|---|---|
-| 1-20 | three sweeps concurrent | 361 s | 3311 s | 9.2x |
-| 21-40 | sweeps finishing (they ended 17:54, this stretch ran 17:47-18:01) | 376 s | 813 s | 2.16x |
-| 41-60 | quiet | 402 s | 522 s | 1.30x |
-| 61-80 | my own profiler running | 347 s | 490 s | *(excluded)* |
-| **81-180** | **quiet** | **1811 s** | **2434 s** | **1.34x** |
-| whole export | mixed | 3538 s | 7949 s | 2.25x |
+| arm | total | per unit | power |
+|---|---|---|---|
+| weights-only (before) | 18 s | 1.29 s | 11.72 W |
+| **`--hessian --refit-metric h^1.0`** | **345 s** | **24.64 s** | 11.77 W |
+| weights-only (after) | 18 s | 1.29 s | 11.91 W |
+| | | **19.2x** | |
 
-**The H-aware export costs 1.34x on a quiet box.** The 9.2x was a four-way
-contended measurement against an uncontended baseline, published as a property
-of the encoder; it is a property of what else I had running. The 1.72x was the
-same error one layer down -- it averaged in units 21-40, which overlapped the
-sweeps' tail.
+The two weights-only arms agree exactly, so the box did not drift. A second,
+independent route gives the same answer: `ldlqH1`'s own quiet stretch (units
+81-180, 24.34 s/unit) against `base3`'s quiet 1.30 s/unit is **18.7x**. Two
+routes, ~19x. Projected to the whole model, a quiet H-aware export of
+Qwen3-0.6B is ~4900 s against the weights-only 255 s; the `ldlqH1` artifact
+actually took 7949 s because parts of it were contended.
 
-One caveat stands and is not yet closed: the *baseline* export was itself
-contended throughout (`base` ran 15:50-16:49 alongside sweeps, `base2`
-16:53-17:42), so **1.34x is a lower bound** -- a quiet-box weights-only
-baseline would be faster and the ratio larger. That matched pair
-(`base3`, same flags minus the Hessian, quiet box) is queued; until it lands,
-1.34x is the best available number and it is labelled as a bound.
+### What was actually wrong, twice
 
-The weights-only export barely notices contention at all (`base` 3542 s,
-`base2` 2966 s under similar load) while the LDLQ export loses a factor of four
-to it. That asymmetry is itself the finding, and it **corrects a claim I had
-been carrying from the window-body work** -- that this box is launch-bound, so
-concurrency is nearly free in throughput. It is free for the weights-only
-encode. It is not free for LDLQ. "Launch-bound" was read off a power number
-(30-35 W at any job count) and applied to a workload it had never been measured
-on.
+Two hypotheses were tested and **both are disproved**, which is why the answer
+is the box after all:
+
+- **Not `0739f33`** (the fused/reference rate crossover). One tree, one
+  variable: `TESSERA_WINDOW_FUSED_MAX_RATE=999` restores the always-fused
+  behaviour. Smokes 24 s vs 23 s -- identical. The code says the same:
+  `viterbi_window` is reached only under `if body is BodyKind.WINDOW`
+  (`encode.py:1378`), and `wire_recipe(E2M1x2, 896)` is `BodyKind.TCQ`.
+- **Not the tree.** `693a3c2` -- the exact commit `base`, `base2` and `ldlqH1`
+  ran on -- exported to a separate directory and run back to back against the
+  current tree: old 17 s, new 18 s, old again 17 s, bytes identical 56/56. The
+  old encoder runs at 1.2 s/unit today.
+
+So `base`/`base2`'s 15.1-18.1 s/unit was three concurrent sweeps, a **~13x
+penalty on the weights-only export**. Which refutes, flatly, a sentence I wrote
+in the previous version of this section: *"the weights-only export barely
+notices contention (`base` 3542 s and `base2` 2966 s under similar load)."*
+They were similar to each other because **both were contended**. I compared two
+treatments and reported it as a control.
+
+That is also why 1.34x came out so small: it divided a 13x-inflated baseline by
+a partly-inflated H-aware run. The inflation cancelled, and what survived
+looked like a cheap lever. The lesson is not "beware contention" -- it is that
+**a ratio between two runs is only a measurement if something pins the
+conditions**, and back-to-back-plus-repeat is what pins them. Nothing in the
+first three figures did.
+
+One consequence worth stating for the route rather than for me: at 19.2x the
+encode cost is a real constraint again. It is affordable on a 0.6B dense model
+(~1.4 h) and it is not obviously affordable on GLM's 4096-column experts, where
+the cost grows with the segment count. **No quiet-box measurement of an
+H-aware GLM expert export exists**; the old 43x came from a contended sweep and
+is withdrawn rather than rescaled.
 
 ### Where the time goes -- profiled, and the hypothesis was wrong
 
@@ -292,51 +313,59 @@ Qwen `layers.1.self_attn.k_proj` (1024x1024, 32 segments), quiet box, warmed,
 | LDLQ 1.0/32 | 71.36 s | **7.19 s** | 89.9% | 6,965,809 | 15.0 W |
 | LDLQ + refit `h^1.0` | 68.26 s | 7.35 s | 89.2% | 4,875,235 | 15.3 W |
 
-**Device-busy time goes up 9.85x.** The work is not unchanged; LDLQ does an
-order of magnitude more GPU work. Launch count does grow 35x, as predicted --
-but that is not what the extra time is.
+**Device-busy time goes up 9.85x.** The work is not unchanged: LDLQ does an
+order of magnitude more GPU work, which kills the original "the columns are
+independent, so the work is fixed" hypothesis outright.
 
-The two independent measurements then agree to within 4%, which is what makes
-this more than a single profile:
+But it does not account for the whole slowdown either, and the previous version
+of this section claimed it did. That claim came from matching the profiled
+device delta (+6.46 s on one unit) against a wall delta of +6.23 s/unit taken
+from the contaminated export series -- two numbers that agreed to 4% and were
+both being compared to the wrong thing. Against the **matched quiet pair**, the
+wall delta is +23.35 s/unit (24.64 against 1.29), so:
 
-| | |
-|---|---|
-| device-time delta, profiled, one unit | **+6.46 s** |
-| wall-time delta per unit, whole export, quiet stretch (units 81-180) | **+6.23 s** |
+| | per unit | share of the wall delta |
+|---|---|---|
+| extra device work | +6.46 s | ~28% |
+| everything else (launch, host, sync) | ~+16.9 s | ~72% |
 
-The export's entire per-unit slowdown *is* the extra device work. That both
-closes the mechanism question and explains why the whole-model factor is only
-1.34x while the encode itself is ~10x: the encode is a few seconds of a ~18 s
-unit, and the rest -- load, pack, twin write -- LDLQ does not touch.
+**Both mechanisms are real, and neither of my two single-cause stories was.**
+The GPU does ~10x the work *and* the loop gets more launch-bound while doing it
+-- GPU idle rises from 76.3% to 89.9%, on 35x the launches. A wall factor of
+19.2x on a device factor of 9.85x is exactly what a widening idle fraction
+looks like.
 
-Where the 10x goes is not the Viterbi. The LDLQ arm's top device ops are
-gather-and-scatter, not trellis: `aten::index` 591,135 calls / 1.146 s,
+Where the extra device work goes is not the Viterbi. The LDLQ arm's top device
+ops are gather-and-scatter: `aten::index` 591,135 calls / 1.146 s,
 `index_elementwise_kernel` 328,745 / 0.726 s, `aten::copy_` 562,409 / 0.562 s,
 `aten::min` 131,077 / 0.356 s, then `sub` and `remainder`. That is the
 per-segment residual materialisation (`ldlq_target[:, start:stop] = base +
 residual @ ldl_factor[stop:, start:stop]`, a matmul that grows with the segment
 index) plus re-indexing the plane once per segment -- real work the plain pass
-never does. Anyone optimising this should start there and not at the Viterbi.
+never does. Anyone optimising this should start there and not at the Viterbi,
+and should expect to recover at most the 28%: the other 72% is launch count,
+which is a fusion problem.
 
 Two things the profile says that are **not** the cost story, recorded so they
 are not misread. The profiled *wall* ratio is 23x; that is a profiler artifact
 (7 million recorded events at ~10 microseconds of instrumentation each) and
-must not be quoted as the encode's cost -- the export's 1.34x is the cost.
+must not be quoted as the encode's cost -- the matched pair's 19.2x is.
 And the refit is free: 2.85 s against the weights-only 3.09 s, inside the noise.
 
 Finally, the power column is its own finding. **Every arm draws 15-19 W of a
 ~140 W envelope** at 23-33% reported utilization, and the GPU sits idle 76-90%
 of the wall in all four. The encoder -- levered or not -- uses about an eighth
-of this box. The 1.34x is real, but so is the headroom, and neither the fused
-window Viterbi nor anything else has closed the launch-bound gap on this body.
+of this box. The headroom is the other half of the 19.2x: three quarters of
+the H-aware slowdown is idle GPU, and nothing -- not the fused window Viterbi,
+which this body does not reach -- has closed the launch-bound gap here.
 
 The 43x on a 4096-column GLM expert was measured inside a sweep with the same
 contention problem and is **not** re-derived here; treat it as unmeasured until
 it is run on a quiet box.
 
-At 1.34x the whole-model H-aware export of Qwen3-0.6B took 7949 s -- a little
-over two hours, not nine -- and the route is not the practical dead end the
-first version of this section called it.
+The `ldlqH1` artifact took 7949 s wall, but it was contended for part of that;
+a quiet whole-model H-aware export projects to ~4900 s against the weights-only
+255 s.
 
 
 ## Weight space: the sweep
@@ -480,8 +509,8 @@ so it can be overruled on a word rather than discovered later:
 
 - The task budgeted **one** export and said not to tune the arm until it wins.
   Killing the export to swap the refit objective is both a second export and a
-  tune. (I believed at the time that it cost 9 h; it costs 1.34x the
-  weights-only pass. The cost was never the load-bearing part of this reason,
+  tune. (I believed at the time that it cost 9 h; it costs 19.2x the
+  weights-only encode, ~1.4 h whole-model. The cost was never the load-bearing part of this reason,
   and the coordinator's answer when asked was "do not relaunch", which settles
   it either way.)
 - The default's gate is **served KL against 0.640**, not this screen. The rule
@@ -540,8 +569,7 @@ worth recording precisely because the opposite keeps happening on this project,
 and one agreement does not make the screen trustworthy.
 
 The arm is exported and served by two commands. The export was launched 16:52 and, once the box went quiet at 17:54,
-ran at 1.34x the weights-only pass and finished in 7949 s at 19:05, not the
-~01:55 the retracted 9.2x implied. This section says exactly where it is so that the
+finished in 7949 s at 19:05, not the ~01:55 the retracted 9.2x implied. This section says exactly where it is so that the
 leg can be finished by anyone, including after this session ends.
 
 | what | value |
@@ -565,8 +593,9 @@ does not beat 0.640, the finding is that LDLQ plus a block-scale refit on the
 LUT plane does not pay for itself on the serving metric at 4.0 bpp, the default
 does not move, and a screen that says 0.78x in weight space has already failed to predict a
 serve once on this project. The encode cost is no longer the argument against
-the route -- at 1.34x it is cheap -- so if it misses the gate, it misses on
-quality alone.
+the route on a 0.6B dense model -- ~1.4 h -- so if it misses the gate, it
+misses on quality; on GLM's 4096-column experts the cost is unmeasured and may
+well be the argument.
 
 The baseline leg is already controlled: `base` (weights-only, the pre-merge
 exporter) and `base2` (weights-only, the *arm's own* post-merge exporter) are
@@ -638,8 +667,9 @@ CHANNEL, so S6b is not on any exportable wire and its map entry exists to make
   the arm the weight-space screen chose, not a sweep of arms; a served
   comparison of `hessian` against `h^1.0` was deliberately not run, because the
   screen separated them and, at the time of the decision, each export was
-  believed to cost ~9 h. That estimate is retracted (1.34x, 7949 s), so
-  the *cost* half of that reasoning no longer holds -- the ONE-export budget and
+  believed to cost ~9 h. It costs 19.2x the weights-only encode, ~1.4 h
+  whole-model, so the *cost* half of that reasoning is weaker than I thought
+  but not absent -- the ONE-export budget and
   the coordinator's instruction not to relaunch do.
 - **`sigma` and `block` were not re-tuned for this plane.** They are the
   window-body receipt's values (1.0 / 32) carried over, and the sweep's
@@ -673,8 +703,11 @@ Measurement: `experiments/ldlq_window_sweep.py` (`--grid`, the `hfit` column),
 `hfit`), and the run scripts that pin each arm's exact flags --
 `ldlq_lut_qwen_hfit.sh`, `ldlq_lut_glm_h1.sh`, `ldlq_lut_glm_hess.sh`,
 `ldlq_lut_chain.sh`, `ldlq_lut_export_arms.sh`, `ldlq_lut_export_base2.sh`,
-`ldlq_lut_serve.sh`, and `ldlq_cost_profile.py` (the profiler + power trace
-behind the cost section).
+`ldlq_lut_serve.sh`, and the four behind the cost section:
+`ldlq_cost_profile.py` (profiler + power trace), `ldlq_cost_matched_pair.sh`
+(the control -- weights-only, H-aware, weights-only again), and
+`ldlq_cost_knob_ab.sh` / `ldlq_cost_tree_ab.sh` (the two disproved
+hypotheses, kept so the disproof is re-runnable).
 
 Tests: `tests/test_ldlq_lut_plane.py` (21), `tests/test_ldlq_window.py` (the
 defaults are the measured ones), `tests/test_merge_guard.py` (a per-plane map
