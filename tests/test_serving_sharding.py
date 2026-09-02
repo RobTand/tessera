@@ -1,29 +1,106 @@
 """The TP seam: which slice a rank serves, and that TP=1 is bit-identically today's.
 
-The plugin serves ``tensor_parallel_size=1``.  These tests are about what
+The plugin has served ``tensor_parallel_size=1``.  These tests are about what
 happens at the boundary anyway, because the loaders are the part of a serving
 route that is expensive to retrofit: they decide, at ``create_weights`` time,
 what shape the layer believes it has, and a wrong answer there is a serve that
 runs and returns wrong logits.
 
-Two properties matter and are asserted directly:
+Three properties matter and are asserted directly, against REAL units:
 
 1. **TP=1 is identity.**  ``_shard_unit_for_rank`` returns the SAME OBJECT, so
    a caller's parsed view of a unit stays valid and the arithmetic is the
    arithmetic of a build with no TP support at all.
-2. **TP>1 refuses by name.**  The cut belongs to ``tessera.layout.slice_unit``
-   (a column slice needs the trellis state its first surviving column inherits
-   -- the INITIAL_STATE plane), and until that lands the honest answer is a
-   refusal that names it, never "every rank holds the whole weight".
+2. **TP>1 cuts, and the cut is the parent's own rows.**  The cut belongs to
+   ``tessera.layout.slice_unit``, and the check here is the one that matters:
+   the shard *decodes* to exactly the parent's slice.  A seam that returned
+   some unit of the right shape would pass every structural check and serve
+   wrong logits.
+3. **A cut the wire cannot express is refused with the granularity.**  A mixed
+   rate schedule confines a column cut to whole 256-column superblocks, and the
+   refusal has to carry ``256`` -- a number the operator can turn into a
+   ``tensor_parallel_size``.
+
+These tests were written for the pre-slicer world, where the seam refused every
+``tp_size > 1`` and a bare ``object()`` was a sufficient stand-in for a unit
+because nothing ever looked inside one.  ``tessera.layout``'s slicer has landed
+(``docs/design/tensor-parallel.md``), so they are driven by real encoded units
+now: against the seam as it is, a sentinel would only prove that it still does
+not look.
 """
 from __future__ import annotations
 
 import pytest
 
 from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, ShardPlan,
-                                      _shard_unit_for_rank, check_shard_granularity,
-                                      plan_shard, shard_granularity, shard_parsed_roles,
+                                      _shard_unit_for_rank, _unit_extent,
+                                      check_shard_granularity, plan_shard,
+                                      shard_granularity, shard_parsed_roles,
                                       tp_rank_and_size)
+
+torch = pytest.importorskip("torch")
+needs_cuda = pytest.mark.skipif(not torch.cuda.is_available(),
+                                reason="the Tessera encoder is a CUDA path")
+
+#: 64x512 is the smallest shape that still exercises arity 2 -- the E2M1x2 cap
+#: unit is 32 trellis steps for 64 weight rows, which is exactly the extent bug
+#: ``_unit_extent`` exists to avoid.
+UNIT_ROWS, UNIT_COLS = 64, 512
+
+
+def _make_unit(label, q256, grid_name):
+    from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
+    from tessera.export import encode_linear_planes
+    from tessera.unit_artifact import parse_unit_artifact
+
+    grid = E4M3_GRID if grid_name == "E4M3" else tuple_grid(E2M1_GRID, 2)
+    torch.manual_seed(11)
+    weight = (torch.randn(UNIT_ROWS, UNIT_COLS, device="cuda") * 0.02).contiguous()
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=grid, q256=q256, name=label, verify=False)
+    return parse_unit_artifact(exported.blob, device="cuda")
+
+
+@pytest.fixture(scope="module")
+def units():
+    """One parsed unit per case, encoded once (the encoder is the slow part)."""
+    if not torch.cuda.is_available():
+        pytest.skip("the Tessera encoder is a CUDA path")
+    return {
+        # window body / CHANNEL plane, uniform rates: cuts freely on both axes.
+        "e4m3": _make_unit("e4m3", 1024, "E4M3"),
+        # the same wire below the cap, where the Bresenham schedule is mixed and
+        # the quota is exact only on a whole superblock.
+        "e4m3-mixed": _make_unit("e4m3-mixed", 1000, "E4M3"),
+        # the E2M1x2 cap wire: TCQ span 2 over an arity-2 grid, LUT plane.
+        "e2m1x2": _make_unit("e2m1x2", 896, "E2M1x2"),
+    }
+
+
+def _decode(parsed):
+    from tessera.decode import reconstruct_unit
+
+    return reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+
+
+def _decode_unit(unit, parsed):
+    from tessera.decode import reconstruct_unit
+
+    return reconstruct_unit(unit, parsed.forests, parsed.code)
+
+
+def _without_tessera_layout(monkeypatch):
+    """Make ``import tessera.layout`` fail, as an older Tessera would."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def no_layout(name, *args, **kwargs):
+        if name == "tessera.layout":
+            raise ImportError("no tessera.layout in this build")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_layout)
 
 
 def test_one_rank_is_the_whole_module():
@@ -81,65 +158,165 @@ def test_nonsensical_coordinates_are_refused():
 
 
 def test_the_seam_returns_the_same_object_on_one_rank():
+    """One rank is identity, and identity does not look inside the unit.
+
+    A sentinel is the right argument HERE and only here: the whole point is
+    that the seam returns before it can inspect anything.
+    """
     unit = object()
     assert _shard_unit_for_rank(unit, 0, 1, None) is unit
     assert _shard_unit_for_rank(unit, 0, 1, AXIS_ROWS) is unit
 
 
+@needs_cuda
+@pytest.mark.parametrize("label", ["e4m3", "e2m1x2"])
 @pytest.mark.parametrize("axis", [AXIS_ROWS, AXIS_COLUMNS])
-def test_the_seam_refuses_more_than_one_rank_and_names_the_slicer(axis):
+def test_the_seam_cuts_a_real_unit_into_the_parents_own_rows(units, label, axis):
+    """tp 2, both axes, both shipping wires: the shard IS the parent's slice."""
+    parsed = units[label]
+    whole = _decode(parsed)
+    rows, columns = _unit_extent(parsed)
+    assert (rows, columns) == (UNIT_ROWS, UNIT_COLS), \
+        "arity 2 halves the step count, not the row count"
+    extent = rows if axis == AXIS_ROWS else columns
+    half = extent // 2
+    for rank in (0, 1):
+        shard = _shard_unit_for_rank(parsed, rank, 2, axis)
+        assert shard is not parsed
+        got = _decode_unit(shard, parsed)
+        want = (whole[rank * half:(rank + 1) * half, :] if axis == AXIS_ROWS
+                else whole[:, rank * half:(rank + 1) * half])
+        assert torch.equal(got, want), f"{label} {axis} rank {rank}"
+
+
+@needs_cuda
+def test_the_seam_refuses_a_cut_the_wire_cannot_express_and_names_the_granularity(units):
+    """A mixed rate schedule confines a column cut to whole superblocks.
+
+    512 columns over four ranks is 128 each, and the quota ``sum(rates) == root
+    * columns`` is exact only on a 256-column superblock -- so the answer is a
+    refusal carrying the number 256, not a silently wrong quota.
+    """
+    parsed = units["e4m3-mixed"]
+    assert shard_granularity(parsed) == (1, 256)
+    with pytest.raises(ValueError) as e:
+        _shard_unit_for_rank(parsed, 1, 4, AXIS_COLUMNS)
+    msg = str(e.value)
+    assert "256" in msg and "column" in msg
+    assert "tensor_parallel_size" in msg      # the operator's way out, in the message
+    # ... and two ranks, which the granularity does divide, is not refused.
+    assert _shard_unit_for_rank(parsed, 1, 2, AXIS_COLUMNS) is not parsed
+
+
+@needs_cuda
+def test_the_seam_names_the_slicer_when_the_build_cannot_cut(monkeypatch, units):
+    """An older Tessera has no ``layout.slice_unit``; the refusal says so.
+
+    This is the branch this whole file used to be about.  It is still real --
+    the plugin is installed against whatever ``tessera`` the image carries --
+    but it is the exception now, so it is provoked rather than assumed.
+    """
+    _without_tessera_layout(monkeypatch)
     with pytest.raises(NotImplementedError) as e:
-        _shard_unit_for_rank(object(), 1, 4, axis)
+        _shard_unit_for_rank(units["e4m3"], 1, 4, AXIS_ROWS)
     msg = str(e.value)
     assert "tessera.layout.slice_unit" in msg
-    assert "tensor_parallel_size=1" in msg      # the operator's way out, in the message
+    assert "tensor_parallel_size=1" in msg
+
+
+@needs_cuda
+def test_the_seam_refuses_a_cut_with_no_axis(units):
+    """``axis=None`` above one rank is a caller bug, not a whole-module shortcut."""
+    with pytest.raises(ValueError, match="no axis"):
+        _shard_unit_for_rank(units["e4m3"], 1, 2, None)
 
 
 def test_sharding_roles_is_identity_on_one_rank():
-    """The path a route actually takes today: the same list, same objects."""
+    """The path a route took before TP: the same list, same objects."""
     roles = [("q_proj", object()), ("k_proj", object()), ("v_proj", object())]
     plan = plan_shard("qkv", rows=1024, columns=2048, out_size=1024, in_size=2048,
                       tp_rank=0, tp_size=1)
     assert shard_parsed_roles(roles, plan) is roles
 
 
-def test_sharding_roles_refuses_a_real_split():
-    class _Parsed:
-        unit = object()
-    roles = [("q_proj", _Parsed())]
-    plan = plan_shard("qkv", rows=1024, columns=2048, out_size=256, in_size=2048,
-                      tp_rank=1, tp_size=4)
-    with pytest.raises(NotImplementedError, match="slice_unit"):
-        shard_parsed_roles(roles, plan)
+@needs_cuda
+@pytest.mark.parametrize("axis", [AXIS_ROWS, AXIS_COLUMNS])
+def test_sharding_roles_cuts_and_re_derives_the_parse(units, axis):
+    """The route's own path at tp 2: a list of parses in, this rank's out.
+
+    What comes back must be a ``ParsedUnit`` whose MANIFEST describes the shard.
+    The routes read shapes off the parse, and a manifest still naming the
+    parent's 64 rows is exactly the kind of stale view that serves without
+    complaining.
+    """
+    from tessera.unit_artifact import ParsedUnit
+
+    parsed = units["e4m3" if axis == AXIS_ROWS else "e2m1x2"]
+    whole = _decode(parsed)
+    rows, columns = _unit_extent(parsed)
+    if axis == AXIS_ROWS:
+        plan = plan_shard("mlp.gate_up", rows=rows, columns=columns,
+                          out_size=rows // 2, in_size=columns, tp_rank=1, tp_size=2)
+    else:
+        plan = plan_shard("mlp.down_proj", rows=rows, columns=columns,
+                          out_size=rows, in_size=columns // 2, tp_rank=1, tp_size=2)
+    assert plan.axis == axis
+    out = shard_parsed_roles([("weight", parsed)], plan)
+    assert len(out) == 1 and out[0][0] == "weight"
+    shard = out[0][1]
+    assert isinstance(shard, ParsedUnit)
+    geometry = shard.manifest.geometry
+    assert (geometry.rows, geometry.columns) == (plan.shard_rows, plan.shard_columns)
+    record = shard.manifest.shard
+    assert record is not None
+    assert record.parent_digest == parsed.manifest.manifest_digest()
+    want = whole[rows // 2:, :] if axis == AXIS_ROWS else whole[:, columns // 2:]
+    assert torch.equal(_decode(shard), want)
 
 
-def test_granularity_is_absent_until_the_slicer_lands_and_is_not_guessed():
+@needs_cuda
+def test_granularity_is_read_off_the_wire_not_guessed(units):
+    """``tessera.layout`` derives these from the body's own packing: arity x
+    span under TCQ, one under the window body; the scale block along columns,
+    raised to the superblock by a mixed schedule.  Pinned here so a change to
+    either has to be a deliberate one."""
+    assert shard_granularity(units["e4m3"]) == (1, 1)          # window, CHANNEL plane
+    assert shard_granularity(units["e2m1x2"]) == (4, 16)       # arity 2 x span 2, LUT half 16
+    assert shard_granularity(units["e4m3-mixed"]) == (1, 256)  # mixed rates -> superblock
+
+
+def test_granularity_is_none_and_the_check_a_no_op_without_the_cutter(monkeypatch):
     """No ``tessera.layout``: the answer is None, and the check is a no-op.
 
     The refusal for a build that cannot cut belongs at the seam, in one place.
     A granularity check that invented a number would refuse the wrong splits.
     """
-    assert shard_granularity(object()) is None
+    _without_tessera_layout(monkeypatch)
+    sentinel = object()
+    assert shard_granularity(sentinel) is None
     plan = plan_shard("m", rows=1024, columns=2048, out_size=256, in_size=2048,
                       tp_rank=0, tp_size=4)
-    check_shard_granularity(plan, object())     # no raise
+    check_shard_granularity(plan, sentinel)     # no raise
 
 
-def test_granularity_refusal_names_the_granularity(monkeypatch):
+@needs_cuda
+def test_granularity_refusal_names_the_granularity(monkeypatch, units):
     """When the cutter is there, an indivisible split says what it needed."""
     import tessera.serving.sharding as sharding
-    monkeypatch.setattr(sharding, "shard_granularity", lambda unit: (192, 16))
-    plan = ShardPlan("m", rows=1024, columns=2048, shard_rows=256, shard_columns=2048,
-                     tp_rank=0, tp_size=4, axis=AXIS_ROWS)
-    with pytest.raises(ValueError) as e:
-        sharding.check_shard_granularity(plan, object())
-    assert "192" in str(e.value) and "256" in str(e.value)
 
-    plan = ShardPlan("m", rows=1024, columns=2048, shard_rows=1024, shard_columns=520,
-                     tp_rank=0, tp_size=4, axis=AXIS_COLUMNS)
+    parsed = units["e4m3"]
+    monkeypatch.setattr(sharding, "shard_granularity", lambda unit: (24, 40))
+    plan = ShardPlan("m", rows=UNIT_ROWS, columns=UNIT_COLS, shard_rows=16,
+                     shard_columns=UNIT_COLS, tp_rank=0, tp_size=4, axis=AXIS_ROWS)
     with pytest.raises(ValueError) as e:
-        sharding.check_shard_granularity(plan, object())
-    assert "16" in str(e.value) and "520" in str(e.value)
+        sharding.check_shard_granularity(plan, parsed)
+    assert "24" in str(e.value) and "16" in str(e.value)
+
+    plan = ShardPlan("m", rows=UNIT_ROWS, columns=UNIT_COLS, shard_rows=UNIT_ROWS,
+                     shard_columns=128, tp_rank=0, tp_size=4, axis=AXIS_COLUMNS)
+    with pytest.raises(ValueError) as e:
+        sharding.check_shard_granularity(plan, parsed)
+    assert "40" in str(e.value) and "128" in str(e.value)
 
 
 def test_tp_coordinates_off_vllm_are_one_rank_not_a_guess():
@@ -147,7 +324,9 @@ def test_tp_coordinates_off_vllm_are_one_rank_not_a_guess():
 
 
 def test_a_prepared_role_carries_an_initial_state_and_refuses_to_decode_it():
-    """The representation carries the sliced-unit plane; no decoder consumes it."""
+    """The representation carries the sliced-unit plane; the span-2 decoder
+    refuses it.  A ROW shard of a TCQ unit is the one cut this route cannot
+    serve, and it is refused rather than decoded against a pinned zero start."""
     torch = pytest.importorskip("torch")
     from tessera.serving import ops
 
@@ -236,30 +415,30 @@ def test_bounds_are_equal_parts_and_refuse_an_uneven_split():
         _bounds(1023, 0, 2)
 
 
-def test_the_pad_really_is_state_minus_one_once_the_slicer_lands():
-    """The pad-threading CLAIM, measured -- skipped until the packer can take a state.
+def test_the_pad_really_is_state_minus_one():
+    """The pad-threading CLAIM, measured.
 
     ``window._pack`` threads a shard's start state into ``pack_window_planes``'
     L-bit pad on the argument that the pad *is* ``state_{-1}``.  That is an
     arithmetic claim about the wire, and it is checked here rather than
     asserted: a whole unit's decode from row ``t0`` down must equal the decode
     of the unit's rows ``t0:`` packed with the parent's state at the cut.  The
-    identity table makes the decoded value the raw L-bit window, so a
-    threading error shows up directly instead of through an alphabet, and the
-    zero-pad control fails, so the check cannot pass for the wrong reason.
+    identity table makes the decoded value the raw L-bit window, so a threading
+    error shows up directly instead of through an alphabet, and the zero-pad
+    control fails, so the check cannot pass for the wrong reason.
 
-    This skips on a build whose ``lane_planes`` predates the ``initial_state``
-    parameter (i.e. before ``tessera.layout``'s slicer merges).  It was run
-    against the merged overlay on 2026-09-02 and passed at six cut points --
-    see docs/measurements/tessera-serving-plugin-2026-09-02.md section 6.
+    This used to skip on a build whose ``lane_planes`` predated the
+    ``initial_state`` parameter.  The slicer has landed, so a build without it
+    is a REGRESSION and is failed rather than skipped past.
     """
     torch = pytest.importorskip("torch")
     import inspect
     import tessera.lane_planes as lane_planes
     from tessera.serving.window import prepare_window
 
-    if "initial_state" not in inspect.signature(lane_planes.pack_window_planes).parameters:
-        pytest.skip("installed lane_planes predates the initial_state parameter")
+    assert "initial_state" in inspect.signature(lane_planes.pack_window_planes).parameters, (
+        "lane_planes.pack_window_planes has lost its initial_state parameter; the TP seam "
+        "cuts row shards that only the pad can start")
 
     L, cols, steps = 6, 5, 24
     torch.manual_seed(7)
@@ -280,3 +459,47 @@ def test_the_pad_really_is_state_minus_one_once_the_slicer_lands():
 
     zeroed = prepare_window(body[7:], rates, L, table, "cpu").decode()
     assert not torch.equal(zeroed, full[7:]), "control: a zero pad must NOT match"
+
+
+@needs_cuda
+def test_the_fp8_route_serves_a_row_shard_as_the_parents_own_rows(units):
+    """The composition test: seam -> FP8 route -> tile, against the parent tile.
+
+    The seam and the route are each proven above and in
+    ``tests/test_serving_fp8_route.py``, but the interesting failure lives
+    between them.  ``prepare_tessera_fp8_module`` threads ``initial_state``
+    into ``prepare_window``; if ``tessera.decode.materialize_fp8`` did NOT read
+    the same field, the route's own ``torch.equal`` self-check would *refuse* a
+    legitimate row shard, and the FP8 family would silently be column-cuts-only
+    -- exactly the restriction the NVFP4 lane has and this one claims not to.
+
+    So the assertion is not "it loaded": it is that the bytes the route hands
+    the fused kernel, and the per-row scales beside them, are the parent tile's
+    own rows for BOTH ranks of a tp=2 cut.
+    """
+    from tessera.decode import materialize_fp8
+    from tessera.serving.fp8_route import prepare_tessera_fp8_module
+
+    parent = units["e4m3"]
+    ref_bytes, ref_scale = materialize_fp8(parent.unit, parent.forests, parent.code)
+    ref_bytes = ref_bytes.to("cuda")
+    ref_scale = ref_scale.to("cuda", torch.float32).reshape(-1)
+    half = UNIT_ROWS // 2
+
+    for rank in (0, 1):
+        plan = plan_shard("m", rows=UNIT_ROWS, columns=UNIT_COLS, out_size=half,
+                          in_size=UNIT_COLS, tp_rank=rank, tp_size=2)
+        assert plan.axis == AXIS_ROWS
+        roles = shard_parsed_roles([("weight", parent)], plan)
+        module = prepare_tessera_fp8_module(roles, device="cuda")
+
+        got = module.decode()
+        want = ref_bytes[rank * half:(rank + 1) * half]
+        assert got.shape == want.shape, f"rank {rank} served the wrong shape"
+        assert torch.equal(got, want), (
+            f"rank {rank} of 2 served {int((got != want).sum())} of {want.numel()} "
+            "bytes that are not the parent's -- the window pad is not being threaded "
+            "through the FP8 route")
+        assert torch.equal(module.row_scale(),
+                           ref_scale[rank * half:(rank + 1) * half]), (
+            f"rank {rank} of 2 got a row scale that is not the parent's")
