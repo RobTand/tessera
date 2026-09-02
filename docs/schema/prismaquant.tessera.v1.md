@@ -164,7 +164,7 @@ row words are plane bytes under the payload digest.
 
 **Accounting.** 16 bits per output row on the DIAG_SV plane, inline:
 `0.0039` bpp on a 2048×4096 unit, plus the ratio's manifest bytes. No
-block-scale planes.
+block-scale planes. `calculator.terminal_rate(with_row_scale=True, window_bits=L)` prices the rows and a window table exactly; it does **not** price a TCQ unit's ALPHABET/DESCENDANT forest planes (per-unit blob bytes: ~1.4 KB at 64×512, 0.0013 bpp at 2048×4096), so a byte quotation that must match `ExportedUnit.exact_bytes` at small shapes reads the container, not the accountant.
 
 **The window body's rate ceiling (a minor-2 clarification).** The TCQ
 trellis spends one bit of the payload on its code, so its per-code rate is
