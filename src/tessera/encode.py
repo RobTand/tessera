@@ -441,6 +441,7 @@ def viterbi_window(
     rate: int,
     weights: "torch.Tensor | None" = None,
     chunk: int = 512,
+    impl: str = "auto",
 ) -> "tuple[torch.Tensor, float]":
     """Exact Viterbi over the bitshift trellis, down every column at once.
 
@@ -460,7 +461,16 @@ def viterbi_window(
     ``viterbi_columns`` takes; ``chunk`` bounds the column batch, since the
     cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
     bytes per position per column.
+
+    ``impl`` picks the machine, never the answer.  ``"reference"`` is the
+    torch chain below -- the definition, and the only path on CPU;
+    ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
+    returns identical states and the identical sse float (see that module for
+    why that is a contract and not a hope); ``"auto"`` takes the fused path
+    on CUDA inputs when Triton is present and the reference otherwise.
     """
+    if impl not in ("auto", "reference", "fused"):
+        raise GrammarError(f"unknown viterbi_window impl {impl!r}")
     device = targets.device
     rows, cols = targets.shape
     size, arity = vectors.shape
@@ -478,6 +488,18 @@ def viterbi_window(
     steps = rows // arity
     fan = 1 << rate                                  # predecessors per state
     low = size >> rate                               # low classes
+    if impl != "reference":
+        from .window_viterbi import fused_available, viterbi_window_fused
+
+        if targets.is_cuda and fused_available():
+            return viterbi_window_fused(targets, vectors, window_bits, rate,
+                                        weights=weights, chunk=chunk)
+        if impl == "fused":
+            raise GrammarError(
+                "the fused window Viterbi is a CUDA path and needs triton; "
+                f"targets are on {device} and triton is "
+                f"{'present' if fused_available() else 'absent'}"
+            )
     tuples = targets.float().reshape(steps, arity, cols)
     wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
     table = vectors.float().to(device)

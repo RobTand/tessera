@@ -178,15 +178,134 @@ byte-identical and keeps its minor. `tests/test_window_body.py` holds the
 Viterbi to the exhaustive search, the replay to the encoder's states, the
 accountant to the bytes, and the reader to fail-closed.
 
-**Not the default.** `DEFAULT_BODY` stays TCQ. Two gates, both mechanical:
-the kernel lane has no window GEMV (`pack_unit_for_kernel` refuses the
-body; the decode is a table lookup per position on an `L`-bit window of
-the packed column, with the table in shared memory — 64 KB at L=16), and
-the reference encoder is O(2^L) per position: ~30 s at L=12, ~150 s at
-L=14, ~13 min at L=16 per 2048×4096 tensor on GB10, which is days per MoE
-model. A Triton Viterbi with the cost front resident (fits at L≤14) or an
-M-algorithm with measured survivors is the next encoder step, and per
-principle 15 its acceptance is profiler evidence, not a bench number.
+**Not the default.** `DEFAULT_BODY` stays TCQ, and one mechanical gate is
+left: the kernel lane has no window GEMV (`pack_unit_for_kernel` refuses
+the body; the decode is a table lookup per position on an `L`-bit window
+of the packed column, with the table in shared memory — 64 KB at L=16).
+The *encoder* gate is closed — the section below is the measurement that
+closed it.
+
+## The encoder, fused (2026-09-02)
+
+`encode.viterbi_window` keeps its definition and gains a machine:
+`src/tessera/window_viterbi.py`, selected by `impl="auto"|"reference"|
+"fused"` (auto is the fused path on CUDA inputs with Triton present, the
+reference everywhere else). The reference spends a step moving eight
+materialised `[2^L, cols]` intermediates — a view, a min, a
+repeat_interleave, a subtract, a square, a sum, an add — through memory to
+do one front's worth of arithmetic. The fused path does the class minimum,
+the traceback write and the branch cost in **one** kernel, one front in and
+one front out; sizes the column batch so both fronts stay in L2 across the
+whole step loop; walks the traceback in one kernel instead of a gather per
+step; and captures the batch as a **CUDA graph**, since every batch is the
+same `2 + steps` launches with the same pointers and only a device-side
+descriptor moving.
+
+**Identity, not tolerance.** The states are the reference's states and the
+`sse` is the reference's float, on all twelve rows below (same tensor per
+row) and on 35 CUDA-gated cases in `tests/test_window_viterbi_fast.py`
+spanning L ∈ {5,6,7,8,9,10,12,14,16}, R ∈ {2,3,4,5,6,7} with R ≤ L, both
+arities, with and without per-position weights, chunk widths that divide
+nothing, and 1–4096 columns. Three things the kernels do deliberately buy
+it: the class minimum is an unrolled scan with a strict `<`, so the winner
+is the *first* minimal index as `torch.min(dim=0)` returns; the epilogue is
+left to torch on the assembled front, so the chunk's summation order is the
+reference's; and every multiply that feeds an add is inline-asm `mul.f32`.
+That last one is not paranoia — `enable_fp_fusion=False` (ptxas
+`--fmad=false`) does **not** stop Blackwell's NVPTX backend packing the
+arithmetic into `mul.rn.f32x2`/`add.rn.f32x2` and contracting the packed
+pair; measured, the fused path returned exactly `fma(d0,d0,e1)` where the
+reference returns `(d0*d0)+e1`, one ulp apart on a third of the elements at
+arity 2. A trellis is a chain of decisions, so one ulp is not a rounding
+detail: it flips a state and every state after it.
+
+One 2048×4096 fp32 target, chunk 512, E4M3-shaped table at arity 1 (256
+distinct values) and an E2M1 pair table at arity 2; reference and fused
+timed **back to back on the same tensor**, which is the only honest
+comparison on a shared board (`--impl both`):
+
+| L | R | arity | reference (s) | fused (s) | speedup | ref W | fused W |
+|---|---|---|---|---|---|---|---|
+| 12 | 4 | 1 | 6.72 | 0.45 | **15.0×** | 49 | 46 |
+| 12 | 4 | 2 | 5.15 | 0.45 | **11.5×** | 52 | 50 |
+| 12 | 5 | 1 | 6.50 | 0.69 | **9.4×** | 54 | 59 |
+| 12 | 5 | 2 | 4.04 | 0.34 | **11.8×** | 67 | 63 |
+| 14 | 4 | 1 | 29.65 | 1.14 | **26.0×** | 54 | 72 |
+| 14 | 4 | 2 | 22.32 | 1.16 | **19.2×** | 54 | 58 |
+| 14 | 5 | 1 | 29.18 | 2.03 | **14.4×** | 55 | 93 |
+| 14 | 5 | 2 | 22.30 | 1.29 | **17.2×** | 56 | 72 |
+| 16 | 4 | 1 | 129.39 | 5.06 | **25.6×** | 52 | 68 |
+| 16 | 4 | 2 | 96.35 | 4.95 | **19.5×** | 53 | 69 |
+| 16 | 5 | 1 | 156.31 | 8.51 | **18.4×** | 52 | 83 |
+| 16 | 5 | 2 | 97.00 | 4.94 | **19.6×** | 52 | 82 |
+
+Whole sweep 605 s → 31 s, **19.5×**, every
+`sse` identical
+(`experiments/results/window_viterbi_bench_paired.jsonl`; states *and* sse
+identity re-checked at L=16, R=4 against a full reference run in
+`window_viterbi_bench_check.jsonl`). Contention is the reason for the
+back-to-back protocol: the same reference config measured 428 s beside two
+other GPU jobs and 129–166 s beside none — a "before" number is worthless
+without the board state, and the first baselines here
+(`window_viterbi_bench.jsonl`) carry a neighbour list that a narrower
+`pgrep` had missed.
+
+**Per principle 15 the profiles are the claim, not the seconds.**
+`torch.profiler`, same box, R=4 arity 1
+(`experiments/results/window_viterbi_profile_{reference,fused}.txt`):
+
+* reference L=12 — 196,648 launches, self CUDA **4.970 s** over six op
+  kinds at ~16.4 k calls each, and `Command Buffer Full` 58.5% of CPU: the
+  launch queue is the wall. L=14 — self CUDA **29.132 s**, `Command Buffer
+  Full` 86.4%.
+* fused L=12 — self CUDA **0.344 s**, 96.8% of it in `_step` (67,584
+  launches at 4.92 µs). L=14 — **1.288 s**, 98.7% `_step`. L=16 —
+  **5.139 s**, 99.3% `_step` at 4.85 µs.
+* board time 4.970 → 0.344 s at L=12 (14.5×) and 29.132 → 1.288 s at L=14
+  (22.6×), and wall now sits within 19%/8%/6% of board time at L=12/14/16,
+  where before the graph it was 2× board time at every L.
+
+**Power against the envelope, not utilisation.** Netdata
+`nvidia_smi.gpu_power_draw` over two 150 s windows of L=16 R=4 arity 1
+(`experiments/results/window_viterbi_power_windows.jsonl`): fused **65.8 W**
+mean (60–69) at 4.618 s a tensor, reference **52.3 W** mean (52–54) at
+127.6 s. The fused path draws a quarter more power and finishes 27.6×
+sooner: 304 J a tensor against 6674 J, **22× the work for a joule**, at 47%
+of the ~140 W envelope against 37% — so the headroom is still there, and
+`gpu_utilization` said 96% on both sides throughout.
+
+**Rejected here, with the numbers, so nobody pays twice.**
+
+* A **register-resident column kernel** (one block per column, the whole
+  `2^L` front in registers for every step, only the traceback byte moving)
+  is exact and lost: 1.156 s against 0.980 s at L=12 R=4, 2048×4096,
+  identical states and sse. `tl.min(..., return_indices)` and the reshape
+  that shifts the front are block-wide barriers twice a step where the
+  tiled kernel's scan is thread-local — holding the front costs more than
+  moving it through L2.
+* **Widening the column batch** past L2: the working-set sweep is a knee at
+  L2/6 ≈ 4 MB and a cliff after it — L=16 runs 5.34 s at 4 MB, 6.23 s at
+  8 MB and 14.59 s at 16 MB, identical `sse` at every point. The cache is
+  doing the work, and the budget is a measurement knob
+  (`TESSERA_WINDOW_L2_BYTES`), never a correctness one.
+* An earlier reading that **CUDA graphs do not help here** was wrong and is
+  retracted: it compared a `cudaEvent` span (which measures the stream,
+  gaps included) against wall. The profiler's per-kernel time is what
+  exposes the gap, and graphs are worth ~2×: the same twelve configs
+  eager-fused and graph-fused, same board, are
+  `window_viterbi_bench_warm.jsonl` against `window_viterbi_bench_graph.jsonl`
+  (L=12 R=4 a1 0.671 → 0.488 s, L=14 2.737 → 1.342 s, L=16 10.884 →
+  5.297 s), and the uncontended reference-only rows are
+  `window_viterbi_bench_uncontended.jsonl`.
+
+**Encoder throughput only — no quality is measured in this section**, and
+the numbers are per 2048×4096 tensor, not per model. The recipe target
+stays **L=14 per-channel on E4M3**: the kernel lane's own sweep prices the
+per-unit 2^L table at nothing through L=14 and at **1.83–1.86×** at L=16
+(span-2 0.204 ms, window L=12 0.199, L=14 0.208, L=16 0.375, identical
+bytes on every other plane —
+`.claude/worktrees/agent-ac41ec3897043fa75/experiments/results/tessera_kernel_window_table_sweep.json`),
+so any L=16 quality reading must be stated *before the table*.
 
 ## What is not established
 
@@ -212,6 +331,10 @@ principle 15 its acceptance is profiler evidence, not a bench number.
 2. Window GEMV in the kernel lane; then the default flips **per grid**:
    E4M3 (window) and E2M1x2 below the cap (window), E2M1x2 at the cap
    (coset trellis, span 2) — a per-unit choice the wire already expresses.
-3. A fast encoder (Triton or survivor-limited), timed on a full expert
-   layer under `torch.profiler` and Netdata before it is trusted.
+3. ~~A fast encoder~~ — done 2026-09-02 (see *The encoder, fused*):
+   9.4–26× on the 2048×4096 sweep, bit-exact, profiled before and after.
+   What is left on that axis is a survivor-limited (M-algorithm) encoder,
+   which would trade exactness for rate and therefore needs a quality A/B,
+   not a clock; and the encoder on a *full expert layer* rather than one
+   tensor.
 4. LDLQ on the window body; the held-out served A/B.
