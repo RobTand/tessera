@@ -9,7 +9,7 @@ refit alone is 0.9203x, and the choice between the two refit objectives moves
 to EXL3 K=4** -- 1.1779x to **1.0957x** -- at the same 4.0 bpp and the same
 bytes.
 
-**Claim, served.** *(unmet at the time of writing; the export lands ~01:55 and
+**Claim, served.** *(unmet at the time of writing; the export lands ~19:20 and
 the serve is chained behind it. See "Served (the gate)".)* Nothing here is a
 served result, and a weight-space geomean has already failed to predict a serve
 once on this project.
