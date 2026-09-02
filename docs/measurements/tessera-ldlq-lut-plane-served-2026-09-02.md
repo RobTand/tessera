@@ -132,6 +132,27 @@ was fit on text it is graded on, and the weight-space sweep is scored on the
 **eval** slice, disjoint from the fit slice the Hessian and the refit were built
 from.
 
+## What an H-aware encode costs on this body
+
+The FP8 receipt measured LDLQ at ~2x the plain encode on the window body. On
+the **TCQ** body it is far worse, and it scales with the row's width:
+
+| unit | cols | plain | + LDLQ 1.0/32 | factor |
+|---|---|---|---|---|
+| Qwen `layers.0.self_attn.q_proj` | 1024 | 18.0 s | 114.5 s | 6.4x |
+| Qwen `layers.1.self_attn.k_proj` | 1024 | 14.4 s | 171.4 s | 11.9x |
+| GLM `L5.gate_proj` | 4096 | 12 s | 519 s | 43x |
+
+The refit is cheap by comparison (20 s on the GLM expert): the cost is the
+**body**, not the plane. LDLQ splits a row into `cols/block` sequential
+segments and calls the trellis once per segment, so the TCQ branch pays its
+per-call overhead -- forest tensors, the completion argmin -- 128 times per
+pass on a 4096-column row instead of once. That is a lead for a follow-up, not
+a result here; what it means today is that `export_glm53_tessera.py --hessian`
+at block 32 is not a practical whole-model export on a 4096-column MoE, and
+the flag it just regained should be read with that beside it. The 0.6B export
+below is 196 units of 1024-3072 columns and takes ~1 h.
+
 ## Weight space: the sweep
 
 *(table)*
