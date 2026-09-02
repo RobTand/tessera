@@ -25,7 +25,8 @@ torch = pytest.importorskip("torch")
 
 from tessera.serving import lane                                    # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
-from tessera.serving.scheme import TESSERA_FP8, TESSERA_NVFP4       # noqa: E402
+from tessera.serving.scheme import (                               # noqa: E402
+    TESSERA_FP8, TESSERA_NVFP4, validate_tessera_scheme)
 
 
 def _install_vllm_stubs():
@@ -365,3 +366,195 @@ def test_an_unknown_family_is_still_refused_by_name():
     from tessera.serving import lane
     with pytest.raises(ValueError, match="family must be one of"):
         lane.build_tessera_method({"family": "TESSERA_NOPE"}, "m", mode="resident")
+
+
+# --------------------------------------------------------------------------
+# A checkpoint's module names are not vLLM's module names.
+#
+# vLLM hands every quantization config the model's ``hf_to_vllm_mapper`` and
+# expects the config to translate its own target lists
+# (``model_loader/utils.py:277-279``; ``models/interfaces.py:1160`` for a
+# ``SupportsQuant`` class).  The base method is a no-op
+# (``base_config.py:229-241``), so inheriting it meant every target stayed in
+# checkpoint space.  On ``Glm5NextForConditionalGeneration`` -- mapper
+# ``{"model.language_model." -> "language_model.model.", "model.visual." ->
+# "visual.", "lm_head." -> "language_model.lm_head."}`` -- not one target would
+# have matched, and every Linear would have been refused at load.
+#
+# It never showed because every Tessera artifact served so far is Qwen3-0.6B,
+# whose class declares no mapper at all.
+# --------------------------------------------------------------------------
+
+class _Mapper:
+    """The one method of ``WeightsMapper`` this contract uses."""
+
+    def __init__(self, prefixes, drop=()):
+        self.prefixes = dict(prefixes)
+        self.drop = set(drop)
+
+    def apply_list(self, values):
+        out = []
+        for value in values:
+            if value in self.drop:
+                continue
+            for old, new in self.prefixes.items():
+                if value.startswith(old):
+                    value = new + value[len(old):]
+                    break
+            out.append(value)
+        return out
+
+
+GLM = {"model.language_model.": "language_model.model.", "model.visual.": "visual."}
+
+
+def test_targets_and_ignores_move_into_the_module_namespace(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    declared = "model.language_model.layers.0.self_attn.qkv_proj"
+    passed = "model.language_model.layers.1.mlp.experts"
+    config = _resolved(_config(targets=(declared,), ignore=(passed, "lm_head")))
+
+    config.apply_vllm_mapper(_Mapper(GLM))
+
+    assert "language_model.model.layers.0.self_attn.qkv_proj" in config.target_scheme
+    assert declared not in config.target_scheme, "the checkpoint name survived the mapping"
+    assert "language_model.model.layers.1.mlp.experts" in config.ignore
+    assert "lm_head" in config.ignore, "a bare module name is not a path and is left alone"
+
+
+def test_the_mapped_target_is_the_one_that_dispatches(monkeypatch):
+    """The point of the whole exercise."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("model.language_model.layers.0.mlp.gate_up_proj",)))
+    config.apply_vllm_mapper(_Mapper(GLM))
+
+    layer = _layer()
+    assert config.get_quant_method(
+        layer, "language_model.model.layers.0.mlp.gate_up_proj") is not None
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(layer, "model.language_model.layers.0.mlp.gate_up_proj")
+
+
+def test_a_regex_target_is_left_alone(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("re:.*gate_up_proj$",)))
+    config.apply_vllm_mapper(_Mapper(GLM))
+    assert "re:.*gate_up_proj$" in config.target_scheme
+
+
+def test_a_dropped_target_refuses_rather_than_vanishing(monkeypatch):
+    """compressed-tensors drops it silently; a dead wire is worse than a stop."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    gone = "model.language_model.layers.0.mlp.gate_up_proj"
+    config = _resolved(_config(targets=(gone,)))
+    with pytest.raises(ValueError, match="drops"):
+        config.apply_vllm_mapper(_Mapper(GLM, drop=(gone,)))
+
+
+def test_two_checkpoint_modules_cannot_share_one_vllm_module(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("a.x.proj", "b.x.proj")))
+    with pytest.raises(ValueError, match="both map to the module"):
+        config.apply_vllm_mapper(_Mapper({"a.": "c.", "b.": "c."}))
+
+
+def test_an_overlap_created_by_the_mapping_is_still_refused(monkeypatch):
+    """The declared/ignored check has to run again on the mapped names."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=("a.x.proj",), ignore=("b.x.proj",)))
+    with pytest.raises(ValueError, match="both declared and ignored"):
+        config.apply_vllm_mapper(_Mapper({"a.": "c.", "b.": "c."}))
+
+
+def test_a_model_with_no_mapper_is_untouched(monkeypatch):
+    """Qwen3-0.6B: vLLM never calls the hook, and nothing may change if it does."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(targets=(TARGET,), ignore=("model.embed_tokens",)))
+    before = dict(config.target_scheme), tuple(config.ignore)
+    config.apply_vllm_mapper(_Mapper({}))
+    assert (config.target_scheme, config.ignore) == before
+
+
+# --------------------------------------------------------------------------
+# The rung a checkpoint declares has to be one the decoder reads.
+#
+# It did not used to be checked at all.  The first allocated Tessera artifact
+# served seven rungs the contract's published set did not name, and nothing
+# refused -- fine in the event, because every one of them decodes, but a rung
+# the reader could not take would have produced a wrong tensor instead of a
+# stop.  The range is derived from the decoder (each rate encoded and taken
+# through this load path), not from what anyone had exported.
+# --------------------------------------------------------------------------
+
+#: EVERY distinct ``(grid, q256)`` any Tessera checkpoint on either box was
+#: built at, read off the 15 artifacts' own ``config_groups`` rather than off
+#: the receipt that happened to mention seven of them.  ``E4M3`` spans 493 to
+#: 1384 -- SIXTEEN rungs, not the seven the allocated-serve receipt named --
+#: and ``E2M1x2`` is 896 and nothing else.
+_RUNGS_ACTUALLY_BUILT = {
+    "E4M3": (493, 749, 750, 785, 814, 824, 909, 934,
+             1006, 1024, 1083, 1107, 1217, 1262, 1366, 1384),
+    "E2M1x2": (896,),
+}
+
+
+def test_every_rung_ever_BUILT_is_inside_the_range(monkeypatch):
+    """The fix may not retroactively refuse a checkpoint that served correctly.
+
+    This is the whole built population, not the receipt's seven, and the two
+    extremes are the point: had the range been widened to cover the rungs the
+    allocated-serve receipt happened to list (749..1262), R493 and R1384 would
+    both be refused today.  Deriving the bound from the decoder rather than
+    from the exported history is what makes those pass, and that is the
+    difference between a gate and an accommodation.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    for rung in _RUNGS_ACTUALLY_BUILT["E4M3"]:
+        validate_tessera_scheme(_fp8_scheme(q256=rung), f"m.R{rung}")
+    for rung in _RUNGS_ACTUALLY_BUILT["E2M1x2"]:
+        validate_tessera_scheme(_scheme(q256=rung), f"m.R{rung}")
+
+
+def test_no_artifact_was_ever_built_on_the_arity_1_grid(monkeypatch):
+    """The one refusal here that is new for a grid ``ROUTES`` still lists.
+
+    ``TESSERA_NVFP4`` holds ``E2M1`` as well as ``E2M1x2``, and the contract
+    publishes a range for the arity-2 grid only, so an arity-1 checkpoint is
+    now refused as unattested rather than served on the other grid's numbers.
+    That is safe to do because no such artifact exists: all 15 Tessera
+    checkpoints on either box are ``E2M1x2`` or ``E4M3``.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    assert "E2M1" not in _RUNGS_ACTUALLY_BUILT
+    with pytest.raises(ValueError, match="publishes no decodable rate range"):
+        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1.built")
+
+
+@pytest.mark.parametrize("rung", [256, 2048])
+def test_the_boundaries_of_the_published_range_are_inside_it(monkeypatch, rung):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    validate_tessera_scheme(_fp8_scheme(q256=rung), "m.edge")
+
+
+@pytest.mark.parametrize("rung", [255, 2049])
+def test_a_rung_outside_the_published_range_refuses_by_number(monkeypatch, rung):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match=f"q256={rung} is outside"):
+        validate_tessera_scheme(_fp8_scheme(q256=rung), "m.past")
+
+
+def test_the_e2m1x2_route_reads_one_rung_and_says_so(monkeypatch):
+    """896 exactly: the grammar caps it above, the native decoder below."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    validate_tessera_scheme(_scheme(q256=896), "m.cap")
+    for rung in (749, 895, 897, 1024):
+        with pytest.raises(ValueError, match="TESSERA_E2M1_K2"):
+            validate_tessera_scheme(_scheme(q256=rung), "m.offcap")
+
+
+def test_a_grid_the_contract_does_not_describe_refuses(monkeypatch):
+    """``TESSERA_NVFP4`` declares it holds ``E2M1`` too; nothing publishes a
+    range for it, and borrowing ``E2M1x2``'s would be the near-miss."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match="publishes no decodable rate range"):
+        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1")

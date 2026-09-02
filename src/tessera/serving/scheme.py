@@ -128,6 +128,47 @@ def _as_int(scheme: Mapping, field: str, target: str) -> int:
     return value
 
 
+def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) -> None:
+    """The rate has to be one the decoder reads, and the contract has to say so.
+
+    Nothing checked this.  An allocated checkpoint served seven rungs
+    (R749/R750/R934/R1006/R1083/R1107/R1262) that the contract's published set
+    did not name, and nothing refused -- the run happened to be fine because
+    every one of them IS decodable, but a rung the decoder could not read would
+    have produced a wrong tensor rather than a refusal, which is the failure
+    this gate exists for.
+
+    The published range is derived from the decoder, not from what has been
+    exported: each candidate rate was encoded and taken through this very load
+    path, and the accepted set is what the contract now states.  Two different
+    mechanisms bound it.  On ``E4M3`` the trellis grammar's shaped domain
+    (code rate 1..8 over an 8-bit-native alphabet) gives a CONTINUOUS
+    ``q256`` in [256, 2048] -- so the contract says continuous, not a list of
+    the two rungs anyone had built.  On ``E2M1x2`` the same grammar caps the
+    top at 896 (rate 7 of arity-2 native 8) and the native decoder cuts off the
+    bottom: it serves the span-2 TCQ body only, and below 896 the recipe writes
+    a WINDOW body that has no served decode.  One point, and it is a real one.
+    """
+    from .contract import reader_accepts, reader_rate_grid
+
+    found = reader_rate_grid(route, grid)
+    if found is None:
+        raise ValueError(
+            f"tessera target {target!r}: this build publishes no decodable rate range for "
+            f"{route} on grid {grid!r}, so there is no rung it can promise to read. "
+            "runtime_contract.json describes the (route, grid) pairs this plugin serves; a pair "
+            "it does not describe is refused rather than served on another pair's numbers.")
+    family, low, high, step = found
+    if not reader_accepts(q256, low, high, step):
+        span = f"[{low}, {high}]" + (f" step {step}" if step != 1 else " (every integer)")
+        raise ValueError(
+            f"tessera target {target!r}: q256={q256} is outside the rungs this build's decoder "
+            f"reads for {family} -- {span}. Serving it would decode bytes the reader does not "
+            "promise to understand, which is a wrong tensor rather than a refusal. Re-export at "
+            "a rung inside the range, or publish a measured range that contains this one in "
+            "runtime_contract.json.")
+
+
 def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     """Resolve a declared Tessera scheme without parsing the blob.
 
@@ -167,6 +208,7 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     if body not in _BODIES:
         raise ValueError(f"tessera target {target!r}: body must be one of {_BODIES}, got {body!r}")
     q256 = _as_int(scheme, "q256", target)
+    _refuse_an_unreadable_rung(family, grid, q256, target)
     rows = _as_int(scheme, "rows", target)
     columns = _as_int(scheme, "columns", target)
     if columns % route["columns_multiple"]:

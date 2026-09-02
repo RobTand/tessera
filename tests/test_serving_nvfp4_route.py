@@ -42,21 +42,41 @@ GROUP = 16
 
 
 def _requires_native_ext():
-    """Skip when Tessera's span-2 decode extension cannot build on this host.
+    """Skip where the toolchain is ABSENT; a broken build is a FAILURE.
 
     The STREAMED residency decodes inside the forward, where there is no
-    fallback by design (``prepare_tessera_module``'s ``allow_torch_fallback`` is
-    the resident path's decision alone) -- so a box without a CUDA toolkit
-    cannot exercise it at all.  That is an ABSENT kernel, not a broken one, and
-    a skip says so; on a box with the extension built these run and must pass.
-    Resident-mode tests are unaffected: they take the named pure-torch
-    fallback, which is the point of having one.
-    """
-    from tessera.serving.ext import get_tessera_ext
+    fallback by design (``prepare_tessera_module``'s ``allow_torch_fallback``
+    is the resident path's decision alone) -- so a box without a CUDA toolkit
+    cannot exercise it at all, and a skip says so.  Resident-mode tests are
+    unaffected: they take the named pure-torch fallback, which is the point of
+    having one.
 
+    The two cases are separated deliberately, because collapsing them is how a
+    route stops being tested with nobody seeing a red line.  It happened here:
+    a blanket ``skip if get_tessera_ext() is None`` was green on BOTH boxes,
+    and neither was missing a compiler -- ``/usr/local/cuda`` pointed at a
+    partial install one directory away from a complete CUDA (sparky), and
+    ``ninja`` was off a non-login ssh's PATH (sparklina).  Both are now
+    resolved by ``ext.toolchain_report``/``_resolve_cuda_home``, so on either
+    box these RUN.  If the compiler is there and the build still fails, that
+    is a regression and it fails loudly, naming what it found.
+    """
+    torch = pytest.importorskip("torch")
+    from tessera.serving.ext import get_tessera_ext, toolchain_report
+
+    if not torch.cuda.is_available():
+        pytest.skip("no visible GPU: the extension is compiled for the LIVE device's capability, "
+                    "so there is no defensible target to build for")
+    found = toolchain_report(torch)
+    if not found["complete"]:
+        pytest.skip(f"no CUDA build toolchain on this host (nvcc={found['nvcc']}, "
+                    f"ninja={found['ninja']}); the streamed residency decodes in-forward "
+                    "and has no fallback")
     if get_tessera_ext() is None:
-        pytest.skip("Tessera's span-2 NVFP4 decode extension cannot build here (no nvcc or no "
-                    "visible GPU); the streamed residency decodes in-forward and has no fallback")
+        pytest.fail(f"the CUDA toolchain IS present (nvcc={found['nvcc']}, "
+                    f"ninja={found['ninja']}) but Tessera's span-2 NVFP4 decode extension did "
+                    "not build; the build error is on stderr above. A broken build, not an "
+                    "absent kernel.")
 
 
 def _tessera():
@@ -328,6 +348,11 @@ def test_scheme_and_blob_must_agree(monkeypatch):
     with pytest.raises(ValueError, match="roles"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "roles": [["other", 256]]}, "t")
     with pytest.raises(ValueError, match="sidecar scheme declares"):
+        parse_tessera_blob_for_scheme(blob, {**scheme, "columns": 1024}, "t")
+    # A DISAGREEING rate never reaches that comparison on this route: the reader
+    # takes one rung (896), so any other value is refused earlier, by the rung
+    # gate, and more specifically.
+    with pytest.raises(ValueError, match="outside the rungs this build's decoder reads"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 640}, "t")
 
 

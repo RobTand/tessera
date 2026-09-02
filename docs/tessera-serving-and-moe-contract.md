@@ -294,3 +294,223 @@ arm slightly worse than the kernel lane rather than better.
 `experiments/assert_render_export_identity.py` checks the seam nothing
 structurally enforces — that the render PrismaQuant prices equals the bytes the
 exporter wrote — on real exported units rather than by assumption.
+
+## 9. Four measured facts that shape the MoE route (2026-09-02)
+
+Everything here was measured on this date against the pinned serving image
+`prismaquant/glm53-mia-sm121:487ecf187` (vllm `0.1.dev20051+g487ecf187`) and
+the surgical model `/mnt/shared/models/GLM-5.3-Flash-4layer`. Each carries the
+scope it was measured at, per principle 14 — none of them is a claim about GLM
+proper, or about any other build.
+
+### 9.1 The NVFP4 MoE arm is refused by this model's own config
+
+`GLM-5.3-Flash-4layer/config.json` sets `swiglu_limit: 10.0`. The build's
+`fused_moe/oracle/nvfp4.py` excludes `FLASHINFER_B12X` from
+`NVFP4_BACKENDS_WITH_CLAMP`, so an explicit `--moe-backend flashinfer_b12x`
+raises `ValueError` on this config, and the auto list is filtered to the
+clamp-capable backends — `FLASHINFER_TRTLLM`, `FLASHINFER_CUTEDSL`,
+`FLASHINFER_CUTLASS`, `VLLM_CUTLASS`, `MARLIN`, `EMULATION`, `HUMMING`. Which
+of those is backed on sm121 is **not measured**.
+
+**Scope: build `487ecf187`, this model's config.** This does not contradict the
+route status recorded for GLM NVFP4 MoE elsewhere, which was measured on a
+config without a `swiglu_limit`, and it does not generalise to GLM proper
+without re-measuring. It has one consequence that is not scoped, though: the
+sentence in `serving/config.py`'s MoE refusal that says NVFP4 W4A4 "needs
+`--moe-backend flashinfer_b12x` on GB10" is an *asserted* runtime claim of the
+kind principle 14 forbids, and on this model it is false. It is corrected when
+the MoE route lands, not before, so that the correction and its evidence travel
+together.
+
+The FP8 oracle carries no analogous clamp filter, so **the TESSERA_FP8 family
+(E4M3 wire, WINDOW body, CHANNEL plane -> per-channel FP8 W8A8) is the first
+and only served MoE arm.** The `requires_serve_flags` value for its contract
+cell will be whatever the pinned build is *seen* to need — not a backend name
+copied from the NVFP4 lane.
+
+### 9.2 The exporter could not see this model's body at all
+
+Three faults, all at plan time, all silent (fixed; see
+`tests/test_export_moe_layouts.py`):
+
+* `quantizable` filtered on `name.startswith("model.layers.")` and `main`
+  parsed the layer index as `name.split(".")[2]`. This checkpoint roots its
+  decoder under a sub-model, `model.language_model.layers.N.`, so the filter
+  matched **nothing**: an export would have quantized zero Linears and reported
+  success. `BODY_LAYER` matches `model.<...>.layers.<N>.`; the vision tower is
+  `model.visual.blocks.N.` and stays BF16 by the same rule rather than by a
+  second exclusion list.
+* Routed experts here are **unpacked per-expert 2-D**
+  (`...mlp.experts.{e}.{gate,up,down}_proj.weight`, 2592 of them across layers
+  1–3; layer 0 is dense). Being 2-D, nothing separated them from ordinary
+  Linears, and they would have been encoded — for hours — into a checkpoint
+  whose `config_groups` name modules vLLM never builds, which the plugin then
+  refuses at **load**. `ROUTED_EXPERT_2D` splits them out at plan time. Its
+  `\d+` segment is what distinguishes a routed expert from
+  `mlp.shared_experts.gate_proj`, which is an ordinary Linear and stays
+  quantizable as one.
+* `len(shape) >= 3` was the whole test for "packed expert stack", and this
+  model's attention carries `k_conv1d.weight [8192, 1, 4]`. Its ignore entry —
+  module minus leaf — is `...self_attn`, the parent of every attention Linear
+  in the layer. `PACKED_EXPERT_ND` identifies a stack by where it sits.
+
+Measured after the fix: **49 dense Linears (was 0), 2592 routed expert leaves
+across layers [1, 2, 3], 0 packed stacks.**
+
+### 9.3 A packed expert stack cannot always be oriented, and this model is the case
+
+`[E, A, B]` is ambiguous on its face, and transformers-5 architectures genuinely
+differ (`gate_up_proj` appears both as `[E, hidden, 2*inter]` and as
+`[E, 2*inter, hidden]`). `packed_expert_orientation` reads the output axis off
+`hidden_size`/`moe_intermediate_size` and **refuses** when the dims cannot
+decide it.
+
+That refusal is not defensive programming. This model has
+`hidden_size == 2 * moe_intermediate_size == 4096`, so a packed `gate_up_proj`
+would be `[E, 4096, 4096]` — square — and no comparison of dims orients it. A
+default axis order there transposes every expert in silence.
+
+The packed path's tests are therefore **synthetic**: no packed-expert source is
+at hand, so they fix the contract, not agreement with a real checkpoint.
+
+### 9.4 The encode budget is real, and the fused path is already taken
+
+Profiled (`torch.profiler`, one unit at the real expert shape 2048x4096, E4M3
+q256=1024 -> WINDOW/CHANNEL, `window_bits = 14`):
+
+* `fused_available()` is **true** and the fused Triton `_step` is **97.97% of
+  CUDA time** (4.600 s of 4.696 s). The rate is not a missing fused path; it
+  *is* the fused path.
+* `verify=True` costs ~3% (5.13 s vs 4.97 s), so the verify is not a lever.
+* **~5.0 s per expert unit** (gate/up 2048x4096: 4.97 s; down 4096x2048:
+  5.11 s), so one MoE layer — 288 experts x 3 projections = 864 units — is
+  **~72 min on one box**, or ~36 min split across sparky and sparklina.
+
+Power, against the box (Netdata, `nvidia_smi.gpu_power_draw`, sparky): the
+encode loop holds **71–73 W of GB10's ~140 W envelope**, against 6–17 W idle.
+So the encoder is fused but roughly half-loaded, and utilization would have
+said nothing — on GB10 it reads "a kernel is resident", not "the SMs are
+working". That headroom is real and unspent: `src/tessera/encode.py` is
+out of scope here, and the budget above is workable without it.
+
+### 9.5 The serving image could not build the streamed decoder
+
+Found by making the NVFP4 streamed tests fail instead of skip. Three hosts,
+three different causes, all previously reported as one absent kernel:
+
+| host | cause | now |
+|---|---|---|
+| sparky | `/usr/local/cuda` -> `/etc/alternatives/cuda` -> `cuda-13.3`, a partial install with no `bin/nvcc`; the complete `cuda-13.0` sits one directory away and matches `torch.version.cuda` | 23 passed |
+| sparklina | `ninja` is in the venv's `bin`, off a non-login ssh's `PATH` | 23 passed |
+| `glm53-mia-sm121:487ecf187` | nvcc and ninja both present, but no `cusparse.h` under `/usr/local/cuda`; ATen's `CUDAContextLight.h` includes it unconditionally | 128 passed, 0 skipped |
+
+The third is the one that matters for shipping: the **streamed residency has no
+pure-torch fallback by design**, so until this was fixed that route could not
+build on the very image that serves it — and nothing said so, because a blanket
+`skip if get_tessera_ext() is None` is green whether the kernel is absent or
+merely unbuilt. `ext.toolchain_report()` now separates the two, and the tests
+skip only on a genuinely absent toolchain and **fail** when the toolchain is
+present and the build broke.
+
+## 10. The rung set the contract publishes is the set the decoder reads (2026-09-02)
+
+`runtime_contract.json` published `candidate_rungs_q256: [1024]` for
+`TESSERA_E4M3_K1` and `[896]` for `TESSERA_E2M1_K2`, and nothing consumed it.
+The first PrismaQuant-allocated artifact served seven rungs outside that list —
+R749, R750, R934, R1006, R1083, R1107, R1262 — with a clean 112/112 census and
+nothing refusing (receipt: `docs/measurements/tessera-allocated-served-2026-09-02.md`,
+finding in §9). That is not a correctness bug at serve time; it is a contract
+that states a set the runtime neither enforces nor is restricted by, which is
+provenance nothing consumes.
+
+**The bound is now derived from the decoder.** Each candidate rate was encoded
+into a unit, packed exactly as the exporter packs, and taken through the
+plugin's own load path — `parse_tessera_blob_for_scheme` then the route's
+`prepare_*`. What that path accepts is what the contract states. Two different
+mechanisms turn out to bound it, and they are not the same mechanism on the two
+families:
+
+| family | grid | reader range (q256) | step | what bounds it |
+|---|---|---|---|---|
+| `TESSERA_E4M3_K1` | `E4M3` | **[256, 2048]** | 1 | the trellis grammar's shaped domain at both ends: code rate 1..8 over an 8-bit-native alphabet. Continuous — 120 of 120 in-range probes accepted, no interior gap. |
+| `TESSERA_E2M1_K2` | `E2M1x2` | **[896, 896]** | 1 | *above*, the same grammar (rate 7 of arity-2 native 8, so q256 ≤ 896); *below*, the native decoder, which serves the span-2 TCQ body only — under 896 `wire_recipe` writes a WINDOW body and `ops.prepare_tessera_module` refuses it by name. |
+
+So E4M3's published set was two orders of magnitude too narrow and E2M1x2's
+single point was exactly right, for a reason nobody had written down.
+
+The fields changed shape to stop the misreading that opened the gap:
+
+* `reader_rate_range_q256` **is** the decodable set, with `reader_rate_step_q256`
+  making "continuous" a thing a gate can read rather than a thing a list
+  implies, and `reader_rate_bound` naming the mechanism.
+* `candidate_rungs_q256` is renamed **`attested_rungs_q256`**. It never was the
+  decodable set; it is the rungs a `lane_eligibility` cell attests, and the
+  validator still requires every cell's `rungs_q256` to be a subset. Decodable
+  and attested are different claims and now have different names. It is
+  deliberately **not** widened to cover the allocated run's rungs: those were
+  censused by another artifact's receipt, not by a cell here. The old name is
+  **retained as a deprecated alias** carrying the same list (the validator
+  refuses it if the two disagree), so the change is additive and the `schema`
+  string does not move — see the cross-repo note below.
+* Each format entry now names its `grid`. `TESSERA_NVFP4` declares it holds
+  `E2M1` as well as `E2M1x2`, and resolving a range by route alone would have
+  handed an arity-1 checkpoint the arity-2 numbers. A (route, grid) pair the
+  contract does not describe is refused, not served on another pair's figures.
+
+**Checked against every artifact, not against the receipt.** The seven rungs
+the receipt named are not the whole exported population. Reading the
+`config_groups` of all 15 Tessera checkpoints on either box gives **17 distinct
+`(grid, q256)` pairs**: `E2M1x2` at 896 and nothing else, and `E4M3` at
+**sixteen** rungs spanning **493 … 1384** (493, 749, 750, 785, 814, 824, 909,
+934, 1006, 1024, 1083, 1107, 1217, 1262, 1366, 1384). Every one is accepted by
+the new gate. That is the argument for deriving the bound from the decoder
+rather than from the exported history: a range widened to cover the receipt's
+seven (749…1262) would refuse both R493 and R1384 — real rungs of the 3.0 and
+5.0 bpp allocated arms — and the gate would have become an accommodation of
+whichever checkpoints someone happened to cite.
+
+The same scan settles the one refusal that is genuinely **new** for a grid
+`ROUTES` still lists: an arity-1 `E2M1` scheme is now refused as unattested
+(the contract publishes a range for `E2M1x2` only). No artifact has ever been
+built on it — all 15 are `E2M1x2` or `E4M3` — so nothing that exists is refused
+by it, and the alternative was to serve an arity-1 checkpoint on the arity-2
+grid's numbers.
+
+**The gate.** `validate_tessera_scheme` refuses a declared `q256` outside the
+published set, naming the rung and the set. It runs at sidecar-parse time,
+before a parameter exists — the same place the family, grid, body and plane
+refusals already live. The seven rungs that slipped through are all inside the
+E4M3 range, so the fix does not retroactively refuse an artifact that served
+correctly; there is a test that says so by name.
+
+`contract_version` 1 → **2**, with a `changelog` in the file itself. The
+`schema` string stays `tessera.runtime-contract.v1`, and that is a decision, not
+an oversight: see below.
+
+**This file has a consumer in another repository, and the effect on it was
+measured, not assumed.** PrismaQuant reads this exact packaged JSON through
+`importlib.resources` (`prismaquant/tessera_render.py::tessera_serving_contract_path`
+→ `prismaquant/gridbook_lane_eligibility.py::load_published_formats`), and its
+`resolve_payload_rung` reads `reader_rate_range_q256` in production
+(`gridbook_lane_eligibility.py:1025`) to decide whether a format name's rate
+resolves at all. So the two halves of this change land on it differently:
+
+* **The widened E4M3 range changes rate resolution, as it should.** Measured
+  against the v2 file: `TESSERA_E4M3_K1_R749` now resolves to rate 749 where
+  under `[1024, 1024]` it resolved to `None`; `R2049` still resolves to `None`;
+  `TESSERA_E2M1_K2_R768` still resolves to `None`.
+* **It does not widen admission, which is the point of separating the two
+  names.** `tessera_lane_attested` is still `False` for
+  `R1024`/`R749`/`R1262`/`E2M1_K2_R896` — the `lane_eligibility` cells'
+  `rungs_q256` did not move, and PrismaQuant's Tessera serving pin is a
+  fail-closed sentinel until Rob cuts a release tag. Decodable widened;
+  attested did not.
+* **The rename would have broken a v1 reader, so it is additive.** Dropping
+  `candidate_rungs_q256` while `schema` still said `v1` is the same
+  "current and wrong" fault this section exists to close, one field over. With
+  the alias, PrismaQuant's Tessera-facing suite is **60 passed, 0 failed**
+  against this tree (`tests/test_tessera_lane_admission.py` +
+  `tests/test_tessera_formats.py`); without it, one test fails with a
+  `KeyError`. The alias is dropped when the `schema` string moves to v2, which
+  is a coordinated change across both repositories and not this one.

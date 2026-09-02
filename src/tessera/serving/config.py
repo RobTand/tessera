@@ -107,14 +107,78 @@ class TesseraConfig(QuantizationConfig):
                 if target in self.target_scheme:
                     raise ValueError(f"target {target!r} is declared by two config groups")
                 self.target_scheme[target] = dict(scheme)
-        overlap = sorted(set(self.ignore) & set(self.target_scheme))
-        if overlap:
-            raise ValueError(
-                f"targets {overlap} are both declared and ignored; one of the two is a mistake")
+        self._check_overlap()
         # Resolve the residency HERE, at config parse, so an unset or misspelt
         # mode is one clear message before any weight is touched.
         self._mode = serve_mode()
         self._declared = False
+
+    def _check_overlap(self) -> None:
+        overlap = sorted(set(self.ignore) & set(self.target_scheme))
+        if overlap:
+            raise ValueError(
+                f"targets {overlap} are both declared and ignored; one of the two is a mistake")
+
+    # -- checkpoint names are not module names ----------------------------
+    def apply_vllm_mapper(self, hf_to_vllm_mapper) -> None:
+        """Translate the checkpoint's module names into the ones vLLM builds.
+
+        A quantization config is written in the CHECKPOINT's namespace; vLLM
+        dispatches on the namespace of the module tree it built, and for a model
+        whose class declares an ``hf_to_vllm_mapper`` the two differ.  vLLM hands
+        every quant config the mapper for exactly this reason -- ``model_loader/
+        utils.py:277-279`` calls ``quant_config.apply_vllm_mapper(
+        hf_to_vllm_mapper.get_unstacked_mapper())`` for a model class that is not
+        ``SupportsQuant``, and ``models/interfaces.py:1160`` does it for one that
+        is.  ``QuantizationConfig.apply_vllm_mapper`` is a no-op
+        (``base_config.py:229-241``), and inheriting it was this plugin's bug:
+        every declared target stayed in checkpoint space, so on any mapped
+        architecture NOTHING matched and every Linear was refused at load.
+
+        It never showed, because every Tessera artifact served so far is
+        Qwen3-0.6B, whose class declares no mapper and whose module path is its
+        checkpoint path.  On ``Glm5NextForConditionalGeneration`` the mapper is
+        ``{"model.language_model." -> "language_model.model.", "model.visual." ->
+        "visual.", "lm_head." -> "language_model.lm_head."}``, so not one target
+        would have matched.
+
+        The target-shape rules are compressed-tensors' own
+        (``compressed_tensors.py:122-153``): a dotted path is translated, a bare
+        module class name or a ``re:`` pattern is left alone.  Where this differs
+        from compressed-tensors is that it REFUSES instead of dropping: a
+        declared wire whose module the runtime maps away, or two checkpoint
+        modules colliding onto one vLLM module, is a checkpoint that cannot be
+        served correctly, and silence there is how a wire ends up loaded and
+        never executed.
+        """
+        def mapped(target: str) -> str:
+            if "." not in target or target.startswith("re:"):
+                return target          # a module class name or a regex, not a path
+            out = hf_to_vllm_mapper.apply_list([target])
+            if not out:
+                raise ValueError(
+                    f"the model's hf_to_vllm_mapper drops {target!r}, so the runtime builds no "
+                    "module for a name this checkpoint declares. Either the checkpoint was "
+                    "written for a different architecture or the wire is dead weight; both are "
+                    "refusals, not warnings.")
+            return out[0]
+
+        declared: dict[str, dict] = {}
+        origin: dict[str, str] = {}
+        for target, scheme in self.target_scheme.items():
+            name = mapped(target)
+            if name in declared:
+                raise ValueError(
+                    f"{origin[name]!r} and {target!r} both map to the module {name!r}: one vLLM "
+                    "module cannot take two Tessera wires")
+            declared[name] = scheme
+            origin[name] = target
+        self.target_scheme = declared
+        # ``dict.fromkeys`` keeps the order and drops the duplicates two
+        # checkpoint names can become; unlike a declared target, a doubly-named
+        # ignore is harmless.
+        self.ignore = tuple(dict.fromkeys(mapped(i) for i in self.ignore))
+        self._check_overlap()
 
     # -- vLLM's QuantizationConfig contract -------------------------------
     @classmethod
