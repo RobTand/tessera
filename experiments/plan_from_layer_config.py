@@ -29,8 +29,10 @@ a *subset* -- ``--layer-stride 28`` prices decoder layer 0 and nothing else --
 and an allocation over 7 of 197 Linears exports to a checkpoint that is 96%
 BF16.  Two modes, and neither is the default guess:
 
-* ``--cover as-allocated`` plans exactly the units the allocation names.  Every
-  other body Linear is BF16.  This is the allocation, unextrapolated.
+* ``--cover as-allocated`` plans exactly the units the allocation names, and
+  names every other body Linear ``"BF16"`` **explicitly** -- silence is not
+  BF16, it is the exporter's ``--grid``/``--q256`` default, which is a 4-bit
+  rung.  This is the allocation, unextrapolated.
 * ``--cover broadcast-by-role`` applies the allocation's per-ROLE assignment at
   every depth.  This is an EXTRAPOLATION and is stamped as one in the sidecar
   (``coverage.mode``, ``coverage.extrapolated: true``): the allocator priced one
@@ -224,7 +226,8 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
                 plan[tensor] = "BF16"
                 continue
             if role not in by_role:
-                continue                     # unpriced role: exporter's own passthrough
+                plan[tensor] = "BF16"        # unpriced role: say BF16, do not assume it
+                continue
             if source in shapes and shapes[source] != shape:
                 raise PlanError(
                     f"{qname} is {shape} but the priced {source} is {shapes[source]}; a rung is "
@@ -234,6 +237,17 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             chosen[qname] = by_role[role]
     else:                                                       # pragma: no cover - argparse
         raise PlanError(f"unknown coverage mode {cover!r}")
+
+    # A tensor the plan does not name is NOT a BF16 module: the exporter falls
+    # back to its own --grid/--q256 default, which is E2M1x2 q256=896 unless a
+    # caller happens to override it.  A plan that covers seven Linears and
+    # leaves 189 to that default is a 4-bit NVFP4 checkpoint with seven Tessera
+    # units in it, priced as neither -- so name every remaining body Linear
+    # BF16 explicitly and let the plan, not an exporter default, be the record
+    # of what the allocation said.
+    for tensor in shapes:
+        if tensor not in plan and tensor[: -len(".weight")] not in chosen:
+            plan[tensor] = "BF16"
 
     # The fused invariant, checked before the encode rather than after it.
     groups, disagreements = {}, []
@@ -298,8 +312,9 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             "planned_tessera_units": len(chosen),
             "planned_bf16_units": sum(1 for v in plan.values() if v == "BF16"),
             "unplanned_body_linears": len(shapes) - len(plan),
-            "note": ("every body Linear the allocation did not name is left to the exporter's own "
-                     "BF16 passthrough" if cover == "as-allocated" else
+            "note": ("every body Linear the allocation did not name is planned as BF16 "
+                     "explicitly, because an unnamed tensor takes the exporter's --grid default, "
+                     "not a passthrough" if cover == "as-allocated" else
                      "the allocation's per-ROLE assignment applied at every depth; the allocator "
                      "priced only the layer(s) above and nothing here says the same rate is right "
                      "at another depth"),
@@ -356,7 +371,8 @@ def main(argv=None):
           + ("  [EXTRAPOLATED from layer "
              f"{cov['broadcast_from_layer']}]" if cov["extrapolated"] else ""))
     print(f"  planned: {cov['planned_tessera_units']} Tessera, {cov['planned_bf16_units']} BF16, "
-          f"{cov['unplanned_body_linears']} left to the exporter's passthrough")
+          f"{cov['unplanned_body_linears']} unnamed (must be 0: an unnamed tensor takes the "
+          f"exporter's --grid default, which is a 4-bit rung, not BF16)")
     by_rung = collections.Counter((u["family"], u["q256"]) for u in provenance["units"])
     for (family, rung), n in sorted(by_rung.items()):
         print(f"    {family}_R{rung}: {n}")

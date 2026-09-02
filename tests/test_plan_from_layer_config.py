@@ -141,12 +141,33 @@ def test_a_unit_the_model_does_not_carry_is_refused():
 
 # -- coverage ------------------------------------------------------------------
 
-def test_as_allocated_leaves_every_unpriced_linear_to_the_exporters_passthrough():
+def test_as_allocated_names_every_unpriced_linear_bf16_rather_than_leaving_it_out():
+    # A tensor the plan does not name does NOT come out BF16: the exporter
+    # falls back to its own --grid/--q256 default, which is a 4-bit NVFP4 rung.
+    # A seven-unit plan that stayed silent about the other 189 therefore built
+    # a 4-bit checkpoint nobody priced -- and, weights-only, one the exporter
+    # refuses outright for want of --input-scales.  Silence is the bug; the
+    # plan says BF16 out loud.
     plan, provenance = build(uniform_config(), one_layer_shapes(layers=28))
-    assert len(plan) == 7
+    assert len(plan) == 196
+    assert sum(1 for v in plan.values() if v == "BF16") == 196 - 7
+    assert plan["model.layers.0.self_attn.q_proj.weight"] == {"grid": "E4M3", "q256": 1083}
+    assert plan["model.layers.27.self_attn.q_proj.weight"] == "BF16"
     coverage = provenance["coverage"]
     assert coverage["extrapolated"] is False
-    assert coverage["unplanned_body_linears"] == 196 - 7
+    assert coverage["unplanned_body_linears"] == 0
+
+
+def test_broadcast_names_a_role_the_allocation_never_priced_bf16():
+    # Same trap one level down: a role missing from the allocation entirely
+    # (not chosen BF16, just absent) must still be named, or it silently takes
+    # the exporter's 4-bit default at all 28 depths.
+    config = uniform_config()
+    del config["model.layers.0.mlp.down_proj"]
+    plan, provenance = build(config, one_layer_shapes(layers=28), cover="broadcast-by-role")
+    assert len(plan) == 196
+    assert plan["model.layers.5.mlp.down_proj.weight"] == "BF16"
+    assert provenance["coverage"]["unplanned_body_linears"] == 0
 
 
 def test_broadcast_applies_the_per_role_assignment_at_every_depth_and_says_it_is_one():
