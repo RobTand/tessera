@@ -9,8 +9,13 @@ simply never added.  The cost of the omission was a hole in the rate menu
 between Tessera-4's 4.0 bpp ceiling and FP8's 8.0, so an allocator that wanted
 five or six bits had to buy eight.
 
-`E4M3^2` stays out, and that exclusion IS structural: 65536 codes against
-ALPHABET/DESCENDANT planes that are one byte per code.
+`E4M3^2` stays out, and that exclusion IS structural for the body it would
+use: the TCQ forest planes are one byte per code, and 65536 anchors is the
+count the encoder already refuses to score per step.  `BF16` reaches the same
+code count and IS in, because the window body never scores the grid -- it
+scores `2^window_bits` states -- and its code plane is sized from
+`PayloadGrid.code_bytes` rather than assumed to be a byte.  The two questions
+only looked like one while every grid fitted in a byte.
 """
 import sys
 from pathlib import Path
@@ -37,11 +42,14 @@ from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 CODE = ConvCode(memory=6)
 
 
-def test_the_serialisable_set_is_exactly_the_grids_that_fit_in_a_byte():
+def test_the_serialisable_set_is_the_grids_a_reader_can_rebuild():
     assert {g.name for g in SERIALISABLE_GRIDS.values()} == {
-        "E2M1", "E2M1x2", "E4M3"}
-    assert all(g.size <= 256 for g in SERIALISABLE_GRIDS.values())
+        "E2M1", "E2M1x2", "E4M3", "BF16"}
     assert grid_digest(E4M3_GRID) in SERIALISABLE_GRIDS
+    # The criterion is reconstructibility, not width -- and the width every
+    # grid does have is derived from it, never assumed.
+    assert {g.name: g.code_bytes for g in SERIALISABLE_GRIDS.values()} == {
+        "E2M1": 1, "E2M1x2": 1, "E4M3": 1, "BF16": 2}
 
 
 def test_e4m3_squared_is_refused_by_the_wire_not_by_the_registry(monkeypatch):

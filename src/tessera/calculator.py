@@ -144,6 +144,7 @@ def terminal_rate(
     span: int = 1,
     window_bits: int = 0,
     with_row_scale: bool = False,
+    code_bytes: int = 1,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
 
@@ -152,11 +153,18 @@ def terminal_rate(
     per output row on DIAG_SV, priced here exactly as the wire charges it.
 
     ``window_bits > 0`` prices a **window body** (schema minor 2): the
-    ALPHABET plane is its ``2^window_bits``-byte table, DESCENDANT and
-    COMPLETION are empty, span is 1.  The table is charged here because it
-    is charged on the wire -- per unit, inline -- and an accountant that
-    left it out would disagree with the artifact by exactly the bytes that
-    distinguish a wide window from a narrow one.
+    ALPHABET plane is its ``code_bytes * 2^window_bits``-byte table,
+    DESCENDANT and COMPLETION are empty, span is 1.  The table is charged
+    here because it is charged on the wire -- per unit, inline -- and an
+    accountant that left it out would disagree with the artifact by exactly
+    the bytes that distinguish a wide window from a narrow one.
+
+    ``code_bytes`` is ``PayloadGrid.code_bytes``: one for every grid that
+    fits a code in a byte, two on BF16, whose table entry *is* a bf16 word.
+    Defaulting it to 1 reproduces every figure derived before the 16-bit
+    route existed; passing the grid's own value is what keeps the accountant
+    and the wire agreeing byte for byte on that route, which is the whole
+    contract this function has.
 
     ``span`` is the trellis super-symbol length (schema minor 1): the BODY
     plane holds ``span * R + span - 1`` bits per super-symbol per column.  A
@@ -192,7 +200,9 @@ def terminal_rate(
         if span != 1:
             raise GrammarError("a window body is span 1")
         completion = 0
-    alphabet = bytes(1 << window_bits) if window_bits else b""
+    if code_bytes not in (1, 2):
+        raise GrammarError(f"a code plane element is one or two bytes, not {code_bytes}")
+    alphabet = bytes(code_bytes << window_bits) if window_bits else b""
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(

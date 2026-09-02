@@ -112,12 +112,25 @@ def materialize_stock(unit, forest, code) -> dict[str, torch.Tensor]:
       (the convention vLLM inverts on load).
     * E4M3 over the CHANNEL plane -> the per-channel FP8 pair: ``weight``
       float8_e4m3fn ``[rows, cols]`` and ``weight_scale`` fp32 ``[rows, 1]``.
+    * BF16 over the CHANNEL plane -> ``weight`` bfloat16 ``[rows, cols]`` and
+      nothing else.  A checkpoint ships one tensor and no scale, so this is
+      the one rendering in the 16-bit route that **folds** the row scale into
+      the value (``materialize_bf16_folded``) -- and the fold costs a
+      rate-independent ~0.0015 of relative output error that a route holding
+      the wire does not pay (``decode.materialize_bf16``).  It buys the thing
+      only a stock tensor can buy: a checkpoint with no quantization config
+      at all, servable by a runtime that has never heard of Tessera *or* of
+      compressed-tensors.  Read it as the twin's price, not the format's.
 
     Every other combination is refused: it has no stock tensor, and the
     kernel lane is where it serves.
     """
     grid, _forests = _grid_and_forests(forest)
     plane = getattr(unit, "scale_plane", ScalePlaneKind.S6B)
+    if plane is ScalePlaneKind.CHANNEL and grid.name == "BF16":
+        from .decode import materialize_bf16_folded
+
+        return {"weight": materialize_bf16_folded(unit, forest, code).contiguous()}
     if plane is ScalePlaneKind.CHANNEL:
         native, scale = materialize_fp8(unit, forest, code)
         return {
