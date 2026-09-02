@@ -45,6 +45,7 @@ merely the same number to a tolerance.
 from __future__ import annotations
 
 import os
+import threading
 
 import torch
 
@@ -81,6 +82,8 @@ _L2_BUDGET = int(os.environ.get("TESSERA_WINDOW_L2_BYTES", "0")) or None
 #: the graph closes.  Only the per-kernel profiler number exposes it.
 _GRAPH = ({"0": False, "1": True}.get(os.environ.get("TESSERA_WINDOW_GRAPH", ""))
           if os.environ.get("TESSERA_WINDOW_GRAPH") else None)
+#: Captures are serialised per process; see the capture block below.
+_CAPTURE_LOCK = threading.Lock()
 
 
 def fused_available() -> bool:
@@ -325,15 +328,32 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
 
     graph = None
     if _GRAPH if _GRAPH is not None else len(descs) >= 6:
-        ctl.copy_(desc[0])
-        warm = torch.cuda.Stream()
-        warm.wait_stream(torch.cuda.current_stream())
-        with torch.cuda.stream(warm):
-            one_batch()                      # compiles and warms; capture runs nothing
-        torch.cuda.current_stream().wait_stream(warm)
-        graph = torch.cuda.CUDAGraph()
-        with torch.cuda.graph(graph):
-            one_batch()
+        # One capture at a time, per process.  A capture is a few milliseconds
+        # and the replays are the long pole, so serialising the captures costs
+        # nothing; running them concurrently costs the graph.  Two things
+        # break a concurrent capture: under CUDA's default ``global`` error
+        # mode any CUDA call from *another* thread while a capture is open
+        # faults it (an allocator call from a second worker encoding its own
+        # unit is enough), and even ``thread_local`` mode leaves the two
+        # captures' begin/end bookkeeping -- ``torch.cuda.graph`` synchronises
+        # the device and empties the cache on entry -- to invalidate each
+        # other.  PrismaBuild's workers encode units concurrently in one
+        # process, so the capture takes the lock and stays thread-local;
+        # replays, eager launches, allocations and stream-level syncs
+        # (``.item()``, ``.cpu()``) on the other threads proceed.  The one
+        # call no mode permits while a capture is open anywhere is a
+        # device-wide ``torch.cuda.synchronize()``: nothing in this package
+        # makes one, and a threaded caller must not either.
+        with _CAPTURE_LOCK:
+            ctl.copy_(desc[0])
+            warm = torch.cuda.Stream()
+            warm.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(warm):
+                one_batch()                  # compiles and warms; capture runs nothing
+            torch.cuda.current_stream().wait_stream(warm)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
+                one_batch()
 
     b = 0
     for start in range(0, cols, chunk):

@@ -255,3 +255,48 @@ def test_the_fused_path_is_the_reference_under_every_plane(grid_name, rate, wind
 
     reference, fused = run("reference"), run("fused")
     assert reference == fused
+
+
+def test_graph_capture_survives_other_threads_encoding(monkeypatch):
+    """Three threads each capture and replay their own graph at once.
+
+    The capture used CUDA's default ``global`` error mode, under which any
+    CUDA call from *another* thread while a capture is open -- a second
+    worker's allocator call is enough -- faults the capture.  PrismaBuild's
+    workers encode units concurrently in one process, so the capture has to
+    be ``thread_local`` and serialised: each thread guards its own stream and
+    the others run.  The result must still be the reference's bytes, per
+    thread.  The workers here compare through ``.cpu()`` (a stream sync) and
+    never call ``torch.cuda.synchronize()``: a device-wide sync is refused
+    while any capture is open, in every capture mode, and that is the
+    contract a threaded caller keeps.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tessera import window_viterbi
+
+    monkeypatch.setattr(window_viterbi, "_GRAPH", True)   # capture even for small batches
+    cases = [(8, 3, 1, 64, 160, True, 32, seed) for seed in range(6)]
+    expected = {}
+    for L, R, arity, rows, cols, weighted, chunk, seed in cases:
+        targets, vectors, weights = _case(L, R, arity, rows, cols, weighted, chunk, seed=seed)
+        expected[seed] = (targets, vectors, weights,
+                          viterbi_window(targets, vectors, L, R, weights=weights,
+                                         chunk=chunk, impl="reference"))
+    barrier = threading.Barrier(3)
+
+    def work(seed):
+        targets, vectors, weights, (ref, sse_ref) = expected[seed]
+        barrier.wait(timeout=60)              # all three capture at the same moment
+        for _ in range(3):
+            got, sse = viterbi_window(targets, vectors, 8, 3, weights=weights,
+                                      chunk=32, impl="fused")
+            assert torch.equal(got.cpu(), ref.cpu()) and sse == sse_ref, \
+                f"seed {seed} diverged under threads"
+        return seed
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for batch in (cases[:3], cases[3:]):
+            done = list(pool.map(work, [c[-1] for c in batch]))
+            assert sorted(done) == sorted(c[-1] for c in batch)

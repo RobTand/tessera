@@ -37,7 +37,7 @@ import torch
 
 from .alphabet import GAUSSIAN_SOURCE, PayloadGrid, build_forest, grid_digest
 from .decode import reconstruct_unit
-from .encode import encode_unit
+from .encode import EncodedUnit, encode_unit
 from .errors import GrammarError
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, RotationState, ScalePlaneKind
@@ -427,7 +427,7 @@ def _plan_for(
     return rates, forests
 
 
-def encode_linear(
+def encode_linear_planes(
     weight: torch.Tensor,
     *,
     grid: PayloadGrid,
@@ -449,8 +449,14 @@ def encode_linear(
     window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
-) -> ExportedUnit:
+) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
+
+    Returns ``(exported, unit, forests)``: the bytes with their exact cost,
+    and the planes and forests they were built from, for a caller that
+    materialises the same unit a second way (``stock.materialize_stock``)
+    and needs it to be *this* encoding and not a re-run of it.  ``encode_linear``
+    is the same call returning the bytes alone.
 
     ``span``, ``scale_plane``, ``body``, ``window_bits`` and ``window_seed``
     default to ``None``, which means *the recipe*: ``wire_recipe(grid,
@@ -520,10 +526,20 @@ def encode_linear(
                 "reconstruction -- refusing to write a unit whose surrogate "
                 "and payload disagree"
             )
-    return ExportedUnit(
+    exported = ExportedUnit(
         name=name, blob=blob, rows=rows, columns=columns,
         q256=q256, exact_bytes=len(region),
     )
+    return exported, unit, forests
+
+
+def encode_linear(weight: torch.Tensor, **kwargs) -> ExportedUnit:
+    """``encode_linear_planes`` returning the serialised unit alone.
+
+    The keyword surface is ``encode_linear_planes``'s, unchanged: ``grid``
+    and ``q256`` are required, the wire fields default to the recipe.
+    """
+    return encode_linear_planes(weight, **kwargs)[0]
 
 
 def export_checkpoint(
