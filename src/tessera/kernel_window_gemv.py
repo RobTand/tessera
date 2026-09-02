@@ -116,7 +116,10 @@ def _ext():
     _ensure_toolchain_on_path()
     src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csrc", "window_gemv.cu")
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-gemv")
+    pf = int(os.environ.get("TESSERA_WINDOW_GEMV_PF", "1"))   # column chunks in flight per warp (1 or 2)
     build = os.path.join(root, "tessera_window_gemv")
+    if pf != 1:
+        build = build + f"_pf{pf}"
     os.makedirs(build, exist_ok=True)
     major, minor = torch.cuda.get_device_capability()
     return load(
@@ -126,6 +129,7 @@ def _ext():
         extra_cuda_cflags=[
             "-O3", "-lineinfo", "-std=c++17",
             *(["-Xptxas", "-v"] if os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE") else []),
+            f"-DWINDOW_GEMV_PF={pf}",
             "-gencode", f"arch=compute_{major}{minor},code=sm_{major}{minor}",
         ],
         verbose=bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE")),

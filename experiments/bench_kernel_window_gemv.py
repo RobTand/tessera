@@ -517,7 +517,7 @@ def arm_ablate(out: dict, shapes, plan_spec=None, seconds=2.0, M=1):
     out["ablate"] = res
 
 
-def arm_power(out: dict, shapes, launches=2000, M=1, plan_spec=None):
+def arm_power(out: dict, shapes, seconds=4.0, M=1, plan_spec=None):
     """The kernel alone, back to back, no per-call sync: the power the box
     draws while the GEMV runs -- the interleaved bench's rows read 30 W
     because seven arms and a sync per round leave the GPU idle most of the
@@ -528,10 +528,13 @@ def arm_power(out: dict, shapes, launches=2000, M=1, plan_spec=None):
         rot = cold_units(r, c, plan=plan, M=M)
         x = torch.randn(M, c, dtype=torch.bfloat16, device="cuda")
         scratch = torch.zeros(M, r, dtype=torch.float32, device="cuda")
-        for _ in range(20):
+        s, e = torch.cuda.Event(True), torch.cuda.Event(True)
+        s.record()
+        for _ in range(50):
             kg.window_gemv(rot.next(), x, out=scratch)
+        e.record()
         torch.cuda.synchronize()
-        t0 = time.time()
+        launches = max(200, int(seconds / (s.elapsed_time(e) / 50 * 1e-3)))
         s, e = torch.cuda.Event(True), torch.cuda.Event(True)
         s.record()
         for _ in range(launches):

@@ -43,6 +43,11 @@ constexpr int RED_STRIDE = 33;   // padded [16][33] reduction rows: conflict-fre
 __host__ __device__ constexpr int max_item_cols(int mt) { return mt <= 2 ? 1024 : 256; }
 // Per-thread x prefetch capacity: max_item_cols(MT) * MT / 256 threads (>= 8 warps).
 constexpr int X_PREFETCH = 8;
+#ifndef WINDOW_GEMV_PF
+#define WINDOW_GEMV_PF 1        // column chunks in flight per warp beyond the current one (1 or 2)
+#endif
+constexpr int PF = WINDOW_GEMV_PF;
+static_assert(PF == 1 || PF == 2, "WINDOW_GEMV_PF is 1 or 2");
 
 struct __align__(16) Item {
     int tile;    // 512-row tile index
@@ -193,17 +198,20 @@ __device__ __forceinline__ void run_item(
     };
 
     int jj = wcol;
-    uint32_t hi = 0, lo = 0, pv = 0;
+    uint32_t hi = 0, lo = 0, pv = 0;          // current column chunk
+    uint32_t hi1 = 0, lo1 = 0, pv1 = 0;       // one ahead (PF == 2 only)
     if (jj < it.ncols) load(jj, hi, lo, pv);
+    if (PF == 2 && jj + wstep < it.ncols) load(jj + wstep, hi1, lo1, pv1);
     for (; jj < it.ncols; jj += wstep) {
         uint32_t nhi = 0, nlo = 0, npv = 0;
-        const int jn = jj + wstep;
+        const int jn = jj + PF * wstep;       // warp-uniform: every lane takes the same branch
         if (jn < it.ncols) load(jn, nhi, nlo, npv);
         float xv[MT];
 #pragma unroll
         for (int m = 0; m < MT; ++m) xv[m] = xs[jj * MT + m];
         consume_chunk<L, RPL, R, MT, TBL, ABL_GATHER, ABL_FMA>(hi, lo, pv, tbl, xv, acc, junk);
-        hi = nhi; lo = nlo; pv = npv;
+        if (PF == 2) { hi = hi1; lo = lo1; pv = pv1; hi1 = nhi; lo1 = nlo; pv1 = npv; }
+        else         { hi = nhi; lo = nlo; pv = npv; }
     }
     if (ABL_FMA) acc[0][0] = __uint_as_float(junk & 0x007fffffu);  // keep the gathers alive
 
