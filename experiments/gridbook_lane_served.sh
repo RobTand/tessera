@@ -23,6 +23,9 @@ TEACHER=$KLDIR/qwen_teacher_bf16_v028.json
 DUMP=$KLDIR/qwen_gridbook_$ARM.json
 LOG=$R/serve_qwen_gridbook_$ARM.log
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
+# TESSERA_LANE_EAGER=0 serves under CUDA graphs (vLLM's default); the eager
+# serve is the numerics arm, the graph serve is principle 9's second leg.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code  # repeated store_true = no-op: graph mode is vLLM's default
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via gridbook ($IMAGE, mode=$MODE)"
@@ -38,7 +41,7 @@ dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -
 pip install --no-deps --no-build-isolation -q -e /gb 2>&1 | tail -2
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization 0.85 \
-  --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' --enforce-eager --trust-remote-code' >/dev/null
+  --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' '"${EAGER_FLAG}"' --trust-remote-code' >/dev/null
 for i in $(seq 1 240); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
   if ! docker ps -q -f name="$NAME" | grep -q .; then
@@ -53,8 +56,11 @@ fi
 # greedy smoke first: the answer to the stock arms' prompt
 curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/json' \
   -d '{"model":"kl-target","prompt":"The capital of France is","max_tokens":16,"temperature":0}' | $PY -c "import json,sys; print('completion:', repr(json.load(sys.stdin)['choices'][0]['text']))"
-$PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url "http://127.0.0.1:${PORT}/v1/completions" \
-  --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL"
+if ! $PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url "http://127.0.0.1:${PORT}/v1/completions" \
+  --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL"; then
+  docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1
+  echo "dump FAILED; serve log at $LOG"; exit 3
+fi
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
 echo "--- route ---"
