@@ -622,6 +622,31 @@ def test_the_window_kernel_lane_decodes_a_shard(units):
         assert torch.allclose(got.float(), reference, rtol=1e-4, atol=1e-4)
 
 
+@needs_cuda
+def test_a_state_width_that_contradicts_the_record_is_refused(units):
+    """INITIAL_STATE has no normative width, so the manifest supplies one.
+
+    ``NORMATIVE_ELEMENT_BITS`` deliberately omits this plane -- its width is
+    the body's, 14 bits under the shipped window wire and the code's memory
+    under the coset trellis -- which means the descriptor alone constrains
+    nothing.  The shard record is what binds it, and a manifest whose plane
+    and record disagree has to be refused rather than read: a state read at
+    the wrong width is a start state that decodes to plausible wrong weights.
+    """
+    from dataclasses import replace
+
+    unit, forests, grid, blob = units["e4m3-window-channel"]
+    parsed = parse_unit_artifact(blob, device=DEVICE)
+    rows = parsed.manifest.geometry.rows
+    shard = slice_unit(parsed, rows=(rows // 2, rows))
+    _m, _r, shard_blob = build_unit_artifact(
+        shard, "half", forests, parsed.manifest.branch.root_q256, CODE)
+    manifest = parse_unit_artifact(shard_blob, device=DEVICE).manifest
+    assert manifest.shard.state_bits == manifest.window_bits
+    with pytest.raises(ManifestError, match="bits wide"):
+        replace(manifest, shard=replace(manifest.shard, state_bits=13))
+
+
 # ------------------------------------------------- the serving materialisers
 
 

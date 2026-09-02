@@ -157,8 +157,29 @@ def test_a_contradicting_element_width_is_refused():
         _descriptor(element_bits=7)
 
 
-def test_every_plane_kind_has_a_normative_width():
-    assert set(NORMATIVE_ELEMENT_BITS) == set(PlaneKind)
+def test_every_plane_kind_has_a_normative_width_but_one():
+    """One plane's width is not the schema's to fix, and only one.
+
+    INITIAL_STATE (schema minor 4) carries the trellis state a shard starts
+    from, and that is ``window_bits`` under a window body and the
+    convolutional code's memory under the coset trellis -- a property of the
+    encoder profile, not of the schema.  A normative entry here would have to
+    be wrong for one of the two bodies.  So the exception is deliberate, and
+    this asserts it is *exactly one*: any other kind arriving without a width
+    would be an unpriced plane two conforming decoders could disagree on.
+
+    The width is still bound, twice, just not here: ``Manifest`` refuses a
+    descriptor whose ``element_bits`` differs from the ``state_bits`` its
+    shard record declares (and, under a window body, from ``window_bits``),
+    and ``parse_unit_artifact`` re-checks it against the body once the profile
+    id has resolved one -- the deferred validation the rate cap already uses.
+    ``tests/test_slice_unit.py`` holds both refusals.
+    """
+    assert set(NORMATIVE_ELEMENT_BITS) == set(PlaneKind) - {PlaneKind.INITIAL_STATE}
+    # ...and the absence really does leave the width free, rather than
+    # defaulting to something a descriptor could contradict silently.
+    for bits in (6, 14):
+        assert _descriptor(kind=PlaneKind.INITIAL_STATE, element_bits=bits).element_bits == bits
 
 
 # --- F5 / F6: derivable metadata must agree with what it derives from -----

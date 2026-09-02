@@ -25,7 +25,10 @@ time as an upper bound and every *ratio measured within one run* as the claim.
 
 ```
 $PY -m pytest tests/test_slice_unit.py -q
-# 64 passed, 2 skipped in 47.51s
+# 75 passed, 2 skipped in 43.25s
+
+$PY -m pytest tests/ -q
+# 616 passed, 2 skipped in 1122.87s
 ```
 
 The two skips are correct refusals, not gaps: the released unit is 512 columns
@@ -82,6 +85,19 @@ canonical order it always wrote.
 Independently: all 196 units of the shipped checkpoint parse, slice at
 tp ∈ {2,4,8} on both axes, and re-serialise, with zero mismatches
 (`/home/rob/tmp/tp-slice/check_all.py`).
+
+**One existing test changed, deliberately.**
+`test_review_1a.py::test_every_plane_kind_has_a_normative_width` asserted that
+every `PlaneKind` carries a schema-fixed element width. INITIAL_STATE cannot:
+its width is `window_bits` (14 on the shipped wire) under a window body and
+the convolutional code's memory (6) under the coset trellis, which is a
+property of the encoder profile, not of the schema — a normative entry would
+have to be wrong for one of the two bodies. The test now asserts the exception
+is *exactly one*, and the width is bound twice elsewhere instead: `Manifest`
+refuses a descriptor whose `element_bits` differs from the `state_bits` its
+shard record declares (and, under a window body, from `window_bits`), and
+`parse_unit_artifact` re-checks it against the body once the profile id has
+resolved one. Both refusals are tested.
 
 ---
 
