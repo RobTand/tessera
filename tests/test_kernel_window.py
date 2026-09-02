@@ -206,10 +206,17 @@ def test_a_fused_module_stacks_into_the_twin_tensor():
 
 @cuda
 @pytest.mark.parametrize("rows,cols", [(64, 64), (128, 256), (200, 176), (48, 3072),
-                                       (1024, 112)])
+                                       (1024, 112), (96, 37), (37, 1)])
 def test_synthetic_units_decode_byte_identically(rows, cols):
     """Shapes off the tile: ``rows`` not a multiple of ``LANES * VEC`` (256) and
-    ``cols`` not a multiple of ``BLOCK_C`` (64), both, and neither."""
+    ``cols`` not a multiple of ``BLOCK_C``, both, and neither.
+
+    ``BLOCK_C`` is a tuned constant (16 today, 64 before), so a shape whose
+    ``cols`` is off *64* stops exercising the column mask the moment it is
+    lowered -- 176 and 112 are both multiples of 16.  ``(96, 37)`` and the
+    single-column ``(37, 1)`` are off every block width this kernel is likely
+    to take, and they stay off it if the constant moves again.
+    """
     kw = _kw()
     torch.manual_seed(rows * 1000 + cols)
     weight = torch.randn(rows, cols, dtype=torch.float32) * 0.02
@@ -312,6 +319,73 @@ def test_a_nonzero_initial_window_decodes_from_the_definition():
         )
         expected = _reference_codes(body, (rate,) * cols, window_bits, table, initial)
         assert torch.equal(prepared.decode(), expected)
+
+
+def _poke_pad(plane: torch.Tensor, offsets, window_bits: int, initial) -> torch.Tensor:
+    """Write each column's initial window into its stream's ``L`` pad bits.
+
+    ``pack_window_planes`` leaves ``window_bits`` zero bits in front of every
+    column -- which *is* ``state_{-1} = 0`` -- and a TP shard fills them with
+    the window its parent's rows ended on.  MSB-first, like every plane here.
+    """
+    out = plane.clone().cpu()
+    for c in range(len(offsets)):
+        off = int(offsets[c])
+        w = int(initial[c])
+        for i in range(window_bits):
+            if (w >> (window_bits - 1 - i)) & 1:
+                out[(off + i) // 8] |= 1 << (7 - ((off + i) % 8))
+    return out
+
+
+@cuda
+def test_the_initial_window_may_travel_in_the_stream_pad():
+    """A TP shard's initial state in the wire's pad, not in a side tensor.
+
+    The two representations must be the same object: ``pack_window_planes``
+    pads every column with ``L`` zero bits, and code ``t``'s window starts at
+    ``offset + (t + 1) * R``, so for ``(t + 1) * R < L`` that window *reaches
+    into the pad*.  A shard therefore needs no extra plane -- it writes its
+    parent's last ``L`` bits into the pad and the kernel reads them like any
+    other wire bits.  This asserts the kernel does exactly that: the same
+    states decoded three ways -- pad-carried with ``initial = 0``, side-tensor
+    with a zero pad, and the one-step definition -- agree byte for byte, and
+    the GEMV built on the pad-carried stream agrees with its own tile.
+
+    It reaches for ``_plane_words`` because the point is a *wire* fact, and
+    the wire is what the lane's packer hands the kernel; there is no public
+    seam that takes a stream someone else packed.
+    """
+    from tessera.lane_planes import pack_window_planes
+
+    kw = _kw()
+    rows, cols, window_bits, rate = 96, 80, 14, 4
+    torch.manual_seed(11)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    codes = torch.randint(0, 256, (1 << window_bits,), dtype=torch.uint8, device="cuda")
+    table = kw.window_code_table(codes, E4M3_GRID, "cuda")
+    scale = torch.rand(rows, device="cuda") + 0.5
+    start = torch.randint(0, 1 << window_bits, (cols,), dtype=torch.int64, device="cuda")
+
+    plane, offsets, rate_t = pack_window_planes(body, (rate,) * cols, window_bits)
+    padded = _poke_pad(plane, offsets.cpu(), window_bits, start.cpu()).to("cuda")
+    zero = torch.zeros(cols, dtype=torch.int64, device="cuda")
+    words = kw._plane_words(padded.contiguous())
+    from_pad = kw.decode_fp8_tile(words, offsets.contiguous(), rate_t.contiguous(),
+                                  zero, table, rows, cols, window_bits, rate)
+
+    side = kw.prepare_window_unit(body, (rate,) * cols, window_bits, codes, E4M3_GRID,
+                                  scale, initial=start, device="cuda")
+    assert torch.equal(from_pad, side.decode())
+    assert torch.equal(from_pad,
+                       _reference_codes(body, (rate,) * cols, window_bits, table, start))
+
+    x = torch.randn(1, cols, device="cuda", dtype=torch.bfloat16) * 0.1
+    y = kw.window_gemv(x, words, offsets.contiguous(), rate_t.contiguous(), zero,
+                       kw.window_value_table(table, "cuda"), scale, rows, cols,
+                       window_bits, rate)
+    ref = (from_pad.view(torch.float8_e4m3fn).float() * scale[:, None]) @ x[0].float()
+    assert float((y[0].float() - ref).abs().max() / ref.abs().max()) < 2.0 ** -8
 
 
 @cuda
@@ -461,7 +535,8 @@ def _value_reference_f32(body_bits, rates, window_bits, table, initial, row_scal
 
 
 @cuda
-@pytest.mark.parametrize("rows,cols", [(256, 128), (200, 176), (128, 1024)])
+@pytest.mark.parametrize("rows,cols", [(256, 128), (200, 176), (128, 1024),
+                                       (72, 45)])
 def test_a_bf16_table_decodes_a_scaled_bf16_tile(rows, cols):
     """``decode_value_tile``: the tile is the table's dtype, scale applied."""
     kw = _kw()

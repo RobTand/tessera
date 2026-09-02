@@ -1,0 +1,97 @@
+=== 1024 3072 block_c=64 code power=59.55 W procs=3
+table dtype torch.uint8
+    Duration                         us        55.94
+    L1/TEX Cache Throughput           %        23.76
+    L2 Cache Throughput               %        21.72
+    Local Memory Spilling Requests                           64,512
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.27
+=== 1024 3072 block_c=32 code power=62.39 W procs=3
+table dtype torch.uint8
+    Duration                         us        41.09
+    L1/TEX Cache Throughput           %        27.52
+    L2 Cache Throughput               %        17.37
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.16
+=== 1024 3072 block_c=16 code power=52.92 W procs=4
+table dtype torch.uint8
+    Duration                         us        32.77
+    L1/TEX Cache Throughput           %        50.54
+    L2 Cache Throughput               %        50.72
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        41.67
+    Achieved Occupancy                        %        36.95
+=== 1024 3072 block_c=8 code power=56.36 W procs=4
+table dtype torch.uint8
+    Duration                         us        43.78
+    L1/TEX Cache Throughput           %        42.56
+    L2 Cache Throughput               %        68.91
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %           75
+    Achieved Occupancy                        %        63.31
+=== 2560 9728 block_c=64 code power=57.00 W procs=4
+table dtype torch.uint8
+    Duration                         us       301.66
+    L1/TEX Cache Throughput           %        30.48
+    L2 Cache Throughput               %        33.18
+    Local Memory Spilling Requests                          510,720
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.36
+=== 2560 9728 block_c=32 code power=57.10 W procs=4
+table dtype torch.uint8
+    Duration                         us       280.38
+    L1/TEX Cache Throughput           %        29.96
+    L2 Cache Throughput               %        20.26
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.23
+=== 2560 9728 block_c=16 code power=60.81 W procs=4
+table dtype torch.uint8
+    Duration                         us       198.53
+    L1/TEX Cache Throughput           %        56.99
+    L2 Cache Throughput               %        67.41
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        41.67
+    Achieved Occupancy                        %        39.92
+=== 2560 9728 block_c=8 code power=52.26 W procs=4
+table dtype torch.uint8
+    Duration                         us       289.44
+    L1/TEX Cache Throughput           %        46.80
+    L2 Cache Throughput               %        82.97
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %           75
+    Achieved Occupancy                        %        68.10
+=== 4096 2560 block_c=64 code power=53.89 W procs=4
+table dtype torch.uint8
+    Duration                         us       136.26
+    L1/TEX Cache Throughput           %        27.08
+    L2 Cache Throughput               %        29.63
+    Local Memory Spilling Requests                          215,040
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.31
+=== 4096 2560 block_c=32 code power=53.66 W procs=4
+table dtype torch.uint8
+    Duration                         us       130.66
+    L1/TEX Cache Throughput           %        27.12
+    L2 Cache Throughput               %        17.93
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        16.67
+    Achieved Occupancy                        %        16.04
+=== 4096 2560 block_c=16 code power=59.41 W procs=4
+table dtype torch.uint8
+    Duration                         us        99.17
+    L1/TEX Cache Throughput           %        47.20
+    L2 Cache Throughput               %        54.52
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %        41.67
+    Achieved Occupancy                        %        39.14
+=== 4096 2560 block_c=8 code power=61.26 W procs=4
+table dtype torch.uint8
+    Duration                         us       125.98
+    L1/TEX Cache Throughput           %        44.40
+    L2 Cache Throughput               %        78.85
+    Local Memory Spilling Requests                                0
+    Theoretical Occupancy                     %           75
+    Achieved Occupancy                        %        67.21
+ALLDONE

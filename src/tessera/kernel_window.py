@@ -533,9 +533,34 @@ def _decode_kernel(
     tl.store(out_ptr + p[:, None].to(tl.int64) * cols + c[None, :], out, mask=keep)
 
 
+#: Columns a decode program covers.  **Measured, not guessed.**  The block is
+#: ``[BLOCK_C, LANES, VEC]`` live registers, so this is what sets the decoder's
+#: occupancy, and 64 -- the first cut -- spilled.  ncu on the FP8 code path,
+#: one warmed launch each, sparklina 2026-09-02 (duration / registers /
+#: local-spill requests / achieved occupancy / L2 throughput):
+#:
+#:   1024x3072   64: 55.94 us  255 reg  64,512 sp  16.3%  21.7%
+#:               32: 41.09     168       0         16.2%  17.4%
+#:               16: 32.77      92       0         37.0%  50.7%   <- default
+#:                8: 43.78      --       0         63.3%  68.9%
+#:   2560x9728   64: 301.66   255 reg  510,720 sp  16.4%  33.2%
+#:               16: 198.53     92       0         39.9%  67.4%
+#:                8: 289.44     --       0         68.1%  83.0%
+#:   4096x2560   64: 136.26   255 reg  215,040 sp  16.3%  29.6%
+#:               16:  99.17     92       0         39.1%  54.5%
+#:                8: 125.98     --       0         67.2%  78.9%
+#:
+#: 16 is 1.37-1.71x over 64 on all three shapes and 8 gives the occupancy back
+#: without the time -- past 16 each program's per-column reads stop amortising
+#: and L2 traffic rises for the same useful bytes.  The value family prefers 16
+#: too (47.94 us vs 56.67 at 64, 93.82 at 4).  Changing this changes no bytes:
+#: it is a tiling constant and the tests hold it byte-identical.
+_DECODE_BLOCK_C = 16
+
+
 def _decode_impl(plane_words, offsets, rates, initial, table, rows, cols,
                  window_bits, max_rate, row_scale=None, lanes: int = 32,
-                 block_c: int = 64):
+                 block_c: int = _DECODE_BLOCK_C):
     """One tile in the table's dtype; ``row_scale`` given means fold it in."""
     out = torch.empty((rows, cols), dtype=table.dtype, device=plane_words.device)
     _decode_kernel[(triton.cdiv(rows, lanes * _VEC), triton.cdiv(cols, block_c))](

@@ -131,10 +131,27 @@ All ops are `torch.library.custom_op(..., mutates_args=())` with
 `register_fake`, static-shaped, no `int()` on the token dim, no `data_ptr`
 fingerprinting, no in-place mutation of an aliased pool.
 
-**TP (amendment 1).** Every entry point takes an `initial` window **as an input
-tensor**, one int64 per column, default zeros = today's pinned-zero start. A TP
-shard is an ordinary unit whose columns begin from the last `window_bits` bits
-of the parent column's stream. Nothing bakes the zero start in.
+**TP (amendment 1, and the coordinator's later concrete form).** A TP shard is
+an ordinary unit whose columns begin from the last `window_bits` bits of the
+parent column's stream, and this lane supports **both spellings of that start,
+which are provably the same object**:
+
+- **In the wire.** `pack_window_planes` puts `L` zero bits in front of every
+  column, and code `t`'s window begins at `offset + (t + 1) * R`, so for
+  `(t + 1) * R < L` that window *reaches into the pad*. The kernels read the
+  window out of the stream — they do not assume the pad is zero — so a shard
+  that fills its pad with its parent's last `L` bits decodes correctly with no
+  extra plane and no flag. Attested by
+  `test_the_initial_window_may_travel_in_the_stream_pad`, byte-identical to the
+  definition (section 2).
+- **Beside the wire.** Every entry point also takes an `initial` window as an
+  input tensor, one int64 per column, default zeros. The kernel adds it in the
+  `(t + 1) * R < L` positions, which is exactly the arithmetic the pad performs,
+  and the test asserts the two agree byte for byte.
+
+Nothing bakes the zero start in, and the lane needs no change when
+`tessera.layout.slice_unit` lands: whichever representation the slicer emits,
+this decodes it.
 
 **The BF16 family (amendment 2).** The table dtype and element width are
 parameters: `uint8` E4M3 byte codes (16 KB) for the FP8 route, `bfloat16` values
@@ -173,8 +190,10 @@ belongs in the lane, and this receipt does not assert what the runtime executes.
 
 ## 2. Acceptance item 1 — bit exactness
 
-`tests/test_kernel_window.py`, **27 passed** on sparklina
-(`experiments/results/kernel-window/pytest3.log`, 124 s). Skips cleanly without
+`tests/test_kernel_window.py`, **31 passed** on sparklina
+(`experiments/results/kernel-window/pytest_blockc16.log`, 128 s, at the tuned
+`BLOCK_C=16`; `pytest3.log` is the same suite at 64, 27 passed before the two
+column-mask shapes and the stream-pad case were added). Skips cleanly without
 CUDA (`pytest.mark.skipif(not torch.cuda.is_available())`) and without the reach
 checkpoint (a second mark), so a box with neither runs zero and fails none.
 
@@ -195,12 +214,23 @@ ssh sparklina 'cd /home/rob/tmp/wt-kernel && PYTHONPATH=src TMPDIR=/home/rob/tmp
   would catch a helper which decodes every unit correctly and concatenates them
   backwards.
 - **Synthetic units** at `(256,128)`, `(200,176)`, `(128,1024)`, `(96,80)`,
-  `(64,64)` and more — deliberately including non-multiples of the 256-row
-  block and of the 32-lane x 8-vector tile — against a step-at-a-time walk of
-  the body's definition, not against another closed form that could share a
-  mistake.
-- **Nonzero initial window**: both families decode a random per-column start
-  correctly and differ from the zero start.
+  `(64,64)`, `(96,37)`, `(37,1)`, `(72,45)` and more — deliberately including
+  non-multiples of the 256-row block, of the 32-lane x 8-vector tile, and of
+  **every plausible `BLOCK_C`** — against a step-at-a-time walk of the body's
+  definition, not against another closed form that could share a mistake. The
+  `37`-column shapes exist because `BLOCK_C` is a tuned constant: `176` and
+  `112` are off 64 but *multiples of 16*, so at the new default they would have
+  stopped exercising the column mask, silently.
+- **Nonzero initial window, both representations.** A random per-column start
+  passed as a side tensor decodes correctly and differs from the zero start, in
+  both families. And — the TP branch's representation —
+  `test_the_initial_window_may_travel_in_the_stream_pad` writes the start into
+  the **wire's own `L` pad bits** (which is what `pack_window_planes` leaves in
+  front of every column) and decodes with `initial = 0`: byte-identical to the
+  side-tensor decode *and* to the step-at-a-time definition, with the GEMV on
+  the same stream inside tolerance of its own tile. The kernel reads the window
+  out of the stream rather than assuming the pad is zero, so a shard needs no
+  extra plane; the side tensor stays as the equivalent second spelling.
 - **Compiled forward**: `torch.compile(fullgraph=True, dynamic=False)` over both
   families' ops, held to bf16's own step (split-K sums in a launch-dependent
   order).
@@ -234,9 +264,32 @@ thing:
 
 ## 4. Acceptance item 3 — the timing table
 
-### 4a. Decode, per unit
+### 4a. Decode, per unit — before and after the `BLOCK_C` flip
 
-`bench-decode-20260902-125834.json`. L2-hot (one unit repeated; at 1024x3072 the
+The decoder's column-block width was 64 when the table below was first taken and
+is **16** now; the flip is a tiling constant, it changes no byte, and section 6
+lever 1 has the ncu evidence that chose it. Both tables are kept, because the
+delta is the claim.
+
+**After (`BLOCK_C=16`, the default), `bench-decode-20260902-134054.json`**, taken
+while holding sparklina's serve lock (`decode_blockc16_lina.log`; 4 other CUDA
+processes, **no container**, 62-67 W against a ~140 W envelope):
+
+| shape | fused | GB/s moved | bf16-tile fused | GB/s moved | torch eager | torch compiled | vs eager | vs compiled |
+|---|---|---|---|---|---|---|---|---|
+| 1024x3072 | **21.19 us** | 223.0 | 24.90 us | 316.0 | 5213.6 us | 729.8 us | 246.1x | 34.4x |
+| 3072x1024 | 19.84 | 237.9 | 21.23 | 370.6 | 5500.4 | 531.6 | 277.3x | 26.8x |
+| 1024x2048 | 14.02 | 224.7 | 15.59 | 336.6 | 3604.8 | 433.8 | 257.2x | 30.9x |
+| 2048x1024 | 14.36 | 219.1 | 14.50 | 361.6 | 2495.8 | 114.7 | 173.8x | 8.0x |
+| 1024x1024 | 8.69 | 181.3 | 8.56 | 306.6 | 438.0 | 74.5 | 50.4x | 8.6x |
+
+**DRAM-cold rotation over all 196 units** (221 MB of plane, nothing L2-resident):
+**30.94 us/unit, 109.0 GB/s moved**, 67.1 W mean / 68.7 W max. **Whole-checkpoint
+decode 6.06 ms** (was 9.72). Per-unit hot the flip is **1.10-1.33x**; on the cold
+rotation **1.60x** — the cold path is where the occupancy mattered most, which is
+the same story lever 1 tells.
+
+**Before (`BLOCK_C=64`)**, `bench-decode-20260902-125834.json`. L2-hot (one unit repeated; at 1024x3072 the
 wire+tile is 7.9 MB inside a 24 MB L2, which is why the "GB/s moved" column
 exceeds the 273 GB/s spec — **these are not DRAM numbers**). Interleaved
 round-robin arms, min of rounds. Torch baseline is the pure-torch window reader
@@ -250,17 +303,27 @@ snapshotted by path so a concurrent edit to the serving tree cannot move it.
 | 2048x1024 | 18.89 | 166.6 | 19.61 | 267.4 | 2616.9 | 113.1 | 138.5x | 6.0x |
 | 1024x1024 | 11.00 | 143.2 | 11.50 | 228.1 | 441.6 | 72.3 | 40.1x | 6.6x |
 
-Power 35-45 W, 6-7 concurrent CUDA processes on every row.
+Power 35-45 W, 6-7 concurrent CUDA processes on every row, no container.
 
-**DRAM-cold**, rotating through all 196 units (221 MB of plane, so nothing is
-L2-resident): **49.57 us/unit, 68.1 GB/s moved**, 35.8 W mean / 40.3 W max.
-Whole-checkpoint decode **9.72 ms**.
+**DRAM-cold**, rotating through all 196 units: **49.57 us/unit, 68.1 GB/s
+moved**, 35.8 W mean / 40.3 W max. Whole-checkpoint decode **9.72 ms**.
+
+The two runs are an hour apart on a shared box, so read the *ratio within each
+run* (fused vs torch) as the solid number and the between-run delta as
+corroborated by ncu rather than established by wall clock: ncu, serialised and
+cache-flushed, puts the same flip at **1.37-1.71x** on three shapes (section 6).
 
 **The BF16 family's write side is nearly free**: the value tile is *twice* the
-bytes and costs 2-5% more time at every shape. Its decode moves 320-323 GB/s
-where the FP8 one moves 199-203, which is the same statement.
+bytes and costs 2-5% more time at every shape at `BLOCK_C=64`, and 0-18% more at
+16 (at 1024x1024 it is 1% *faster*, which is inside the run's spread). Its decode
+moves 306-371 GB/s where the FP8 one moves 181-238, which is the same statement:
+the tile write is not what this kernel is spending its time on.
 
-**Is the decoder bandwidth-bound? No, and this is the acceptance line it misses.**
+**Is the decoder bandwidth-bound? No, and this is the acceptance line it misses
+— though the `BLOCK_C` flip halves the gap.** At the default the same shape now
+reads **L1/TEX 50.5% and L2 50.7% of peak** (section 6 lever 1) with **zero**
+spills, against the figures below. The counters below are the **`BLOCK_C=64`**
+kernel, kept because they are what named the lever;
 ncu on `_decode_kernel` at 1024x3072 (`ncu_decode_1024x3072.txt`,
 cache-flushed, so DRAM-cold: 56.16 us):
 
@@ -273,10 +336,11 @@ Theoretical Occupancy  16.67 %      Achieved Occupancy     16.31 %
 Waves Per SM           2            L1/TEX Hit Rate        88.86 %
 ```
 
-255 registers per thread, **64,512 spill requests**, 16.7% occupancy, and no
-memory unit ncu can see above **23%** of its peak (there is no DRAM counter on
-this part). The decoder is fast relative to the torch reader and it is **not** at
-the write-out bound. That is an honest miss against "target: bandwidth-bound", and
+255 registers per thread, **64,512 spill requests** (336 a block), 16.7%
+occupancy, and no memory unit ncu can see above **23%** of its peak (there is no
+DRAM counter on this part). That is what the lever was named against. At
+`BLOCK_C=16` it is 92 registers, **0 spills**, 37.0% occupancy and ~50% of both
+cache units — better, and still **not** at the write-out bound. That is an honest miss against "target: bandwidth-bound", and
 the register pressure is the named lever (section 6).
 
 ### 4b. GEMV at M=1, per Linear shape
@@ -530,7 +594,7 @@ The parametrisation is built and tested; the *route* is not measured.
 - **CUDA-graph capture of the lane's forward.** Every number here is eager.
 - **The activation-contract gate.** Section 1: W2's call, per principle 14.
 
-## 9. Three corrections to earlier claims in this work
+## 9. Four corrections to earlier claims in this work
 
 - **The initial-window hoist was wrong and is reverted** (`793c09d`). Moving the
   initial-window term behind `if pid_p == 0` — a program-uniform branch, so it
@@ -560,8 +624,27 @@ The parametrisation is built and tested; the *route* is not measured.
   table shows it at 205.6 GB/s on a cold 5120x5120 in the same session. 93.9 is
   not a bound I established, and the 17408x5120 argument does not need it: both
   kernels take ~950 us there and the fused one reads half the bytes.
+- **The first `BLOCK_C` sweep measured the wrong kernel, and the discrepancy it
+  produced is what caught it.** It called `_decode_impl` with the unit's
+  `value_table` rather than its `code_table` — a float table, hence a different
+  element width, a different output dtype and a different register budget. It
+  read 56 spill requests a block where the FP8 path reads 336, at the same
+  shape, grid and duration; that 6x is what said "these are two binaries, not
+  one". The sweep in section 6 is the re-run on `decode_fp8_tile`'s own path
+  (`ncu_blockc.py` takes `code|value` explicitly now so the mistake cannot be
+  made silently again). The direction was the same on both paths and 16 won on
+  both, but the numbers that chose the default are the FP8 ones.
 
 ## 10. Reproducing
+
+The `BLOCK_C` sweep of section 6 lever 1 (`ncu_blockc_sweep.log`), which needs
+`/home/rob/tmp/kernel-window/ncu_blockc.py` on the box:
+
+```bash
+ncu --kernel-name regex:decode --launch-skip 5 --launch-count 1 \
+  --section SpeedOfLight --section MemoryWorkloadAnalysis --section Occupancy \
+  python ncu_blockc.py <rows> <cols> <block_c> code   # or `value` for the BF16 family
+```
 
 ```bash
 rsync -a --delete --exclude .git --exclude __pycache__ <worktree>/ sparklina:/home/rob/tmp/wt-kernel/
