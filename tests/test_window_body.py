@@ -368,8 +368,9 @@ def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
     settings = encode_settings_from_config(config)
     assert (settings["body"], settings["window_bits"], settings["window_seed"],
             settings["window_sigma"]) == (WINDOW, 10, 7, 2.5)
-    # a config written before the field existed means the TCQ body
-    legacy = {k: v for k, v in config.items() if k != "body"}
+    # a config written before the field existed (and before the per-rung
+    # recipe table that now carries it too) means the TCQ body
+    legacy = {k: v for k, v in config.items() if k not in ("body", "wire")}
     s = encode_settings_from_config(legacy)
     assert (s["body"], s["window_bits"], s["window_seed"], s["window_sigma"]) == (BodyKind.TCQ, 0, 0, None)
     with pytest.raises(GrammarError, match="body kind"):

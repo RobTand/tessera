@@ -52,6 +52,11 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "RecipeRange",
+    "recipe_table",
+    "recipe_at",
+    "rung_ceiling",
+    "PER_RUNG",
     "plan_for",
     "encode_linear",
     "encode_settings_from_config",
@@ -120,6 +125,15 @@ DEFAULT_WINDOW_SIGMA: "float | None" = None
 DEFAULT_CHANNEL_SIGMA: "float | None" = None
 
 
+_PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
+                ScalePlaneKind.CHANNEL: "channel"}
+_BODY_NAMES = {BodyKind.TCQ: "tcq", BodyKind.WINDOW: "window"}
+#: The config's spelling of a projected field whose value varies with the
+#: rung: the truth is then in ``wire.recipes``, and a reader that does not
+#: know the table must not guess.
+PER_RUNG = "per-rung"
+
+
 @dataclass(frozen=True)
 class WireRecipe:
     """The wire-level choices the exporter makes for a unit: body and plane.
@@ -155,6 +169,37 @@ class WireRecipe:
         if body is BodyKind.TCQ and self.window_bits:
             raise GrammarError("a TCQ recipe has no window_bits")
 
+    def to_config(self) -> dict:
+        """The recipe as the config spells it (one entry of ``wire.recipes``)."""
+        return {
+            "body": _BODY_NAMES[BodyKind(self.body)],
+            "span": int(self.span),
+            "plane": _PLANE_NAMES[ScalePlaneKind(self.scale_plane)],
+            "window_bits": int(self.window_bits),
+            "seed": int(self.window_seed),
+            "sigma": None if self.window_sigma is None else float(self.window_sigma),
+            "channel_sigma": (None if self.channel_sigma is None
+                              else float(self.channel_sigma)),
+        }
+
+    @classmethod
+    def from_config(cls, spec: dict) -> "WireRecipe":
+        bodies = {name: kind for kind, name in _BODY_NAMES.items()}
+        planes = {name: kind for kind, name in _PLANE_NAMES.items()}
+        if spec.get("body") not in bodies:
+            raise GrammarError(f"unknown body kind {spec.get('body')!r} in the recipe table")
+        if spec.get("plane") not in planes:
+            raise GrammarError(f"unknown scale plane {spec.get('plane')!r} in the recipe table")
+        sigma, channel_sigma = spec.get("sigma"), spec.get("channel_sigma")
+        return cls(
+            body=bodies[spec["body"]], span=int(spec["span"]),
+            scale_plane=planes[spec["plane"]],
+            window_bits=int(spec.get("window_bits", 0)),
+            window_seed=int(spec.get("seed", 0)),
+            window_sigma=None if sigma is None else float(sigma),
+            channel_sigma=None if channel_sigma is None else float(channel_sigma),
+        )
+
 
 #: The shipping recipe today, on every grid: the span-2 coset trellis over
 #: the LUT scale plane (schema minor 1).
@@ -185,9 +230,69 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
       pay for the table.
 
     ``q256`` is accepted so the sub-cap flip is a one-line change here and
-    nowhere else; it is unused while the recipe is rung-independent.
+    nowhere else; it is unused while the recipe is rung-independent.  The
+    exporter and the config are already per-rung: ``recipe_table`` records
+    what this function says at every rung, so a checkpoint written under a
+    rung-dependent recipe replays each unit at its own meaning.
     """
     return TCQ_RECIPE
+
+
+@dataclass(frozen=True)
+class RecipeRange:
+    """One row of the recipe table: the recipe every rung in [lo, hi] gets."""
+
+    q256_lo: int
+    q256_hi: int
+    recipe: WireRecipe
+
+    def to_config(self) -> dict:
+        return {"q256_lo": int(self.q256_lo), "q256_hi": int(self.q256_hi),
+                **self.recipe.to_config()}
+
+    @classmethod
+    def from_config(cls, spec: dict) -> "RecipeRange":
+        return cls(int(spec["q256_lo"]), int(spec["q256_hi"]), WireRecipe.from_config(spec))
+
+
+def rung_ceiling(grid: PayloadGrid) -> int:
+    """The highest rung any body admits on ``grid``, in q256 per position.
+
+    The window body may spend the grid's whole payload width at a position
+    (``_plan_for``), so the ceiling is ``payload_bits`` per tuple; the TCQ
+    body's cap is one bit lower and is refused by the schedule, not here.
+    """
+    return grid.payload_bits * 256 // grid.arity
+
+
+def recipe_table(grid: PayloadGrid, resolve=None) -> "tuple[RecipeRange, ...]":
+    """The recipe at every rung of ``grid``, as contiguous ranges.
+
+    ``resolve(grid, q256)`` defaults to ``wire_recipe``; an exporter passes
+    its own resolver, which applies the caller's explicit overrides on top
+    of the recipe, so the table it writes describes the checkpoint it built
+    rather than the module's default.  The table is a function of the
+    resolver alone, never of the plan: two parts of one checkpoint built by
+    the same code carry identical tables whatever rungs each used, which is
+    what lets the merge guard compare them.
+    """
+    resolve = wire_recipe if resolve is None else resolve
+    ranges: "list[RecipeRange]" = []
+    for q in range(1, rung_ceiling(grid) + 1):
+        recipe = resolve(grid, q)
+        if ranges and ranges[-1].recipe == recipe:
+            ranges[-1] = RecipeRange(ranges[-1].q256_lo, q, recipe)
+        else:
+            ranges.append(RecipeRange(q, q, recipe))
+    return tuple(ranges)
+
+
+def recipe_at(table: "tuple[RecipeRange, ...]", q256: int) -> WireRecipe:
+    """The table's recipe for rung ``q256``; a rung outside every range is refused."""
+    for entry in table:
+        if entry.q256_lo <= q256 <= entry.q256_hi:
+            return entry.recipe
+    raise GrammarError(f"rung {q256} is outside the recipe table's ranges")
 
 
 @dataclass(frozen=True)
@@ -330,34 +435,17 @@ def encode_linear(
         raise GrammarError(
             f"{name}: {rows} rows is not divisible by the grid arity {grid.arity}"
         )
-    recipe = wire_recipe(grid, q256)
-    span = recipe.span if span is None else int(span)
-    scale_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
-    body = BodyKind(recipe.body if body is None else body)
-    window_bits = recipe.window_bits if window_bits is None else int(window_bits)
-    window_seed = recipe.window_seed if window_seed is None else int(window_seed)
-    if window_sigma is None:
-        window_sigma = recipe.window_sigma
-    if channel_sigma is None:
-        channel_sigma = recipe.channel_sigma
-    if scale_plane is ScalePlaneKind.CHANNEL:
-        # Resolved here so the TCQ forest and the encoder's rows model the
-        # same Gaussian; ``encode_unit`` resolves it identically.
-        from .scale_channel import default_channel_sigma
-
-        if channel_sigma is None:
-            channel_sigma = default_channel_sigma(grid)
+    recipe = _resolve_recipe(
+        grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
+        channel_sigma,
+    )(q256)
+    span, scale_plane, body = recipe.span, recipe.scale_plane, recipe.body
+    window_bits, window_seed = recipe.window_bits, recipe.window_seed
+    window_sigma, channel_sigma = recipe.window_sigma, recipe.channel_sigma
     source_sigma = channel_sigma if scale_plane is ScalePlaneKind.CHANNEL else None
     rates, forests = _plan_for(grid, q256, columns, body, source_sigma)
     if body is BodyKind.WINDOW and completion not in (None, 0):
         raise GrammarError(f"{name}: a window body has no completion axis")
-    # A window body has no super-symbols.  The span is a TCQ setting whose
-    # default is the shipping wire's 2; under a window body it means nothing
-    # and is not asked for, so it is resolved to 1 here rather than making
-    # every window caller spell ``span=1`` to escape a default that does not
-    # apply to it.  The config records the resolved value.
-    if body is BodyKind.WINDOW:
-        span = 1
     unit = encode_unit(
         weight, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
@@ -434,11 +522,11 @@ def export_checkpoint(
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
-    resolved = _resolve_recipe(
-        grid, plan, span, scale_plane, body, window_bits, window_seed, window_sigma,
+    resolve = _resolve_recipe(
+        grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
         channel_sigma,
     )
-    span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma = resolved
+    table = recipe_table(grid, lambda _grid, q: resolve(q))
 
     payload: "dict[str, torch.Tensor]" = {}
     units: "list[ExportedUnit]" = []
@@ -449,10 +537,8 @@ def export_checkpoint(
                 tensor, grid=grid, q256=plan[name], name=name, code=code,
                 group=group, half=half, rotation=rotation,
                 with_diagonals=with_diagonals, verify=verify,
-                scale_refit=scale_refit, span=span, scale_plane=scale_plane,
-                trellis_weighting=trellis_weighting,
-                body=body, window_bits=window_bits, window_seed=window_seed,
-                window_sigma=window_sigma, channel_sigma=channel_sigma,
+                scale_refit=scale_refit, trellis_weighting=trellis_weighting,
+                **_recipe_kwargs(resolve(plan[name])),
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -475,56 +561,82 @@ def export_checkpoint(
     )
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting, body, window_bits, window_seed, window_sigma,
-                  channel_sigma)
+                  report, plan, extra_config, scale_refit, trellis_weighting, table)
     return report
 
 
-def _resolve_recipe(grid, plan, span, scale_plane, body, window_bits, window_seed,
+def _resolve_recipe(grid, span, scale_plane, body, window_bits, window_seed,
                     window_sigma, channel_sigma):
-    """One recipe for a checkpoint: the fields the caller left unset, from
-    ``wire_recipe``.  A plan whose rungs resolve to different recipes is
-    refused -- the config records one body and one plane, and a checkpoint
-    that mixed them would be described by neither."""
-    recipes = {wire_recipe(grid, q) for q in set(plan.values())} or {wire_recipe(grid)}
-    if len(recipes) != 1:
-        raise GrammarError(
-            f"the plan's rungs resolve to {len(recipes)} different wire recipes on "
-            f"{grid.name}; export one recipe per checkpoint"
+    """The per-rung resolver an exporter and ``encode_linear`` share.
+
+    Returns ``resolve(q256) -> WireRecipe``: the fields the caller left
+    ``None`` come from ``wire_recipe(grid, q256)``, the ones it named override
+    them for every rung alike.  A window body has no super-symbols, so its
+    span is resolved to 1 rather than making every window caller spell
+    ``span=1`` to escape a TCQ default that does not apply to it; a CHANNEL
+    plane's source spread resolves to ``default_channel_sigma`` so the TCQ
+    forest and the encoder's rows model the same Gaussian.  Rungs that
+    resolve to different recipes are not refused: the config records the
+    whole table (``recipe_table``) and replays each unit at its own meaning.
+    """
+    from .scale_channel import default_channel_sigma
+
+    def resolve(q256: "int | None") -> WireRecipe:
+        recipe = wire_recipe(grid, q256)
+        r_body = BodyKind(recipe.body if body is None else body)
+        r_span = recipe.span if span is None else int(span)
+        if r_body is BodyKind.WINDOW:
+            r_span = 1
+        r_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
+        r_bits = recipe.window_bits if window_bits is None else int(window_bits)
+        r_seed = recipe.window_seed if window_seed is None else int(window_seed)
+        r_sigma = recipe.window_sigma if window_sigma is None else float(window_sigma)
+        r_csigma = recipe.channel_sigma if channel_sigma is None else float(channel_sigma)
+        if r_plane is ScalePlaneKind.CHANNEL and r_csigma is None:
+            r_csigma = default_channel_sigma(grid)
+        return WireRecipe(
+            body=r_body, span=r_span, scale_plane=r_plane, window_bits=r_bits,
+            window_seed=r_seed, window_sigma=r_sigma, channel_sigma=r_csigma,
         )
-    recipe = next(iter(recipes))
-    span = recipe.span if span is None else int(span)
-    scale_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
-    body = BodyKind(recipe.body if body is None else body)
-    window_bits = recipe.window_bits if window_bits is None else int(window_bits)
-    window_seed = recipe.window_seed if window_seed is None else int(window_seed)
-    window_sigma = recipe.window_sigma if window_sigma is None else float(window_sigma)
-    channel_sigma = recipe.channel_sigma if channel_sigma is None else float(channel_sigma)
-    if scale_plane is ScalePlaneKind.CHANNEL and channel_sigma is None:
-        from .scale_channel import default_channel_sigma
 
-        channel_sigma = default_channel_sigma(grid)
-    return span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma
+    return resolve
 
 
-_PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
-                ScalePlaneKind.CHANNEL: "channel"}
+def _recipe_kwargs(recipe: WireRecipe) -> dict:
+    """``encode_linear``'s wire keywords for one resolved recipe."""
+    return dict(
+        span=recipe.span, scale_plane=recipe.scale_plane, body=recipe.body,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma,
+    )
+
+
+def _projected(table: "tuple[RecipeRange, ...]", field, mixed=PER_RUNG):
+    """A recipe field for the config's flat keys: its value when every range
+    of the table agrees, else ``mixed`` -- the flat keys are a projection of
+    ``wire.recipes`` kept for readers of the earlier configs, and a
+    projection that averaged two bodies into one would be a lie."""
+    values = {field(entry.recipe) for entry in table}
+    return next(iter(values)) if len(values) == 1 else mixed
 
 
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
                   extra_config: "dict | None", scale_refit: int = 0,
-                  span: int = 1,
-                  scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
                   trellis_weighting: str = "none",
-                  body: BodyKind = BodyKind.TCQ, window_bits: int = 0,
-                  window_seed: int = 0, window_sigma: "float | None" = None,
-                  channel_sigma: "float | None" = None) -> None:
-    plane = ScalePlaneKind(scale_plane)
-    body = BodyKind(body)
-    if body is BodyKind.WINDOW:
-        span = 1                       # what ``encode_linear`` resolved it to
+                  table: "tuple[RecipeRange, ...] | None" = None) -> None:
+    if table is None:
+        table = recipe_table(grid)
+    span = _projected(table, lambda r: int(r.span), mixed=None)
+    plane = _projected(table, lambda r: _PLANE_NAMES[ScalePlaneKind(r.scale_plane)])
+    body = _projected(table, lambda r: _BODY_NAMES[BodyKind(r.body)])
+    window_bits = _projected(table, lambda r: int(r.window_bits), mixed=None)
+    window_seed = _projected(table, lambda r: int(r.window_seed), mixed=None)
+    window_sigma = _projected(
+        table, lambda r: None if r.window_sigma is None else float(r.window_sigma), mixed=None)
+    channel_sigma = _projected(
+        table, lambda r: None if r.channel_sigma is None else float(r.channel_sigma),
+        mixed=None)
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
@@ -556,18 +668,19 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # ``weighting`` is the Viterbi's branch-metric weight (an encoder
         # setting: ``none`` = per-half normalised error, ``scale`` = true
         # squared error); the merge guard compares it like ``scale.refit``.
-        "trellis": {"span": int(span), "weighting": str(trellis_weighting)},
+        "trellis": {"span": span, "weighting": str(trellis_weighting)},
         # The BODY kind (schema minor 2).  ``window_bits`` is wire (manifest
         # field, profile-id tag); ``seed`` and ``sigma`` are the table's
         # construction parameters -- the table itself is on the plane, so a
         # reader never needs them, but a replay does and a merge must compare
         # them: two halves over different tables are two artifacts.  A config
         # without this key means the TCQ body, which is every artifact before
-        # the field existed.
-        "body": {"kind": "window" if body is BodyKind.WINDOW else "tcq",
-                 "window_bits": int(window_bits),
-                 "seed": int(window_seed),
-                 "sigma": None if window_sigma is None else float(window_sigma)},
+        # the field existed.  These flat keys, ``trellis.span`` and
+        # ``scale.plane`` are projections of ``wire.recipes``: when the recipe
+        # varies with the rung they read ``per-rung`` (``null`` for the
+        # numbers) and the table is the only truth.
+        "body": {"kind": body, "window_bits": window_bits, "seed": window_seed,
+                 "sigma": window_sigma},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
         # interleave, because the same count meant a different encoder before
         # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
@@ -578,8 +691,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # units, the rows were scaled to and the table/forest modelled).
         "scale": {"group": group, "half": half, "refit": scale_refit,
                   "schedule": "amax" if scale_refit == 0 else "trailing-refit",
-                  "plane": _PLANE_NAMES[plane],
-                  "sigma": None if channel_sigma is None else float(channel_sigma)},
+                  "plane": plane, "sigma": channel_sigma},
+        # The recipe at every rung of the grid, as contiguous q256 ranges:
+        # body, span, plane, window table parameters and modelled spreads.  A
+        # function of the exporter's resolver alone, never of the plan, so
+        # every part of one checkpoint carries the same table and a replay
+        # of any rung finds its meaning here (``encode_settings_from_config``).
+        "wire": {"recipes": [entry.to_config() for entry in table]},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
@@ -688,11 +806,11 @@ def export_checkpoint_streaming(
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
-    resolved = _resolve_recipe(
-        grid, plan, span, scale_plane, body, window_bits, window_seed, window_sigma,
+    resolve = _resolve_recipe(
+        grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
         channel_sigma,
     )
-    span, scale_plane, body, window_bits, window_seed, window_sigma, channel_sigma = resolved
+    table = recipe_table(grid, lambda _grid, q: resolve(q))
 
     units: "list[ExportedUnit]" = []
     passthrough_bytes = 0
@@ -708,12 +826,9 @@ def export_checkpoint_streaming(
                         tensor.to(device), grid=grid, q256=plan[name], name=name,
                         code=code, group=group, half=half, rotation=rotation,
                         with_diagonals=with_diagonals, verify=verify,
-                        scale_refit=scale_refit, span=span,
-                        scale_plane=scale_plane,
+                        scale_refit=scale_refit,
                         trellis_weighting=trellis_weighting,
-                        body=body, window_bits=window_bits,
-                        window_seed=window_seed, window_sigma=window_sigma,
-                        channel_sigma=channel_sigma,
+                        **_recipe_kwargs(resolve(plan[name])),
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -743,9 +858,7 @@ def export_checkpoint_streaming(
         {"metadata": {"total_size": report.total_bytes},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting, body, window_bits, window_seed, window_sigma,
-                  channel_sigma)
+                  report, plan, extra_config, scale_refit, trellis_weighting, table)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
@@ -759,8 +872,13 @@ def read_checkpoint_config(out_dir: "str | Path") -> dict:
     return json.loads((Path(out_dir) / "tessera_config.json").read_text())
 
 
-def encode_settings_from_config(config: dict) -> dict:
+def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict:
     """The ``encode_linear`` keyword arguments that reproduce a written checkpoint.
+
+    A config with a ``wire.recipes`` table resolves the body, span, plane and
+    window parameters for rung ``q256`` from the table; when the table holds
+    one recipe the rung may be omitted, and when it holds several a caller
+    that names no rung is refused rather than handed the wrong body.
 
     A config written before a setting existed means the value the exporter
     had *then*, not the value it defaults to now -- the exporter's defaults
@@ -780,14 +898,43 @@ def encode_settings_from_config(config: dict) -> dict:
     trellis = config.get("trellis", {})
     plane = scale.get("plane", "s6b")
     planes = {name: kind for kind, name in _PLANE_NAMES.items()}
-    if plane not in planes:
+    if plane not in planes and plane != PER_RUNG:
         raise GrammarError(f"unknown scale plane {plane!r} in config")
-    channel_sigma = scale.get("sigma")
     body = config.get("body", {"kind": "tcq"})
     kind = body.get("kind", "tcq")
-    if kind not in ("tcq", "window"):
+    if kind not in ("tcq", "window", PER_RUNG):
         raise GrammarError(f"unknown body kind {kind!r} in config")
-    sigma = body.get("sigma")
+    wire = config.get("wire")
+    if wire is not None:
+        table = tuple(RecipeRange.from_config(e) for e in wire.get("recipes", ()))
+        if not table:
+            raise GrammarError("the config's wire.recipes table is empty")
+        if q256 is None:
+            recipes = {entry.recipe for entry in table}
+            if len(recipes) != 1:
+                raise GrammarError(
+                    "this checkpoint's recipe varies with the rung "
+                    f"({len(table)} ranges); name the unit's q256 to replay it"
+                )
+            recipe = table[0].recipe
+        else:
+            recipe = recipe_at(table, int(q256))
+    else:
+        if plane == PER_RUNG:
+            raise GrammarError("config says per-rung scale planes but carries no wire.recipes")
+        if kind == PER_RUNG:
+            raise GrammarError("config says per-rung bodies but carries no wire.recipes")
+        channel_sigma = scale.get("sigma")
+        sigma = body.get("sigma")
+        recipe = WireRecipe(
+            body=BodyKind.WINDOW if kind == "window" else BodyKind.TCQ,
+            span=int(trellis.get("span", 1)) if kind != "window" else 1,
+            scale_plane=planes[plane],
+            window_bits=int(body.get("window_bits", 0)),
+            window_seed=int(body.get("seed", 0)),
+            window_sigma=None if sigma is None else float(sigma),
+            channel_sigma=None if channel_sigma is None else float(channel_sigma),
+        )
     return dict(
         code=code,
         group=int(scale.get("group", DEFAULT_GROUP)),
@@ -795,14 +942,8 @@ def encode_settings_from_config(config: dict) -> dict:
         rotation=RotationState[config.get("rotation", "NONE")],
         with_diagonals=bool(config.get("with_diagonals", False)),
         scale_refit=int(scale.get("refit", 0)),
-        span=int(trellis.get("span", 1)),
-        scale_plane=planes[plane],
         trellis_weighting=str(trellis.get("weighting", "none")),
-        body=BodyKind.WINDOW if kind == "window" else BodyKind.TCQ,
-        window_bits=int(body.get("window_bits", 0)),
-        window_seed=int(body.get("seed", 0)),
-        window_sigma=None if sigma is None else float(sigma),
-        channel_sigma=None if channel_sigma is None else float(channel_sigma),
+        **_recipe_kwargs(recipe),
     )
 
 

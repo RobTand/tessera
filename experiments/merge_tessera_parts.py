@@ -54,6 +54,17 @@ SHARED = (
     "requires_serve_flags", "inherits",
 )
 
+#: Fields that define the encoding when the exporter writes them, and that
+#: earlier exporters did not write at all: compared like ``SHARED`` when the
+#: first part carries them, refused when the parts disagree on whether they
+#: exist, skipped (and said so) when no part has them.  ``wire.recipes`` is
+#: the per-rung recipe table (body, span, plane, window table parameters per
+#: q256 range) -- the flat ``body``/``scale.plane``/``trellis.span`` keys are
+#: its projection and read ``per-rung`` when it varies, so two parts that
+#: agree on the flat keys can still have been encoded differently below the
+#: cap, and only the table can say.
+SHARED_WHEN_WRITTEN = ("wire.recipes",)
+
 _MISSING = object()
 
 
@@ -124,8 +135,20 @@ def main():
             f"cannot certify the parts were encoded identically. Either the "
             f"exporter stopped writing them or SHARED names them wrongly; "
             f"fix that rather than merging unchecked.")
+    compared = list(SHARED)
+    for field in SHARED_WHEN_WRITTEN:
+        present = [dotted(config, field) is not _MISSING for _, _, config in loaded]
+        if all(present):
+            compared.append(field)
+        elif any(present):
+            raise SystemExit(
+                f"{field!r} is written by some parts and not others -- they were "
+                f"built by different exporters; rebuild the older parts")
+        else:
+            print(f"note: no part carries {field!r} (written by later exporters); "
+                  f"the recipe is compared through its flat projection only")
     for part, _, config in loaded[1:]:
-        for field in SHARED:
+        for field in compared:
             if dotted(base, field) != dotted(config, field):
                 raise SystemExit(
                     f"parts disagree on {field!r}: {dotted(base, field)!r} vs "

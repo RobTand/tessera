@@ -216,6 +216,20 @@ bytes is comparing W4A4 against W8A8, and at 4.0 bytes those differ 1.44×
 as served (`tessera8-targets`). The cost model prices what the route
 executes (PrismaQuant principles 8/9/14), never the weight leg alone.
 
+The recipe is per rung, and the checkpoint says so. `wire_recipe(grid,
+q256)` is the one function; the exporter resolves it per unit (the caller's
+explicit overrides apply on top, for every rung alike), and the config
+records the whole table as contiguous `q256` ranges under `wire.recipes`
+(body, span, plane, window table parameters, modelled spreads). The flat
+`body` / `scale.plane` / `trellis.span` keys are a projection of that table
+kept for readers of the earlier configs and read `per-rung` when the table
+varies, so a reader that does not know the table cannot mistake one body
+for the other. `encode_settings_from_config(config, q256)` replays a unit
+at its own rung's meaning and refuses to guess when the table varies and no
+rung is named; the merge guard compares the table across parts whenever the
+parts carry it. Nothing here flips a recipe: `wire_recipe` still returns the
+coset trellis over LUT16 on every grid until the encoder gate clears.
+
 ## 6. What this does not unify, on purpose
 
 * **The TCQ body is not a window table.** A span-2 super-symbol's state
