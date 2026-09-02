@@ -31,8 +31,9 @@ collapses at 7. §7.
 **And W1's prediction reproduces on a different model, harness and H.** At
 8 bpp on six dense Qwen3-0.6B Linears, H-weighted geomean:
 **BF16 R = 8 0.00783 · E4M3 R = 8 0.02280 · FP8 RTN 0.02341** against W1's
-predicted 0.0079 / 0.0234 / 0.0238 — three digits, six tensors, through the
-real wire. Same bytes as a full FP8 tile, **3.0x less error**. §7c.
+predicted 0.0079 / 0.0234 / 0.0238 — **within 3% on all three arms**, six
+tensors, through the real wire. At 1% more bytes than a full FP8 tile,
+**3.0x less error**. §7c.
 
 `TESSERA_BF16` is a real third family: it writes, reads back bit-exactly,
 decodes four ways that agree to the bit, exports a checkpoint plus a plain-BF16
@@ -487,10 +488,10 @@ This is the point the whole family was built for, so it is stated as a
 prediction that was checked rather than as a result that was found. W1's
 alphabet-floor screen predicted **BF16 R = 8 0.0079 vs E4M3 R = 8 0.0234 vs
 FP8 RTN 0.0238**. On six dense Qwen Linears through the real wire the
-H-weighted geomean is **0.00783 / 0.02280 / 0.02341** — the same order and the
-same magnitudes to three digits, on a different harness, different tensors and
-a different H. On plain Frobenius the order is the same and wider
-(0.00640 / 0.02652 / 0.02622).
+H-weighted geomean is **0.00783 / 0.02280 / 0.02341** — the same order, and
+every arm **within 3%** of the predicted value (0.9% / 2.6% / 1.6%), on a
+different harness, different tensors and a different H. On plain Frobenius the
+order is the same and wider (0.00640 / 0.02652 / 0.02622).
 
 Two readings of that row, and only the second is the family's claim:
 
@@ -500,7 +501,7 @@ Two readings of that row, and only the second is the family's claim:
   taking ~1.6-1.8x per bit on this axis (1.7-1.9x on `wt`, W1's ~1.93x). The
   floor is the alphabet's, measured twice now.
 - **A 16-bit-alphabet trellis at 8.11 bpp is 3.0x better than a full FP8 tile
-  at 8.02 bpp** — same bytes, three times less error — and **BF16 at R = 7
+  at 8.02 bpp** — 1% more bytes, three times less error — and **BF16 at R = 7
   (7.11 bpp) is 1.9x better than E4M3 at R = 8 (8.06 bpp)**, a whole bit
   cheaper. Above ~6 bpp the 8-bit route is not a rung the allocator should be
   offered when this one exists.
@@ -746,12 +747,17 @@ a hard sub-question. The two candidates named in the brief resolved by reading
 code rather than by reasoning about it — the table construction is W1's own
 `window_table` with a different grid, and the rate-cap algebra is already in
 `export._plan_for` (`payload_bits` under WINDOW, `payload_bits − 1` under TCQ).
-Five `advisor()` calls were made, one before committing to the grid shape and
-four in the endgame; they produced eight of the checks in this document (the
-encoder-drift diff, the structural twin check, the `grid_from_config` hole, the
-PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d,
-this section's contention note, the merged-tree signature check on
-`encode_linear_planes`, and the route-namespace correction in §8).
+Six `advisor()` calls were made, one before committing to the grid shape and
+five in the endgame. They produced eleven of the checks in this document: the
+encoder-drift diff, the structural twin check, the `grid_from_config` hole,
+the PrismaQuant accountant line, the stale `materialize_bf16` sentence in
+§10d, this section's contention note, the merged-tree signature check on
+`encode_linear_planes`, the route-namespace correction in §8, the merged-tree
+identity re-run above, the fused-vs-reference discriminator that turned the
+R = 8 cost from a suspicion into an attribution, and — last — the two
+overclaims corrected in place here: "three digits" became the exact bound
+(within 3%), and the `_tile` fix was demoted from "the real fix" to a
+hypothesis that may spill worse than what it replaces.
 
 **Merged with `master` at `f3e7d0a`** (the serving plugin, TP slicing / schema
 minor 4, the window kernel, LDLQ + the Hessian plumbing). Two conflicts, both
@@ -880,11 +886,16 @@ outlier work identified as the hard ones.
   currently takes the fused path whenever the input is CUDA and Triton is
   present (`encode.py:538-543`); making `auto` prefer the reference at
   `1 << rate` above the crossover would make R = 8 encodes ~10x faster and is
-  bit-exact by the table above. **The real fix is in `_tile`:** the cap
+  bit-exact by the table above. **The candidate fix in the kernel itself is
+  `_tile`, and it is a hypothesis, not a measurement:** the cap
   `bl * FAN < 1024` shrinks `BL` as `FAN` grows, so the fully unrolled
   class-minimum loop doubles in length while its `[BC, BL]` tile falls to 8
-  lanes at `FAN = 256`; letting `BL*BC` hold at a warp would keep the
-  2x-per-bit trend instead of breaking it. **Neither was changed here** —
+  lanes at `FAN = 256`, and holding `BL*BC` at a warp would stop that. But the
+  kernel's second half builds `state` and `cost` as `[BC, BL, FAN]`, so
+  widening `BL` multiplies the branch-cost register footprint by the same
+  factor (`BL = 16` at `FAN = 256` is 8192 floats a program) and may spill
+  worse than the unroll does. Whoever owns the kernel should measure it, not
+  take it from here. **Neither was changed here** —
   `encode.py` is shared with three other branches mid-measurement, this
   branch's diff is meant to be a grid and a recipe, and changing a hot path
   under five running jobs is the "don't change a kernel mid-A/B" landmine.

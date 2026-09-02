@@ -19,10 +19,12 @@ across impls at every rate):
                                                        than the path it replaces
 
 So the cliff is the Triton step kernel's, not the encoder's.  See
-``docs/measurements/tessera-bf16-route-2026-09-02.md`` section 11 for the two
-fixes (a dispatch rule in ``viterbi_window``; ``_tile`` holding ``BL*BC`` at a
-warp) -- neither applied here, because ``encode.py`` is shared with other
-branches mid-measurement.
+``docs/measurements/tessera-bf16-route-2026-09-02.md`` section 11: the
+*measured* fix is a dispatch rule in ``viterbi_window`` (prefer the reference
+above the crossover -- bit-exact, ~10x faster at R = 8 by the table above);
+the ``_tile`` change is a hypothesis and may spill worse, since widening
+``BL`` also widens the ``[BC, BL, FAN]`` branch-cost tile.  Neither is applied
+here: ``encode.py`` is shared with other branches mid-measurement.
 
 Run::
 

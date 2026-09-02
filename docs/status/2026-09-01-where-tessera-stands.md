@@ -670,10 +670,10 @@ dense Linears): the two arms are within 1%, so the menu keeps both.
 
 At **8 bpp** on those six dense Linears the prediction that started this
 reproduces on a different model, harness and H: **BF16 0.00783 · E4M3 0.02280
-· FP8 RTN 0.02341**, against W1's predicted 0.0079 / 0.0234 / 0.0238 — three
-digits, through the real wire. E4M3 spends its alphabet (0.02744 -> 0.02375 ->
+· FP8 RTN 0.02341**, against W1's predicted 0.0079 / 0.0234 / 0.0238 — every
+arm **within 3%**, through the real wire. E4M3 spends its alphabet (0.02744 -> 0.02375 ->
 0.02280 over R=6,7,8; the last bit buys 4%) while BF16 keeps taking ~1.6-1.8x
-a bit. **Same bytes as a full FP8 tile, 3.0x less error**, and BF16 at R=7 is
+a bit. **1% more bytes than a full FP8 tile, 3.0x less error**, and BF16 at R=7 is
 1.9x better than E4M3 at R=8 a whole bit cheaper. One caveat kept in view:
 `layers.2.mlp.down_proj` still never crosses on the H-weighted axis through
 R=8 (1.048x) while reaching 0.23x on plain Frobenius — a reach problem, not an
