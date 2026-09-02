@@ -29,10 +29,13 @@ compiled, same bytes, same GEMM, reads 0.0269 (top-1
 number sits, and the -0.004 on KL-vs-BF16 is a draw.
 
 **What this attests, and what it does not.** Faithfulness: the route serves
-the wire's bytes, both modes, both regimes. Not quality: at 0.47 the
-Tessera-8 wire on this dense model is 23x worse than per-channel FP8
-round-to-nearest served on the same route (0.0205,
-`tessera-stock-lane-served-2026-09-02.md`), the CHANNEL plane's blindness to
+the wire's bytes, both modes, both regimes. Not quality: the 4.07-bpp
+Tessera-8 wire reads 0.47 on this dense model against 0.0205 for per-channel
+FP8 round-to-nearest at 8.0 bpp on the same route
+(`tessera-stock-lane-served-2026-09-02.md`), a 23x gap that is 4 bits of
+code against 8; production GPTQ+JSO NVFP4 at 4.5 bpp W4A4 reads 0.511 on
+the same table, so at its wire Tessera-8 is the best ~4-bit point there,
+not a bad 8-bit one. What is bad is narrower: the CHANNEL plane's blindness to
 outlier input columns, and the greedy continuation of "The capital of France
 is" is " 111111111111111" on the lane exactly as it is on the stock arm. The
 route is the product's 8-bit half; the wire it carries is the encoder's
@@ -213,8 +216,10 @@ chooses shippable.
   beats NVFP4 4.5 and where every Tessera-8 win was measured -- are not in
   the lane.
 * Faithfulness, not quality: every number above is the stock arm's number
-  for the same bytes. On this dense model the E4M3/CHANNEL wire loses to FP8
-  RTN by 23x and the E2M1x2 wire loses to production NVFP4 at 4.5 by 1.25x
+  for the same bytes. On this dense model the 4.07-bpp E4M3/CHANNEL wire
+  loses to 8.0-bpp FP8 RTN by 23x (4 bits of code against 8; production
+  NVFP4 at 4.5 bpp is 25x behind the same FP8 arm) and the 4.0-bpp E2M1x2
+  wire loses to production NVFP4 at 4.5 bpp by 1.25x under W4A4
   (`tessera-stock-lane-served-2026-09-02.md`); what the lane buys is the
   bytes on disk and, in `streamed` mode, in memory.
 * The FP8 arms have no stock compiled comparator (the stock-lane receipt is

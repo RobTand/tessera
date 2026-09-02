@@ -546,8 +546,11 @@ eager and under the default compiled forward
   lands on a Gridbook release that packages v14 (Rob's call).
 
 What this attests is faithfulness, not quality: on this dense model the
-E4M3/CHANNEL wire is 23x behind FP8 RTN and the E2M1x2 wire 1.25x behind
-production NVFP4 at 4.5 (`tessera-stock-lane-served-2026-09-02.md`). The
+4.07-bpp E4M3/CHANNEL wire is 23x behind 8.0-bpp FP8 RTN (4 bits of code
+against 8; production NVFP4 at 4.5 bpp is 25x behind the same arm, and at
+its own wire Tessera-8's 0.470 is the best ~4-bit point on that table) and
+the 4.0-bpp E2M1x2 wire is 1.25x behind production NVFP4 at 4.5 under W4A4
+(`tessera-stock-lane-served-2026-09-02.md`). The
 lane makes whatever the encoder produces and the allocator chooses
 shippable at the wire's bytes; the wire's quality on dense models is the
 encoder's open problem (the CHANNEL plane's outlier blindness), and the
