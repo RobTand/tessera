@@ -469,7 +469,7 @@ def encode_linear_planes(
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
     ldl: "torch.Tensor | None" = None,
-    ldl_block: int = 128,
+    ldl_block: int = DEFAULT_LDLQ_BLOCK,
     refit_metric: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":

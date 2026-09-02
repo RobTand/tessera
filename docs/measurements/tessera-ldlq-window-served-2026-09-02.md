@@ -165,6 +165,20 @@ KL-vs-BF16 over top-1024 support (a lower bound), teacher
 | production NVFP4 GPTQ+JSO (W4A4), stock-lane receipt | 4.5 / 4.5 | 0.511 | | 62.6% |
 | FP8 RTN per-channel (W8A8), stock-lane receipt | 8.0 / 8.0 | 0.0205 | | 91.2% |
 
+**Tail checked, because a lower mean KL can hide a heavier tail** (the
+H-weighted refit deliberately lets some rows' plain error rise to serve loud
+columns, so this is the shape to look for). It does not: per-position `kl_lower`
+improves monotonically at every quantile reported.
+
+| arm | mean | p99 | max |
+|---|---|---|---|
+| baseline | 0.151163 | 0.924707 | 3.612462 |
+| + LDLQ | 0.112864 | 0.847693 | 3.545269 |
+| + LDLQ + full-H refit | **0.104577** | **0.756224** | **2.295350** |
+
+(`jq '.all | {kl_lower_mean, kl_lower_p99, kl_lower_max}'` over
+`kl_base_vs_lina.json`, `kl_ldlq.json`, `kl_ldlqH.json`.)
+
 **0.692x of the baseline's KL at identical bytes** (LDLQ alone 0.747x), and
 +3.5 points of top-1 agreement. Against production NVFP4 GPTQ+JSO at 4.5 bpp the
 4.07-bpp wire is now 4.9x better (was 3.4x); against FP8 RTN at 8.0 bpp it is 5.1x
@@ -206,16 +220,18 @@ held-out eval rows. Out-space geomean (`results/tessera_ldlq_glm_window.json`):
 | vs EXL3 K=4 (LDLQ, W4A16) | 1.218x -> **1.135x** with LDLQ | 0.625x -> 0.585x |
 
 No regression anywhere: the GLM gate was "geomean <= 1.00x vs LDLQ-off" and the
-measurement is 0.932x. The full-H refit is worth ~1% here and ~26% on dense
-Qwen — the asymmetry is the Hessian's, not the encoder's: GLM expert inputs are
-near-Gaussian (`tessera-w4a4-changes-the-lever`), Qwen's dense rows are not.
+measurement is 0.932x (q960) / 0.941x (q1216) for the default recipe, i.e.
+LDLQ + full-H refit; LDLQ alone is 0.932x / 0.936x. The full-H refit is worth
+~1% here and ~26% on dense Qwen — the asymmetry is the Hessian's, not the
+encoder's: GLM expert inputs are near-Gaussian
+(`tessera-w4a4-changes-the-lever`), Qwen's dense rows are not.
 
 ## The gate, and what "default" means
 
 | gate | required | measured | verdict |
 |---|---|---|---|
 | served KL on Qwen | strictly better than 0.1512 | 0.1046 (0.692x) | **pass** |
-| GLM six-expert geomean | <= 1.00x vs LDLQ-off | 0.932x | **pass** |
+| GLM six-expert geomean | <= 1.00x vs LDLQ-off | 0.932x / 0.941x (q960 / q1216) | **pass** |
 
 Both pass, so the recipe is default — but "default" here cannot mean "always
 on", because `encode_unit` cannot invent a Hessian. The default is the *answer to
@@ -248,6 +264,19 @@ can refuse parts built against different activations.
   here establishes which way it goes at other rungs.
 * Encode-time numbers are contended on the baseline side. A clean paired
   whole-checkpoint timing on one idle box is not done.
+* **The default lives only in `experiments/export_gridbook_tessera.py`.** The
+  library's `export_checkpoint` / `export_checkpoint_streaming` take no
+  Hessian, and `merge_tessera_parts.py`'s field list and
+  `encode_settings_from_config` do not know the `activation_aware` block — so
+  two shards built against *different* Hessians would merge without refusal.
+  Plumbing that through the library export path and the merge guard is not done
+  here; it is the coordinator's call who takes it.
+
+**Fable consultations:** none. The advisor call settled the one design question
+(LDLQ inside `encode_unit` as a block-sequential schedule sharing one plane,
+rather than the standalone `compensate.compensated_targets`, which is unsound
+under a row scale fit over all columns), and the row-scale optimum is a closed
+form, so no sub-question was hard enough to escalate.
 
 ## Files
 

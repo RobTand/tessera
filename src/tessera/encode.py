@@ -912,7 +912,7 @@ def encode_unit(
     window_sigma: "float | None" = None,
     channel_sigma: "float | None" = None,
     ldl: "torch.Tensor | None" = None,
-    ldl_block: int = 128,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
     refit_metric: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
 ) -> EncodedUnit:
@@ -1202,6 +1202,33 @@ def encode_unit(
             )
         if ldl_block < 1:
             raise GrammarError(f"the LDLQ block must be at least one column, got {ldl_block}")
+        if cols % ldl_block:
+            raise GrammarError(
+                f"{cols} input features is not a multiple of the LDLQ block {ldl_block}; "
+                "block_ldl refuses the same shape, so the factor and the schedule "
+                "cannot both be right"
+            )
+        # The factor and the schedule must agree on the block size.  block_ldl
+        # leaves the identity on its own diagonal blocks, so this catches the
+        # dangerous direction: a factor built FINER than the schedule has spent
+        # compensation on columns the schedule then quantises together, and the
+        # arithmetic stays well-formed while pricing an arm that is neither
+        # block size.  (The reverse -- a coarser factor read at a finer block --
+        # keeps the identity here and merely compensates less, so it passes.)
+        _m = cols // ldl_block
+        _diag = torch.diagonal(
+            ldl.reshape(_m, ldl_block, _m, ldl_block), dim1=0, dim2=2
+        ).permute(2, 0, 1)
+        if not torch.allclose(
+            _diag,
+            torch.eye(ldl_block, dtype=ldl.dtype, device=ldl.device).expand(_m, -1, -1),
+            atol=1e-5,
+        ):
+            raise GrammarError(
+                f"the LDL factor's {ldl_block}-column diagonal blocks are not the "
+                f"identity: it was not produced by block_ldl at block {ldl_block}. "
+                "Pass the ldl_block the factor was built with."
+            )
         if scale_plane is not ScalePlaneKind.CHANNEL:
             # A block plane's scale is fit to a within-row span of columns, so
             # a block-sequential pass would fit each span to a target the next

@@ -19,6 +19,7 @@ import torch
 from tessera.alphabet import E4M3_GRID
 from tessera.compensate import block_ldl, regularize_hessian
 from tessera.encode import encode_unit, window_table
+from tessera.errors import GrammarError
 from tessera.export import (
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
     encode_linear_planes)
@@ -69,6 +70,7 @@ def test_ldlq_changes_the_codes_and_keeps_the_wire():
     """A real Hessian moves the encode, and the artifact still round-trips."""
     from tessera.unit_artifact import read_unit_artifact
 
+    torch.manual_seed(1)          # mix/x/x_ev below draw from the global RNG
     w = _weights(seed=1)
     # Correlated inputs: an iid x makes H the identity, under which LDLQ has
     # nothing to compensate and the arms differ only by rounding noise.
@@ -94,7 +96,25 @@ def test_ldlq_changes_the_codes_and_keeps_the_wire():
 
 
 @cuda
+def test_a_block_size_disagreement_is_refused():
+    """A COARSER schedule over a finer factor is the silent-wrong pair: the
+    factor already spent compensation on columns the schedule then quantises
+    together, and the arithmetic stays well-formed. The reverse (a finer
+    schedule over a coarser factor) only compensates less, so it is allowed."""
+    torch.manual_seed(3)
+    w = _weights(seed=3)
+    x = torch.randn(1024, COLS, device=w.device)
+    H = regularize_hessian(x.T @ x, count=1024, sigma_reg=3.0)
+    with pytest.raises(GrammarError, match="diagonal blocks are not the identity"):
+        _encode(w, scale_refit=4, ldl=block_ldl(H, 32), ldl_block=64)
+    with pytest.raises(GrammarError, match="not a multiple of the LDLQ block"):
+        _encode(w, scale_refit=4, ldl=block_ldl(H, 64), ldl_block=96)
+    _encode(w, scale_refit=4, ldl=block_ldl(H, 64), ldl_block=64)   # the matching pair
+
+
+@cuda
 def test_ldlq_is_deterministic():
+    torch.manual_seed(2)
     w = _weights(seed=2)
     x = torch.randn(1024, COLS, device=w.device)
     L = block_ldl(regularize_hessian(x.T @ x, count=1024, sigma_reg=3.0), 64)
