@@ -192,6 +192,19 @@ gain/cost **7.7×** — but its mechanism is "promote the layers that need it", 
 
 ## The decision chain
 
+**2026-09-02 (frontier) — the production encoder on the six experts, every
+(grid, body, plane, rate) arm at equal bytes** (`docs/tessera-one-format.md`
+§4). Headline: **E4M3 window body over the CHANNEL plane, L=12, no LDLQ:
+0.985× EXL3 K4 at 4.0 bpp, 0.957× EXL3 K3 at 3.0 bpp, 1.016× at 5.0**,
+on the true wire, decoded bit-exactly by the kernel lane. As served (W8A8
+on the FP8 tensor core) it is 1.047× EXL3's W4A16 at 4.0 bytes and 0.973×
+at 3.0. The window body also takes the E2M1x2 sub-cap ladder from 1.36–1.43×
+behind EXL3 to 1.06–1.10×; at the E2M1x2 cap the coset trellis still wins
+at L=12 (1.170× vs 1.244×). Gates for flipping the E4M3 recipe: kernel
+decode (done, incl. CHANNEL), quality on the wire (done), encoder
+throughput (fused Viterbi in flight), and PrismaQuant's byte accountant
+pricing a shape-dependent recipe (the seam refuses rather than floors).
+
 1. Full-model allocation deferred — an allocation cannot be built or exported
    today (`export_native_compressed.py` has zero Tessera references,
    `tessera_allocator.py` sets `producer_eligible: False`,

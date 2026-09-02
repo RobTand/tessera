@@ -88,33 +88,57 @@ construction, its own plane code).
 
 | bpp | arm | plane | protocol | out | vs EXL3 out | as served | served vs EXL3 W4A16 |
 |---|---|---|---|---|---|---|---|
-| 3.0 | E2M1x2 window L=16 (K=5) | per-16 fp32 | exp | 0.1738 (L5.gate) | — | a4 | — |
-| 3.5 | E2M1x2 window L=16 (K=6) | per-16 fp32 | exp | 1.34× better than TCQ | — | a4 | — |
-| 4.0 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.0841 (L5.gate) | 1.176× | a4 | 1.070× (W4A4) |
-| 4.0 | E4M3 TCQ span 2 | LUT16 | wire | 0.0812 | 1.206× | a8 0.0847 | 1.257× |
-| 4.0 | E4M3 window L=12 | LUT16 | wire | 0.0757 | 1.124× | a8 0.0794 | 1.179× |
-| 4.0 | E4M3 window L=12 | CHANNEL | exp, pinned | 0.0664 | **0.986×** | a8 0.0706 | 1.048× |
-| 4.0 | E4M3 window L=14 | CHANNEL | exp, pinned | 0.0632 | **0.938×** | a8 0.0676 | **1.003×** |
-| 4.0 | Gridbook FP8-CB K32 | per-row | exp | 0.0862 | 1.28× | a8 0.0904 | 1.33× |
+| 2.5 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.2635 | 1.401× | a4 0.2763 | 1.47× |
+| 2.5 | E2M1x2 window L=12 | LUT16 | wire | 0.1982 | **1.056×** | a4 0.2155 | 1.15× |
+| 3.0 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.1817 | 1.357× | a4 0.2004 | 1.50× |
+| 3.0 | E2M1x2 window L=12 | LUT16 | wire | 0.1417 | **1.061×** | a4 0.1654 | 1.24× |
+| 3.0 | E4M3 window L=12 | CHANNEL | wire | 0.1274 | **0.957×** | a8 0.1296 | **0.973×** |
+| 3.5 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.1364 | 1.431× | a4 0.1608 | 1.69× |
+| 3.5 | E2M1x2 window L=12 | LUT16 | wire | 0.1044 | **1.098×** | a4 0.1350 | 1.42× |
+| 4.0 | E2M1x2 TCQ span 2 (default wire, at its cap) | LUT16 | wire | 0.0794 | **1.170×** | a4 0.1169 | 1.72× |
+| 4.0 | E2M1x2 window L=12 | LUT16 | wire | 0.0842 | 1.244× | a4 0.1202 | 1.78× |
+| 4.0 | E4M3 TCQ span 2 (default wire) | LUT16 | wire | 0.0812 | 1.197× | a8 0.0847 | 1.25× |
+| 4.0 | E4M3 TCQ span 2 | CHANNEL | wire | 0.0957 | 1.414× | a8 0.0986 | 1.46× |
+| 4.0 | E4M3 window L=12 | LUT16 | wire | 0.0757 | 1.119× | a8 0.0794 | 1.17× |
+| 4.0 | E4M3 window L=12 | CHANNEL | wire | 0.0665 | **0.985×** | a8 0.0707 | **1.047×** |
+| 4.0 | E4M3 window L=14 | CHANNEL | exp, pinned | 0.0632 | 0.938× | a8 0.0676 | 1.003× |
+| 4.0 | Gridbook FP8-CB K32 | per-row | exp (provisional) | 0.0862 | 1.28× | a8 0.0904 | 1.33× |
 | 4.5 | NVFP4 GPTQ+JSO | per-16 | exp | — | — | a4 0.1188 | 1.53× (at 4.0 bytes) |
-| 5.0 | E4M3 window L=14 | CHANNEL | exp, pinned | 0.0339 | **0.989×** | a8 0.0415 | 1.21× |
-| 8.0 | FP8 per-channel RTN (E4M3 floor) | per-row | exp | 0.0189 | (EXL3 K8 0.0051) | a8 0.0306 | — |
+| 5.0 | E4M3 TCQ span 2 (default wire) | LUT16 | wire | 0.0425 | 1.232× | a8 0.0488 | 1.41× |
+| 5.0 | E4M3 window L=12 | LUT16 | wire | 0.0406 | 1.177× | a8 0.0471 | 1.37× |
+| 5.0 | E4M3 window L=12 | CHANNEL | wire | 0.0349 | **1.016×** | a8 0.0423 | 1.23× |
+| 6.0 | E4M3 window L=12 | CHANNEL | wire | 0.0218 | 1.240× | a8 0.0324 | 1.84× |
+| 8.0 | FP8 per-channel RTN (E4M3 floor) | per-row | wire | 0.0215 | (EXL3 K8 0.0048) | a8 0.0322 | — |
 
-The production-encoder rows for every cell above, plus the E2M1x2 window
-arms on the true wire and the E4M3 3.0/6.0 rungs, are written by
-`experiments/tessera_frontier.py` into `experiments/results/tessera_frontier.{json,log}`
-and folded in here when the run lands.
+The *wire* rows are `experiments/tessera_frontier.py` on the six experts
+(`experiments/results/tessera_frontier.{json,log,stdout}`, run 2026-09-02
+on sparklina at Tessera `40ae011`, window arms at L=12, `scale_refit=1`,
+no LDLQ). EXL3 rows are the reference quantiser's reconstructions on the
+same rows (K=2..8; K4 0.06736, K5 0.03429). The L=14 wire arms at 4.0 and
+5.0 are running; the L=14 CHANNEL row above is the pinned-tile experiment.
 
-**What the table says.** (i) Below 4.0 the window body owns the E2M1x2
-ladder; at the cap the coset trellis does. (ii) On E4M3 the plane is worth
-as much as the body: the same window over the LUT16 plane is 1.14× behind
-the same window over the CHANNEL plane at equal bytes. (iii) At 4.0 bytes
-as served, E4M3 + CHANNEL + window is the best executed contract we have
-and is level with EXL3's W4A16 on an FP8 tensor core; at 5.0 and above the
-FP8 activation leg is the floor and EXL3's W4A16 pulls ahead as served.
-(iv) Gridbook's corner of the grammar loses to the memory corner at 4.0;
-its remaining claims (6 bpp on E4M3, ≤3.3 bpp on E2M1) are the frontier
-run's remaining cells.
+**What the table says.** (i) Below the cap the window body owns the
+E2M1x2 ladder on the true wire, not just the tile: 1.06–1.10× behind EXL3
+at 2.5–3.5 bpp where the coset trellis is 1.36–1.43×. At 4.0 the coset
+trellis at its cap (1.170×) beats the L=12 window (1.244×); the six-expert
+tuple sweep says L=14 levels them at equal payload, and the wire pays the
+window no label bits, so the L=14 wire arm decides the cap. (ii) On E4M3
+the plane and the body compound: the default wire (coset trellis over
+LUT16) is 1.20× behind EXL3 K4; the window over the same plane 1.12×; the
+window over the CHANNEL plane **0.985× at 4.0 and 0.957× at 3.0** — the
+production encoder, at L=12, before LDLQ, decoded bit-exactly by the kernel
+lane — level at 5.0 (1.016×) and 1.24× behind at 6.0, where the E4M3 floor
+(per-channel RTN 0.0215 at 8 bpp against EXL3 K6 0.0175 at 6) caps every
+8-bit tile. The coset trellis over the CHANNEL plane is the worst E4M3 arm
+(1.41×): the sub-cap E4M3 forest builder, not the plane. (iii) As served,
+E4M3 + CHANNEL + window at 4.0 bytes executes W8A8 at 1.047× EXL3's W4A16
+(0.973× at 3.0 bytes): the best executed contract we have, and the only
+one at or under EXL3's weight-only number. Every E2M1 arm pays the NVFP4
+activation leg (a4 ≈ 1.4–1.5× its own weight-only error at 4.0), which is
+why W4A4 loses as served at every rate and why W8A8 is the 4.0-byte
+recipe. (iv) Gridbook's corner of the grammar loses to the memory corner
+at 4.0 (1.28× vs 0.985×); its 6-bpp and ≤3.3-bpp claims are re-derived from
+the follow-up worker's finished file, not from this run's copies.
 
 ## 5. The product the allocator sees
 
