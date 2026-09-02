@@ -14,7 +14,7 @@ export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$R/logs
 export TESSERA_KL_PORT=8002
 export TESSERA_GPU_MEM_UTIL=0.30
-export TESSERA_KL_NAME=tessera-kl-serve-rot
+export TESSERA_KL_NAME=tessera-kl-serve-rot   # unique to this worker: docker rm -f must never touch another serve
 export TMPDIR=/home/rob/tmp
 export TRITON_CACHE_DIR=/home/rob/.triton-cache
 cd $W

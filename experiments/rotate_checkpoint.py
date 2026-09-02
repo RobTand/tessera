@@ -203,6 +203,12 @@ def main() -> None:
     ap.add_argument("--tokens", type=int, default=512)
     ap.add_argument("--verify-text", type=Path, default=None)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--identity", action="store_true",
+                    help="R = I: fold the norm gammas and untie the head, but do NOT rotate. "
+                         "This is the control that separates the two things a folded R1 does "
+                         "at once -- gamma folding rescales every input column of every reader "
+                         "and so moves both the per-16 group maxima and the per-row amax a "
+                         "quantiser sees, entirely apart from any mixing.")
     args = ap.parse_args()
 
     config = json.loads((args.src / "config.json").read_text())
@@ -211,10 +217,12 @@ def main() -> None:
     state, _ = load_state_dict(args.src)
     dtype = state["model.embed_tokens.weight"].dtype
 
-    rot = rotation(hidden, args.seed)
+    rot = (torch.eye(hidden, dtype=torch.float64) if args.identity
+           else rotation(hidden, args.seed))
     identity = (rot @ rot.T - torch.eye(hidden, dtype=torch.float64)).abs().max().item()
-    print(f"R: {hidden}x{hidden} randomised Hadamard, seed {args.seed}, "
-          f"max |R Rᵀ - I| = {identity:.3e}")
+    print(f"R: {hidden}x{hidden} "
+          f"{'IDENTITY (gamma-fold control, no mixing)' if args.identity else 'randomised Hadamard'}"
+          f", seed {args.seed}, max |R Rᵀ - I| = {identity:.3e}")
     assert identity < 1e-10, "R is not orthogonal"
 
     rotated = rotate_state_dict(state, n_layers, rot)
@@ -234,7 +242,8 @@ def main() -> None:
     dst_bytes = sum(p.stat().st_size for p in args.dst.glob("*.safetensors"))
     head_bytes = payload["lm_head.weight"].numel() * payload["lm_head.weight"].element_size()
     sidecar = {
-        "transform": "QuaRot/SpinQuant R1 (residual-stream randomised Hadamard), folded",
+        "transform": ("gamma fold only, R = I (control)" if args.identity
+                      else "QuaRot/SpinQuant R1 (residual-stream randomised Hadamard), folded"),
         "source": str(args.src), "seed": args.seed, "hidden": hidden,
         "rotation_sha256": hashlib.sha256(rot.numpy().tobytes()).hexdigest(),
         "orthogonality_residual": identity,
