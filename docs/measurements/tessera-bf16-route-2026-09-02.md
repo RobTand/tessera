@@ -128,7 +128,7 @@ the first one whose code does not fit in a byte. The ALPHABET plane carries
 the grid is recovered by digest search over `SERIALISABLE_GRIDS`, so a reader
 without BF16 fails at the profile id with the list of grids it does implement,
 never at the plane. Written up as
-`docs/schema/prismaquant.tessera.v1.md` §1d.
+`docs/schema/prismaquant.tessera.v1.md` §1e.
 
 **Accounting.** `calculator.terminal_rate` hardcoded one byte per table entry —
 the exact `format-cost-models-must-not-be-special-cases` bug class, live on the
@@ -187,7 +187,7 @@ the six GLM units. A twin written in fp16 would be a tighter ceiling (W1's
 
 ## 5. Export
 
-`experiments/export_gridbook_tessera.py --grid BF16` writes modules declaring
+`experiments/export_tessera_serving.py --grid BF16` writes modules declaring
 family `TESSERA_BF16`, and `--stock-twin DIR` writes, alongside it, a plain
 BF16 safetensors of the decoded tiles under the *source's own tensor names*,
 with `quantization_config` removed and every passthrough tensor copied
@@ -496,10 +496,10 @@ anyway.
 
 The plugin adds a **third family** alongside `TESSERA_NVFP4` (W4A4) and
 `TESSERA_FP8` (W8A8): `TESSERA_BF16`, **W16A16**, materialising into an
-ordinary bfloat16 weight. It needs no new flag — the existing
-`GRIDBOOK_TESSERA` / `GRIDBOOK_TESSERA_MODE` pair selects it — and no new
-packing: there is no stock quantized layout to build, because bf16 *is* the
-stock layout.
+ordinary bfloat16 weight. It needs no new flag — the checkpoint's
+`quant_method: "tessera"` selects the plugin and `TESSERA_SERVE_MODE` declares
+the residency, exactly as for the other two — and no new packing: there is no
+stock quantized layout to build, because bf16 *is* the stock layout.
 
 **One import, no Triton.** `src/tessera/bf16_route.py` is pure torch, so a
 runtime forbidden from importing Triton imports this module unchanged.
@@ -540,8 +540,9 @@ quality choice. **Folded** (`materialize_bf16_folded` /
 `stock.materialize_stock`; a lane that calls it has silently chosen the twin's
 error for no reason.
 
-**What the route spec should say** (mirroring `TESSERA_FP8`'s row in the
-Gridbook contract): family `TESSERA_BF16`, weight dtype `bfloat16`, activation
+**What the route spec should say** (mirroring `TESSERA_FP8`'s row in
+Tessera's own `runtime_contract.json`): family `TESSERA_BF16`, weight dtype
+`bfloat16`, activation
 dtype `bfloat16`, no weight scale tensor on the stock side, `activation
 contract "w16a16"`, streamed residency = the artifact's own wire bpp,
 resident residency = 16 bpp. There is no `--moe-backend` requirement and no
@@ -673,15 +674,28 @@ encoder-drift diff, the structural twin check, the `grid_from_config` hole, the
 PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d, and
 this section's contention note).
 
-**Merge note (this branch is cut at `3d419e7`).** `master` has since renamed
-`experiments/export_gridbook_tessera.py` to `experiments/export_tessera_serving.py`
-(`fb84e41`, a **pure** rename -- the two blobs are byte-identical), and this
-branch's `--grid BF16` / `--stock-twin` work is a diff against the old path.
-Apply it to the new name; there is no content conflict. Everything else on this
-branch is either a new file or a localized hunk in `alphabet.py`, `encode.py`,
-`export.py`, `decode.py`, `stock.py`, `calculator.py`, `unit_artifact.py`. The
-no-touch files (`serving/`, `kernel*.py`, `compensate.py`, `scale_channel.py`,
-`layout.py`) are untouched.
+**Merged with `master` at `f3e7d0a`** (the serving plugin, TP slicing / schema
+minor 4, the window kernel, LDLQ + the Hessian plumbing). Two conflicts, both
+resolved by hand: this document's status entry, and the exporter -- `master`
+moved `experiments/export_gridbook_tessera.py` to
+`experiments/export_tessera_serving.py` and left a shim at the old name, so
+**the BF16 family lives in `export_tessera_serving.py`** and the shim is
+`master`'s. Everything else auto-merged. The no-touch files (`serving/`,
+`kernel*.py`, `compensate.py`, `scale_channel.py`, `layout.py`) are untouched
+by this branch.
+
+**Every number in this document predates that merge.** They were taken at
+`fc2c1c1` (stamped in the artifacts and in the sweep JSONs), before `master`'s
+LDLQ + full-H refit landed. That work moves both arms — it is a better
+encoder for the E4M3 wire and for the BF16 wire alike — so the *ratios* are
+the claim and the absolute errors here are the pre-LDLQ ones. Re-running the
+sweep on the merged tree is the first thing that would sharpen §7.
+
+**Test state after the merge:** `pytest tests -q` is **792 passed, 5 skipped,
+8 failed** on the host. All 8 failures (`test_serving_nvfp4_route.py` ×3,
+`test_serving_sharding.py` ×5) reproduce **identically on a clean `master`
+checkout** (`git archive master | …`, 8 failed / 36 passed) and none touch
+this branch's files; they are `master`'s to fix.
 
 **What is measured here, and on what.** Weight-space and (on GLM) output-space
 error, on real tensors, both arms through the real wire, priced at the bytes

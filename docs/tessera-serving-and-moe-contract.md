@@ -1,6 +1,11 @@
 # Tessera: serving contract, MoE cell, and export gate
 
-Status: **decisions**, 2026-09-01. Written before the render mechanism so the
+Status: **decisions**, 2026-09-01; sections 1 and 3 **superseded 2026-09-02**
+by the Tessera serving plugin (`docs/measurements/tessera-serving-plugin-2026-09-02.md`).
+The superseded text is kept: it is the decision the plugin replaced, and the
+reasoning in it is why the plugin looks the way it does.
+
+Original status line: Written before the render mechanism so the
 on-disk layout is not built twice. Every measured number here is cited to the
 run that produced it; nothing is asserted about a runtime we have not read.
 
@@ -19,6 +24,18 @@ The encode campaign is an afternoon. Encode cost is **not** what gates this
 work, which removes the main argument for building the serving backend first.
 
 ## 1. Serving contract (decided; loader deferred)
+
+> **Superseded 2026-09-02 — the loader is no longer deferred, and it is ours.**
+> Tessera ships its own vLLM plugin: `tessera.serving`, an entry point in the
+> `vllm.general_plugins` group registering `quant_method: "tessera"`.  A serve
+> installs one package -- Tessera -- and no second quantization stack.  Both
+> routes below are served by it (`TESSERA_NVFP4` W4A4 and `TESSERA_FP8` W8A8),
+> and the streamed residency mode is the kernel lane's shape: the body stays
+> compressed on disk *and in memory*, decoded inside the forward.  The only
+> operator knob is `TESSERA_SERVE_MODE=resident|streamed`.  What survives from
+> the text below is its reasoning: the container is self-describing from bytes
+> alone, which is exactly why the loader stayed small enough to own.
+
 
 The precedent is in the pinned image already: vLLM `0.1.dev20051+g487ecf187`
 (Mia's exact pin) carries in-tree `exl3.py::Exl3Config`, which reads trellis
@@ -71,6 +88,20 @@ the goal.
   which is the next commit, not a Gridbook cell and not an RC wheel.
 
 ## 3. Export gate (decided)
+
+> **Superseded 2026-09-02 for the dense cell.**  "Tessera rungs are
+> `route_status: unbacked` on every serving profile today" was true of a world
+> with no Tessera runtime.  Tessera now publishes its own machine-readable
+> contract (`tessera/serving/runtime_contract.json`) whose dense cells are
+> `backed_with_serve_flag`, carrying `requires_plugin: "tessera"` and
+> `requires_serve_flags: ["TESSERA_SERVE_MODE=resident|streamed"]` -- a gate
+> input, not prose (principle 14).  A producer derives eligibility from that
+> table through `importlib.resources` and refuses on mismatch.  **The routed-MoE
+> cell is NOT superseded:** the contract declares `structures: ["dense"]` and
+> the plugin refuses a FusedMoE layer loudly, so a Tessera MoE export still
+> fails closed exactly as this section says.  The declared-non-native-target
+> decision below therefore still governs any MoE artifact.
+
 
 Tessera rungs are `route_status: unbacked` on every serving profile today, and
 export fails closed on an unbacked route (principle 9). That is the doctrine

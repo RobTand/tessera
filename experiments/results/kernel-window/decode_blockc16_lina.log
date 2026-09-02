@@ -1,0 +1,16 @@
+=== lock held 2868449 2026-09-02T17:40:24Z kernel-window decode re-take (block_c=16)
+=== power 62.69 W procs 4 containers 0
+4 process(es) on the card at start
+idle draw before the first arm: {'mean_w': 64.3, 'max_w': 64.7, 'min_w': 63.5, 'n': 3, 'cuda_procs_max': 4, 'cuda_procs_min': 4}
+196 real units
+  1024x3072: fused 21.19 us (223.0 GB/s, 62.1 W, 4 procs) | bf16 tile 24.90 us (316.0 GB/s) | torch eager 5213.6 | compiled 729.8 us  -> 246.1x / 34.4x
+  3072x1024: fused 19.84 us (237.9 GB/s, 61.8 W, 4 procs) | bf16 tile 21.23 us (370.6 GB/s) | torch eager 5500.4 | compiled 531.6 us  -> 277.3x / 26.8x
+  1024x2048: fused 14.02 us (224.7 GB/s, 61.2 W, 4 procs) | bf16 tile 15.59 us (336.6 GB/s) | torch eager 3604.8 | compiled 433.8 us  -> 257.2x / 30.9x
+  2048x1024: fused 14.36 us (219.1 GB/s, 62.2 W, 4 procs) | bf16 tile 14.50 us (361.6 GB/s) | torch eager 2495.8 | compiled 114.7 us  -> 173.8x / 8.0x
+  1024x1024: fused 8.69 us (181.3 GB/s, 57.9 W, 4 procs) | bf16 tile 8.56 us (306.6 GB/s) | torch eager 438.0 | compiled 74.5 us  -> 50.4x / 8.6x
+  cold rotation over 196 units (221 MB of plane): 30.94 us/unit, 109.0 GB/s, 67.1 W mean / 68.7 W max
+  whole-checkpoint decode: 6.06 ms
+
+wrote /mnt/shared/tessera-runs/kernel-window/bench-decode-20260902-134054.json
+=== power after 64.86 W procs 3
+=== DECODE DONE

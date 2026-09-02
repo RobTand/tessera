@@ -29,6 +29,7 @@ from safetensors import safe_open
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid          # noqa: E402
+from tessera.compensate import block_ldl, regularize_hessian          # noqa: E402
 from tessera.export import DEFAULT_SCALE_REFIT, encode_linear          # noqa: E402
 from tessera.manifest import BodyKind                                  # noqa: E402
 from tessera.unit_artifact import read_unit_artifact                   # noqa: E402
@@ -52,6 +53,14 @@ def main():
     ap.add_argument("--exl3", type=int, nargs="+", default=[3, 4, 5])
     ap.add_argument("--slice", type=int, nargs=2, default=None, metavar=("ROWS", "COLS"))
     ap.add_argument("--no-tcq", action="store_true")
+    ap.add_argument("--ldlq-sigma", type=float, nargs="*", default=None,
+                    help="also run each window arm with LDLQ at these Hessian regularisers; "
+                         "H is x_fit^T x_fit, the same fit rows the plane and the NVFP4 input "
+                         "scale are fit on, and the score stays the held-out eval rows")
+    ap.add_argument("--ldlq-block", type=int, default=128)
+    ap.add_argument("--refit-metric", default=None,
+                    help="run the window arms again with the row-scale refit under this error: "
+                         "hessian | h^ALPHA")
     ap.add_argument("--out", default="experiments/results/tessera_window_wire.json")
     a = ap.parse_args()
     rungs = json.loads(a.rungs_json) if a.rungs_json else RUNGS
@@ -80,6 +89,12 @@ def main():
         g = select_mse_grid_input_global_scale([x_fit])
         xq4 = nvfp4_activation_qdq_served(x_ev, g).float()
         xq8 = fp8_dynamic_activation_qdq_vllm(x_ev).dequant.float()
+        # The Hessian for the activation-aware encoder arms, from the SAME fit
+        # rows every other fitted quantity here uses; the score below is the
+        # held-out tail, so no arm is graded on rows it was fit on.
+        H = None
+        if a.ldlq_sigma or a.refit_metric:
+            H = (x_fit.double().T @ x_fit.double()).float() / x_fit.shape[0]
         del x_fit, xa
         for proj in a.projs:
             name = f"model.language_model.layers.{layer}.mlp.experts.0.{proj}.weight"
@@ -124,6 +139,29 @@ def main():
                     for L in a.window_bits:
                         wire(f"{gname} window q{q_win} L={L}", grid=grid, q256=q_win,
                              body=BodyKind.WINDOW, window_bits=L)
+                        if H is None or H.shape[0] != w.shape[1]:
+                            continue
+                        metric = None
+                        if a.refit_metric == "hessian":
+                            metric = H
+                        elif a.refit_metric:
+                            hd = H.diagonal()
+                            metric = (hd / hd.mean()).pow(float(a.refit_metric.removeprefix("h^")))
+                        # Each lever alone and the two together, so the cross
+                        # term is visible rather than assumed.
+                        combos = [(sigma, None) for sigma in (a.ldlq_sigma or [])]
+                        if metric is not None:
+                            combos.append((None, metric))
+                            combos += [(sigma, metric) for sigma in (a.ldlq_sigma or [])]
+                        for sigma, m in combos:
+                            ldl = None
+                            if sigma is not None:
+                                ldl = block_ldl(regularize_hessian(H, sigma_reg=sigma), a.ldlq_block)
+                            tag = ("" if sigma is None else f" LDLQ{sigma}") + \
+                                  ("" if m is None else f" refit-{a.refit_metric}")
+                            wire(f"{gname} window q{q_win} L={L}{tag}", grid=grid, q256=q_win,
+                                 body=BodyKind.WINDOW, window_bits=L, ldl=ldl,
+                                 ldl_block=a.ldlq_block, refit_metric=m)
             out["experts"][tname] = res
             out_path.write_text(json.dumps(out, indent=1))
         del x_ev, xq4, xq8

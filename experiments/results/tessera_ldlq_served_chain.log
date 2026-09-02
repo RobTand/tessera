@@ -1,0 +1,48 @@
+== exporting ldlq  (--hessian /mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt --ldlq-sigma 1.0 --ldlq-block 32)  12:18:38
+}
+elapsed 1288s -> /mnt/shared/tessera-runs/ldlq/ldlq-gridbook (twin -> /mnt/shared/tessera-runs/ldlq/ldlq-stock-twin)
+== exporting ldlqH  (--hessian /mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt --ldlq-sigma 1.0 --ldlq-block 32 --refit-metric hessian)  12:40:10
+}
+elapsed 1092s -> /mnt/shared/tessera-runs/ldlq/ldlqH-gridbook (twin -> /mnt/shared/tessera-runs/ldlq/ldlqH-stock-twin)
+== exports done 12:58:23
+serving /mnt/shared/tessera-runs/ldlq/ldlq-stock-twin  (vllm/vllm-openai:latest)
+  up after 130s
+[dump] chunk 1/8 positions=511 k=1025 4.9s
+[dump] chunk 2/8 positions=511 k=1025 9.6s
+[dump] chunk 3/8 positions=511 k=1025 14.2s
+[dump] chunk 4/8 positions=511 k=1025 18.8s
+[dump] chunk 5/8 positions=511 k=1025 23.3s
+[dump] chunk 6/8 positions=511 k=1025 26.8s
+[dump] chunk 7/8 positions=511 k=1024 31.7s
+[dump] chunk 8/8 positions=511 k=1025 36.6s
+dumped 4088 positions x k<=1025 -> /mnt/shared/tessera-kl/qwen_ldlq_ldlq.json
+  top-K coverage: min=0.0802 mean=0.9770   (1 - coverage is the teacher/student mass this K cannot see)
+dumped -> /mnt/shared/tessera-kl/qwen_ldlq_ldlq.json   (serve log /mnt/shared/tessera-runs/ldlq/serve_qwen_ldlq_ldlq.log)
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=81.60%
+  ALL            KL >= 0.112864   (<= 2.743693 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.027012 max 0.794042
+  CONFIDENT      n=1709 (42%)  KL >= 0.080449   (<= 0.601585)
+  legacy (v1)    all=0.114194  confident=0.079878   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_ldlq.json
+serving /mnt/shared/tessera-runs/ldlq/ldlqH-stock-twin  (vllm/vllm-openai:latest)
+  up after 140s
+[dump] chunk 1/8 positions=511 k=1025 5.2s
+[dump] chunk 2/8 positions=511 k=1025 10.7s
+[dump] chunk 3/8 positions=511 k=1025 15.9s
+[dump] chunk 4/8 positions=511 k=1025 21.2s
+[dump] chunk 5/8 positions=511 k=1025 26.6s
+[dump] chunk 6/8 positions=511 k=1025 31.7s
+[dump] chunk 7/8 positions=511 k=1024 37.2s
+[dump] chunk 8/8 positions=511 k=1025 41.9s
+dumped 4088 positions x k<=1025 -> /mnt/shared/tessera-kl/qwen_ldlq_ldlqH.json
+  top-K coverage: min=0.2957 mean=0.9727   (1 - coverage is the teacher/student mass this K cannot see)
+dumped -> /mnt/shared/tessera-kl/qwen_ldlq_ldlqH.json   (serve log /mnt/shared/tessera-runs/ldlq/serve_qwen_ldlq_ldlqH.log)
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=81.51%
+  ALL            KL >= 0.104577   (<= 2.711599 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.026719 max 0.778474
+  CONFIDENT      n=1709 (42%)  KL >= 0.072552   (<= 0.588612)
+  legacy (v1)    all=0.109982  confident=0.074509   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_ldlqH.json
+CHAIN DONE 13:15:21

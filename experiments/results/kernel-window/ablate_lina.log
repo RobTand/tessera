@@ -1,0 +1,18 @@
+5 process(es) on the card at start
+idle draw before the first arm: {'mean_w': 30.6, 'max_w': 31.1, 'min_w': 29.7, 'n': 3, 'cuda_procs_max': 5, 'cuda_procs_min': 5}
+  -- 1024x3072, split 64
+     full                           21.17 us   (34.9 W)
+     no wire read                   17.64 us   (40.1 W)
+     no value gather                18.96 us   (38.9 W)
+     neither wire nor gather        23.58 us   (38.7 W)
+     no split-K atomic              19.46 us   (38.0 W)
+     no activation load / FMA       21.91 us   (40.1 W)
+  -- 2560x9728, split 16
+     full                          324.99 us   (39.7 W)
+     no wire read                  109.21 us   (40.7 W)
+     no value gather               320.36 us   (40.7 W)
+     neither wire nor gather       380.24 us   (42.4 W)
+     no split-K atomic             331.87 us   (39.7 W)
+     no activation load / FMA      330.70 us   (39.3 W)
+
+wrote /mnt/shared/tessera-runs/kernel-window/bench-ablate-20260902-130333.json

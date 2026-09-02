@@ -32,6 +32,7 @@ from fractions import Fraction
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Mapping
 
 import torch
 
@@ -52,6 +53,11 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "DEFAULT_LDLQ_SIGMA",
+    "DEFAULT_LDLQ_BLOCK",
+    "DEFAULT_REFIT_OBJECTIVE",
+    "HESSIAN_IDENTITY",
+    "ActivationSource",
     "E4M3_RECIPE",
     "BF16_RECIPE",
     "E2M1X2_SUBCAP_RECIPE",
@@ -131,6 +137,166 @@ DEFAULT_WINDOW_BITS = 0
 DEFAULT_WINDOW_SEED = 0
 DEFAULT_WINDOW_SIGMA: "float | None" = None
 DEFAULT_CHANNEL_SIGMA: "float | None" = None
+#: What to do with an input Hessian when a caller supplies one.  These are
+#: not encoder defaults -- ``encode_unit`` cannot invent a Hessian, so its own
+#: ``ldl``/``refit_metric`` stay ``None`` and a weights-only encode is byte for
+#: byte what it always was.  They are the ANSWER to "an exporter has H; now
+#: what", and every one of them is measured
+#: (``docs/measurements/tessera-ldlq-window-served-2026-09-02.md``): on
+#: Qwen3-0.6B's FP8 wire at 4.07 bpp, served KL-vs-BF16 on vanilla vLLM goes
+#: 0.1512 -> 0.1129 with LDLQ and -> 0.1046 with the full-Hessian row-scale
+#: refit as well (top-1 agreement 78.1% -> 81.5%), at identical bytes; on six
+#: GLM experts the out-space geomean is 0.932x at the same settings.
+#: ``sigma`` and ``block`` are the pair the held-out weight-space sweep chose
+#: over {0.3, 1, 3, 10} x {32, 128}; ``"hessian"`` is the exact quadratic, not
+#: a diagonal power, because the row's true proxy loss has a closed form.
+DEFAULT_LDLQ_SIGMA = 1.0
+DEFAULT_LDLQ_BLOCK = 32
+DEFAULT_REFIT_OBJECTIVE = "hessian"
+
+
+#: The three provenance fields that name *which* Hessian shaped the bytes.
+#: ``capture_h_full.py`` writes all three: the sha of the calibration text,
+#: the number of fit tokens, and the sha of the token ids themselves.  Two
+#: captures that agree on all three are the same capture; two that differ on
+#: any of them are different Hessians, and parts built against them are two
+#: artifacts rather than one.  Required at construction rather than read with
+#: ``.get`` -- an identity of ``None`` compares equal to another ``None``,
+#: which is exactly how a merge guard goes vacuous.
+HESSIAN_IDENTITY = ("text_sha256", "fit_tokens", "fit_ids_sha256")
+
+
+@dataclass(frozen=True)
+class ActivationSource:
+    """The input Hessians an export encodes against, and what to do with them.
+
+    This is the one place the answer to "an exporter has H; now what" lives.
+    ``export_checkpoint``, ``export_checkpoint_streaming`` and the experiment
+    driver all take this object and call ``for_unit``, so the settings that
+    shaped a checkpoint cannot drift between the library and a script -- which
+    is the failure this class exists to prevent, the library path having had
+    no Hessian at all while the script had a measured recipe.
+
+    ``hessians`` maps a **unit** name to its ``[in_features, in_features]``
+    second-moment matrix.  A unit name is the tensor name with one trailing
+    ``.weight`` removed -- ``model.layers.0.mlp.up_proj`` -- which is what a
+    forward hook on the module naturally produces (``capture_h_full.py``).
+    There is deliberately no fallback lookup: a dict keyed the other way would
+    partially match and encode part of the model weights-only, and an encode
+    that silently falls back to RTN raises nothing and looks fine
+    (``render-activations-keyed-by-qname``).  A missing key is refused.
+
+    ``provenance`` is the capture's own record, carried into the exported
+    config so an auditor can see which H shaped the bytes.  It must carry
+    ``HESSIAN_IDENTITY``; anything else it holds (model, seqlen, source split)
+    rides along unread.
+
+    The defaults are the measured recipe -- see ``DEFAULT_LDLQ_SIGMA``.
+    ``refit_objective`` is ``"hessian"`` (the exact quadratic), ``"plain"``
+    (no metric, the weights-only refit) or ``"h^ALPHA"`` for a diagonal power.
+    """
+
+    hessians: "Mapping[str, torch.Tensor]"
+    provenance: "dict"
+    ldlq_sigma: "float | None" = DEFAULT_LDLQ_SIGMA
+    ldlq_block: int = DEFAULT_LDLQ_BLOCK
+    refit_objective: str = DEFAULT_REFIT_OBJECTIVE
+    refit_reach_floor: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.provenance, dict):
+            raise GrammarError(
+                "an ActivationSource needs the capture's provenance dict: without "
+                "it the exported config cannot say which Hessian shaped the bytes"
+            )
+        absent = [f for f in HESSIAN_IDENTITY if self.provenance.get(f) is None]
+        if absent:
+            raise GrammarError(
+                f"the Hessian provenance has no {absent} -- these name the capture, "
+                "and a merge guard that compares them against another part's "
+                "missing values passes vacuously. Re-capture with capture_h_full.py"
+            )
+        if self.ldlq_sigma is not None and not self.ldlq_sigma > 0:
+            raise GrammarError(
+                f"the LDLQ regulariser must be positive (or None to turn LDLQ off), "
+                f"got {self.ldlq_sigma}"
+            )
+        if self.ldlq_block < 1:
+            raise GrammarError(f"the LDLQ block must be at least one column, got "
+                               f"{self.ldlq_block}")
+        obj = self.refit_objective
+        if obj not in ("hessian", "plain") and not obj.startswith("h^"):
+            raise GrammarError(
+                f"unknown refit objective {obj!r}: 'hessian' (the exact quadratic), "
+                "'plain' (unweighted) or 'h^ALPHA' (a diagonal power)"
+            )
+        if obj.startswith("h^"):
+            try:
+                float(obj.removeprefix("h^"))
+            except ValueError:
+                raise GrammarError(f"{obj!r} is not a diagonal power h^ALPHA") from None
+
+    @staticmethod
+    def unit_name(tensor_name: str) -> str:
+        """The Hessian key for a tensor name: one trailing ``.weight`` removed."""
+        return tensor_name.removesuffix(".weight")
+
+    def for_unit(self, tensor_name: str, in_features: int,
+                 device: "str | torch.device" = "cpu") -> dict:
+        """The ``encode_linear`` keyword arguments this unit's Hessian implies.
+
+        Refuses a missing key and a shape mismatch.  Both would otherwise be
+        silent: a wrong key encodes the unit weights-only, and a Hessian of the
+        wrong width would either broadcast or fail somewhere far from here.
+        """
+        key = self.unit_name(tensor_name)
+        if key not in self.hessians:
+            raise GrammarError(
+                f"no Hessian for {key!r}: the capture's keys must be the encoder's "
+                f"unit names (tensor name minus one '.weight'). Encoding it "
+                f"weights-only would raise nothing and quietly price a different "
+                f"artifact, so the export refuses instead"
+            )
+        H = self.hessians[key]
+        H = H.to(device=device, dtype=torch.float32)
+        if H.ndim != 2 or H.shape[0] != H.shape[1] or H.shape[0] != in_features:
+            raise GrammarError(
+                f"{key}: H is {tuple(H.shape)} for {in_features} input features"
+            )
+        kwargs: dict = {"refit_reach_floor": bool(self.refit_reach_floor)}
+        if self.ldlq_sigma is not None:
+            from .compensate import block_ldl, regularize_hessian
+
+            kwargs["ldl"] = block_ldl(
+                regularize_hessian(H, sigma_reg=float(self.ldlq_sigma)),
+                self.ldlq_block,
+            )
+            kwargs["ldl_block"] = self.ldlq_block
+        if self.refit_objective == "hessian":
+            kwargs["refit_metric"] = H
+        elif self.refit_objective != "plain":
+            alpha = float(self.refit_objective.removeprefix("h^"))
+            h = H.diagonal()
+            kwargs["refit_metric"] = (h / h.mean()).pow(alpha)
+        return kwargs
+
+    def config_block(self) -> dict:
+        """The ``activation_aware`` block the exported config records.
+
+        Every field here is compared by the merge guard, and the whole block
+        is what tells a reader that these bytes are **not** reproducible from
+        the weights alone.
+        """
+        return {
+            "ldlq_sigma": self.ldlq_sigma,
+            "ldlq_block": self.ldlq_block,
+            "refit_objective": self.refit_objective,
+            "refit_reach_floor": bool(self.refit_reach_floor),
+            "hessian": dict(self.provenance),
+            "note": "encoder-side only: the wire, the decoder and the lane are "
+                    "unchanged, but this encode is not reproducible from the "
+                    "weights alone -- it needs this Hessian.",
+        }
 
 
 _PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
@@ -514,6 +680,10 @@ def encode_linear_planes(
     window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = DEFAULT_LDLQ_BLOCK,
+    refit_metric: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -539,6 +709,14 @@ def encode_linear_planes(
     switch.  The default stays ``0`` so the exporter's rung names keep meaning
     the rate they have always meant -- ``q256`` alone -- and a caller that wants
     the other axis asks for it.
+
+    ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
+    activation-aware encoder settings (``encode_unit``): the input Hessian's
+    LDL factor for this unit's columns, and the error the row-scale refit
+    minimises.  They change no byte of the wire's grammar -- an artifact built
+    with them is read by the same decoder -- but an encode that uses them is
+    not reproducible from the weights alone, so an exporter that sets them
+    records where its Hessian came from.
 
     ``verify`` reads the bytes back and compares to the encoder's own
     reconstruction.  It is on by default and costs one decode: the guarantee
@@ -572,6 +750,8 @@ def encode_linear_planes(
         trellis_weighting=trellis_weighting,
         body=body, window_bits=window_bits, window_seed=window_seed,
         window_sigma=window_sigma, channel_sigma=channel_sigma,
+        ldl=ldl, ldl_block=ldl_block, refit_metric=refit_metric,
+        refit_reach_floor=refit_reach_floor,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -629,6 +809,7 @@ def export_checkpoint(
     window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
+    activation: "ActivationSource | None" = None,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
 
@@ -639,6 +820,14 @@ def export_checkpoint(
     in ``plan`` that is absent from ``tensors`` is an error rather than a
     no-op: a plan that silently fails to apply is how an artifact ends up
     heavier than the allocation that justified it.
+
+    ``activation`` supplies per-unit input Hessians and turns on the measured
+    activation-aware recipe (LDLQ plus the full-Hessian row-scale refit).  It
+    is refused, not ignored, when a planned unit has no Hessian: an encode
+    that quietly falls back to weights-only raises nothing and ships a
+    different artifact from the one that was priced.  The bytes stay on the
+    same wire -- both levers are encoder-side -- and the config records which
+    capture shaped them.
     """
     from safetensors.torch import save_file
 
@@ -667,6 +856,8 @@ def export_checkpoint(
                 with_diagonals=with_diagonals, verify=verify,
                 scale_refit=scale_refit, trellis_weighting=trellis_weighting,
                 **_recipe_kwargs(resolve(plan[name])),
+                **(activation.for_unit(name, tensor.shape[1], tensor.device)
+                   if activation is not None else {}),
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -689,7 +880,8 @@ def export_checkpoint(
     )
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, trellis_weighting, table)
+                  report, plan, extra_config, scale_refit, trellis_weighting, table,
+                  activation)
     return report
 
 
@@ -773,7 +965,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
                   extra_config: "dict | None", scale_refit: int = 0,
                   trellis_weighting: str = "none",
-                  table: "tuple[RecipeRange, ...] | None" = None) -> None:
+                  table: "tuple[RecipeRange, ...] | None" = None,
+                  activation: "ActivationSource | None" = None) -> None:
     if table is None:
         table = recipe_table(grid)
     used = _used_recipes(table, plan.values())
@@ -867,6 +1060,14 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
             "body_bpp_exact": [report.body_bpp.numerator,
                                report.body_bpp.denominator],
         },
+        # Which Hessian shaped these bytes, and what was done with it.
+        # ``null`` means a weights-only encode -- reproducible from the source
+        # weights and this config alone.  A dict means it is NOT: the bytes
+        # depend on the named capture, so the merge guard compares every field
+        # here and refuses parts built against different Hessians, and
+        # ``encode_settings_from_config`` refuses to hand back encode arguments
+        # that would silently replay the unit weights-only.
+        "activation_aware": None if activation is None else activation.config_block(),
         "plan": dict(plan),
         "rungs_q256": sorted({u.q256 for u in report.units}),
     }
@@ -901,6 +1102,7 @@ def export_checkpoint_streaming(
     window_seed: "int | None" = None,
     window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
     channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
+    activation: "ActivationSource | None" = None,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -921,6 +1123,14 @@ def export_checkpoint_streaming(
     index and config a filtered run writes cover **only its own shards**; the
     caller merges them.  This exists because a 320B-parameter export is nine
     hours on one GB10 and the second one was idle at 4 W.
+
+    ``activation`` supplies per-unit input Hessians and turns on the measured
+    activation-aware recipe (LDLQ plus the full-Hessian row-scale refit).  It
+    is refused, not ignored, when a planned unit has no Hessian: an encode
+    that quietly falls back to weights-only raises nothing and ships a
+    different artifact from the one that was priced.  The bytes stay on the
+    same wire -- both levers are encoder-side -- and the config records which
+    capture shaped them.
     """
     import shutil
 
@@ -980,6 +1190,8 @@ def export_checkpoint_streaming(
                         scale_refit=scale_refit,
                         trellis_weighting=trellis_weighting,
                         **_recipe_kwargs(resolve(plan[name])),
+                        **(activation.for_unit(name, tensor.shape[1], device)
+                           if activation is not None else {}),
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -1009,7 +1221,8 @@ def export_checkpoint_streaming(
         {"metadata": {"total_size": report.total_bytes},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
-                  report, plan, extra_config, scale_refit, trellis_weighting, table)
+                  report, plan, extra_config, scale_refit, trellis_weighting, table,
+                  activation)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
@@ -1041,7 +1254,24 @@ def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict
     missing key resolves to its legacy meaning rather than to today's default.
     ``conv_generators`` is read when present and otherwise resolved from the
     memory order's table, which is what every earlier artifact used.
+
+    A config whose ``activation_aware`` block is not ``null`` is **refused**.
+    Those bytes were shaped by a named Hessian, and no dict of encode keywords
+    can carry one: handing the caller the weights-only settings would replay
+    the unit as a different artifact and raise nothing -- the same silent-RTN
+    failure the export path refuses on a missing key.  A caller holding the
+    capture builds an ``ActivationSource`` and passes it to the exporter; this
+    function is not where a Hessian arrives.
     """
+    activation_aware = config.get("activation_aware")
+    if activation_aware is not None:
+        identity = activation_aware.get("hessian", {})
+        raise GrammarError(
+            "this checkpoint was encoded activation-aware and cannot be replayed "
+            "from its config alone: the bytes depend on the Hessian "
+            f"{ {f: identity.get(f) for f in HESSIAN_IDENTITY} }. Rebuild that "
+            "capture, wrap it in an ActivationSource and pass it to the exporter."
+        )
     memory = int(config.get("conv_memory", DEFAULT_CODE.memory))
     generators = config.get("conv_generators")
     code = (ConvCode(memory=memory, generators=tuple(int(g, 8) for g in generators))

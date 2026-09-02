@@ -13,7 +13,10 @@ export PYTHONPATH="$WT/src:$WT/experiments" TMPDIR=/home/rob/tmp
 export TRITON_CACHE_DIR=/home/rob/.triton-cache
 
 cd "$WT"
-while pgrep -f "export_gridbook_tessera.py|bf16_route_weight_space.py" > /dev/null; do
+# The guard must name EVERY stage that holds the GPU, not just the two that
+# hold it longest: it missed bf16_twin_check.py once and this runner then
+# started under a live twin check (receipt section 11).
+while pgrep -f "export_tessera_serving.py|export_gridbook_tessera.py|bf16_route_weight_space.py|bf16_twin_check.py" > /dev/null; do
   sleep 30
 done
 echo "=== w1 identity $(date -Is)"

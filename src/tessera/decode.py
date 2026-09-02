@@ -29,6 +29,7 @@ from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
 __all__ = [
+    "release_order",
     "replay_body",
     "decode_codes",
     "decode_codes_mixed",
@@ -49,6 +50,7 @@ def _replay_core(
     mask: int,
     memory: int,
     points: int,
+    init: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
     """Body bits -> anchor indices, as one fusable elementwise chain.
 
@@ -65,19 +67,30 @@ def _replay_core(
     """
     select = (body >> shift) & 1
     point = body & mask
-    subset = _window_subset(select, table_sub_flat, memory)
+    subset = _window_subset(select, table_sub_flat, memory, init)
     return subsets_flat[subset.int() * points + point.int()]
 
 
-def _window_subset(
-    select: torch.Tensor, table_sub_flat: torch.Tensor, memory: int
+def _conv_state_stream(
+    select: torch.Tensor, memory: int, init: "torch.Tensor | None" = None
 ) -> torch.Tensor:
-    """Select bits ``[T, cols]`` -> the code's output subset per step.
+    """The convolutional register **before** each step, from the select bits.
 
-    The state before step t is the previous ``memory`` select bits, so this is
-    a windowed function of the stream with O(1) depth (see ``replay_body``).
-    Shared by the per-position replay and the span-L replay, whose select
-    stream is one bit per super-symbol.
+    ``ConvCode.step`` is ``(bit << memory) | state`` right-shifted, a pure
+    shift register, so ``state_t = sum_{k=1..memory} select_{t-k} << (memory -
+    k)``: the newest bit sits at the top.  That makes the state a windowed
+    function of the stream with O(1) depth rather than a walk down the column.
+
+    ``init`` is ``state_0`` -- the register a **shard** inherits from the rows
+    its parent holds above it (``layout.slice_unit``).  Only the first
+    ``memory`` steps can still see it, and the correction is a *right* shift,
+    because a select bit that was ``memory - m`` bits from the top at step 0 is
+    ``memory - m - t`` bits from the top at step t:
+
+        state_t |= init >> t      for t < memory
+
+    ``None`` is the pinned zero start every whole unit has, and then this is
+    byte for byte the replay it always was.
     """
 
     def lagged(value: torch.Tensor, rows_back: int) -> torch.Tensor:
@@ -99,6 +112,27 @@ def _window_subset(
             packed = (packed << width) | lagged(window[width], held)
             held += width
     state = lagged(packed, 1)
+    if init is None:
+        return state
+    taps = min(memory, state.shape[0])
+    start = init.reshape(1, -1).to(state.dtype)
+    shifts = torch.arange(taps, device=state.device, dtype=state.dtype).reshape(taps, 1)
+    head = state[:taps] | (start >> shifts)
+    return torch.cat([head, state[taps:]], dim=0)
+
+
+def _window_subset(
+    select: torch.Tensor,
+    table_sub_flat: torch.Tensor,
+    memory: int,
+    init: "torch.Tensor | None" = None,
+) -> torch.Tensor:
+    """Select bits ``[T, cols]`` -> the code's output subset per step.
+
+    Shared by the per-position replay and the span-L replay, whose select
+    stream is one bit per super-symbol.  ``init`` is the shard's start state.
+    """
+    state = _conv_state_stream(select, memory, init)
     return table_sub_flat[(select.int() << memory) + state.int()]
 
 
@@ -108,6 +142,7 @@ def _replay_span(
     table_sub: torch.Tensor,
     memory: int,
     span: int,
+    init: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
     """Span-L replay: one select bit per super-symbol, stored labels, points.
 
@@ -126,7 +161,7 @@ def _replay_span(
     select = (fields[:, 0] >> shift) & 1                        # [T, cols]
     stored = (fields[:, 1:] >> shift) & (SUBSET_COUNT - 1)     # [T, L-1, cols]
     point = fields & mask                                        # [T, L, cols]
-    super_label = _window_subset(select, table_sub.reshape(-1), memory).long()
+    super_label = _window_subset(select, table_sub.reshape(-1), memory, init).long()
     first = (super_label - stored.sum(dim=1)) % SUBSET_COUNT
     labels = torch.cat([first.unsqueeze(1), stored], dim=1)     # [T, L, cols]
     return subsets[labels, point].reshape(steps, cols)
@@ -143,6 +178,7 @@ def _decode_core(
     memory: int,
     points: int,
     width: int,
+    init: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
     """Body bits + completion bits -> E2M1 nibbles, in one fused pass.
 
@@ -151,7 +187,9 @@ def _decode_core(
     exists to be indexed once.  Fused, it never materialises, and the decoder's
     whole output is a uint8 nibble per position.
     """
-    anchor = _replay_core(body, subsets_flat, table_sub_flat, shift, mask, memory, points)
+    anchor = _replay_core(
+        body, subsets_flat, table_sub_flat, shift, mask, memory, points, init
+    )
     return reach_flat[anchor.int() * width + completion.int()]
 
 
@@ -209,13 +247,21 @@ def _replay_tables(
 
 
 def replay_body(
-    body_bits: torch.Tensor, forest: AnchorForest, code: ConvCode, span: int = 1
+    body_bits: torch.Tensor,
+    forest: AnchorForest,
+    code: ConvCode,
+    span: int = 1,
+    initial_state: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
     """Replay the convolutional code from the body bits alone.
 
     This is the decoder's half of the round trip: it must land on the encoder's
     anchors using nothing but the stored bits, so the test that it equals
     ``EncodedUnit.anchors`` is the real proof the body is decodable.
+
+    ``initial_state`` is the per-column register the stream starts from -- the
+    INITIAL_STATE plane of a shard (``layout.slice_unit``).  ``None`` is the
+    pinned zero start every whole unit has and every kernel assumes.
     """
     device = body_bits.device
     rows, cols = body_bits.shape
@@ -247,7 +293,9 @@ def replay_body(
         )
     )
     if shifted and span > 1:
-        return _replay_span(body_bits, subsets, table_sub, code.memory, span)
+        return _replay_span(
+            body_bits, subsets, table_sub, code.memory, span, initial_state
+        )
     if shifted:
         # Narrowing the body is a bandwidth choice too, and it is available
         # only while a code fits in a byte.  At R=9 this truncated the select
@@ -270,6 +318,7 @@ def replay_body(
             mask,
             code.memory,
             points,
+            initial_state,
         )
         run = _fused_replay() if body.is_cuda and narrow else None
         if run is not None:
@@ -286,7 +335,11 @@ def replay_body(
     stored = (fields[:, 1:] >> shift) & (SUBSET_COUNT - 1)
     point = fields & mask
     anchors = torch.zeros(rows // span, span, cols, dtype=torch.long, device=device)
-    state = torch.zeros(cols, dtype=torch.long, device=device)
+    state = (
+        torch.zeros(cols, dtype=torch.long, device=device)
+        if initial_state is None
+        else initial_state.to(device).long().reshape(cols)
+    )
     for sup in range(rows // span):
         super_label = table_sub[select[sup], state]
         first = (super_label - stored[sup].sum(dim=0)) % SUBSET_COUNT
@@ -296,7 +349,12 @@ def replay_body(
     return anchors.reshape(rows, cols)
 
 
-def replay_window(body_bits: torch.Tensor, window_bits: int, rate: int) -> torch.Tensor:
+def replay_window(
+    body_bits: torch.Tensor,
+    window_bits: int,
+    rate: int,
+    initial_state: "torch.Tensor | None" = None,
+) -> torch.Tensor:
     """The window body's states from its bits alone (schema minor 2).
 
     ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from ``state_{-1} = 0``
@@ -305,6 +363,17 @@ def replay_window(body_bits: torch.Tensor, window_bits: int, rate: int) -> torch
     positions that reach back ``L`` bits, masked.  Closed form, one shifted
     add per tap, no walk down the column -- the same O(1)-depth property
     ``replay_body`` verifies for the convolutional code, here by construction.
+
+    ``initial_state`` is ``state_{-1}``: what a **shard** inherits from the
+    rows its parent holds above it (``layout.slice_unit``).  Unrolling the
+    same recursion gives
+
+        state_t = (init << (t+1)R | sum_{j<=t} bits_j << (t-j)R) mod 2^L
+
+    so the correction is a *left* shift growing with t -- the opposite
+    direction to the convolutional register's, because this shift register
+    runs the other way -- and it falls out of the mask on its own once
+    ``(t+1)R >= L``.  ``None`` is the pinned zero start every whole unit has.
     """
     if not 1 <= rate <= window_bits:
         raise GrammarError(f"rate {rate} does not fit a {window_bits}-bit window")
@@ -313,7 +382,71 @@ def replay_window(body_bits: torch.Tensor, window_bits: int, rate: int) -> torch
     taps = -(-window_bits // rate)
     for tap in range(1, taps):
         state[tap:] |= bits[:-tap] << (tap * rate)
+    if initial_state is not None:
+        start = initial_state.to(state.device).long().reshape(1, -1)
+        for tap in range(min(taps, state.shape[0])):
+            state[tap] |= (start << ((tap + 1) * rate)).reshape(-1)
     return state & ((1 << window_bits) - 1)
+
+
+def release_order(
+    decoded: torch.Tensor, cols: int, superblock: int, counts: "tuple[int, ...]"
+) -> torch.Tensor:
+    """S9's release placement at an **explicit** per-superblock count vector.
+
+    ``encode._canonical_release_order`` is this function at the Bresenham
+    spread of a single total, and a test binds the two so they cannot drift.
+    A *shard* needs the general form, because its counts are not a Bresenham
+    spread of anything: they are the restriction of its parent's.
+
+    Why the restriction is well defined -- the threshold argument.  Within one
+    superblock the parent released the ``n`` positions of largest decoded
+    ``|value|``, ties broken by ascending flat position.  That is a *threshold*
+    set: there is a cutoff ``(tau, pos)`` in the total order such that a
+    position is released exactly when it sits above the cutoff.  Intersecting a
+    threshold set with any subset ``S`` of the superblock leaves the elements
+    of ``S`` above the same cutoff -- which is the top ``|S and released|`` of
+    ``S`` in the same order.  So a shard's released set *is* a legal S9
+    placement for the shard, at the counts the restriction gives, and the
+    decoded magnitudes it ranks by are the parent's own: a shard's body
+    replays to the same codes and its scale field is the parent's restricted,
+    so ``decoded`` agrees position for position.
+
+    The order the counts must therefore travel on the wire: a shard writes its
+    RELEASE plane with ``CountGranularity.PER_SUPERBLOCK`` counts, where a
+    whole unit writes one total and lets the reader respread it.
+    """
+    device = decoded.device
+    blocks = max(1, cols // superblock)
+    if len(counts) != blocks:
+        raise GrammarError(
+            f"{len(counts)} release counts for {blocks} superblocks"
+        )
+    flat = decoded.abs().reshape(-1)
+    position = torch.arange(flat.numel(), device=device)
+    block_of = (position % cols) // superblock
+
+    chosen = []
+    for index, count in enumerate(counts):
+        if not count:
+            continue
+        members = position[block_of == index]
+        if count > members.numel():
+            raise GrammarError(
+                f"superblock {index} releases {count} of {members.numel()} "
+                "positions"
+            )
+        order = torch.argsort(flat[members], descending=True, stable=True)
+        chosen.append(members[order[:count]])
+    if not chosen:
+        return torch.zeros(0, dtype=torch.long, device=device)
+    return torch.cat(chosen)
+
+
+def bresenham_release_counts(total: int, blocks: int) -> "tuple[int, ...]":
+    """The uniform spread ``encode._canonical_release_order`` applies."""
+    per, remainder = divmod(total, blocks)
+    return tuple(per + (1 if index < remainder else 0) for index in range(blocks))
 
 
 def _grid_and_forests(forest):
@@ -347,9 +480,15 @@ def _decode_window(unit: "EncodedUnit", grid: PayloadGrid, code_dtype) -> torch.
         )
     rates = torch.tensor(unit.rates, device=device)
     codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
+    start = getattr(unit, "initial_state", None)
     for present in sorted(set(unit.rates)):
         which = torch.nonzero(rates == present).squeeze(1)
-        states = replay_window(unit.body_bits[:, which], unit.window_bits, present)
+        states = replay_window(
+            unit.body_bits[:, which],
+            unit.window_bits,
+            present,
+            None if start is None else start.to(device)[which],
+        )
         codes[:, which] = table[states].to(code_dtype)
     return codes
 
@@ -373,7 +512,10 @@ def decode_codes(
     depth = forest.cap - forest.rate
     completion = depth if completion is None else completion
     device = unit.body_bits.device
-    anchors = replay_body(unit.body_bits, forest, code, getattr(unit, "span", 1))
+    anchors = replay_body(
+        unit.body_bits, forest, code, getattr(unit, "span", 1),
+        getattr(unit, "initial_state", None),
+    )
     # A code is a nibble only while the grid is E2M1.  Above 256 codes a uint8
     # table silently wraps, so the dtype follows the grid -- and it stays uint8
     # below that so the single-rate and mixed-rate decoders agree on the dtype
@@ -631,6 +773,11 @@ def decode_codes_mixed(
         return codes
     codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
     span = getattr(unit, "span", 1)
+    # A shard's start state is per column, so it is sliced by the same
+    # ``which`` the body is: a rate group's columns carry their own states.
+    start = getattr(unit, "initial_state", None)
+    if start is not None:
+        start = start.to(device)
     # The depth the unit was WRITTEN at bounds the depth it can be read at.
     # ``completion_bits`` at level c is an index into ``reachable(anchor, c)``,
     # and the descendant order is a tree read most-significant-bit first, so the
@@ -690,6 +837,7 @@ def decode_codes_mixed(
             code.memory,
             points,
             reachable.shape[1],
+            None if start is None else start[which],
         )
         if run is not None:
             try:
@@ -697,7 +845,9 @@ def decode_codes_mixed(
                 continue
             except Exception:  # pragma: no cover - fall back, never fail closed
                 pass
-        anchors = replay_body(body, picked, code, span)
+        anchors = replay_body(
+            body, picked, code, span, None if start is None else start[which]
+        )
         codes[:, which] = reachable.long()[anchors, comp.long()].to(code_dtype)
     if apply_release and unit.release_index.numel():
         codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)

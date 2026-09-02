@@ -17,7 +17,7 @@ cd "$WT"
 for Q in "${@:-1536 1792}"; do
   R=$((Q / 256))
   echo "=== R=$R (q256=$Q)  $(date -Is)"
-  "$PY" experiments/export_gridbook_tessera.py "$SRC" "$OUT/qwen0.6b-bf16-r$R" \
+  "$PY" experiments/export_tessera_serving.py "$SRC" "$OUT/qwen0.6b-bf16-r$R" \
       --grid BF16 --q256 "$Q" --stock-twin "$OUT/qwen0.6b-bf16-r$R-twin" --device cuda
   echo "=== verify R=$R  $(date -Is)"
   "$PY" experiments/bf16_twin_check.py \

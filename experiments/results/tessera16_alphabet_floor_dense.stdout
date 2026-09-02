@@ -1,0 +1,42 @@
+rate-8 arms on 7 tensors of layers [2]: layers.2.mlp, layers.2.mlp, layers.2.mlp, layers.2.self_attn, layers.2.self_attn, layers.2.self_attn, layers.2.self_attn
+[0/196] model.layers.0.mlp.down_proj 21s fp8rtn 0.0264 nvfp4 0.0919 e4m3_q1024 0.0732 bf16_q1024 0.0731 bf16fold_q1024 0.0731
+[10/196] model.layers.1.self_attn.k_proj 223s fp8rtn 0.0257 nvfp4 0.0846 e4m3_q1024 0.0896 bf16_q1024 0.0881 bf16fold_q1024 0.0881
+[20/196] model.layers.10.self_attn.v_proj 355s fp8rtn 0.0265 nvfp4 0.1024 e4m3_q1024 0.0866 bf16_q1024 0.0866 bf16fold_q1024 0.0866
+[30/196] model.layers.12.mlp.up_proj 512s fp8rtn 0.0263 nvfp4 0.0977 e4m3_q1024 0.0753 bf16_q1024 0.0752 bf16fold_q1024 0.0752
+[40/196] model.layers.13.self_attn.q_proj 647s fp8rtn 0.0262 nvfp4 0.0960 e4m3_q1024 0.0691 bf16_q1024 0.0686 bf16fold_q1024 0.0686
+[50/196] model.layers.15.mlp.gate_proj 784s fp8rtn 0.0262 nvfp4 0.0887 e4m3_q1024 0.0739 bf16_q1024 0.0731 bf16fold_q1024 0.0731
+[60/196] model.layers.16.self_attn.o_proj 933s fp8rtn 0.0265 nvfp4 0.0958 e4m3_q1024 0.0728 bf16_q1024 0.0726 bf16fold_q1024 0.0727
+[70/196] model.layers.18.mlp.down_proj 1079s fp8rtn 0.0263 nvfp4 0.0961 e4m3_q1024 0.0777 bf16_q1024 0.0778 bf16fold_q1024 0.0778
+[80/196] model.layers.19.self_attn.k_proj 1171s fp8rtn 0.0259 nvfp4 0.0961 e4m3_q1024 0.0780 bf16_q1024 0.0775 bf16fold_q1024 0.0775
+[90/196] model.layers.2.self_attn.v_proj 7725s fp8rtn 0.0263 nvfp4 0.1010 e4m3_q1024 0.0803 bf16_q1024 0.0803 bf16fold_q1024 0.0804 e4m3_q2048 0.0263 bf16_q2048 0.0063 bf16fold_q2048 0.0065
+[100/196] model.layers.21.mlp.up_proj 7803s fp8rtn 0.0264 nvfp4 0.0967 e4m3_q1024 0.0751 bf16_q1024 0.0750 bf16fold_q1024 0.0750
+[110/196] model.layers.22.self_attn.q_proj 7866s fp8rtn 0.0265 nvfp4 0.0982 e4m3_q1024 0.0720 bf16_q1024 0.0716 bf16fold_q1024 0.0716
+[120/196] model.layers.24.mlp.gate_proj 7909s fp8rtn 0.0263 nvfp4 0.0917 e4m3_q1024 0.0697 bf16_q1024 0.0695 bf16fold_q1024 0.0695
+[130/196] model.layers.25.self_attn.o_proj 7946s fp8rtn 0.0264 nvfp4 0.0933 e4m3_q1024 0.0737 bf16_q1024 0.0735 bf16fold_q1024 0.0735
+[140/196] model.layers.27.mlp.down_proj 7975s fp8rtn 0.0272 nvfp4 0.0993 e4m3_q1024 0.0940 bf16_q1024 0.0926 bf16fold_q1024 0.0926
+[150/196] model.layers.3.self_attn.k_proj 8009s fp8rtn 0.0259 nvfp4 0.0938 e4m3_q1024 0.0802 bf16_q1024 0.0792 bf16fold_q1024 0.0792
+[160/196] model.layers.4.self_attn.v_proj 8044s fp8rtn 0.0263 nvfp4 0.1025 e4m3_q1024 0.0828 bf16_q1024 0.0828 bf16fold_q1024 0.0828
+[170/196] model.layers.6.mlp.up_proj 8088s fp8rtn 0.0264 nvfp4 0.0989 e4m3_q1024 0.0772 bf16_q1024 0.0772 bf16fold_q1024 0.0772
+[180/196] model.layers.7.self_attn.q_proj 8127s fp8rtn 0.0263 nvfp4 0.0993 e4m3_q1024 0.0724 bf16_q1024 0.0719 bf16fold_q1024 0.0719
+[190/196] model.layers.9.mlp.gate_proj 8159s fp8rtn 0.0265 nvfp4 0.0891 e4m3_q1024 0.0651 bf16_q1024 0.0649 bf16fold_q1024 0.0649
+
+== geomean over 196 Qwen3-0.6B Linears (all)
+    arm                  plain  H-weighted
+    fp8rtn              0.0264      0.0262
+    bf16_q1024          0.0701      0.0762
+    bf16fold_q1024      0.0702      0.0762
+    e4m3_q1024          0.0704      0.0765
+    nvfp4               0.0941      0.0955
+
+== geomean over 7 Linears of layer [2] (the rate-8 subset)
+    arm                  plain  H-weighted
+    fp8rtn              0.0264      0.0238
+    bf16_q1024          0.0703      0.0735
+    bf16_q2048          0.0062      0.0079
+    bf16fold_q1024      0.0703      0.0735
+    bf16fold_q2048      0.0064      0.0080
+    e4m3_q1024          0.0705      0.0738
+    e4m3_q2048          0.0264      0.0234
+    nvfp4               0.0933      0.0866
+
+wrote /home/rob/tessera/experiments/results/tessera16_alphabet_floor_dense.json

@@ -43,6 +43,7 @@ from .manifest import (
     ArrangementMode,
     BodyKind,
     BranchIdentity,
+    ShardOrigin,
     ContainerClass,
     Geometry,
     Manifest,
@@ -134,6 +135,22 @@ def encoder_profile_id(
         parts.append(f"scale:{ScalePlaneKind(scale_plane).name.lower()}")
     payload = "|".join(parts)
     return hashlib.sha256(payload.encode()).digest()
+
+
+def _arrangement_for(rates, q256: int, columns: int) -> ArrangementMode:
+    """BRESENHAM when the schedule is regenerable, STORED when it is not.
+
+    A whole unit's schedule is the canonical Bresenham spread and is not
+    written twice.  A **column shard**'s is a *window* of that spread, which is
+    in general not the canonical schedule of its own column count -- so it goes
+    on the wire.  The choice is made by comparing, never by asking whether the
+    unit is a shard: a shard whose window happens to be canonical writes the
+    smaller manifest, and a whole unit is unaffected.
+    """
+    from .grammar import bresenham_rate_schedule, root_from_q256
+
+    canonical = bresenham_rate_schedule(root_from_q256(q256), columns, cap=None)
+    return ArrangementMode.BRESENHAM if rates == canonical else ArrangementMode.STORED
 
 
 def _forest_planes(rates: "tuple[int, ...]", forests: "dict[int, AnchorForest]"):
@@ -282,6 +299,29 @@ def build_unit_artifact(
     else:
         alphabet, descendant = _forest_planes(rates, forests)
 
+    # A shard (``layout.slice_unit``) carries three extra things: the start
+    # state its columns replay from, the per-superblock release counts no
+    # spread reproduces, and the record saying where in its parent it sits.
+    # A whole unit has ``state_bits == 0`` and no shard record, and then every
+    # line below is the line it always was -- which is what makes the identity
+    # slice byte-identical to the unit it came from.
+    state_bits = int(getattr(unit, "state_bits", 0))
+    start = getattr(unit, "initial_state", None)
+    if bool(state_bits) != (start is not None):
+        raise GrammarError(
+            f"the unit declares {state_bits} state bits and "
+            f"{'a' if start is not None else 'no'} start state; a shard cut "
+            "below row 0 carries both or neither"
+        )
+    # Only a shard puts its release counts on the wire.  A whole unit's are the
+    # Bresenham spread of the total, which the reader regenerates -- and writing
+    # them anyway would change the RELEASE descriptor's granularity and with it
+    # the bytes of every unit that carries releases.
+    release_counts = (
+        (getattr(unit, "release_counts", ()) or None)
+        if getattr(unit, "parent_rows", 0)
+        else None
+    )
     has_diagonals = unit.diagonals is not None
     payloads = {
         PlaneKind.ALPHABET: alphabet,
@@ -298,6 +338,18 @@ def build_unit_artifact(
     row_scale = plane_kind is ScalePlaneKind.CHANNEL
     if row_scale:
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.scale_rows)
+    if state_bits:
+        if start.numel() != cols:
+            raise GrammarError(
+                f"the start state holds {start.numel()} words for {cols} "
+                "columns: one state per column"
+            )
+        if int(start.max()) >= (1 << state_bits):
+            raise GrammarError(
+                f"a start state of {int(start.max())} does not fit "
+                f"{state_bits} bits"
+            )
+        payloads[PlaneKind.INITIAL_STATE] = pack_uniform(start, state_bits)
     spec = TerminalSpec(
         "t-nvfp4",
         widths,
@@ -309,6 +361,7 @@ def build_unit_artifact(
         with_scale_refine=not row_scale,
         with_diagonals=has_diagonals,
         with_row_scale=row_scale,
+        state_bits=state_bits,
     )
     # The spec is built first and handed to the layout on purpose: the plane
     # extent, the bytes packed into it and the terminal that describes it are
@@ -329,12 +382,24 @@ def build_unit_artifact(
         spec=spec,
         span=span,
         with_row_scale=row_scale,
+        state_bits=state_bits,
+        release_counts=release_counts,
     )
     region = build_plane_region(planes, payloads)
     terminal = build_terminal(
         geometry, rates, spec, planes, len(alphabet), len(descendant),
         plane_region=region, cap=cap, arity=grid.arity, span=span,
     )
+    shard = None
+    if getattr(unit, "parent_rows", 0):
+        shard = ShardOrigin(
+            row_offset=int(unit.row_offset),
+            col_offset=int(unit.col_offset),
+            parent_rows=int(unit.parent_rows),
+            parent_columns=int(unit.parent_columns),
+            parent_digest=unit.parent_digest,
+            state_bits=state_bits,
+        )
     manifest = Manifest(
         encoder_profile_id=encoder_profile_id(
             code, rates, grid, span, plane_kind, body, window_bits
@@ -346,7 +411,7 @@ def build_unit_artifact(
             container=container,
         ),
         geometry=geometry,
-        arrangement=ArrangementMode.BRESENHAM,
+        arrangement=_arrangement_for(rates, q256, cols),
         rates=rates,
         planes=planes,
         terminals=(terminal,),
@@ -355,6 +420,7 @@ def build_unit_artifact(
         scale_plane=scale_plane,
         body=body,
         window_bits=window_bits,
+        shard=shard,
     )
     return manifest, region, serialize(manifest, region)
 
@@ -486,10 +552,10 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     # unique solution of ``sum(min(limit, cap - R)) * steps``.  Recomputing the
     # ceiling here instead would mis-slice every unit encoded shallower than its
     # rate allows -- silently, since the bits would still unpack.
-    from .planes import CANONICAL_PLANE_ORDER
+    wire = manifest.plane_order
 
     completion_limit = completion_limit_from_elements(
-        terminal.plane_elements[CANONICAL_PLANE_ORDER.index(PlaneKind.COMPLETION)],
+        terminal.plane_elements[wire.index(PlaneKind.COMPLETION)],
         rates,
         steps,
         grid.rate_cap,
@@ -500,11 +566,9 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT], grid
     )
 
-    n_released = terminal.plane_elements[
-        CANONICAL_PLANE_ORDER.index(PlaneKind.RELEASE)
-    ]
-    scales = _read_scale_planes(plane, chunks, terminal, geometry, device)
-    unit = EncodedUnit(
+    n_released = terminal.plane_elements[wire.index(PlaneKind.RELEASE)]
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+    unit = _as_unit(manifest, dict(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
         codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -527,7 +591,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         half=geometry.half_weights,
         span=span,
         **scales,
-    )
+    ), chunks, device, code)
     if n_released and grid.arity > 1:
         raise GrammarError(
             "release is not defined at arity > 1: an override replaces one "
@@ -540,21 +604,19 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         # rank by descending decoded magnitude per superblock, and the RELEASE
         # plane's codes land on those positions in that order.
         from .decode import decode_codes_mixed, unit_scale_field
-        from .encode import _canonical_release_order, e2m1_value_table
+        from .encode import e2m1_value_table
 
         pre = decode_codes_mixed(unit, forests, code, apply_release=False)
         scale = unit_scale_field(unit, rows, cols)
         decoded = e2m1_value_table(device)[pre.int()] * scale
-        unit.release_index = _canonical_release_order(
-            decoded, cols, geometry.superblock_columns, n_released
-        )
+        unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
         )
     return ParsedUnit(unit=unit, forests=forests, code=code, grid=grid, manifest=manifest)
 
 
-def _read_scale_planes(plane, chunks, terminal, geometry, device) -> dict:
+def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict:
     """Segment 2b off the wire, for every plane kind: the unit's scale fields.
 
     Refuses, before any scale is derived, a terminal whose declared plane
@@ -562,10 +624,8 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device) -> dict:
     SCALE_BASE, a CHANNEL plane carries no SCALE_REFINE and no DIAG_SU, and
     its DIAG_SV holds exactly one word per output row.
     """
-    from .planes import CANONICAL_PLANE_ORDER
-
     def elements(kind: PlaneKind) -> int:
-        return terminal.plane_elements[CANONICAL_PLANE_ORDER.index(kind)]
+        return terminal.plane_elements[order.index(kind)]
 
     rows = geometry.rows
     n_base, n_refine = elements(PlaneKind.SCALE_BASE), elements(PlaneKind.SCALE_REFINE)
@@ -616,6 +676,87 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device) -> dict:
     )
 
 
+def _shard_state(manifest, chunks, device):
+    """The INITIAL_STATE plane as a ``[cols]`` int64 tensor, or ``None``.
+
+    The plane's width is the shard record's ``state_bits``; that the width is
+    the right one for the *body* is checked by the caller, which by then holds
+    the convolutional code the profile id resolved.
+    """
+    shard = manifest.shard
+    if shard is None or not shard.has_initial_state:
+        return None
+    return unpack_uniform(
+        chunks[PlaneKind.INITIAL_STATE],
+        manifest.geometry.columns,
+        shard.state_bits,
+        device,
+    )
+
+
+def _release_placement(manifest, decoded, cols: int, n_released: int):
+    """Which positions the RELEASE plane overrides, in plane order.
+
+    A whole unit's per-superblock counts are the Bresenham spread of the
+    total, which the reader regenerates (``encode._canonical_release_order``).
+    A **shard**'s are not a spread of anything -- they are the restriction of
+    its parent's -- so they travel on the wire as the RELEASE descriptor's
+    per-superblock ``counts`` and are read back here.
+    """
+    from .decode import release_order
+    from .encode import _canonical_release_order
+    from .planes import CountGranularity
+
+    superblock = manifest.geometry.superblock_columns
+    descriptor = manifest.plane(PlaneKind.RELEASE)
+    if (
+        manifest.shard is not None
+        and descriptor is not None
+        and descriptor.count_granularity is CountGranularity.PER_SUPERBLOCK
+    ):
+        if sum(descriptor.counts) != n_released:
+            raise GrammarError(
+                f"the RELEASE plane's superblock counts sum to "
+                f"{sum(descriptor.counts)}, the terminal declares {n_released}"
+            )
+        return release_order(decoded, cols, superblock, descriptor.counts)
+    return _canonical_release_order(decoded, cols, superblock, n_released)
+
+
+def _as_unit(manifest, fields: dict, chunks, device, code):
+    """``EncodedUnit``, or the ``SlicedUnit`` a shard's manifest describes.
+
+    A shard is a unit plus a start state, so this is where the reader learns
+    that its body does not begin at the pinned zero -- and where a state whose
+    width contradicts the body is refused, after the profile id has resolved
+    the convolutional code the manifest could not check against.
+    """
+    from .layout import SlicedUnit
+
+    shard = manifest.shard
+    if shard is None:
+        return EncodedUnit(**fields)
+    if shard.has_initial_state:
+        body = manifest.body
+        want = manifest.window_bits if body is BodyKind.WINDOW else code.memory
+        if shard.state_bits != want:
+            raise GrammarError(
+                f"a {body.name} body's start state is {want} bits wide; this "
+                f"shard declares {shard.state_bits}. Refusing to replay a body "
+                "from a state of the wrong width"
+            )
+    return SlicedUnit(
+        **fields,
+        row_offset=shard.row_offset,
+        col_offset=shard.col_offset,
+        initial_state=_shard_state(manifest, chunks, device),
+        parent_rows=shard.parent_rows,
+        parent_columns=shard.parent_columns,
+        parent_digest=shard.parent_digest,
+        state_bits=shard.state_bits,
+    )
+
+
 def _read_diagonals(plane, chunks, rows, cols, device):
     """Segment 2a, present only when DIAG_SU is: under a CHANNEL plane DIAG_SV
     is the row scale and there is no rank-1 pair to build."""
@@ -639,9 +780,9 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     """
     from .container import plane_ranges
     from .diagonals import Diagonals
-    from .planes import CANONICAL_PLANE_ORDER
 
     manifest, terminal = art.manifest, art.terminal
+    wire = manifest.plane_order
     geometry, rates = manifest.geometry, manifest.rates
     rows, cols = geometry.rows, geometry.columns
     window_bits = manifest.window_bits
@@ -660,7 +801,7 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         chunks[descriptor.kind] = art.plane_region[offset : offset + content]
 
     def elements(kind: PlaneKind) -> int:
-        return terminal.plane_elements[CANONICAL_PLANE_ORDER.index(kind)]
+        return terminal.plane_elements[wire.index(kind)]
 
     table_bytes = chunks[PlaneKind.ALPHABET]
     need = grid.code_bytes << window_bits
@@ -694,8 +835,8 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
             f"{grid.size}-code {grid.name} grid: refusing to decode"
         )
     n_released = elements(PlaneKind.RELEASE)
-    scales = _read_scale_planes(plane, chunks, terminal, geometry, device)
-    unit = EncodedUnit(
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+    unit = _as_unit(manifest, dict(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
         codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -715,19 +856,17 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         window_bits=window_bits,
         window_codes=table.to(device),
         **scales,
-    )
+    ), chunks, device, None)
     if n_released and grid.arity > 1:
         raise GrammarError("release is not defined at arity > 1")
     if n_released:
         from .decode import decode_codes_mixed, unit_scale_field
-        from .encode import _canonical_release_order, e2m1_value_table
+        from .encode import e2m1_value_table
 
         pre = decode_codes_mixed(unit, grid, None, apply_release=False)
         scale = unit_scale_field(unit, rows, cols)
         decoded = e2m1_value_table(device)[pre.int()] * scale
-        unit.release_index = _canonical_release_order(
-            decoded, cols, geometry.superblock_columns, n_released
-        )
+        unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
         )

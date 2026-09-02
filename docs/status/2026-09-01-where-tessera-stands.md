@@ -583,6 +583,75 @@ the refit (h^0.75 beats NVFP4 on plain and weighted error on the worst unit)
 and LDLQ. Receipt: `docs/measurements/tessera-dense-reach-fix-2026-09-02.md`.
 The "23x / 25x / best ~4-bit point" framing above is the pre-fix table.
 
+## 2026-09-02 (the housing): Tessera serves itself
+
+Rob: *"i want all of the serving machinery housed within the Tessera plugin.
+If there's infra that we need from gridbook, move it over."*  Done.
+`tessera.serving` is Tessera's **own** out-of-tree vLLM plugin -- entry point
+`tessera = "tessera.serving:register"` in the `vllm.general_plugins` group,
+registering `quant_method: "tessera"`, selected by the checkpoint with **no
+enable flag** and one operator knob `TESSERA_SERVE_MODE=resident|streamed`.
+Both routes moved (`TESSERA_NVFP4` W4A4, `TESSERA_FP8` W8A8), with the streamed
+window decode, the span-2 CUDA decoder, the compile-identity hook, the route
+telemetry, the census tool, the tests and a Tessera-owned
+`runtime_contract.json`.  Nothing under `src/tessera` imports `gridbook`
+(an `ast` test on the import graph, not the substring).  Gridbook withdrew the
+lane, the `GRIDBOOK_TESSERA[_MODE]` flag pair and the `TESSERA_*` contract rows
+at **contract v15** -- v13/v14 were never released, so it is a withdrawal, not
+a break.  PrismaQuant admits the lane through
+`prismaquant/tessera_serving_runtime_pin.json` and is **fail-closed** until a
+Tessera release tag exists (verified: the table parses, 2 families / 4 cells,
+`tessera_lane_attested` False on both rungs).  Cutting that tag is Rob's call.
+
+The plugin requirement is a **field**, not prose: every eligibility cell
+carries `requires_plugin: "tessera"` beside `route_status` and
+`requires_serve_flags`, refused on both sides if absent, because "this artifact
+needs software vLLM does not ship" is a claim about a runtime (principle 14).
+
+**MoE is designed everywhere and served nowhere**: the dispatch matches vLLM's
+routed-experts layer before `LinearBase` and *raises* unless the checkpoint
+named that prefix in `ignore` (returning `None` would silently hand it
+`UnquantizedFusedMoEMethod`); the exporter separates rank-3 packed expert
+stacks from 2-D weights so an MoE checkpoint cannot export as "fully
+quantized" with BF16 experts; and there is **no `routed_moe` cell** --
+`structures: ["dense"]` in a field a gate can read, because no served expert
+measurement exists.
+
+**TP is designed in from the start** (Rob, same day): the artifact is
+TP-agnostic and the exporter never encodes per rank; a rank cuts at load.
+`serving/sharding.py` derives the axis from the sizes vLLM asks for
+(`out_size*tp == rows` -> `"row"`; `in_size*tp == columns` -> `"column"`, the
+vocabulary `tessera.layout.can_shard` already speaks), never from a class name;
+`_shard_unit_for_rank` is the seam (identity at `tp_size == 1`, and above it
+`tessera.layout.slice_unit` by name).  The two families part company on the
+**initial state** a sliced unit carries: the window family threads it through
+the packed plane's existing L-bit pad, which *is* `state_{-1}`, so that family
+shards with no kernel change; the span-2 family **refuses**, because its
+window's reversed bit order makes a threaded start state unwritten and
+untested, and a decoder starting every row at the pinned zero state would
+decode a sliced unit wrongly and quietly.  `max_world_size: [1]` is in the
+contract: what is built is the seam, not the cut.
+
+**The move is exact, and the one arm that was not is understood.**  Twelve
+served arms (three checkpoints x two residency modes x eager/compiled) against
+the Gridbook lane's own dumps on the **same inodes** -- `model.safetensors`
+hardlinked, only `quant_method` and a new `structure` key differing in
+`config.json`.  Route census **112/112** on the declared routes in all four
+mode x regime combinations, `other_route_modules: 0`.  Mutual KL: **eleven of
+twelve arms at exactly 0.000000 with 100% top-1**.  The twelfth
+(`k2-resident-graph`) read 0.017591 -- and it is inductor, not the move: the
+identical sources recompiled from an **empty** compile cache serve logits
+bit-equal to Gridbook (0.000000 / 100%) and differ from the chain's own build
+by 0.017117.  Two builds of one graph, two sets of kernels.  Replaying the
+artifact does not test this (the second serve loads the same AOT key and
+reproduces it exactly); recompiling does.  For scale, compilation moves that
+arm by 0.2442 (plugin) / 0.2445 (Gridbook) against its own eager dump, which
+the two runtimes reproduce to three digits, and **eager is 0.000000 across both
+runtimes and both residency modes**.
+
+Receipt (censuses, mutual KL vs the Gridbook lane on the same inodes, and the
+six sites where the unit slicer lands):
+`docs/measurements/tessera-serving-plugin-2026-09-02.md`.
 ## 2026-09-02 (the third family): a 16-bit route, because the ceiling was the alphabet
 
 The window body stops improving above ~6 bpp because the **E4M3 alphabet** runs
@@ -609,7 +678,7 @@ exported at R=6 and R=7 (wire 6.129 / 7.129 bpp) with plain-BF16 twins that a
 stock `from_pretrained` loads and generates from; all 196 units are bitwise
 `materialize_bf16_folded` of the wire and the twins are structurally the source
 checkpoint (311/311 tensors). Two format-level fixes fell out: the ALPHABET
-plane now carries the grid's code width (schema §1d, no minor — the grid is
+plane now carries the grid's code width (schema §1e, no minor — the grid is
 recovered by digest, so an old reader fails closed), and
 `calculator.terminal_rate` was charging one byte per table entry for every
 grid.

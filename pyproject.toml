@@ -9,8 +9,19 @@ description = "prismaquant.tessera.v1 wire schema, parser, and exact-byte footpr
 requires-python = ">=3.10"
 dependencies = []
 
+[project.entry-points."vllm.general_plugins"]
+# Tessera's serving half: registers quant_method="tessera" with vLLM.  The
+# checkpoint selects it; the only operator knob is TESSERA_SERVE_MODE.
+tessera = "tessera.serving:register"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The packaged runtime contract a producer reads through importlib.resources,
+# and the CUDA source the NVFP4 route JIT-builds.  An editable install reads
+# the tree and would not notice these missing; a wheel would.
+"tessera.serving" = ["runtime_contract.json", "csrc/*.cu"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

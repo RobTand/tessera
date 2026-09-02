@@ -1,0 +1,170 @@
+{
+ "schema": "tessera.runtime-contract.v1",
+ "contract_version": 1,
+ "quant_method": {
+  "canonical": "tessera",
+  "accepted": [
+   "tessera"
+  ],
+  "legacy": []
+ },
+ "versions": {
+  "tessera": "0.1.0",
+  "plugin_entry_point": "tessera = tessera.serving:register",
+  "attested_on": {
+   "vllm": "0.28.0",
+   "torch": "2.13.0",
+   "image": "vllm/vllm-openai:latest",
+   "device": "NVIDIA GB10 (sm_121)"
+  }
+ },
+ "formats": [
+  {
+   "kind": "tessera_wire",
+   "family": "TESSERA_E2M1_K2",
+   "name_pattern": "TESSERA_E2M1_K2_R{k}",
+   "candidate_rungs_q256": [
+    896
+   ],
+   "reader_rate_range_q256": [
+    896,
+    896
+   ],
+   "native_terminal_q256": 1024,
+   "residency_modes": [
+    "resident",
+    "streamed"
+   ]
+  },
+  {
+   "kind": "tessera_wire",
+   "family": "TESSERA_E4M3_K1",
+   "name_pattern": "TESSERA_E4M3_K1_R{k}",
+   "candidate_rungs_q256": [
+    1024
+   ],
+   "reader_rate_range_q256": [
+    1024,
+    1024
+   ],
+   "native_terminal_q256": 2048,
+   "residency_modes": [
+    "resident",
+    "streamed"
+   ]
+  }
+ ],
+ "lane_eligibility": {
+  "schema": "tessera.lane-eligibility.v3",
+  "platforms": {
+   "sm_121": {
+    "compute_capability": [
+     12,
+     1
+    ]
+   }
+  },
+  "regimes": [
+   "decode",
+   "batch"
+  ],
+  "structures": [
+   "dense"
+  ],
+  "cells": [
+   {
+    "id": "tessera_e2m1_k2_dense_sm121_decode_scaled_mm_w4a4",
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     896
+    ],
+    "activation_contract": "e2m1_group16_ue4m3_static",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e2m1_k2_dense_sm121_batch_scaled_mm_w4a4",
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     896
+    ],
+    "activation_contract": "e2m1_group16_ue4m3_static",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_decode_scaled_mm_w8a8",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_batch_scaled_mm_w8a8",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
+   }
+  ]
+ },
+ "tensor_parallel": {
+  "axis": "vllm_tensor_parallel_world_size",
+  "semantics": "closed_world",
+  "units": [
+   {
+    "unit": "TESSERA_E2M1_K2",
+    "kind": "tessera_wire_family",
+    "max_world_size": 1
+   },
+   {
+    "unit": "TESSERA_E4M3_K1",
+    "kind": "tessera_wire_family",
+    "max_world_size": 1
+   }
+  ]
+ },
+ "expert_parallel": {
+  "axis": "vllm_expert_parallel_size",
+  "semantics": "closed_world",
+  "units": []
+ }
+}

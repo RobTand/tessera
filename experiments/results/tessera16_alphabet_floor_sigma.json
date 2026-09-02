@@ -1,0 +1,91 @@
+{
+ "args": {
+  "stage": "sigma",
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "rungs": [
+   1024
+  ],
+  "window_bits": [
+   14
+  ],
+  "sigmas": [
+   0.25,
+   1.0,
+   4.0
+  ],
+  "refits": [
+   4,
+   0
+  ],
+  "eval_rows": 1024,
+  "exl3": [
+   4,
+   5,
+   6,
+   8
+  ],
+  "limit": 0,
+  "rungs_all": [
+   1024
+  ],
+  "subset_layer": [
+   2
+  ],
+  "parity": true,
+  "out": "/home/rob/tessera/experiments/results/tessera16_alphabet_floor_sigma.json"
+ },
+ "tensor": "model.language_model.layers.5.mlp.experts.0.gate_proj.weight",
+ "sigma": {
+  "sigma0.25_refit4": {
+   "wt": 0.06941641867160797,
+   "row_scales_distinct": 185,
+   "rows": 2048,
+   "secs": 32.2157416343689
+  },
+  "sigma0.25_refit0": {
+   "wt": 0.06956066936254501,
+   "row_scales_distinct": 109,
+   "rows": 2048,
+   "secs": 10.199485540390015
+  },
+  "sigma1.0_refit4": {
+   "wt": 0.06941641867160797,
+   "row_scales_distinct": 185,
+   "rows": 2048,
+   "secs": 42.105682373046875
+  },
+  "sigma1.0_refit0": {
+   "wt": 0.06956066936254501,
+   "row_scales_distinct": 109,
+   "rows": 2048,
+   "secs": 8.588521480560303
+  },
+  "sigma4.0_refit4": {
+   "wt": 0.08971665799617767,
+   "row_scales_distinct": 255,
+   "rows": 2048,
+   "secs": 36.95341920852661
+  },
+  "sigma4.0_refit0": {
+   "wt": 0.09116204082965851,
+   "row_scales_distinct": 15,
+   "rows": 2048,
+   "secs": 9.623419284820557
+  }
+ },
+ "row_rms": {
+  "max": 0.022736407816410065,
+  "min": 0.017837518826127052,
+  "median": 0.019574319943785667,
+  "spread": 1.27463960647583,
+  "p99_over_p1": 1.069604754447937
+ }
+}
