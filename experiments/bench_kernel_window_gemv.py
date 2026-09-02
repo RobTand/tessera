@@ -317,7 +317,7 @@ def plan_str(p: kg.Plan) -> str:
 # --- arms ---------------------------------------------------------------------------
 
 
-def arm_gemv(out: dict, models, batches, plan_spec=None, seconds=2.5, quick=False):
+def arm_gemv(out: dict, models, batches, plan_spec=None, seconds=2.5, quick=False, iters=None):
     shapes = {}
     for model in models:
         for _name, r, c in MODELS[model][1]:
@@ -372,7 +372,7 @@ def arm_gemv(out: dict, models, batches, plan_spec=None, seconds=2.5, quick=Fals
             arms = {"fused_kernel": kernel_only, "fused_op": fused_op, "bf16_linear": bf16_call,
                     "fp8_quant_plus_mm": fp8_eager_call, "fp8_lane_quant_plus_mm": fp8_lane_call,
                     "fp8_mm_only": fp8_mm_only, "wire_read": wire_read}
-            n = 64 if r * c <= 4 << 20 else 16
+            n = iters or (64 if r * c <= 4 << 20 else 16)   # launches per timed round
             try:
                 g = bench_group(arms, n=n, seconds=seconds)
             except Exception as exc:
@@ -536,6 +536,7 @@ def arm_power(out: dict, shapes, seconds=4.0, M=1, plan_spec=None):
         torch.cuda.synchronize()
         launches = max(200, int(seconds / (s.elapsed_time(e) / 50 * 1e-3)))
         s, e = torch.cuda.Event(True), torch.cuda.Event(True)
+        t0 = time.time()
         s.record()
         for _ in range(launches):
             kg.window_gemv(rot.next(), x, out=scratch)
@@ -564,6 +565,9 @@ def main(argv=None):
                     help="for plans/ablate")
     ap.add_argument("--seconds", type=float, default=2.5)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--iters", type=int, default=None,
+                    help="launches per timed round (default 64, 16 above 4M weights); a round must fit "
+                         "inside one GPU time slice on a shared box for min-of-rounds to see the kernel")
     ap.add_argument("--tag", default="")
     args = ap.parse_args(argv)
     outdir = Path(args.out)
@@ -578,7 +582,7 @@ def main(argv=None):
         POWER = pw
         if args.arm in ("all", "gemv"):
             print("== gemv ==", flush=True)
-            arm_gemv(out, models, batches, args.plan, seconds=args.seconds, quick=args.quick)
+            arm_gemv(out, models, batches, args.plan, seconds=args.seconds, quick=args.quick, iters=args.iters)
         if args.arm in ("all", "plans"):
             print("== plans ==", flush=True)
             arm_plans(out, shapes, seconds=min(args.seconds, 1.5))

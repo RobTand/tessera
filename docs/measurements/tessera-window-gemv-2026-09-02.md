@@ -3,17 +3,22 @@
 **Outcome.** A fused CUDA GEMV that reads the ~4.07 bpp E4M3 window wire
 (schema minor 2, L=14, CHANNEL plane) directly and beats the resident-FP8
 lane (`per-token quant + torch._scaled_mm`, 8 bpw) per decode token on the
-Qwen3-4B Linear list by **<<OP_4B>>x (op: zero + kernel + bf16 cast) /
-<<KERNEL_4B>>x (kernel alone)** at M=1, against the brief's target of >= 1.3x
+Qwen3-4B Linear list by **1.855x (op: zero + kernel + bf16 cast) /
+1.953x (kernel alone)** at M=1, against the brief's target of >= 1.3x
 and the byte-ratio bound of ~2.0x (the lane reads 8 bpw at ~203 GB/s, the
-wire is 4.07 bpw). The kernel runs at <<GBS_BIG>> GB/s on the big 4B shapes,
-<<FRAC_READ_BIG>> of what a plain CUDA streaming read achieves on the same
+wire is 4.07 bpw). The kernel runs at 203-207 GB/s on the big 4B shapes,
+0.87-0.88 of what a plain CUDA streaming read achieves on the same
 bytes (232-253 GB/s; the 273 GB/s spec is not reachable by any reader we
-measured, see section 4) and <<FRAC_273_BIG>> of spec. The debug decode and
+measured, see section 4) and 0.74-0.76 of spec. The debug decode and
 the GEMV path are both bit-exact against `materialize_fp8` on all 196
-reach-checkpoint units. Everything below was measured on **sparklina** while
-four foreign CUDA jobs were running on it; the box state is recorded next to
-every row.
+reach-checkpoint units. At the granularity the lane actually issues GEMVs
+(fused `qkv_proj` / `gate_up_proj`, as the reach checkpoint stores them) the
+4B per-token ratio is 2.59x, and on the assumed 27B list 2.42x; the 0.6B
+list, launch-bound at 0.5-1.5 MB per unit, is 1.41x (1.61x fused). At M=2 /
+4 / 8 the 4B ratios are 1.43x / 1.56x / 1.09x (section 11). Everything
+below was measured on **sparklina** while four foreign CUDA jobs were
+running on it (6-8 CUDA processes including mine); the box state is
+recorded next to every row.
 
 - Module: `src/tessera/kernel_window_gemv.py` + `src/tessera/csrc/window_gemv.cu`
   (standalone; `kernel.py`, `kernel_window.py` and `serving/` untouched).
@@ -26,7 +31,8 @@ every row.
 - Raw results: `/mnt/shared/tessera-runs/gemv/` (JSON per arm, logs, ncu text).
 - Commits (branch `worktree-agent-a1644313db5da8a4e` on master `fb84e41`):
   `85bdb4b` v1, `dfa5d37` v2, `60fccd0` every-weight tests + power arm,
-  <<RECEIPT_COMMIT>> receipt.
+  `7b96896` 256-column default + fused lists + tables, `c8aa7ed` prefetch
+  option + power arm + follow-up chain, and the receipt commit (`git log`).
 
 ## 1. Conditions
 
@@ -148,6 +154,10 @@ sustained read power was 84-91 W. So "bandwidth-bound" on this box means
 ~240 GB/s, and the fp8 comparator itself reads at 203 GB/s.
 
 ## 5. The number (v2, chain `v2`)
+
+Read the 27B-assumed rows and the fused 19456x2560 row's fp8 column with
+section 9b: rounds longer than a GPU time slice measure a share of the GPU.
+The Qwen3-4B / 0.6B rows are clean.
 
 ### M=1: per shape (us, min over interleaved rounds)
 
@@ -410,7 +420,37 @@ v2 (chain `v2`, box shared):
 | 9728x2560 | 58.9 | 57.9 (+2%) | 28.8 (+51%) | 58.9 (-0%) | - | 6-6 / 36.3 W / 2411 MHz |
 | 2560x9728 | 58.0 | 57.1 (+2%) | 28.7 (+51%) | 57.9 (+0%) | - | 6-6 / 37.8 W / 2411 MHz |
 
-<<ABLATE_TEXT>>
+Reading the v2 rows: deleting the wire read halves the time on every big
+shape (30.4 -> 13.7 us, 58.9 -> 28.8 us), while deleting the table gather
+or the FMAs changes nothing (0-2%, within noise), so the arithmetic is
+free and the kernel is memory-side. But it is not a pure bandwidth
+pipeline either: the DRAM time for the bytes at the measured streaming rate
+(245 GB/s) is 21.4 us for 5.24 MB and 50.8 us for 12.45 MB, the no-read
+floor is 13.7 / 28.8 us, and the measured 30.4 / 58.9 us sits between the
+sum (35 / 80) and the max (21 / 51): the setup that remains when no bytes
+are read (table staging, x staging, the shuffle/funnel state pipeline on
+fabricated words, the two-level reduction and the global atomics) is only
+partly overlapped with the stream. The overlap is better on the 12.45 MB
+shapes (measured/max = 1.16) than on the 5.24 MB ones (1.42) because a
+96-block grid gets 190 items of 256 columns on the former and 96 on the
+latter -- with one item per block nothing hides a block's ramp and drain.
+
+**What was tried against that residual and did not move it:**
+- a second column chunk in flight per warp (`WINDOW_GEMV_PF=2`, three more
+  registers, its own build): 0-3% *slower* on every 4B shape, per token
+  9870 vs 9748 us (`bench_gemv_v2pf{2,1}_*.json`, same fp8 arms within 1%
+  in both runs) -- per-warp latency hiding in the column loop is not the
+  limiter;
+- three blocks per SM (144 blocks, a queued third block): -6% on 4096x2560,
+  +3% on 2560x9728; 8 warps per block: +4-6%; the fp32 table (one block per
+  SM): +9-17% -- occupancy is already what the 64-register / 43 KB smem
+  budget allows (2 blocks x 16 warps = 32 of 48 warps per SM), and the
+  remaining stall is the ramp/drain, not steady-state MLP.
+The saturating resource, stated plainly: at 2 blocks per SM the kernel
+streams at 0.87-0.88 of the plain reader on 12 MB shapes and 0.81 on 5 MB
+shapes; the rest is per-launch ramp/drain that only more bytes per launch
+(fused units: 19456x2560 reads at 215 GB/s, 0.88 of the reader) or fewer
+launches (a CUDA graph over a layer) amortise.
 
 ## 8. ncu (M=1, default plan, 1 launch after 5 warm-ups)
 
@@ -456,13 +496,80 @@ v2 (box shared):
 | Block Limit Shared Mem | 2 block | 2 block | 2 block | 2 block | 2 block |
 | Dynamic Shared Memory Per Block | 43.07 Kbyte/block | 43.07 Kbyte/block | 43.07 Kbyte/block | 43.07 Kbyte/block | 43.07 Kbyte/block |
 
-<<NCU_TEXT>>
+v1 -> v2 on the same shape (different box states, so read the ratios):
+duration 48.4 -> 34.5 us on 4096x2560 and 86.4 -> 82.1 us on 9728x2560 under
+ncu; registers 64 in both (no spills at M=1); occupancy 66.7% theoretical
+(2 blocks x 16 warps of 48; limited by registers and shared memory alike)
+and 65-66% achieved; one wave; scheduler "No Eligible" 65-70% of cycles in
+both -- the warps are waiting on memory, not on issue (Compute (SM) 23-29%,
+L2 throughput 11-16%). The v2 shared-memory footprint grew from 35.9 to
+43.1 KB per block (x double-buffer) without changing the block limit.
 
 ## 9. Sustained power (the kernel alone, 2000 launches back to back)
 
-<<POWER_TABLE>>
+Not measurable on this box, and the attempt is itself a measurement. The
+sustained arm (`--arm power`: the kernel alone, back to back for >= 4 s per
+shape, `bench_power_v2_*.json`) came back at 78 us per launch on 4096x2560
+and 173-177 us on the 9728 shapes -- 2.5-2.9x the interleaved rows -- at
+31-45 W with 7 CUDA processes on the GPU. That is not the kernel slowing
+down; it is my process's *share* of a time-sliced GPU: over a 4 s window the
+foreign contexts take their slices, and the mean per launch is wall-clock
+over launches. The interleaved bench survives this because each of its
+timed rounds is 64 launches (~2 ms on the 4B shapes) and min-of-rounds keeps
+the rounds that fell inside my own slice; a 4 s mean cannot. The power
+sampler in that window sees the whole box -- mine and theirs -- so the
+31-45 W is not attributable either. The reference for what this stream
+costs is the bandwidth probe on the quiet box (section 4): 84-91 W at
+240-253 GB/s, i.e. the kernel at 0.87 of that rate should sit near 80 W
+alone. A quiet-box `--arm power` is one command (section 13) and is the
+first thing to run when the box is free.
 
-<<POWER_TEXT>>
+| shape | us per launch, 4 s sustained | GB/s (my share) | mean W (whole box) | CUDA procs |
+|---|---|---|---|---|
+| 4096x2560 | 78.2 | 67.0 | 31.0 | 7 |
+| 1024x2560 | 33.2 | 39.5 | 35.4 | 7 |
+| 2560x4096 | 95.4 | 55.0 | 40.1 | 7 |
+| 9728x2560 | 172.7 | 72.1 | 42.8 | 7 |
+| 2560x9728 | 177.1 | 70.3 | 44.5 | 7 |
+
+## 9b. Time-slicing, and what it does to the big-buffer rows
+
+Every arm on the 27B-assumed shapes (44.56 MB wire, 89 MB fp8, 178 MB
+bf16) and the fused `gate_up` comparator (49.8 MB fp8) ran at 93-131 GB/s
+in chain v2 -- the fused GEMV, `_scaled_mm`, cuBLAS bf16 **and the plain
+streaming reader alike** -- while the same reader kernel reads 64-256 MB
+buffers at 234-246 GB/s in `bw_probe_cuda.py`. `experiments/bw_size_probe.py`
+(`bw_size_probe_v2_it8.log`, 7 CUDA procs) isolates it: same reader, same
+launch, one process:
+
+| buffer | per read | GB/s | round (8 reads) |
+|---|---|---|---|
+| uint8 randint 64 MB x4 | 666 us | 100.7 | 5.3 ms |
+| uint8 randint 356 MB x3 | 3481 us | 102.4 | 28 ms |
+| int32 randint 356 MB x3 | 3511 us | 101.5 | 28 ms |
+| bench repacked words 44.56 MB x3 | 187 us | 238.8 | 1.5 ms |
+| bench repacked words 44.56 MB x1 | 189 us | 235.3 | 1.5 ms |
+| bench repacked words 12.45 MB x8 | 57 us | 220.0 | 0.45 ms |
+| fp8 randint 49.8 MB x2 (19456x2560) | 197 us | 253.1 | 1.6 ms |
+| fp8 randint 24.9 MB x4 (9728x2560) | 100 us | 248.3 | 0.8 ms |
+| fp8 randint 89 MB x2 (5120x17408) | 732 us | 121.8 | 5.9 ms |
+
+It is not the buffer (the 44.56 MB words read at 239 GB/s here and the 49.8
+MB fp8 at 253) and not the size as such; it is the **length of the timed
+round**: every row whose 8-read round exceeds ~2 ms measures at ~100-120
+GB/s, every row under ~1.6 ms at 220-253. That is a GPU shared by 7
+contexts handing out time slices of a few ms: a round that fits inside my
+slice is measured clean; a longer round is measured at my share of the GPU.
+In the bench the 27B shapes are timed 16 launches per round (6-15 ms per
+round), so **section 5's 27B-assumed rows and the fused 19456x2560 fp8
+column are share-of-GPU numbers, not kernel numbers**; their ratios stand
+only in the sense that all arms are sliced alike (the 2.42x is not a claim
+about the kernel at 44 MB). A re-measurement at 2 launches per round
+(`--iters 2`; `gemv_pf_chain.sh` stage `DO_IT`) is queued behind another
+session's serve lock as this is written and lands in
+`/mnt/shared/tessera-runs/gemv/gemv_v2it2.log` /
+`bench_gemv_v2it2_*.json`; the 4B rows (0.45-1 ms rounds) are the ones the
+headline rests on and are not affected. `--iters` is now a bench flag.
 
 ## 10. The bf16 value family (no fold)
 
@@ -483,7 +590,26 @@ table build is the slower one, section 6).
 
 ## 11. M > 1
 
-<<M_TEXT>>
+Measured M = 1, 2, 4, 8 on every shape (section 5 tables); per token on
+the Qwen3-4B list the op is **1.855x / 1.433x / 1.556x / 1.088x** the fp8
+lane at M = 1 / 2 / 4 / 8 (27B-assumed: 2.42x / 1.45x / 1.72x / 1.02x; 4B
+fused: 2.59x / 1.31x / 1.36x / 1.06x). The lane's cost is flat in M (its
+bytes are the weights), the wire GEMV's grows: each extra batch row is one
+more FMA and one more x value per weight, and the reduction and output
+grow with M. Two things in the numbers:
+- **M=2 is slower than M=4** (12.66 vs 11.63 ms per token on 4B; 39.6 vs
+  36.6 us on 4096x2560). M=2 uses the 16-rows-per-lane build (MT=2, 32
+  accumulators, ptxas reports 4 B / 16 B of spills), M=4 the 8-rows-per-lane
+  build (MT=4). The 8-row build at M=2 was measured too
+  (`--plan 8,16,96,256,bf16`): 14.8 ms, worse. Routing M=2 (and M=3) to the
+  MT=4 kernel by padding is a free ~8% that is not done here because the
+  8-row build refuses rate-1 columns and the routing would need that guard;
+  recorded as a follow-up.
+- **M=8 is 1.09x** (4B) / 1.02x (27B): the 128-register build (no spills)
+  fixed the v1 collapse (0.15x), but at M=8 the kernel is issue-bound on the
+  gather+FMA per weight (8 FMAs and 8 x loads per code) and only one block
+  per SM fits. Above M=8 the decode-to-bf16 + cuBLAS route (section 10) is
+  the intended path; it is not benchmarked here.
 
 ## 12. What remains
 
@@ -501,9 +627,12 @@ table build is the slower one, section 6).
 - **Small shapes** (0.6B list, <= 1.5 MB of wire) are launch/setup-bound
   (section 5); a CUDA graph over a whole layer's GEMVs is the fix, not
   measured here.
-- **Box state:** every v2 row was measured beside four foreign jobs; a quiet
-  re-run of the `gemv` arm is one command
-  (`experiments/gemv_chain.sh` with `DO_PLANS=0 DO_ABLATE=0 DO_NCU=0`).
+- **Box state:** every v2 row was measured beside four to six foreign
+  contexts; the 4B/0.6B rows survive that (min-of-rounds inside a time
+  slice), the 27B rows and the sustained power do not (sections 9, 9b). A
+  quiet-box re-run of `gemv` and `power` is one command each (section 13).
+- **M=2 routing** to the 8-row kernel (section 11): ~8% at M=2, needs the
+  rate-1 guard.
 
 ## 13. Commands
 
@@ -517,7 +646,9 @@ ssh sparklina 'cd /home/rob/tmp/wt-gemv && OUT=/mnt/shared/tessera-runs/gemv TAG
 python experiments/bench_kernel_window_gemv.py --arm gemv   --tag v2 --out $OUT            # all models, M=1,2,4,8
 python experiments/bench_kernel_window_gemv.py --arm plans  --tag v2plans --out $OUT --shapes 4096x2560,1024x2560,2560x4096,2560x9728,9728x2560,1024x1024
 python experiments/bench_kernel_window_gemv.py --arm ablate --tag v2 --out $OUT
-python experiments/bench_kernel_window_gemv.py --arm power  --tag v2 --out $OUT
+python experiments/bench_kernel_window_gemv.py --arm power  --tag v2 --out $OUT     # needs a quiet box, see 9
+OUT=$OUT TAG=v2 DO_POWER=0 DO_SIZE=1 ITERS=1 DO_IT=1 DO_PF=0 DO_M2=0 DO_TESTS=0 experiments/run_gemv_bench.sh experiments/gemv_pf_chain.sh
+TESSERA_WINDOW_GEMV_PF=2 python experiments/bench_kernel_window_gemv.py --arm gemv --models Qwen3-4B --batches 1 --tag v2pf2 --out $OUT
 ncu --section Occupancy --section MemoryWorkloadAnalysis --section WarpStateStats --section SpeedOfLight \
     --section LaunchStats --section ComputeWorkloadAnalysis --section SchedulerStats \
     --kernel-name regex:window_gemv_kernel --launch-skip 5 --launch-count 1 \
@@ -532,6 +663,6 @@ python experiments/gemv_receipt_tables.py --dir $OUT --gemv 'bench_gemv_v2_*.jso
 
 No fable-* or opus-* workers were spawned. The `advisor` reviewer was
 consulted twice (design/result review before the receipt; final check); its
-asks -- prove every weight through the GEMV path, add a sustained-power
+first-round asks -- prove every weight through the GEMV path, add a sustained-power
 measurement, state contention per row, do not present ncu's memory
 percentage as a DRAM fraction -- are all in this receipt.
