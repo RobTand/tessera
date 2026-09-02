@@ -63,6 +63,12 @@ bash experiments/bf16_tail_run.sh                                    # W1 identi
 bash experiments/bf16_r8_dense_run.sh                                # twin re-check through the renamed folded path, then dense R=8
 ```
 
+Both exporter runs were made at `fc2c1c1`, when the exporter was still
+`experiments/export_gridbook_tessera.py`; the merge with `master` (§11) moved
+that file to `experiments/export_tessera_serving.py` and the launcher above
+names the new path. The exported bytes are the old name's, and the module the
+shim now forwards to is the same code plus this branch's BF16 family.
+
 `bf16_r8_run.sh` is in the tree beside these and is **superseded**: it ran the
 GLM set at R=8 first, which is 1442 s (E4M3) + 969 s (BF16) per 2048x4096
 tensor -- about four hours for six -- so it was killed after `L5.gate_proj`
@@ -540,13 +546,47 @@ quality choice. **Folded** (`materialize_bf16_folded` /
 `stock.materialize_stock`; a lane that calls it has silently chosen the twin's
 error for no reason.
 
-**What the route spec should say** (mirroring `TESSERA_FP8`'s row in
-Tessera's own `runtime_contract.json`): family `TESSERA_BF16`, weight dtype
-`bfloat16`, activation
-dtype `bfloat16`, no weight scale tensor on the stock side, `activation
-contract "w16a16"`, streamed residency = the artifact's own wire bpp,
-resident residency = 16 bpp. There is no `--moe-backend` requirement and no
-kernel gate: the GEMM is the runtime's own BF16 GEMM.
+**Two names, and they are not the same name.** `serving/contract.py:198-205`
+says so itself: a `runtime_contract.json` `formats[].family` is a **payload**
+name a producer prices (grid + arity — `TESSERA_E4M3_K1`), while a
+`scheme.ROUTES` key is **what the tile is on the hardware** (`TESSERA_FP8`),
+and `_FAMILY_TO_ROUTE` maps one to the other. The checkpoint's per-target
+`scheme["family"]` is the *route* key — `validate_tessera_scheme` checks it
+against `TESSERA_FAMILIES = tuple(ROUTES)` — so the exporter here writes
+`TESSERA_BF16`, the route key. A contract row needs the payload name beside
+it; `TESSERA_BF16_K1` follows the existing convention, and picking it is the
+plugin's call, not this branch's.
+
+**What the route spec should say.** The `ROUTES` entry, filled in the shape of
+the `TESSERA_FP8` one at `scheme.py:95-102`:
+
+```python
+TESSERA_BF16: {
+    "grids": ("BF16",), "plane": "CHANNEL",
+    "short": "BF16",
+    "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),
+    "tile": "bf16 (stock bfloat16 weight, one fp32 scale per row -- an epilogue, not folded)",
+    "columns_multiple": 1,          # a BF16 GEMM has no K quantum of ours
+    "activation_contract": BF16_ACTIVATION_CONTRACT,   # the A side is unquantized
+}
+```
+
+and the contract rows: `kind "tessera_wire"`, payload family
+`TESSERA_BF16_K1`, `name_pattern "TESSERA_BF16_K1_R{k}"`, candidate rungs the
+q256 the artifact was built at (1536 and 1792 here), `native_terminal_q256`
+4096, `residency_modes ["resident", "streamed"]`. Streamed residency is the
+artifact's own wire bpp; resident is 16 bpp. There is no `--moe-backend`
+requirement, no `requires_serve_flags` beyond the mode, and no kernel gate:
+the GEMM is the runtime's own BF16 GEMM, so the cell's `route_status` is
+`backed` rather than `backed_with_serve_flag` — subject to the plugin's own
+attestation, not to this receipt's say-so (principle 14).
+
+**The extension point is already written down.** `scheme.py:105-111` describes
+this family unprompted — *"a third family (say a WINDOW/CHANNEL body whose
+alphabet is snapped to bf16 and decoded to a bf16 tile for the stock GEMM) is
+one route module, one `ROUTES` entry naming its builder, and its contract rows
+-- and nothing here or in `lane` has to be edited to admit it"*. That is the
+shape this hand-off assumes; `bf16_route.py` is the route module it names.
 
 **Caveat to carry into the lane's receipt.** A streamed BF16 route decodes an
 *entire* tile per forward, and at 16-bit output width the decode's own memory
@@ -668,11 +708,12 @@ a hard sub-question. The two candidates named in the brief resolved by reading
 code rather than by reasoning about it — the table construction is W1's own
 `window_table` with a different grid, and the rate-cap algebra is already in
 `export._plan_for` (`payload_bits` under WINDOW, `payload_bits − 1` under TCQ).
-Four `advisor()` calls were made, one before committing to the grid shape and
-three in the endgame; they produced six of the checks in this document (the
+Five `advisor()` calls were made, one before committing to the grid shape and
+four in the endgame; they produced eight of the checks in this document (the
 encoder-drift diff, the structural twin check, the `grid_from_config` hole, the
-PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d, and
-this section's contention note).
+PrismaQuant accountant line, the stale `materialize_bf16` sentence in §10d,
+this section's contention note, the merged-tree signature check on
+`encode_linear_planes`, and the route-namespace correction in §8).
 
 **Merged with `master` at `f3e7d0a`** (the serving plugin, TP slicing / schema
 minor 4, the window kernel, LDLQ + the Hessian plumbing). Two conflicts, both
@@ -733,6 +774,44 @@ outlier work identified as the hard ones.
   2048×4096 encode on this box; the sweep was stopped after L5.gate_proj and
   the dense R = 8 screen was run instead. The six-tensor R = 8 geomean is
   unmeasured.
+- **R = 8 costs 40-80x R = 7, and the cost is the window kernel's, not the
+  family's.** On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
+  identical code path, both arms) the encode seconds run **2, 3, 5, 10** at
+  R = 4, 5, 6, 7 -- a clean 2x per bit -- and then **424 (E4M3) / 639 (BF16)**
+  at R = 8; on `gate_proj` the R = 8 pair is 820 / 740 against the same 10 s at
+  R = 7. Compile time is not the explanation: every R = 8 call has *identical*
+  constexprs (`ARITY`, `FAN`, `SIZE`, `HAS_W`, `BACK_U8`, `BL`, `BC`), so the
+  second, third and fourth encodes reuse the cached kernel, and the slowest of
+  the four is the last. Nor is it launch geometry: reading `_tile`
+  (`window_viterbi.py:238-249`) at L = 14, `bl * FAN` is pinned under 1024 and
+  `bl * FAN * bc` under 2048, so `grid` is **(16, width/2)** and `warps` is
+  **4** at every rate from 4 to 8, `BL*FAN*BC` is 2048 at every rate, and the
+  launch count (`2 + steps`) does not depend on the rate at all. What *does*
+  scale is the class-minimum loop `for f in tl.static_range(1, FAN)`
+  (`window_viterbi.py:172`): it is **fully unrolled**, so its instruction count
+  is `FAN - 1` (15 -> 255 over R = 4..8) while its per-iteration tile
+  `[BC, BL]` shrinks as `2048 / FAN` (128 -> 8 lanes). Below one warp -- which
+  is R >= 7 -- the halving stops paying and only the doubling remains, and that
+  accounts for the 2x-per-bit trend. It does **not** account for the extra
+  20-40x at `FAN = 256` specifically; a spill at the 255-deep unroll is the
+  suspect, unattributed.
+
+  Two honest caveats. **The box is shared**: at the time of writing six GPU
+  processes from other branches are resident on sparklina (32 W of a ~140 W
+  envelope, `gpu_utilization` 96%, six host cores each at ~100% -- principle
+  15's exact signature, utilisation saying "saturated" while power says
+  one-quarter loaded), so the R = 8 seconds are contended wall-clock and the
+  R = 7 seconds come from a different run. The multiplier is therefore "large",
+  not "40-80x measured cleanly". **The discriminator is cheap and immune to
+  that**: time `viterbi_window_fused` against the eager reference on one
+  1024x1024 tensor at R = 7 and R = 8 *in the same process* -- if the reference
+  shows no cliff, the Triton step kernel owns it and the fix is a `_tile` that
+  keeps `BL*BC` at a warp by giving back some of the `bl * FAN < 1024` cap. Not
+  run: it needs the GPU, and running it now would perturb five other branches'
+  measurements as much as theirs are perturbing this one. Addressed to whoever
+  owns `window_viterbi.py`. The product range is R = 4..8, so the top rung
+  costing this much is a real cost of the family and not a footnote.
+
 - **One timing column is contended, and no error number is.** The tail
   runner's `pgrep` guard listed the export and the sweep but not
   `bf16_twin_check.py`, so it started at 14:25:03 while the R=7 twin check was
