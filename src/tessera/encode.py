@@ -831,6 +831,148 @@ def _pack_scales_lut(
     return table_bytes, index.to(torch.uint8), table[index], global_scale
 
 
+def _refit_scales_lut_metric(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    half: int,
+    table_bytes: torch.Tensor,
+    index: torch.Tensor,
+    effective: torch.Tensor,
+    global_scale: float,
+    metric: torch.Tensor,
+):
+    """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
+
+    ``_refit_scales_lut`` minimises the plain squared error, for which a
+    16-block's scale is ``<w, u> / <u, u>`` over its own sixteen columns and
+    nothing else.  Under a metric the blocks stop being independent, and this
+    is the same least-squares step taken in the metric's geometry.
+
+    **The closed form.**  Row ``r`` reconstructs as ``w_hat_r = sum_b s_rb
+    u_rb``, where ``u_rb`` is the row's unscaled grid values on block ``b`` and
+    zero elsewhere.  The proxy loss is ``L = sum_r (w_r - w_hat_r) H (w_r -
+    w_hat_r)^T`` -- H couples input features, so *columns* interact and *rows*
+    do not, which is why every step below is exact per row.  Differentiating in
+    one block's scale with the others held:
+
+        dL/ds_rb = -2 (w_r - w_hat_r) H u_rb^T
+        s*_rb    = (r_rb H u_rb^T) / (u_rb H u_rb^T),
+                   r_rb = w_r - sum_{b' != b} s_rb' u_rb'
+
+    which is the projection of the block's residual onto its own codes in the
+    H inner product.  Written incrementally -- the form actually computed --
+    with ``G = (W - S*U) H`` the current gradient field and ``A_rb = u_rb H
+    u_rb^T`` the block's curvature:
+
+        s*_rb = s_rb + (G_rb . u_rb) / A_rb
+
+    ``A`` needs only H's **diagonal 16x16 blocks**; the off-diagonal coupling
+    enters through ``G``.  At ``H = I`` the cross terms vanish because blocks
+    have disjoint support, ``A = <u, u>``, ``G . u = <w, u> - s <u, u>``, and
+    the form collapses to ``<w, u> / <u, u>`` -- the plain refit, exactly.  A
+    1-D metric (the diagonal ``h^alpha`` objective) is separable the same way
+    and is computed directly.
+
+    **This is JSO's question with H in place of the grid search.**  Joint scale
+    optimisation asks which per-block scale minimises an activation-weighted
+    error and answers it by trying a small ladder of levels; here the answer is
+    the stationary point of that same error, in closed form, with no ladder and
+    no level to choose.
+
+    **Three things are approximate, and the guard is where they are paid for.**
+    (a) Every block moves at once, so the vector step is Jacobi, not the joint
+    minimiser -- corrected by an exact per-row step length ``t*`` along the
+    direction, which is the true minimiser on that line and is identically 1
+    when the metric is separable.  (b) ``_fit_lut`` chooses the sixteen table
+    entries under the separable second-order model ``sum_b A_b (c_b - s*_b)^2``,
+    i.e. the expansion around the current plane with cross-block terms dropped.
+    (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
+    given the others.  The accept test is where the cross terms come back: the
+    candidate planes are scored on the **full quadratic**, and the plane the
+    unit already has is one of the candidates, so the step is monotone in the
+    metric's own error and the alternation with the trellis stays monotone.
+
+    Landing is unchanged and needs no rounding rule of its own: the table holds
+    exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
+    among them (``_nearest``).  ``land_at_least``'s round-up exists for a
+    *floor*, which is a CHANNEL-plane mechanism; there is no floor here.
+    """
+    rows, cols = work.shape
+    if cols % half:
+        raise GrammarError(
+            f"a metric-aware LUT refit needs each {half}-weight scale block to lie "
+            f"within one row, and {cols} input features is not a multiple of {half}"
+        )
+    nb = cols // half
+    W = work.float()
+    U = units.float()
+    S = effective.reshape(rows, nb)
+    Ub = U.reshape(rows, nb, half)
+
+    if metric.ndim == 1:
+        h = metric.to(W.dtype).to(W.device).reshape(1, nb, half)
+        A = (Ub * Ub * h).sum(dim=2)
+        B = (W.reshape(rows, nb, half) * Ub * h).sum(dim=2)
+        target = torch.where(A > 0, B / A.clamp_min(1e-30), S)
+
+        def cost(C: torch.Tensor) -> float:
+            return float((A * C * C - 2.0 * B * C).sum())
+    elif metric.ndim == 2:
+        if metric.shape != (cols, cols):
+            raise GrammarError(
+                f"a full refit metric is [cols, cols] = ({cols}, {cols}), "
+                f"got {tuple(metric.shape)}"
+            )
+        H = metric.to(W.dtype).to(W.device)
+        Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
+        A = torch.einsum("rbi,bij,rbj->rb", Ub, Hd, Ub)
+        E = W - S.repeat_interleave(half, dim=1) * U
+        G = E @ H
+        step = ((G.reshape(rows, nb, half) * Ub).sum(dim=2)).div(A.clamp_min(1e-30))
+        step = torch.where(A > 0, step, torch.zeros_like(step))
+        # The exact step length along that direction, per row -- rows are
+        # independent under H, so each has its own line minimiser and the
+        # pre-landing candidate can never raise the loss.
+        D = step.repeat_interleave(half, dim=1) * U
+        num = (G * D).sum(dim=1)
+        den = ((D @ H) * D).sum(dim=1)
+        t = torch.where(den > 0, num / den.clamp_min(1e-30), torch.zeros_like(num))
+        target = S + t.clamp_min(0.0).unsqueeze(1) * step
+
+        def cost(C: torch.Tensor) -> float:
+            Ec = W - C.repeat_interleave(half, dim=1) * U
+            return float(((Ec @ H) * Ec).sum())
+    else:
+        raise GrammarError(
+            f"a refit metric is per-column [cols] or a full [cols, cols] Hessian, "
+            f"got shape {tuple(metric.shape)}"
+        )
+
+    valid = (A > 0) & (target > 0)
+    target = torch.where(valid, target, S)
+    weights = torch.where(valid, A, torch.zeros_like(A))
+
+    flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
+    old_table = _lut_values(table_bytes, global_scale)
+    new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel())
+
+    # Three candidates, scored on the full quadratic: the plane the unit
+    # already has, the same table re-assigned to the new targets, and the
+    # freshly fit table.  Keeping the current plane in the running is what
+    # makes this monotone once the cross-block terms are charged -- under a
+    # separable metric it never wins, because re-assignment lands every block
+    # on its own minimiser.
+    best_bytes, best_index, best_eff = table_bytes, index.long(), S
+    best = cost(S)
+    for cand_bytes, cand_table in ((table_bytes, old_table), (new_bytes, new_table)):
+        idx = _nearest(flat_t, cand_table)
+        eff = cand_table[idx].reshape(rows, nb)
+        here = cost(eff)
+        if here < best:
+            best, best_bytes, best_index, best_eff = here, cand_bytes, idx, eff
+    return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
+
+
 def _refit_scales_lut(
     work: torch.Tensor,
     units: torch.Tensor,
@@ -839,6 +981,7 @@ def _refit_scales_lut(
     index: torch.Tensor,
     effective: torch.Tensor,
     global_scale: float,
+    metric: "torch.Tensor | None" = None,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -849,7 +992,16 @@ def _refit_scales_lut(
     targets.  The lower weighted cost wins, so a greedy fit that happens to be
     worse than the table it would replace is never taken -- without this the
     alternation with the trellis could oscillate.
+
+    ``metric`` hands the step off to ``_refit_scales_lut_metric``, which is the
+    same least squares in the metric's geometry; the plain path below is left
+    exactly as it was so that a weights-only encode is byte for byte what it
+    always was.
     """
+    if metric is not None:
+        return _refit_scales_lut_metric(
+            work, units, half, table_bytes, index, effective, global_scale, metric,
+        )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
     A = (U * U).sum(dim=1)
@@ -950,12 +1102,18 @@ def encode_unit(
     needs does not arise.  Encoder-side only: no byte of the wire changes, and
     the same decoder reads the result.
 
-    ``refit_metric`` is the error the row-scale refit minimises: ``None`` the
-    plain squared error, ``[cols]`` a per-input-column weight (a diagonal
-    Hessian, or a power of one), ``[cols, cols]`` the full Hessian's exact
-    quadratic (``scale_channel.refit_channel_scale``).  ``refit_reach_floor``
-    keeps every row's refit scale high enough that the pass's own target stays
-    inside the body's reach.  Both are encoder settings; neither is wire.
+    ``refit_metric`` is the error the scale refit minimises: ``None`` the plain
+    squared error, ``[cols]`` a per-input-column weight (a diagonal Hessian, or
+    a power of one), ``[cols, cols]`` the full Hessian's exact quadratic.  It
+    is read by the CHANNEL plane's row-scale refit
+    (``scale_channel.refit_channel_scale``) and by the LUT plane's per-16
+    block-scale refit (``_refit_scales_lut_metric``), which is the same closed
+    form restricted to a block's columns; S6b has no metric-aware refit and
+    refuses one rather than ignoring it.  ``refit_reach_floor`` keeps every
+    row's refit scale high enough that the pass's own target stays inside the
+    body's reach, and is CHANNEL-only for the same reason -- a block scale
+    already tracks its own sixteen weights.  Both are encoder settings; neither
+    is wire.
 
     ``span`` is the trellis super-symbol length (``viterbi_columns``) and
     ``scale_plane`` how segment 2b is written; both are wire and both default
@@ -1194,27 +1352,34 @@ def encode_unit(
     # the profile id are untouched.
     if trellis_weighting not in ("none", "scale"):
         raise GrammarError(f"trellis_weighting must be 'none' or 'scale', got {trellis_weighting!r}")
-    # The refit metric and the reach floor are read ONLY by the CHANNEL
-    # branch of the refit below, and only when a refit runs at all.  Given
-    # either under a block plane or at ``scale_refit=0`` they would be
-    # silently dropped and the unit would encode as if the caller had passed
-    # nothing -- an activation-aware export would then ship weights-only bytes
-    # and raise nothing, which is the whole failure this plumbing exists to
-    # prevent.  Refuse instead of ignoring.
-    if refit_metric is not None or refit_reach_floor:
+    # The refit metric and the reach floor are read only by the refit below,
+    # and only where that refit implements them.  Handed to a plane or a
+    # schedule that does not, they would be silently dropped and the unit
+    # would encode as if the caller had passed nothing -- an activation-aware
+    # export would then ship weights-only bytes and raise nothing, which is
+    # the whole failure this plumbing exists to prevent.  Refuse instead of
+    # ignoring, one message per reason.
+    if refit_metric is not None and scale_plane is ScalePlaneKind.S6B:
+        raise GrammarError(
+            "refit_metric is implemented for the CHANNEL plane's row scale and "
+            "the LUT plane's per-half block scale; S6b's grouped (base, refine) "
+            "words have no metric-aware refit, so this would be silently ignored"
+        )
+    if refit_reach_floor and scale_plane is not ScalePlaneKind.CHANNEL:
+        raise GrammarError(
+            "refit_reach_floor is a CHANNEL-plane mechanism: it raises a ROW's "
+            "scale so the row's loudest weight stays inside the body's reach. A "
+            "block plane's scale already tracks its own sixteen weights' amax, "
+            "and there is no measured floor for one, so this would be silently "
+            "ignored"
+        )
+    if scale_refit == 0 and (refit_metric is not None or refit_reach_floor):
         named = "refit_metric" if refit_metric is not None else "refit_reach_floor"
-        if scale_plane is not ScalePlaneKind.CHANNEL:
-            raise GrammarError(
-                f"{named} is read only by the CHANNEL plane's refit; a block "
-                f"plane fits its scales to within-row column spans and has no "
-                f"row-scale to weight, so this would be silently ignored"
-            )
-        if scale_refit == 0:
-            raise GrammarError(
-                f"{named} shapes the scale refit, and scale_refit=0 runs none: "
-                f"the amax plane is written byte for byte and the argument "
-                f"would be silently ignored"
-            )
+        raise GrammarError(
+            f"{named} shapes the scale refit, and scale_refit=0 runs none: "
+            f"the amax plane is written byte for byte and the argument "
+            f"would be silently ignored"
+        )
     if ldl is not None:
         if ldl.shape != (cols, cols):
             raise GrammarError(
@@ -1250,15 +1415,14 @@ def encode_unit(
                 f"identity: it was not produced by block_ldl at block {ldl_block}. "
                 "Pass the ldl_block the factor was built with."
             )
-        if scale_plane is not ScalePlaneKind.CHANNEL:
-            # A block plane's scale is fit to a within-row span of columns, so
-            # a block-sequential pass would fit each span to a target the next
-            # block has not produced yet.  The CHANNEL plane has no column
-            # axis, which is why LDLQ lands there first.
-            raise GrammarError(
-                "LDLQ is implemented for the CHANNEL scale plane; a block plane's "
-                "per-column-span scales would have to be scheduled with it"
-            )
+        # LDLQ used to refuse every plane but CHANNEL, on the reasoning that a
+        # block plane's within-row column spans "would have to be scheduled
+        # with the blocks".  They do not: the plane is read ONCE per pass,
+        # before the block loop (``scale = current_scale()``), and refit ONCE
+        # after it, so every block of every pass quantises against the same
+        # fixed plane whatever its column granularity.  The schedule and the
+        # plane never interleave, and the identity-factor tests pin that on the
+        # LUT plane's two bodies as they already did on CHANNEL.
         ldl_factor = ldl.to(device=device, dtype=torch.float32)
         # Descending block starts; only the lowest-index block may be short.
         block_spans = [
@@ -1321,7 +1485,8 @@ def encode_unit(
             )
         elif scale_plane is ScalePlaneKind.LUT:
             table_bytes, refine, effective = _refit_scales_lut(
-                work, units, half, table_bytes, refine, effective, global_scale
+                work, units, half, table_bytes, refine, effective, global_scale,
+                metric=refit_metric,
             )
         else:
             base_byte, refine, effective = _refit_scales(

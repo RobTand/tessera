@@ -1,0 +1,162 @@
+# The 4-bit route goes activation-aware: LDLQ and an H-solved block-scale refit on the LUT plane (2026-09-02)
+
+**Claim.** *(filled from the served run below)*
+
+Commit: see `git log` for this file. Tests: `tests/test_ldlq_lut_plane.py`,
+`tests/test_ldlq_window.py`, `tests/test_merge_guard.py`.
+
+## Why this was blocked, and why the block was wrong
+
+`tessera-ldlq-window-served-2026-09-02` landed both encoder-side levers on the
+FP8 route and said, in `encode_unit`, that they were CHANNEL-plane mechanisms:
+
+> LDLQ is implemented for the CHANNEL scale plane; a block plane's
+> per-column-span scales would have to be scheduled with it
+
+That reason does not survive reading the loop it guards. The plane is read
+**once per pass**, before the block loop (`scale = current_scale()`), and refit
+**once after it**; every block of every pass quantises against the same fixed
+plane whatever its column granularity. The schedule and the plane never
+interleave, so there is nothing to schedule together. The refusal was
+conservative, not load-bearing, and it was lifted by implementing the missing
+half rather than by bypassing the check — the LUT plane's refit genuinely did
+not read a metric, and that half is new code.
+
+Both bodies the 4-bit grid ships are covered, and
+`test_identity_factor_is_the_plain_pass_on_the_lut_plane` pins the claim on each
+at blocks 32/64/128: a factor with no off-diagonal blocks reproduces the
+ordinary whole-matrix pass **bit for bit** — codes, scale table, indices and the
+reported sse. That is the statement that block-sequential encoding is a
+*schedule* and not a second encoder, and it is the same test the CHANNEL plane
+already carried.
+
+## The block-scale refit: JSO's knob, solved with H instead of searched
+
+The CHANNEL plane's refit had one scale per output row, so its optimum was one
+scalar quadratic per row. A block plane has one scale per **sixteen input
+columns of one row** — NVFP4's own layout — and those blocks are coupled by
+every off-diagonal of `H`. The closed form is the same projection restricted to
+a block's columns.
+
+Row `r` reconstructs as `w_hat_r = sum_b s_rb u_rb`, where `u_rb` is the row's
+unscaled grid values on block `b` and zero elsewhere. The proxy loss is
+
+```
+L = sum_r (w_r - w_hat_r) H (w_r - w_hat_r)^T
+```
+
+`H` couples input features, so *columns* interact and *rows* do not — which is
+why every step below is exact per row. Differentiating in one block's scale
+with the others held:
+
+```
+dL/ds_rb = -2 (w_r - w_hat_r) H u_rb^T
+s*_rb    = (r_rb H u_rb^T) / (u_rb H u_rb^T),   r_rb = w_r - sum_{b' != b} s_rb' u_rb'
+```
+
+the projection of the block's residual onto its own codes in the `H` inner
+product. Written incrementally — the form actually computed — with
+`G = (W - S*U) H` the current gradient field and `A_rb = u_rb H u_rb^T`:
+
+```
+s*_rb = s_rb + (G_rb . u_rb) / A_rb
+```
+
+`A` needs only `H`'s **diagonal 16x16 blocks**; the off-diagonal coupling enters
+through `G`. At `H = I` the cross terms vanish because blocks have disjoint
+support, `A = <u,u>`, `G.u = <w,u> - s<u,u>`, and the form collapses to
+`<w,u>/<u,u>` — the plain refit, exactly. `test_an_identity_metric_is_the_plain_refit`
+pins that collapse.
+
+**This is JSO's question with `H` in place of the grid search.** Joint scale
+optimisation asks which per-block scale minimises an activation-weighted error
+and answers it by trying a small ladder of levels; here the answer is the
+stationary point of that same error, in closed form, with no ladder and no level
+to choose (principle 2).
+
+**Landing stays exact and needs no rounding rule of its own.** The plane's
+sixteen table entries are exact E4M3 bytes, and with the codes fixed a block's
+error is a parabola in its scale, so nearest-in-*linear* distance to `s*` is the
+exact minimiser among them (`_nearest`) — not nearest in log distance, which is
+what an E4M3 rounder would do. `land_at_least`'s round-up exists for a *floor*,
+a CHANNEL-plane mechanism that raises a **row** scale so the row's loudest
+weight stays inside the body's reach; a block scale already tracks its own
+sixteen weights' amax, so there is no floor here and `refit_reach_floor` is
+refused under a block plane rather than silently ignored.
+
+### Three approximations, and the guard that charges for them
+
+The step is a *coordinate* optimum, so honesty about what is not exact:
+
+1. Every block moves at once — the vector step is Jacobi, not the joint
+   minimiser. Corrected by an exact **per-row step length** `t*` along the
+   direction, which is the true minimiser on that line (rows are independent
+   under `H`) and is identically 1 when the metric is separable.
+2. `_fit_lut` chooses the sixteen table entries under the separable
+   second-order model `sum_b A_b (c_b - s*_b)^2` — the expansion around the
+   current plane with cross-block terms dropped.
+3. Assignment is nearest-in-linear to `s*`, the exact per-block optimum given
+   the others.
+
+The accept test is where the cross terms come back: the candidate planes are
+scored on the **full quadratic**, and the plane the unit already has is one of
+the candidates, so the step is monotone in the metric's own error and the
+alternation with the trellis stays monotone
+(`test_the_metric_refit_is_monotone_under_its_own_metric`).
+
+**The failure this design had to avoid, and the test that would catch it.** A
+Jacobi step that the guard rejects on every pass would leave the "+ refit" arm
+encoding *identically* to the arm without it, raising nothing — the same class
+of silent no-op the previous commit closed for dropped kwargs.
+`test_the_metric_refit_moves_scales_and_lowers_the_metric_cost` asserts both
+halves (indices move, and the exact `H`-cost strictly falls) on a Hessian with
+real off-block coupling, and the sweep harness prints `!! IDENTICAL BYTES`
+whenever two arms of one unit materialise the same tensor.
+
+## The Hessian, and what it may not have seen
+
+The same capture as the FP8 receipt — `experiments/capture_h_full.py`, fp32
+accumulation of `x^T x` per Linear from a BF16 HF forward with hooks.
+
+| field | value |
+|---|---|
+| source | wikitext-2-raw-v1 **train** (local `datasets` cache), 295,562 chars |
+| text sha256 | `a5c5fd091a3486361e71eae1132fff141aeadd0ae51ebf688da4661752f853d3` |
+| fit slice | 16,384 tokens, `seqlen` 512, ids sha256 `229c6f72307f7050…` |
+| eval slice | 8,192 tokens from the next offset, ids sha256 `30ec7255e6934172…` |
+| Linears | 196 (every `*_proj` under `model.layers`) |
+
+The served KL corpus is `corpus_qwen_n8_s512.json` — wikitext-2 **test**
+(`source_sha256 076d33efc447…`). Train and test are disjoint splits, so no arm
+was fit on text it is graded on, and the weight-space sweep is scored on the
+**eval** slice, disjoint from the fit slice the Hessian and the refit were built
+from.
+
+## Weight space: the sweep
+
+*(table)*
+
+## Served (the gate)
+
+*(table)*
+
+## GLM cross-check
+
+*(table)*
+
+## The gate
+
+*(table)*
+
+## Scope, and what is not measured
+
+*(list)*
+
+## Files
+
+Code: `src/tessera/encode.py` (`_refit_scales_lut_metric`, the lifted LDLQ
+refusal, the re-scoped `refit_metric`/`refit_reach_floor` refusals),
+`src/tessera/export.py` (`ActivationSource.from_capture`),
+`experiments/ldlq_window_sweep.py` (`--grid`), `experiments/tessera_window_wire.py`
+(the levers now ride the TCQ arm too), `experiments/export_glm53_tessera.py`
+(`--hessian`), `experiments/ldlq_lut_chain.sh`, `tests/test_ldlq_lut_plane.py`.

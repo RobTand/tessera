@@ -354,25 +354,32 @@ def test_the_streaming_export_takes_the_same_source(tmp_path):
 
 
 @cuda
-def test_a_block_plane_refuses_the_refit_metric_rather_than_dropping_it(tmp_path):
-    """Only the CHANNEL branch of the refit reads ``refit_metric``.  Under a
-    block plane it would be silently ignored, and an activation-aware export
-    would ship weights-only bytes without raising -- so it is refused, the same
-    way LDLQ already is."""
+def test_a_plane_without_a_metric_refit_refuses_one_rather_than_dropping_it(tmp_path):
+    """Every plane that does not read an argument refuses it.
+
+    The CHANNEL plane's row-scale refit and the LUT plane's per-16 block-scale
+    refit both implement ``refit_metric``; S6b does not, and the reach floor is
+    a CHANNEL mechanism on any plane.  Dropped silently, either would let an
+    activation-aware export ship weights-only bytes and raise nothing, which is
+    the failure this plumbing exists to prevent."""
     from tessera.alphabet import E2M1_GRID, tuple_grid
     from tessera.export import encode_linear
+    from tessera.manifest import ScalePlaneKind
 
     K2 = tuple_grid(E2M1_GRID, 2)
     g = torch.Generator().manual_seed(11)
     w = torch.randn(ROWS, COLS, generator=g).bfloat16()
     H = next(iter(_hessians(["x.weight"]).values()))
-    with pytest.raises(GrammarError, match="CHANNEL plane's refit"):
-        encode_linear(w, grid=K2, q256=896, name="x", refit_metric=H)
-    with pytest.raises(GrammarError, match="CHANNEL plane's refit"):
+    with pytest.raises(GrammarError, match="S6b"):
+        encode_linear(w, grid=K2, q256=896, name="x", refit_metric=H,
+                      scale_plane=ScalePlaneKind.S6B)
+    with pytest.raises(GrammarError, match="CHANNEL-plane mechanism"):
         encode_linear(w, grid=K2, q256=896, name="x", refit_reach_floor=True)
     with pytest.raises(GrammarError, match="scale_refit=0 runs none"):
         encode_linear(w, grid=E4M3_GRID, q256=Q256, name="x",
                       scale_refit=0, refit_metric=H)
+    # ...and the LUT plane, which now implements it, does not refuse.
+    encode_linear(w, grid=K2, q256=896, name="x", refit_metric=H)
 
 
 # --------------------------------------------------------------------------

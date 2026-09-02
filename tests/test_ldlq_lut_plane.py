@@ -1,0 +1,272 @@
+"""LDLQ and the metric-aware refit on the LUT plane -- the 4-bit route's wire.
+
+The FP8 route got both levers first because its CHANNEL plane has no column
+axis.  ``encode_unit`` refused them under a block plane on the reasoning that
+the plane's within-row column spans "would have to be scheduled with the
+blocks".  They do not: the plane is read once per pass, before the block loop,
+and refit once after it, so the schedule and the plane never interleave.  This
+file is the evidence for that, on the two bodies the E2M1x2 grid ships:
+
+* the **TCQ cap wire** (``q256 = 896``, span 2, LUT16) -- the 4.0 bpp wire; and
+* the **sub-cap window body** (``q256 < 896``, L=12, LUT16).
+
+and for the block-scale refit's closed form: that it is the plain refit when
+the metric is the identity, the diagonal form when the metric is diagonal, and
+that on a Hessian with real off-block coupling it *moves* and *lowers the
+metric's own error* -- the last because a Jacobi step that the monotone guard
+rejects every pass would leave the arm encoding identically to LDLQ alone and
+raise nothing.
+"""
+import pytest
+import torch
+
+from tessera.alphabet import E2M1_GRID, tuple_grid
+from tessera.compensate import block_ldl, regularize_hessian
+from tessera.encode import _refit_scales_lut
+from tessera.errors import GrammarError
+from tessera.export import (
+    encode_linear, encode_linear_planes, tcq_cap_q256, wire_recipe)
+from tessera.manifest import BodyKind, ScalePlaneKind
+
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the Viterbi is CUDA")
+
+K2 = tuple_grid(E2M1_GRID, 2)
+CAP = tcq_cap_q256(K2)          # 896: the 4.0 bpp wire
+SUBCAP = 768                    # the window body's range
+ROWS, COLS = 64, 256
+
+
+def _weights(seed=0, rows=ROWS, cols=COLS, device="cuda"):
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    return (torch.randn(rows, cols, generator=g) * 0.02).to(
+        device=device, dtype=torch.float32).contiguous()
+
+
+def _hessian(cols=COLS, seed=1, device="cuda", coupling=1.0):
+    """A PSD input Hessian with genuine off-BLOCK structure.
+
+    A block-diagonal H would make the coordinate step exact and prove nothing
+    about the guard, so the mixing matrix is dense and a few columns are made
+    loud, which is the shape a real activation Hessian has.
+    """
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    x = torch.randn(4 * cols, cols, generator=g)
+    mix = torch.eye(cols) + coupling * torch.randn(cols, cols, generator=g) / cols ** 0.5
+    x = x @ mix
+    x[:, ::29] *= 5.0
+    return ((x.T @ x) / x.shape[0]).to(device=device, dtype=torch.float32)
+
+
+def _encode(w, q256, **kw):
+    """The unit ``wire_recipe(E2M1x2, q256)`` resolves to.
+
+    Through ``encode_linear_planes`` rather than ``encode_unit`` because the
+    TCQ body needs its anchor forests built for the rung, and the point of
+    these arms is the wire the exporter writes, not a hand-assembled one.
+    """
+    return encode_linear_planes(
+        w.bfloat16(), grid=K2, q256=q256, name="u", verify=False, **kw)[1]
+
+
+# --------------------------------------------------------------------------
+# LDLQ is a schedule, not a second encoder -- on the block plane too.
+# --------------------------------------------------------------------------
+
+
+@cuda
+@pytest.mark.parametrize("q256", [CAP, SUBCAP])
+@pytest.mark.parametrize("block", [32, 64, 128])
+def test_identity_factor_is_the_plain_pass_on_the_lut_plane(q256, block):
+    """A factor with no off-diagonal blocks compensates nothing, so it must
+    encode bit for bit what the ordinary whole-matrix pass encodes -- codes,
+    scale table, indices and the reported sse."""
+    w = _weights()
+    plain = _encode(w, q256, scale_refit=4)
+    eye = torch.eye(COLS, device=w.device)
+    same = _encode(w, q256, scale_refit=4, ldl=eye, ldl_block=block)
+    assert torch.equal(plain.codes, same.codes)
+    assert torch.equal(plain.scale_lut, same.scale_lut)
+    assert torch.equal(plain.scale_refine, same.scale_refine)
+    assert plain.scale_global == same.scale_global
+    assert plain.sse == same.sse
+
+
+@cuda
+@pytest.mark.parametrize("q256", [CAP, SUBCAP])
+def test_ldlq_moves_the_encode_and_keeps_the_wire(q256):
+    """A real Hessian changes the codes, and the unit still serialises."""
+    w = _weights(seed=5)
+    L = block_ldl(regularize_hessian(_hessian(), sigma_reg=1.0), 32)
+    plain = _encode(w, q256, scale_refit=4)
+    ldlq = _encode(w, q256, scale_refit=4, ldl=L, ldl_block=32)
+    assert not torch.equal(plain.codes, ldlq.codes)
+    assert plain.codes.shape == ldlq.codes.shape
+    assert plain.scale_refine.shape == ldlq.scale_refine.shape
+    assert plain.scale_lut.numel() == ldlq.scale_lut.numel()
+    again = _encode(w, q256, scale_refit=4, ldl=L, ldl_block=32)
+    assert torch.equal(ldlq.codes, again.codes)          # deterministic
+
+
+@cuda
+def test_the_block_size_guard_still_holds_under_a_block_plane():
+    w = _weights(seed=3)
+    H = regularize_hessian(_hessian(seed=3), sigma_reg=3.0)
+    with pytest.raises(GrammarError, match="diagonal blocks are not the identity"):
+        _encode(w, CAP, scale_refit=4, ldl=block_ldl(H, 32), ldl_block=64)
+    with pytest.raises(GrammarError, match="not a multiple of the LDLQ block"):
+        _encode(w, CAP, scale_refit=4, ldl=block_ldl(H, 64), ldl_block=96)
+    _encode(w, CAP, scale_refit=4, ldl=block_ldl(H, 64), ldl_block=64)
+
+
+# --------------------------------------------------------------------------
+# The block-scale refit's closed form.
+# --------------------------------------------------------------------------
+
+
+def _lut_fixture(seed=0, rows=12, cols=64, half=16, device="cpu"):
+    """A LUT plane and codes to refit it against, without running a trellis."""
+    g = torch.Generator().manual_seed(seed)
+    work = (torch.randn(rows, cols, generator=g) * 0.02).to(device)
+    units = torch.randint(-6, 7, (rows, cols), generator=g).float().to(device)
+    from tessera.encode import _pack_scales_lut
+    table, index, effective, glob = _pack_scales_lut(work, half, peak=6.0)
+    return work, units, half, table.to(device), index.to(device), effective.to(device), glob
+
+
+def _cost(work, units, effective, half, M):
+    e = work - effective.reshape(work.shape[0], -1).repeat_interleave(half, dim=1) * units
+    return float(((e @ M) * e).sum())
+
+
+def test_an_identity_metric_is_the_plain_refit():
+    """The derivation's own claim: at ``H = I`` the cross-block terms vanish
+    because blocks have disjoint support, and ``s* = <w,u>/<u,u>`` again."""
+    work, units, half, table, index, eff, glob = _lut_fixture()
+    plain = _refit_scales_lut(work, units, half, table, index, eff, glob)
+    eye = torch.eye(work.shape[1])
+    metric = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=eye)
+    assert torch.equal(plain[0], metric[0])
+    assert torch.equal(plain[1], metric[1])
+    assert torch.allclose(plain[2], metric[2], rtol=1e-6, atol=0)
+
+
+def test_a_diagonal_metric_is_the_full_form_with_a_diagonal_hessian():
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=2)
+    h = torch.rand(work.shape[1]) + 0.1
+    a = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=h)
+    b = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=torch.diag(h))
+    assert torch.equal(a[1], b[1])
+    assert torch.allclose(a[2], b[2], rtol=1e-5, atol=0)
+
+
+def test_the_metric_refit_moves_scales_and_lowers_the_metric_cost():
+    """The no-op this test exists to catch: a Jacobi step that the monotone
+    guard rejects on every pass leaves the metric arm encoding *identically* to
+    the arm without it, and raises nothing.  So assert both halves -- scales
+    move, and the metric's own error strictly falls."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=4, cols=128)
+    H = _hessian(cols=128, seed=4, device="cpu")
+    before = _cost(work, units, eff, half, H)
+    _, new_index, new_eff = _refit_scales_lut(
+        work, units, half, table, index, eff, glob, metric=H)
+    assert not torch.equal(new_index, index), "no scale moved: the guard rejected every step"
+    assert _cost(work, units, new_eff, half, H) < before
+
+
+def test_the_metric_refit_is_monotone_under_its_own_metric():
+    """Whatever the metric, the plane never ends worse than it began under it:
+    the plane the unit already has is one of the candidates."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=6, cols=128)
+    h = torch.rand(128) + 0.05
+    for metric in (h, _hessian(cols=128, seed=7, device="cpu"),
+                   _hessian(cols=128, seed=8, device="cpu", coupling=4.0)):
+        M = torch.diag(metric) if metric.ndim == 1 else metric
+        _, _, new_eff = _refit_scales_lut(
+            work, units, half, table, index, eff, glob, metric=metric)
+        assert _cost(work, units, new_eff, half, M) <= _cost(work, units, eff, half, M) + 1e-9
+
+
+def test_a_metric_refit_needs_its_blocks_inside_a_row():
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=9, rows=8, cols=64)
+    with pytest.raises(GrammarError, match="within one row"):
+        _refit_scales_lut(work, units, 24, table, index, eff, glob,
+                          metric=torch.eye(64))
+
+
+# --------------------------------------------------------------------------
+# End to end, through the exporter's own entry point.
+# --------------------------------------------------------------------------
+
+
+@cuda
+@pytest.mark.parametrize("q256", [CAP, SUBCAP])
+def test_both_levers_reach_the_bytes_on_the_four_bit_wire(q256):
+    """Each lever alone, and the two together, must produce three encodings
+    that differ from the baseline and from each other -- otherwise the arm is
+    named after a setting that did nothing."""
+    w = _weights(seed=8).bfloat16()
+    H = _hessian(seed=8)
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    base = encode_linear(w, grid=K2, q256=q256, name="x").blob
+    ldlq = encode_linear(w, grid=K2, q256=q256, name="x", ldl=L, ldl_block=32).blob
+    refit = encode_linear(w, grid=K2, q256=q256, name="x", refit_metric=H).blob
+    both = encode_linear(w, grid=K2, q256=q256, name="x",
+                         ldl=L, ldl_block=32, refit_metric=H).blob
+    assert len({base, ldlq, refit, both}) == 4
+    assert len(base) == len(ldlq) == len(refit) == len(both), "the wire is unchanged"
+
+
+@cuda
+def test_the_body_the_recipe_picks_is_the_body_measured():
+    """The two arms above are the two bodies the grid ships, not one twice."""
+    assert wire_recipe(K2, CAP).body is BodyKind.TCQ
+    assert wire_recipe(K2, CAP).scale_plane is ScalePlaneKind.LUT
+    assert wire_recipe(K2, SUBCAP).body is BodyKind.WINDOW
+    assert wire_recipe(K2, SUBCAP).scale_plane is ScalePlaneKind.LUT
+
+
+@cuda
+def test_the_streaming_export_carries_a_hessian_onto_the_four_bit_wire(tmp_path):
+    """``export_glm53_tessera.py``'s path, at its own grid.
+
+    That driver streams shards through ``export_checkpoint_streaming`` on
+    E2M1_K2, and it is the driver whose ``--hessian`` was withheld while the
+    block plane refused both levers.  So pin the whole leg: the Hessian
+    reaches the encoder (the bytes move), the wire does not grow, and the
+    capture's identity lands in the config a merge guard reads.
+    """
+    import json
+
+    from safetensors.torch import save_file
+
+    from tessera.export import ActivationSource, export_checkpoint_streaming
+
+    g = torch.Generator().manual_seed(21)
+    tensors = {f"model.layers.0.mlp.{p}.weight": torch.randn(64, 256, generator=g).bfloat16()
+               for p in ("gate_proj", "up_proj")}
+    src = tmp_path / "src"
+    src.mkdir()
+    save_file({k: v.contiguous() for k, v in tensors.items()},
+              str(src / "model.safetensors"), metadata={"format": "pt"})
+    plan = {name: CAP for name in tensors}
+    hessians = {ActivationSource.unit_name(n): _hessian(cols=256, seed=i, device="cpu")
+                for i, n in enumerate(tensors)}
+    provenance = {"source": "wikitext-2 train", "text_sha256": "c" * 64,
+                  "fit_tokens": 16384, "fit_ids_sha256": "d" * 64}
+    extra = {"source_model": str(src), "prismaquant_plan": "smoke", "inherits": {}}
+
+    export_checkpoint_streaming(src, tmp_path / "plain", plan, grid=K2,
+                                copy_aux=False, extra_config=extra)
+    export_checkpoint_streaming(
+        src, tmp_path / "aware", plan, grid=K2, copy_aux=False, extra_config=extra,
+        activation=ActivationSource(hessians=hessians, provenance=provenance))
+
+    plain = (tmp_path / "plain" / "model.safetensors").read_bytes()
+    aware = (tmp_path / "aware" / "model.safetensors").read_bytes()
+    assert plain != aware, "the Hessian was recorded but never reached the encoder"
+    assert len(plain) == len(aware), "both levers are encoder-side; the wire is the same"
+    config = json.loads((tmp_path / "aware" / "tessera_config.json").read_text())
+    assert config["activation_aware"]["hessian"]["fit_ids_sha256"] == "d" * 64
+    assert config["activation_aware"]["refit_objective"] == "hessian"
+    assert json.loads(
+        (tmp_path / "plain" / "tessera_config.json").read_text())["activation_aware"] is None

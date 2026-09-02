@@ -277,6 +277,34 @@ class ActivationSource:
             kwargs["refit_metric"] = (h / h.mean()).pow(alpha)
         return kwargs
 
+    @classmethod
+    def from_capture(cls, path, **settings) -> "ActivationSource":
+        """Load a ``capture_h_full.py`` payload and wrap it at ``settings``.
+
+        Every driver that offers a ``--hessian`` flag comes through here, so
+        the one thing they cannot disagree about is what a capture file means:
+        ``H`` keyed by unit name, the capture's own provenance carried forward
+        with the file's path stamped on it (a reader needs to know *which*
+        file, not only which text), and the measured recipe filling in every
+        setting the caller left out.  ``ldlq_sigma`` below zero is spelled by
+        the CLIs as "LDLQ off" and lands here as ``None``.
+        """
+        import torch as _torch
+
+        payload = _torch.load(str(path), map_location="cpu", weights_only=False)
+        if "H" not in payload:
+            raise GrammarError(
+                f"{path} carries no 'H': a capture payload is "
+                "{'H': {unit: [cols, cols]}, 'provenance': {...}}")
+        sigma = settings.pop("ldlq_sigma", DEFAULT_LDLQ_SIGMA)
+        if sigma is not None and float(sigma) < 0:
+            sigma = None
+        return cls(
+            hessians=payload["H"],
+            provenance=dict(payload.get("provenance") or {}, path=str(path)),
+            ldlq_sigma=sigma, **settings,
+        )
+
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.
 

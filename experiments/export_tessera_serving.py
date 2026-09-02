@@ -233,13 +233,8 @@ def main():
     # that let the library path encode weights-only while the script did not.
     activation = None
     if args.hessian:
-        payload = torch.load(args.hessian, map_location="cpu", weights_only=False)
-        if args.ldlq_sigma is not None and args.ldlq_sigma < 0:
-            args.ldlq_sigma = None                  # `--ldlq-sigma -1` turns LDLQ off
-        activation = ActivationSource(
-            hessians=payload["H"], provenance=dict(payload.get("provenance") or {},
-                                                   path=str(args.hessian)),
-            ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
+        activation = ActivationSource.from_capture(
+            args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
             refit_objective=args.refit_metric,
             refit_reach_floor=args.refit_reach_floor,
         )
