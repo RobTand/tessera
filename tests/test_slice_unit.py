@@ -630,12 +630,20 @@ def test_the_window_kernel_lane_decodes_a_shard(units):
 def test_granularity_agrees_between_a_unit_and_a_manifest(units, label):
     """A reader holding only bytes computes the granularity a holder of the
     planes computes.  The serving plugin has the manifest; the exporter has
-    the unit; a disagreement would be a shard one of them refuses to make."""
+    the unit; a disagreement would be a shard one of them refuses to make.
+
+    The third form is the one a loader actually holds -- a ``ParsedUnit``,
+    which supplies its own superblock and arity.  It has to agree without
+    being told them, because the defaults (256, arity 1) are wrong for a
+    k-tuple grid and a caller who passed nothing would get a granularity that
+    ``slice_unit`` then refuses."""
     unit, forests, grid, blob = units[label]
     parsed = parse_unit_artifact(blob, device=DEVICE)
-    assert shard_granularity(
+    explicit = shard_granularity(
         parsed.unit, parsed.manifest.geometry.superblock_columns, grid.arity
-    ) == shard_granularity(parsed.manifest)
+    )
+    assert explicit == shard_granularity(parsed.manifest)
+    assert explicit == shard_granularity(parsed)
 
 
 @needs_cuda
@@ -650,6 +658,9 @@ def test_can_shard_matches_what_slice_unit_accepts(units):
             for tp in (2, 4, 8, 16):
                 allowed = can_shard(parsed.unit, tp, axis,
                                     geometry.superblock_columns, grid.arity)
+                # A loader holds the parse, not the planes, and passes no
+                # superblock or arity; it must get the same answer.
+                assert can_shard(parsed, tp, axis) is allowed
                 if extent % tp:
                     assert not allowed
                     continue

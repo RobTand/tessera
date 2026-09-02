@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0`, `1` or `2`; see §1a, §1b) |
+| 10 | 2 | schema minor (`0`–`4`; see §1a–§1d) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -166,6 +166,108 @@ row words are plane bytes under the payload digest.
 `0.0039` bpp on a 2048×4096 unit, plus the ratio's manifest bytes. No
 block-scale planes. `calculator.terminal_rate(with_row_scale=True, window_bits=L)` prices the rows and a window table exactly; it does **not** price a TCQ unit's ALPHABET/DESCENDANT forest planes (per-unit blob bytes: ~1.4 KB at 64×512, 0.0013 bpp at 2048×4096), so a byte quotation that must match `ExportedUnit.exact_bytes` at small shapes reads the container, not the accountant.
 
+### 1d. Schema minor 4 (2026-09-02): the shard record and the INITIAL_STATE plane
+
+Minor 4 appends one optional record to the canonical manifest, **after** the
+minor-2 fields, and — only for a shard cut below row 0 — adds one plane.
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `has_shard` | uint | `0` = a whole unit, and nothing follows. `1` = this unit is a window of another one; the record follows. |
+| `shard.row_offset` | uint | The parent row this unit's row 0 is. |
+| `shard.col_offset` | uint | The parent column this unit's column 0 is. |
+| `shard.parent_rows` | uint | The parent's row count. |
+| `shard.parent_columns` | uint | The parent's column count. |
+| `shard.parent_digest` | digest32 | The parent manifest's `manifest_digest`. Provenance, never a decode input. |
+| `shard.state_bits` | uint | The INITIAL_STATE plane's element width, or `0`. Non-zero **iff** `row_offset` is non-zero. |
+
+**Why it exists.** A Tessera artifact is tensor-parallel by construction: the
+exporter writes one whole unit and never learns the TP degree, and every rank
+cuts its own shard out of those bytes at load (`layout.slice_unit`). Every
+plane restricts — BODY and COMPLETION are per-column streams, the block scale
+planes are indexed `(row × cols + col) // block`, DIAG_SU is per input channel
+and DIAG_SV per output channel, RELEASE restricts by the threshold argument in
+`decode.release_order` — with exactly one exception: a column's body is a bit
+stream entered at row 0 from a **pinned zero** trellis state, so entering it at
+row `r0` needs the state the rows above left behind. That state is the one
+thing this minor adds.
+
+**The INITIAL_STATE plane** (`PlaneKind` 9). One element per **column**, index
+domain `AXIS_IN`, payload dtype `UINT`, MSB-first, element width
+`shard.state_bits`:
+
+* under a **WINDOW** body, `state_bits = window_bits`, and the element is
+  `state_{r0−1}` — the last `L` bits of the column's stream before the cut, so
+  that `state_t = ((state_{t−1} << R) | bits_t) mod 2^L` continues unbroken;
+* under a **TCQ** body, `state_bits = the convolutional code's memory order`,
+  and the element is the shift register before the super-symbol the cut lands
+  on: `sum_{k=1..memory} select_{−k} << (memory − k)`, the newest select bit at
+  the top, exactly `ConvCode.step`'s convention.
+
+The width is **not** in `NORMATIVE_ELEMENT_BITS`, because it is a property of
+the encoder profile rather than of the schema. It is bound twice instead: the
+manifest asserts the descriptor's `element_bits` equals `shard.state_bits` and,
+under a window body, that both equal `window_bits`; the reader asserts the same
+against the code's memory once the profile id has resolved it — the deferred
+validation the rate cap already uses.
+
+**Plane order.** A shard cut below row 0 writes
+
+```
+ALPHABET, DESCENDANT, INITIAL_STATE, BODY, SCALE_BASE, COMPLETION,
+DIAG_SU, DIAG_SV, SCALE_REFINE, RELEASE
+```
+
+(`planes.SHARD_PLANE_ORDER`), so its `plane_elements` count array has **ten**
+entries where a whole unit's has nine. The position is forced: the order is
+also the truncation order and a terminal is a prefix of it, so a state plane
+after BODY could be truncated away while the body it governs stayed, and the
+body would then replay from the pinned zero and decode to plausible wrong
+weights. Ahead of BODY, no legal truncation can separate the two. Every
+consumer that indexes `plane_elements` positionally takes its order from
+`Manifest.plane_order`.
+
+**RELEASE under a shard.** A whole unit's per-superblock release counts are the
+Bresenham spread of the total, which the reader regenerates. A shard's are the
+*restriction* of its parent's, which no spread reproduces, so a shard writes
+the RELEASE descriptor with `PER_SUPERBLOCK` granularity and its counts on the
+wire. The restriction is well defined because S9's placement is a **threshold**
+set within each superblock — the top `n` by decoded `|value|`, ties by
+ascending position — and the intersection of a threshold set with any subset is
+the top `k` of that subset in the same order.
+
+**Reading.** A minor-4 reader takes `has_shard` off the manifest and, when it
+is set, reads the record, selects the shard plane order, and refuses: a state
+plane without a record, a record whose `row_offset`/`state_bits` disagree on
+presence, a state width that contradicts the body, a state element count that
+is not the column count, or a shard whose extent runs past the parent it names.
+A header below minor 4 carrying a shard record cannot occur, because the
+manifest declares minor 4 whenever the record is present.
+
+**Writing.** `serialize` writes the lowest minor a manifest needs, so a whole
+unit is byte-identical to what it was before this minor existed — nine plane
+descriptors, a nine-entry count array, no trailing record. `slice_unit` over a
+unit's whole extent returns that unit: the identity slice names no parent, so
+it writes no record. A **column** shard's rate schedule is a window of the
+parent's Bresenham spread and is in general not the canonical schedule of its
+own column count, so its arrangement is `STORED` and its rates are on the wire;
+the choice is made by comparing against the canonical schedule, never by asking
+whether the unit is a shard.
+
+**Identity.** The shard record is manifest bytes under the manifest digest; the
+state plane is plane bytes under the payload digest and carries its own
+`content_digest`. The **encoder profile id is unchanged** — a shard is decoded
+by the same trellis, over the same grid, at the same span, and no field of the
+profile moves. That is the point: a shard is not a different encoding.
+
+**Accounting.** `state_bits` bits per column, inline, so `state_bits ÷
+rows_per_shard` bpp on a row cut and nothing at all on a column cut. On the
+shipped E4M3 wire (`L = 14`) that is 0.0137 bpp at 1024 rows per shard, 0.34%
+of a 4.07-bpp unit; see `docs/measurements/tessera-tp-slicing-2026-09-02.md`
+for the measured table and for the separate, larger cost of *materialising* a
+shard as its own artifact, which duplicates the per-unit ALPHABET table.
+
+
 **The window body's rate ceiling (a minor-2 clarification).** The TCQ
 trellis spends one bit of the payload on its code, so its per-code rate is
 capped at `payload_bits − 1`. The window body's shaping is the `L − R` bits
@@ -295,15 +397,18 @@ must not be the unverified one.
 ## 4. Parse algorithm
 
 1. Read and validate the 24-byte header: magic, version (major `1`, minor
-   `0`, `1` or `2`), header size.
+   `0`–`4`), header size.
 2. Read exactly `manifest_bytes`; decode canonically **under the header's
    minor** (minor 1 reads `span` and the scale-plane record after the payload
-   digest; minor 2 reads `body` and `window_bits` after those); **reject
-   trailing bytes**. Reject a header that declares a minor lower than the one
-   the manifest needs.
-3. Validate the manifest: canonical plane order, no duplicate kinds, rate
+   digest; minor 2 reads `body` and `window_bits` after those; minor 4 reads
+   the shard record after those); **reject trailing bytes**. Reject a header
+   that declares a minor lower than the one the manifest needs.
+3. Validate the manifest: the unit's plane order (canonical, or the shard order
+   when a shard record declares a start state), no duplicate kinds, rate
    schedule exact against the root, complete superblocks keep the quota, no two
-   terminals share an `exact_bytes`.
+   terminals share an `exact_bytes`, and — for a shard — that its extent fits
+   the parent it names and its state plane matches the width the record
+   declares.
 4. Measure the physical plane region. Find the terminal whose `exact_bytes`
    equals it. **No match is a rejection** — arbitrary byte prefixes are not
    terminals (§9).

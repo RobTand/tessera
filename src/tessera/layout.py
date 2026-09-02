@@ -525,6 +525,7 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
 
     if isinstance(unit, Manifest):
         return _manifest_granularity(unit)
+    unit, superblock, arity = _unwrap(unit, superblock, arity)
     steps, cols = unit.body_bits.shape
     span = int(getattr(unit, "span", 1))
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
@@ -603,20 +604,38 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
     """
     if tp < 1:
         raise GrammarError(f"tp must be positive, got {tp}")
+    if axis not in ("row", "column"):
+        raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
     from .manifest import Manifest
 
     if isinstance(unit, Manifest):
         rows, cols = unit.geometry.rows, unit.geometry.columns
     else:
+        unit, superblock, arity = _unwrap(unit, superblock, arity)
         steps, cols = unit.body_bits.shape
         rows = steps * arity
     row_gran, col_gran = shard_granularity(unit, superblock, arity)
-    extent, granularity = (
-        (rows, row_gran) if axis == "row" else (cols, col_gran)
-    )
-    if axis not in ("row", "column"):
-        raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
+    extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
     return extent % tp == 0 and (extent // tp) % granularity == 0
+
+
+def _unwrap(unit, superblock: int, arity: int):
+    """A ``ParsedUnit`` carries its own superblock and arity; take them.
+
+    A loader holds what ``parse_unit_artifact`` returned, not a bare
+    ``EncodedUnit``, and the defaults here (superblock 256, arity 1) are wrong
+    for a k-tuple grid -- so reading them off the parse is what keeps
+    ``can_shard`` and ``slice_unit`` answering about the same unit.
+    """
+    from .unit_artifact import ParsedUnit
+
+    if not isinstance(unit, ParsedUnit):
+        return unit, superblock, arity
+    return (
+        unit.unit,
+        unit.manifest.geometry.superblock_columns,
+        unit.grid.arity if unit.grid is not None else arity,
+    )
 
 
 def _initial_state(unit, steps0: int, arity: int, code, parent_state):
@@ -628,6 +647,17 @@ def _initial_state(unit, steps0: int, arity: int, code, parent_state):
     ``decode._conv_state_stream``'s last row.  A shard of a shard therefore
     composes for free -- the parent's own start state is an input to both --
     and there is no separate derivation to drift from the decoder.
+
+    The replay runs over a **bounded tail**, not over every row above the cut.
+    Both registers are finite: the window body's state is the last ``L`` bits
+    of the stream, which ``ceil(L / R)`` positions fill, and the coset
+    trellis's is the last ``memory`` select bits, which ``memory + 1``
+    super-symbols fill (one more, because the stream reports the register
+    *before* each step it has bits for).  Past that depth the rows above
+    contribute nothing -- including the parent's own start state, which is why
+    the tail needs no init once it is full.  Running the whole prefix instead
+    made a rank's cut cost O(rows above it): the last rank of a tp=8 cut
+    replayed seven eighths of the unit to recover fourteen bits per column.
     """
     from .decode import _conv_state_stream, replay_window
 
@@ -646,23 +676,37 @@ def _initial_state(unit, steps0: int, arity: int, code, parent_state):
     window = BodyKind(getattr(unit, "body", BodyKind.TCQ)) is BodyKind.WINDOW
     for present in sorted(set(unit.rates)):
         which = torch.nonzero(rates == present).squeeze(1)
-        above = body[:steps0, which]
-        start = None if parent_state is None else parent_state.to(device)[which]
         if window:
+            window_bits = int(unit.window_bits)
+            taps = -(-window_bits // present)
+            depth = min(steps0, taps)
+            start = (
+                None
+                if depth == taps or parent_state is None
+                else parent_state.to(device)[which]
+            )
             state[which] = replay_window(
-                above, int(unit.window_bits), present, start
+                body[steps0 - depth : steps0, which], window_bits, present, start
             )[-1]
             continue
+        start = None if parent_state is None else parent_state.to(device)[which]
         # The coset trellis: one select bit per super-symbol.  The stream gives
         # the register *before* each super-symbol it has bits for, so the state
         # at the cut is one step past its last row -- ``ConvCode.step``'s
         # ``((bit << memory) | state) >> 1``, which is exact and costs a shift.
         supers = steps0 // span
-        select = ((above.long().reshape(supers, span, which.numel())[:, 0])
-                  >> (present - 1)) & 1
+        depth = min(supers, code.memory + 1)
+        if depth == code.memory + 1:
+            start = None
+        # Row-slice first, then column-gather: gathering the whole prefix and
+        # slicing it afterwards copies every row above the cut.
+        tail = body[(supers - depth) * span : steps0, which]
+        select = (
+            (tail.long().reshape(depth, span, which.numel())[:, 0]) >> (present - 1)
+        ) & 1
         stream = _conv_state_stream(select, code.memory, start)
         state[which] = (
-            (select[supers - 1].long() << code.memory) | stream[supers - 1].long()
+            (select[depth - 1].long() << code.memory) | stream[depth - 1].long()
         ) >> 1
     return state
 
