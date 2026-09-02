@@ -1,364 +1,328 @@
-"""The kernel lane over a window body (schema minor 2).
+"""The fused window decoder: byte-identity first, then the GEMV's tolerance.
 
-The span-2 lane in ``tests/test_kernel.py`` decodes a convolutional trellis:
-a window of select bits, a stored label, a point field, three tables.  A
-window body has none of that.  ``state_t = ((state_{t-1} << R) | bits_t) mod
-2^L`` from ``state_{-1} = 0`` makes a state *literally* the last ``L`` bits
-of the column's stream, so the kernel reads an ``L``-bit field out of the
-plane and indexes the unit's own ``2^L`` table.  These tests hold that
-kernel to the reader.
-
-The comparison is against ``read_unit_artifact`` -- **bytes**, not the
-encoder's tensors -- wherever a unit can be serialised, because the claim
-the lane makes is that resident bytes and stored bytes decode to the same
-weights.  Where an artifact cannot be built (a hand-made plane at a window
-wider than the reference encoder can search) the reference is
-``replay_window`` composed with the grid, which is the same grammar written
-out in torch.
+The contract this file holds the kernel to is the one the FP8 route needs:
+``kernel_window.decode_fp8_tile`` must produce the *same bytes* as
+``decode.materialize_fp8`` -- not close, identical -- because the serving lane
+already refuses a module whose in-forward decoder disagrees with the reference
+by one byte, and because those bytes are what a stock ``float-quantized``
+checkpoint carries.  The GEMV is held to a derived fp32 tolerance instead,
+since split-K sums in a different order.
 """
 
-from __future__ import annotations
-
-import contextlib
+import sys
+from pathlib import Path
 
 import pytest
 import torch
 
-import tessera.unit_artifact as unit_artifact_module
-from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
-from tessera.decode import replay_window
-from tessera.encode import encode_unit, grid_vector_table
-from tessera.errors import GrammarError
-from tessera.manifest import ArrangementMode, BodyKind, RotationState, ScalePlaneKind
-from tessera.trellis import ConvCode
-from tessera.unit_artifact import build_unit_artifact, read_unit_artifact
-from tessera.wire import scales_from_lut
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available(), reason="the kernel lane is a CUDA path"
+from tessera.alphabet import E4M3_GRID                                  # noqa: E402
+from tessera.decode import materialize_fp8                             # noqa: E402
+from tessera.errors import GrammarError                                # noqa: E402
+from tessera.export import E4M3_RECIPE, encode_linear_planes           # noqa: E402
+from tessera.fused import parse_fused                                  # noqa: E402
+from tessera.unit_artifact import parse_unit_artifact                  # noqa: E402
+
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
+
+#: The reach checkpoint of `docs/measurements/tessera-dense-reach-fix-2026-09-02.md`:
+#: 196 units, 112 modules, the E4M3 wire at 4.07 bpp, with the materialised
+#: stock twin beside it.
+REACH = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook")
+TWIN = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin")
+checkpoint = pytest.mark.skipif(
+    not (REACH / "model.safetensors").exists(),
+    reason="the reach checkpoint is not on this box",
 )
 
-CODE = ConvCode(memory=6)
-K2 = tuple_grid(E2M1_GRID, 2)
-WINDOW = BodyKind.WINDOW
 
-#: A three-rate schedule over 512 columns whose root is exactly 6 and whose
-#: every 256-column superblock keeps the quota.  ``bresenham_rate_schedule``
-#: mixes only the two rates bracketing the root, so a {5, 6, 7} unit -- the
-#: mixed case the lane has to decode -- is reachable only as a stored
-#: arrangement.
-MIXED_567 = ((5,) * 64 + (6,) * 128 + (7,) * 64) * 2
-assert sum(MIXED_567) == 6 * 512
+def _kw():
+    from tessera import kernel_window
+
+    return kernel_window
 
 
-@contextlib.contextmanager
-def _stored_arrangement():
-    """Build the next artifact with ``ArrangementMode.STORED``.
+def _units(limit=None):
+    """``(module, role, ParsedUnit)`` for the reach checkpoint's units."""
+    from safetensors import safe_open
 
-    ``build_unit_artifact`` declares BRESENHAM, and a Bresenham schedule is
-    two adjacent rates by construction -- so there is no three-rate artifact
-    without this.  STORED is the wire's own answer for an importance-placed
-    schedule (``manifest.py``: "importance-placed; the rate vector is on the
-    wire") and ``read_unit_artifact`` already reads the vector back off it, so
-    the round trip below is the real reader on real bytes, not a shortcut
-    around it.
+    with safe_open(str(REACH / "model.safetensors"), framework="pt") as handle:
+        keys = sorted(k for k in handle.keys() if k.endswith(".wire_bytes"))
+        for key in keys[:limit]:
+            blob = bytes(handle.get_tensor(key).numpy().tobytes())
+            for member in parse_fused(blob):
+                yield key[: -len(".wire_bytes")], member.name, parse_unit_artifact(
+                    member.blob, device="cuda"
+                )
+
+
+def _reference_codes(body_bits, rates, window_bits, table, initial):
+    """The window body's codes by its **definition**, one step at a time.
+
+    ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from ``state_{-1} =
+    initial``.  ``decode.replay_window`` is the closed form of this with the
+    start pinned at zero; this walk is what an initial-state shard has to
+    agree with, so the nonzero case is checked against the definition rather
+    than against another closed form that could share its mistake.
     """
-    real = unit_artifact_module.Manifest
-    unit_artifact_module.Manifest = lambda **kw: real(
-        **{**kw, "arrangement": ArrangementMode.STORED}
-    )
-    try:
-        yield
-    finally:
-        unit_artifact_module.Manifest = real
+    rows, cols = body_bits.shape
+    mask = (1 << window_bits) - 1
+    state = initial.to(torch.int64).clone()
+    out = torch.zeros(rows, cols, dtype=torch.uint8, device=body_bits.device)
+    rate = torch.tensor(rates, dtype=torch.int64, device=body_bits.device)
+    for t in range(rows):
+        state = ((state << rate) | body_bits[t].to(torch.int64)) & mask
+        out[t] = table[state]
+    return out
 
 
-# --- the plane: a shift register's stream, column-major, with an L-bit pad ---
+# --- the tables -------------------------------------------------------------
 
 
-def _read_state(plane: torch.Tensor, start: int, window: int) -> int:
-    """The ``window``-bit big-endian field at bit ``start``, read a bit at a time.
+def test_every_legal_e4m3_byte_is_exact_in_fp16():
+    """The value table is fp16, and that is lossless for this grid.
 
-    Deliberately the slowest possible reader: it shares no arithmetic with
-    either the kernel's eight-byte span load or ``pack_window_planes``'s packing, so
-    an error in the bit order cannot cancel between them.
+    Three mantissa bits over ``2**-9 .. 448`` sits inside fp16's normals, so
+    the GEMV's 32 KB table reconstructs exactly what an FP8 GEMM over the
+    decoded tile would see.  Asserted, not argued.
     """
-    value = 0
-    for offset in range(window):
-        bit = start + offset
-        value = (value << 1) | ((int(plane[bit // 8]) >> (7 - bit % 8)) & 1)
-    return value
+    byte = torch.arange(256, dtype=torch.uint8)
+    value = byte.view(torch.float8_e4m3fn).float()
+    finite = torch.isfinite(value)
+    assert int(finite.sum()) == 254
+    assert torch.equal(value[finite].half().float(), value[finite])
 
 
-@pytest.mark.parametrize("window", [10, 16, 20])
-def test_the_window_plane_holds_replay_windows_states(window):
-    """The plane's ``L``-bit field at ``offset[c] + (t+1)*R`` is ``state_t``.
-
-    This is the whole contract between ``pack_window_planes`` and the kernel,
-    tested against ``decode.replay_window`` -- the reader's own closed form --
-    over a mixed schedule, at three widths up to the wire's widest.
-    """
-    from tessera.kernel import pack_window_planes
-
-    torch.manual_seed(window)
-    steps, cols = 9, 32
-    rates = tuple(min((3, 5, 7)[c % 3], window) for c in range(cols))
-    bits = torch.stack([
-        torch.randint(0, 1 << r, (steps,), device="cuda") for r in rates
-    ], dim=1).to(torch.uint8)
-    plane, offsets, rate_t = pack_window_planes(bits, rates, window)
-    assert torch.equal(rate_t.cpu(), torch.tensor(rates, dtype=torch.int32))
-    host = plane.cpu()
-    for col, rate in enumerate(rates):
-        want = replay_window(bits[:, col : col + 1], window, rate).reshape(-1)
-        base = int(offsets[col])
-        assert base % 8 == 0, "a column starts on a byte"
-        for step in range(steps):
-            got = _read_state(host, base + (step + 1) * rate, window)
-            assert got == int(want[step]), f"column {col} step {step}"
-
-
-def test_the_window_plane_refuses_widths_and_rates_it_cannot_carry():
-    from tessera.kernel import pack_window_planes
-
-    bits = torch.zeros(8, 16, dtype=torch.uint8, device="cuda")
-    with pytest.raises(GrammarError, match="outside 1..20"):
-        pack_window_planes(bits, (3,) * 16, 21)
-    with pytest.raises(GrammarError, match="does not fit"):
-        pack_window_planes(bits, (9,) * 16, 8)
-    with pytest.raises(GrammarError, match="rates for"):
-        pack_window_planes(bits, (3,) * 15, 10)
-
-
-# --- the kernel with no encoder in front of it: any width, hand-made bytes ---
-
-
-@pytest.mark.parametrize("window", [12, 18, 20])
-def test_window_gemv_is_bit_exact_over_a_hand_made_plane(window):
-    """A random table and a random stream, decoded two ways.
-
-    The reference encoder searches ``2^L`` states per position, so a unit at
-    ``L = 20`` costs minutes to *encode* and seconds to decode -- which would
-    price a correctness test at the encoder's rate, not the kernel's.  Nothing
-    about the decode needs an encoder: the wire is a table, a stream and a
-    scale plane, and this builds all three directly.  It is the only place the
-    kernel's window read is exercised past ``L = 16``.
-    """
-    from tessera.kernel import (
-        build_window_values, lut_scale_table, pack_scale_nibbles,
-        pack_window_planes, tessera_gemv_window,
+@cuda
+def test_code_table_is_the_reference_byte_map():
+    """``window_code_table`` composes the two lookups ``materialize_fp8`` does."""
+    kw = _kw()
+    codes = torch.arange(1 << 8, dtype=torch.uint8, device="cuda") % 256
+    table = kw.window_code_table(codes, E4M3_GRID, "cuda")
+    native = torch.tensor(E4M3_GRID.native, dtype=torch.uint8, device="cuda")
+    assert torch.equal(table, native[codes.long()])
+    assert torch.equal(
+        kw.window_value_table(table).float(), table.view(torch.float8_e4m3fn).float()
     )
 
-    torch.manual_seed(window)
-    grid, arity, half = K2, 2, 16
-    steps, cols = 96, 128
-    rows = steps * arity
-    rates = tuple((5, 6, 7)[c % 3] for c in range(cols))
-    bits = torch.stack([
-        torch.randint(0, 1 << r, (steps,), device="cuda") for r in rates
-    ], dim=1).to(torch.uint8)
-    table = torch.randint(0, grid.size, (1 << window,), dtype=torch.uint8, device="cuda")
-    lut = torch.arange(0x30, 0x40, dtype=torch.uint8, device="cuda")
-    refine = torch.randint(0, 16, (rows * cols // half,), dtype=torch.uint8, device="cuda")
 
-    # the reference: replay, table, grid, scale -- ``dequantize``'s own order
-    codes = torch.zeros(steps, cols, dtype=torch.long, device="cuda")
-    for rate in sorted(set(rates)):
-        which = torch.tensor([c for c, r in enumerate(rates) if r == rate], device="cuda")
-        codes[:, which] = table[replay_window(bits[:, which], window, rate)].long()
-    vectors = grid_vector_table(grid, "cuda")[codes]              # [steps, cols, arity]
-    scale = torch.repeat_interleave(
-        scales_from_lut(refine, lut, 1.0), half
-    ).reshape(rows, cols)
-    reference = vectors.permute(0, 2, 1).reshape(rows, cols) * scale
+# --- byte identity on the shipped checkpoint --------------------------------
 
-    plane, offsets, rate_t = pack_window_planes(bits, rates, window)
-    for k in (0, 1, 2, 17, cols - 1):
-        x = torch.zeros(cols, device="cuda")
-        x[k] = 1.0
-        got = tessera_gemv_window(
-            x, plane, offsets, rate_t, table, build_window_values(grid, "cuda"),
-            pack_scale_nibbles(refine, rows, cols, half), lut_scale_table(lut, "cuda"),
-            1.0, rows, cols, window, arity, half=half, lanes=8, split_k=4,
+
+@cuda
+@checkpoint
+def test_every_reach_unit_decodes_byte_identically():
+    """All 196 units: the fused tile equals ``materialize_fp8``, byte for byte,
+    and the row scale equals the reference's fp32 expression exactly."""
+    kw = _kw()
+    seen = 0
+    for _module, _role, parsed in _units():
+        reference, scale = materialize_fp8(parsed.unit, parsed.forests or parsed.grid,
+                                           parsed.code)
+        prepared = kw.prepare_from_parsed(parsed, device="cuda")
+        assert torch.equal(prepared.decode(), reference.cuda()), _role
+        assert torch.equal(prepared.row_scale, scale.cuda().float()), _role
+        seen += 1
+    assert seen == 196
+
+
+@cuda
+@checkpoint
+@pytest.mark.skipif(not (TWIN / "model.safetensors").exists(), reason="no stock twin")
+def test_reach_units_match_the_stock_twin_tensors():
+    """The fused tile is the *materialised checkpoint's* bytes.
+
+    ``materialize_fp8`` is the decoder; the twin is what was written to disk
+    from it and what vanilla vLLM loads.  Both, because an agreement with the
+    decoder alone would not catch a checkpoint written from something else.
+    """
+    from safetensors import safe_open
+
+    kw = _kw()
+    with safe_open(str(TWIN / "model.safetensors"), framework="pt") as twin:
+        for module, role, parsed in _units(limit=12):
+            name = module.rsplit(".", 1)[0] + "." + role
+            weight = twin.get_tensor(name + ".weight")
+            scale = twin.get_tensor(name + ".weight_scale")
+            prepared = kw.prepare_from_parsed(parsed, device="cuda")
+            assert torch.equal(
+                prepared.decode().cpu().view(torch.float8_e4m3fn), weight
+            ), name
+            assert torch.equal(prepared.row_scale.cpu(), scale.reshape(-1).float()), name
+
+
+# --- synthetic units --------------------------------------------------------
+
+
+@cuda
+@pytest.mark.parametrize("rows,cols", [(64, 64), (128, 256), (200, 176), (48, 3072),
+                                       (1024, 112)])
+def test_synthetic_units_decode_byte_identically(rows, cols):
+    """Shapes off the tile: ``rows`` not a multiple of ``LANES * VEC`` (256) and
+    ``cols`` not a multiple of ``BLOCK_C`` (64), both, and neither."""
+    kw = _kw()
+    torch.manual_seed(rows * 1000 + cols)
+    weight = torch.randn(rows, cols, dtype=torch.float32) * 0.02
+    _exported, unit, forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024, name="synthetic",
+        body=E4M3_RECIPE.body, span=E4M3_RECIPE.span,
+        scale_plane=E4M3_RECIPE.scale_plane, window_bits=E4M3_RECIPE.window_bits,
+        window_seed=E4M3_RECIPE.window_seed,
+    )
+    reference, scale = materialize_fp8(unit, forests or E4M3_GRID, None)
+    prepared = kw.prepare_window_unit(
+        unit.body_bits, unit.rates, unit.window_bits, unit.window_codes, E4M3_GRID,
+        unit.scale_rows.float() * float(unit.scale_global), device="cuda",
+    )
+    assert torch.equal(prepared.decode(), reference.cuda())
+    assert torch.equal(prepared.row_scale, scale.cuda().float())
+
+
+@cuda
+def test_a_nonzero_initial_window_decodes_from_the_definition():
+    """A TP shard starts mid-column: the kernel must take the initial window.
+
+    The same stream is decoded twice -- once by the kernel with a per-column
+    initial window, once by the one-step-at-a-time definition seeded with the
+    same windows -- and the two must agree byte for byte.  The zero case is
+    checked in the same test so a kernel that ignored the argument entirely
+    would fail on the nonzero one and pass on the zero one, which is the
+    failure mode worth separating.
+    """
+    kw = _kw()
+    rows, cols, window_bits, rate = 96, 80, 14, 4
+    torch.manual_seed(7)
+    body = torch.randint(0, 1 << rate, (rows, cols), dtype=torch.uint8, device="cuda")
+    codes = torch.randint(0, 256, (1 << window_bits,), dtype=torch.uint8, device="cuda")
+    table = kw.window_code_table(codes, E4M3_GRID, "cuda")
+    scale = torch.rand(rows, device="cuda") + 0.5
+    for initial in (
+        torch.zeros(cols, dtype=torch.int64, device="cuda"),
+        torch.randint(0, 1 << window_bits, (cols,), dtype=torch.int64, device="cuda"),
+    ):
+        prepared = kw.prepare_window_unit(
+            body, (rate,) * cols, window_bits, codes, E4M3_GRID, scale,
+            initial=initial, device="cuda",
         )
-        assert torch.equal(got, reference[:, k]), f"window {window} column {k}"
+        expected = _reference_codes(body, (rate,) * cols, window_bits, table, initial)
+        assert torch.equal(prepared.decode(), expected)
 
 
-# --- encoded units, through the wire, back out of the bytes ----------------
+@cuda
+def test_an_initial_window_wider_than_the_wire_is_refused():
+    kw = _kw()
+    body = torch.zeros(32, 16, dtype=torch.uint8, device="cuda")
+    codes = torch.zeros(1 << 10, dtype=torch.uint8, device="cuda")
+    with pytest.raises(GrammarError, match="initial window"):
+        kw.prepare_window_unit(
+            body, (4,) * 16, 10, codes, E4M3_GRID,
+            torch.ones(32, device="cuda"),
+            initial=torch.full((16,), 1 << 10, dtype=torch.int64, device="cuda"),
+            device="cuda",
+        )
 
 
-CASES = [
-    # (id, grid, rates, window_bits, scale plane, rows, cols)
-    ("k2-mixed567-L10-lut", K2, MIXED_567, 10, ScalePlaneKind.LUT, 256, 512),
-    ("k2-mixed567-L12-lut", K2, MIXED_567, 12, ScalePlaneKind.LUT, 256, 512),
-    ("k2-mixed567-L14-lut", K2, MIXED_567, 14, ScalePlaneKind.LUT, 256, 512),
-    ("k2-mixed567-L16-lut", K2, MIXED_567, 16, ScalePlaneKind.LUT, 256, 512),
-    ("k2-mixed567-L10-s6b", K2, MIXED_567, 10, ScalePlaneKind.S6B, 256, 512),
-    ("k2-mixed567-L14-s6b", K2, MIXED_567, 14, ScalePlaneKind.S6B, 256, 512),
-    ("e4m3-r4-L12-lut", E4M3_GRID, (4,) * 512, 12, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r4-L14-lut", E4M3_GRID, (4,) * 512, 14, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r4-L16-lut", E4M3_GRID, (4,) * 512, 16, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r5-L12-lut", E4M3_GRID, (5,) * 512, 12, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r5-L14-lut", E4M3_GRID, (5,) * 512, 14, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r5-L16-lut", E4M3_GRID, (5,) * 512, 16, ScalePlaneKind.LUT, 256, 512),
-    ("e4m3-r4-L12-s6b", E4M3_GRID, (4,) * 512, 12, ScalePlaneKind.S6B, 256, 512),
-    ("e4m3-r5-L14-s6b", E4M3_GRID, (5,) * 512, 14, ScalePlaneKind.S6B, 256, 512),
-    # The shipping expert shape, and an odd one: 100 codes is neither a
-    # multiple of the lane's VEC nor of a program's LANES*VEC, so both tail
-    # masks run; 768 columns is not a power of two.
-    ("k2-r7-L12-lut-2048x4096", K2, (7,) * 4096, 12, ScalePlaneKind.LUT, 2048, 4096),
-    ("k2-r7-L10-lut-200x768", K2, (7,) * 768, 10, ScalePlaneKind.LUT, 200, 768),
-]
+@cuda
+@checkpoint
+def test_a_released_or_rotated_unit_is_refused():
+    """The lane applies no post-decode transform, so it refuses units carrying
+    one rather than serving weights the reference would not produce."""
+    kw = _kw()
+    _module, _role, parsed = next(_units(limit=1))
+    parsed.unit.release_index = torch.zeros(3, dtype=torch.int64, device="cuda")
+    with pytest.raises(GrammarError, match="released"):
+        kw.prepare_from_parsed(parsed, device="cuda")
 
 
-@pytest.fixture(scope="module", params=CASES, ids=[c[0] for c in CASES])
-def window_unit(request):
-    """One encoded window unit, its artifact, and the weights read from bytes."""
-    _name, grid, rates, window_bits, plane, rows, cols = request.param
-    torch.manual_seed(rows + cols + window_bits)
-    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
-    weights[: rows // 8] *= 4.0                      # several scale binades
-    unit = encode_unit(
-        weights, grid, rates, CODE, body=WINDOW, window_bits=window_bits,
-        scale_plane=plane, scale_refit=1, rotation=RotationState.NONE,
-        with_diagonals=False,
-    )
-    q256 = sum(rates) * 256 // len(rates)
-    assert sum(rates) * 256 == q256 * len(rates), "the schedule must have an exact root"
-    canonical = len(set(rates)) <= 2
-    with contextlib.nullcontext() if canonical else _stored_arrangement():
-        _manifest, _region, blob = build_unit_artifact(unit, "unit0", grid, q256, CODE)
-    assert blob[10] == 2, "schema minor 2"
-    return {
-        "unit": unit, "grid": grid, "rates": rates, "rows": rows, "cols": cols,
-        "window_bits": window_bits, "plane": plane, "blob": blob,
-        "reference": read_unit_artifact(blob, device="cuda"),
-    }
+# --- the GEMV ---------------------------------------------------------------
 
 
-def test_the_window_kernel_decodes_the_bytes_the_reader_decodes(window_unit):
-    """One-hot columns: the kernel's weights equal the artifact's, exactly.
+@cuda
+@checkpoint
+def test_gemv_matches_the_dequantised_reference():
+    """``window_gemv`` against ``(tile.float() * scale) @ x.float()``.
 
-    ``x = e_k`` sums nothing, so this is the decode itself and ``torch.equal``
-    is the right relationship -- the split-K atomic that blurs the low bits of
-    a real GEMV never fires.  The reference is ``read_unit_artifact``, so what
-    is compared is the kernel against **the bytes**, with the encoder's
-    tensors out of the loop entirely.
+    Tolerance: the kernel accumulates in fp32 and reduces over split-K by
+    atomic add, so the sum order differs from torch's.  A ``K``-term fp32 sum
+    carries a relative error bounded by about ``K * 2**-24`` in the worst case
+    and ``sqrt(K) * 2**-24`` in practice; at ``K = 3072`` that is 1.8e-4 worst
+    case, 1.0e-5 typical.  ``2e-6`` of the row's own magnitude is the bar --
+    an order under the practical bound and three under the worst case -- the
+    same shape of bar the span-2 receipt set at 3.4e-07 for its shorter sum.
+    A one-hot probe is checked separately at exact equality, where nothing is
+    summed and no tolerance is owed.
     """
-    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
-
-    cols, reference = window_unit["cols"], window_unit["reference"]
-    packed = pack_unit_for_kernel(window_unit["unit"], window_unit["grid"], CODE)
-    assert packed["kind"] == "window"
-    probes = [0, 1, 7, 8, 15, 16, 17, 33, cols // 2, cols - 1]
-    for k in dict.fromkeys(probes):
-        x = torch.zeros(cols, device="cuda")
-        x[k] = 1.0
-        got = gemv_from_packed(x, packed, lanes=8, split_k=4)
-        assert torch.equal(got, reference[:, k]), f"column {k}"
-
-
-def test_the_window_gemv_matches_the_reference_decode(window_unit):
-    """The lane's tolerance contract, as ``test_kernel.py`` states it."""
-    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
-
-    packed = pack_unit_for_kernel(window_unit["unit"], window_unit["grid"], CODE)
-    torch.manual_seed(1)
-    x = torch.randn(window_unit["cols"], device="cuda")
-    got = gemv_from_packed(x, packed)
-    want = window_unit["reference"] @ x
-    assert (got - want).norm() / want.norm() < 1e-5
+    kw = _kw()
+    torch.manual_seed(3)
+    for _module, role, parsed in _units(limit=6):
+        prepared = kw.prepare_from_parsed(parsed, device="cuda")
+        weight = prepared.decode().view(torch.float8_e4m3fn).float() * prepared.row_scale[:, None]
+        for m in (1, 2, 4, 8):
+            x = torch.randn(m, prepared.cols, device="cuda", dtype=torch.bfloat16)
+            got = prepared.gemv(x)
+            want = x.float() @ weight.t()
+            error = (got - want).abs().max() / want.abs().max()
+            assert float(error) < 2e-6, (role, m, float(error))
+        probe = torch.zeros(1, prepared.cols, device="cuda", dtype=torch.bfloat16)
+        probe[0, 5] = 1.0
+        assert torch.equal(prepared.gemv(probe)[0], weight[:, 5])
 
 
-def test_the_window_planes_weigh_the_wire(window_unit):
-    """Resident bytes are the wire's: ``R`` bits per code and a scale nibble.
+@cuda
+@checkpoint
+def test_window_linear_dispatches_on_m_inside_the_op():
+    """One op, both branches: the GEMV under ``gemv_max`` and the decoded W8A8
+    GEMM above it, each within its own contract's error of the fp32 product.
 
-    The window body carries no label plane and no separated point plane, so at
-    the E2M1x2 cap it is 3.5 b/wt of body against the span-2 trellis's 3.75 --
-    the two are *not* the same bytes and the bench says so.  The only resident
-    bytes the wire does not charge are the per-column ``L``-bit pad, which
-    stands in for ``state_{-1} = 0`` exactly as ``SELECT_PAD`` does for the
-    trellis lane, and eight bytes of slack for the last eight-byte span read.
+    ``window_linear`` returns **bf16**, so the bar is bf16's own rounding (8
+    mantissa bits, ``2**-9`` relative per element) and not the fp32 GEMV's
+    2e-6: an exact result rounded to bf16 already lands ~2e-3 from an fp32
+    reference measured against the row's largest entry.
+
+    Each branch is compared to *its own* contract's exact product: below
+    ``gemv_max`` the bf16 activation goes in whole, above it the activation is
+    quantised per token to E4M3 first.  Comparing the W8A8 branch to the bf16
+    product instead would measure the A-side's 3-bit mantissa (~3e-2), which
+    is the contract's error and not this kernel's.
     """
-    from tessera.kernel import pack_unit_for_kernel
-
-    rows, cols = window_unit["rows"], window_unit["cols"]
-    rates, window = window_unit["rates"], window_unit["window_bits"]
-    steps = rows // window_unit["grid"].arity
-    packed = pack_unit_for_kernel(window_unit["unit"], window_unit["grid"], CODE)
-    assert packed["plane"].numel() == sum(
-        -(-(window + steps * r) // 8) for r in rates
-    ) + 8
-    body_bits = steps * sum(rates)
-    pad_bits = window * cols
-    assert packed["plane"].numel() * 8 >= body_bits + pad_bits
-    assert (packed["plane"].numel() - 8) * 8 - pad_bits - body_bits < 8 * cols
-    assert packed["table"].numel() == 1 << window          # the ALPHABET plane
-    if window_unit["plane"] is ScalePlaneKind.LUT:
-        assert packed["scale_plane"].numel() * 8 == rows * cols * 0.25
-    else:
-        assert packed["scale_plane"].numel() * 8 == rows * cols * 0.5
-
-
-def test_the_window_lane_refuses_what_it_does_not_decode():
-    """Three post-decode transforms the reader applies and no GEMV here does.
-
-    Each of them would otherwise return weights that are wrong by a rank-1
-    factor, an orthogonal transform, or a handful of released positions --
-    all plausible, none detectable without the comparison this test makes
-    impossible to skip.
-    """
-    from tessera.kernel import pack_unit_for_kernel, tessera_gemv_window
-
-    torch.manual_seed(9)
-    rows, cols = 128, 512
-    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
-    common = dict(body=WINDOW, window_bits=9, scale_plane=ScalePlaneKind.LUT,
-                  scale_refit=0)
-    # release is arity-1 only, so it is exercised on E4M3
-    released = encode_unit(weights, E4M3_GRID, (7,) * cols, CODE,
-                           released_positions=8, **common)
-    with pytest.raises(GrammarError, match="released positions"):
-        pack_unit_for_kernel(released, E4M3_GRID, CODE)
-    diagonal = encode_unit(weights, K2, (7,) * cols, CODE, with_diagonals=True, **common)
-    with pytest.raises(GrammarError, match="diagonals"):
-        pack_unit_for_kernel(diagonal, K2, CODE)
-    plain = encode_unit(weights, K2, (7,) * cols, CODE, **common)
-    packed = pack_unit_for_kernel(plain, K2, CODE)
-    plain.rotation = RotationState.R_IN_ONLY
-    with pytest.raises(GrammarError, match="rotated"):
-        pack_unit_for_kernel(plain, K2, CODE)
-
-    x = torch.zeros(cols, device="cuda")
-    args = (packed["plane"], packed["offsets"], packed["rates"], packed["table"],
-            packed["values"], packed["scale_plane"], packed["scale_table"],
-            packed["global_scale"])
-    with pytest.raises(GrammarError, match="window table holds"):
-        tessera_gemv_window(x, *args, rows, cols, 10, 2)
-    with pytest.raises(GrammarError, match="offsets and"):
-        tessera_gemv_window(x, *args, rows, cols - 16, 9, 2)
-    with pytest.raises(GrammarError, match="whole codes"):
-        tessera_gemv_window(x, *args, rows - 1, cols, 9, 2)
-    with pytest.raises(GrammarError, match="whole number"):
-        tessera_gemv_window(x[:-1], *args, rows, cols - 1, 9, 2)
+    kw = _kw()
+    _module, _role, parsed = next(_units(limit=1))
+    p = kw.prepare_from_parsed(parsed, device="cuda")
+    weight = p.decode().view(torch.float8_e4m3fn).float() * p.row_scale[:, None]
+    torch.manual_seed(11)
+    for m in (1, 8, 64):
+        x = torch.randn(m, p.cols, device="cuda", dtype=torch.bfloat16) * 0.1
+        y = kw.window_linear(x, p.plane_words, p.offsets, p.rates, p.initial,
+                             p.code_table, p.value_table, p.row_scale, p.rows, p.cols,
+                             p.window_bits, p.max_rate)
+        if m <= 8:
+            a = x.float()
+        else:
+            a_q, a_scale = kw._fp8_per_token(x)
+            a = a_q.float() * a_scale
+        want = a @ weight.t()
+        assert y.shape == (m, p.rows) and y.dtype == torch.bfloat16
+        assert float((y.float() - want).abs().max() / want.abs().max()) < 5e-3, m
 
 
-def test_the_span2_trellis_lane_still_dispatches_to_itself():
-    """A TCQ unit is unchanged by the window branch: same key, same kernel."""
-    from tessera.alphabet import build_forest
-    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
-    from tessera.decode import reconstruct_unit
+@cuda
+@checkpoint
+def test_the_ops_survive_a_compiled_forward():
+    """The three ops are opaque, functional and static-shaped, so Inductor
+    traces through a forward that calls them without a graph break, without
+    reading a data pointer and without guarding on the token dimension."""
+    kw = _kw()
+    _module, _role, parsed = next(_units(limit=1))
+    p = kw.prepare_from_parsed(parsed, device="cuda")
 
-    torch.manual_seed(12)
-    rows, cols = 256, 512
-    weights = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
-    forest = build_forest(K2.rate_cap, grid=K2)
-    unit = encode_unit(weights, {K2.rate_cap: forest}, (K2.rate_cap,) * cols, CODE,
-                       completion=0, span=2, scale_plane=ScalePlaneKind.LUT)
-    packed = pack_unit_for_kernel(unit, forest, CODE)
-    assert packed["kind"] == "span2"
-    reference = reconstruct_unit(unit, {K2.rate_cap: forest}, CODE, completion=0).float()
-    for k in (0, 5, cols - 1):
-        x = torch.zeros(cols, device="cuda")
-        x[k] = 1.0
-        assert torch.equal(gemv_from_packed(x, packed, lanes=8, split_k=4), reference[:, k])
+    def forward(x):
+        y = kw.window_linear(x, p.plane_words, p.offsets, p.rates, p.initial,
+                             p.code_table, p.value_table, p.row_scale, p.rows, p.cols,
+                             p.window_bits, p.max_rate)
+        return y * 2
+
+    x = torch.randn(1, p.cols, device="cuda", dtype=torch.bfloat16) * 0.1
+    eager = forward(x)
+    compiled = torch.compile(forward, fullgraph=True, dynamic=False)(x)
+    assert torch.equal(eager, compiled)
