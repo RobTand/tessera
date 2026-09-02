@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 
+from .errors import GrammarError
 from .grammar import C_FULL_BITS, bresenham_rate_schedule, root_from_q256
 from .layout import TerminalSpec, build_planes, build_terminal
 from .manifest import Geometry
@@ -141,8 +142,16 @@ def terminal_rate(
     cap: int = C_FULL_BITS,
     arity: int = 1,
     span: int = 1,
+    window_bits: int = 0,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
+
+    ``window_bits > 0`` prices a **window body** (schema minor 2): the
+    ALPHABET plane is its ``2^window_bits``-byte table, DESCENDANT and
+    COMPLETION are empty, span is 1.  The table is charged here because it
+    is charged on the wire -- per unit, inline -- and an accountant that
+    left it out would disagree with the artifact by exactly the bytes that
+    distinguish a wide window from a narrow one.
 
     ``span`` is the trellis super-symbol length (schema minor 1): the BODY
     plane holds ``span * R + span - 1`` bits per super-symbol per column.  A
@@ -174,6 +183,11 @@ def terminal_rate(
         quantizable_params=rows * columns,
     )
     rates = bresenham_rate_schedule(root_from_q256(q256), columns, cap)
+    if window_bits:
+        if span != 1:
+            raise GrammarError("a window body is span 1")
+        completion = 0
+    alphabet = bytes(1 << window_bits) if window_bits else b""
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
@@ -196,10 +210,10 @@ def terminal_rate(
     # plane extent never reaches the returned value.  Kept because a latent
     # divergence between the two accountants is exactly the bug class this
     # function keeps having, not because a rung was ever mispriced here.
-    planes = build_planes(geometry, rates, b"", b"", cap=cap, arity=arity,
+    planes = build_planes(geometry, rates, alphabet, b"", cap=cap, arity=arity,
                           spec=spec, span=span)
     return build_terminal(
-        geometry, rates, spec, planes, 0, 0, cap=cap, arity=arity, span=span
+        geometry, rates, spec, planes, len(alphabet), 0, cap=cap, arity=arity, span=span
     ).exact_bpp
 
 

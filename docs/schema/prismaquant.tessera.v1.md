@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0` or `1`; see §1a) |
+| 10 | 2 | schema minor (`0`, `1` or `2`; see §1a, §1b) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -64,6 +64,58 @@ kind, element width, order and truncation rule is what it was. Minor 0
 artifacts mean exactly what they meant. What changed is the meaning of a
 nibble under a new `kind` and the meaning of a BODY column under a new
 `span`, both declared per artifact and both digested.
+
+### 1b. Schema minor 2 (2026-09-02): the window body
+
+Minor 2 appends two fields to the canonical manifest, **after** the minor-1
+fields:
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `body` | uint | `0` = TCQ: the shaped convolutional trellis (every artifact before minor 2). `1` = WINDOW: the bitshift trellis. A position stores its `R` body bits and its code is `ALPHABET[state]`, where `state_t = ((state_{t−1} << R) \| bits_t) mod 2^window_bits` and `state_{−1} = 0`. |
+| `window_bits` | uint | The window width `L` (`R ≤ L ≤ 20`; `0` under TCQ). |
+
+**Planes under a window body.** The ALPHABET plane *is* the table: exactly
+`2^L` bytes, one grid code per state, in state order. DESCENDANT holds no
+elements (there is no forest) and COMPLETION holds none (there is no
+completion axis: the table is flat). BODY is `R` bits per position,
+column-major MSB-first, exactly as a span-1 TCQ body; `span` is `1`. The
+scale planes, diagonals and release are unchanged. No plane kind, element
+width or ordering changes — which is why this is a minor.
+
+**Reading.** A minor-2 reader takes `body` and `window_bits` off the
+manifest, resolves the grid by digest (§5), and rebuilds every state in
+closed form: a state is the last `L` bits of the column's stream, so
+`state_t = Σ_j bits_{t−j} << jR` over `⌈L/R⌉` taps, masked — no walk down
+the column. It refuses a table whose length is not `2^L`, a table byte at
+or above the grid's code count, and any DESCENDANT or COMPLETION element,
+before a state indexes anything.
+
+**Writing.** `serialize` still writes the lowest minor a manifest needs: a
+TCQ unit is a minor-0 or minor-1 artifact exactly as before, byte for byte.
+A window manifest asked to encode at minor 1 is refused.
+
+**Identity.** A window profile digests `body:window,L=<window_bits>`, the
+rate set, the grid and the scale-plane tag — and **not** the convolutional
+code or the forest rule, because neither takes part in decoding it. A TCQ
+profile is unchanged. The table travels on the plane under the payload
+digest; the parameters that built it (a seed and a source model) are
+recorded in the checkpoint config for replay and the merge guard, never
+read by a decoder.
+
+**Accounting.** The table is charged on the ALPHABET plane, inline, per
+unit: `2^L` bytes — `0.0156` bpp at `L = 14` and `0.0625` at `L = 16` on a
+2048×4096 unit. `Storage.REFERENCE` is not used: nothing resolves a
+by-reference plane today, and a second sharing mechanism is not the price
+of a quarter-percent.
+
+**Why this body exists.** Measured on six GLM-5.3-Flash experts
+(`docs/measurements/tessera-window-body-2026-09-02.md`): below the E2M1x2
+cap the window body is 1.3× better than the coset trellis at the same
+bytes, and on E4M3 under a per-channel plane it is 1.2× better than the
+convolutional trellis and beats EXL3 K4 in output space at 4.0 bpp. At the
+E2M1x2 cap the structured coset table remains better until `L ≥ 14`, so the
+body is a per-unit choice, not a replacement.
 
 ## 2. Decisions this schema makes
 
@@ -185,11 +237,12 @@ must not be the unverified one.
 ## 4. Parse algorithm
 
 1. Read and validate the 24-byte header: magic, version (major `1`, minor
-   `0` or `1`), header size.
+   `0`, `1` or `2`), header size.
 2. Read exactly `manifest_bytes`; decode canonically **under the header's
    minor** (minor 1 reads `span` and the scale-plane record after the payload
-   digest); **reject trailing bytes**. Reject a header that declares minor 0
-   for a manifest that needs minor 1.
+   digest; minor 2 reads `body` and `window_bits` after those); **reject
+   trailing bytes**. Reject a header that declares a minor lower than the one
+   the manifest needs.
 3. Validate the manifest: canonical plane order, no duplicate kinds, rate
    schedule exact against the root, complete superblocks keep the quota, no two
    terminals share an `exact_bytes`.
@@ -230,7 +283,10 @@ trellis span (`trellis:span=L`, appended only when `L ≠ 1`) and the
 scale-plane kind (`scale:lut`, appended only when the kind is not S6b). The
 conditional form keeps every pre-minor-1 digest unchanged; the reader
 recomputes the digest from the manifest's own `span` and `kind`, so the pair
-is verified, not assumed.
+is verified, not assumed. A **window body** (minor 2) digests
+`body:window,L=<window_bits>` in place of the convolutional code and the
+forest rule (§1b); the reader recomputes it from the manifest's `body` and
+`window_bits`, so a manifest that lies about either fails the digest search.
 
 ## 6. Frozen constants
 

@@ -1161,8 +1161,15 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     forest per unit here) and an S6b plane at span 2 (the kernel reads the
     LUT plane's nibbles; the shipping wire is span 2 over a LUT plane).
     """
-    from .manifest import ScalePlaneKind
+    from .manifest import BodyKind, ScalePlaneKind
 
+    if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
+        raise GrammarError(
+            "the kernel lane has no decode for a window body yet: its GEMV "
+            "would look each position's code up by the column's last "
+            f"{unit.window_bits} bits, which no kernel here does. Refusing at "
+            "the seam rather than packing the body as if it were a trellis."
+        )
     if unit.span != 2:
         raise GrammarError(f"pack_unit_for_kernel is the span-2 path; this unit is span {unit.span}")
     if unit.scale_plane is not ScalePlaneKind.LUT:

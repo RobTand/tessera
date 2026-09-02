@@ -45,6 +45,8 @@ __all__ = [
     "Geometry",
     "ScalePlaneKind",
     "ScalePlane",
+    "BodyKind",
+    "WINDOW_BITS_MAX",
     "TerminalRecord",
     "Manifest",
 ]
@@ -181,6 +183,32 @@ class ScalePlaneKind(IntEnum):
     #: scale is ``e4m3(table[nibble]) * global``.  Same index granularity as
     #: S6b at half the bytes; the table is chosen per unit by the encoder.
     LUT = 1
+
+
+class BodyKind(IntEnum):
+    """What the BODY plane's bits are, and how a code is recovered from them."""
+
+    #: The shaped trellis: a rate-1/2 convolutional code over four subsets of
+    #: the anchor alphabet, ``R`` bits per position (``R + 1`` at a stored
+    #: label when ``span > 1``), anchors on the ALPHABET plane and the
+    #: completion forest on DESCENDANT.  Every artifact before minor 2.
+    TCQ = 0
+    #: The window body (schema minor 2).  ``R`` bits per position, and the
+    #: code at a position is a table lookup on the last ``window_bits`` bits
+    #: of the column's stream: ``state_t = ((state_{t-1} << R) | bits_t) mod
+    #: 2^window_bits``, ``state_{-1} = 0``, ``code_t = ALPHABET[state_t]``.
+    #: The ALPHABET plane *is* the table (``2^window_bits`` grid codes);
+    #: DESCENDANT and COMPLETION are empty; ``span`` is 1.  No convolutional
+    #: code, no forest: the redundancy that shapes the reconstruction is the
+    #: ``window_bits - R`` bits of history every position shares with its
+    #: predecessors (Tseng et al.'s bitshift trellis, on the hardware tile).
+    WINDOW = 1
+
+
+#: The widest window a reader will allocate a table for: a 2^20-entry table
+#: is 1 MiB per unit, and the ALPHABET plane is charged per unit, so nothing
+#: above this is a rate anyone would ship.  A bound, not a tuning constant.
+WINDOW_BITS_MAX = 20
 
 
 @dataclass(frozen=True)
@@ -349,10 +377,18 @@ class Manifest:
     # to say, so re-serialising one is byte-identical too.
     span: int = 1
     scale_plane: ScalePlane = ScalePlane(ScalePlaneKind.S6B)
+    # Schema minor 2 (2026-09-02).  ``body`` says what the BODY bits are and
+    # ``window_bits`` is the window body's state width (0 under TCQ).  Same
+    # discipline as minor 1: a TCQ manifest carries neither field and writes
+    # at the minor it needed before they existed.
+    body: BodyKind = BodyKind.TCQ
+    window_bits: int = 0
 
     @property
     def schema_minor(self) -> int:
         """The lowest schema minor that expresses this manifest."""
+        if self.body is BodyKind.WINDOW:
+            return 2
         legacy = self.span == 1 and self.scale_plane.kind is ScalePlaneKind.S6B
         return 0 if legacy else 1
 
@@ -361,6 +397,17 @@ class Manifest:
             raise ManifestError("malformed encoder_profile_id")
         if self.span < 1:
             raise ManifestError(f"span must be positive, got {self.span}")
+        if self.body is BodyKind.WINDOW:
+            if self.span != 1:
+                raise ManifestError(
+                    f"a window body has no super-symbols; span must be 1, got {self.span}"
+                )
+            if not 1 <= self.window_bits <= WINDOW_BITS_MAX:
+                raise ManifestError(
+                    f"window_bits {self.window_bits} outside 1..{WINDOW_BITS_MAX}"
+                )
+        elif self.window_bits:
+            raise ManifestError("window_bits is only meaningful under a window body")
         if len(self.payload_digest) != DIGEST_BYTES:
             raise ManifestError("malformed payload_digest")
         if not self.terminals:
@@ -385,6 +432,11 @@ class Manifest:
         # wire field would let it disagree with the grid.  The bound is applied
         # against the real grid at forest rebuild, before any decode.
         validate_rate_schedule(self.rates, self.branch.root, cap=None)
+        if self.body is BodyKind.WINDOW and self.window_bits < max(self.rates):
+            raise ManifestError(
+                f"window_bits {self.window_bits} cannot hold a rate-"
+                f"{max(self.rates)} position's bits"
+            )
         if not superblock_quota_ok(
             self.rates, self.geometry.superblock_columns, self.branch.root
         ):
@@ -477,9 +529,9 @@ class Manifest:
         minor = self.schema_minor if schema_minor is None else schema_minor
         if minor < self.schema_minor:
             raise ManifestError(
-                f"schema minor {minor} cannot express span {self.span} with a "
-                f"{self.scale_plane.kind.name} scale plane; needs minor "
-                f"{self.schema_minor}"
+                f"schema minor {minor} cannot express a {self.body.name} body at "
+                f"span {self.span} with a {self.scale_plane.kind.name} scale "
+                f"plane; needs minor {self.schema_minor}"
             )
         writer = Writer()
         writer.text(SCHEMA_ID).digest32(self.encoder_profile_id)
@@ -499,6 +551,8 @@ class Manifest:
         if minor >= 1:
             writer.uint(self.span)
             self.scale_plane.encode(writer)
+        if minor >= 2:
+            writer.uint(int(self.body)).uint(self.window_bits)
         return writer.bytes
 
     @classmethod
@@ -506,10 +560,10 @@ class Manifest:
         """Parse canonical bytes written at ``schema_minor``.
 
         The minor is the container header's, not something the manifest can
-        discover about itself: the minor-1 fields follow the payload digest,
-        and a minor-0 reader stopping there would leave trailing bytes, which
-        ``finish`` refuses.  The default is 0 because that is what every
-        caller that predates the field means.
+        discover about itself: the minor-1 fields follow the payload digest
+        and the minor-2 fields follow those, so a reader stopping early would
+        leave trailing bytes, which ``finish`` refuses.  The default is 0
+        because that is what every caller that predates the field means.
         """
         reader = Reader(data)
         schema = reader.text()
@@ -539,9 +593,13 @@ class Manifest:
         )
         payload_digest = reader.digest32()
         span, scale_plane = 1, ScalePlane(ScalePlaneKind.S6B)
+        body, window_bits = BodyKind.TCQ, 0
         if schema_minor >= 1:
             span = reader.uint()
             scale_plane = ScalePlane.decode(reader)
+        if schema_minor >= 2:
+            body = BodyKind(reader.uint())
+            window_bits = reader.uint()
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -554,6 +612,8 @@ class Manifest:
             payload_digest=payload_digest,
             span=span,
             scale_plane=scale_plane,
+            body=body,
+            window_bits=window_bits,
         )
 
     def manifest_digest(self) -> bytes:

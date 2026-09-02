@@ -26,14 +26,24 @@ from dataclasses import dataclass
 
 import torch
 
-from .alphabet import E2M1_GRID, E2M1_VALUES, AnchorForest, PayloadGrid, build_forest
+import functools
+
+from .alphabet import (
+    E2M1_GRID,
+    E2M1_VALUES,
+    GAUSSIAN_SOURCE,
+    GROUP_SCALED_SOURCE,
+    AnchorForest,
+    PayloadGrid,
+    build_forest,
+)
 from .diagonals import (
     Diagonals,
     apply_diagonals,
     apply_rotation,
     fit_diagonals,
 )
-from .manifest import RotationState, ScalePlaneKind
+from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
@@ -143,6 +153,16 @@ class EncodedUnit:
     scale_plane: ScalePlaneKind = ScalePlaneKind.S6B
     scale_lut: "torch.Tensor | None" = None   # [<=16] uint8 E4M3FN bytes, ascending
     scale_global: float = 1.0
+    # The BODY plane's *kind* (schema minor 2).  Under ``WINDOW`` the trellis
+    # is the bitshift trellis: ``anchors`` holds the per-position STATE (the
+    # last ``window_bits`` bits of the column's stream), ``body_bits`` the R
+    # new bits per position, ``codes`` is ``window_codes[state]``, and the
+    # completion plane is empty.  ``window_codes`` is the table -- one grid
+    # code per state -- and it travels on the ALPHABET plane.  Wire, all
+    # three: bound into the encoder profile id and read off the manifest.
+    body: BodyKind = BodyKind.TCQ
+    window_bits: int = 0
+    window_codes: "torch.Tensor | None" = None   # [2^window_bits] uint8 grid codes
 
     @property
     def released_positions(self) -> int:
@@ -341,6 +361,158 @@ def viterbi_columns(
             bits[step] = (head << shift) | pt
         state = prev[side, state]
     return anchors, bits, sse
+
+
+@functools.lru_cache(maxsize=64)
+def _window_table_cpu(
+    grid: PayloadGrid, window_bits: int, sigma: "float | None", seed: int, half: int,
+) -> torch.Tensor:
+    size = 1 << window_bits
+    peak = max(abs(v) for v in grid.values)
+    # Equal-mass quantiles of the modelled source, one set per coordinate.
+    # ``sigma=None`` models what the per-half scale plane actually delivers
+    # to the grid -- a Gaussian normalised by its own half's maximum, bounded
+    # at the peak (``GROUP_SCALED_SOURCE``); a number is a plain Gaussian in
+    # grid units for a plane that does not bound (a per-channel scale).
+    if sigma is None:
+        # The group-scaled source is built in whole halves, so a table
+        # narrower than a half takes order statistics of one half's worth.
+        count = max(size, half)
+        sample = torch.tensor(GROUP_SCALED_SOURCE(peak, half, count=count))
+        if sample.numel() != count:
+            raise GrammarError(
+                f"the group-scaled source yielded {sample.numel()} values for "
+                f"{count}; half {half} must divide the table size"
+            )
+        picks = ((torch.arange(size, dtype=torch.float64) + 0.5) * count / size).long()
+        quantiles = sample[picks]
+    else:
+        quantiles = torch.tensor(GAUSSIAN_SOURCE(size, float(sigma)))
+    generator = torch.Generator().manual_seed(int(seed))
+    points = torch.stack(
+        [quantiles[torch.randperm(size, generator=generator)] for _ in range(grid.arity)],
+        dim=1,
+    ).float()                                                   # [size, arity]
+    vectors = grid_vector_table(grid).float()                   # [codes, arity]
+    # Nearest grid vector, ties to the lower code: E4M3's duplicate slots
+    # (the two former NaNs, the negative zero) sit above the legal byte.
+    codes = torch.cdist(points, vectors).argmin(dim=1)
+    return codes.to(torch.uint8) if grid.size <= 256 else codes.to(torch.int32)
+
+
+def window_table(
+    grid: PayloadGrid,
+    window_bits: int,
+    *,
+    sigma: "float | None" = None,
+    seed: int = 0,
+    half: int = 16,
+    device=None,
+) -> torch.Tensor:
+    """The window body's table: ``2^window_bits`` grid codes, one per state.
+
+    A state is the last ``window_bits`` bits of a column's stream, so the
+    table is what turns shared history into shaped reconstruction: the
+    trellis picks a path whose states index good values, and the shaping
+    gain comes from the ``2^(window_bits - R)`` states every R-bit choice can
+    land in.  The entries are a seeded permutation of equal-mass quantiles of
+    the modelled source, snapped to the grid (Tseng et al.'s "random Gaussian
+    codebook", on the tile); a computed (hash) table was measured worse than
+    the stored one at every width, so the table is stored, on the ALPHABET
+    plane, and priced there.
+
+    Deterministic in ``(grid, window_bits, sigma, seed, half)`` and cached:
+    every unit on one grid at one width shares the table, and a table that
+    changed run to run would make artifacts irreproducible.  The table is
+    wire regardless -- a reader takes it off the plane, never rebuilds it.
+    """
+    if not 1 <= window_bits <= WINDOW_BITS_MAX:
+        raise GrammarError(f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}")
+    if sigma is not None and not sigma > 0:
+        raise GrammarError(f"the window source sigma must be positive, got {sigma}")
+    table = _window_table_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    return table.to(device) if device is not None else table.clone()
+
+
+def viterbi_window(
+    targets: torch.Tensor,
+    vectors: torch.Tensor,
+    window_bits: int,
+    rate: int,
+    weights: "torch.Tensor | None" = None,
+    chunk: int = 512,
+) -> "tuple[torch.Tensor, float]":
+    """Exact Viterbi over the bitshift trellis, down every column at once.
+
+    ``targets`` is ``[rows, cols]`` already divided by its scale; ``vectors``
+    is ``[2^window_bits, arity]`` -- the table's reconstruction per state.
+    Returns ``(state[steps, cols] int64, sse)``, ``steps = rows // arity``.
+
+    The trellis: ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from
+    ``state_{-1} = 0``, so a state's ``2^R`` predecessors share its low
+    ``L - R`` bits and differ in the ``R`` bits that fall off the top.  One
+    step is a minimum over those predecessors per low class -- a ``[2^R,
+    2^(L-R)]`` reduction -- then every state adds its own branch cost.  The
+    start is **pinned** at state 0, exactly as the decoder assumes: a free
+    start would encode information the reader cannot recover.
+
+    ``weights`` is the same per-POSITION branch-metric weight as
+    ``viterbi_columns`` takes; ``chunk`` bounds the column batch, since the
+    cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
+    bytes per position per column.
+    """
+    device = targets.device
+    rows, cols = targets.shape
+    size, arity = vectors.shape
+    if size != 1 << window_bits:
+        raise GrammarError(
+            f"the table holds {size} states, window_bits {window_bits} needs {1 << window_bits}"
+        )
+    if not 1 <= rate <= window_bits:
+        raise GrammarError(f"rate {rate} does not fit a {window_bits}-bit window")
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    steps = rows // arity
+    fan = 1 << rate                                  # predecessors per state
+    low = size >> rate                               # low classes
+    tuples = targets.float().reshape(steps, arity, cols)
+    wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
+    table = vectors.float().to(device)
+    states = torch.empty(steps, cols, dtype=torch.long, device=device)
+    sse = 0.0
+    for start in range(0, cols, chunk):
+        x = tuples[:, :, start : start + chunk]                  # [steps, arity, n]
+        n = x.shape[2]
+        cost = torch.full((size, n), float("inf"), device=device)
+        cost[0] = 0.0
+        # The traceback stores the winning predecessor's top R bits per
+        # (step, low class, column).  A byte holds it up to rate 8.
+        back = torch.empty(steps, low, n, dtype=torch.uint8 if fan <= 256 else torch.int32,
+                           device=device)
+        for step in range(steps):
+            best, pred = cost.view(fan, low, n).min(dim=0)      # [low, n]
+            back[step] = pred.to(back.dtype)
+            diff = x[step].t().unsqueeze(1) - table.unsqueeze(0)  # [n, size, arity]
+            diff = diff * diff
+            if wrows is not None:
+                diff = diff * wrows[step, :, start : start + chunk].t().unsqueeze(1)
+            branch = diff.sum(dim=2).t()                          # [size, n]
+            # new state = (low class << R) | new bits: consecutive states
+            # share one predecessor class.
+            cost = best.repeat_interleave(fan, dim=0) + branch
+        final, state = cost.min(dim=0)                           # [n]
+        sse += float(final.sum())
+        column = torch.empty(steps, n, dtype=torch.long, device=device)
+        for step in range(steps - 1, -1, -1):
+            column[step] = state
+            lowbits = state >> rate
+            pred = back[step].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
+            state = (pred << (window_bits - rate)) | lowbits
+        states[:, start : start + chunk] = column
+    return states, sse
 
 
 def _pack_scales(
@@ -708,8 +880,19 @@ def encode_unit(
     span: int = 1,
     scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
     trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
+
+    ``body`` selects the trellis (schema minor 2): ``TCQ`` is the shaped
+    convolutional trellis over the anchor forests; ``WINDOW`` is the bitshift
+    trellis over a ``2^window_bits``-entry table (``window_table``,
+    ``viterbi_window``), which needs no forest, no completion axis and span
+    1.  ``window_seed``/``window_sigma`` parameterise the table and are
+    recorded by the exporter so a replay rebuilds the same one.
 
     ``trellis_weighting`` is the branch-metric weight the Viterbi runs under:
     ``"none"`` minimises the per-half normalised error (the encoder as first
@@ -729,17 +912,39 @@ def encode_unit(
     rows, cols = weights.shape
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
-    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
-    grid = next(iter(forests.values())).grid
-    if any(f.grid != grid for f in forests.values()):
-        raise GrammarError("a unit's rate schedule must share one payload grid")
-    for present in sorted(set(rates)):
-        if present not in forests:
-            raise GrammarError(
-                f"the schedule uses rate {present} but no forest was supplied "
-                f"for it; got forests for {sorted(forests)}"
-            )
+    body = BodyKind(body)
+    if isinstance(forest, PayloadGrid):
+        # A window body has no forests; the grid is all it needs.
+        if body is not BodyKind.WINDOW:
+            raise GrammarError("a TCQ body needs its anchor forests, not a bare grid")
+        grid, forests = forest, {}
+    else:
+        forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+        grid = next(iter(forests.values())).grid
+        if any(f.grid != grid for f in forests.values()):
+            raise GrammarError("a unit's rate schedule must share one payload grid")
+        for present in sorted(set(rates)):
+            if present not in forests and body is BodyKind.TCQ:
+                raise GrammarError(
+                    f"the schedule uses rate {present} but no forest was supplied "
+                    f"for it; got forests for {sorted(forests)}"
+                )
     device = weights.device
+    if body is BodyKind.WINDOW:
+        if span != 1:
+            raise GrammarError(f"a window body has no super-symbols; span must be 1, got {span}")
+        if completion not in (None, 0):
+            raise GrammarError(
+                "a window body has no completion axis: its table is flat, not a "
+                f"forest; got completion={completion}"
+            )
+        if window_bits < max(rates):
+            raise GrammarError(
+                f"window_bits {window_bits} cannot hold a rate-{max(rates)} position's bits"
+            )
+        completion = 0
+    elif window_bits:
+        raise GrammarError("window_bits is only meaningful under a window body")
 
     # S5 transforms, outermost first: rotate the input basis, then remove the
     # rank-1 magnitude field, then set scales on what is left.  The order is
@@ -801,11 +1006,30 @@ def encode_unit(
     codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
     vectors = grid_vector_table(grid, device)
     rate_vector = torch.tensor(rates, device=device)
+    window_codes = window_vectors = None
+    if body is BodyKind.WINDOW:
+        window_codes = window_table(
+            grid, window_bits, sigma=window_sigma, seed=window_seed, half=half, device=device,
+        )
+        window_vectors = vectors[window_codes.long()]           # [2^L, arity]
 
     def trellis_pass(targets: torch.Tensor, weights: "torch.Tensor | None" = None) -> float:
         # One Viterbi per rate: columns are independent, so a mixed-rate
         # schedule is a partition of columns and not a harder problem.
         total = 0.0
+        if body is BodyKind.WINDOW:
+            # One table for every rate: a state indexes the same entry
+            # whatever width the column's new bits have.
+            for present in sorted(set(rates)):
+                which = torch.nonzero(rate_vector == present).squeeze(1)
+                sub = targets[:, which].contiguous()
+                sub_w = None if weights is None else weights[:, which].contiguous()
+                state, s_ = viterbi_window(sub, window_vectors, window_bits, present, weights=sub_w)
+                total += s_
+                anchors[:, which] = state
+                body_bits[:, which] = (state & ((1 << present) - 1)).to(body_dtype)
+                codes[:, which] = window_codes.long()[state]
+            return total
         for present in sorted(set(rates)):
             picked = forests[present]
             depth = picked.cap - present
@@ -915,6 +1139,9 @@ def encode_unit(
         scale_plane=scale_plane,
         scale_lut=table_bytes,
         scale_global=global_scale,
+        body=body,
+        window_bits=window_bits,
+        window_codes=window_codes,
     )
 
 

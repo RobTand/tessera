@@ -40,7 +40,7 @@ from .decode import reconstruct_unit
 from .encode import encode_unit
 from .errors import GrammarError
 from .grammar import bresenham_rate_schedule
-from .manifest import RotationState, ScalePlaneKind
+from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import ConvCode
 from .unit_artifact import build_unit_artifact, read_unit_artifact
 
@@ -96,6 +96,24 @@ DEFAULT_TRELLIS_WEIGHTING = "scale"
 #: ``span=1, scale_plane=S6B`` reproduces every earlier artifact byte for byte.
 DEFAULT_SPAN = 2
 DEFAULT_SCALE_PLANE = ScalePlaneKind.LUT
+#: The BODY kind (schema minor 2).  ``WINDOW`` is the bitshift trellis over a
+#: ``2^window_bits`` table on the ALPHABET plane (``encode.window_table``,
+#: ``encode.viterbi_window``): measured on six GLM experts at 4.0 bpp over a
+#: per-channel E4M3 plane, L=14 is 1.235x better than the TCQ body in output
+#: space and 1.074x better than EXL3 K4, and on E2M1x2 below the cap (3.5
+#: bpp) 1.34x better than the coset trellis
+#: (``experiments/results/tessera_bitshift_tile.json``,
+#: ``tessera_bitshift_tuple.json``).  **Not yet the default**, for two
+#: reasons that are gates rather than doubts: the kernel lane has no window
+#: GEMV (``pack_unit_for_kernel`` refuses the body), and the exact encoder is
+#: O(2^window_bits) per position -- ~150 s per 2048x4096 tensor at L=14 in
+#: the reference implementation, which is days per MoE model.  Both are on
+#: the path; the default flips when a full expert layer has been timed on
+#: a survivor-limited or Triton encoder and the kernel decodes the wire.
+DEFAULT_BODY = BodyKind.TCQ
+DEFAULT_WINDOW_BITS = 0
+DEFAULT_WINDOW_SEED = 0
+DEFAULT_WINDOW_SIGMA: "float | None" = None
 
 
 @dataclass(frozen=True)
@@ -147,16 +165,20 @@ class ExportReport:
 
 
 @lru_cache(maxsize=256)
-def _plan_for(grid: PayloadGrid, q256: int, columns: int):
+def _plan_for(grid: PayloadGrid, q256: int, columns: int, body: BodyKind = BodyKind.TCQ):
     """Rate schedule and forests for one (grid, rung, width).
 
     Cached because the forests are an exhaustive per-rate optimisation and are
     identical for every Linear of the same width at the same rung -- on a
     288-expert MoE layer that is hundreds of units sharing one plan, and
-    rebuilding it per tensor is the export's largest avoidable cost.
+    rebuilding it per tensor is the export's largest avoidable cost.  A
+    window body has no forests: the second element is then the grid itself,
+    which is what every decode-side entry point accepts in their place.
     """
     root = Fraction(q256 * grid.arity, 256)
     rates = bresenham_rate_schedule(root, columns, cap=grid.rate_cap)
+    if BodyKind(body) is BodyKind.WINDOW:
+        return rates, grid
     forests = {rate: build_forest(rate, grid=grid) for rate in sorted(set(rates))}
     return rates, forests
 
@@ -178,8 +200,17 @@ def encode_linear(
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
+    body: BodyKind = DEFAULT_BODY,
+    window_bits: int = DEFAULT_WINDOW_BITS,
+    window_seed: int = DEFAULT_WINDOW_SEED,
+    window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
 ) -> ExportedUnit:
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
+
+    ``body``/``window_bits``/``window_seed``/``window_sigma`` select and
+    parameterise the window body (schema minor 2, ``encode_unit``); the
+    defaults are the TCQ body, so a caller that names none of them gets the
+    shipping wire.
 
     ``completion`` is the second rate axis and it was previously nailed shut at
     zero here.  A column at body rate ``R`` may spend up to ``cap - R`` further
@@ -204,13 +235,25 @@ def encode_linear(
         raise GrammarError(
             f"{name}: {rows} rows is not divisible by the grid arity {grid.arity}"
         )
-    rates, forests = _plan_for(grid, q256, columns)
+    body = BodyKind(body)
+    rates, forests = _plan_for(grid, q256, columns, body)
+    if body is BodyKind.WINDOW and completion not in (None, 0):
+        raise GrammarError(f"{name}: a window body has no completion axis")
+    # A window body has no super-symbols.  The span is a TCQ setting whose
+    # default is the shipping wire's 2; under a window body it means nothing
+    # and is not asked for, so it is resolved to 1 here rather than making
+    # every window caller spell ``span=1`` to escape a default that does not
+    # apply to it.  The config records the resolved value.
+    if body is BodyKind.WINDOW:
+        span = 1
     unit = encode_unit(
         weight, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
-        completion=completion, group=group, half=half,
+        completion=0 if body is BodyKind.WINDOW else completion, group=group, half=half,
         scale_refit=scale_refit, span=span, scale_plane=scale_plane,
         trellis_weighting=trellis_weighting,
+        body=body, window_bits=window_bits, window_seed=window_seed,
+        window_sigma=window_sigma,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
@@ -253,6 +296,10 @@ def export_checkpoint(
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
+    body: BodyKind = DEFAULT_BODY,
+    window_bits: int = DEFAULT_WINDOW_BITS,
+    window_seed: int = DEFAULT_WINDOW_SEED,
+    window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
 ) -> ExportReport:
     """Write ``tensors`` to ``out_dir``, encoding every name ``plan`` rates.
 
@@ -283,6 +330,8 @@ def export_checkpoint(
                 with_diagonals=with_diagonals, verify=verify,
                 scale_refit=scale_refit, span=span, scale_plane=scale_plane,
                 trellis_weighting=trellis_weighting,
+                body=body, window_bits=window_bits, window_seed=window_seed,
+                window_sigma=window_sigma,
             )
             units.append(unit)
             payload[name + BLOB_SUFFIX] = torch.frombuffer(
@@ -306,7 +355,7 @@ def export_checkpoint(
 
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting)
+                  trellis_weighting, body, window_bits, window_seed, window_sigma)
     return report
 
 
@@ -315,8 +364,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   extra_config: "dict | None", scale_refit: int = 0,
                   span: int = 1,
                   scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
-                  trellis_weighting: str = "none") -> None:
+                  trellis_weighting: str = "none",
+                  body: BodyKind = BodyKind.TCQ, window_bits: int = 0,
+                  window_seed: int = 0, window_sigma: "float | None" = None) -> None:
     plane = ScalePlaneKind(scale_plane)
+    body = BodyKind(body)
+    if body is BodyKind.WINDOW:
+        span = 1                       # what ``encode_linear`` resolved it to
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
@@ -349,6 +403,17 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # setting: ``none`` = per-half normalised error, ``scale`` = true
         # squared error); the merge guard compares it like ``scale.refit``.
         "trellis": {"span": int(span), "weighting": str(trellis_weighting)},
+        # The BODY kind (schema minor 2).  ``window_bits`` is wire (manifest
+        # field, profile-id tag); ``seed`` and ``sigma`` are the table's
+        # construction parameters -- the table itself is on the plane, so a
+        # reader never needs them, but a replay does and a merge must compare
+        # them: two halves over different tables are two artifacts.  A config
+        # without this key means the TCQ body, which is every artifact before
+        # the field existed.
+        "body": {"kind": "window" if body is BodyKind.WINDOW else "tcq",
+                 "window_bits": int(window_bits),
+                 "seed": int(window_seed),
+                 "sigma": None if window_sigma is None else float(window_sigma)},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
         # interleave, because the same count meant a different encoder before
         # 61df165 (k refits BETWEEN k+1 passes) -- the merge guard compares both.
@@ -404,6 +469,10 @@ def export_checkpoint_streaming(
     span: int = DEFAULT_SPAN,
     scale_plane: ScalePlaneKind = DEFAULT_SCALE_PLANE,
     trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
+    body: BodyKind = DEFAULT_BODY,
+    window_bits: int = DEFAULT_WINDOW_BITS,
+    window_seed: int = DEFAULT_WINDOW_SEED,
+    window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
 ) -> ExportReport:
     """Export shard-by-shard, holding one shard in memory at a time.
 
@@ -478,6 +547,8 @@ def export_checkpoint_streaming(
                         scale_refit=scale_refit, span=span,
                         scale_plane=scale_plane,
                         trellis_weighting=trellis_weighting,
+                        body=body, window_bits=window_bits,
+                        window_seed=window_seed, window_sigma=window_sigma,
                     )
                     units.append(unit)
                     key = name + BLOB_SUFFIX
@@ -508,7 +579,7 @@ def export_checkpoint_streaming(
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, span, scale_plane,
-                  trellis_weighting)
+                  trellis_weighting, body, window_bits, window_seed, window_sigma)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
@@ -544,6 +615,11 @@ def encode_settings_from_config(config: dict) -> dict:
     plane = scale.get("plane", "s6b")
     if plane not in ("s6b", "lut16"):
         raise GrammarError(f"unknown scale plane {plane!r} in config")
+    body = config.get("body", {"kind": "tcq"})
+    kind = body.get("kind", "tcq")
+    if kind not in ("tcq", "window"):
+        raise GrammarError(f"unknown body kind {kind!r} in config")
+    sigma = body.get("sigma")
     return dict(
         code=code,
         group=int(scale.get("group", DEFAULT_GROUP)),
@@ -554,6 +630,10 @@ def encode_settings_from_config(config: dict) -> dict:
         span=int(trellis.get("span", 1)),
         scale_plane=ScalePlaneKind.S6B if plane == "s6b" else ScalePlaneKind.LUT,
         trellis_weighting=str(trellis.get("weighting", "none")),
+        body=BodyKind.WINDOW if kind == "window" else BodyKind.TCQ,
+        window_bits=int(body.get("window_bits", 0)),
+        window_seed=int(body.get("seed", 0)),
+        window_sigma=None if sigma is None else float(sigma),
     )
 
 

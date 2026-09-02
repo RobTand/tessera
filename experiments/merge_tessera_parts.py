@@ -47,6 +47,7 @@ SHARED = (
     "grid.digest", "grid.name", "grid.base", "grid.partition",
     "grid.arity", "grid.size", "grid.rate_cap",
     "conv_memory", "conv_generators", "trellis.span", "trellis.weighting",
+    "body.kind", "body.window_bits", "body.seed", "body.sigma",
     "scale.group", "scale.half", "scale.refit", "scale.schedule", "scale.plane",
     "rotation", "with_diagonals", "tp_size",
     "source_model", "prismaquant_plan", "route_status",

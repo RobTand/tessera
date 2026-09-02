@@ -60,8 +60,12 @@ SCHEMA_MAJOR = 1
 #: span-1 S6b unit is still a minor-0 artifact byte for byte; ``parse`` reads
 #: both.  A minor bump, not a major one, because the plane region's grammar is
 #: unchanged and every minor-0 artifact means exactly what it meant.
-SCHEMA_MINOR = 1
-SCHEMA_MINORS_READ = (0, 1)
+#: Minor 2 (2026-09-02) appends the body kind and the window width after the
+#: minor-1 fields.  A TCQ manifest still writes at minor 0 or 1, so every
+#: artifact written before either bump is byte-identical; the plane grammar is
+#: unchanged (the window body's table travels on the ALPHABET plane).
+SCHEMA_MINOR = 2
+SCHEMA_MINORS_READ = (0, 1, 2)
 
 _HEADER = struct.Struct("<8sHHIII")
 

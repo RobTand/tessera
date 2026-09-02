@@ -1,0 +1,21 @@
+
+##### tessera_bitshift_tile 2026-09-01 20:35:05 args={'rates': [4, 5], 'memories': [12, 14, 16], 'expert_memories': [10, 12, 14], 'kinds': ['computed', 'e4m3'], 'sigma_units': 64.0, 'rows': 2048, 'gauss_cols': 512, 'chunk': 256, 'seed': 1234, 'layers': [5, 20, 42], 'projs': ['gate_proj', 'up_proj'], 'eval_rows': 1024, 'refits': 2, 'exl3': [4, 5], 'no_gaussian': False, 'no_experts': True, 'out': 'experiments/results/tessera_bitshift_tile_computed.json'}
+
+### Gaussian oracle: RMS / 2^-R (EXL3 K4 1.068, K5 1.085 on this protocol)
+  R=4 Tessera 4-subset Ungerboeck m6, LM+mid (free values)       1.2939x    1.9s
+  R=4 Tessera 4-subset Ungerboeck m6, LM+mid snapped E4M3        1.3480x    1.7s
+  R=4 bitshift computed L=12 K=4                                 1.3703x    1.6s
+  R=4 bitshift computed L=14 K=4                                 1.2276x    9.3s
+  R=4 bitshift computed L=16 K=4                                 1.1851x   44.8s
+  R=4 bitshift e4m3    L=12 K=4                                  1.1645x    1.7s
+  R=4 bitshift e4m3    L=14 K=4                                  1.1073x    8.8s
+  R=4 bitshift e4m3    L=16 K=4                                  1.0741x   43.3s
+  R=5 Tessera 4-subset Ungerboeck m6, LM+mid (free values)       1.3695x    1.7s
+  R=5 Tessera 4-subset Ungerboeck m6, LM+mid snapped E4M3        1.4272x    1.7s
+  R=5 bitshift computed L=12 K=5                                 1.6013x    1.6s
+  R=5 bitshift computed L=14 K=5                                 1.4193x    8.8s
+  R=5 bitshift computed L=16 K=5                                 1.3112x   42.6s
+  R=5 bitshift e4m3    L=12 K=5                                  1.2700x    1.6s
+  R=5 bitshift e4m3    L=14 K=5                                  1.1925x    8.8s
+  R=5 bitshift e4m3    L=16 K=5                                  1.1554x   42.0s
+done

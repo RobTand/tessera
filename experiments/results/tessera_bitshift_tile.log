@@ -1,0 +1,159 @@
+
+##### tessera_bitshift_tile 2026-09-01 20:30:36 args={'rates': [4, 5], 'memories': [8, 10, 12, 14, 16], 'expert_memories': [10, 12, 14], 'kinds': ['free', 'e4m3', 'lm-mid', 'sorted'], 'sigma_units': 64.0, 'rows': 2048, 'gauss_cols': 512, 'chunk': 256, 'seed': 1234, 'layers': [5, 20, 42], 'projs': ['gate_proj', 'up_proj'], 'eval_rows': 1024, 'refits': 2, 'exl3': [4, 5], 'no_gaussian': False, 'no_experts': False, 'out': 'experiments/results/tessera_bitshift_tile.json'}
+
+### Gaussian oracle: RMS / 2^-R (EXL3 K4 1.068, K5 1.085 on this protocol)
+  R=4 Tessera 4-subset Ungerboeck m6, LM+mid (free values)       1.2939x    0.5s
+  R=4 Tessera 4-subset Ungerboeck m6, LM+mid snapped E4M3        1.3480x    0.3s
+  R=4 bitshift free    L= 8 K=4                                  1.4675x    0.2s
+  R=4 bitshift free    L=10 K=4                                  1.2737x    0.3s
+  R=4 bitshift free    L=12 K=4                                  1.1634x    0.5s
+  R=4 bitshift free    L=14 K=4                                  1.1059x    2.7s
+  R=4 bitshift free    L=16 K=4                                  1.0714x   12.7s
+  R=4 bitshift e4m3    L= 8 K=4                                  1.4762x    0.2s
+  R=4 bitshift e4m3    L=10 K=4                                  1.2761x    0.2s
+  R=4 bitshift e4m3    L=12 K=4                                  1.1645x    0.6s
+  R=4 bitshift e4m3    L=14 K=4                                  1.1073x    2.7s
+  R=4 bitshift e4m3    L=16 K=4                                  1.0741x   12.6s
+  R=4 bitshift lm-mid  L= 8 K=4                                  1.6435x    0.3s
+  R=4 bitshift lm-mid  L=10 K=4                                  1.4727x    0.2s
+  R=4 bitshift lm-mid  L=12 K=4                                  1.4075x    0.5s
+  R=4 bitshift lm-mid  L=14 K=4                                  1.3687x    2.6s
+  R=4 bitshift lm-mid  L=16 K=4                                  1.3475x   12.6s
+  R=4 bitshift sorted  L= 8 K=4                                  2.4332x    0.2s
+  R=4 bitshift sorted  L=10 K=4                                  2.4166x    0.2s
+  R=4 bitshift sorted  L=12 K=4                                  2.4216x    0.5s
+  R=4 bitshift sorted  L=14 K=4                                  2.4205x    2.7s
+  R=4 bitshift sorted  L=16 K=4                                  2.4205x   12.6s
+  R=5 Tessera 4-subset Ungerboeck m6, LM+mid (free values)       1.3695x    0.3s
+  R=5 Tessera 4-subset Ungerboeck m6, LM+mid snapped E4M3        1.4272x    0.3s
+  R=5 bitshift free    L= 8 K=5                                  1.7707x    0.2s
+  R=5 bitshift free    L=10 K=5                                  1.4094x    0.3s
+  R=5 bitshift free    L=12 K=5                                  1.2317x    0.5s
+  R=5 bitshift free    L=14 K=5                                  1.1379x    2.7s
+  R=5 bitshift free    L=16 K=5                                  1.0904x   12.3s
+  R=5 bitshift e4m3    L= 8 K=5                                  1.7723x    0.2s
+  R=5 bitshift e4m3    L=10 K=5                                  1.4425x    0.3s
+  R=5 bitshift e4m3    L=12 K=5                                  1.2700x    0.5s
+  R=5 bitshift e4m3    L=14 K=5                                  1.1925x    2.7s
+  R=5 bitshift e4m3    L=16 K=5                                  1.1554x   12.3s
+  R=5 bitshift lm-mid  L= 8 K=5                                  2.0664x    0.2s
+  R=5 bitshift lm-mid  L=10 K=5                                  1.6357x    0.3s
+  R=5 bitshift lm-mid  L=12 K=5                                  1.5388x    0.5s
+  R=5 bitshift lm-mid  L=14 K=5                                  1.4594x    2.6s
+  R=5 bitshift lm-mid  L=16 K=5                                  1.4215x   12.3s
+  R=5 bitshift sorted  L= 8 K=5                                  3.0941x    0.3s
+  R=5 bitshift sorted  L=10 K=5                                  3.0969x    0.3s
+  R=5 bitshift sorted  L=12 K=5                                  3.0927x    0.6s
+  R=5 bitshift sorted  L=14 K=5                                  3.0917x    2.7s
+  R=5 bitshift sorted  L=16 K=5                                  3.0913x   12.4s
+
+### Six experts, per-channel protocol, held-out last 1024 rows
+
+== L5.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08816  0.07237  0.11671  0.07672
+    EXL3 K=5                                                  5.012  0.04482  0.03674  0.09877  0.04470
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08586  0.08298  0.12344  0.08680
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.08050  0.07752  0.11982  0.08157
+      (6.5s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07301  0.07026  0.11525  0.07477
+      (17.6s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06937  0.06680  0.11323  0.07150
+      (78.9s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04520  0.04358  0.10136  0.05048
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04601  0.04438  0.10169  0.05120
+      (7.4s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03978  0.03840  0.09923  0.04608
+      (31.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03738  0.03610  0.09840  0.04420
+      (208.8s)
+
+== L5.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08816  0.07465  0.12055  0.07915
+    EXL3 K=5                                                  5.012  0.04483  0.03800  0.10204  0.04623
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08580  0.08528  0.12725  0.08924
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.08043  0.08004  0.12365  0.08421
+      (7.7s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07301  0.07274  0.11915  0.07736
+      (29.1s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06940  0.06915  0.11713  0.07403
+      (136.3s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04524  0.04513  0.10477  0.05228
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04598  0.04574  0.10495  0.05280
+      (8.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03978  0.03970  0.10253  0.04769
+      (28.6s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03739  0.03713  0.10155  0.04555
+      (143.0s)
+
+== L20.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08495  0.06925  0.11155  0.07340
+    EXL3 K=5                                                  5.012  0.04317  0.03530  0.09450  0.04289
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08555  0.07896  0.11784  0.08264
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.08019  0.07402  0.11447  0.07793
+      (7.7s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07295  0.06754  0.11045  0.07182
+      (30.0s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06931  0.06394  0.10836  0.06843
+      (137.2s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04493  0.04136  0.09696  0.04799
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04561  0.04195  0.09712  0.04855
+      (8.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03963  0.03662  0.09492  0.04402
+      (29.0s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03702  0.03418  0.09407  0.04204
+      (140.0s)
+
+== L20.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08492  0.07293  0.11761  0.07732
+    EXL3 K=5                                                  5.012  0.04315  0.03726  0.09967  0.04524
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08552  0.08303  0.12401  0.08691
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.08034  0.07777  0.12047  0.08190
+      (7.7s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07312  0.07118  0.11644  0.07570
+      (27.2s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06945  0.06745  0.11424  0.07216
+      (134.2s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04520  0.04402  0.10233  0.05095
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04592  0.04452  0.10244  0.05139
+      (8.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03992  0.03875  0.10015  0.04650
+      (30.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03728  0.03607  0.09915  0.04428
+      (146.1s)
+
+== L42.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08580  0.05132  0.08395  0.05453
+    EXL3 K=5                                                  5.012  0.04361  0.02610  0.07145  0.03198
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08521  0.05995  0.08966  0.06276
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.07989  0.05688  0.08754  0.05985
+      (8.0s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07266  0.05080  0.08378  0.05409
+      (31.4s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06902  0.04841  0.08236  0.05185
+      (149.1s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04462  0.03109  0.07347  0.03619
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04567  0.03212  0.07389  0.03710
+      (8.4s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03973  0.02810  0.07223  0.03367
+      (31.4s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03710  0.02619  0.07146  0.03210
+      (146.6s)
+
+== L42.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08580  0.06673  0.10897  0.07088
+    EXL3 K=5                                                  5.012  0.04366  0.03389  0.09269  0.04153
+    Tessera-8 R=4 per-channel 4-subset Ung6 (today)           4.008  0.08541  0.07779  0.11606  0.08138
+    Tessera-8 R=4 per-channel bitshift E4M3 L=10              4.013  0.08011  0.07292  0.11286  0.07675
+      (7.9s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=12              4.014  0.07290  0.06614  0.10856  0.07035
+      (29.9s)
+    Tessera-8 R=4 per-channel bitshift E4M3 L=14              4.015  0.06928  0.06305  0.10666  0.06745
+      (149.6s)
+    Tessera-8 R=5 per-channel 4-subset Ung6 (today)           5.008  0.04504  0.04089  0.09549  0.04740
+    Tessera-8 R=5 per-channel bitshift E4M3 L=10              5.013  0.04600  0.04196  0.09589  0.04837
+      (8.4s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=12              5.014  0.03995  0.03625  0.09356  0.04346
+      (30.1s)
+    Tessera-8 R=5 per-channel bitshift E4M3 L=14              5.015  0.03738  0.03398  0.09269  0.04157
+      (193.6s)
+done

@@ -214,6 +214,24 @@ the production encoder measures **1.125× over today's default at 4.0 bpp**
 on the six GLM experts, and the W4A4 gap to EXL3@A4 is 1.205× → **1.137×**.
 The 151 GiB export on disk (refit 0, span 1, S6b) is 1.22× behind it.
 
+**2026-09-02 — the window body (schema minor 2) is built, not yet default.**
+The bitshift trellis on the tile (`docs/measurements/tessera-window-body-2026-09-02.md`):
+a position's code is a table lookup on the last L bits of its column's
+stream, the 2^L table rides the ALPHABET plane, no forest, no completion
+axis. Below the E2M1x2 cap it is 1.3× better than the coset trellis at the
+same bytes (3.5 bpp); on E4M3 under a per-channel plane, L=14 is 1.2× better
+than the convolutional trellis and 1.07× better than EXL3 K4 in output space
+at 4.0 bpp — and W8A8 on the FP8 tensor core is level with EXL3's W4A16 at
+the same bytes. At the E2M1x2 cap the structured coset table stays better
+until L≥14–16. `BodyKind.WINDOW` / `window_bits` are manifest fields bound
+into the profile id; `encode_linear(body=BodyKind.WINDOW, window_bits=L)`
+writes it; `DEFAULT_BODY` stays TCQ until (a) a window GEMV exists in the
+kernel lane (`pack_unit_for_kernel` refuses the body today) and (b) the
+encoder is faster than the O(2^L) reference (~150 s per 2048×4096 tensor at
+L=14). The per-channel scale plane the E4M3 headline used is not yet a
+`ScalePlaneKind`; it is the next wire addition, and it is also the layout
+the served W8A8 path consumes.
+
 1. ~~**Kernel lane: span-2 decode.**~~ **Done** (`docs/measurements/tessera-kernel-span2-2026-09-01.md`):
    the tuple GEMV decodes the minor-1 wire bit-exactly at the wire's own
    4.0 b/wt (the LUT plane is read as nibbles, not materialised), and with

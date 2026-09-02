@@ -1,0 +1,135 @@
+{
+ "args": {
+  "rates": [
+   4,
+   5
+  ],
+  "memories": [
+   12,
+   14,
+   16
+  ],
+  "expert_memories": [
+   10,
+   12,
+   14
+  ],
+  "kinds": [
+   "computed",
+   "e4m3"
+  ],
+  "sigma_units": 64.0,
+  "rows": 2048,
+  "gauss_cols": 512,
+  "chunk": 256,
+  "seed": 1234,
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "eval_rows": 1024,
+  "refits": 2,
+  "exl3": [
+   4,
+   5
+  ],
+  "no_gaussian": false,
+  "no_experts": true,
+  "out": "experiments/results/tessera_bitshift_tile_computed.json"
+ },
+ "gaussian": {
+  "R=4 tessera-4subset-ung6-lmmid": {
+   "ratio": 1.293930172920227,
+   "s": 1.8748791217803955
+  },
+  "R=4 tessera-4subset-ung6-lmmid-e4m3": {
+   "ratio": 1.3479853868484497,
+   "s": 1.690478801727295
+  },
+  "R=4 bitshift-computed-L12": {
+   "ratio": 1.3703259229660034,
+   "s": 1.5892488956451416,
+   "L": 12,
+   "kind": "computed"
+  },
+  "R=4 bitshift-computed-L14": {
+   "ratio": 1.227561354637146,
+   "s": 9.262716054916382,
+   "L": 14,
+   "kind": "computed"
+  },
+  "R=4 bitshift-computed-L16": {
+   "ratio": 1.185109257698059,
+   "s": 44.78211069107056,
+   "L": 16,
+   "kind": "computed"
+  },
+  "R=4 bitshift-e4m3-L12": {
+   "ratio": 1.1644963026046753,
+   "s": 1.7169392108917236,
+   "L": 12,
+   "kind": "e4m3"
+  },
+  "R=4 bitshift-e4m3-L14": {
+   "ratio": 1.107256293296814,
+   "s": 8.803967237472534,
+   "L": 14,
+   "kind": "e4m3"
+  },
+  "R=4 bitshift-e4m3-L16": {
+   "ratio": 1.0740516185760498,
+   "s": 43.29974436759949,
+   "L": 16,
+   "kind": "e4m3"
+  },
+  "R=5 tessera-4subset-ung6-lmmid": {
+   "ratio": 1.3694844245910645,
+   "s": 1.661571741104126
+  },
+  "R=5 tessera-4subset-ung6-lmmid-e4m3": {
+   "ratio": 1.4271838665008545,
+   "s": 1.7263357639312744
+  },
+  "R=5 bitshift-computed-L12": {
+   "ratio": 1.6012765169143677,
+   "s": 1.6195228099822998,
+   "L": 12,
+   "kind": "computed"
+  },
+  "R=5 bitshift-computed-L14": {
+   "ratio": 1.4193413257598877,
+   "s": 8.75382375717163,
+   "L": 14,
+   "kind": "computed"
+  },
+  "R=5 bitshift-computed-L16": {
+   "ratio": 1.311240315437317,
+   "s": 42.64977049827576,
+   "L": 16,
+   "kind": "computed"
+  },
+  "R=5 bitshift-e4m3-L12": {
+   "ratio": 1.269997239112854,
+   "s": 1.5546948909759521,
+   "L": 12,
+   "kind": "e4m3"
+  },
+  "R=5 bitshift-e4m3-L14": {
+   "ratio": 1.1924774646759033,
+   "s": 8.764446496963501,
+   "L": 14,
+   "kind": "e4m3"
+  },
+  "R=5 bitshift-e4m3-L16": {
+   "ratio": 1.1554368734359741,
+   "s": 41.976038217544556,
+   "L": 16,
+   "kind": "e4m3"
+  }
+ }
+}

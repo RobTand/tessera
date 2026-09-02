@@ -21,10 +21,10 @@ import os
 
 import torch
 
-from .alphabet import AnchorForest
+from .alphabet import AnchorForest, PayloadGrid
 from .encode import EncodedUnit, e2m1_value_table
 from .errors import GrammarError
-from .manifest import ScalePlaneKind
+from .manifest import BodyKind, ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
@@ -294,6 +294,64 @@ def replay_body(
     return anchors.reshape(rows, cols)
 
 
+def replay_window(body_bits: torch.Tensor, window_bits: int, rate: int) -> torch.Tensor:
+    """The window body's states from its bits alone (schema minor 2).
+
+    ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from ``state_{-1} = 0``
+    is a pure shift register, so a state is the last ``L`` bits of the
+    column's stream: ``sum_j bits_{t-j} << jR`` over the ``ceil(L / R)``
+    positions that reach back ``L`` bits, masked.  Closed form, one shifted
+    add per tap, no walk down the column -- the same O(1)-depth property
+    ``replay_body`` verifies for the convolutional code, here by construction.
+    """
+    if not 1 <= rate <= window_bits:
+        raise GrammarError(f"rate {rate} does not fit a {window_bits}-bit window")
+    bits = body_bits.long()
+    state = bits.clone()
+    taps = -(-window_bits // rate)
+    for tap in range(1, taps):
+        state[tap:] |= bits[:-tap] << (tap * rate)
+    return state & ((1 << window_bits) - 1)
+
+
+def _grid_and_forests(forest):
+    """``(grid, forests)`` from a forest, a rate->forest map, or a bare grid.
+
+    A window body has no forests -- its table is on the unit -- so a reader
+    holding only bytes resolves the grid and passes that.  A TCQ unit still
+    needs its forests, and the grid is theirs.
+    """
+    if isinstance(forest, PayloadGrid):
+        return forest, {}
+    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    return next(iter(forests.values())).grid, forests
+
+
+def _decode_window(unit: "EncodedUnit", grid: PayloadGrid, code_dtype) -> torch.Tensor:
+    device = unit.body_bits.device
+    rows, cols = unit.body_bits.shape
+    if unit.window_codes is None:
+        raise GrammarError("a window body needs the unit's table")
+    table = unit.window_codes.to(device).long()
+    if table.numel() != 1 << unit.window_bits:
+        raise GrammarError(
+            f"the window table holds {table.numel()} entries, window_bits "
+            f"{unit.window_bits} needs {1 << unit.window_bits}"
+        )
+    if table.numel() and int(table.max()) >= grid.size:
+        raise GrammarError(
+            f"the window table names code {int(table.max())} outside the "
+            f"{grid.size}-code {grid.name} grid"
+        )
+    rates = torch.tensor(unit.rates, device=device)
+    codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
+    for present in sorted(set(unit.rates)):
+        which = torch.nonzero(rates == present).squeeze(1)
+        states = replay_window(unit.body_bits[:, which], unit.window_bits, present)
+        codes[:, which] = table[states].to(code_dtype)
+    return codes
+
+
 def decode_codes(
     unit: EncodedUnit,
     forest: AnchorForest,
@@ -301,6 +359,15 @@ def decode_codes(
     completion: int | None = None,
 ) -> torch.Tensor:
     """Full decode from stored planes to E2M1 nibbles, in wire order."""
+    if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
+        # This is the single-forest TCQ path; a window body has no forest and
+        # replays through ``decode_codes_mixed``.  Refuse rather than replay a
+        # window stream through the convolutional code, which would decode to
+        # plausible wrong weights.
+        raise GrammarError(
+            "decode_codes is the TCQ path; a window body decodes through "
+            "decode_codes_mixed / reconstruct_unit with its grid"
+        )
     depth = forest.cap - forest.rate
     completion = depth if completion is None else completion
     device = unit.body_bits.device
@@ -402,19 +469,23 @@ def decode_codes_mixed(
     The plane stores codes, never indices -- that is where its rate advantage
     comes from, and it is only decodable because the order is derivable.
     """
-    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
+    grid, forests = _grid_and_forests(forest)
     device = unit.body_bits.device
     rows, cols = unit.body_bits.shape
     rates = torch.tensor(unit.rates, device=device)
     # uint8, not int64: a code is a 4-bit nibble.  Carrying the decoder's whole
     # output at eight bytes a nibble made the completion lookup cost more than
     # the trellis replay it followed.
-    grid = next(iter(forests.values())).grid
     # A code is a nibble only on a 16-code grid.  ``uint8`` silently wraps at
     # 256, which a 1024-code k-tuple grid reaches -- and a wrapped code decodes
     # to a plausible wrong weight, never to an error.
     narrow = grid.size <= 256
     code_dtype = torch.uint8 if narrow else torch.int32
+    if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
+        codes = _decode_window(unit, grid, code_dtype)
+        if apply_release and unit.release_index.numel():
+            codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)
+        return codes
     codes = torch.zeros(rows, cols, dtype=code_dtype, device=device)
     span = getattr(unit, "span", 1)
     # The depth the unit was WRITTEN at bounds the depth it can be read at.
@@ -516,8 +587,7 @@ def reconstruct_unit(
     from .diagonals import undo_diagonals, undo_rotation
 
     codes = decode_codes_mixed(unit, forest, code, completion)
-    forests = forest if isinstance(forest, dict) else {forest.rate: forest}
-    grid = next(iter(forests.values())).grid
+    grid, _forests = _grid_and_forests(forest)
     # ``body_bits`` is one row per CODE; the scale planes are per position.
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity

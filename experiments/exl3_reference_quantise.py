@@ -1,8 +1,11 @@
 """A reference EXL3 quantisation of the six GLM-5.3 expert tensors.
 
-Runs the upstream exllamav3 quantiser (``quantize_exl3``) at K = 4, 5, 6, 8 on
-the same six ``[2048, 4096]`` expert weights and the same Hessian Tessera is
-measured on, so the two can be compared format-vs-format at matched rate.
+Runs the upstream exllamav3 quantiser (``quantize_exl3``) at the rates
+``--rates`` names -- 4, 5, 6, 8 by default, and 2 and 3 shipped later by
+``--rates 2 3 --summary-name summary_K2_K3.json`` so the ladder brackets every
+sub-4-bit rung -- on the same six ``[2048, 4096]`` expert weights and the same
+Hessian Tessera is measured on, so the two can be compared format-vs-format at
+matched rate.
 
 Everything about the EXL3 side is the library's own: its trellis codebook
 (``mul1``), its blockwise Hadamard pre-rotation and random sign flips, its
@@ -117,6 +120,11 @@ def main():
                          f"(default: the shipped 'default' arm plus a 'prior' arm at K=4)")
     ap.add_argument("--no-ship", action="store_true",
                     help="measure only; write no .pt files and no summary.json")
+    ap.add_argument("--summary-name", default="summary.json",
+                    help="basename of the summary written under --out. Additive: "
+                         "the default is the existing behaviour byte for byte. A run "
+                         "that adds rungs (--rates 2 3) points this at its own file so "
+                         "the K=4..8 summary it is extending is not overwritten")
     ap.add_argument("--replicate-prior", action="store_true",
                     help="shorthand: --act ACT_PROBE --split half --configs prior "
                          "--rates 4 --no-ship, i.e. reproduce exl3_rate_sweep.py exactly")
@@ -384,7 +392,7 @@ def main():
         print(f"\nmerged {len(results)} entries into {a.merge_into} "
               f"under '{a.merge_key}'")
     elif not a.no_ship:
-        with open(f"{a.out}/summary.json", "w") as f:
+        with open(f"{a.out}/{a.summary_name}", "w") as f:
             json.dump(summary, f, indent=2)
 
     tags = [f"L{l}.{p}" for l in a.layers for p in a.projs]
@@ -425,7 +433,7 @@ def main():
     elif a.no_ship:
         print(f"\nmeasure-only run ({a.act}, split={a.split}); nothing written")
     else:
-        print(f"\nwrote {a.out}/summary.json ({len(main_rows)} shipped entries)")
+        print(f"\nwrote {a.out}/{a.summary_name} ({len(main_rows)} shipped entries)")
 
 
 if __name__ == "__main__":
