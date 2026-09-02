@@ -59,6 +59,7 @@ graph-mode generation smoke (`experiments/serve_smoke_graph.sh`, no
 |---|---|---|---|
 | `fp8-rtn` W8A8, 8.0 resident | **0.0205** | 0.0142 | 91.2% |
 | `tessera-e8` W8A8, 8.0 resident (4.07 wire) | 0.4699 | 0.3894 | 63.2% |
+| `tessera-e8-reach` W8A8, 8.0 resident (4.07 wire), reach-aware row start (2026-09-02, later) | 0.1512 | 0.1005 | 78.1% |
 | `nvfp4-prod` W4A4, 4.5 resident | 0.5106 | 0.4358 | 62.6% |
 | `tessera-k2` W4A4, 4.5 resident (4.00 wire) | 0.6404 | 0.5486 | 58.8% |
 
@@ -70,7 +71,8 @@ Read plainly:
   coset-constrained code set under the same scale plane does not beat GPTQ +
   JSO at the same residency, and the scale plane alone did not carry it.
 * **As an FP8 encoder, Tessera-8 at a 4-bit wire is 23× worse than FP8 RTN at
-  the same 8-bit residency** (0.470 vs 0.020). Nobody should serve the
+  the same 8-bit residency** (0.470 vs 0.020; 0.151 vs 0.020 with the reach-aware
+  row start, `tessera-dense-reach-fix-2026-09-02.md`). Nobody should serve the
   materialised form of Tessera-8 for quality; its value is the 4.07-bpp wire on
   the kernel lane, and this arm only shows the FP8 route serves the bytes.
 * Tessera-8 W8A8 beats production NVFP4 W4A4 by 8% (0.470 vs 0.511) — at

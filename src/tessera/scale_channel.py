@@ -120,16 +120,49 @@ def land_channel_scale(
 
 
 def initial_channel_scale(
-    work: torch.Tensor, sigma: float
+    work: torch.Tensor, sigma: float, reach: "float | None" = None
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
-    """The amax-free initial plane: every row's RMS lands on ``sigma`` grid units.
+    """The initial plane: every row's RMS lands on ``sigma`` grid units, and
+    every row's largest weight lands inside the body's ``reach``.
+
+    ``reach`` is the largest magnitude, in grid units, the body can emit: the
+    window table's extreme entry, or the largest anchor a TCQ forest reaches.
+    A row whose largest weight would land beyond it starts lower instead, at
+    the sigma that puts that weight exactly on the reach, because nothing
+    downstream recovers a clipped weight -- the trellis can only emit the
+    reach for it, and the refit is a least-squares step on the codes the
+    trellis chose, which re-inflates a globally lowered sigma back to the
+    clip.  Rows inside the reach are untouched, so on a light-tailed source
+    this is the plain RMS start byte for byte; ``None`` is that start for
+    every row.
+
+    Why per row and not per unit: the source model the alphabet and the
+    table were fit to is a Gaussian, whose rows exceed the E4M3 table's
+    4.08-sigma reach 4.5% of the time at width 1024.  Qwen3-0.6B's rows do
+    so 25% of the time (59% of ``down_proj`` rows, up to 30 sigma), and the
+    clipped entries sat in the Hessian-dominant columns.  Measured there
+    (``experiments/dense_spread_fix.py``, ``dense_spread_census.py``): the
+    worst unit's H-weighted error 0.410 -> 0.058 against production NVFP4
+    GPTQ+JSO at 0.053, the 196-tensor geomean 0.0872 -> 0.0765 (NVFP4
+    0.0955) with plain error 0.0742 -> 0.0704; a global lower sigma moved
+    nothing.
 
     Returns ``(stored fp16 [rows], effective fp32 [rows], global)``.
     """
     if not sigma > 0:
         raise GrammarError(f"the channel source sigma must be positive, got {sigma}")
-    rms = work.float().pow(2).mean(dim=1).sqrt()
-    scale = rms / float(sigma)
+    w = work.float()
+    rms = w.pow(2).mean(dim=1).sqrt()
+    row_sigma = torch.full_like(rms, float(sigma))
+    if reach is not None:
+        if not reach > 0:
+            raise GrammarError(f"the body's reach must be positive grid units, got {reach}")
+        amax = w.abs().amax(dim=1)
+        # A row's largest weight in grid units is ``amax / rms * sigma``; past
+        # the reach the row starts at ``reach * rms / amax`` instead.
+        over = amax * float(sigma) > float(reach) * rms
+        row_sigma = torch.where(over, float(reach) * rms / amax.clamp_min(1e-30), row_sigma)
+    scale = rms / row_sigma
     global_scale = channel_global(scale)
     stored, effective = land_channel_scale(scale, global_scale)
     return stored, effective, global_scale

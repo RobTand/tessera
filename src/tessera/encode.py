@@ -1022,7 +1022,25 @@ def encode_unit(
             )
         if channel_sigma is None:
             channel_sigma = default_channel_sigma(grid)
-        channel_rows, effective_rows, global_scale = initial_channel_scale(work, channel_sigma)
+        # The body's reach in grid units, so the initial plane keeps every
+        # row's largest weight inside what the trellis can emit
+        # (``initial_channel_scale``): the window table's extreme entry, or
+        # the largest anchor the forests reach.
+        if body is BodyKind.WINDOW:
+            reach_sigma = channel_sigma if window_sigma is None else window_sigma
+            reach_codes = window_table(
+                grid, window_bits, sigma=reach_sigma, seed=window_seed, half=half, device=device,
+            )
+            reach = float(grid_vector_table(grid, device)[reach_codes.long()].abs().max())
+        else:
+            reach = max(
+                float(grid_vector_table(grid, device)[
+                    torch.as_tensor(f.blocks, device=device, dtype=torch.long)].abs().max())
+                for f in forests.values()
+            )
+        channel_rows, effective_rows, global_scale = initial_channel_scale(
+            work, channel_sigma, reach=reach,
+        )
         base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
         refine = torch.zeros(0, dtype=torch.uint8, device=device)
         effective = None

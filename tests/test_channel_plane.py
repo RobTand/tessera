@@ -43,7 +43,7 @@ from tessera.export import (
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
 from tessera.manifest import BodyKind, Manifest, ScalePlane, ScalePlaneKind
 from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
-from tessera.scale_channel import default_channel_sigma, refit_channel_scale
+from tessera.scale_channel import default_channel_sigma, initial_channel_scale, refit_channel_scale
 from tessera.trellis import ConvCode
 from tessera.unit_artifact import build_unit_artifact, encoder_profile_id, read_unit_artifact
 
@@ -353,3 +353,31 @@ def test_the_exporter_writes_the_recipe_and_replays_it(tmp_path):
     # a config written before the plane existed still means what it meant
     old = encode_settings_from_config({"scale": {"plane": "lut16"}})
     assert old["scale_plane"] is ScalePlaneKind.LUT and old["channel_sigma"] is None
+
+
+def test_the_initial_plane_keeps_every_row_inside_the_reach():
+    """A row whose largest weight would land past the body's reach starts at
+    the sigma that puts it exactly on the reach; rows inside it are the plain
+    RMS start byte for byte (``tessera-dense-outlier-mechanism``)."""
+    torch.manual_seed(3)
+    work = torch.randn(6, 512)
+    work[1, 7] = 30.0 * work[1].pow(2).mean().sqrt()       # a 30-sigma weight
+    work[4, 100] = 9.0 * work[4].pow(2).mean().sqrt()      # a 9-sigma weight
+    sigma, reach = 94.2, 384.0
+    plain_stored, plain_eff, plain_global = initial_channel_scale(work, sigma)
+    stored, eff, global_scale = initial_channel_scale(work, sigma, reach=reach)
+    units = work.abs().amax(dim=1) / eff
+    assert bool((units <= reach * (1 + 2.0 ** -10)).all()), units.tolist()
+    rms = work.pow(2).mean(dim=1).sqrt()
+    inside = (work.abs().amax(dim=1) * sigma <= reach * rms)
+    assert inside.tolist() == [True, False, True, True, False, True]
+    # Inside the reach the effective scale is the plain start, whatever the
+    # global landed on; past it the row's largest weight lands on the reach.
+    assert torch.allclose(eff[inside], plain_eff[inside], rtol=1e-6, atol=0)
+    for r in (1, 4):
+        assert abs(float(units[r]) - reach) / reach < 2.0 ** -9
+    plain_units = work.abs().amax(dim=1) / plain_eff
+    assert float(plain_units[1]) > reach and float(plain_units[4]) > reach
+    assert initial_channel_scale(work, sigma, reach=None)[1].equal(plain_eff)
+    with pytest.raises(GrammarError):
+        initial_channel_scale(work, sigma, reach=0.0)

@@ -565,3 +565,20 @@ carries the damage in every arm and the other modules' family barely
 moves this model. Next: the Gridbook release and PrismaQuant
 re-pin; the exporter codec and lane spec on the PrismaQuant side so an
 allocation over `TESSERA_*` rungs ships from there; the routed-MoE cell.
+
+## 2026-09-02 (later): the dense failure was the encoder's source model, fixed at the same wire
+
+The 4.07-bpp E4M3/CHANNEL wire on Qwen3-0.6B serves at **KL 0.151** (top-1
+78.1%) against 0.470 before, same teacher, image and corpus: 3.4x better than
+production NVFP4 GPTQ+JSO at 4.5 bpp W4A4 (0.511) and 7.4x behind FP8 RTN at
+8.0 (0.0205), where it was 23x. The mechanism: the window table reaches 4.08
+sigma0 and a quarter of Qwen's rows (59% of `down_proj`) carry a larger weight,
+which clipped in the Hessian-dominant columns; `initial_channel_scale` now
+starts such rows at the sigma that puts their max on the reach (the fp16 row
+scale the plane already stores), so wire, table, decoder and lane are
+untouched. H-weighted census 0.0872 -> 0.0765 (NVFP4 0.0955), 192/196 tensors
+ahead of NVFP4; six GLM experts unmoved (0.998x). Branch-metric h-weighting is
+a no-op by construction (columns are independent trellises); h enters through
+the refit (h^0.75 beats NVFP4 on plain and weighted error on the worst unit)
+and LDLQ. Receipt: `docs/measurements/tessera-dense-reach-fix-2026-09-02.md`.
+The "23x / 25x / best ~4-bit point" framing above is the pre-fix table.
