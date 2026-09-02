@@ -1,7 +1,8 @@
 # Slicing a Tessera unit into the shard a rank loads
 
 **Date** 2026-09-02 · **Branch** `worktree-agent-a5d4cf4818e8e77ba` off
-`3d419e7`, commits `dee75d9` + `1ce9b70` ·
+`3d419e7`, commits `dee75d9`, `1ce9b70`, `d8cc017` and the one this line lands
+in ·
 **Design** [`docs/design/tensor-parallel.md`](../design/tensor-parallel.md) ·
 **Schema** `docs/schema/prismaquant.tessera.v1.md` §1d (minor 4)
 
