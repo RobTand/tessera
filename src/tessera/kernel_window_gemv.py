@@ -241,7 +241,10 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
         sm_count = torch.cuda.get_device_properties(0).multi_processor_count if torch.cuda.is_available() else 48
     rpl = 16 if M <= 2 else 8
     per_sm = 2 if table_dtype == torch.bfloat16 else 1
-    return Plan(rpl=rpl, warps=warps, blocks=sm_count * per_sm, cols_per_item=max_item_cols(_m_tile(M)),
+    # 256-column items measured 3-5% faster than 1024-column ones on the
+    # 9728-row/col shapes and level elsewhere (plan sweep 2026-09-02): two
+    # items per block let the second item's setup overlap the first's tail.
+    return Plan(rpl=rpl, warps=warps, blocks=sm_count * per_sm, cols_per_item=min(256, max_item_cols(_m_tile(M))),
                 table_dtype=table_dtype)
 
 

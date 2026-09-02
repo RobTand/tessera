@@ -62,6 +62,17 @@ MODELS = {
         ("o_proj", 2560, 4096), ("gate_proj", 9728, 2560), ("up_proj", 9728, 2560),
         ("down_proj", 2560, 9728),
     ]),
+    # The same two models at the granularity vLLM/Gridbook actually issue a
+    # GEMV: qkv_proj and gate_up_proj are one fused Linear each (the reach
+    # checkpoint stores them as one fused unit).
+    "Qwen3-0.6B-fused": (28, [
+        ("qkv_proj", 4096, 1024), ("o_proj", 1024, 2048), ("gate_up_proj", 6144, 1024),
+        ("down_proj", 1024, 3072),
+    ]),
+    "Qwen3-4B-fused": (36, [
+        ("qkv_proj", 6144, 2560), ("o_proj", 2560, 4096), ("gate_up_proj", 19456, 2560),
+        ("down_proj", 2560, 9728),
+    ]),
     # ASSUMED dense 27B list (hidden 5120, intermediate 17408, 64 layers, 40 q
     # heads / 8 kv heads at head_dim 128); no 27B config is on this box.
     "27B-assumed": (64, [
@@ -543,7 +554,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--arm", default="all", choices=["all", "gemv", "plans", "ablate", "power"])
     ap.add_argument("--out", default="/mnt/shared/tessera-runs/gemv")
-    ap.add_argument("--models", default="Qwen3-0.6B,Qwen3-4B,27B-assumed")
+    ap.add_argument("--models", default="Qwen3-0.6B,Qwen3-4B,Qwen3-0.6B-fused,Qwen3-4B-fused,27B-assumed")
     ap.add_argument("--batches", default="1,2,4,8")
     ap.add_argument("--plan", default=None, help="rpl,warps,blocks,cpi,dtype (default: default_plan)")
     ap.add_argument("--shapes", default="4096x2560,1024x2560,2560x4096,9728x2560,2560x9728",
