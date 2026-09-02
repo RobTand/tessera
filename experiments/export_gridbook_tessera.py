@@ -123,10 +123,19 @@ def fused_module(tensor_name: str):
 
 
 def git_hash() -> str:
+    """The commit this build came from -- from git, or from the environment.
+
+    A build that runs on a synced copy of the tree has no ``.git`` and used to
+    stamp ``unknown``, which is a provenance hole in an artifact whose whole
+    claim is that the surrogate, the KL and the bytes are one rendering.
+    ``TESSERA_GIT`` is how the caller supplies it when git cannot.
+    """
+    import os
+
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
     except Exception:
-        return "unknown"
+        return os.environ.get("TESSERA_GIT", "unknown")
 
 
 def quantizable(src: Path):
