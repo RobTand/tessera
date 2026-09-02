@@ -459,3 +459,47 @@ def test_the_pad_really_is_state_minus_one():
 
     zeroed = prepare_window(body[7:], rates, L, table, "cpu").decode()
     assert not torch.equal(zeroed, full[7:]), "control: a zero pad must NOT match"
+
+
+@needs_cuda
+def test_the_fp8_route_serves_a_row_shard_as_the_parents_own_rows(units):
+    """The composition test: seam -> FP8 route -> tile, against the parent tile.
+
+    The seam and the route are each proven above and in
+    ``tests/test_serving_fp8_route.py``, but the interesting failure lives
+    between them.  ``prepare_tessera_fp8_module`` threads ``initial_state``
+    into ``prepare_window``; if ``tessera.decode.materialize_fp8`` did NOT read
+    the same field, the route's own ``torch.equal`` self-check would *refuse* a
+    legitimate row shard, and the FP8 family would silently be column-cuts-only
+    -- exactly the restriction the NVFP4 lane has and this one claims not to.
+
+    So the assertion is not "it loaded": it is that the bytes the route hands
+    the fused kernel, and the per-row scales beside them, are the parent tile's
+    own rows for BOTH ranks of a tp=2 cut.
+    """
+    from tessera.decode import materialize_fp8
+    from tessera.serving.fp8_route import prepare_tessera_fp8_module
+
+    parent = units["e4m3"]
+    ref_bytes, ref_scale = materialize_fp8(parent.unit, parent.forests, parent.code)
+    ref_bytes = ref_bytes.to("cuda")
+    ref_scale = ref_scale.to("cuda", torch.float32).reshape(-1)
+    half = UNIT_ROWS // 2
+
+    for rank in (0, 1):
+        plan = plan_shard("m", rows=UNIT_ROWS, columns=UNIT_COLS, out_size=half,
+                          in_size=UNIT_COLS, tp_rank=rank, tp_size=2)
+        assert plan.axis == AXIS_ROWS
+        roles = shard_parsed_roles([("weight", parent)], plan)
+        module = prepare_tessera_fp8_module(roles, device="cuda")
+
+        got = module.decode()
+        want = ref_bytes[rank * half:(rank + 1) * half]
+        assert got.shape == want.shape, f"rank {rank} served the wrong shape"
+        assert torch.equal(got, want), (
+            f"rank {rank} of 2 served {int((got != want).sum())} of {want.numel()} "
+            "bytes that are not the parent's -- the window pad is not being threaded "
+            "through the FP8 route")
+        assert torch.equal(module.row_scale(),
+                           ref_scale[rank * half:(rank + 1) * half]), (
+            f"rank {rank} of 2 got a row scale that is not the parent's")

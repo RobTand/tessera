@@ -210,9 +210,13 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
   15.1 ms and 21.3 ms;
 * *materialising* a shard as its own artifact costs more than the state plane,
   because the per-unit ALPHABET table (2^L bytes for a window body) is
-  duplicated per shard. That cost is avoidable and is not on the serving path:
-  a rank slices in memory from the one artifact on disk. It is reported anyway,
-  because a shard artifact is a real thing the API can produce.
+  duplicated per shard. That cost is a *transient* on the serving path, not a
+  resident one: the plugin's loader does round-trip each shard through bytes
+  (`_reparse_shard`, below), because only the wire carries a released unit's
+  restricted per-superblock counts — but the blob and its duplicated table are
+  freed as soon as the parse returns, and what the rank holds afterwards is one
+  shard-sized parse. Nothing is duplicated on disk: there is still one artifact
+  per unit, and every rank reads the same one.
 
 ## What remains
 
