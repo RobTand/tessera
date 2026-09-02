@@ -1467,10 +1467,31 @@ def _pack_window_unit(unit, grid) -> dict:
     plane, offsets, rates = pack_window_planes(
         unit.body_bits, unit.rates, unit.window_bits
     )
+    row_scale = None
     if unit.scale_plane is ScalePlaneKind.LUT:
         scale_plane = pack_scale_nibbles(unit.scale_refine, rows, cols, unit.half)
         scale_table = lut_scale_table(unit.scale_lut, device)
         global_scale = float(unit.scale_global)
+    elif unit.scale_plane is ScalePlaneKind.CHANNEL:
+        # Schema minor 3: one fp16 word per output row times the global.  A
+        # row scale is a factor of the row, not of the dot product, so the
+        # kernel runs over an identity block plane (E4M3 0x38 is exactly 1.0,
+        # global 1.0 -- both multiplications are exact) and the row scale is
+        # applied as an epilogue in ``gemv_from_packed``, computed by the
+        # same fp32 expression the reader uses (``channel_scale_field``), so
+        # a one-hot column decodes to the reader's bytes bit for bit.
+        from .scale_channel import channel_scale_field
+
+        if unit.scale_rows is None:
+            raise GrammarError("a CHANNEL scale plane needs the unit's row words")
+        scale_plane = torch.full(
+            (cols // unit.half, rows), 0x38, dtype=torch.uint8, device=device
+        )
+        scale_table = None
+        global_scale = 1.0
+        row_scale = channel_scale_field(
+            unit.scale_rows.to(device), unit.scale_global, rows, 1
+        )[:, 0].contiguous()
     else:
         e4m3, global_scale = nvfp4_scale_bytes(
             unit.scale_base, unit.scale_refine, unit.group, unit.half
@@ -1483,7 +1504,7 @@ def _pack_window_unit(unit, grid) -> dict:
         "table": unit.window_codes.to(device).to(torch.uint8).contiguous(),
         "values": build_window_values(grid, device),
         "scale_plane": scale_plane, "scale_table": scale_table,
-        "global_scale": global_scale,
+        "global_scale": global_scale, "row_scale": row_scale,
         "rows": rows, "cols": cols, "window_bits": int(unit.window_bits),
         "arity": grid.arity, "half": unit.half, "max_rate": max(unit.rates),
     }
@@ -1544,13 +1565,15 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
 def gemv_from_packed(x: torch.Tensor, packed: dict, **kw) -> torch.Tensor:
     """The lane's GEMV over a ``pack_unit_for_kernel`` result, either body."""
     if packed.get("kind", "span2") == "window":
-        return tessera_gemv_window(
+        out = tessera_gemv_window(
             x, packed["plane"], packed["offsets"], packed["rates"],
             packed["table"], packed["values"], packed["scale_plane"],
             packed["scale_table"], packed["global_scale"], packed["rows"],
             packed["cols"], packed["window_bits"], packed["arity"],
             half=packed["half"], max_rate=packed["max_rate"], **kw,
         )
+        row_scale = packed.get("row_scale")
+        return out if row_scale is None else out * row_scale
     return tessera_gemv_tuple_span2(
         x, packed["select"], packed["label"], packed["point"], packed["nibbles"],
         packed["table"], packed["label_lut"], packed["values"],

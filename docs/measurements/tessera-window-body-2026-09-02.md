@@ -369,10 +369,12 @@ alone or to the kernel row alone:
 1. ~~`ScalePlaneKind.CHANNEL`~~ **Done** (schema minor 3): one fp16 per
    output row on the DIAG_SV plane times an fp32 global, the served W8A8
    layout (`decode.materialize_fp8`), refit landed on the stored word.
-2. ~~Window GEMV in the kernel lane~~ — landed, see "Kernel lane" above
-   (block planes only: a window unit over the CHANNEL plane is not yet
-   decodable in the lane). The default can flip **per grid** on the
-   encoder's schedule alone —
+2. ~~Window GEMV in the kernel lane~~ — landed, see "Kernel lane" above;
+   a window unit over the CHANNEL plane decodes in the same lane (identity
+   block plane, row scale as an epilogue in the reader's own fp32
+   expression; `tests/test_channel_plane.py`, bit-exact on one-hot
+   columns). The default can flip **per grid** on the encoder's schedule
+   alone —
    E4M3 (window) and E2M1x2 below the cap (window), E2M1x2 at the cap
    (coset trellis, span 2), a per-unit choice the wire already expresses —
    **but only up to L=14**: at L=16 the per-unit table costs the GEMV

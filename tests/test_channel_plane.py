@@ -219,7 +219,7 @@ def test_the_reader_fails_closed_on_planes_that_disagree_with_the_kind():
         manifest.encode(2)
 
 
-def test_the_kernel_lane_refuses_a_channel_plane():
+def test_the_span2_lane_refuses_a_channel_plane():
     pytest.importorskip("triton")
     from tessera.kernel import pack_unit_for_kernel
 
@@ -229,6 +229,43 @@ def test_the_kernel_lane_refuses_a_channel_plane():
                        completion=0)
     with pytest.raises(TesseraError):
         pack_unit_for_kernel(unit, forest[7], CODE)
+
+
+@pytest.mark.parametrize("grid,rate,window", [(E4M3_GRID, 4, 8), (K2, 7, 8), (E4M3_GRID, 5, 10)],
+                         ids=["e4m3-r4-L8", "k2-r7-L8", "e4m3-r5-L10"])
+def test_the_window_lane_decodes_a_channel_plane(grid, rate, window):
+    """The window GEMV under a CHANNEL plane: the reader's bytes, bit for bit.
+
+    One-hot columns compare the kernel's decode against ``read_unit_artifact``
+    with ``torch.equal`` (the row scale is an epilogue in the reader's own
+    fp32 expression); a random vector holds the lane's ``rel < 1e-5``.
+    """
+    pytest.importorskip("triton")
+    if not torch.cuda.is_available():
+        pytest.skip("the kernel lane runs on CUDA")
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
+
+    rows, cols = 256, 512
+    w = _weights(rows, cols, seed=3).to("cuda")
+    w[: rows // 8] *= 4.0
+    rates = (rate,) * cols
+    unit = encode_unit(w, grid, rates, CODE, body=WINDOW, window_bits=window,
+                       scale_plane=CHANNEL, scale_refit=1, completion=0)
+    _manifest, _region, blob = build_unit_artifact(unit, "unit0", grid, rate * 256, CODE)
+    assert blob[10] == 3
+    reference = read_unit_artifact(blob, device="cuda")
+    packed = pack_unit_for_kernel(unit, grid, CODE)
+    assert packed["kind"] == "window" and packed["row_scale"] is not None
+    assert packed["global_scale"] == 1.0 and packed["scale_table"] is None
+    for k in (0, 1, 15, 16, 17, cols // 2, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = gemv_from_packed(x, packed, lanes=8, split_k=4)
+        assert torch.equal(got, reference[:, k]), f"column {k}"
+    x = torch.randn(cols, device="cuda")
+    got = gemv_from_packed(x, packed, lanes=8, split_k=4)
+    expect = reference @ x
+    assert (got - expect).norm() / expect.norm() < 1e-5
 
 
 # ----------------------------------------------------- what did not change
