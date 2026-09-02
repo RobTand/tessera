@@ -1,0 +1,131 @@
+{
+ "args": {
+  "stage": "checks",
+  "dense_json": "experiments/results/tessera16_alphabet_floor_dense.json",
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "rungs": [
+   1024,
+   1280,
+   1536,
+   1792,
+   2048
+  ],
+  "window_bits": [
+   12,
+   14,
+   16
+  ],
+  "sigmas": [
+   1.0,
+   4.0
+  ],
+  "bf16_exp": [
+   -29,
+   2
+  ],
+  "refits": [
+   4,
+   0
+  ],
+  "eval_rows": 1024,
+  "exl3": [
+   4,
+   5,
+   6,
+   8
+  ],
+  "limit": 0,
+  "rungs_all": [
+   1024
+  ],
+  "subset_layer": [
+   2
+  ],
+  "parity": true,
+  "out": "/home/rob/tessera/experiments/results/tessera16_alphabet_floor_checks.json"
+ },
+ "tables": {
+  "E4M3_L12": {
+   "states": 4096,
+   "distinct_values": 168,
+   "grid_codes": 256,
+   "reach_grid_units": 352.0,
+   "reach_sigma": 3.737508075722838
+  },
+  "BF16_L12": {
+   "states": 4096,
+   "distinct_values": 1546,
+   "grid_codes": 8192,
+   "reach_grid_units": 3.671875,
+   "reach_sigma": 3.671875
+  },
+  "E4M3_L14": {
+   "states": 16384,
+   "distinct_values": 202,
+   "grid_codes": 256,
+   "reach_grid_units": 384.0,
+   "reach_sigma": 4.077281537152187
+  },
+  "BF16_L14": {
+   "states": 16384,
+   "distinct_values": 2116,
+   "grid_codes": 8192,
+   "reach_grid_units": 4.0,
+   "reach_sigma": 4.0
+  },
+  "E4M3_L16": {
+   "states": 65536,
+   "distinct_values": 236,
+   "grid_codes": 256,
+   "reach_grid_units": 416.0,
+   "reach_sigma": 4.417054998581536
+  },
+  "BF16_L16": {
+   "states": 65536,
+   "distinct_values": 2680,
+   "grid_codes": 8192,
+   "reach_grid_units": 4.3125,
+   "reach_sigma": 4.3125
+  }
+ },
+ "snap": {
+  "L12": {
+   "entries": 4096,
+   "differ_from_rne": 8,
+   "max_abs_diff": 0.00390625,
+   "max_rel_diff": 0.006802720949053764
+  },
+  "L14": {
+   "entries": 16384,
+   "differ_from_rne": 30,
+   "max_abs_diff": 0.015625,
+   "max_rel_diff": 0.007633587811142206
+  },
+  "L16": {
+   "entries": 65536,
+   "differ_from_rne": 96,
+   "max_abs_diff": 0.015625,
+   "max_rel_diff": 0.007751937955617905
+  }
+ },
+ "log": [
+  "BF16 grid BF16e-29:2: 8192 codes, peak 7.96875, min |v| 1.863e-09",
+  "  E4M3 L=12: 168 distinct of 4096 states (256 codes available), reach 3.738 sigma",
+  "  BF16 L=12: 1546 distinct of 4096 states (8192 codes available), reach 3.672 sigma",
+  "    snap vs bf16 RNE: 8 of 4096 entries differ, max |d| 3.91e-03",
+  "  E4M3 L=14: 202 distinct of 16384 states (256 codes available), reach 4.077 sigma",
+  "  BF16 L=14: 2116 distinct of 16384 states (8192 codes available), reach 4.000 sigma",
+  "    snap vs bf16 RNE: 30 of 16384 entries differ, max |d| 1.56e-02",
+  "  E4M3 L=16: 236 distinct of 65536 states (256 codes available), reach 4.417 sigma",
+  "  BF16 L=16: 2680 distinct of 65536 states (8192 codes available), reach 4.312 sigma",
+  "    snap vs bf16 RNE: 96 of 65536 entries differ, max |d| 1.56e-02"
+ ]
+}

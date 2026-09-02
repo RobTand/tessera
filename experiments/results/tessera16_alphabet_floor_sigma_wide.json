@@ -1,0 +1,69 @@
+{
+ "args": {
+  "stage": "sigma",
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "rungs": [
+   1024
+  ],
+  "window_bits": [
+   14
+  ],
+  "sigmas": [
+   4.0
+  ],
+  "bf16_exp": [
+   -27,
+   4
+  ],
+  "refits": [
+   4,
+   0
+  ],
+  "eval_rows": 1024,
+  "exl3": [
+   4,
+   5,
+   6,
+   8
+  ],
+  "limit": 0,
+  "rungs_all": [
+   1024
+  ],
+  "subset_layer": [
+   2
+  ],
+  "parity": true,
+  "out": "/home/rob/tessera/experiments/results/tessera16_alphabet_floor_sigma_wide.json"
+ },
+ "tensor": "model.language_model.layers.5.mlp.experts.0.gate_proj.weight",
+ "sigma": {
+  "sigma4.0_refit4": {
+   "wt": 0.06941641867160797,
+   "row_scales_distinct": 185,
+   "rows": 2048,
+   "secs": 29.018001317977905
+  },
+  "sigma4.0_refit0": {
+   "wt": 0.06956066936254501,
+   "row_scales_distinct": 109,
+   "rows": 2048,
+   "secs": 7.94951605796814
+  }
+ },
+ "row_rms": {
+  "max": 0.022736407816410065,
+  "min": 0.017837518826127052,
+  "median": 0.019574319943785667,
+  "spread": 1.27463960647583,
+  "p99_over_p1": 1.069604754447937
+ }
+}

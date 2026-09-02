@@ -1,0 +1,118 @@
+{
+ "args": {
+  "stage": "price",
+  "dense_json": "experiments/results/tessera16_alphabet_floor_dense.json",
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "rungs": [
+   1024,
+   1280,
+   1536,
+   1792,
+   2048
+  ],
+  "window_bits": [
+   14
+  ],
+  "sigmas": [
+   1.0,
+   4.0
+  ],
+  "bf16_exp": [
+   -29,
+   2
+  ],
+  "refits": [
+   4,
+   0
+  ],
+  "eval_rows": 1024,
+  "exl3": [
+   4,
+   5,
+   6,
+   8
+  ],
+  "limit": 0,
+  "rungs_all": [
+   1024
+  ],
+  "subset_layer": [
+   2
+  ],
+  "parity": true,
+  "out": "experiments/results/tessera16_alphabet_floor_price.json"
+ },
+ "dense_json": "experiments/results/tessera16_alphabet_floor_dense.json",
+ "price": {
+  "bf16_q1024": {
+   "tensors": 196,
+   "params": 440401920,
+   "bpp": 4.129180908203125,
+   "plain": 0.07014737690064553,
+   "weighted": 0.0762029060357861
+  },
+  "bf16_q2048": {
+   "tensors": 7,
+   "params": 15728640,
+   "bpp": 8.129180908203125,
+   "plain": 0.006214252274018212,
+   "weighted": 0.007907196362127502
+  },
+  "bf16fold_q1024": {
+   "tensors": 196,
+   "params": 440401920,
+   "bpp": 4.129180908203125,
+   "plain": 0.07016715567052717,
+   "weighted": 0.07622090284690843
+  },
+  "bf16fold_q2048": {
+   "tensors": 7,
+   "params": 15728640,
+   "bpp": 8.129180908203125,
+   "plain": 0.006418814466477847,
+   "weighted": 0.007977947711525924
+  },
+  "e4m3_q1024": {
+   "tensors": 196,
+   "params": 440401920,
+   "bpp": 4.070847574869791,
+   "plain": 0.07042577462912368,
+   "weighted": 0.07652376823330781
+  },
+  "e4m3_q2048": {
+   "tensors": 7,
+   "params": 15728640,
+   "bpp": 8.070847574869791,
+   "plain": 0.026443513443321316,
+   "weighted": 0.023397676468653192
+  },
+  "fp8rtn": {
+   "tensors": 196,
+   "params": 440401920,
+   "bpp": 8.025,
+   "plain": 0.026374197022791035,
+   "weighted": 0.026185153567259936
+  },
+  "nvfp4": {
+   "tensors": 196,
+   "params": 440401920,
+   "bpp": 4.500014241536459,
+   "plain": 0.09412860989061851,
+   "weighted": 0.09552758301877709
+  }
+ },
+ "row_rms": {
+  "tensors": 196,
+  "median_spread": 5.953137636184692,
+  "max_spread": 42.25768280029297,
+  "min_spread": 1.6327195167541504
+ }
+}
