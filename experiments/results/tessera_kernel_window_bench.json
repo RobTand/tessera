@@ -1,0 +1,406 @@
+[
+ {
+  "commit": "57d1f67",
+  "label": "window body kernel lane, one tessera_bitshift_tuple experiment concurrent",
+  "tensor": "model.language_model.layers.20.mlp.experts.0.gate_proj.weight",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 20.0,
+  "lanes": 64,
+  "split_k": 128,
+  "envelope_w": 140,
+  "records": [
+   {
+    "arm": "bf16 torch gemv",
+    "ms_per_call": 0.4322754412415774,
+    "calls": 46304,
+    "bytes_per_call": 16777216,
+    "epoch": [
+     1788317191.552594,
+     1788317211.5735023
+    ],
+    "profile": [
+     {
+      "name": "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, __nv_bflo",
+      "self_cuda_ms_per_call": 0.3888385399999999,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     },
+     {
+      "name": "cudaDeviceSynchronize",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 2
+     }
+    ],
+    "GBps": 38.811402174069016,
+    "power": {
+     "mean_w": 46.0965,
+     "max_w": 48.55,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "span2 trellis E2M1x2 R=7",
+    "kind": "span2",
+    "window_bits": null,
+    "rate": 7,
+    "grid": "E2M1x2",
+    "ms_per_call": 0.20966362401328204,
+    "calls": 95392,
+    "body_bytes": 3936264,
+    "scale_bytes": 262144,
+    "table_bytes": 0,
+    "bytes_per_call": 4198408,
+    "body_bits_per_weight": 3.7539138793945312,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.5944202636528644e-07,
+    "encode_seconds": 9.195553541183472,
+    "epoch": [
+     1788317221.5701103,
+     1788317241.5751219
+    ],
+    "profile": [
+     {
+      "name": "_tuple_gemv_span2_kernel",
+      "self_cuda_ms_per_call": 0.14960229999999985,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008544000000000052,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 20.02449409027688,
+    "power": {
+     "mean_w": 54.53150000000001,
+     "max_w": 56.76,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=12",
+    "kind": "window",
+    "window_bits": 12,
+    "rate": 7,
+    "grid": "E2M1x2",
+    "ms_per_call": 0.20818823510473902,
+    "calls": 96096,
+    "body_bytes": 3678216,
+    "scale_bytes": 262144,
+    "table_bytes": 4096,
+    "bytes_per_call": 3944456,
+    "body_bits_per_weight": 3.5078201293945312,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.521773805914563e-07,
+    "encode_seconds": 16.104536294937134,
+    "epoch": [
+     1788317257.7431335,
+     1788317277.7538643
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.14683004,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008953600000000552,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 18.94658455611362,
+    "power": {
+     "mean_w": 56.583000000000006,
+     "max_w": 58.66,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E4M3   R=4 L=12",
+    "kind": "window",
+    "window_bits": 12,
+    "rate": 4,
+    "grid": "E4M3",
+    "ms_per_call": 0.20952491363822076,
+    "calls": 95456,
+    "body_bytes": 4202504,
+    "scale_bytes": 262144,
+    "table_bytes": 4096,
+    "bytes_per_call": 4468744,
+    "body_bits_per_weight": 4.007820129394531,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.822568430678075e-07,
+    "encode_seconds": 21.34731149673462,
+    "epoch": [
+     1788317299.1629243,
+     1788317319.1681237
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.14819315999999996,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008524799999999958,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 21.32798397290368,
+    "power": {
+     "mean_w": 65.40700000000001,
+     "max_w": 68.29,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=14",
+    "kind": "window",
+    "window_bits": 14,
+    "rate": 7,
+    "grid": "E2M1x2",
+    "ms_per_call": 0.2133977023274795,
+    "calls": 93728,
+    "body_bytes": 3678216,
+    "scale_bytes": 262144,
+    "table_bytes": 16384,
+    "bytes_per_call": 3956744,
+    "body_bits_per_weight": 3.5078201293945312,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.5956017541138863e-07,
+    "encode_seconds": 83.35180163383484,
+    "epoch": [
+     1788317402.5828955,
+     1788317422.5890462
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.1497648200000001,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008863999999999941,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 18.54164293637985,
+    "power": {
+     "mean_w": 57.449,
+     "max_w": 59.85,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E4M3   R=4 L=14",
+    "kind": "window",
+    "window_bits": 14,
+    "rate": 4,
+    "grid": "E4M3",
+    "ms_per_call": 0.21387769064183842,
+    "calls": 93536,
+    "body_bytes": 4202504,
+    "scale_bytes": 262144,
+    "table_bytes": 16384,
+    "bytes_per_call": 4481032,
+    "body_bits_per_weight": 4.007820129394531,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.56231709019994e-07,
+    "encode_seconds": 109.73996758460999,
+    "epoch": [
+     1788317532.384334,
+     1788317552.394387
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.19532404000000006,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008626799999999639,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 20.951376399065285,
+    "power": {
+     "mean_w": 65.829,
+     "max_w": 68.71,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=16",
+    "kind": "window",
+    "window_bits": 16,
+    "rate": 7,
+    "grid": "E2M1x2",
+    "ms_per_call": 0.506200825926746,
+    "calls": 39520,
+    "body_bytes": 3678216,
+    "scale_bytes": 262144,
+    "table_bytes": 65536,
+    "bytes_per_call": 4005896,
+    "body_bits_per_weight": 3.5078201293945312,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.481417536477238e-07,
+    "encode_seconds": 369.6116647720337,
+    "epoch": [
+     1788317922.0830026,
+     1788317942.0950806
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.21102525999999988,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008403199999999925,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 7.913649671878858,
+    "power": {
+     "mean_w": 53.209,
+     "max_w": 53.45,
+     "samples": 20
+    }
+   },
+   {
+    "arm": "window E4M3   R=4 L=16",
+    "kind": "window",
+    "window_bits": 16,
+    "rate": 4,
+    "grid": "E4M3",
+    "ms_per_call": 0.3825728417610159,
+    "calls": 52288,
+    "body_bytes": 4202504,
+    "scale_bytes": 262144,
+    "table_bytes": 65536,
+    "bytes_per_call": 4530184,
+    "body_bits_per_weight": 4.007820129394531,
+    "scale_bits_per_weight": 0.25,
+    "one_hot_bit_exact": true,
+    "rel_err_vs_reference": 3.557866534720233e-07,
+    "encode_seconds": 473.6028175354004,
+    "epoch": [
+     1788318415.7700224,
+     1788318435.7788684
+    ],
+    "profile": [
+     {
+      "name": "_window_gemv_kernel",
+      "self_cuda_ms_per_call": 0.17426864000000009,
+      "count": 50
+     },
+     {
+      "name": "void at::native::vectorized_elementwise_kernel<4, at::native::FillFunctor<float>",
+      "self_cuda_ms_per_call": 0.0008486399999999412,
+      "count": 50
+     },
+     {
+      "name": "Activity Buffer Request",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 1
+     },
+     {
+      "name": "cudaLaunchKernel",
+      "self_cuda_ms_per_call": 0.0,
+      "count": 50
+     }
+    ],
+    "GBps": 11.84136327907431,
+    "power": {
+     "mean_w": 57.349000000000004,
+     "max_w": 58.85,
+     "samples": 20
+    }
+   }
+  ],
+  "time": 1788318438.312252
+ }
+]

@@ -188,15 +188,156 @@ byte-identical and keeps its minor. `tests/test_window_body.py` holds the
 Viterbi to the exhaustive search, the replay to the encoder's states, the
 accountant to the bytes, and the reader to fail-closed.
 
-**Not the default.** `DEFAULT_BODY` stays TCQ. Two gates, both mechanical:
-the kernel lane has no window GEMV (`pack_unit_for_kernel` refuses the
-body; the decode is a table lookup per position on an `L`-bit window of
-the packed column, with the table in shared memory — 64 KB at L=16), and
-the reference encoder is O(2^L) per position: ~30 s at L=12, ~150 s at
-L=14, ~13 min at L=16 per 2048×4096 tensor on GB10, which is days per MoE
-model. A Triton Viterbi with the cost front resident (fits at L≤14) or an
-M-algorithm with measured survivors is the next encoder step, and per
-principle 15 its acceptance is profiler evidence, not a bench number.
+**Not the default.** `DEFAULT_BODY` stays TCQ. One gate is now closed and
+one is open. The kernel lane **does** decode the body (see "Kernel lane"
+below). What remains is the reference encoder, which is O(2^L) per
+position: ~30 s at L=12, ~150 s at L=14, ~13 min at L=16 per 2048×4096
+tensor on GB10, which is days per MoE model. A Triton Viterbi with the
+cost front resident (fits at L≤14) or an M-algorithm with measured
+survivors is the next encoder step, and per principle 15 its acceptance is
+profiler evidence, not a bench number.
+
+## Kernel lane (2026-09-02)
+
+**Claim.** The Triton GEMV decodes a window body bit-exactly at the wire's
+own bytes, over both grids, both scale planes and mixed rate schedules, and
+at the shipping shape it is **the span-2 trellis kernel's equal up to
+L=14 while reading fewer bytes, and 1.85× its cost at L=16** — the
+per-unit `2^L` table is the whole of that, measured with the encoder taken
+out of the run. `pack_unit_for_kernel` dispatches on `BodyKind`; the span-2
+trellis path is untouched, byte for byte and kernel for kernel.
+
+**The decode.** No replay tables and no halo argument: a state *is* the
+last `L` bits of the column's stream, so the kernel reads an `L`-bit field
+out of the plane and indexes the unit's own `2^L` ALPHABET table, then the
+grid's value table (`kernel.build_window_values`) — the same shared /
+per-unit seam the trellis lane cuts, with the halves the other way round.
+Fusing them would be `2^L × arity` floats: 512 KB per unit at L=16, arity
+2, against 64 KB for the table. `pack_window_planes` writes the plane
+column-major MSB-first with an `L`-bit zero pad per column (the pad *is*
+`state_{−1} = 0`, as `SELECT_PAD` is for the trellis lane) and a per-column
+bit offset, because a mixed schedule gives every column its own stride —
+the case the span-2 lane refuses outright.
+
+**Method** (principle 15). `experiments/tessera_kernel_window_bench.py`,
+same tensor and protocol as the span-2 bench: one GLM routed expert
+(`layers.20.mlp.experts.0.gate_proj`, 2048×4096), ≥20 s timed loops,
+CUDA-event ms/call, a `torch.profiler` pass for self CUDA time, and
+`nvidia-smi` power sampled once a second with each arm's epoch window in
+the JSON. Results `experiments/results/tessera_kernel_window_bench.json`,
+log `...bench.log`, power `...power.csv`. Envelope ~140 W. A second script,
+`experiments/tessera_kernel_window_table_sweep.py`
+(`...window_table_sweep.json`), times synthetic units with no encoder in the
+run, which is what isolates `L`.
+
+**The box was not idle.** Three other Tessera GPU jobs were resident for the
+whole run — `tessera_vs_exl3_followups.py` (PID 1103204, from 20:18),
+`tessera_bitshift_tuple.py --chunk 256` (PID 1123072, from 20:34) and
+`window_viterbi_bench.py` (PID 1346756, from 22:41) — and the last of those
+plus a `pytest` run *started while the bench was running*, at 22:41 and 23:04.
+(The counts the two logs print — "6 other tessera process(es)", "concurrent
+GPU jobs: 9" — count the shell wrappers too; `ps` showed three python jobs on
+the GPU, the PIDs above.)
+The bf16 anchor reads 0.4323 ms against the 0.0161 this tensor takes on an
+idle box: absolute ms below are inflated ~27× and are **not** comparable to
+the span-2 lane's published 0.0524 ms. The comparison that survives is
+arm-against-arm inside this run, and even that is weakened by the two jobs
+that arrived mid-run, which is why the second table exists.
+
+| arm | ms/call | kernel self CUDA | bytes/call | b/wt | power mean/max |
+|---|---|---|---|---|---|
+| bf16 torch GEMV (anchor) | 0.4323 | — | 16.78 MB | 16.0 | 46.1 / 48.5 W |
+| span2 trellis E2M1×2 R=7 | 0.2097 | 0.1496 | 4.20 MB | 3.75+0.25 | 54.5 / 56.8 W |
+| window E2M1×2 R=7 L=12 | 0.2082 | 0.1468 | 3.94 MB + 4 KB table | 3.51+0.25 | 56.6 / 58.7 W |
+| window E2M1×2 R=7 L=14 | 0.2134 | 0.1498 | 3.96 MB + 16 KB table | 3.51+0.25 | 57.4 / 59.9 W |
+| window E2M1×2 R=7 L=16 | 0.5062 | 0.2110 | 4.01 MB + 64 KB table | 3.51+0.25 | 53.2 / 53.5 W |
+| window E4M3 R=4 L=12 | 0.2095 | 0.1482 | 4.47 MB + 4 KB table | 4.01+0.25 | 65.4 / 68.3 W |
+| window E4M3 R=4 L=14 | 0.2139 | 0.1953 | 4.48 MB + 16 KB table | 4.01+0.25 | 65.8 / 68.7 W |
+| window E4M3 R=4 L=16 | 0.3826 | 0.1743 | 4.53 MB + 64 KB table | 4.01+0.25 | 57.3 / 58.9 W |
+
+Every arm draws 46–69 W of a ~140 W envelope, the bandwidth-bound signature
+the span-2 lane already has (`gpu_utilization` is non-diagnostic on GB10 —
+principle 15); the window body does not change what the lane is limited by.
+At L ≤ 14 **neither instrument separates the arms in this run**: ms/call is
+flat at 0.208–0.214 because contention floors it, and the kernel row is one
+short profiler pass on the same contended box — so the lone 0.1953 on E4M3
+L=14 is that pass's noise, not a slower kernel (the repeated sweep below puts
+the arm at 1.02× span-2). L=16 is the one width that breaks the floor, in
+both grids, which contention alone does not explain. The sweep below is what
+ranks all of them.
+
+**The L=16 cost is the table, and it is not the encoder's heat.** Each arm
+above is timed right after its own 16–474 s encode, so a wall number could be
+carrying whatever the encode left behind. `tessera_kernel_window_table_sweep.py`
+removes the encoder: synthetic units at the same 2048×4096 shape (real
+forests, real LUTs, real plane layouts, random body bits), all resident before
+anything is timed, two passes. Across L the plane bytes, the scale plane and
+the value table are *identical* — the rate is fixed, so only the `2^L` ALPHABET
+table changes size — which makes this an attribution and not a correlation.
+
+| arm | table | ms/call pass 0 | pass 1 | vs span-2 |
+|---|---|---|---|---|
+| span2 E2M1×2 R=7 | — | 0.2038 | 0.2036 | 1.00× |
+| window E2M1×2 R=7 L=10 | 1 KB | 0.1970 | 0.1972 | 0.97× |
+| window E2M1×2 R=7 L=12 | 4 KB | 0.1992 | 0.1975 | 0.97× |
+| window E2M1×2 R=7 L=14 | 16 KB | 0.2059 | 0.2082 | 1.01× |
+| window E2M1×2 R=7 L=16 | 64 KB | 0.3755 | 0.3704 | 1.83× |
+| window E2M1×2 R=7 L=18 | 256 KB | 0.6011 | 0.6013 | 2.95× |
+| window E4M3 R=4 L=10 | 1 KB | 0.1992 | 0.1991 | 0.98× |
+| window E4M3 R=4 L=12 | 4 KB | 0.2026 | 0.2036 | 1.00× |
+| window E4M3 R=4 L=14 | 16 KB | 0.2083 | 0.2071 | 1.02× |
+| window E4M3 R=4 L=16 | 64 KB | 0.3795 | 0.3790 | 1.86× |
+| window E4M3 R=4 L=18 | 256 KB | 0.8439 | 0.8447 | 4.14× |
+
+ms/call reproduces to under 2% across passes; the profiler's self-CUDA row
+does not (its pass is a handful of calls, and on this box it scattered ±30%,
+including one 0.057 ms read on an arm that read 0.151 ms the other pass). On
+a contended box the 6 s CUDA-event loop is the instrument that ranks and the
+profiler row is the one that attributes — the two are not interchangeable,
+which is the same lesson the synchronising `rates.max()` taught below.
+
+**So the lane's answer is per-L, not one number.** At L ≤ 14 the window GEMV
+is the span-2 kernel's equal or a shade under it (0.97–1.02×) *while reading
+fewer bytes* — 3.51 b/wt of body against 3.75 at the E2M1×2 cap. At L=16 the
+64 KB per-unit table falls out of whatever the SM was holding and it costs
+1.83–1.86×; at L=18, 3–4×. Two things could move that, and they are not the
+same kind of work: holding the table in shared memory is lane work, while
+sharing one table across a layer's units is an encoder-and-wire choice, since
+the table is per-unit on the wire today. As the lane stands, though, **a
+window body wider than L=14 is a decode the kernel pays for**, and the widths
+this document's own results favour (L ≥ 14–16, §Result) land on the wrong
+side of that. It is a lane finding the encoder work should hear, not a defect
+in this decode.
+
+**Bit-exactness.** `tests/test_kernel_window.py` (57 cases): one-hot
+columns through the kernel equal `read_unit_artifact(blob)` by
+`torch.equal` — the comparison is against the **bytes**, not the encoder's
+tensors — over E2M1×2 with a mixed {5,6,7} schedule at L ∈ {10,12,14,16}
+and E4M3 at R ∈ {4,5} and L ∈ {12,14,16}, at 256×512, at 2048×4096, and at
+200×768 (100 codes, so both tail masks run). Every one of those cells runs
+under the LUT16 plane; the S6b plane runs on four of them (E2M1×2 mixed at
+L=10 and L=14, E4M3 R=4 at L=12, R=5 at L=14), because the plane is a
+`constexpr` branch in the kernel and does not interact with `L` — that is
+an argument, not a measurement, and the coverage is what it is. The bench re-checks one-hot exactness at 2048×4096 for
+every arm before it times it, which is where the L=14/16 big-shape cases
+are covered — encoding one costs 2.5–5.5 minutes. A hand-made plane (no
+encoder) pins the window read at L ∈ {12,18,20}.
+
+**What the profiler changed.** Two findings, both invisible to ms/call
+alone or to the kernel row alone:
+
+* The first cut computed the window, the state and the code once per
+  *output row* rather than once per *code*, and read four bytes per code.
+  At the E2M1×2 cap that is 64 byte loads per lane per column for a result
+  bit-identical across the arity axis: on a 3 s smoke it read 0.163 ms
+  self CUDA against the span-2 kernel's 0.105 — **1.55× the work for fewer
+  bytes**. Blocking as `[LANES, VEC, arity]` and reading each half-lane's
+  windows out of one int64 (16 loads) closed it. (Those two numbers are
+  smoke-length and off the table below, which is the 20 s run.)
+* A launch-shape check that read `int(rates.max())` off the device tensor
+  synchronised every call: 2.6 ms/call against a ~0.1 ms kernel. The
+  profiler's kernel row was *unchanged* and only ms/call moved, which is
+  the case for keeping both instruments.
 
 ## What is not established
 
@@ -228,9 +369,17 @@ principle 15 its acceptance is profiler evidence, not a bench number.
 1. ~~`ScalePlaneKind.CHANNEL`~~ **Done** (schema minor 3): one fp16 per
    output row on the DIAG_SV plane times an fp32 global, the served W8A8
    layout (`decode.materialize_fp8`), refit landed on the stored word.
-2. Window GEMV in the kernel lane; then the default flips **per grid**:
+2. ~~Window GEMV in the kernel lane~~ — landed, see "Kernel lane" above
+   (block planes only: a window unit over the CHANNEL plane is not yet
+   decodable in the lane). The default can flip **per grid** on the
+   encoder's schedule alone —
    E4M3 (window) and E2M1x2 below the cap (window), E2M1x2 at the cap
-   (coset trellis, span 2) — a per-unit choice the wire already expresses.
+   (coset trellis, span 2), a per-unit choice the wire already expresses —
+   **but only up to L=14**: at L=16 the per-unit table costs the GEMV
+   1.85×, and L≥14 is exactly where the encoder wins. Sharing one table
+   across a layer's units, or holding it in shared memory, is the lane work
+   that would remove the constraint. The other gate is still the O(2^L)
+   encoder.
 3. A fast encoder (Triton or survivor-limited), timed on a full expert
    layer under `torch.profiler` and Netdata before it is trusted.
 4. LDLQ on the window body; the held-out served A/B.
