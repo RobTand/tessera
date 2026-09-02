@@ -296,6 +296,35 @@ branch.
 
 *(table)*
 
+## What this branch changes by default
+
+For the release tag, stated as a table rather than a paragraph, because the
+question is "does the wire's default behaviour move" and the answer is
+different for each plane:
+
+| path | before | after |
+|---|---|---|
+| any encode with **no** Hessian | weights-only | **byte-identical** (784/784, twice) |
+| CHANNEL plane + H (the E4M3 window route) | sigma 1.0, block 32, refit `hessian` | **identical** |
+| LUT plane + H (E2M1, E2M1x2 -- the 4-bit wire) | `GrammarError`, refused | runs: sigma 1.0, block 32, refit `h^1.0` |
+| S6b plane + H | `GrammarError`, refused | refit still refused; LDLQ now permitted |
+
+So **no default moves on any path the previous code could execute.**
+`DEFAULT_LDLQ_SIGMA` and `DEFAULT_LDLQ_BLOCK` are unchanged at 1.0 and 32.
+`DEFAULT_REFIT_OBJECTIVE` changes *type* -- from the string `"hessian"` to a
+per-plane map -- but it still evaluates to `"hessian"` on CHANNEL, and CHANNEL
+was the only plane that could read it before. The two new rows are capability,
+not policy: they are reachable only by passing a Hessian, which no recipe does
+on its own.
+
+Two things worth saying out loud about that table. The `h^1.0` on the LUT row
+is chosen on a **weight-space screen**; until the served gate below reports, it
+is the best-screened objective for a route that previously did not exist, not a
+served default. And the S6b row is narrower than it looks: across every `q256`
+of all three serialisable grids, `wire_recipe` resolves only to LUT and
+CHANNEL, so S6b is not on any exportable wire and its map entry exists to make
+`objective_for` total over the enum.
+
 ## Scope, and what is not measured
 
 - **The refit lever and the LDLQ lever do not live in the same place.** On
