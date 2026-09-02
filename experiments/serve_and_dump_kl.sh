@@ -28,6 +28,8 @@ echo "serving $MODEL  ($IMAGE)"
 # cannot see is not reported as a missing file, it is reported as a malformed
 # HuggingFace repo id, which sends you looking in entirely the wrong place.
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
+source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
+trap serve_lock_release EXIT
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
@@ -37,7 +39,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 \
-  --gpu-memory-utilization 0.85 \
+  --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
   $EAGER_FLAG --trust-remote-code \
   >/dev/null

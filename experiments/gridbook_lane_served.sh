@@ -33,6 +33,8 @@ EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=-
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via gridbook ($IMAGE, mode=$MODE)"
+source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
+trap serve_lock_release EXIT
 docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
   -v "$GB":/gb -v "$TS":/tessera -v "$EXT":/ext \
@@ -45,7 +47,7 @@ inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dis
 dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
 pip install --no-deps --no-build-isolation -q -e /gb 2>&1 | tail -2
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
-  --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization 0.85 \
+  --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' '"${EAGER_FLAG}"' --trust-remote-code' >/dev/null
 for i in $(seq 1 240); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
