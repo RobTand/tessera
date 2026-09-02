@@ -28,6 +28,12 @@ whole bit. At 7 the E4M3 arm has stopped being a rung. And the BF16 arm holds
 0.93-0.96x of EXL3 across the range where the E4M3 arm inverts at 6 and
 collapses at 7. §7.
 
+**And W1's prediction reproduces on a different model, harness and H.** At
+8 bpp on six dense Qwen3-0.6B Linears, H-weighted geomean:
+**BF16 R = 8 0.00783 · E4M3 R = 8 0.02280 · FP8 RTN 0.02341** against W1's
+predicted 0.0079 / 0.0234 / 0.0238 — three digits, six tensors, through the
+real wire. Same bytes as a full FP8 tile, **3.0x less error**. §7c.
+
 `TESSERA_BF16` is a real third family: it writes, reads back bit-exactly,
 decodes four ways that agree to the bit, exports a checkpoint plus a plain-BF16
 twin a stock loader serves, and is priced by the accountant at its true width.
@@ -61,6 +67,8 @@ TESSERA_GIT=fc2c1c1 bash experiments/bf16_export_qwen.sh 1536 1792   # export + 
 bash experiments/bf16_weight_space_run.sh                            # the allocator's table, GLM then dense
 bash experiments/bf16_tail_run.sh                                    # W1 identity, structural twin check, stock HF greedy
 bash experiments/bf16_r8_dense_run.sh                                # twin re-check through the renamed folded path, then dense R=8
+python experiments/bf16_route_w1_identity.py --out .../w1_identity_merged.json   # the same identity check, re-run from the MERGED tree (see 11)
+python experiments/bf16_window_rate_cliff.py                         # fused vs reference at R=6,7,8 -- whose R=8 cliff is it (see 11)
 ```
 
 Both exporter runs were made at `fc2c1c1`, when the exporter was still
@@ -452,13 +460,16 @@ the six.
 | **BF16 window R=6** | 6.1063 | 0.01997 | **0.02150** |
 | E4M3 window R=7 | 7.0577 | 0.02665 | 0.02375 |
 | **BF16 window R=7** | 7.1063 | 0.01078 | **0.01214** |
+| E4M3 window R=8 | 8.0577 | 0.02652 | 0.02280 |
+| **BF16 window R=8** | 8.1063 | 0.00640 | **0.00783** |
 
 | R | BF16 / E4M3 same R | BF16 / E4M3 one rung up | BF16 / NVFP4 4.5 | BF16 / FP8 RTN 8.02 |
 |---|---:|---:|---:|---:|
 | 4 | 0.995 | 1.815 | **0.876** | 3.134 |
 | 5 | 0.964 | 1.421 | 0.465 | 1.665 |
 | 6 | **0.784** | **0.905** | 0.257 | 0.918 |
-| 7 | **0.511** | — | 0.145 | **0.518** |
+| 7 | **0.511** | 0.532 | 0.145 | **0.518** |
+| 8 | **0.343** | — | 0.094 | **0.334** |
 
 The same three statements hold on dense weights, and the table costs more here
 (+0.049 bpp, not +0.016, because these Linears are 1024x3072 and smaller). Two
@@ -471,22 +482,49 @@ additions:
   while being smaller (4.06-4.11 bpp), which is the already-known Tessera
   result and is here only as a sanity rail.
 
+**At 8 bpp the two alphabets separate by 3x, and the screen reproduces W1's.**
+This is the point the whole family was built for, so it is stated as a
+prediction that was checked rather than as a result that was found. W1's
+alphabet-floor screen predicted **BF16 R = 8 0.0079 vs E4M3 R = 8 0.0234 vs
+FP8 RTN 0.0238**. On six dense Qwen Linears through the real wire the
+H-weighted geomean is **0.00783 / 0.02280 / 0.02341** — the same order and the
+same magnitudes to three digits, on a different harness, different tensors and
+a different H. On plain Frobenius the order is the same and wider
+(0.00640 / 0.02652 / 0.02622).
+
+Two readings of that row, and only the second is the family's claim:
+
+- **The 8-bit route is done improving and the 16-bit one is not.** E4M3 goes
+  0.02744 -> 0.02375 -> 0.02280 at R = 6, 7, 8 — it has spent its alphabet,
+  and the last bit buys 4%. BF16 goes 0.02150 -> 0.01214 -> 0.00783, still
+  taking ~1.6-1.8x per bit on this axis (1.7-1.9x on `wt`, W1's ~1.93x). The
+  floor is the alphabet's, measured twice now.
+- **A 16-bit-alphabet trellis at 8.11 bpp is 3.0x better than a full FP8 tile
+  at 8.02 bpp** — same bytes, three times less error — and **BF16 at R = 7
+  (7.11 bpp) is 1.9x better than E4M3 at R = 8 (8.06 bpp)**, a whole bit
+  cheaper. Above ~6 bpp the 8-bit route is not a rung the allocator should be
+  offered when this one exists.
+
 **Per-unit crossover — and the one unit that does not.** The crossover rate
 (lowest R where BF16 beats E4M3 at the *same* R, the conservative reading
 since BF16 is paying more there):
 
-| unit | shape | `wt` | `h` | BF16 R=6 / E4M3 R=7, `h` |
+| unit | shape | `wt` | `h` | BF16 R=8 / E4M3 R=8, `h` |
 |---|---|---|---|---:|
-| `layers.2.mlp.down_proj` | 1024x3072 | R=4 (0.9988x) | **never in R=4..7** | 1.541 |
-| `layers.2.mlp.gate_proj` | 3072x1024 | R=4 (0.9975x) | R=4 (0.9935x) | 0.694 |
-| `layers.2.self_attn.q_proj` | 2048x1024 | R=4 (0.9920x) | R=4 (0.9880x) | 0.868 |
-| `layers.2.self_attn.o_proj` | 1024x2048 | R=4 (0.9967x) | R=4 (0.9955x) | 0.759 |
-| `layers.14.mlp.down_proj` | 1024x3072 | R=4 (0.9980x) | R=5 (0.9626x) | 0.801 |
-| `layers.27.mlp.down_proj` | 1024x3072 | R=4 (0.9979x) | R=4 (0.9849x) | 0.975 |
+| `layers.2.mlp.down_proj` | 1024x3072 | R=4 (0.9988x) | **never in R=4..8** | **1.048** |
+| `layers.2.mlp.gate_proj` | 3072x1024 | R=4 (0.9975x) | R=4 (0.9935x) | 0.197 |
+| `layers.2.self_attn.q_proj` | 2048x1024 | R=4 (0.9920x) | R=4 (0.9880x) | 0.424 |
+| `layers.2.self_attn.o_proj` | 1024x2048 | R=4 (0.9967x) | R=4 (0.9955x) | 0.243 |
+| `layers.14.mlp.down_proj` | 1024x3072 | R=4 (0.9980x) | R=5 (0.9626x) | 0.300 |
+| `layers.27.mlp.down_proj` | 1024x3072 | R=4 (0.9979x) | R=4 (0.9849x) | 0.257 |
 
 Five of six cross at R = 4 on both axes. **`layers.2.mlp.down_proj` never
-crosses on the H-weighted axis** — 1.010x / 1.019x / 1.018x / 1.044x at
-R = 4..7 — while on plain Frobenius it is 0.72x at R = 6 and 0.41x at R = 7.
+crosses on the H-weighted axis** — 1.010x / 1.019x / 1.018x / 1.044x / 1.048x
+at R = 4..8 — while on plain Frobenius it is 0.72x at R = 6, 0.41x at R = 7
+and **0.23x at R = 8**. The R = 8 point sharpens the diagnosis rather than
+softening it: on this one unit the 16-bit alphabet is worth 4.3x on plain
+error and *nothing at all* on the columns H actually weights, which is what a
+reach problem looks like and is not what an alphabet problem looks like.
 The residual is concentrated in its high-H columns, and this is the unit whose
 rows the reach fix was written for. The likely mechanism is the σ: at the same
 L and seed the BF16 table reaches **4.00 σ** where E4M3's reaches 4.08, and
@@ -725,12 +763,28 @@ moved `experiments/export_gridbook_tessera.py` to
 `kernel*.py`, `compensate.py`, `scale_channel.py`, `layout.py`) are untouched
 by this branch.
 
-**Every number in this document predates that merge.** They were taken at
-`fc2c1c1` (stamped in the artifacts and in the sweep JSONs), before `master`'s
-LDLQ + full-H refit landed. That work moves both arms — it is a better
-encoder for the E4M3 wire and for the BF16 wire alike — so the *ratios* are
-the claim and the absolute errors here are the pre-LDLQ ones. Re-running the
-sweep on the merged tree is the first thing that would sharpen §7.
+**Every number in this document predates that merge — and one of them was
+re-taken after it, to check that this matters less than it sounds.** They were
+taken at `fc2c1c1` (stamped in the artifacts and in the sweep JSONs), before
+`master`'s LDLQ + full-H refit landed. Rather than assert from `master`'s
+docstring that a weights-only encode is unchanged, §1's identity harness was
+re-run from the merged tree
+(`w1_identity_merged.json`, `TESSERA_GIT=dcbd902`) and reproduces the
+pre-merge out-space errors **exactly**: 0.06693 / 0.03447 / 0.01788 / 0.00937
+at R = 4 / 5 / 6 / 7, with `value_mismatches` still 0 and
+`cdist_vs_exact_mismatches` still 30. The reason is visible in the signature —
+`encode_linear_planes` defaults `ldl=None` and `refit_metric=None`, so the new
+machinery is opt-in and a weights-only call reaches the same code — but the
+check is the evidence, not the reasoning (principle 14, applied to this
+branch's own claims).
+
+**What that verification does and does not cover.** It covers the BF16 wire at
+R = 4..7 on one GLM tensor, end to end through the real bytes. It does **not**
+re-take the E4M3 arm, the six-tensor GLM sweep, or any dense unit. Those are
+still `fc2c1c1` numbers, and when the H-aware encoder is actually *used* it
+will move both arms — so for §7 the *ratios* remain the claim. Re-running the
+sweep with LDLQ on is the first thing that would sharpen it; re-running it
+weights-only would, on this evidence, reprint the same table.
 
 **Test state after the merge:** `pytest tests -q` is **792 passed, 5 skipped,
 8 failed** on the host. All 8 failures (`test_serving_nvfp4_route.py` ×3,
@@ -770,10 +824,13 @@ outlier work identified as the hard ones.
   grid is the first experiment, and a wider table costs two bytes an entry
   here, so the L-vs-rate frontier is a different curve from E4M3's. W1's
   reasoning about L = 16 (its "L = 16: not run") applies with the cost doubled.
-- **The R = 8 GLM point is one tensor, not six.** R = 8 costs ~24 min per
-  2048×4096 encode on this box; the sweep was stopped after L5.gate_proj and
-  the dense R = 8 screen was run instead. The six-tensor R = 8 geomean is
-  unmeasured.
+- **The R = 8 *GLM* point is one tensor, not six.** R = 8 costs ~24 min per
+  2048×4096 encode on this box (see the encode-cost bullet below), so that
+  sweep was stopped after L5.gate_proj and the budget was spent on the dense
+  R = 8 screen instead — which *did* complete on all six units (§7c) and is
+  the one the alphabet-floor prediction is checked against. What remains
+  unmeasured is the six-**expert** GLM R = 8 geomean and, with it, a
+  BF16-vs-EXL3-K8 number on more than one tensor.
 - **R = 8 costs 40-80x R = 7, and the cost is the window kernel's, not the
   family's.** On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
   identical code path, both arms) the encode seconds run **2, 3, 5, 10** at
@@ -790,27 +847,56 @@ outlier work identified as the hard ones.
   scale is the class-minimum loop `for f in tl.static_range(1, FAN)`
   (`window_viterbi.py:172`): it is **fully unrolled**, so its instruction count
   is `FAN - 1` (15 -> 255 over R = 4..8) while its per-iteration tile
-  `[BC, BL]` shrinks as `2048 / FAN` (128 -> 8 lanes). Below one warp -- which
-  is R >= 7 -- the halving stops paying and only the doubling remains, and that
-  accounts for the 2x-per-bit trend. It does **not** account for the extra
-  20-40x at `FAN = 256` specifically; a spill at the 255-deep unroll is the
-  suspect, unattributed.
+  `[BC, BL]` shrinks as `2048 / FAN` (128 -> 8 lanes). The doubling is what the
+  clock sees -- a serial unrolled loop costs its length -- and the shrinking
+  tile is why it is never recovered: past `FAN = 64` the tile is at or under a
+  warp (32 -> 16 -> 8 lanes at R = 6, 7, 8), so each iteration issues at
+  roughly fixed cost however narrow it gets. That accounts for the
+  2x-per-bit trend. It does **not** account for the extra
+  20-40x at `FAN = 256`, and rather than leave that as a suspicion the
+  discriminator was run (`experiments/bf16_window_rate_cliff.py`): **the same
+  tensor, both implementations, one process**, `viterbi_window(impl="fused")`
+  against `impl="reference"` (the torch chain, the definition) on a 1024x1024
+  tensor at L = 14.
 
-  Two honest caveats. **The box is shared**: at the time of writing six GPU
-  processes from other branches are resident on sparklina (32 W of a ~140 W
-  envelope, `gpu_utilization` 96%, six host cores each at ~100% -- principle
-  15's exact signature, utilisation saying "saturated" while power says
-  one-quarter loaded), so the R = 8 seconds are contended wall-clock and the
-  R = 7 seconds come from a different run. The multiplier is therefore "large",
-  not "40-80x measured cleanly". **The discriminator is cheap and immune to
-  that**: time `viterbi_window_fused` against the eager reference on one
-  1024x1024 tensor at R = 7 and R = 8 *in the same process* -- if the reference
-  shows no cliff, the Triton step kernel owns it and the fix is a `_tile` that
-  keeps `BL*BC` at a warp by giving back some of the `bl * FAN < 1024` cap. Not
-  run: it needs the GPU, and running it now would perturb five other branches'
-  measurements as much as theirs are perturbing this one. Addressed to whoever
-  owns `window_viterbi.py`. The product range is R = 4..8, so the top rung
-  costing this much is a real cost of the family and not a footnote.
+  | impl | R = 6 | R = 7 | R = 8 | R6->R7 | R7->R8 |
+  |---|---:|---:|---:|---:|---:|
+  | `reference` | 6.548 s | 6.544 s | 6.631 s | 1.00x | **1.01x** |
+  | `fused` | 0.753 s | 1.474 s | **65.004 s** | 1.96x | **44.09x** |
+
+  `sse` is identical between the two at every rate (392.791046 / 122.382999 /
+  50.547596), so this is one answer computed two ways, not two answers.
+
+  **The reference path is flat in the rate** — which is the algebra: per step
+  the trellis evaluates `low * FAN = 2^L` transitions whatever the rate, so
+  rate-independence is what a correct implementation *should* show, and the
+  torch chain shows it to 1%. **The entire cliff is the Triton step kernel's**,
+  and it is worse than "slow": at R = 8 the fused path is **9.8x slower than
+  the reference it exists to replace**, having been 8.7x faster at R = 6. The
+  crossover is between R = 7 and R = 8. Attributed, not suspected.
+
+  Two consequences for whoever owns `window_viterbi.py`. **The cheap fix is a
+  dispatch rule, not a kernel rewrite:** `viterbi_window`'s `impl="auto"`
+  currently takes the fused path whenever the input is CUDA and Triton is
+  present (`encode.py:538-543`); making `auto` prefer the reference at
+  `1 << rate` above the crossover would make R = 8 encodes ~10x faster and is
+  bit-exact by the table above. **The real fix is in `_tile`:** the cap
+  `bl * FAN < 1024` shrinks `BL` as `FAN` grows, so the fully unrolled
+  class-minimum loop doubles in length while its `[BC, BL]` tile falls to 8
+  lanes at `FAN = 256`; letting `BL*BC` hold at a warp would keep the
+  2x-per-bit trend instead of breaking it. **Neither was changed here** —
+  `encode.py` is shared with three other branches mid-measurement, this
+  branch's diff is meant to be a grid and a recipe, and changing a hot path
+  under five running jobs is the "don't change a kernel mid-A/B" landmine.
+  Recorded as a hand-off with the measurement attached.
+
+  One caveat on the *sweep's* seconds, separate from the above. The box is
+  shared: six GPU processes from other branches were resident on sparklina
+  while §7c's R = 8 arms ran (32 W of a ~140 W envelope, `gpu_utilization`
+  96%, six host cores each at ~100% — principle 15's exact signature,
+  utilisation saying "saturated" while power says one-quarter loaded), so the
+  424 / 639 / 820 / 740 s figures are contended wall-clock. The discriminator
+  above is immune to that: both arms saw the same box in the same process.
 
 - **One timing column is contended, and no error number is.** The tail
   runner's `pgrep` guard listed the export and the sweep but not

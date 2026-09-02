@@ -668,6 +668,18 @@ EXL3's 8-bit point. On six dense Qwen Linears (H-weighted) the same shape:
 less**. Below R=6 the alphabet is free and costs 0.016 bpp (0.049 on small
 dense Linears): the two arms are within 1%, so the menu keeps both.
 
+At **8 bpp** on those six dense Linears the prediction that started this
+reproduces on a different model, harness and H: **BF16 0.00783 · E4M3 0.02280
+· FP8 RTN 0.02341**, against W1's predicted 0.0079 / 0.0234 / 0.0238 — three
+digits, through the real wire. E4M3 spends its alphabet (0.02744 -> 0.02375 ->
+0.02280 over R=6,7,8; the last bit buys 4%) while BF16 keeps taking ~1.6-1.8x
+a bit. **Same bytes as a full FP8 tile, 3.0x less error**, and BF16 at R=7 is
+1.9x better than E4M3 at R=8 a whole bit cheaper. One caveat kept in view:
+`layers.2.mlp.down_proj` still never crosses on the H-weighted axis through
+R=8 (1.048x) while reaching 0.23x on plain Frobenius — a reach problem, not an
+alphabet one, and the reason (L, sigma) for this grid is stated rather than
+searched.
+
 Built, not just measured: `BF16_GRID` (65 536 codes, the code *is* the bf16 bit
 pattern, `payload_bits=16`), `BF16_RECIPE` (window, span 1, CHANNEL, L=14),
 `materialize_bf16` / `bf16_route.stream_bf16` (both return the *pair* -- tile
