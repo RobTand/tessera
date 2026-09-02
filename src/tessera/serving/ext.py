@@ -25,6 +25,22 @@ list that omits 12.1, which would leave a GB10 running from PTX JIT or a
 mismatched SASS target.  A host with no visible GPU therefore has no defensible
 target and reports the module unavailable.
 
+TOOLCHAIN.  The build needs an ``nvcc`` and a ``ninja``, and finding them is
+not always the operator's job: ``torch.utils.cpp_extension`` resolves
+``CUDA_HOME`` to ``/usr/local/cuda`` whenever that path merely EXISTS and stops
+searching, so a box whose ``update-alternatives`` link points at a PARTIAL
+install (``doc/``, ``targets/``, no ``bin/nvcc`` -- which is how a second CUDA
+lands beside a first) fails every build with ``nvcc: not found`` while a
+complete toolkit sits one directory away.  :func:`_resolve_cuda_home` finishes
+the search torch starts, and prefers the toolkit whose version matches the one
+torch itself was built against.  It corrects ``cpp_extension.CUDA_HOME`` as
+well as the environment, because ``load()`` reads that module global and it is
+frozen at import.  ``CUDA_HOME``/``CUDA_PATH`` set in the
+environment always wins: an operator naming a toolkit is a decision, not a
+guess to be second-guessed.  ``ninja`` is looked for beside ``sys.executable``
+when it is not on ``PATH``, because a venv invoked by absolute path (every
+non-login ssh) has its own ``bin`` off ``PATH``.
+
 FALLBACK.  There is one, and it is explicit: ``tessera.stock.materialize_stock``
 produces the same tile in pure torch, and ``ops.prepare_tessera_module`` uses it
 when this extension cannot build -- but only for the RESIDENT residency, where
@@ -55,6 +71,7 @@ __all__ = [
     "get_tessera_ext",
     "require_tessera_ext",
     "reset_for_tests",
+    "toolchain_report",
 ]
 
 #: Bumped whenever the pybind signature changes.  The loader refuses a module
@@ -65,6 +82,106 @@ _SYMBOLS = ("tessera_nvfp4_decode_span2_out", "tessera_nvfp4_abi_schema")
 
 _NVCC_HINT = ("install the CUDA toolkit (nvcc) in the serving environment and make sure a "
               "GPU is visible, then restart; the extension builds on first use")
+
+
+def _nvcc_root(nvcc: str) -> str:
+    """The toolkit root holding ``bin/nvcc``."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(nvcc)))
+
+
+def _has_nvcc(root: str | None) -> bool:
+    return bool(root) and os.access(os.path.join(root, "bin", "nvcc"), os.X_OK)
+
+
+def _resolve_cuda_home(torch) -> str | None:
+    """Point ``CUDA_HOME`` at a toolkit that actually contains ``nvcc``.
+
+    Returns the root in use, or ``None`` when no complete toolkit was found.
+    This COMPLETES torch's search rather than replacing it -- the candidates
+    are torch's own answer first, then the ``which nvcc`` fallback torch would
+    have reached had ``/usr/local/cuda`` not existed, then the versioned roots.
+    Nothing here is a threshold or a preference: the test is whether a path
+    holds an executable ``bin/nvcc``.
+    """
+    explicit = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
+    if explicit:
+        return explicit if _has_nvcc(explicit) else None
+
+    candidates: list[str] = []
+    try:
+        from torch.utils.cpp_extension import CUDA_HOME as TORCH_CUDA_HOME
+    except Exception:  # noqa: BLE001 -- an old torch without the symbol
+        TORCH_CUDA_HOME = None
+    if TORCH_CUDA_HOME:
+        candidates.append(TORCH_CUDA_HOME)
+    found = shutil.which("nvcc")
+    if found:
+        candidates.append(_nvcc_root(found))
+    # The toolkit torch was built against is the RIGHT one when several are
+    # installed, so it is tried before the merely-newest.
+    version = getattr(getattr(torch, "version", None), "cuda", None)
+    if version:
+        candidates.append(f"/usr/local/cuda-{version}")
+    import glob as _glob
+    candidates.extend(sorted(_glob.glob("/usr/local/cuda-*"), reverse=True))
+
+    for root in candidates:
+        if _has_nvcc(root):
+            _adopt_cuda_home(root)
+            return root
+    return None
+
+
+def _adopt_cuda_home(root: str) -> None:
+    """Make ``root`` the toolkit this process builds with.
+
+    Both halves are needed and neither is redundant: ``load()`` builds its
+    nvcc path from ``torch.utils.cpp_extension.CUDA_HOME``, a module global
+    frozen at IMPORT time, so the environment variable alone arrives too late
+    for a torch that is already imported; and the environment variable is what
+    the compiler's own subprocesses and any later import will read.
+    """
+    os.environ["CUDA_HOME"] = root
+    try:
+        from torch.utils import cpp_extension
+    except Exception:  # noqa: BLE001 -- nothing to correct without torch
+        return
+    if not _has_nvcc(getattr(cpp_extension, "CUDA_HOME", None)):
+        cpp_extension.CUDA_HOME = root
+
+
+def _resolve_ninja() -> str | None:
+    """``ninja`` on PATH, or the one beside this interpreter (put on PATH)."""
+    found = shutil.which("ninja")
+    if found:
+        return found
+    beside = os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "ninja")
+    if os.access(beside, os.X_OK):
+        os.environ["PATH"] = os.path.dirname(beside) + os.pathsep + os.environ.get("PATH", "")
+        return beside
+    return None
+
+
+def toolchain_report(torch=None) -> dict[str, object]:
+    """What the build would find right now: ``{"nvcc":…, "ninja":…, "cuda_home":…}``.
+
+    Public because a test that SKIPS on a missing toolchain has to be able to
+    tell "no compiler on this box" from "the compiler is here and the build
+    broke".  Only the first is a skip; the second is a failure.
+    """
+    if torch is None:
+        try:
+            import torch  # noqa: PLC0415
+        except Exception:  # noqa: BLE001
+            torch = None
+    cuda_home = _resolve_cuda_home(torch) if torch is not None else None
+    ninja = _resolve_ninja()
+    return {
+        "cuda_home": cuda_home,
+        "nvcc": os.path.join(cuda_home, "bin", "nvcc") if cuda_home else None,
+        "ninja": ninja,
+        "complete": bool(cuda_home and ninja),
+    }
 
 _ext = None
 _tried = False
@@ -216,6 +333,12 @@ def _load_locked():
         import torch
         from torch.utils.cpp_extension import load
 
+        # Before anything else: make the toolchain findable.  A box with a
+        # complete CUDA one directory off torch's guess used to report the
+        # kernel "unavailable", which is a claim about the FORMAT made from a
+        # fact about a symlink.
+        _resolve_cuda_home(torch)
+        _resolve_ninja()
         src_dir = _require_csrc("tessera_nvfp4.cu")
         source = os.path.join(src_dir, "tessera_nvfp4.cu")
         cc = _target_capability("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
@@ -252,8 +375,10 @@ def _load_locked():
         print(f"[tessera-serving] ERROR: broken tessera install -- {exc}", file=sys.stderr, flush=True)
         _ext = None
     except Exception as exc:  # noqa: BLE001 -- the probe itself is soft
+        found = toolchain_report()
         print(f"[tessera-serving] WARNING: NVFP4 decode extension unavailable "
-              f"({type(exc).__name__}: {exc}). To build it: {_NVCC_HINT}.",
+              f"({type(exc).__name__}: {exc}). Toolchain found: nvcc={found['nvcc']} "
+              f"ninja={found['ninja']}. To build it: {_NVCC_HINT}.",
               file=sys.stderr, flush=True)
         _ext = None
     finally:
