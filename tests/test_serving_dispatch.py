@@ -486,17 +486,48 @@ def test_a_model_with_no_mapper_is_untouched(monkeypatch):
 # through this load path), not from what anyone had exported.
 # --------------------------------------------------------------------------
 
-def test_the_allocated_rungs_that_slipped_through_are_inside_the_range(monkeypatch):
-    """R749/R750/R934/R1006/R1083/R1107/R1262, all E4M3, all decodable.
+#: EVERY distinct ``(grid, q256)`` any Tessera checkpoint on either box was
+#: built at, read off the 15 artifacts' own ``config_groups`` rather than off
+#: the receipt that happened to mention seven of them.  ``E4M3`` spans 493 to
+#: 1384 -- SIXTEEN rungs, not the seven the allocated-serve receipt named --
+#: and ``E2M1x2`` is 896 and nothing else.
+_RUNGS_ACTUALLY_BUILT = {
+    "E4M3": (493, 749, 750, 785, 814, 824, 909, 934,
+             1006, 1024, 1083, 1107, 1217, 1262, 1366, 1384),
+    "E2M1x2": (896,),
+}
 
-    The receipt's finding was a contract gap, not a wrong artifact, and this
-    keeps it that way: the fix must not retroactively refuse a checkpoint that
-    served correctly.
+
+def test_every_rung_ever_BUILT_is_inside_the_range(monkeypatch):
+    """The fix may not retroactively refuse a checkpoint that served correctly.
+
+    This is the whole built population, not the receipt's seven, and the two
+    extremes are the point: had the range been widened to cover the rungs the
+    allocated-serve receipt happened to list (749..1262), R493 and R1384 would
+    both be refused today.  Deriving the bound from the decoder rather than
+    from the exported history is what makes those pass, and that is the
+    difference between a gate and an accommodation.
     """
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    for rung in (749, 750, 934, 1006, 1024, 1083, 1107, 1262):
-        scheme = _fp8_scheme(q256=rung)
-        validate_tessera_scheme(scheme, f"m.R{rung}")
+    for rung in _RUNGS_ACTUALLY_BUILT["E4M3"]:
+        validate_tessera_scheme(_fp8_scheme(q256=rung), f"m.R{rung}")
+    for rung in _RUNGS_ACTUALLY_BUILT["E2M1x2"]:
+        validate_tessera_scheme(_scheme(q256=rung), f"m.R{rung}")
+
+
+def test_no_artifact_was_ever_built_on_the_arity_1_grid(monkeypatch):
+    """The one refusal here that is new for a grid ``ROUTES`` still lists.
+
+    ``TESSERA_NVFP4`` holds ``E2M1`` as well as ``E2M1x2``, and the contract
+    publishes a range for the arity-2 grid only, so an arity-1 checkpoint is
+    now refused as unattested rather than served on the other grid's numbers.
+    That is safe to do because no such artifact exists: all 15 Tessera
+    checkpoints on either box are ``E2M1x2`` or ``E4M3``.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    assert "E2M1" not in _RUNGS_ACTUALLY_BUILT
+    with pytest.raises(ValueError, match="publishes no decodable rate range"):
+        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1.built")
 
 
 @pytest.mark.parametrize("rung", [256, 2048])

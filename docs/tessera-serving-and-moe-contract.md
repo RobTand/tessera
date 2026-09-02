@@ -458,6 +458,25 @@ The fields changed shape to stop the misreading that opened the gap:
   handed an arity-1 checkpoint the arity-2 numbers. A (route, grid) pair the
   contract does not describe is refused, not served on another pair's figures.
 
+**Checked against every artifact, not against the receipt.** The seven rungs
+the receipt named are not the whole exported population. Reading the
+`config_groups` of all 15 Tessera checkpoints on either box gives **17 distinct
+`(grid, q256)` pairs**: `E2M1x2` at 896 and nothing else, and `E4M3` at
+**sixteen** rungs spanning **493 … 1384** (493, 749, 750, 785, 814, 824, 909,
+934, 1006, 1024, 1083, 1107, 1217, 1262, 1366, 1384). Every one is accepted by
+the new gate. That is the argument for deriving the bound from the decoder
+rather than from the exported history: a range widened to cover the receipt's
+seven (749…1262) would refuse both R493 and R1384 — real rungs of the 3.0 and
+5.0 bpp allocated arms — and the gate would have become an accommodation of
+whichever checkpoints someone happened to cite.
+
+The same scan settles the one refusal that is genuinely **new** for a grid
+`ROUTES` still lists: an arity-1 `E2M1` scheme is now refused as unattested
+(the contract publishes a range for `E2M1x2` only). No artifact has ever been
+built on it — all 15 are `E2M1x2` or `E4M3` — so nothing that exists is refused
+by it, and the alternative was to serve an arity-1 checkpoint on the arity-2
+grid's numbers.
+
 **The gate.** `validate_tessera_scheme` refuses a declared `q256` outside the
 published set, naming the rung and the set. It runs at sidecar-parse time,
 before a parameter exists — the same place the family, grid, body and plane
