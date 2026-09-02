@@ -227,26 +227,9 @@ matched bytes.
 
 ## What an H-aware encode costs on this body
 
-The FP8 receipt measured LDLQ at ~2x the plain encode on the window body. On
-the **TCQ** body it is far worse, and it scales with the row's width:
-
-| unit | cols | plain | + LDLQ 1.0/32 | factor |
-|---|---|---|---|---|
-| Qwen `layers.0.self_attn.q_proj` | 1024 | 18.0 s | 114.5 s | 6.4x |
-| Qwen `layers.1.self_attn.k_proj` | 1024 | 14.4 s | 171.4 s | 11.9x |
-| GLM `L5.gate_proj` | 4096 | 12 s | 519 s | 43x |
-
-The refit is cheap by comparison (20 s on the GLM expert): the cost is the
-**body**, not the plane, and the mechanism is the box. LDLQ splits a row into
-`cols/block` sequential segments and calls the trellis once per segment
-(`trellis_pass(span_cols=...)`), so a pass that made one `viterbi_columns` call
-per distinct rate now makes one per rate *per segment* -- 32 times on a
-1024-column row, 128 on a 4096-column one. The columns are independent, so the
-total *work* is unchanged; what multiplies is the per-call launch overhead, and
-this box is launch-bound (34.5 W of a ~140 W envelope at 96% "utilization",
-whatever the job count). That is also why the window body pays only ~2x for the
-same schedule: `viterbi_window` is the fused kernel, and the TCQ body's Viterbi
-is not fused.
+Every number in the first version of this section was measured on a box running
+three other jobs, and every one of them was wrong in the same direction. What
+follows is the corrected measurement, then what is still unmeasured.
 
 **Retraction: the 9.2x in the first version of this section was a contention
 artifact, and so was the ~9 h it implied.** Both exports walk the same 196
@@ -281,11 +264,35 @@ sharing the GPU cost the LDLQ export a factor of four. "Launch-bound" was read
 off a power number (30-35 W at any job count) and applied to a workload it had
 not been measured on.
 
+### What is still unmeasured: where the time goes
+
+The 1.72x is a stopwatch. **Why** an H-aware pass costs 1.7x is not measured,
+and the mechanism the first version of this section asserted -- that LDLQ's
+cost is per-call overhead rather than work, because the pass splits a row into
+`cols/block` sequential segments and calls the trellis once per segment
+(`trellis_pass(span_cols=...)`), so the columns' independence keeps the total
+work fixed while the call count multiplies -- is an *unprofiled* claim about
+where time goes, which principle 15 says is not evidence.
+
+`experiments/ldlq_cost_profile.py` is written to settle it: `torch.profiler`
+for self-device time per kernel, device launch counts per arm and the
+wall-vs-device gap that is the actual signature of a launch-bound loop, plus a
+power sampler against the ~140 W envelope for the load the in-process view
+cannot see. It has **not** produced a number yet. The first attempt ran
+alongside the export and was polluting the very measurement it exists to
+explain, so it was killed and re-armed to run on a quiet box after the serve
+(`/home/rob/tmp/ldlq_arm_profile.sh` -> `cost_profile.json`). Until it reports,
+the mechanism above is a hypothesis, and the two sentences it would support --
+"the work is unchanged, the call count multiplies" and "that is why the fused
+window body pays less" -- should be read as such.
+
+The 43x on a 4096-column GLM expert was measured inside a sweep with the same
+contention problem and is **not** re-derived here; treat it as unmeasured until
+it is run on a quiet box.
+
 At 1.72x the whole-model H-aware export of Qwen3-0.6B is **~1.7 h**, not 9, and
 the route is not the practical dead end the first version of this section
-called it. The 43x on a 4096-column GLM expert was measured inside a sweep with
-the same contention problem and is **not** re-derived here; treat it as
-unmeasured until it is run on a quiet box.
+called it.
 
 
 ## Weight space: the sweep
