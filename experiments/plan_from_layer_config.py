@@ -1,0 +1,373 @@
+#!/usr/bin/env python
+"""Turn a PrismaQuant ``layer_config.json`` into the Tessera exporter's ``--plan-json``.
+
+PrismaQuant's allocator writes a per-Linear assignment keyed by *qname*
+(``model.layers.0.mlp.gate_proj``) carrying ``tessera_format`` in the
+``TESSERA_<BASE>_K<arity>_R<rung>`` spelling.  ``export_tessera_serving.py``
+wants a per-*tensor* plan (``model.layers.0.mlp.gate_proj.weight``) whose value
+is ``{"grid": ..., "q256": ...}`` or the string ``"BF16"``.  This script is the
+only place that translation lives, and it does three jobs beyond renaming:
+
+**It refuses what cannot be served in one checkpoint.**  A non-Tessera
+*quantised* choice (NVFP4, FP8_DYNAMIC, ...) has no route in the Tessera plugin,
+so a plan that mixed one in would either be dropped silently by the exporter's
+``unknown`` check or exported as something the allocator did not choose.  Those
+are counted and refused by name.  A BF16 choice is not a refusal -- it is a
+plain BF16 module, which is exactly what the exporter's passthrough does.
+
+**It checks the fused-group invariant before the exporter does.**  vLLM builds
+ONE method per fused module, so ``q/k/v`` must agree on ``(grid, q256)`` and so
+must ``gate/up``.  The exporter's answer to a disagreement is to pass the whole
+group through as BF16 and print it; that is the right answer at export time and
+the wrong thing to discover after a 20-minute encode, so a disagreement is
+reported here, up front, with the members and their rungs.  ``--allow-fused-
+disagreement`` downgrades it to a warning and writes the plan anyway, so the
+exporter's own passthrough is what happens.
+
+**It says whether the plan covers the model.**  A PrismaQuant campaign may price
+a *subset* -- ``--layer-stride 28`` prices decoder layer 0 and nothing else --
+and an allocation over 7 of 197 Linears exports to a checkpoint that is 96%
+BF16.  Two modes, and neither is the default guess:
+
+* ``--cover as-allocated`` plans exactly the units the allocation names.  Every
+  other body Linear is BF16.  This is the allocation, unextrapolated.
+* ``--cover broadcast-by-role`` applies the allocation's per-ROLE assignment at
+  every depth.  This is an EXTRAPOLATION and is stamped as one in the sidecar
+  (``coverage.mode``, ``coverage.extrapolated: true``): the allocator priced one
+  layer and nothing here says the same rate is right at depth 27.  It is
+  refused unless the allocation is single-layer and every target layer's shape
+  for that role matches the priced one, because a broadcast across differing
+  shapes is a different rate (the CHANNEL plane amortises over rows).
+
+The sidecar ``<out>.provenance.json`` carries the source path, the allocation's
+own ``__prismaquant__`` block, the coverage decision, and a per-unit table with
+each unit's shape, rung, wire bytes as PrismaQuant charged them
+(``prismaquant.tessera_formats.artifact_bpp``, when ``--prismaquant`` points at
+a tree that has it) and the totals.  That table is what an export is checked
+against: the bytes served must be the bytes priced.
+"""
+from __future__ import annotations
+
+import argparse
+import collections
+import json
+import re
+import sys
+from fractions import Fraction
+from pathlib import Path
+
+from safetensors import safe_open
+
+#: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
+FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
+FAMILY = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)$")
+
+#: The exporter's fused groups, as ``export_tessera_serving.FUSED`` spells them.
+FUSED = (("self_attn", "qkv_proj", ("q_proj", "k_proj", "v_proj")),
+         ("mlp", "gate_up_proj", ("gate_proj", "up_proj")))
+
+#: What the allocator may pick that is not a Tessera wire and is still fine.
+BF16_CHOICES = {"BF16", "bfloat16", "bf16"}
+
+
+class PlanError(SystemExit):
+    pass
+
+
+def grid_of(family: str) -> str:
+    """``TESSERA_E4M3_K1 -> "E4M3"``, ``TESSERA_E2M1_K2 -> "E2M1x2"``.
+
+    The exporter's ``--grid`` vocabulary spells arity as an ``xN`` suffix and
+    arity 1 as a bare base, which is the same object under a different name.
+    """
+    match = FAMILY.match(family)
+    if not match:
+        raise PlanError(f"not a Tessera family name: {family!r}")
+    arity = int(match.group("arity"))
+    return match.group("base") + ("" if arity == 1 else f"x{arity}")
+
+
+def parse_entry(qname: str, entry) -> tuple:
+    """``(kind, payload)``: ``("tessera", (grid, q256))``, ``("bf16", None)`` or ``("other", label)``."""
+    if isinstance(entry, str):
+        return ("bf16", None) if entry in BF16_CHOICES else ("other", entry)
+    if not isinstance(entry, dict):
+        raise PlanError(f"{qname}: unreadable layer_config entry {entry!r}")
+    fmt = entry.get("tessera_format")
+    if fmt:
+        match = FORMAT.match(fmt)
+        if not match:
+            raise PlanError(f"{qname}: {fmt!r} is not the TESSERA_<BASE>_K<arity>_R<rung> spelling")
+        family = f"TESSERA_{match.group('base')}_K{match.group('arity')}"
+        declared = entry.get("tessera_family")
+        if declared and declared != family:
+            raise PlanError(f"{qname}: tessera_family {declared!r} disagrees with tessera_format {fmt!r}")
+        rung = int(match.group("rung"))
+        body_q256 = entry.get("tessera_body_rate_q256")
+        if body_q256 is not None and int(body_q256) != rung:
+            raise PlanError(f"{qname}: tessera_body_rate_q256 {body_q256} disagrees with {fmt!r}")
+        return ("tessera", (grid_of(family), rung, family))
+    label = entry.get("data_type") or entry.get("format") or entry.get("bits")
+    if str(label) in BF16_CHOICES:
+        return ("bf16", None)
+    return ("other", str(label))
+
+
+def body_weights(model: Path) -> dict:
+    """``{tensor name: (rows, cols)}`` for every 2-D ``model.layers.*.weight``."""
+    index = model / "model.safetensors.index.json"
+    if index.exists():
+        shards = sorted({s for s in json.loads(index.read_text())["weight_map"].values()})
+    else:
+        shards = sorted(p.name for p in model.glob("*.safetensors"))
+    shapes = {}
+    for shard in shards:
+        with safe_open(str(model / shard), framework="pt") as handle:
+            for name in handle.keys():
+                if name.startswith("model.layers.") and name.endswith(".weight"):
+                    shape = tuple(handle.get_slice(name).get_shape())
+                    if len(shape) == 2:
+                        shapes[name] = shape
+    if not shapes:
+        raise PlanError(f"no 2-D model.layers.*.weight tensors in {model}")
+    return shapes
+
+
+def role_of(qname: str) -> str:
+    return qname.rsplit(".", 1)[-1]
+
+
+def layer_of(qname: str) -> int:
+    parts = qname.split(".")
+    return int(parts[2])
+
+
+def fused_key(qname: str):
+    """``(fused module qname, ordered member qnames)`` or ``None``."""
+    prefix, role = qname.rsplit(".", 1)
+    for block, fused, members in FUSED:
+        if prefix.endswith("." + block) and role in members:
+            return f"{prefix}.{fused}", tuple(f"{prefix}.{m}" for m in members)
+    return None
+
+
+def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "Fraction | None":
+    """PrismaQuant's own charged wire bits for this unit, or ``None`` if unavailable.
+
+    The allocator's byte budget is spent in this currency, so it is the number
+    an export must reproduce.  Imported from the PrismaQuant tree rather than
+    reimplemented: two accountings of one wire is the drift this check exists
+    to catch.
+    """
+    if prismaquant is None:
+        return None
+    if str(prismaquant) not in sys.path:
+        sys.path.insert(0, str(prismaquant))
+    try:
+        from prismaquant.tessera_formats import artifact_bpp
+    except Exception as exc:                                    # pragma: no cover - env
+        print(f"  (no PrismaQuant accounting: {exc})", flush=True)
+        return None
+    rows, cols = shape
+    return Fraction(artifact_bpp(family, rung, shape=(rows, cols))) * rows * cols
+
+
+def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
+          prismaquant: "Path | None"):
+    meta = config.get("__prismaquant__")
+    assignment = {k: v for k, v in config.items() if not k.startswith("__")}
+    if not assignment:
+        raise PlanError("layer_config names no units")
+
+    tessera, bf16, other = {}, [], {}
+    for qname, entry in sorted(assignment.items()):
+        kind, payload = parse_entry(qname, entry)
+        if kind == "tessera":
+            tessera[qname] = payload
+        elif kind == "bf16":
+            bf16.append(qname)
+        else:
+            other[qname] = payload
+    if other:
+        counts = collections.Counter(other.values())
+        sample = sorted(other)[:5]
+        raise PlanError(
+            f"{len(other)} unit(s) carry a non-Tessera QUANTISED choice "
+            f"({dict(counts)}); the Tessera plugin serves TESSERA_* wires only, so one "
+            f"checkpoint cannot hold these and a Tessera wire at the same time.  Units, "
+            f"first five: {sample}.  BF16 is not in this count -- a BF16 choice is a plain "
+            f"BF16 module and is planned as one.")
+
+    priced_layers = sorted({layer_of(q) for q in tessera} | {layer_of(q) for q in bf16})
+    all_layers = sorted({layer_of(t[: -len(".weight")]) for t in shapes})
+
+    plan, units, broadcast_from = {}, [], None
+    if cover == "as-allocated":
+        chosen = dict(tessera)
+        for qname in bf16:
+            plan[qname + ".weight"] = "BF16"
+    elif cover == "broadcast-by-role":
+        if len(priced_layers) != 1:
+            raise PlanError(
+                f"--cover broadcast-by-role needs a single-layer allocation to broadcast; this "
+                f"one names layers {priced_layers}.  Broadcasting a multi-layer allocation would "
+                f"have to invent a rule for which layer's rate wins.")
+        broadcast_from = priced_layers[0]
+        by_role = {role_of(q): payload for q, payload in tessera.items()}
+        bf16_roles = {role_of(q) for q in bf16}
+        chosen = {}
+        for tensor, shape in shapes.items():
+            qname = tensor[: -len(".weight")]
+            role = role_of(qname)
+            source = f"model.layers.{broadcast_from}.{qname.split('.', 3)[3]}.weight"
+            if role in bf16_roles and role not in by_role:
+                plan[tensor] = "BF16"
+                continue
+            if role not in by_role:
+                continue                     # unpriced role: exporter's own passthrough
+            if source in shapes and shapes[source] != shape:
+                raise PlanError(
+                    f"{qname} is {shape} but the priced {source} is {shapes[source]}; a rung is "
+                    f"a rate on a SHAPE (the CHANNEL plane amortises over rows), so broadcasting "
+                    f"it onto a different shape would be a different rate.  Use "
+                    f"--cover as-allocated.")
+            chosen[qname] = by_role[role]
+    else:                                                       # pragma: no cover - argparse
+        raise PlanError(f"unknown coverage mode {cover!r}")
+
+    # The fused invariant, checked before the encode rather than after it.
+    groups, disagreements = {}, []
+    for qname in chosen:
+        key = fused_key(qname)
+        if key is None:
+            continue
+        module, members = key
+        if module in groups:
+            continue
+        groups[module] = members
+        present = [m for m in members if m in chosen]
+        recipes = {(chosen[m][0], chosen[m][1]) for m in present}
+        if len(present) != len(members) or len(recipes) != 1:
+            disagreements.append({
+                "module": module,
+                "members": {m: (f"{chosen[m][2]}_R{chosen[m][1]}" if m in chosen else "ABSENT")
+                            for m in members},
+            })
+    if disagreements and not allow_disagreement:
+        raise PlanError(
+            f"{len(disagreements)} fused module(s) do not share one (grid, q256): "
+            f"{json.dumps(disagreements[:3], indent=2)}\n"
+            f"vLLM builds ONE quantization method per fused module, so the exporter would pass "
+            f"the whole group through as BF16.  That is a finding about the allocation -- it "
+            f"chose an assignment this serving path cannot express.  Re-run with "
+            f"--allow-fused-disagreement to write the plan anyway and let the exporter's own "
+            f"passthrough handle it.")
+
+    total_params, total_charged = 0, Fraction(0)
+    for qname, (grid, rung, family) in sorted(chosen.items()):
+        tensor = qname + ".weight"
+        if tensor not in shapes:
+            raise PlanError(f"{qname} is not a 2-D body Linear in the model: no tensor {tensor}")
+        rows, cols = shapes[tensor]
+        plan[tensor] = {"grid": grid, "q256": rung}
+        bits = charged_bits(prismaquant, family, rung, (rows, cols))
+        total_params += rows * cols
+        if bits is not None:
+            total_charged += bits
+        units.append({
+            "tensor": tensor, "qname": qname, "role": role_of(qname), "layer": layer_of(qname),
+            "family": family, "grid": grid, "q256": rung, "rows": rows, "columns": cols,
+            "params": rows * cols,
+            "prismaquant_charged_bits": None if bits is None else float(bits),
+            "prismaquant_charged_bits_exact": None if bits is None else [bits.numerator, bits.denominator],
+            "prismaquant_charged_bpp": None if bits is None else float(bits / (rows * cols)),
+        })
+
+    provenance = {
+        "schema": "tessera.plan_from_layer_config.v1",
+        "source_layer_config": None,                             # filled by main
+        "prismaquant_meta": meta,
+        "coverage": {
+            "mode": cover,
+            "extrapolated": cover == "broadcast-by-role",
+            "broadcast_from_layer": broadcast_from,
+            "allocation_units": len(tessera) + len(bf16),
+            "allocation_layers": priced_layers,
+            "model_body_linears": len(shapes),
+            "model_layers": len(all_layers),
+            "planned_tessera_units": len(chosen),
+            "planned_bf16_units": sum(1 for v in plan.values() if v == "BF16"),
+            "unplanned_body_linears": len(shapes) - len(plan),
+            "note": ("every body Linear the allocation did not name is left to the exporter's own "
+                     "BF16 passthrough" if cover == "as-allocated" else
+                     "the allocation's per-ROLE assignment applied at every depth; the allocator "
+                     "priced only the layer(s) above and nothing here says the same rate is right "
+                     "at another depth"),
+        },
+        "fused_disagreements": disagreements,
+        "totals": {
+            "tessera_units": len(chosen),
+            "quantized_params": total_params,
+            "prismaquant_charged_bits": float(total_charged) if total_charged else None,
+            "prismaquant_charged_bpp": (float(total_charged / total_params)
+                                        if total_charged and total_params else None),
+        },
+        "units": units,
+    }
+    return plan, provenance
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("layer_config", type=Path, help="PrismaQuant layer_config.json")
+    ap.add_argument("model", type=Path, help="the source checkpoint, read for tensor names and shapes")
+    ap.add_argument("out", type=Path, help="the exporter's --plan-json")
+    ap.add_argument("--cover", choices=("as-allocated", "broadcast-by-role"), default="as-allocated",
+                    help="as-allocated: plan exactly what the allocation names (default).  "
+                         "broadcast-by-role: apply its per-role assignment at every depth "
+                         "(an EXTRAPOLATION, stamped as one in the sidecar)")
+    ap.add_argument("--allow-fused-disagreement", action="store_true",
+                    help="write the plan even when a fused module's members disagree, letting the "
+                         "exporter pass the group through as BF16")
+    ap.add_argument("--prismaquant", type=Path, default=None,
+                    help="a PrismaQuant tree, imported read-only for its own wire accounting "
+                         "(prismaquant.tessera_formats.artifact_bpp) so the sidecar carries the "
+                         "bits the allocator charged")
+    args = ap.parse_args(argv)
+
+    config = json.loads(args.layer_config.read_text())
+    shapes = body_weights(args.model)
+    plan, provenance = build(config, shapes, cover=args.cover,
+                             allow_disagreement=args.allow_fused_disagreement,
+                             prismaquant=args.prismaquant)
+    provenance["source_layer_config"] = str(args.layer_config.resolve())
+    provenance["model"] = str(args.model.resolve())
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(plan, indent=2, sort_keys=True))
+    sidecar = args.out.with_suffix(args.out.suffix + ".provenance.json")
+    sidecar.write_text(json.dumps(provenance, indent=2))
+
+    cov = provenance["coverage"]
+    print(f"{args.layer_config}")
+    print(f"  allocation: {cov['allocation_units']} unit(s) on layer(s) {cov['allocation_layers']}"
+          f" of {cov['model_body_linears']} body Linears over {cov['model_layers']} layers")
+    print(f"  coverage {cov['mode']}"
+          + ("  [EXTRAPOLATED from layer "
+             f"{cov['broadcast_from_layer']}]" if cov["extrapolated"] else ""))
+    print(f"  planned: {cov['planned_tessera_units']} Tessera, {cov['planned_bf16_units']} BF16, "
+          f"{cov['unplanned_body_linears']} left to the exporter's passthrough")
+    by_rung = collections.Counter((u["family"], u["q256"]) for u in provenance["units"])
+    for (family, rung), n in sorted(by_rung.items()):
+        print(f"    {family}_R{rung}: {n}")
+    totals = provenance["totals"]
+    if totals["prismaquant_charged_bpp"] is not None:
+        print(f"  PrismaQuant charges {totals['prismaquant_charged_bits']:.0f} bits over "
+              f"{totals['quantized_params']} params = "
+              f"{totals['prismaquant_charged_bpp']:.6f} bpp")
+    print(f"  -> {args.out}\n  -> {sidecar}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
