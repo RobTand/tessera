@@ -10,7 +10,12 @@ serve_lock_acquire() {
   until mkdir "$SERVE_LOCK" 2>/dev/null; do
     if [ -d "$SERVE_LOCK" ] && [ $(( $(date +%s) - $(stat -c %Y "$SERVE_LOCK") )) -gt 3600 ] \
        && [ -z "$(docker ps -q 2>/dev/null)" ]; then
-      echo "serve_lock: removing stale lock $SERVE_LOCK" >&2; rmdir "$SERVE_LOCK" 2>/dev/null
+      # rmdir alone can never succeed here: acquire writes an owner file into
+      # the directory, so a stale lock was permanently un-removable and every
+      # later serve queued behind a dead worker forever (2026-09-02: one dead
+      # holder blocked three workers on sparklina until it was cleared by hand).
+      echo "serve_lock: removing stale lock $SERVE_LOCK" >&2
+      rm -f "$SERVE_LOCK/owner"; rmdir "$SERVE_LOCK" 2>/dev/null
     fi
     sleep 15
   done
