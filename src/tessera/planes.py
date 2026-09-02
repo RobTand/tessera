@@ -26,6 +26,8 @@ from .exact import bits_to_bytes
 __all__ = [
     "PlaneKind",
     "NORMATIVE_ELEMENT_BITS",
+    "SHARD_PLANE_ORDER",
+    "plane_order",
     "IndexDomain",
     "Storage",
     "BitOrder",
@@ -48,6 +50,7 @@ class PlaneKind(IntEnum):
     DIAG_SV = 6  # segment 2a: output-channel diagonal
     SCALE_REFINE = 7  # segment 2b plane 2: 4-bit per-16 refinement
     RELEASE = 8  # stage B: 4-bit constraint-release overrides
+    INITIAL_STATE = 9  # shard: the trellis state each column starts from
 
 
 #: Wire order, which is also the truncation order (schema 1a decision D5).
@@ -68,6 +71,47 @@ CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
     PlaneKind.SCALE_REFINE,
     PlaneKind.RELEASE,
 )
+
+
+#: The order a **shard** writes: the same sequence with INITIAL_STATE wedged
+#: between the blob planes and the body (schema minor 4).
+#:
+#: The position is forced, not stylistic.  The order is also the truncation
+#: order, and a terminal is a *prefix* of it -- so a plane placed after BODY
+#: could be truncated away while the body it governs stayed, and the body
+#: would then replay from the pinned zero start and decode to plausible wrong
+#: weights.  Ahead of BODY, no legal truncation can separate the two.  It
+#: sits after ALPHABET/DESCENDANT for the same reason those lead: nothing
+#: decodes without them either, and the state is meaningless without the
+#: table the body indexes.
+#:
+#: A whole unit never writes this plane, so ``CANONICAL_PLANE_ORDER`` is
+#: unchanged and every artifact written before this schema minor is
+#: byte-identical -- including its ``plane_elements`` count array, which stays
+#: nine entries long.
+SHARD_PLANE_ORDER: tuple[PlaneKind, ...] = (
+    PlaneKind.ALPHABET,
+    PlaneKind.DESCENDANT,
+    PlaneKind.INITIAL_STATE,
+    PlaneKind.BODY,
+    PlaneKind.SCALE_BASE,
+    PlaneKind.COMPLETION,
+    PlaneKind.DIAG_SU,
+    PlaneKind.DIAG_SV,
+    PlaneKind.SCALE_REFINE,
+    PlaneKind.RELEASE,
+)
+
+
+def plane_order(has_initial_state: bool) -> "tuple[PlaneKind, ...]":
+    """The wire/truncation order for a unit, by whether it carries a state.
+
+    Every consumer that indexes ``TerminalRecord.plane_elements`` positionally
+    -- the container's ``plane_ranges`` and ``verify_plane_region``, the
+    accountant, the layout builder, the reader -- takes its order from here,
+    so the two orders cannot drift apart in one of them.
+    """
+    return SHARD_PLANE_ORDER if has_initial_state else CANONICAL_PLANE_ORDER
 
 
 #: Normative per-plane element width (schema 1a, review finding F3).
@@ -116,6 +160,16 @@ class PayloadDtype(IntEnum):
     FP16 = 4
 
 
+#: INITIAL_STATE is deliberately **absent** from this table: its width is the
+#: body's state width (``window_bits`` under WINDOW, the convolutional code's
+#: memory under TCQ), which is a property of the encoder profile and not of
+#: the schema.  A fixed normative width here would either overcharge every
+#: shard or be wrong for one of the two bodies.  It is bound instead by
+#: ``Manifest.__post_init__``, which asserts the descriptor's ``element_bits``
+#: equals the ``state_bits`` its shard record declares, and by
+#: ``parse_unit_artifact``, which asserts that width against the body the
+#: profile id resolved to -- the same deferred-validation pattern the rate cap
+#: uses.
 NORMATIVE_ELEMENT_BITS.update(
     {
         PlaneKind.ALPHABET: 8,

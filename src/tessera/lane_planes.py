@@ -251,18 +251,28 @@ def build_span2_luts(
 
 
 def pack_window_planes(
-    body_bits: torch.Tensor, rates: "tuple[int, ...]", window_bits: int
+    body_bits: torch.Tensor,
+    rates: "tuple[int, ...]",
+    window_bits: int,
+    initial_state: "torch.Tensor | None" = None,
 ) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
     """Wire BODY -> ``(plane uint8, column bit offsets int64, rates int32)``.
 
     Column-major and MSB-first like every other plane here, with two
     differences the window body forces:
 
-    - **``window_bits`` zero bits pad each column**, exactly as ``SELECT_PAD``
+    - **``window_bits`` pad bits lead each column**, exactly as ``SELECT_PAD``
       does for the trellis lanes and for the same reason: the pad *is*
-      ``state_{-1} = 0``, so position 0's window needs no boundary test.  The
+      ``state_{-1}``, so position 0's window needs no boundary test.  The
       pad is ``L`` rather than 8 because the window is ``L`` wide and reaches
-      ``L - R`` bits behind position 0.
+      ``L - R`` bits behind position 0.  For a whole unit the pad is zero --
+      the pinned start.  For a **shard** (``layout.slice_unit``) it is that
+      column's stored start state, written as an ``L``-bit MSB-first integer,
+      and the kernel needs no change at all: its window read at ``(t + 1) * R``
+      then yields ``(init << R | bits_0) mod 2^L`` at ``t = 0``, which is the
+      recursion's own first step.  A shard packed with a zero pad would decode
+      to plausible wrong weights, so the state is threaded rather than
+      dropped.
     - **each column carries its own rate**, so the columns are not one stride
       apart.  A mixed schedule is the normal case for this body (the TCQ
       span-2 lane refuses one), so the offset of every column is a tensor the
@@ -294,6 +304,17 @@ def pack_window_planes(
         raise GrammarError(
             f"rate {max(rates)} does not fit a {window_bits}-bit window"
         )
+    if initial_state is not None:
+        if initial_state.numel() != cols:
+            raise GrammarError(
+                f"the start state holds {initial_state.numel()} words for "
+                f"{cols} columns: one per column"
+            )
+        if int(initial_state.max()) >= (1 << window_bits):
+            raise GrammarError(
+                f"a start state of {int(initial_state.max())} does not fit a "
+                f"{window_bits}-bit window"
+            )
     rate_t = torch.tensor(rates, dtype=torch.int32, device=device)
     col_bytes = (window_bits + steps * rate_t.long() + 7) // 8
     starts = torch.zeros(cols + 1, dtype=torch.int64, device=device)
@@ -314,6 +335,12 @@ def pack_window_planes(
             bits[:, window_bits + position : stop : present] = (
                 (values >> (present - 1 - position)) & 1
             ).t().to(torch.uint8)
+        if initial_state is not None:
+            start = initial_state.to(device).long()[which]         # [m]
+            for position in range(window_bits):
+                bits[:, position] = (
+                    (start >> (window_bits - 1 - position)) & 1
+                ).to(torch.uint8)
         packed = (bits.reshape(-1, 8) * weights).sum(1, dtype=torch.uint8)
         dest = starts[which][:, None] + torch.arange(nbytes, device=device)[None, :]
         plane[dest.reshape(-1)] = packed
@@ -363,7 +390,8 @@ def _pack_window_unit(unit, grid) -> dict:
     rows = steps * grid.arity
     device = unit.body_bits.device
     plane, offsets, rates = pack_window_planes(
-        unit.body_bits, unit.rates, unit.window_bits
+        unit.body_bits, unit.rates, unit.window_bits,
+        getattr(unit, "initial_state", None),
     )
     row_scale = None
     if unit.scale_plane is ScalePlaneKind.LUT:
@@ -431,6 +459,19 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
         grid = forest.grid if isinstance(forest, AnchorForest) else forest
         return _pack_window_unit(unit, grid)
+    if getattr(unit, "initial_state", None) is not None:
+        # The window branch threads the state through its pad; the span-2
+        # trellis planes would need the same treatment on the select plane's
+        # SELECT_PAD, in the bit order ``build_span2_luts`` reverses, and that
+        # is unwritten and untested.  Refusing is the only honest answer: a
+        # shard packed against the pinned zero start decodes to plausible
+        # wrong weights, silently.
+        raise GrammarError(
+            "the span-2 kernel lane does not yet take a start state; this unit "
+            f"is a shard beginning at row {getattr(unit, 'row_offset', 0)} of "
+            "its parent. Decode it through tessera.decode, or serve it from a "
+            "whole unit"
+        )
     if unit.span != 2:
         raise GrammarError(f"pack_unit_for_kernel is the span-2 path; this unit is span {unit.span}")
     if unit.scale_plane is not ScalePlaneKind.LUT:

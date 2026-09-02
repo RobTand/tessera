@@ -34,7 +34,14 @@ from .grammar import (
     superblock_quota_ok,
     validate_rate_schedule,
 )
-from .planes import CANONICAL_PLANE_ORDER, PlaneDescriptor, PlaneKind, Storage
+from .planes import (
+    CANONICAL_PLANE_ORDER,
+    SHARD_PLANE_ORDER,
+    PlaneDescriptor,
+    PlaneKind,
+    Storage,
+    plane_order,
+)
 
 __all__ = [
     "SCHEMA_ID",
@@ -47,6 +54,7 @@ __all__ = [
     "ScalePlane",
     "BodyKind",
     "WINDOW_BITS_MAX",
+    "ShardOrigin",
     "TerminalRecord",
     "Manifest",
 ]
@@ -307,6 +315,78 @@ class ScalePlane:
 
 
 @dataclass(frozen=True)
+class ShardOrigin:
+    """Where a unit sits inside the unit it was cut from (schema minor 4).
+
+    A Tessera artifact is **tensor-parallel by construction**: the exporter
+    writes one whole unit and never learns the TP degree, and every rank cuts
+    its own shard out of those bytes at load (``layout.slice_unit``).  This
+    record is what makes a shard a first-class unit rather than a fragment --
+    it is a complete, self-describing artifact that decodes on its own, and
+    this says which rows and columns of which parent it decodes *to*.
+
+    ``state_bits`` is the width of one INITIAL_STATE element: the window width
+    under a WINDOW body, the convolutional code's memory under TCQ.  It is
+    zero exactly when ``row_offset`` is zero, because a column cut at row 0
+    starts from the pinned zero state the decoder already assumes -- which is
+    why a shard that only slices columns carries no state plane at all, and
+    why the identity slice is byte-identical to its parent.
+
+    ``parent_digest`` is the parent manifest's ``manifest_digest``.  It is
+    provenance, not a decode input: two ranks holding two shards can prove
+    they came from one artifact without either holding the other's bytes.
+    """
+
+    row_offset: int
+    col_offset: int
+    parent_rows: int
+    parent_columns: int
+    parent_digest: bytes
+    state_bits: int = 0
+
+    def __post_init__(self) -> None:
+        for name in ("row_offset", "col_offset", "parent_rows", "parent_columns",
+                     "state_bits"):
+            if getattr(self, name) < 0:
+                raise ManifestError(f"shard.{name} must not be negative")
+        if self.parent_rows <= 0 or self.parent_columns <= 0:
+            raise ManifestError("a shard names a parent with positive extent")
+        if len(self.parent_digest) != DIGEST_BYTES:
+            raise ManifestError("malformed parent digest")
+        if bool(self.state_bits) != bool(self.row_offset):
+            raise ManifestError(
+                f"shard declares row_offset {self.row_offset} and state_bits "
+                f"{self.state_bits}: a shard cut below row 0 carries its start "
+                "state, and one cut at row 0 carries none"
+            )
+
+    @property
+    def has_initial_state(self) -> bool:
+        return self.row_offset > 0
+
+    def encode(self, writer: Writer) -> None:
+        (
+            writer.uint(self.row_offset)
+            .uint(self.col_offset)
+            .uint(self.parent_rows)
+            .uint(self.parent_columns)
+            .digest32(self.parent_digest)
+            .uint(self.state_bits)
+        )
+
+    @classmethod
+    def decode(cls, reader: Reader) -> "ShardOrigin":
+        return cls(
+            row_offset=reader.uint(),
+            col_offset=reader.uint(),
+            parent_rows=reader.uint(),
+            parent_columns=reader.uint(),
+            parent_digest=reader.digest32(),
+            state_bits=reader.uint(),
+        )
+
+
+@dataclass(frozen=True)
 class TerminalRecord:
     """One concrete, exactly-priced terminal.
 
@@ -323,11 +403,17 @@ class TerminalRecord:
     payload_digest: bytes
 
     def __post_init__(self) -> None:
-        if len(self.plane_elements) != len(CANONICAL_PLANE_ORDER):
+        # Either wire order: nine entries for a whole unit, ten for a shard,
+        # whose extra entry is the INITIAL_STATE plane.  Which of the two this
+        # record means is not the record's to know -- ``Manifest`` owns that
+        # and checks the length against its own order.
+        if len(self.plane_elements) not in (
+            len(CANONICAL_PLANE_ORDER), len(SHARD_PLANE_ORDER)
+        ):
             raise ManifestError(
                 f"terminal {self.slot_id!r}: plane_elements has "
                 f"{len(self.plane_elements)} entries, expected "
-                f"{len(CANONICAL_PLANE_ORDER)}"
+                f"{len(CANONICAL_PLANE_ORDER)} or {len(SHARD_PLANE_ORDER)}"
             )
         if any(count < 0 for count in self.plane_elements):
             raise ManifestError(f"terminal {self.slot_id!r}: negative plane count")
@@ -413,6 +499,16 @@ class Manifest:
     # at the minor it needed before they existed.
     body: BodyKind = BodyKind.TCQ
     window_bits: int = 0
+    # Schema minor 4 (2026-09-02).  ``shard`` is present only on a unit cut
+    # out of another with ``layout.slice_unit``; a whole unit carries None and
+    # writes at the minor it needed before the field existed, so every
+    # artifact ever written is byte-identical across this bump.
+    shard: "ShardOrigin | None" = None
+
+    @property
+    def plane_order(self) -> "tuple[PlaneKind, ...]":
+        """This manifest's wire order -- the order its counts are indexed by."""
+        return plane_order(self.shard is not None and self.shard.has_initial_state)
 
     @property
     def schema_minor(self) -> int:
@@ -421,8 +517,12 @@ class Manifest:
         Minor 3 (2026-09-02) adds no field: it is the ``CHANNEL`` value of
         the minor-1 scale-plane record, which a minor-1 or minor-2 reader
         cannot resolve, so a manifest carrying it declares the minor that
-        can.
+        can.  Minor 4 (2026-09-02) appends the shard record, and a shard cut
+        below row 0 also changes the plane order, so an earlier reader must
+        not try.
         """
+        if self.shard is not None:
+            return 4
         if self.scale_plane.kind is ScalePlaneKind.CHANNEL:
             return 3
         if self.body is BodyKind.WINDOW:
@@ -454,9 +554,18 @@ class Manifest:
         kinds = [plane.kind for plane in self.planes]
         if len(set(kinds)) != len(kinds):
             raise ManifestError("duplicate plane kind in manifest")
-        order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+        wire = self.plane_order
+        order = {kind: index for index, kind in enumerate(wire)}
+        if any(kind not in order for kind in kinds):
+            stray = [kind.name for kind in kinds if kind not in order]
+            raise ManifestError(
+                f"plane {stray} has no place in this unit's wire order; an "
+                "INITIAL_STATE plane belongs to a shard cut below row 0 and "
+                "to nothing else"
+            )
         if [order[kind] for kind in kinds] != sorted(order[kind] for kind in kinds):
             raise ManifestError("planes are not in canonical plane order")
+        self._validate_shard(wire)
 
         if len(self.rates) != self.geometry.columns:
             raise ManifestError(
@@ -500,6 +609,60 @@ class Manifest:
             )
         self._validate_terminal_prefixes()
 
+    def _validate_shard(self, wire: "tuple[PlaneKind, ...]") -> None:
+        """A shard's geometry, its state plane and its parent must agree.
+
+        The state plane's *width* is checked here against the shard record;
+        that the width is the right one for the **body** is checked in
+        ``parse_unit_artifact``, after the profile id has resolved the
+        convolutional code -- the manifest cannot know the code's memory order,
+        for the same reason it defers the rate cap to the payload grid.
+        """
+        state = self.plane(PlaneKind.INITIAL_STATE)
+        if self.shard is None:
+            if state is not None:
+                raise ManifestError(
+                    "an INITIAL_STATE plane without a shard record: nothing "
+                    "says which rows of what this state starts"
+                )
+            return
+        shard = self.shard
+        if shard.row_offset + self.geometry.rows > shard.parent_rows:
+            raise ManifestError(
+                f"shard rows [{shard.row_offset}, "
+                f"{shard.row_offset + self.geometry.rows}) run past a parent of "
+                f"{shard.parent_rows} rows"
+            )
+        if shard.col_offset + self.geometry.columns > shard.parent_columns:
+            raise ManifestError(
+                f"shard columns [{shard.col_offset}, "
+                f"{shard.col_offset + self.geometry.columns}) run past a parent "
+                f"of {shard.parent_columns} columns"
+            )
+        if not shard.has_initial_state:
+            return
+        if state is None:
+            raise ManifestError(
+                f"shard starts at row {shard.row_offset} but declares no "
+                "INITIAL_STATE plane; a body replayed from the pinned zero "
+                "start would decode to plausible wrong weights"
+            )
+        if state.element_bits != shard.state_bits:
+            raise ManifestError(
+                f"the INITIAL_STATE plane is {state.element_bits} bits wide, "
+                f"the shard record declares {shard.state_bits}"
+            )
+        if state.element_count != self.geometry.columns:
+            raise ManifestError(
+                f"the INITIAL_STATE plane holds {state.element_count} entries "
+                f"for {self.geometry.columns} columns: one state per column"
+            )
+        if self.body is BodyKind.WINDOW and shard.state_bits != self.window_bits:
+            raise ManifestError(
+                f"a window body's start state is its {self.window_bits}-bit "
+                f"window; the shard declares {shard.state_bits}"
+            )
+
     def _validate_terminal_prefixes(self) -> None:
         """Every terminal must be a genuine **prefix** of the plane region.
 
@@ -515,14 +678,21 @@ class Manifest:
         not the bytes it describes.  The accountant catches an *over*-claim
         (`footprint.plane_region_bytes`); nothing caught the shape.
         """
-        extents = [0] * len(CANONICAL_PLANE_ORDER)
-        order = {kind: index for index, kind in enumerate(CANONICAL_PLANE_ORDER)}
+        wire = self.plane_order
+        extents = [0] * len(wire)
+        order = {kind: index for index, kind in enumerate(wire)}
         for descriptor in self.planes:
             extents[order[descriptor.kind]] = descriptor.element_count
 
         for terminal in self.terminals:
+            if len(terminal.plane_elements) != len(wire):
+                raise ManifestError(
+                    f"terminal {terminal.slot_id!r} counts "
+                    f"{len(terminal.plane_elements)} planes, this unit's wire "
+                    f"order has {len(wire)}"
+                )
             truncated = False
-            for index, kind in enumerate(CANONICAL_PLANE_ORDER):
+            for index, kind in enumerate(wire):
                 count = terminal.plane_elements[index]
                 extent = extents[index]
                 if count > extent:
@@ -569,7 +739,9 @@ class Manifest:
             raise ManifestError(
                 f"schema minor {minor} cannot express a {self.body.name} body at "
                 f"span {self.span} with a {self.scale_plane.kind.name} scale "
-                f"plane; needs minor {self.schema_minor}"
+                f"plane"
+                + (" on a shard" if self.shard is not None else "")
+                + f"; needs minor {self.schema_minor}"
             )
         writer = Writer()
         writer.text(SCHEMA_ID).digest32(self.encoder_profile_id)
@@ -591,6 +763,10 @@ class Manifest:
             self.scale_plane.encode(writer)
         if minor >= 2:
             writer.uint(int(self.body)).uint(self.window_bits)
+        if minor >= 4:
+            writer.uint(1 if self.shard is not None else 0)
+            if self.shard is not None:
+                self.shard.encode(writer)
         return writer.bytes
 
     @classmethod
@@ -642,6 +818,10 @@ class Manifest:
         if schema_minor >= 2:
             body = BodyKind(reader.uint())
             window_bits = reader.uint()
+        shard = None
+        if schema_minor >= 4:
+            if reader.uint():
+                shard = ShardOrigin.decode(reader)
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -656,6 +836,7 @@ class Manifest:
             scale_plane=scale_plane,
             body=body,
             window_bits=window_bits,
+            shard=shard,
         )
 
     def manifest_digest(self) -> bytes:
