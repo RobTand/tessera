@@ -1,7 +1,18 @@
 # Tessera
 
-`prismaquant.tessera.v1` — the wire schema, the bytes-only parser, and the
-exact-byte footprint accountant.
+Continuous-rate trellis-coded quantization of LLM weights onto the tiles the
+tensor cores already run: E2M1 (NVFP4, W4A4), E4M3 (FP8, W8A8) and BF16. One
+wire — a 14-bit sliding-window trellis over a Gaussian-quantile table snapped
+to the hardware alphabet, one per-row scale, rates at a 1/256-bpp quantum —
+decoded to stock tiles by Tessera's own vLLM plugin (`quant_method: "tessera"`,
+resident or streamed), tensor-parallel by construction, and allocated per
+Linear by PrismaQuant across all three alphabets on measured cost.
+
+`prismaquant.tessera.v1` is the wire schema; this package holds the schema, the
+bytes-only parser, the exact-byte footprint accountant, the encoder (Viterbi
+with an optional Hessian-aware LDLQ + row-scale refit), the decoders, the
+kernels, and the serving plugin. Measurements live under `docs/measurements/`;
+the current state under `docs/status/`.
 
 Implemented against `prismaquant/docs/design/embedded_native_weight_coding_2026-08-31.md`
 (sha256 `1f813a354fe694b31a24aee65f47e3f6cc5b1043f3556005120a1b795bf27886`,
