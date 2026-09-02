@@ -52,6 +52,11 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "E4M3_RECIPE",
+    "E2M1X2_SUBCAP_RECIPE",
+    "E4M3_WINDOW_BITS",
+    "E2M1X2_SUBCAP_WINDOW_BITS",
+    "tcq_cap_q256",
     "RecipeRange",
     "recipe_table",
     "recipe_at",
@@ -201,40 +206,82 @@ class WireRecipe:
         )
 
 
-#: The shipping recipe today, on every grid: the span-2 coset trellis over
-#: the LUT scale plane (schema minor 1).
+#: The coset-trellis recipe (schema minor 1): the span-2 trellis over the
+#: LUT scale plane.  The wire for E2M1 and for E2M1x2 at its cap.
 TCQ_RECIPE = WireRecipe(
     body=DEFAULT_BODY, span=DEFAULT_SPAN, scale_plane=DEFAULT_SCALE_PLANE,
     window_bits=DEFAULT_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
     window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
 )
 
+#: The window body's table width per grid.  L=14 on E4M3: the kernel lane
+#: decodes the per-unit 2^L table at the span-2 kernel's cost through L=14
+#: and 1.85x at L=16; the fused Viterbi encodes it at 1.1 s per 2048x4096
+#: pass; on the wire it is 0.93x EXL3 K4 at 4.0 bpp against 0.985x at L=12.
+#: L=12 below the E2M1x2 cap: the width the sub-cap wire arms were measured
+#: at (1.06-1.10x EXL3 at 2.5-3.5 bpp); L=14 there is a measurement to run,
+#: not a default to assume.
+E4M3_WINDOW_BITS = 14
+E2M1X2_SUBCAP_WINDOW_BITS = 12
+
+#: E4M3 (schema minor 3 plane, minor 2 body): the bitshift-window trellis
+#: over the CHANNEL plane -- one fp16 per output row on DIAG_SV times a
+#: global, decoded to a stock per-channel FP8 tensor.
+E4M3_RECIPE = WireRecipe(
+    body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.CHANNEL,
+    window_bits=E4M3_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
+    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
+)
+
+#: E2M1x2 below the coset trellis's cap: the window body over the same LUT
+#: plane the cap recipe uses.
+E2M1X2_SUBCAP_RECIPE = WireRecipe(
+    body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.LUT,
+    window_bits=E2M1X2_SUBCAP_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
+    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=DEFAULT_CHANNEL_SIGMA,
+)
+
+
+def tcq_cap_q256(grid: PayloadGrid) -> int:
+    """The coset trellis's highest rung on ``grid`` in q256 per position:
+    ``payload_bits - 1`` per tuple, the bit the trellis spends on its code."""
+    return grid.rate_cap * 256 // grid.arity
+
 
 def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     """The wire the exporter writes for a unit on ``grid`` at rung ``q256``.
 
-    Today every grid gets ``TCQ_RECIPE``.  The measured targets, each held
-    behind a mechanical gate rather than a doubt
-    (``docs/measurements/tessera-window-body-2026-09-02.md``):
+    Measured on the six GLM-5.3-Flash routed experts against EXL3 on the
+    same held-out rows (``docs/tessera-one-format.md`` §4,
+    ``docs/measurements/tessera-window-body-2026-09-02.md``), and flipped
+    2026-09-02 once its two mechanical gates closed -- the kernel lane
+    decodes the window body bit-exactly over every plane, and the fused
+    Viterbi encodes it 15-26x faster than the reference, bit-exact:
 
-    * **E4M3**: the window body over the CHANNEL plane -- at 4.0 bpp L=14
-      is 1.235x better than this recipe in output space and 0.94x of EXL3
-      K4 pinned, and its decoded tile is a stock per-channel FP8 tensor.
-      Gates: a window decode in the kernel lane and an encoder faster than
-      the O(2^L) reference.
-    * **E2M1x2 below the cap** (``q256 < 896``): the window body over the
-      LUT plane, 1.3x better than the coset trellis at 3.0-3.5 bpp.  Same
-      gates, plus the measurement on the true wire (LUT plane, mixed rates).
-    * **E2M1x2 at the cap**: this recipe.  The structured coset table is not
-      beaten by a random window until L >= 14-16, and then by too little to
-      pay for the table.
+    * **E4M3**, every rung: ``E4M3_RECIPE`` -- the window body over the
+      CHANNEL plane, L=14.  0.93x EXL3 K4 at 4.0 bpp and 0.92-0.95x at 5.0
+      on the wire (0.985x / 1.016x at L=12), before LDLQ; the coset trellis
+      over LUT16 it replaces was 1.20x / 1.23x.  Its decoded tile is a stock
+      per-channel FP8 tensor, so the route is the FP8 MMA (W8A8).
+    * **E2M1x2 below the cap** (``q256 < tcq_cap_q256(grid)``, 3.5 body bits
+      per weight): ``E2M1X2_SUBCAP_RECIPE`` -- the window body over LUT16,
+      L=12.  1.06-1.10x EXL3 at 2.5-3.5 bpp where the coset trellis is
+      1.36-1.43x.
+    * **E2M1x2 at the cap** and **E2M1**: ``TCQ_RECIPE``.  At the cap the
+      structured coset table beats the window on the wire at L=12 (1.170x
+      against 1.244x) and at L=14 (1.21x): the window pays the table's
+      entropy and the code bit is cheaper.  E2M1 (arity 1) is unmeasured
+      under the window body and keeps the recipe it was measured with.
 
-    ``q256`` is accepted so the sub-cap flip is a one-line change here and
-    nowhere else; it is unused while the recipe is rung-independent.  The
-    exporter and the config are already per-rung: ``recipe_table`` records
-    what this function says at every rung, so a checkpoint written under a
-    rung-dependent recipe replays each unit at its own meaning.
+    The table this defines is what the config records per rung
+    (``recipe_table``), so a checkpoint carries its own meaning even if
+    these lines move again.
     """
+    if grid.arity == 1 and grid.name == "E4M3":
+        return E4M3_RECIPE
+    if grid.arity == 2 and grid.name.startswith("E2M1") and q256 is not None \
+            and q256 < tcq_cap_q256(grid):
+        return E2M1X2_SUBCAP_RECIPE
     return TCQ_RECIPE
 
 
@@ -584,10 +631,21 @@ def _resolve_recipe(grid, span, scale_plane, body, window_bits, window_seed,
     def resolve(q256: "int | None") -> WireRecipe:
         recipe = wire_recipe(grid, q256)
         r_body = BodyKind(recipe.body if body is None else body)
+        if r_body is BodyKind.TCQ and recipe.body is not BodyKind.TCQ:
+            # A caller that names the coset trellis over a window recipe
+            # gets the trellis's own wire for the body's fields -- its span
+            # from TCQ_RECIPE, no table -- and the grid recipe's plane.
+            recipe = WireRecipe(
+                body=BodyKind.TCQ, span=TCQ_RECIPE.span, scale_plane=recipe.scale_plane,
+                window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma,
+            )
         r_span = recipe.span if span is None else int(span)
         if r_body is BodyKind.WINDOW:
             r_span = 1
         r_plane = ScalePlaneKind(recipe.scale_plane if scale_plane is None else scale_plane)
+        # A caller that names the TCQ body over a window recipe gets the
+        # trellis, not the recipe's table width: the width belongs to the
+        # body, and a TCQ recipe has none.
         r_bits = recipe.window_bits if window_bits is None else int(window_bits)
         r_seed = recipe.window_seed if window_seed is None else int(window_seed)
         r_sigma = recipe.window_sigma if window_sigma is None else float(window_sigma)
@@ -611,13 +669,23 @@ def _recipe_kwargs(recipe: WireRecipe) -> dict:
     )
 
 
-def _projected(table: "tuple[RecipeRange, ...]", field, mixed=PER_RUNG):
-    """A recipe field for the config's flat keys: its value when every range
-    of the table agrees, else ``mixed`` -- the flat keys are a projection of
-    ``wire.recipes`` kept for readers of the earlier configs, and a
-    projection that averaged two bodies into one would be a lie."""
-    values = {field(entry.recipe) for entry in table}
+def _projected(recipes: "tuple[WireRecipe, ...]", field, mixed=PER_RUNG):
+    """A recipe field for the config's flat keys: its value when every recipe
+    the checkpoint used agrees, else ``mixed`` -- the flat keys are a
+    projection of ``wire.recipes`` over the plan's rungs, kept for readers
+    of the earlier configs, and a projection that averaged two bodies into
+    one would be a lie."""
+    values = {field(recipe) for recipe in recipes}
     return next(iter(values)) if len(values) == 1 else mixed
+
+
+def _used_recipes(table: "tuple[RecipeRange, ...]", rungs) -> "tuple[WireRecipe, ...]":
+    """The distinct recipes the rungs in ``rungs`` resolve to on ``table``;
+    every recipe of the table when no rung is known."""
+    rungs = sorted(set(rungs))
+    if not rungs:
+        return tuple(dict.fromkeys(entry.recipe for entry in table))
+    return tuple(dict.fromkeys(recipe_at(table, q) for q in rungs))
 
 
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
@@ -627,15 +695,16 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   table: "tuple[RecipeRange, ...] | None" = None) -> None:
     if table is None:
         table = recipe_table(grid)
-    span = _projected(table, lambda r: int(r.span), mixed=None)
-    plane = _projected(table, lambda r: _PLANE_NAMES[ScalePlaneKind(r.scale_plane)])
-    body = _projected(table, lambda r: _BODY_NAMES[BodyKind(r.body)])
-    window_bits = _projected(table, lambda r: int(r.window_bits), mixed=None)
-    window_seed = _projected(table, lambda r: int(r.window_seed), mixed=None)
+    used = _used_recipes(table, plan.values())
+    span = _projected(used, lambda r: int(r.span), mixed=None)
+    plane = _projected(used, lambda r: _PLANE_NAMES[ScalePlaneKind(r.scale_plane)])
+    body = _projected(used, lambda r: _BODY_NAMES[BodyKind(r.body)])
+    window_bits = _projected(used, lambda r: int(r.window_bits), mixed=None)
+    window_seed = _projected(used, lambda r: int(r.window_seed), mixed=None)
     window_sigma = _projected(
-        table, lambda r: None if r.window_sigma is None else float(r.window_sigma), mixed=None)
+        used, lambda r: None if r.window_sigma is None else float(r.window_sigma), mixed=None)
     channel_sigma = _projected(
-        table, lambda r: None if r.channel_sigma is None else float(r.channel_sigma),
+        used, lambda r: None if r.channel_sigma is None else float(r.channel_sigma),
         mixed=None)
     config = {
         "quant_method": "tessera",
@@ -676,9 +745,9 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # them: two halves over different tables are two artifacts.  A config
         # without this key means the TCQ body, which is every artifact before
         # the field existed.  These flat keys, ``trellis.span`` and
-        # ``scale.plane`` are projections of ``wire.recipes``: when the recipe
-        # varies with the rung they read ``per-rung`` (``null`` for the
-        # numbers) and the table is the only truth.
+        # ``scale.plane`` are projections of ``wire.recipes`` over the rungs
+        # this checkpoint used: when those rungs' recipes differ they read
+        # ``per-rung`` (``null`` for the numbers) and the table is the truth.
         "body": {"kind": body, "window_bits": window_bits, "seed": window_seed,
                  "sigma": window_sigma},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they
@@ -695,8 +764,9 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # The recipe at every rung of the grid, as contiguous q256 ranges:
         # body, span, plane, window table parameters and modelled spreads.  A
         # function of the exporter's resolver alone, never of the plan, so
-        # every part of one checkpoint carries the same table and a replay
-        # of any rung finds its meaning here (``encode_settings_from_config``).
+        # every part of one checkpoint carries the same table (the merge
+        # guard compares it) and a replay of any rung finds its meaning here
+        # (``encode_settings_from_config``).
         "wire": {"recipes": [entry.to_config() for entry in table]},
         "rotation": rotation.name,
         "with_diagonals": bool(with_diagonals),
@@ -876,9 +946,10 @@ def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict
     """The ``encode_linear`` keyword arguments that reproduce a written checkpoint.
 
     A config with a ``wire.recipes`` table resolves the body, span, plane and
-    window parameters for rung ``q256`` from the table; when the table holds
-    one recipe the rung may be omitted, and when it holds several a caller
-    that names no rung is refused rather than handed the wrong body.
+    window parameters for rung ``q256`` from the table; when the rungs the
+    checkpoint used (``rungs_q256``) share one recipe the rung may be
+    omitted, and when they do not a caller that names no rung is refused
+    rather than handed the wrong body.
 
     A config written before a setting existed means the value the exporter
     had *then*, not the value it defaults to now -- the exporter's defaults
@@ -910,13 +981,17 @@ def encode_settings_from_config(config: dict, q256: "int | None" = None) -> dict
         if not table:
             raise GrammarError("the config's wire.recipes table is empty")
         if q256 is None:
-            recipes = {entry.recipe for entry in table}
+            # Without a rung, the checkpoint's own rungs decide: one recipe
+            # across them replays without naming one; several refuse.
+            rungs = config.get("rungs_q256") or list(config.get("plan", {}).values())
+            recipes = _used_recipes(table, rungs)
             if len(recipes) != 1:
                 raise GrammarError(
                     "this checkpoint's recipe varies with the rung "
-                    f"({len(table)} ranges); name the unit's q256 to replay it"
+                    f"({len(recipes)} recipes over its rungs); name the unit's q256 "
+                    "to replay it"
                 )
-            recipe = table[0].recipe
+            recipe = recipes[0]
         else:
             recipe = recipe_at(table, int(q256))
     else:

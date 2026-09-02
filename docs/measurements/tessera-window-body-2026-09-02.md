@@ -462,6 +462,17 @@ bytes on every other plane —
 `.claude/worktrees/agent-ac41ec3897043fa75/experiments/results/tessera_kernel_window_table_sweep.json`),
 so any L=16 quality reading must be stated *before the table*.
 
+One tile the bench never visited: **the E4M3 ceiling rung, R=8 at L=14**
+(q2048, 8 b/wt). The fused kernel takes it (`_tile` at fan 256 gives a
+4-state × 1-column program) but slowly — 27 s for a 256×512 unit against
+0.15 s at R=4 on the same table, both bit-exact against the reader
+(`test_the_window_lane_decodes_a_channel_plane[e4m3-r8-L14-the-ceiling]`).
+The rung builds, packs and decodes; it is also dominated on the menu by FP8
+passthrough at the same bytes (the window body's 256 successors of a 256-value
+alphabet cover fewer than all of it, and q2048 reads 0.0269 rel_err where
+q1792 reads 0.0270 on a 256×512 Gaussian), so the DP will not pick it. If a
+sweep ever encodes it in bulk, retile the fan-256 case first.
+
 ## What is not established
 
 * ~~The E4M3 headline is under a per-channel plane that the wire does not

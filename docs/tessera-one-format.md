@@ -74,7 +74,7 @@ space where the window body at L=14 is 0.94× of it
 | **Encoder speed** | reference window Viterbi ~30 s / 150 s / 13 min per 2048×4096 at L=12/14/16 | fused Triton Viterbi in flight (worker `a812f218`), bit-exact against the reference, accepted on profiler + power evidence |
 | **PrismaQuant spec** | reads `wire_recipe` (PrismaQuant `b02d8b2`): every accountant takes the recipe; the route is derived from (grid base, plane) with the activation quantiser and capability floor taken by reference from the NVFP4 / FP8_E4M3 registry rows; family bounds follow the body's cap. Shape-dependent terms (CHANNEL rows, window table) are priced exactly where a shape exists and **refused** in the shape-free `FormatSpec` rate | shape-aware `bits_for_shape` on the spec and in every byte gate, so a shape-dependent recipe synthesizes (in flight); then the E4M3 flip |
 | **Measurement** | four harnesses, three protocols (per-channel and per-16 fp32 arms re-implement the encoder) | `experiments/tessera_frontier.py`: every (grid, body, plane, rate) point through the production encoder, one JSON, one table, EXL3/Gridbook/NVFP4/FP8 comparators at matched bpp |
-| **Per-grid defaults** | `wire_recipe` returns the TCQ recipe for every grid | flip E4M3 to window over CHANNEL and E2M1x2 sub-cap to window over LUT16 when the two workers land; E2M1x2 at the cap stays TCQ |
+| **Per-grid defaults** | `wire_recipe(grid, q256)`: E4M3 → window over CHANNEL, L=14, every rung; E2M1x2 → window over LUT16, L=12, below its cap (q256 < 896) and the coset trellis at it; E2M1 → the coset trellis. Flipped 2026-09-02 once the kernel lane decoded the body and the fused Viterbi encoded it. | E2M1 under the window body, and L=14 below the E2M1x2 cap, are measurements to run |
 
 ## 4. The frontier
 
@@ -88,24 +88,28 @@ construction, its own plane code).
 
 | bpp | arm | plane | protocol | out | vs EXL3 out | served | vs EXL3 at the same activation | vs EXL3 W4A16 |
 |---|---|---|---|---|---|---|---|---|
-| 2.5 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.2635 | 1.401× | a4 0.2763 | 1.317× | 1.469× |
+| 2.5 | E2M1x2 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.2635 | 1.401× | a4 0.2763 | 1.317× | 1.469× |
 | 2.5 | E2M1x2 window L=12 | LUT16 | wire | 0.1982 | **1.056×** | a4 0.2155 | 1.029× | 1.149× |
-| 3.0 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.1817 | 1.357× | a4 0.2004 | 1.261× | 1.497× |
+| 3.0 | E2M1x2 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.1817 | 1.357× | a4 0.2004 | 1.261× | 1.497× |
 | 3.0 | E2M1x2 window L=12 | LUT16 | wire | 0.1417 | **1.061×** | a4 0.1654 | 1.042× | 1.238× |
 | 3.0 | E4M3 window L=12 | CHANNEL | wire | 0.1274 | **0.957×** | a8 0.1296 | **0.958×** | **0.973×** |
-| 3.5 | E2M1x2 TCQ span 2 (default wire) | LUT16 | wire | 0.1364 | 1.431× | a4 0.1608 | 1.220× | 1.687× |
+| 3.5 | E2M1x2 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.1364 | 1.431× | a4 0.1608 | 1.220× | 1.687× |
 | 3.5 | E2M1x2 window L=12 | LUT16 | wire | 0.1044 | **1.098×** | a4 0.1350 | 1.025× | 1.420× |
-| 4.0 | E2M1x2 TCQ span 2 (default wire, at its cap) | LUT16 | wire | 0.0793 | **1.170×** | a4 0.1169 | 1.067× | 1.723× |
+| 4.0 | E2M1x2 TCQ span 2 (at its cap: the wire) | LUT16 | wire | 0.0793 | **1.170×** | a4 0.1169 | 1.067× | 1.723× |
 | 4.0 | E2M1x2 window L=12 | LUT16 | wire | 0.0842 | 1.244× | a4 0.1202 | 1.099× | 1.776× |
-| 4.0 | E4M3 TCQ span 2 (default wire) | LUT16 | wire | 0.0812 | 1.197× | a8 0.0847 | 1.177× | 1.248× |
+| 4.0 | E2M1x2 window L=14 | LUT16 | wire | 0.0824 | 1.227× | a4 0.1189 | 1.091× | 1.771× |
+| 4.0 | E4M3 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.0812 | 1.197× | a8 0.0847 | 1.177× | 1.248× |
 | 4.0 | E4M3 TCQ span 2 | CHANNEL | wire | 0.0957 | 1.414× | a8 0.0986 | 1.374× | 1.457× |
 | 4.0 | E4M3 window L=12 | LUT16 | wire | 0.0757 | **1.119×** | a8 0.0794 | 1.106× | 1.173× |
+| 4.0 | E4M3 window L=14 | LUT16 | wire | 0.0733 | 1.091× | a8 0.0770 | 1.081× | 1.147× |
 | 4.0 | E4M3 window L=12 | CHANNEL | wire | 0.0665 | **0.985×** | a8 0.0707 | **0.987×** | **1.047×** |
 | 4.0 | E4M3 window L=14 | CHANNEL | exp, pinned | 0.0632 | 0.938× | a8 0.0676 | 0.946× | 1.003× |
+| 4.0 | E4M3 window L=14 | CHANNEL | **wire, the default** | 0.0629 | **0.940×** | a8 0.0673 | **0.946×** | **1.005×** |
 | 4.5 | NVFP4 GPTQ+JSO | per-16 | exp | — | — | a4 0.1188 | — | 1.53× (at 4.0 bytes) |
-| 5.0 | E4M3 TCQ span 2 (default wire) | LUT16 | wire | 0.0425 | 1.232× | a8 0.0488 | 1.161× | 1.413× |
+| 5.0 | E4M3 TCQ span 2 (the wire before the flip) | LUT16 | wire | 0.0425 | 1.232× | a8 0.0488 | 1.161× | 1.413× |
 | 5.0 | E4M3 window L=12 | LUT16 | wire | 0.0406 | 1.177× | a8 0.0471 | 1.122× | 1.367× |
 | 5.0 | E4M3 window L=12 | CHANNEL | wire | 0.0349 | **1.016×** | a8 0.0423 | 1.011× | 1.232× |
+| 5.0 | E4M3 window L=14 | CHANNEL | **wire, the default** | 0.0323 | **0.947×** | a8 0.0402 | **0.964×** | 1.179× |
 | 6.0 | E4M3 window L=12 | CHANNEL | wire | 0.0218 | 1.240× | a8 0.0324 | 1.090× | 1.842× |
 | 8.0 | FP8 per-channel RTN (E4M3 floor) | per-row | wire | 0.0215 | (EXL3 K8 0.0048) | a8 0.0322 | 1.318× | — |
 
@@ -121,16 +125,23 @@ executed error under the route's activation quantiser (a4 = NVFP4, a8 =
 FP8); "vs EXL3 at the same activation" divides it by EXL3's own error
 under that same quantiser (the hypothetical EXL3@A4 / EXL3@A8 baselines),
 and "vs EXL3 W4A16" divides it by EXL3's weight-only error, which is what
-EXL3 executes. The L=14 CHANNEL row is the pinned-tile experiment
-(`tessera_bitshift_tile`); the L=14 wire arms at 4.0 and 5.0 are running.
+EXL3 executes. The L=14 `exp, pinned` row is the pinned-tile experiment
+(`tessera_bitshift_tile`); the L=14 `wire` rows are
+`experiments/results/tessera_frontier_L14.json` — the same six experts,
+the same harness and the same EXL3 reference rows, run on sparklina from a
+tree rsynced before the fused-Viterbi merge, `8489634` (the record says `git: unknown`
+because sparklina has no checkout; the reference encoder took 108–138 s per
+arm, and the fused kernel is bit-exact with it). Ratios are geometric means
+of the six per-tensor ratios against EXL3 interpolated to the arm's bpp.
 
 **What the table says.** (i) Below the cap the window body owns the
 E2M1x2 ladder on the true wire, not just the tile: 1.06–1.10× behind EXL3
 at 2.5–3.5 bpp where the coset trellis is 1.36–1.43×. At 4.0 the coset
-trellis at its cap (1.170×) beats the L=12 window (1.244×); the six-expert
-tuple sweep says L=14 levels them at equal payload, and the wire pays the
-window no label bits, so the L=14 wire arm decides the cap. (ii) On E4M3
-the plane and the body compound: the default wire (coset trellis over
+trellis at its cap (1.170×) beats the window at L=12 (1.244×) and at L=14
+(1.227×, per expert 1.21–1.26×): the tuple sweep's "L=14 levels them at
+equal payload" did not survive the wire's LUT16 plane, so the cap stays on
+the coset trellis and the window owns only the rungs below it. (ii) On E4M3
+the plane and the body compound: the wire before the flip (coset trellis over
 LUT16) is 1.20× behind EXL3 K4; the window over the same plane 1.12×; the
 window over the CHANNEL plane **0.985× at 4.0 and 0.957× at 3.0** — the
 production encoder, at L=12, before LDLQ, decoded bit-exactly by the kernel
@@ -141,8 +152,11 @@ lane — level at 5.0 (1.016×) and 1.24× behind at 6.0, where the E4M3 floor
 E4M3 + CHANNEL + window executes W8A8 at 0.973× EXL3's W4A16 number at
 3.0 bytes on disk and 1.047× at 4.0 — the best executed contract we have;
 under EXL3's own activation quantiser (EXL3@A8, the standing baseline's
-8-bit form) it is 0.958× and 0.987×. The 3.0-byte row is the only executed
-arm under EXL3's weight-only number; the 4.0-byte row is 4.7% over it.
+8-bit form) it is 0.958× and 0.987× — all at L=12. At L=14, the default
+the flip ships, the 4.0-byte row is **level with EXL3's weight-only number
+as served (1.005×)** and 0.946× under EXL3@A8; the 5.0-byte row is 1.18×
+as served and 0.964× under EXL3@A8. The 3.0-byte row (L=12) is the only
+executed arm strictly under EXL3's weight-only number.
 "Bytes" here are bytes on disk: the stock per-channel FP8 route reached
 through `materialize_fp8` holds 8 bits per weight resident after load, and
 holding 4 bits resident under W8A8 needs the decode-to-FP8-tile GEMM the
@@ -165,8 +179,8 @@ and on the scalar per-channel Tessera-8, not yet on the window body.
 
 | bpp | arm (follow-ups harness) | out | vs EXL3 out (min–max) | served | vs EXL3 at the same activation |
 |---|---|---|---|---|---|
-| 4.000 | Tessera-4 default wire (TCQ span 2, LUT16, refit 4) | 0.0798 | 1.169× (1.153–1.202) | a4 0.1176 | 1.066× |
-| 4.000 | Tessera-4 default wire + LDLQ σ=3 (whole-unit re-encode) | 0.0754 | **1.102× (1.096–1.110)** | a4 0.1146 | 1.039× |
+| 4.000 | Tessera-4 wire at the cap (TCQ span 2, LUT16, refit 4) | 0.0798 | 1.169× (1.153–1.202) | a4 0.1176 | 1.066× |
+| 4.000 | Tessera-4 wire at the cap + LDLQ σ=3 (whole-unit re-encode) | 0.0754 | **1.102× (1.096–1.110)** | a4 0.1146 | 1.039× |
 | 4.008 | Tessera-8 R=4 per-channel scalar (no body) | 0.0780 | 1.147× (1.136–1.165) | a8 0.0816 | 1.132× |
 | 4.008 | Tessera-8 R=4 per-channel + LDLQ σ=3 (row scale frozen) | 0.0721 | **1.059× (1.046–1.067)** | a8 0.0760 | 1.052× |
 | 5.008 | Tessera-8 R=5 per-channel scalar (no body) | 0.0410 | 1.184× (1.169–1.203) | a8 0.0476 | 1.127× |
@@ -227,8 +241,14 @@ varies, so a reader that does not know the table cannot mistake one body
 for the other. `encode_settings_from_config(config, q256)` replays a unit
 at its own rung's meaning and refuses to guess when the table varies and no
 rung is named; the merge guard compares the table across parts whenever the
-parts carry it. Nothing here flips a recipe: `wire_recipe` still returns the
-coset trellis over LUT16 on every grid until the encoder gate clears.
+parts carry it. The flip itself landed the same day, once both mechanical
+gates had closed: the kernel lane decodes the window body bit-exactly over
+every plane, and the fused Viterbi (`window_viterbi.py`, 15× at L=12, 26×
+at L=14, bit-exact, profiled and powered per principle 15) encodes it at
+1.1 s per 2048×4096 pass at L=14 — the reference took 30 s. `wire_recipe`
+now returns the window body over CHANNEL at L=14 on E4M3 at every rung, the
+window over LUT16 at L=12 on E2M1x2 below its cap, and the coset trellis at
+the E2M1x2 cap and on E2M1.
 
 ## 6. What this does not unify, on purpose
 

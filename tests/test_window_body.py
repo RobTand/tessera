@@ -347,11 +347,17 @@ def test_the_kernel_lane_decodes_a_window_body():
 # ---------------------------------------------------------------- exporter
 
 
-def test_the_exporter_default_is_still_the_tcq_body():
-    """The window body is measured better below the cap and on E4M3 but has
-    no kernel decode and an O(2^L) reference encoder; it flips when both are
-    in, not before."""
+def test_the_default_is_per_grid_and_the_constants_are_the_coset_recipes():
+    """``DEFAULT_BODY``/``DEFAULT_WINDOW_BITS`` spell the coset-trellis recipe
+    (E2M1, and E2M1x2 at its cap).  The window body flipped on 2026-09-02
+    for E4M3 and for E2M1x2 below the cap, once the kernel lane decoded it
+    and the fused Viterbi encoded it."""
+    from tessera.alphabet import E4M3_GRID
+    from tessera.export import wire_recipe
+
     assert DEFAULT_BODY is BodyKind.TCQ and DEFAULT_WINDOW_BITS == 0
+    assert wire_recipe(E4M3_GRID, 1024).body is WINDOW
+    assert wire_recipe(K2, 6 * 128).body is WINDOW and wire_recipe(K2, 7 * 128).body is BodyKind.TCQ
 
 
 def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
@@ -377,9 +383,13 @@ def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
         encode_settings_from_config({**config, "body": {"kind": "hash"}})
     with pytest.raises(GrammarError, match="completion"):
         encode_linear(w, grid=K2, q256=6 * 128, body=WINDOW, window_bits=10, completion=1)
-    # today's default writes a TCQ body, and says so
-    export_checkpoint({"w": w}, {"w": 6 * 128}, tmp_path / "tcq", grid=K2)
+    # the recipe writes the window body below the E2M1x2 cap and the coset
+    # trellis at it, and the config says which -- per rung, in its table
+    export_checkpoint({"w": w}, {"w": 7 * 128}, tmp_path / "tcq", grid=K2)
     assert read_checkpoint_config(tmp_path / "tcq")["body"]["kind"] == "tcq"
+    export_checkpoint({"w": w}, {"w": 6 * 128}, tmp_path / "sub", grid=K2)
+    sub = read_checkpoint_config(tmp_path / "sub")
+    assert sub["body"]["kind"] == "window" and sub["body"]["window_bits"] == 12
 
 
 # ----------------------------------------------------------------- quality

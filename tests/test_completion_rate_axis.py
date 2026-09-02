@@ -51,10 +51,17 @@ def _weight(rows=64, cols=512, seed=0):
 
 
 def _build(grid, q256, completion, name="u"):
+    # The completion axis is the TCQ body's: a column may spend its unspent
+    # bits selecting among the descendants its trellis subset reaches.  The
+    # window body has no descendants and refuses the axis, and since the
+    # 2026-09-02 flip it is the recipe on E4M3 and below the E2M1x2 cap, so
+    # the body is pinned here rather than taken from the recipe.
+    from tessera.manifest import BodyKind
+
     return encode_linear(
         _weight(), grid=grid, q256=q256, name=name, code=CODE,
         rotation=RotationState.NONE, with_diagonals=False,
-        completion=completion, verify=True,
+        completion=completion, verify=True, body=BodyKind.TCQ,
     )
 
 

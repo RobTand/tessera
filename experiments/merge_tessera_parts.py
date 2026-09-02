@@ -65,6 +65,14 @@ SHARED = (
 #: cap, and only the table can say.
 SHARED_WHEN_WRITTEN = ("wire.recipes",)
 
+#: The flat projections of the recipe table.  They describe the rungs a
+#: part *used*, so two parts of one checkpoint may legitimately differ on
+#: them (one part all at the cap, the other mixed) while carrying the same
+#: table; when every part carries ``wire.recipes`` the table is compared and
+#: these are not.
+PROJECTED_BY_TABLE = ("trellis.span", "body.kind", "body.window_bits", "body.seed",
+                      "body.sigma", "scale.plane", "scale.sigma")
+
 _MISSING = object()
 
 
@@ -140,6 +148,8 @@ def main():
         present = [dotted(config, field) is not _MISSING for _, _, config in loaded]
         if all(present):
             compared.append(field)
+            if field == "wire.recipes":
+                compared = [f for f in compared if f not in PROJECTED_BY_TABLE]
         elif any(present):
             raise SystemExit(
                 f"{field!r} is written by some parts and not others -- they were "

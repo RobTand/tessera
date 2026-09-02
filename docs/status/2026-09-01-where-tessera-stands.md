@@ -356,3 +356,25 @@ imatrix rows are Gridbook as it ships: FP8-CB 1.28×/1.33×/1.35× at 4/5/6,
 FP4-CB 1.26–1.27× at 2.3–3.3, all behind the window body over CHANNEL
 (0.957×/0.985×/1.016×/1.240× at 3/4/5/6). Open: LDLQ on the window body.
 Full suite on the merged tree: 471 passed.
+
+## 2026-09-02 (the flip)
+
+Both mechanical gates closed and the recipe flipped, default, not opt-in.
+The fused window Viterbi (`src/tessera/window_viterbi.py`, `ee9bdf2`) is
+15× at L=12, 26× at L=14 and 26× at L=16 on a 2048×4096 tensor, bit-exact
+(identical states and the identical sse float; the artifact bytes are the
+reference's under every plane), with `torch.profiler` before/after and
+Netdata power (22× the work per joule at 47% of the envelope). The config
+carries the recipe per rung (`wire.recipes`, `dccbfd3`), PrismaQuant prices
+a shape-dependent recipe exactly or refuses (`def11bd`), and `wire_recipe`
+now returns: E4M3 → window over CHANNEL at L=14 on every rung (L=14 wire
+arms, six experts, `experiments/results/tessera_frontier_L14.json`: **0.940×
+EXL3 K4 at 4.0 bpp and 0.947× K5 at 5.0** in output space, 0.946×/0.964×
+against EXL3 at the same 8-bit activation, 1.005×/1.18× as served — W8A8
+against EXL3's W4A16; per expert 0.92–0.96× on all six);
+E2M1x2 → window over LUT16 at L=12 below the cap (q256 < 896), the coset
+trellis at the cap (the L=14 window at the cap is 1.227× — per expert
+1.21–1.26× — against the trellis's 1.170×); E2M1 → the coset trellis, unmeasured
+under the window body. Not shippable yet: `materialize_fp8` is a function,
+not an exporter writing compressed-tensors; no serving lane is attested;
+units are not TP-shardable; LDLQ on the window body is unmeasured.

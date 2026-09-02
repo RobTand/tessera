@@ -231,8 +231,10 @@ def test_the_span2_lane_refuses_a_channel_plane():
         pack_unit_for_kernel(unit, forest[7], CODE)
 
 
-@pytest.mark.parametrize("grid,rate,window", [(E4M3_GRID, 4, 8), (K2, 7, 8), (E4M3_GRID, 5, 10)],
-                         ids=["e4m3-r4-L8", "k2-r7-L8", "e4m3-r5-L10"])
+@pytest.mark.parametrize("grid,rate,window", [(E4M3_GRID, 4, 8), (K2, 7, 8), (E4M3_GRID, 5, 10),
+                                              (E4M3_GRID, 4, 14), (E4M3_GRID, 8, 14)],
+                         ids=["e4m3-r4-L8", "k2-r7-L8", "e4m3-r5-L10",
+                              "e4m3-r4-L14-the-default", "e4m3-r8-L14-the-ceiling"])
 def test_the_window_lane_decodes_a_channel_plane(grid, rate, window):
     """The window GEMV under a CHANNEL plane: the reader's bytes, bit for bit.
 
@@ -307,9 +309,18 @@ def test_a_window_body_may_spend_the_grids_whole_width():
 
 
 def test_the_exporter_writes_the_recipe_and_replays_it(tmp_path):
-    for grid in (E2M1_GRID, K2, E4M3_GRID):
-        assert wire_recipe(grid) == TCQ_RECIPE
-        assert wire_recipe(grid, 3 * 256) == TCQ_RECIPE
+    from tessera.export import E2M1X2_SUBCAP_RECIPE, E4M3_RECIPE, tcq_cap_q256
+
+    # E2M1 keeps the coset trellis; E2M1x2 is the window below its cap and
+    # the coset trellis at it; E4M3 is the window over CHANNEL at every rung.
+    assert wire_recipe(E2M1_GRID) == wire_recipe(E2M1_GRID, 512) == TCQ_RECIPE
+    assert tcq_cap_q256(K2) == 896
+    assert wire_recipe(K2) == wire_recipe(K2, 896) == TCQ_RECIPE
+    assert wire_recipe(K2, 895) == wire_recipe(K2, 256) == E2M1X2_SUBCAP_RECIPE
+    assert E2M1X2_SUBCAP_RECIPE.body is WINDOW and E2M1X2_SUBCAP_RECIPE.scale_plane is ScalePlaneKind.LUT
+    assert wire_recipe(E4M3_GRID) == wire_recipe(E4M3_GRID, 1024) == E4M3_RECIPE
+    assert E4M3_RECIPE.body is WINDOW and E4M3_RECIPE.scale_plane is CHANNEL
+    assert E4M3_RECIPE.window_bits == 14 and E4M3_RECIPE.span == 1
     assert TCQ_RECIPE.body is BodyKind.TCQ and TCQ_RECIPE.span == 2
     assert TCQ_RECIPE.scale_plane is ScalePlaneKind.LUT
     with pytest.raises(GrammarError):
@@ -319,8 +330,12 @@ def test_the_exporter_writes_the_recipe_and_replays_it(tmp_path):
     w = _weights()
     unit = encode_linear(w, grid=E4M3_GRID, q256=4 * 256, scale_refit=0)
     art = parse(unit.blob).manifest
+    assert art.body is E4M3_RECIPE.body and art.span == E4M3_RECIPE.span
+    assert art.scale_plane.kind is E4M3_RECIPE.scale_plane
+    assert art.window_bits == E4M3_RECIPE.window_bits
+    unit = encode_linear(w, grid=K2, q256=896, scale_refit=0)
+    art = parse(unit.blob).manifest
     assert art.body is TCQ_RECIPE.body and art.span == TCQ_RECIPE.span
-    assert art.scale_plane.kind is TCQ_RECIPE.scale_plane
 
     plan = {"a": 4 * 256}
     export_checkpoint({"a": w}, plan, tmp_path, grid=E4M3_GRID, scale_refit=1,

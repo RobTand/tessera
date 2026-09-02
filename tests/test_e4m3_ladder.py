@@ -28,7 +28,7 @@ from tessera.alphabet import (  # noqa: E402
     tuple_grid,
 )
 from tessera.errors import GrammarError  # noqa: E402
-from tessera.export import DEFAULT_SCALE_PLANE, DEFAULT_SPAN, encode_linear  # noqa: E402
+from tessera.export import encode_linear  # noqa: E402
 from tessera.manifest import ScalePlaneKind  # noqa: E402
 from tessera.manifest import RotationState  # noqa: E402
 from tessera.trellis import ConvCode  # noqa: E402
@@ -92,14 +92,21 @@ def test_e4m3_ladder_serialises():
         # byte per anchor and the anchor count doubles with the rate, so the
         # top step carries 128 extra bytes.  That is a charged plane doing its
         # job, not slack in the accounting.
-        assert 1.0 <= upper - lower <= 1.02, sizes
-    # The exporter's default overhead above the rung's body rate: the span-L
-    # trellis spends (L - 1) / L extra bits per position (one weight on this
-    # arity-1 grid) and the scale plane spends 0.25 bpp as a LUT index or 0.5
-    # as S6b, at the default (32, 16) geometry -- plus the forest and header,
+        assert 1.0 <= upper - lower <= 1.02, sizes   # window body: no forest to grow
+    # The exporter's overhead above the rung's body rate follows the E4M3
+    # recipe: the window body spends no code bit and grows no forest plane,
+    # so the overhead is the per-unit 2^L table (8 * 2^L bits over the
+    # tensor -- 2.0 bpp at L=14 on this small tensor, 0.016 at 2048x4096)
+    # plus the CHANNEL plane (one fp16 per row and a global) and the header,
     # which is under a tenth of a bit at this size.
-    plane = 0.25 if DEFAULT_SCALE_PLANE is ScalePlaneKind.LUT else 0.5
-    extra = (DEFAULT_SPAN - 1) / DEFAULT_SPAN + plane
+    from tessera.export import wire_recipe
+    from tessera.manifest import BodyKind, ScalePlaneKind
+
+    recipe = wire_recipe(E4M3_GRID, RUNGS[0])
+    assert recipe.body is BodyKind.WINDOW and recipe.scale_plane is ScalePlaneKind.CHANNEL
+    table = 8 * (1 << recipe.window_bits) / w.numel()
+    rows = 16 * w.shape[0] / w.numel()
+    extra = table + rows
     assert all(extra <= size - rung / 256 < extra + 0.1
                for size, rung in zip(sizes, RUNGS)), sizes
 

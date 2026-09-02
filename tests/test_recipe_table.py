@@ -1,10 +1,10 @@
 """The config carries the recipe per rung, and a checkpoint replays at its own meaning.
 
-``wire_recipe`` is rung-independent today (TCQ everywhere); the E4M3 and
-E2M1x2 sub-cap flips are gated on the encoder.  These tests exercise the
-machinery those flips land on -- a resolver that varies with the rung, a
-config table that records it, a replay that reads it back per unit -- by
-patching ``wire_recipe`` rather than waiting for the flip.
+``wire_recipe`` varies with the grid and, on E2M1x2, with the rung.  These
+tests exercise the machinery the flip landed on -- a resolver that varies
+with the rung, a config table that records it, a replay that reads it back
+per unit -- with a patched recipe (so they do not depend on where the flip
+sits) and pin the shipping table separately.
 """
 
 import pytest
@@ -50,14 +50,18 @@ def _weights(rows=64, cols=256, seed=0):
     return torch.randn(rows, cols, generator=g)
 
 
-def test_the_table_today_is_one_tcq_range_to_the_window_ceiling():
-    for grid, ceiling in ((E2M1_GRID, 1024), (K2, 1024), (E4M3_GRID, 2048)):
-        assert rung_ceiling(grid) == ceiling
-        table = recipe_table(grid)
-        assert table == (RecipeRange(1, ceiling, TCQ_RECIPE),)
-        assert recipe_at(table, ceiling) == TCQ_RECIPE
-        with pytest.raises(GrammarError, match="outside"):
-            recipe_at(table, ceiling + 1)
+def test_the_table_is_the_flipped_recipe_per_grid():
+    from tessera.export import E2M1X2_SUBCAP_RECIPE, E4M3_RECIPE
+
+    assert (rung_ceiling(E2M1_GRID), rung_ceiling(K2), rung_ceiling(E4M3_GRID)) == (1024, 1024, 2048)
+    assert recipe_table(E2M1_GRID) == (RecipeRange(1, 1024, TCQ_RECIPE),)
+    assert recipe_table(K2) == (RecipeRange(1, CAP_Q256 - 1, E2M1X2_SUBCAP_RECIPE),
+                                RecipeRange(CAP_Q256, 1024, TCQ_RECIPE))
+    assert recipe_table(E4M3_GRID) == (RecipeRange(1, 2048, E4M3_RECIPE),)
+    table = recipe_table(E4M3_GRID)
+    assert recipe_at(table, 2048) == E4M3_RECIPE
+    with pytest.raises(GrammarError, match="outside"):
+        recipe_at(table, 2049)
 
 
 def test_the_table_records_a_rung_dependent_recipe_as_ranges():
@@ -75,7 +79,7 @@ def test_the_table_records_a_rung_dependent_recipe_as_ranges():
 
 def test_a_mixed_plan_exports_each_unit_at_its_rung_and_replays_it(tmp_path, monkeypatch):
     monkeypatch.setattr("tessera.export.wire_recipe", _sub_cap_window)
-    assert wire_recipe(K2, 640) == TCQ_RECIPE          # the import is the unpatched name
+    assert wire_recipe(K2, 640) != WINDOW_LUT           # the import is the unpatched name
     tensors = {"low": _weights(seed=1), "cap": _weights(seed=2)}
     plan = {"low": 640, "cap": CAP_Q256}
     report = export_checkpoint(tensors, plan, tmp_path, grid=K2, scale_refit=1)
