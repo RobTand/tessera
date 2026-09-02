@@ -1,6 +1,22 @@
 # The 4-bit route goes activation-aware: LDLQ and an H-solved block-scale refit on the LUT plane (2026-09-02)
 
-**Claim.** *(filled from the served run below)*
+**Claim, weight space (measured).** Both encoder-side levers now run on the
+LUT plane, so the 4-bit wire can be encoded H-aware for the first time.
+**LDLQ is the lever and the refit objective is second order**: on six Qwen
+units LDLQ alone is **0.8164x** against the same wire with no levers, the
+refit alone is 0.9203x, and the choice between the two refit objectives moves
+1.38%. On six GLM experts **LDLQ alone closes 39% of the wire's out-space gap
+to EXL3 K=4** -- 1.1779x to **1.0957x** -- at the same 4.0 bpp and the same
+bytes.
+
+**Claim, served.** *(unmet at the time of writing; the export lands ~01:55 and
+the serve is chained behind it. See "Served (the gate)".)* Nothing here is a
+served result, and a weight-space geomean has already failed to predict a serve
+once on this project.
+
+**Cost.** An H-aware encode is **9.2x** the weights-only one on this body
+(measured off both exports' `[20/196]` line), ~9 h for a 0.6B model. That price
+is why the served gate, not this screen, decides whether the route ships.
 
 Commit: see `git log` for this file. Tests: `tests/test_ldlq_lut_plane.py`,
 `tests/test_ldlq_window.py`, `tests/test_merge_guard.py`.
@@ -336,6 +352,26 @@ Read three ways:
 | LDLQ only | 0.8164x | 0.9302x | pass |
 | LDLQ + `h^1.0` | 0.7805x | 0.9313x | pass |
 | LDLQ + `hessian` | **0.7699x** | 0.9858x | pass (barely) |
+
+### The two verdicts, side by side
+
+| | rule's pick | shipped arm |
+|---|---|---|
+| objective | `hessian` | `h^1.0` |
+| Qwen six-unit `out` geomean | **0.7699x** | 0.7805x |
+| Qwen units won, of six | 2 | **4** |
+| worst unit's unweighted weight error (`plain`) | **0.22229** | 0.10643 |
+| same, refit alone | **0.28714** | 0.09844 |
+| every other unit and arm sits in | 0.093 -- 0.110 | 0.093 -- 0.110 |
+| GLM refit alone, vs plain | **1.0564x** (regresses) | 0.9989x (no-op) |
+| GLM stacked on LDLQ, vs plain | 0.9858x | **0.9313x** |
+| GLM gate <= 1.00x | pass, on LDLQ's back | pass |
+| served evidence | none, and none will exist | the gate below |
+
+The weight-error column is the argument, and it is not in the rule. `hessian`
+buys its 23% on that one unit by putting the unit's weights 2.3x further from
+their true values and trusting the calibration Hessian to say that does not
+matter. That is fitting the H's rows rather than the weights.
 
 **Applied literally, the pre-registered rule selects `hessian`.** The Qwen
 geomeans are 1.38% apart, which is outside the 1% band that would have sent the
