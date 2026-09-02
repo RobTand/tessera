@@ -41,6 +41,24 @@ requires_cuda = pytest.mark.skipif(not CUDA, reason="needs a CUDA device")
 GROUP = 16
 
 
+def _requires_native_ext():
+    """Skip when Tessera's span-2 decode extension cannot build on this host.
+
+    The STREAMED residency decodes inside the forward, where there is no
+    fallback by design (``prepare_tessera_module``'s ``allow_torch_fallback`` is
+    the resident path's decision alone) -- so a box without a CUDA toolkit
+    cannot exercise it at all.  That is an ABSENT kernel, not a broken one, and
+    a skip says so; on a box with the extension built these run and must pass.
+    Resident-mode tests are unaffected: they take the named pure-torch
+    fallback, which is the point of having one.
+    """
+    from tessera.serving.ext import get_tessera_ext
+
+    if get_tessera_ext() is None:
+        pytest.skip("Tessera's span-2 NVFP4 decode extension cannot build here (no nvcc or no "
+                    "visible GPU); the streamed residency decodes in-forward and has no fallback")
+
+
 def _tessera():
     return pytest.importorskip("tessera.fused"), pytest.importorskip("tessera.export"), \
         pytest.importorskip("tessera.stock"), pytest.importorskip("tessera.alphabet")
@@ -233,6 +251,8 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_tile_is_the_stock_tile_byte_for_byte(monkeypatch, mode):
     """The decoded tile IS materialize_stock's after share_global: codes, scale bytes, global."""
+    if mode == MODE_STREAMED:
+        _requires_native_ext()
     got, want, layer, method, (packed, scale, global_) = _drive(monkeypatch, mode)
     if mode == MODE_RESIDENT:
         tile, scale_b = layer.weight_fp4.view(torch.uint8), layer.scale_b
@@ -268,6 +288,7 @@ def test_fused_roles_decode_into_row_slices_on_one_global(monkeypatch):
 
 @requires_cuda
 def test_the_two_modes_are_numerically_identical(monkeypatch):
+    _requires_native_ext()
     a, _w, _l, _m, _ = _drive(monkeypatch, MODE_RESIDENT, seed=7)
     b, _w2, _l2, _m2, _ = _drive(monkeypatch, MODE_STREAMED, seed=7)
     assert torch.equal(a, b)
@@ -278,6 +299,7 @@ def test_streamed_holds_the_wire_and_no_resident_tile(monkeypatch):
     """Streamed: the prepared planes are the layer's only weight state; the
     tile is decoded into fresh tensors each forward (a functional op), so no
     layer holds a decoded tile, a scale plane, or a slice of a shared pool."""
+    _requires_native_ext()
     _g, _w, a, _m, _ = _drive(monkeypatch, MODE_STREAMED, roles=(("weight", 128),), cols=512)
     for name in ("wire_bytes", "weight_fp4", "scale_b", "decode_buf", "scale_scratch"):
         assert not hasattr(a, name), name
