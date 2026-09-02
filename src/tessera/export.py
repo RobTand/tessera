@@ -35,7 +35,7 @@ from pathlib import Path
 
 import torch
 
-from .alphabet import BF16_GRID, GAUSSIAN_SOURCE, PayloadGrid, build_forest, grid_digest
+from .alphabet import GAUSSIAN_SOURCE, PayloadGrid, build_forest, grid_digest
 from .decode import reconstruct_unit
 from .encode import EncodedUnit, encode_unit
 from .errors import GrammarError
