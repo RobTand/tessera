@@ -14,9 +14,10 @@ the serve is chained behind it. See "Served (the gate)".)* Nothing here is a
 served result, and a weight-space geomean has already failed to predict a serve
 once on this project.
 
-**Cost.** An H-aware encode is **9.2x** the weights-only one on this body
-(measured off both exports' `[20/196]` line), ~9 h for a 0.6B model. That price
-is why the served gate, not this screen, decides whether the route ships.
+**Cost.** An H-aware encode is **~1.7x** the weights-only one on this body on
+a quiet box -- ~1.7 h for a 0.6B model. An earlier version of this receipt said
+9.2x and ~9 h; that was a contended measurement against an uncontended
+baseline and is retracted below.
 
 Commit: see `git log` for this file. Tests: `tests/test_ldlq_lut_plane.py`,
 `tests/test_ldlq_window.py`, `tests/test_merge_guard.py`.
@@ -247,24 +248,45 @@ whatever the job count). That is also why the window body pays only ~2x for the
 same schedule: `viterbi_window` is the fused kernel, and the TCQ body's Viterbi
 is not fused.
 
-The consequence is concrete and it is a limit on the route, not a footnote.
-Both exports walk the same 196 units in the same order, so their own progress
-lines are the measurement:
+**Retraction: the 9.2x in the first version of this section was a contention
+artifact, and so was the ~9 h it implied.** Both exports walk the same 196
+units in the same order, so their progress lines are matched by unit -- but not
+by what else was on the box. The first twenty units of the H-aware export ran
+against three concurrent weight-space sweeps; the sweeps finished at 17:54 and
+the next forty ran on an idle box:
 
-| Qwen3-0.6B E2M1x2 @ q896, 196 units | at `[20/196]` | whole model |
-|---|---|---|
-| weights-only | 361 s | 3538 s (18 s/unit) |
-| `--hessian --refit-metric h^1.0` | 3311 s | ~32,500 s extrapolated (166 s/unit) |
+| units | weights-only | H-aware | factor | box during the H-aware stretch |
+|---|---|---|---|---|
+| 1-20 | 361 s | 3311 s | 9.2x | three sweeps concurrent |
+| 21-40 | 376 s | 813 s | 2.16x | idle |
+| 41-60 | 402 s | 522 s | 1.30x | idle |
+| **21-60** | **778 s** | **1335 s** | **1.72x** | idle |
 
-**~9.2x, i.e. ~9 h for a 0.6B model.** The factor grows with the row width
-because LDLQ's cost is the segment count, so it is 43x on a 4096-column GLM
-expert: `export_glm53_tessera.py --hessian` at block 32 on those experts is not
-a practical whole-model export at all. Two follow-ups, neither
-done here: shard the export across processes the way `export_glm53_tessera.py`
-already does (the box is launch-bound, so N processes over disjoint layer
-ranges should be close to N times faster, and the merge guard exists to make
-the halves provably one artifact), or fuse the TCQ Viterbi as the window body's
-already is.
+**The H-aware encode costs ~1.7x, not 9.2x.** I published a 4-way-contended
+measurement against an uncontended baseline and called the ratio a property of
+the encoder. It is a property of what else I had running.
+
+Two caveats on the 1.72x, because it is not a clean A/B either. The
+weights-only side ran with one to three sweeps concurrent itself, so if
+anything 1.72x is a *lower* bound -- a quiet-box baseline would be faster and
+the ratio larger. And the weights-only export barely notices contention at all
+(`base` 3542 s and `base2` 2966 s under similar load), which is itself the
+finding: the weights-only pass is not GPU-bound and the LDLQ pass is, which is
+why sharing the box costs the latter 4x and the former nothing.
+
+That also **corrects a claim I had been carrying from the window-body work** --
+that this box is launch-bound, so concurrency is nearly free in throughput. It
+is free for the weights-only encode. It is not free for LDLQ: four processes
+sharing the GPU cost the LDLQ export a factor of four. "Launch-bound" was read
+off a power number (30-35 W at any job count) and applied to a workload it had
+not been measured on.
+
+At 1.72x the whole-model H-aware export of Qwen3-0.6B is **~1.7 h**, not 9, and
+the route is not the practical dead end the first version of this section
+called it. The 43x on a 4096-column GLM expert was measured inside a sweep with
+the same contention problem and is **not** re-derived here; treat it as
+unmeasured until it is run on a quiet box.
+
 
 ## Weight space: the sweep
 
@@ -396,8 +418,10 @@ I did not relaunch, and the code default stays `lut16: h^1.0`. The reasoning,
 so it can be overruled on a word rather than discovered later:
 
 - The task budgeted **one** export and said not to tune the arm until it wins.
-  Killing a 9 h export to swap the refit objective is both a second export and
-  a tune.
+  Killing the export to swap the refit objective is both a second export and a
+  tune. (I believed at the time that it cost 9 h; it costs ~1.7 h. The cost was
+  never the load-bearing part of this reason, and the coordinator's answer when
+  asked was "do not relaunch", which settles it either way.)
 - The default's gate is **served KL against 0.640**, not this screen. The rule
   above chose which candidate to *export*; it was never authorised to set a
   default by itself. A 1.38% weight-space edge cannot set a default here --
@@ -419,8 +443,9 @@ rather than resolved, and one instruction reverses it.
 ## Served (the gate) -- IN FLIGHT, NOT YET MEASURED
 
 **Unmet at the time of writing.** The arm is exported and served by two
-commands, and the first one takes ~9 h on this box (launched 16:52, `[20/196]`
-at 3311 s, so it lands ~01:55) for the reason the section above measures. This section says exactly where it is so that the
+commands. The export was launched 16:52 and, once the box went quiet at 17:54,
+runs at ~1.7x the weights-only pass -- so it lands around 19:20, not the ~01:55
+the retracted 9.2x implied. This section says exactly where it is so that the
 leg can be finished by anyone, including after this session ends.
 
 | what | value |
@@ -442,10 +467,10 @@ leg can be finished by anyone, including after this session ends.
 better -- a question this receipt cannot answer and should not guess at. If it
 does not beat 0.640, the finding is that LDLQ plus a block-scale refit on the
 LUT plane does not pay for itself on the serving metric at 4.0 bpp, the default
-does not move, and the 9.2x encode cost is the reason not to keep tuning: an
-H-aware 4-bit route has to win by enough to justify that price, and a screen
-that says 0.78x in weight space has already failed to predict a serve once on
-this project.
+does not move, and a screen that says 0.78x in weight space has already failed to predict a
+serve once on this project. The encode cost is no longer the argument against
+the route -- at ~1.7x it is cheap -- so if it misses the gate, it misses on
+quality alone.
 
 The baseline leg is already controlled: `base` (weights-only, the pre-merge
 exporter) and `base2` (weights-only, the *arm's own* post-merge exporter) are
@@ -517,7 +542,10 @@ CHANNEL, so S6b is not on any exportable wire and its map entry exists to make
   one rung (E2M1x2, q896, the TCQ cap) against one teacher on one box. It is
   the arm the weight-space screen chose, not a sweep of arms; a served
   comparison of `hessian` against `h^1.0` was deliberately not run, because the
-  screen separated them and each export costs ~9 h.
+  screen separated them and, at the time of the decision, each export was
+  believed to cost ~9 h. That estimate is retracted (~1.7 h on a quiet box), so
+  the *cost* half of that reasoning no longer holds -- the ONE-export budget and
+  the coordinator's instruction not to relaunch do.
 - **`sigma` and `block` were not re-tuned for this plane.** They are the
   window-body receipt's values (1.0 / 32) carried over, and the sweep's
   three-sigma scan confirms 1.0 on this body rather than deriving it. Block 32
