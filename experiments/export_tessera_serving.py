@@ -81,7 +81,7 @@ from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
 from tessera.export import (  # noqa: E402
-    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
@@ -218,8 +218,12 @@ def main():
     ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
                     help="Hessian regulariser for LDLQ cross-column feedback; a negative value turns LDLQ off")
     ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK, help="LDLQ input-feature block")
-    ap.add_argument("--refit-metric", default=DEFAULT_REFIT_OBJECTIVE,
-                    help="error the row-scale refit minimises: plain | hessian | h^ALPHA")
+    ap.add_argument("--refit-metric", default=None,
+                    help="error the scale refit minimises: plain | hessian | h^ALPHA. "
+                         "Default: the measured objective for each unit's own scale "
+                         "plane (export.DEFAULT_REFIT_OBJECTIVE), which is not one "
+                         "value -- the exact quadratic on the CHANNEL plane, the "
+                         "diagonal h^1.0 on the LUT plane")
     ap.add_argument("--refit-reach-floor", action="store_true",
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
     args = ap.parse_args()
@@ -233,11 +237,11 @@ def main():
     # that let the library path encode weights-only while the script did not.
     activation = None
     if args.hessian:
-        activation = ActivationSource.from_capture(
-            args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
-            refit_objective=args.refit_metric,
-            refit_reach_floor=args.refit_reach_floor,
-        )
+        settings = {"ldlq_sigma": args.ldlq_sigma, "ldlq_block": args.ldlq_block,
+                    "refit_reach_floor": args.refit_reach_floor}
+        if args.refit_metric is not None:      # else: the measured per-plane map
+            settings["refit_objective"] = args.refit_metric
+        activation = ActivationSource.from_capture(args.hessian, **settings)
 
     default_grid = grid_for(args.grid)
     check_recipe(default_grid, args.q256)
@@ -359,7 +363,8 @@ def main():
                 # A missing key renders RTN and raises nothing; ``for_unit``
                 # refuses instead, and is the same call the library exporters make.
                 extra = ({} if activation is None else
-                         activation.for_unit(member, weight.shape[1], args.device))
+                         activation.for_unit(member, weight.shape[1], args.device,
+                                             scale_plane=recipe.scale_plane))
                 exported, unit, forests = encode_linear_planes(
                     weight, grid=grid, q256=q256, name=member, verify=not args.no_verify, **extra)
                 extra.clear()

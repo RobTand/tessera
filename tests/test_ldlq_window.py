@@ -170,13 +170,26 @@ def test_reach_floor_keeps_the_target_inside_the_body():
 def test_the_activation_aware_defaults_are_the_measured_ones():
     """The recipe an exporter applies when it is handed a Hessian.
 
-    Pinned because these three numbers are a measurement, not a taste: on
-    Qwen3-0.6B's 4.07-bpp FP8 wire they take served KL-vs-BF16 from 0.1512 to
-    0.1046 at identical bytes, and on six GLM experts the out-space geomean to
-    0.932x (docs/measurements/tessera-ldlq-window-served-2026-09-02.md).
-    Changing one means re-running that gate.
+    Pinned because every value here is a measurement, not a taste. ``sigma``
+    and ``block``: on Qwen3-0.6B's 4.07-bpp FP8 wire they take served
+    KL-vs-BF16 from 0.1512 to 0.1046 at identical bytes, and on six GLM experts
+    the out-space geomean to 0.932x
+    (docs/measurements/tessera-ldlq-window-served-2026-09-02.md).
+
+    The objective is **per scale plane** because the two planes that have a
+    metric-aware refit were measured to want different ones: the CHANNEL
+    plane's refit is one scalar per row and solves the exact quadratic in
+    closed form (0.5982x vs h^1.0's 0.6376x, same receipt), while the LUT
+    plane's is a Jacobi step plus a separable sixteen-entry table fit, and its
+    full-H arm lands worse than the diagonal one on the fit rows' own quadratic
+    (docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md). S6b has no
+    metric-aware refit at all, so LDLQ runs there alone.
+
+    Changing any of them means re-running the gate that set it.
     """
-    assert (DEFAULT_LDLQ_SIGMA, DEFAULT_LDLQ_BLOCK, DEFAULT_REFIT_OBJECTIVE) == (1.0, 32, "hessian")
+    assert (DEFAULT_LDLQ_SIGMA, DEFAULT_LDLQ_BLOCK) == (1.0, 32)
+    assert dict(DEFAULT_REFIT_OBJECTIVE) == {
+        "channel": "hessian", "lut16": "h^1.0", "s6b": "plain"}
 
 
 @cuda

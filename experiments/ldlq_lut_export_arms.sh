@@ -34,7 +34,10 @@ run () {   # name, extra flags...
   tail -2 "$RUNS/export_$name.log"
 }
 
-run ldlqH  --hessian "$H" &
+# Both objectives are named explicitly.  The default is per scale plane and
+# this task is what set the LUT plane's entry, so leaving one of them implicit
+# would make the arm mean different things before and after the change.
+run ldlqH  --hessian "$H" --refit-metric hessian &
 run ldlqH1 --hessian "$H" --refit-metric h^1.0 &
 wait
 echo ARMS_DONE; date

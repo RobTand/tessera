@@ -132,6 +132,57 @@ was fit on text it is graded on, and the weight-space sweep is scored on the
 **eval** slice, disjoint from the fit slice the Hessian and the refit were built
 from.
 
+## The exact objective loses to the diagonal one, on its own quadratic
+
+The CHANNEL plane's measured default is the **exact** `hessian` objective: on
+the FP8 wire it beat every diagonal power (0.5982x vs h^1.0's 0.6376x,
+`tessera-ldlq-window-served-2026-09-02.md`). On the LUT plane it is the other
+way round, and the reason is not the one a reader would guess.
+
+`experiments/ldlq_lut_qwen_hfit.sh`, `layers.0.self_attn.q_proj`, every arm
+carrying both scores -- `out` is the held-out eval slice, `hfit` is
+`sqrt(E H E^T / W H W^T)` on the **fit** rows, the quadratic the refit is
+provably monotone in:
+
+| arm | out | hfit | s |
+|---|---|---|---|
+| baseline (no LDLQ, plain refit) | 0.06053 | 0.06006 | 27 |
+| LDLQ 1.0/32 | 0.05149 | 0.05025 | 179 |
+| refit h^1.0 only | 0.05417 | 0.05393 | 29 |
+| refit full-H only | 0.05584 | 0.05541 | 19 |
+| **LDLQ 1.0/32 + refit h^1.0** | **0.04375** | **0.04283** | 173 |
+| LDLQ 1.0/32 + refit full-H | 0.04822 | 0.04699 | 156 |
+
+Two readings, and only one of them survives:
+
+* **It is not the accept guard.** Every refit arm lands *below* the baseline on
+  `hfit`, so nothing raises the quantity the guard scores. The guard holds.
+* **It is not generalisation.** `hfit` and `out` agree to within 1-3% on every
+  arm, i.e. the 16k-token Hessian transfers to the held-out slice; and the
+  ordering is the same in both columns. The full-H refit is worse **on the fit
+  rows' own quadratic** -- the objective it alone is solving exactly.
+
+What is left is the optimiser, and the receipt's own list of approximations
+already names it. Under a **diagonal** metric the sixteen-column blocks
+decouple completely: the coordinate step is the joint minimiser (`t* = 1`
+exactly), and `_fit_lut`'s separable model `sum_b A_b (c_b - s*_b)^2` is not a
+model but the cost itself. Under the **full** H neither is true: the vector
+step is Jacobi corrected by a single per-row step length, and the table fit
+drops every cross-block term. So the alternation with the trellis -- which
+minimises its own SSE, not this quadratic -- converges to a worse point of the
+full-H objective than the diagonal path reaches of it.
+
+The CHANNEL plane has no such gap: one scalar per row, rows independent under
+H, so its full-H refit *is* the exact minimiser and there is no table to fit.
+**The exactness that matters is the optimiser's, not the objective's** -- and
+that is a property of the plane, which is why the default below is per plane
+and not per repo.
+
+**Open lever, not tried:** a Gauss-Seidel sweep (update `G` after each block
+rather than stepping every block from the same residual) is the standard fix
+for exactly this, and would plausibly make the full-H objective win here too.
+The per-plane default records what was measured *with this optimiser*.
+
 ## The decision rule, written before the numbers
 
 Three candidate recipes for "what an exporter does on the LUT plane when it is

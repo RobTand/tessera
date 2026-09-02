@@ -141,7 +141,11 @@ def test_the_config_names_which_hessian_shaped_the_bytes(tmp_path):
     assert block["hessian"]["fit_ids_sha256"] == "b" * 64
     assert block["hessian"]["fit_tokens"] == 131072
     assert (block["ldlq_sigma"], block["ldlq_block"]) == (1.0, 32)
-    assert block["refit_objective"] == "hessian"
+    # The objective is per scale plane, so the whole map travels: two parts
+    # built with different maps are two artifacts even where they happen to
+    # agree on the plane one of them used.
+    assert block["refit_objective"] == {"channel": "hessian", "lut16": "h^1.0",
+                                        "s6b": "plain"}
 
 
 # --------------------------------------------------------------------------
@@ -182,6 +186,23 @@ def test_each_activation_field_refuses_on_its_own(aware_config, field, other):
     with pytest.raises(SystemExit, match=field):
         merge.check_configs([("partA", a), ("partB", b)])
     merge.check_configs([("partA", a), ("partB", copy.deepcopy(aware_config))])
+
+
+def test_parts_that_disagree_only_off_their_own_plane_still_refuse(aware_config):
+    """The map is compared whole, not at the plane this export happened to use.
+
+    Both parts here encode on the CHANNEL plane and agree about it; they
+    disagree about ``lut16``. Comparing only the plane in use would call them
+    the same artifact -- and the next export from the same source, on a grid
+    whose recipe is LUT, would silently be a third one.
+    """
+    a = copy.deepcopy(aware_config)
+    b = copy.deepcopy(aware_config)
+    assert b["activation_aware"]["refit_objective"]["channel"] == "hessian"
+    b["activation_aware"]["refit_objective"] = dict(
+        b["activation_aware"]["refit_objective"], lut16="hessian")
+    with pytest.raises(SystemExit, match="refit_objective"):
+        merge.check_configs([("partA", a), ("partB", b)])
 
 
 def test_matching_activation_aware_parts_merge(aware_config):

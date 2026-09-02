@@ -267,7 +267,9 @@ def test_the_streaming_export_carries_a_hessian_onto_the_four_bit_wire(tmp_path)
     assert len(plain) == len(aware), "both levers are encoder-side; the wire is the same"
     config = json.loads((tmp_path / "aware" / "tessera_config.json").read_text())
     assert config["activation_aware"]["hessian"]["fit_ids_sha256"] == "d" * 64
-    assert config["activation_aware"]["refit_objective"] == "hessian"
+    assert config["activation_aware"]["refit_objective"]["lut16"] == "h^1.0", (
+        "the 4-bit route's own plane is what this export used, and the config "
+        "must say which objective wrote the bytes")
     assert json.loads(
         (tmp_path / "plain" / "tessera_config.json").read_text())["activation_aware"] is None
 
@@ -317,3 +319,82 @@ def test_the_refit_objective_reaches_the_lut_plane_and_changes_the_bytes(tmp_pat
     assert len(set(blobs.values())) == 3, (
         "two refit objectives wrote the same bytes: one of them is not being read")
     assert len({len(b) for b in blobs.values()}) == 1, "the refit never changes the wire"
+
+
+def test_a_per_plane_objective_needs_the_plane_and_will_not_guess():
+    """The map's two measured answers disagree, so a caller that does not say
+    which plane it is encoding on cannot be handed either of them.
+
+    This is the silent-no-op shape again, one level up: a ``for_unit`` that
+    quietly picked (say) the CHANNEL entry would encode a LUT-plane unit at an
+    objective measured somewhere else and raise nothing.
+    """
+    from tessera.export import DEFAULT_REFIT_OBJECTIVE, ActivationSource
+    from tessera.manifest import ScalePlaneKind
+
+    provenance = {"text_sha256": "a" * 64, "fit_tokens": 1024,
+                  "fit_ids_sha256": "b" * 64}
+    source = ActivationSource(hessians={}, provenance=provenance)
+    assert source.refit_objective == DEFAULT_REFIT_OBJECTIVE
+
+    with pytest.raises(GrammarError, match="scale plane"):
+        source.objective_for(None)
+    assert source.objective_for(ScalePlaneKind.LUT) == "h^1.0"
+    assert source.objective_for(ScalePlaneKind.CHANNEL) == "hessian"
+    assert source.objective_for(ScalePlaneKind.S6B) == "plain"
+
+    # A plain string still means every plane, and needs no plane to resolve.
+    assert ActivationSource(hessians={}, provenance=provenance,
+                            refit_objective="plain").objective_for(None) == "plain"
+
+    # A map that does not name the plane in use refuses rather than falling
+    # back to another plane's measurement.
+    partial = ActivationSource(hessians={}, provenance=provenance,
+                               refit_objective={"channel": "hessian"})
+    with pytest.raises(GrammarError, match="lut16"):
+        partial.objective_for(ScalePlaneKind.LUT)
+
+
+@cuda
+def test_the_default_on_this_plane_is_the_arm_that_was_measured(tmp_path):
+    """The exported default and the measured arm must be the same bytes.
+
+    The served arm below was exported with an explicit ``--refit-metric
+    h^1.0``, and the per-plane default was set to that value afterwards. If the
+    default resolved to anything else on the LUT plane -- the CHANNEL entry,
+    a fallback, the old single constant -- then the recipe the exporter applies
+    by default would not be the recipe the receipt measured, and nothing would
+    say so.
+    """
+    from safetensors.torch import save_file
+
+    from tessera.export import ActivationSource, export_checkpoint_streaming
+
+    g = torch.Generator().manual_seed(55)
+    tensors = {"model.layers.0.mlp.gate_proj.weight":
+               torch.randn(64, 256, generator=g).bfloat16()}
+    src = tmp_path / "src"
+    src.mkdir()
+    save_file({k: v.contiguous() for k, v in tensors.items()},
+              str(src / "model.safetensors"), metadata={"format": "pt"})
+    plan = {name: CAP for name in tensors}
+    hessians = {ActivationSource.unit_name(n): _hessian(cols=256, seed=3, device="cpu")
+                for n in tensors}
+    provenance = {"text_sha256": "a" * 64, "fit_tokens": 16384,
+                  "fit_ids_sha256": "b" * 64}
+    extra = {"source_model": str(src), "inherits": {}}
+
+    out = {}
+    for tag, objective in (("default", None), ("explicit", "h^1.0"),
+                           ("full_h", "hessian")):
+        kw = {} if objective is None else {"refit_objective": objective}
+        d = tmp_path / tag
+        export_checkpoint_streaming(
+            src, d, plan, grid=K2, copy_aux=False, extra_config=extra,
+            activation=ActivationSource(hessians=hessians, provenance=provenance, **kw))
+        out[tag] = (d / "model.safetensors").read_bytes()
+
+    assert out["default"] == out["explicit"], (
+        "the LUT plane's default is not the h^1.0 arm the receipt measured")
+    assert out["default"] != out["full_h"], (
+        "the two objectives reach the same bytes, so the plane is not reading one")

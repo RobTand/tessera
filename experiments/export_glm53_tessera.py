@@ -46,7 +46,7 @@ import torch
 
 from tessera.alphabet import E2M1_GRID, tuple_grid
 from tessera.export import (
-    DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
+    DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, export_checkpoint_streaming)
 from tessera.manifest import RotationState
 
@@ -69,8 +69,10 @@ def main():
     ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
                     help="Hessian regulariser for LDLQ; a negative value turns LDLQ off")
     ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK)
-    ap.add_argument("--refit-metric", default=DEFAULT_REFIT_OBJECTIVE,
-                    help="error the scale refit minimises: plain | hessian | h^ALPHA")
+    ap.add_argument("--refit-metric", default=None,
+                    help="error the scale refit minimises: plain | hessian | h^ALPHA. "
+                         "Default: the measured objective for each unit's own scale "
+                         "plane (export.DEFAULT_REFIT_OBJECTIVE)")
     args = ap.parse_args()
 
     # One loader for every driver's --hessian, so no two of them can disagree
@@ -79,7 +81,8 @@ def main():
     if args.hessian:
         activation = ActivationSource.from_capture(
             args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
-            refit_objective=args.refit_metric)
+            **({} if args.refit_metric is None
+               else {"refit_objective": args.refit_metric}))
 
     plan = {k: int(v) for k, v in json.load(open(PLAN)).items()}
     shard_filter = None
