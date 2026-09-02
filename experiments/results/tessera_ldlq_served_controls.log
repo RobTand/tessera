@@ -1,0 +1,89 @@
+serving /home/rob/models/Qwen3-0.6B  (vllm/vllm-openai:latest)
+  up after 130s
+[dump] chunk 1/8 positions=511 k=1025 5.5s
+[dump] chunk 2/8 positions=511 k=1025 10.9s
+[dump] chunk 3/8 positions=511 k=1025 15.9s
+[dump] chunk 4/8 positions=511 k=1025 21.3s
+[dump] chunk 5/8 positions=511 k=1025 26.8s
+[dump] chunk 6/8 positions=511 k=1025 32.5s
+[dump] chunk 7/8 positions=511 k=1024 37.8s
+[dump] chunk 8/8 positions=511 k=1025 43.2s
+dumped 4088 positions x k<=1025 -> /mnt/shared/tessera-kl/qwen_teacher_bf16_lina.json
+  top-K coverage: min=0.2787 mean=0.9767   (1 - coverage is the teacher/student mass this K cannot see)
+dumped -> /mnt/shared/tessera-kl/qwen_teacher_bf16_lina.json   (serve log /mnt/shared/tessera-runs/ldlq/serve_qwen_teacher_bf16_lina.log)
+serving /mnt/shared/tessera-runs/ldlq/base-stock-twin  (vllm/vllm-openai:latest)
+  up after 150s
+[dump] chunk 1/8 positions=511 k=1025 6.2s
+[dump] chunk 2/8 positions=511 k=1025 11.5s
+[dump] chunk 3/8 positions=511 k=1025 16.5s
+[dump] chunk 4/8 positions=511 k=1025 21.7s
+[dump] chunk 5/8 positions=511 k=1025 27.0s
+[dump] chunk 6/8 positions=511 k=1025 32.7s
+[dump] chunk 7/8 positions=511 k=1025 38.3s
+[dump] chunk 8/8 positions=511 k=1025 43.9s
+dumped 4088 positions x k<=1025 -> /mnt/shared/tessera-kl/qwen_ldlq_base.json
+  top-K coverage: min=0.0817 mean=0.9776   (1 - coverage is the teacher/student mass this K cannot see)
+dumped -> /mnt/shared/tessera-kl/qwen_ldlq_base.json   (serve log /mnt/shared/tessera-runs/ldlq/serve_qwen_ldlq_base.log)
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=78.06%
+  ALL            KL >= 0.151163   (<= 2.892148 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.028139 max 0.866124
+  CONFIDENT      n=1709 (42%)  KL >= 0.100486   (<= 0.645353)
+  legacy (v1)    all=0.153807  confident=0.101127   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_base_vs_lina.json
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=78.06%
+  ALL            KL >= 0.151163   (<= 2.892148 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.028139 max 0.866124
+  CONFIDENT      n=1709 (42%)  KL >= 0.100486   (<= 0.645353)
+  legacy (v1)    all=0.153807  confident=0.101127   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_base_vs_sparky.json
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=81.60%
+  ALL            KL >= 0.112864   (<= 2.743693 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.027012 max 0.794042
+  CONFIDENT      n=1709 (42%)  KL >= 0.080449   (<= 0.601585)
+  legacy (v1)    all=0.114194  confident=0.079878   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_ldlq_vs_lina.json
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection  bound=lower bound (data-processing inequality)  positions=4088  corpus=076d33efc447(4096 tok)  tokenizer=76f13c8e6e55
+positions=4088  top1_agree=81.60%
+  ALL            KL >= 0.112864   (<= 2.743693 at the declared floor 3.72e-44)
+                 teacher tail mass outside the compared support: mean 0.027012 max 0.794042
+  CONFIDENT      n=1709 (42%)  KL >= 0.080449   (<= 0.601585)
+  legacy (v1)    all=0.114194  confident=0.079878   -- floor-substituted, no tail term, NOT a bound
+  -> /mnt/shared/tessera-runs/ldlq/kl_ldlq_vs_sparky.json
+Traceback (most recent call last):
+  File "/home/rob/dq-runs/kl_tool.py", line 836, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 832, in main
+    return args.func(args)
+           ^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 480, in cmd_compare
+    student_meta, s_ids, s_lps = read_payload(args.student)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 211, in read_payload
+    with np.load(p, allow_pickle=False) as z:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/venvs/prismaquant-cu130/lib/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 454, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/mnt/shared/tessera-kl/qwen_ldlq_ldlqH.json.npz'
+Traceback (most recent call last):
+  File "/home/rob/dq-runs/kl_tool.py", line 836, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 832, in main
+    return args.func(args)
+           ^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 480, in cmd_compare
+    student_meta, s_ids, s_lps = read_payload(args.student)
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/kl_tool.py", line 211, in read_payload
+    with np.load(p, allow_pickle=False) as z:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/dq-runs/venvs/prismaquant-cu130/lib/python3.12/site-packages/numpy/lib/_npyio_impl.py", line 454, in load
+    fid = stack.enter_context(open(os.fspath(file), "rb"))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/mnt/shared/tessera-kl/qwen_ldlq_ldlqH.json.npz'
+CHAIN2 DONE 13:12:31

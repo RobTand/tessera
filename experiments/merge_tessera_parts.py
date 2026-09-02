@@ -21,8 +21,10 @@ Accounting is summed, not recomputed: `quantized_bytes`/`quantized_params` are
 the accountant's own totals from each half, and body bpp is re-derived from the
 sum so it cannot drift from the bytes.  The rest of the config must be
 *identical* between halves -- same grid, same code, same geometry, same
-rotation -- and the merge refuses if it is not, since two halves encoded
-differently are two artifacts, not one.
+rotation, and the same **Hessian** where one shaped the bytes -- and the merge
+refuses if it is not, since two halves encoded differently are two artifacts,
+not one.  `check_configs` is that comparison, split out so the guard can be
+tested field by field rather than only through a full merge.
 """
 import argparse
 import json
@@ -73,6 +75,29 @@ SHARED_WHEN_WRITTEN = ("wire.recipes",)
 PROJECTED_BY_TABLE = ("trellis.span", "body.kind", "body.window_bits", "body.seed",
                       "body.sigma", "scale.plane", "scale.sigma")
 
+#: The activation-aware encoding: which Hessian shaped the bytes, and what was
+#: done with it.  Compared field by field so a refusal names the one that
+#: differs, and every one of them is written by ``_write_config`` -- a name
+#: here that the exporter does not write would compare ``_MISSING`` to
+#: ``_MISSING`` and pass, which is how eight of ``SHARED``'s thirteen went
+#: unenforced.  ``tests/test_merge_guard.py`` asserts each name resolves in a
+#: config the exporter actually wrote, and gives each one its own failing case.
+#:
+#: The three ``hessian.*`` fields are the capture's identity (``HESSIAN_IDENTITY``
+#: in ``tessera.export``): the sha of the calibration text, the fit token count
+#: and the sha of the token ids.  The rest of the provenance (model, seqlen,
+#: source split) rides along for an auditor and is not compared, because these
+#: three already decide whether two captures are the same capture.
+SHARED_ACTIVATION = (
+    "activation_aware.ldlq_sigma",
+    "activation_aware.ldlq_block",
+    "activation_aware.refit_objective",
+    "activation_aware.refit_reach_floor",
+    "activation_aware.hessian.text_sha256",
+    "activation_aware.hessian.fit_tokens",
+    "activation_aware.hessian.fit_ids_sha256",
+)
+
 _MISSING = object()
 
 
@@ -91,6 +116,96 @@ def load(part):
     index = json.loads((part / "model.safetensors.index.json").read_text())
     config = json.loads((part / "tessera_config.json").read_text())
     return part, index, config
+
+
+def check_configs(parts):
+    """Refuse unless every part was encoded identically; return the first config.
+
+    ``parts`` is ``[(name, config), ...]``.  Raises ``SystemExit`` naming the
+    single field that differs, because "the configs disagree" is not an
+    actionable message when thirty fields are compared.
+
+    Three classes of field, and the difference between them is who wrote them:
+
+      * ``SHARED`` -- written by every exporter that has ever run.  Absent from
+        the first part means the guard cannot do its job, so it refuses rather
+        than passing; that is the bug that once left eight of thirteen names
+        comparing ``None`` to ``None``.
+      * ``SHARED_WHEN_WRITTEN`` -- written by later exporters only.  Compared
+        when every part has them, refused when the parts disagree about
+        whether they exist (different exporters), noted and skipped when none
+        does.
+      * ``SHARED_ACTIVATION`` -- the activation-aware block, which is
+        ``null`` on a weights-only export and a dict otherwise.  Null in every
+        part is a consistent weights-only merge; a mix of null and dict is two
+        artifacts, one of which was shaped by a Hessian the other never saw.
+    """
+    names = [name for name, _ in parts]
+    base = dict(parts[0][1])
+    # A guard that cannot find the field it guards is a bug, not a pass.  The
+    # old ``if field in base`` skipped absent names silently, which is how
+    # eight of them went unenforced without anyone noticing.
+    absent = [f for f in SHARED if dotted(base, f) is _MISSING]
+    if absent:
+        raise SystemExit(
+            f"{names[0]} has no {absent} -- these fields define the "
+            f"encoding and cannot be compared across parts, so the merge "
+            f"cannot certify the parts were encoded identically. Either the "
+            f"exporter stopped writing them or SHARED names them wrongly; "
+            f"fix that rather than merging unchecked.")
+    compared = list(SHARED)
+    for field in SHARED_WHEN_WRITTEN:
+        present = [dotted(config, field) is not _MISSING for _, config in parts]
+        if all(present):
+            compared.append(field)
+            if field == "wire.recipes":
+                compared = [f for f in compared if f not in PROJECTED_BY_TABLE]
+        elif any(present):
+            raise SystemExit(
+                f"{field!r} is written by some parts and not others -- they were "
+                f"built by different exporters; rebuild the older parts")
+        else:
+            print(f"note: no part carries {field!r} (written by later exporters); "
+                  f"the recipe is compared through its flat projection only")
+
+    # --- the activation-aware block ---------------------------------------
+    written = [dotted(config, "activation_aware") for _, config in parts]
+    if any(v is not _MISSING for v in written):
+        stale = [n for n, v in zip(names, written) if v is _MISSING]
+        if stale:
+            raise SystemExit(
+                f"{stale} carry no 'activation_aware' key while the others do -- "
+                f"they were built by different exporters, and the older ones "
+                f"cannot say whether a Hessian shaped their bytes; rebuild them")
+        aware = [n for n, v in zip(names, written) if v]
+        if aware and len(aware) != len(names):
+            plain = [n for n, v in zip(names, written) if not v]
+            raise SystemExit(
+                f"{aware} were encoded activation-aware and {plain} were not -- "
+                f"one half's bytes depend on a Hessian the other half never saw, "
+                f"so they are two artifacts, not one")
+        if aware:
+            missing = [f for f in SHARED_ACTIVATION if dotted(base, f) is _MISSING]
+            if missing:
+                raise SystemExit(
+                    f"{names[0]} is activation-aware but its block has no "
+                    f"{missing} -- the merge cannot certify the parts were built "
+                    f"against the same Hessian at the same settings, and a field "
+                    f"absent from every part would compare equal and pass "
+                    f"vacuously. Re-export with a current exporter.")
+            compared.extend(SHARED_ACTIVATION)
+    else:
+        print("note: no part carries 'activation_aware' (written by later "
+              "exporters); whether a Hessian shaped these bytes is unrecorded")
+
+    for name, config in parts[1:]:
+        for field in compared:
+            if dotted(base, field) != dotted(config, field):
+                raise SystemExit(
+                    f"parts disagree on {field!r}: {dotted(base, field)!r} vs "
+                    f"{dotted(config, field)!r} -- two halves encoded differently "
+                    f"are two artifacts, not one")
+    return base
 
 
 def main():
@@ -131,39 +246,7 @@ def main():
             f"  unexpected {extra[:5]}")
 
     # --- config: identical where it must be, summed where it adds --------
-    base = dict(loaded[0][2])
-    # A guard that cannot find the field it guards is a bug, not a pass.  The
-    # old ``if field in base`` skipped absent names silently, which is how
-    # eight of them went unenforced without anyone noticing.
-    absent = [f for f in SHARED if dotted(base, f) is _MISSING]
-    if absent:
-        raise SystemExit(
-            f"{loaded[0][0].name} has no {absent} -- these fields define the "
-            f"encoding and cannot be compared across parts, so the merge "
-            f"cannot certify the parts were encoded identically. Either the "
-            f"exporter stopped writing them or SHARED names them wrongly; "
-            f"fix that rather than merging unchecked.")
-    compared = list(SHARED)
-    for field in SHARED_WHEN_WRITTEN:
-        present = [dotted(config, field) is not _MISSING for _, _, config in loaded]
-        if all(present):
-            compared.append(field)
-            if field == "wire.recipes":
-                compared = [f for f in compared if f not in PROJECTED_BY_TABLE]
-        elif any(present):
-            raise SystemExit(
-                f"{field!r} is written by some parts and not others -- they were "
-                f"built by different exporters; rebuild the older parts")
-        else:
-            print(f"note: no part carries {field!r} (written by later exporters); "
-                  f"the recipe is compared through its flat projection only")
-    for part, _, config in loaded[1:]:
-        for field in compared:
-            if dotted(base, field) != dotted(config, field):
-                raise SystemExit(
-                    f"parts disagree on {field!r}: {dotted(base, field)!r} vs "
-                    f"{dotted(config, field)!r} -- two halves encoded differently "
-                    f"are two artifacts, not one")
+    base = check_configs([(part.name, config) for part, _, config in loaded])
     acct = {"quantized_params": 0, "quantized_bytes": 0, "passthrough_bytes": 0}
     plan, rungs = {}, set()
     for _, _, config in loaded:

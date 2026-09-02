@@ -43,6 +43,7 @@ __all__ = [
     "land_channel_scale",
     "initial_channel_scale",
     "refit_channel_scale",
+    "land_at_least",
     "channel_scale_field",
 ]
 
@@ -168,11 +169,33 @@ def initial_channel_scale(
     return stored, effective, global_scale
 
 
+def land_at_least(
+    floor: torch.Tensor, global_scale: float
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The smallest fp16 word over ``global_scale`` that is at least ``floor``.
+
+    ``land_channel_scale`` rounds to nearest, which may land a hair *below* a
+    scale that was computed as a lower bound.  A reach floor that is missed by
+    one ulp clips the very weight it was raised for, so this rounds up: cast,
+    then nudge by one ulp (fp16 keeps ten mantissa bits) where the cast fell
+    short.
+    """
+    stored, effective = land_channel_scale(floor, global_scale)
+    short = effective < floor
+    if bool(short.any()):
+        bumped = (stored.float() * (1.0 + 2.0 ** -10)).to(torch.float16)
+        stored = torch.where(short, bumped, stored)
+        effective = stored.float() * global_scale
+    return stored, effective
+
+
 def refit_channel_scale(
     work: torch.Tensor,
     units: torch.Tensor,
     stored: torch.Tensor,
     global_scale: float,
+    metric: "torch.Tensor | None" = None,
+    floor: "torch.Tensor | None" = None,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """One least-squares step on the row scales, landed on fp16 words.
 
@@ -181,11 +204,43 @@ def refit_channel_scale(
     ``u``; the optimum ``B / A`` is landed on a word and kept only where the
     landed word lowers the row's error, so no row ends worse than it began
     and the alternation with the trellis is monotone in squared error.
+
+    ``metric`` changes which error that is, and nothing else.  ``None`` is the
+    plain squared error above.  A 1-D ``[cols]`` tensor is a per-input-column
+    weight (the diagonal-Hessian objective ``sum_j h_j e_ij^2``, or any power
+    of it).  A 2-D ``[cols, cols]`` tensor is the full Hessian, for which the
+    row's true proxy loss ``(w_r - s u_r) H (w_r - s u_r)^T`` is the same
+    scalar quadratic with ``A = u_r H u_r^T`` and ``B = w_r H u_r^T`` -- the
+    exact form, with no exponent to choose.  The monotone guard is evaluated
+    under whichever metric was asked for, so the alternation stays monotone in
+    *that* error.
+
+    ``floor`` is a per-row lower bound on the effective scale, landed upward.
+    It is how the body's reach survives a refit: a least-squares step is
+    amax-blind, and a row whose target exceeds ``reach * s`` clips at the
+    trellis, which no later step recovers (``initial_channel_scale``).  The
+    bound is applied after the guard, so a row is never left both clipping and
+    "improved".
     """
     W = work.float()
     U = units.float()
-    A = (U * U).sum(dim=1)
-    B = (W * U).sum(dim=1)
+    if metric is None:
+        A = (U * U).sum(dim=1)
+        B = (W * U).sum(dim=1)
+    elif metric.ndim == 1:
+        m = metric.to(W.dtype).to(W.device).reshape(1, -1)
+        A = (U * U * m).sum(dim=1)
+        B = (W * U * m).sum(dim=1)
+    elif metric.ndim == 2:
+        H = metric.to(W.dtype).to(W.device)
+        UH = U @ H
+        A = (UH * U).sum(dim=1)
+        B = (UH * W).sum(dim=1)
+    else:
+        raise GrammarError(
+            f"a refit metric is per-column [cols] or a full [cols, cols] Hessian, "
+            f"got shape {tuple(metric.shape)}"
+        )
     old_eff = stored.float() * global_scale
     candidate = torch.where(A > 0, B / A.clamp_min(1e-30), old_eff)
     new_stored, new_eff = land_channel_scale(candidate, global_scale)
@@ -193,6 +248,10 @@ def refit_channel_scale(
     err_new = A * new_eff * new_eff - 2 * B * new_eff
     keep_new = err_new < err_old
     stored_out = torch.where(keep_new, new_stored, stored)
+    if floor is not None:
+        floor_stored, floor_eff = land_at_least(floor.float(), global_scale)
+        below = stored_out.float() * global_scale < floor_eff
+        stored_out = torch.where(below, floor_stored, stored_out)
     return stored_out, stored_out.float() * global_scale
 
 

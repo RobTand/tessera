@@ -80,7 +80,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid  # noqa: E402
-from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # noqa: E402
+from tessera.export import (  # noqa: E402
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, DEFAULT_REFIT_OBJECTIVE,
+    ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
@@ -208,7 +210,39 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
+    ap.add_argument("--hessian", type=Path, default=None,
+                    help="capture_h_full.py payload: full input Hessians keyed by the tensor's module "
+                         "name.  Enables the activation-aware encoder settings below; an encode that "
+                         "uses them is not reproducible from the weights alone, so the file's own "
+                         "provenance is copied into the manifest.")
+    ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
+                    help="Hessian regulariser for LDLQ cross-column feedback; a negative value turns LDLQ off")
+    ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK, help="LDLQ input-feature block")
+    ap.add_argument("--refit-metric", default=DEFAULT_REFIT_OBJECTIVE,
+                    help="error the row-scale refit minimises: plain | hessian | h^ALPHA")
+    ap.add_argument("--refit-reach-floor", action="store_true",
+                    help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
     args = ap.parse_args()
+
+    # The activation-aware settings fire when, and only when, a Hessian is
+    # here: the encoder cannot invent one, and a weights-only export must stay
+    # the byte-for-byte artifact it was.  Given one, the defaults are the
+    # measured recipe (export.DEFAULT_LDLQ_*), overridable per run.  The recipe
+    # itself lives in ``ActivationSource``, not here: this script and the
+    # library exporters must not carry two copies of it, which is the drift
+    # that let the library path encode weights-only while the script did not.
+    activation = None
+    if args.hessian:
+        payload = torch.load(args.hessian, map_location="cpu", weights_only=False)
+        if args.ldlq_sigma is not None and args.ldlq_sigma < 0:
+            args.ldlq_sigma = None                  # `--ldlq-sigma -1` turns LDLQ off
+        activation = ActivationSource(
+            hessians=payload["H"], provenance=dict(payload.get("provenance") or {},
+                                                   path=str(args.hessian)),
+            ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
+            refit_objective=args.refit_metric,
+            refit_reach_floor=args.refit_reach_floor,
+        )
 
     default_grid = grid_for(args.grid)
     check_recipe(default_grid, args.q256)
@@ -327,8 +361,13 @@ def main():
             stock_tensors: dict[str, dict] = {}
             for member in members:
                 weight = weights_cache.pop(member).to(args.device, torch.float32).contiguous()
+                # A missing key renders RTN and raises nothing; ``for_unit``
+                # refuses instead, and is the same call the library exporters make.
+                extra = ({} if activation is None else
+                         activation.for_unit(member, weight.shape[1], args.device))
                 exported, unit, forests = encode_linear_planes(
-                    weight, grid=grid, q256=q256, name=member, verify=not args.no_verify)
+                    weight, grid=grid, q256=q256, name=member, verify=not args.no_verify, **extra)
+                extra.clear()
                 parse_unit_artifact(exported.blob, device=args.device)      # the reader accepts what we wrote
                 role = module_of(member).rsplit(".", 1)[-1]
                 roles.append((role, exported.rows, exported.blob, unit, forests))
@@ -469,6 +508,7 @@ def main():
                + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
+        "activation_aware": None if activation is None else activation.config_block(),
         "stock_twin": str(twin) if twin is not None else None,
         "totals": totals, "modules": module_records,
     }

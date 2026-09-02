@@ -105,3 +105,7 @@ route's activation leg, a per-model measured checkpoint transform, not a format
 mode. Next on the encoder: the h-weighted refit and LDLQ on the window body under
 served KL; the E2M1x2 sub-cap window arm on the NVFP4 route carries the same
 CHANNEL-free plane and is unaffected.
+
+**Measured (2026-09-02):** both, in
+`tessera-ldlq-window-served-2026-09-02.md`. Served KL 0.151163 -> 0.104577 at
+identical bytes; both are default when the exporter is given a Hessian.

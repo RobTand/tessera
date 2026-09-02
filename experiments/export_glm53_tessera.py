@@ -26,6 +26,15 @@ second code path -- there is no branch that can disagree with the census.
 ``verify=True``: every unit is decoded back and compared before its bytes are
 accepted.  The bytes are the claim (today's lesson: never a formula where an
 accountant exists), and the accountant is the thing that writes them.
+
+**No ``--hessian`` here, on purpose.**  ``export_checkpoint_streaming`` takes an
+``ActivationSource`` and this driver could pass one, but the activation-aware
+recipe (LDLQ plus the full-Hessian row-scale refit) is implemented for the
+CHANNEL scale plane and this grid is E2M1_K2, whose recipe is LUT16 below the
+cap and the coset trellis at it.  ``encode_unit`` refuses both levers under a
+block plane rather than ignoring them, so the flag would abort on the first
+unit.  A flag that cannot fire on the one grid its driver uses is worse than no
+flag; when a CHANNEL-plane GLM wire exists, add it here.
 """
 import argparse
 import json, sys, time
