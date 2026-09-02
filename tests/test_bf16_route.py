@@ -435,3 +435,95 @@ def test_a_checkpoint_config_naming_this_grid_replays_it():
 
 def test_the_family_name_is_spelled_once():
     assert BF16_FAMILY == "TESSERA_BF16"
+
+
+# ------------------------- the TP shard's start state -----------------------
+#
+# §6 P0-shardstate of the 2026-09-02 math audit.  ``prepare_bf16_unit`` packed
+# with ``pack_window_planes(body, rates, L)`` -- no ``initial_state`` -- and
+# ``stream_bf16`` replayed from the pinned zero register, so a row shard's
+# first ``ceil(L/R)`` rows decoded to plausible wrong values.  The route is
+# pure torch, so both the fault and the fix are visible here with no GPU.
+
+
+def _row_shard(rows=32, cols=96, window_bits=TEST_L, cut=(16, 32)):
+    """A row shard of a BF16 window unit, re-parsed from its own bytes.
+
+    The round trip is what a serving rank does (``serving/sharding.
+    _reparse_shard``) and is what makes the parsed unit a ``SlicedUnit``
+    carrying an INITIAL_STATE plane.
+    """
+    from tessera.layout import slice_unit
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact
+
+    torch.manual_seed(0)
+    weight = (torch.randn(rows, cols) * torch.linspace(0.2, 3.0, rows)[:, None]).float()
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=BF16_GRID, q256=1024, name="unit", window_bits=window_bits)
+    parsed = parse_unit_artifact(exported.blob, device="cpu")
+    shard = slice_unit(parsed, rows=cut)
+    manifest = parsed.manifest
+    _m, _region, blob = build_unit_artifact(
+        shard, "rank", parsed.forests, int(manifest.branch.root_q256),
+        parsed.code or ConvCode(),
+        superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container)
+    return parse_unit_artifact(blob, device="cpu")
+
+
+def test_the_streamed_decoder_starts_a_shard_where_the_parent_left_off():
+    """``stream_bf16`` on a shard is ``materialize_bf16`` on the same shard.
+
+    The reference reads the INITIAL_STATE plane; before this was threaded the
+    streamed pair differed on the shard's first row, which is the whole
+    failure mode -- plausible values, no error.
+    """
+    shard = _row_shard()
+    assert int(shard.unit.initial_state.max()) > 0, "the fixture is not a shard"
+    want_tile, want_scale = materialize_bf16(shard.unit, shard.grid, shard.code)
+    got_tile, got_scale = stream_bf16(prepare_bf16_unit(shard.unit))
+    assert torch.equal(got_tile, want_tile)
+    assert torch.equal(got_scale, want_scale)
+
+
+def test_the_folded_rendering_of_a_shard_agrees_too():
+    """The twin's one-tensor rendering takes the same start state."""
+    shard = _row_shard()
+    assert torch.equal(
+        stream_bf16_folded(prepare_bf16_unit(shard.unit)),
+        materialize_bf16_folded(shard.unit, shard.grid, shard.code))
+
+
+def test_a_whole_unit_is_unchanged_by_the_threading():
+    """No start state, no change: the pinned zero start is still the default."""
+    _w, exported, _unit, _forests = _encode()
+    parsed = parse_unit_artifact(exported.blob, device="cpu")
+    assert getattr(parsed.unit, "initial_state", None) is None
+    got_tile, got_scale = stream_bf16(prepare_bf16_unit(parsed.unit))
+    want_tile, want_scale = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
+    assert torch.equal(got_tile, want_tile) and torch.equal(got_scale, want_scale)
+
+
+@pytest.mark.parametrize("window_bits,rate", [(8, 4), (12, 4), (14, 4), (13, 1), (6, 3)])
+def test_the_pad_reader_inverts_the_packer_at_any_width(window_bits, rate):
+    """``window_pad_state`` is exactly ``pack_window_planes``' pad, read back.
+
+    Widths that are not a whole number of bytes are the point: the pad is the
+    *top* ``L`` bits of the column's first ``ceil(L/8)`` bytes, so a width of
+    12 or 14 exercises the trailing shift that a width of 8 hides.  Synthetic
+    bits rather than an encode, because L=14 through the reference Viterbi is
+    minutes on CPU and the packing is what is under test.
+    """
+    from tessera.bf16_route import window_pad_state
+    from tessera.lane_planes import pack_window_planes
+
+    steps, cols = 24, 17
+    torch.manual_seed(window_bits)
+    body = torch.randint(0, 1 << rate, (steps, cols), dtype=torch.uint8)
+    start = torch.randint(0, 1 << window_bits, (cols,), dtype=torch.int64)
+    plane, offsets, _rates = pack_window_planes(body, (rate,) * cols, window_bits, start)
+    assert torch.equal(window_pad_state(plane, offsets, window_bits), start)
+
+    zero, offsets0, _r = pack_window_planes(body, (rate,) * cols, window_bits)
+    assert not window_pad_state(zero, offsets0, window_bits).any()

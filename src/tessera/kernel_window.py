@@ -351,12 +351,20 @@ def prepare_from_parsed(parsed, device=None) -> PreparedWindowUnit:
         )
     rows, _cols = unit.body_bits.shape
     row_scale = unit.scale_rows.to(torch.float32) * float(unit.scale_global)
-    # ``initial_window`` is absent on a whole unit (the pinned zero start) and
+    # ``initial_state`` is absent on a whole unit (the pinned zero start) and
     # present on a tensor-parallel shard, whose columns continue a parent's
     # stream.  Read whichever the artifact carries; never assume the zero.
+    #
+    # The name is the one ``layout.SlicedUnit`` uses, and it is the field the
+    # INITIAL_STATE plane parses into.  This read said ``initial_window``
+    # until the 2026-09-02 math audit: a getattr for an attribute nothing
+    # defines, so it was always ``None`` and every shard was prepared against
+    # the pinned zero start -- decoding its first ``ceil(L/R)`` rows to
+    # plausible wrong weights with nothing raised.  The whole-unit path was
+    # unaffected, which is why no test saw it.
     return prepare_window_unit(
         unit.body_bits, unit.rates, unit.window_bits, unit.window_codes, grid,
-        row_scale.reshape(rows), initial=getattr(unit, "initial_window", None),
+        row_scale.reshape(rows), initial=getattr(unit, "initial_state", None),
         device=device,
     )
 

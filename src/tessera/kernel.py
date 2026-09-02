@@ -42,6 +42,56 @@ __all__ = ["build_code_lut", "build_tuple_index_lut", "build_anchor_values",
            "tessera_gemv", "tessera_gemv_window", "nvfp4_gemv"]
 
 
+# ---------------------------------------------------------------------------
+# Launch-shape guards
+#
+# Every kernel below derives its addressing from two divisibilities the plane
+# packers already enforce (``lane_planes.pack_kernel_planes`` refuses
+# ``rows % 8``; ``pack_scale_nibbles`` cannot reshape a partial column group),
+# and which the wrappers used to assume rather than state.  An artifact can
+# therefore never carry these shapes -- but a hand-built call could, and the
+# consequence is not an error: the GEMVs simply stop at ``(cols // half) *
+# half`` columns and the rest never enter the dot product, while the GEMM
+# reads scale group ``cols // half`` of a ``cols // half``-group plane.  A
+# wrong weight is not an exception, so the shape is checked, not assumed --
+# the same discipline ``tessera_gemv_window``'s reach check already applies.
+# ---------------------------------------------------------------------------
+
+
+def _require_column_groups(cols: int, half: int) -> None:
+    """``cols`` must be a whole number of ``half``-sized scale groups.
+
+    The scale plane is ``[cols // half, rows]``, so the remainder has no
+    group of its own: a GEMV walking ``cols // half`` groups never reaches
+    those columns, and the GEMM, which indexes by ``k // half``, reaches one
+    group past the plane.  Neither raises on its own.
+    """
+    if half <= 0 or cols % half:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {half}-groups; the scale "
+            "plane has no group for the remainder, so the last "
+            f"{cols % half if half > 0 else cols} columns would leave the dot "
+            "product (GEMV) or index one group past the plane (GEMM)"
+        )
+
+
+def _require_byte_aligned_rows(rows: int) -> None:
+    """``rows`` must byte-align a column plane.
+
+    The select plane is written with a ``SELECT_PAD``-bit pad per column and
+    the point plane packs ``rows * (rate - 1)`` bits per column, so a column
+    starts on a byte -- and the constant sub-byte shifts every sliced/wide
+    kernel is derived with are that byte offset.  With a remainder the shift
+    varies with the column and the decoded weights are silently wrong.
+    """
+    if rows % 8:
+        raise GrammarError(
+            f"rows={rows} must be a multiple of 8: the select plane is written "
+            f"with a {SELECT_PAD}-bit pad per column and the constant-shift "
+            "arithmetic assumes column starts land on byte boundaries"
+        )
+
+
 def build_code_lut(
     forest: AnchorForest, code: ConvCode, device: str = "cuda"
 ) -> torch.Tensor:
@@ -424,6 +474,8 @@ def tessera_gemv_sliced(
     """``W @ x`` from the sliced resident layout.  ``e4m3_t`` is ``[cols/half, rows]``."""
     from .encode import e2m1_value_table
 
+    _require_byte_aligned_rows(rows)
+    _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
         x.reshape(-1), select_plane, point_plane, lut, e4m3_t.reshape(-1),
@@ -484,9 +536,15 @@ def nvfp4_gemv_sliced(
     block_n: int = 256,
     split_k: int = 32,
 ) -> torch.Tensor:
-    """``W @ x`` over column-major NVFP4 nibbles.  The controlled comparator."""
+    """``W @ x`` over column-major NVFP4 nibbles.  The controlled comparator.
+
+    Guarded like the arm it is compared against: a dropped column here does
+    not corrupt a weight, it corrupts a *measurement*, which is worse -- the
+    comparator would simply report a smaller dot product as NVFP4's answer.
+    """
     from .encode import e2m1_value_table
 
+    _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _nvfp4_sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
         x.reshape(-1), packed_t.reshape(-1), e4m3_t.reshape(-1),
@@ -619,6 +677,10 @@ def tessera_gemv_wide(
             "derived for VEC=8 against SELECT_PAD=8 and rows % 8 == 0. Another "
             "width needs the shifts re-derived, not just this check relaxed."
         )
+    # The other half of the same sentence, which used to live only in that
+    # message: the derivation needs ``rows % 8 == 0`` too.
+    _require_byte_aligned_rows(rows)
+    _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
         x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
@@ -924,7 +986,11 @@ def tessera_gemv_tuple_span2(
     launch shape is the measured one (``experiments/results/tessera_kernel_shape_sweep.json``,
     2048x4096 GLM expert): split-K 128 keeps 256 programs in flight, which is
     what a latency-bound decode needs on 48 SMs; the span-1 kernel's default
-    of 32 leaves it at 64."""
+    of 32 leaves it at 64.
+
+    ``rate`` must be **odd**, as in ``tessera_gemv_tuple``: the point window is
+    split into two equal byte halves, so ``rate - 1`` is even and
+    ``vec * (rate - 1)`` a whole number of bytes.  Enforced below."""
     steps = rows // arity
     if rows % arity or steps % 16:
         raise GrammarError(
@@ -945,6 +1011,7 @@ def tessera_gemv_tuple_span2(
         raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
     if scale_table.numel() != 16 or scale_table.dtype != torch.float32:
         raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
+    _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_span2_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
         x.reshape(-1), select_plane, label_plane, point_plane, scale_nibbles,
@@ -1110,8 +1177,7 @@ def tessera_gemv_window(
             f"{rows} rows at arity {arity} does not give whole codes and paired "
             "scale nibbles"
         )
-    if cols % half:
-        raise GrammarError(f"{cols} columns is not a whole number of {half}-groups")
+    _require_column_groups(cols, half)
     if table.numel() != 1 << window_bits:
         raise GrammarError(
             f"the window table holds {table.numel()} entries, window_bits "
@@ -1145,10 +1211,16 @@ def tessera_gemv_window(
     lut = scale_table is not None
     if lut and (scale_table.numel() != 16 or scale_table.dtype != torch.float32):
         raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
+    # The kernel reads ``scale_table_ptr`` only under ``lut_scale``, but a
+    # launch still needs a valid pointer for the argument, so the S6b branch
+    # aliases the scale plane there.  Named rather than passed twice inline:
+    # a repeated argument reads like a bug and this one is deliberate and
+    # provably dead (`_window_gemv_kernel`'s `if lut_scale:` is its only use).
+    scale_table_arg = scale_table if lut else scale_plane
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _window_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
         x.reshape(-1), plane, offsets, rates, table, values,
-        scale_plane, scale_table if lut else scale_plane, out,
+        scale_plane, scale_table_arg, out,
         float(global_scale), rows, steps, cols,
         window=window_bits, arity=arity, half=half, lut_scale=lut,
         LANES=lanes, VEC=vec, SPLIT_K=split_k,
@@ -1208,7 +1280,12 @@ def tessera_gemv_tuple(
     ``build_tuple_value_lut``.
 
     See the split-K note on ``tessera_gemv_wide``: the reduction is an atomic
-    add and its low bits are order-dependent."""
+    add and its low bits are order-dependent.
+
+    ``rate`` must be **odd** -- the point window is split into two equal byte
+    halves, which needs an even ``rate - 1`` and ``vec * (rate - 1)`` a whole
+    number of bytes.  Enforced below; stated here because a caller choosing a
+    schedule should not have to read the launch to find out."""
     steps = rows // arity
     if rows % arity or steps % 8:
         raise GrammarError(
@@ -1227,6 +1304,7 @@ def tessera_gemv_tuple(
         )
     if memory > SELECT_PAD:
         raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
         x.reshape(-1), select_plane, point_plane, index_lut, value_table,
@@ -1386,12 +1464,8 @@ def tessera_gemm(
             f"the reduction runs over the {cols} columns the trellis does NOT "
             "run down"
         )
-    if rows % 8:
-        raise GrammarError(
-            f"rows={rows} must be a multiple of 8: the select plane is written "
-            f"with a {SELECT_PAD}-bit pad per column and the halo arithmetic "
-            "assumes column starts land on byte boundaries"
-        )
+    _require_byte_aligned_rows(rows)
+    _require_column_groups(cols, half)
     M = x.shape[0]
     # Both planes are addressed in bits.  int32 holds the larger of the two up
     # to ~2.1e9 bits; past that the arithmetic must widen or it wraps silently,

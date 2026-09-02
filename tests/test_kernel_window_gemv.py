@@ -401,3 +401,62 @@ def test_window_linear_seam_and_m_limit():
     assert y.shape == (2, 3, rows) and y.dtype == torch.bfloat16
     with pytest.raises(GrammarError, match="M=9"):
         kg.window_gemv(unit, torch.randn(9, cols, device="cuda").bfloat16())
+
+
+# ---------------------- the TP shard this lane cannot take ------------------
+#
+# §6 P0-shardstate of the 2026-09-02 math audit.  ``kernel_window_gemv`` never
+# read ``initial_state``, so a row shard was repacked as if it started from the
+# pinned zero register.  Unlike the Triton lane it cannot simply be threaded:
+# ``csrc/window_gemv.cu`` supplies ``state_{-1}`` itself -- "the L-bit pad that
+# opens every wire column is not stored: it is all zeros by definition
+# (state_{-1} = 0) and the kernel supplies it" (window_gemv.cu:17), and lane 0
+# of tile 0 takes its ``prev`` word from "the zero pad on tile 0"
+# (window_gemv.cu:23).  Taking a start state is a kernel change on a path this
+# pass cannot measure, so the lane fails closed instead, exactly as
+# ``lane_planes.pack_unit_for_kernel`` already does for a span-2 TCQ shard.
+#
+# CPU-reachable on purpose: the refusal precedes every device touch.
+
+
+class _ShardParsed(_Parsed):
+    """``_Parsed`` carrying an INITIAL_STATE plane, as ``layout.SlicedUnit`` does."""
+
+    def __init__(self, body, rates, codes, scale_rows, initial_state):
+        super().__init__(body, rates, codes, scale_rows)
+        self.unit.initial_state = initial_state
+
+
+def _kg_no_build():
+    """The module without ``_require_toolchain``: these refusals never build."""
+    from tessera import kernel_window_gemv
+
+    return kernel_window_gemv
+
+
+def test_the_window_gemv_refuses_a_shard_start_state():
+    """A shard is refused by name, not decoded from zero."""
+    kg = _kg_no_build()
+    rows, cols = 512, 64
+    body = torch.zeros(rows, cols, dtype=torch.uint8)
+    codes = torch.zeros(1 << L, dtype=torch.uint8)
+    scale_rows = torch.ones(rows, dtype=torch.float16)
+    start = torch.arange(cols, dtype=torch.int64) % (1 << L)
+    with pytest.raises(GrammarError, match="start state"):
+        kg.prepare_from_parsed(_ShardParsed(body, (4,) * cols, codes, scale_rows, start))
+
+
+def test_the_value_family_refuses_a_shard_start_state():
+    """The raw-bits entry point fails closed on the same state.
+
+    ``prepare_value_unit`` takes body bits rather than a unit, so a caller
+    holding a ``SlicedUnit`` would otherwise drop the state with nowhere to
+    say so.  The keyword exists only to be refused.
+    """
+    kg = _kg_no_build()
+    rows, cols = 512, 64
+    body = torch.zeros(rows, cols, dtype=torch.uint8)
+    values = torch.zeros(1 << L, dtype=torch.bfloat16)
+    with pytest.raises(GrammarError, match="start state"):
+        kg.prepare_value_unit(body, (4,) * cols, L, values,
+                              initial_state=torch.zeros(cols, dtype=torch.int64))
