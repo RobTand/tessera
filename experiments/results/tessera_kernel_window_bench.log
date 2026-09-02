@@ -1,0 +1,35 @@
+model.language_model.layers.20.mlp.experts.0.gate_proj.weight (2048, 4096)  commit 57d1f67  label 'window body kernel lane, one tessera_bitshift_tuple experiment concurrent'  lanes 64 split_k 128  windows [12, 14, 16]
+  concurrent GPU load: 6 other tessera process(es)
+/home/rob/dq-runs/venvs/prismaquant-cu130/lib/python3.12/site-packages/torch/profiler/profiler.py:224: UserWarning: Warning: Profiler clears events at the end of each cycle.Only events from the current cycle will be reported.To keep events across cycles, set acc_events=True.
+  _warn_once(
+  bf16 torch gemv                      0.4323 ms/call     38.8 GB/s
+  span2 trellis E2M1x2 R=7             0.2097 ms/call     20.0 GB/s  (4.20 MB/call, 3.75+0.25 b/wt)  exact=True rel=3.59e-07  encode 9s
+      _tuple_gemv_span2_kernel                                     0.1496 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0009 ms self CUDA
+  window E2M1x2 R=7 L=12               0.2082 ms/call     18.9 GB/s  (3.94 MB/call, 3.51+0.25 b/wt + 4096 B table)  exact=True rel=3.52e-07  encode 16s
+      _window_gemv_kernel                                          0.1468 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0009 ms self CUDA
+  window E4M3   R=4 L=12               0.2095 ms/call     21.3 GB/s  (4.47 MB/call, 4.01+0.25 b/wt + 4096 B table)  exact=True rel=3.82e-07  encode 21s
+      _window_gemv_kernel                                          0.1482 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0009 ms self CUDA
+  window E2M1x2 R=7 L=14               0.2134 ms/call     18.5 GB/s  (3.96 MB/call, 3.51+0.25 b/wt + 16384 B table)  exact=True rel=3.60e-07  encode 83s
+      _window_gemv_kernel                                          0.1498 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0009 ms self CUDA
+  window E4M3   R=4 L=14               0.2139 ms/call     21.0 GB/s  (4.48 MB/call, 4.01+0.25 b/wt + 16384 B table)  exact=True rel=3.56e-07  encode 110s
+      _window_gemv_kernel                                          0.1953 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0009 ms self CUDA
+  window E2M1x2 R=7 L=16               0.5062 ms/call      7.9 GB/s  (4.01 MB/call, 3.51+0.25 b/wt + 65536 B table)  exact=True rel=3.48e-07  encode 370s
+      _window_gemv_kernel                                          0.2110 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0008 ms self CUDA
+  window E4M3   R=4 L=16               0.3826 ms/call     11.8 GB/s  (4.53 MB/call, 4.01+0.25 b/wt + 65536 B table)  exact=True rel=3.56e-07  encode 474s
+      _window_gemv_kernel                                          0.1743 ms self CUDA
+      void at::native::vectorized_elementwise_kernel<4, at::nati   0.0008 ms self CUDA
+  bf16 torch gemv                    power  46.1 W mean,  48.5 W max over 20 samples
+  span2 trellis E2M1x2 R=7           power  54.5 W mean,  56.8 W max over 20 samples
+  window E2M1x2 R=7 L=12             power  56.6 W mean,  58.7 W max over 20 samples
+  window E4M3   R=4 L=12             power  65.4 W mean,  68.3 W max over 20 samples
+  window E2M1x2 R=7 L=14             power  57.4 W mean,  59.9 W max over 20 samples
+  window E4M3   R=4 L=14             power  65.8 W mean,  68.7 W max over 20 samples
+  window E2M1x2 R=7 L=16             power  53.2 W mean,  53.5 W max over 20 samples
+  window E4M3   R=4 L=16             power  57.3 W mean,  58.9 W max over 20 samples
+wrote experiments/results/tessera_kernel_window_bench.json and experiments/results/tessera_kernel_window_power.csv

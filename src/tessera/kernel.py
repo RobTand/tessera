@@ -29,10 +29,12 @@ import triton.language as tl
 from .alphabet import AnchorForest
 from .decode import _replay_tables
 from .errors import GrammarError
+from .manifest import WINDOW_BITS_MAX, RotationState
 from .trellis import ConvCode, SUBSET_COUNT
 
 __all__ = ["build_code_lut", "build_tuple_index_lut", "build_anchor_values",
-           "tessera_dequant", "tessera_gemv", "nvfp4_gemv"]
+           "build_window_values", "pack_window_planes", "tessera_dequant",
+           "tessera_gemv", "tessera_gemv_window", "nvfp4_gemv"]
 
 
 def build_code_lut(
@@ -1154,22 +1156,362 @@ def tessera_gemv_tuple_span2(
     return out
 
 
-def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
-    """Everything ``tessera_gemv_tuple_span2`` needs, from one encoded unit.
+# --- the window body (schema minor 2): a shift register, not a trellis -----
+#
+# ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from ``state_{-1} = 0``
+# makes a state *literally* the last ``L`` bits of the column's stream, so the
+# kernel needs no replay tables and no halo argument: it reads an L-bit field
+# out of the plane and indexes the unit's table.  That is the same property the
+# TCQ lane had to prove about ``ConvCode.step``; here it is the definition.
 
-    Refuses what the span-2 kernel does not read: a mixed-rate schedule (one
-    forest per unit here) and an S6b plane at span 2 (the kernel reads the
-    LUT plane's nibbles; the shipping wire is span 2 over a LUT plane).
+
+def pack_window_planes(
+    body_bits: torch.Tensor, rates: "tuple[int, ...]", window_bits: int
+) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
+    """Wire BODY -> ``(plane uint8, column bit offsets int64, rates int32)``.
+
+    Column-major and MSB-first like every other plane here, with two
+    differences the window body forces:
+
+    - **``window_bits`` zero bits pad each column**, exactly as ``SELECT_PAD``
+      does for the trellis lanes and for the same reason: the pad *is*
+      ``state_{-1} = 0``, so position 0's window needs no boundary test.  The
+      pad is ``L`` rather than 8 because the window is ``L`` wide and reaches
+      ``L - R`` bits behind position 0.
+    - **each column carries its own rate**, so the columns are not one stride
+      apart.  A mixed schedule is the normal case for this body (the TCQ
+      span-2 lane refuses one), so the offset of every column is a tensor the
+      kernel reads rather than a multiplication it does.  Columns start on a
+      byte, which is what makes the offset table small enough to be free.
+
+    With the pad, the L-bit window of code ``t`` in column ``c`` begins at bit
+    ``offsets[c] + (t + 1) * rates[c]`` and runs ``L`` bits: the ``L`` pad bits
+    plus ``t + 1`` positions of ``R`` bits, minus the ``L`` bits of the window
+    itself.  Eight bytes of slack at the end keep the kernel's eight-byte span
+    read on the last code of the last column inside the tensor.
+
+    The width bound here is the *wire's* (``WINDOW_BITS_MAX``), not the
+    kernel's.  How wide a window a launch can actually read depends on ``vec``
+    and the schedule's top rate together -- a half-lane's windows share one
+    int64 -- so that check lives in ``tessera_gemv_window``, where both are
+    known.
+    """
+    steps, cols = body_bits.shape
+    device = body_bits.device
+    if len(rates) != cols:
+        raise GrammarError(f"{len(rates)} rates for {cols} columns")
+    if not 1 <= window_bits <= WINDOW_BITS_MAX:
+        raise GrammarError(
+            f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}, the widest "
+            "window the wire carries"
+        )
+    if max(rates) > window_bits:
+        raise GrammarError(
+            f"rate {max(rates)} does not fit a {window_bits}-bit window"
+        )
+    rate_t = torch.tensor(rates, dtype=torch.int32, device=device)
+    col_bytes = (window_bits + steps * rate_t.long() + 7) // 8
+    starts = torch.zeros(cols + 1, dtype=torch.int64, device=device)
+    starts[1:] = torch.cumsum(col_bytes, 0)
+    plane = torch.zeros(int(starts[-1]) + 8, dtype=torch.uint8, device=device)
+    body = body_bits.to(torch.int32)
+    weights = 1 << torch.arange(7, -1, -1, device=device, dtype=torch.uint8)
+    for present in sorted(set(rates)):
+        which = torch.tensor(
+            [c for c, r in enumerate(rates) if r == present],
+            dtype=torch.int64, device=device,
+        )
+        nbytes = int(col_bytes[which[0]])
+        bits = torch.zeros(which.numel(), nbytes * 8, dtype=torch.uint8, device=device)
+        values = body[:, which]                                   # [steps, m]
+        stop = window_bits + steps * present
+        for position in range(present):
+            bits[:, window_bits + position : stop : present] = (
+                (values >> (present - 1 - position)) & 1
+            ).t().to(torch.uint8)
+        packed = (bits.reshape(-1, 8) * weights).sum(1, dtype=torch.uint8)
+        dest = starts[which][:, None] + torch.arange(nbytes, device=device)[None, :]
+        plane[dest.reshape(-1)] = packed
+    return plane, starts[:cols] * 8, rate_t
+
+
+def build_window_values(grid, device: str = "cuda") -> torch.Tensor:
+    """``code * arity + a -> the code's value``, fp32.  The SHARED half.
+
+    The per-unit half of a window body is its ``2^L`` table of grid codes,
+    which rides the ALPHABET plane and is already a resident byte per state.
+    What a code *reconstructs to* is the grid's, shared by every unit over it
+    -- the same seam ``build_tuple_index_lut`` / ``build_anchor_values`` cut
+    for the trellis lane, with the halves the other way round.
+
+    Fusing them instead would give ``2^L * arity`` floats: 512 KB per unit at
+    ``L = 16``, arity 2, against 64 KB for the table and a grid table shared
+    across the model.  That is the ratio that decided the trellis lane's split
+    and it decides this one.
+    """
+    from .encode import grid_vector_table
+
+    return grid_vector_table(grid, device).reshape(-1).contiguous()
+
+
+@triton.jit
+def _window_gemv_kernel(
+    x_ptr, plane_ptr, offset_ptr, rate_ptr, table_ptr, value_ptr,
+    scale_ptr, scale_table_ptr, out_ptr,
+    global_scale, rows, steps, cols,
+    window: tl.constexpr, arity: tl.constexpr, half: tl.constexpr,
+    lut_scale: tl.constexpr,
+    LANES: tl.constexpr, VEC: tl.constexpr, SPLIT_K: tl.constexpr,
+):
+    """GEMV over a window body: an L-bit field, the unit's table, a value.
+
+    Per code the dependent-load depth is three -- the plane bytes, the unit's
+    ``2^L`` table, the grid's value table -- against the span-2 trellis
+    kernel's window bytes, label byte, point bytes, ``label_lut``, value.  It
+    reads *fewer* planes than the trellis lane because the window body has
+    fewer: no label plane, no separated point plane, no completion plane.
+
+    Two things decide whether that structural advantage survives contact with
+    the machine, and the first cut got both wrong -- it was 1.77x the span-2
+    kernel at the E2M1x2 cap while reading *fewer* bytes:
+
+    - **The block is ``[LANES, VEC, arity]``, not ``[LANES, VEC * arity]``.**
+      A window, a state and a code are per *code*; only the value and the
+      scale are per row.  Written flat, the arity rows of a code each redo the
+      whole plane read, which at arity 2 doubles every load in the kernel for
+      a result that is bit-identical across the axis.
+    - **A lane reads its VEC windows out of two eight-byte spans**, not four
+      bytes per code.  Consecutive codes are ``R`` bits apart, so ``VEC/2``
+      of them span ``L + (VEC/2 - 1) R + 7 <= 64`` bits: one int64 per half
+      covers them, and each code's window is a shift of it.  Per lane per
+      column that is 16 byte loads instead of ``4 * VEC``.  The wrapper
+      checks the inequality rather than assuming it.
+
+    ``rate`` is a *runtime* scalar per column, not a ``constexpr``: a mixed
+    schedule is the ordinary case for this body and the alternative -- one
+    specialisation per rate, or a padded uniform stride -- would either
+    recompile per unit or spend bits the wire does not spend.  The shift
+    arithmetic is the same either way; only the multiplication is dynamic.
+
+    ``lut_scale`` picks the plane: a LUT nibble per (row, group) through a
+    16-entry fp32 table (the plane at its wire size, 0.25 b/wt), or the S6b
+    plane materialised to one E4M3 byte per (row, group) and decoded by field
+    arithmetic, which is what ``_apply_scale`` does for the span-1 lane.  Both
+    already exist on this lane; neither is a new plane.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    base = pid_n * LANES * VEC + tl.arange(0, LANES) * VEC       # first CODE
+    v = tl.arange(0, VEC)                 # which code within the lane
+    a = tl.arange(0, arity)               # which position within the code
+    codes = base[:, None] + v[None, :]                          # [LANES, VEC]
+    hot = codes < steps
+    offs_n = codes[:, :, None] * arity + a[None, None, :]       # [LANES, VEC, arity]
+    live = offs_n < rows
+    acc = tl.zeros((LANES, VEC, arity), dtype=tl.float32)
+
+    MASK: tl.constexpr = (1 << window) - 1
+    HALF_CODES: tl.constexpr = VEC // 2
+    m = v % HALF_CODES                    # position of a code within its half
+    first = base[:, None] + (v // HALF_CODES)[None, :] * HALF_CODES   # half's first code
+
+    groups = cols // half
+    for g in range(pid_k, groups, SPLIT_K):
+        sidx = g.to(tl.int64) * rows + offs_n.to(tl.int64)
+        if lut_scale:
+            # LUT scale plane: [groups, rows] nibbles, even row high.
+            nb = tl.load(scale_ptr + sidx // 2, mask=live, other=0).to(tl.int32)
+            nib = (nb >> (4 * (1 - (offs_n & 1)))) & 0xF
+            scale = tl.load(scale_table_ptr + nib, mask=live, other=0.0)
+        else:
+            # S6b materialised: one E4M3 byte per (row, group), field arithmetic.
+            e4m3 = tl.load(scale_ptr + sidx, mask=live, other=0).to(tl.int32)
+            scale = tl.exp2(((e4m3 >> 3) & 0xF).to(tl.float32) - 7.0) * (
+                1.0 + (e4m3 & 0x7).to(tl.float32) / 8.0
+            )
+        for i in tl.static_range(half):
+            k = g * half + i
+            offset = tl.load(offset_ptr + k)
+            rate = tl.load(rate_ptr + k).to(tl.int64)
+            # The window of code t is the L bits at [offset + (t+1)*R, +L).
+            # Read the half's eight bytes once; every code in it is a shift.
+            anchor = offset + (first.to(tl.int64) + 1) * rate
+            byte = anchor // 8
+            span = tl.zeros((LANES, VEC), dtype=tl.int64)
+            for t in tl.static_range(8):
+                span = (span << 8) | tl.load(
+                    plane_ptr + byte + t, mask=hot, other=0
+                ).to(tl.int64)
+            shift = 64 - (anchor % 8) - m[None, :].to(tl.int64) * rate - window
+            # ``span``'s top byte can set the sign bit and ``>>`` is
+            # arithmetic, but the sign fill lands at bit positions >= the
+            # field width, which the mask removes.  One eight-byte read
+            # therefore covers every legal window up to the wrapper's bound.
+            state = (span >> shift) & MASK
+            grid_code = tl.load(table_ptr + state, mask=hot, other=0).to(tl.int32)
+            value = tl.load(
+                value_ptr + grid_code[:, :, None] * arity + a[None, None, :],
+                mask=live, other=0.0,
+            )
+            acc += value * scale * tl.load(x_ptr + k)
+
+    tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=live)
+
+
+def tessera_gemv_window(
+    x: torch.Tensor,
+    plane: torch.Tensor,
+    offsets: torch.Tensor,
+    rates: torch.Tensor,
+    table: torch.Tensor,
+    values: torch.Tensor,
+    scale_plane: torch.Tensor,
+    scale_table: "torch.Tensor | None",
+    global_scale: float,
+    rows: int,
+    cols: int,
+    window_bits: int,
+    arity: int,
+    half: int = 16,
+    max_rate: "int | None" = None,
+    lanes: int = 64,
+    vec: int = 8,
+    split_k: int = 128,
+) -> torch.Tensor:
+    """``W @ x`` decoding a window body (schema minor 2) in the kernel.
+
+    Planes from ``pack_window_planes`` and either ``pack_scale_nibbles`` (LUT)
+    or ``wire.nvfp4_scale_bytes`` transposed to ``[groups, rows]`` (S6b);
+    ``table`` is the unit's own ``2^L`` ALPHABET plane and ``values`` the
+    grid's, from ``build_window_values`` -- or all of them from
+    ``pack_unit_for_kernel``.  ``scale_table`` is the 16-entry fp32 LUT table
+    or ``None`` for the S6b plane.  Split-K reduces by atomic add, so this is
+    not a bit-identical-across-runs path; a one-hot probe still returns a
+    column exactly because nothing is summed.
+    """
+    steps = rows // arity
+    if rows % arity or rows % 2:
+        raise GrammarError(
+            f"{rows} rows at arity {arity} does not give whole codes and paired "
+            "scale nibbles"
+        )
+    if cols % half:
+        raise GrammarError(f"{cols} columns is not a whole number of {half}-groups")
+    if table.numel() != 1 << window_bits:
+        raise GrammarError(
+            f"the window table holds {table.numel()} entries, window_bits "
+            f"{window_bits} needs {1 << window_bits}"
+        )
+    if offsets.numel() != cols or rates.numel() != cols:
+        raise GrammarError(
+            f"{offsets.numel()} offsets and {rates.numel()} rates for {cols} columns"
+        )
+    if vec < 2 or vec & (vec - 1):
+        raise GrammarError(f"vec={vec}: a lane's codes split into two halves")
+    # A half's ``vec // 2`` windows are read out of one int64: the last one
+    # ends at most ``window + (vec/2 - 1) * R + 7`` bits into it, counting the
+    # sub-byte offset of the first.  Checked, not assumed -- the shifts are
+    # silently wrong past it, and a wrong weight is not an error.
+    #
+    # ``max_rate`` is an argument because reading it off the device tensor is
+    # a synchronisation, and a synchronisation on a launch-shape check that
+    # cannot change between calls cost 2.6 ms against a ~0.1 ms kernel: 25x
+    # the thing being measured, invisible to the profiler's kernel row and
+    # visible only in ms/call.  ``pack_unit_for_kernel`` carries the value.
+    if max_rate is None:
+        max_rate = int(rates.max())
+    reach = window_bits + (vec // 2 - 1) * int(max_rate) + 7
+    if reach > 64:
+        raise GrammarError(
+            f"a window of {window_bits} bits at rate {int(rates.max())} reaches "
+            f"{reach} bits across {vec // 2} codes, past the 64 the kernel reads "
+            "in one span; lower vec or narrow the window"
+        )
+    lut = scale_table is not None
+    if lut and (scale_table.numel() != 16 or scale_table.dtype != torch.float32):
+        raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
+    out = torch.zeros(rows, dtype=torch.float32, device=x.device)
+    _window_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
+        x.reshape(-1), plane, offsets, rates, table, values,
+        scale_plane, scale_table if lut else scale_plane, out,
+        float(global_scale), rows, steps, cols,
+        window=window_bits, arity=arity, half=half, lut_scale=lut,
+        LANES=lanes, VEC=vec, SPLIT_K=split_k,
+    )
+    return out
+
+
+def _pack_window_unit(unit, grid) -> dict:
+    """``pack_unit_for_kernel``'s window branch.  See its docstring."""
+    from .manifest import ScalePlaneKind
+    from .wire import nvfp4_scale_bytes
+
+    if unit.release_index.numel():
+        raise GrammarError(
+            "this unit has released positions, which overwrite decoded codes "
+            "from the RELEASE plane; the kernel lane reads no such plane"
+        )
+    if unit.diagonals is not None:
+        raise GrammarError(
+            "this unit carries diagonals; undoing them is a rank-1 factor "
+            "outside the GEMV, which the kernel lane does not apply"
+        )
+    if unit.rotation is not RotationState.NONE:
+        raise GrammarError(
+            f"this unit is rotated ({unit.rotation.name}); undoing the rotation "
+            "is a basis change the kernel lane does not apply"
+        )
+    steps, cols = unit.body_bits.shape
+    rows = steps * grid.arity
+    device = unit.body_bits.device
+    plane, offsets, rates = pack_window_planes(
+        unit.body_bits, unit.rates, unit.window_bits
+    )
+    if unit.scale_plane is ScalePlaneKind.LUT:
+        scale_plane = pack_scale_nibbles(unit.scale_refine, rows, cols, unit.half)
+        scale_table = lut_scale_table(unit.scale_lut, device)
+        global_scale = float(unit.scale_global)
+    else:
+        e4m3, global_scale = nvfp4_scale_bytes(
+            unit.scale_base, unit.scale_refine, unit.group, unit.half
+        )
+        scale_plane = e4m3.reshape(rows, cols // unit.half).t().contiguous()
+        scale_table = None
+    return {
+        "kind": "window",
+        "plane": plane, "offsets": offsets, "rates": rates,
+        "table": unit.window_codes.to(device).to(torch.uint8).contiguous(),
+        "values": build_window_values(grid, device),
+        "scale_plane": scale_plane, "scale_table": scale_table,
+        "global_scale": global_scale,
+        "rows": rows, "cols": cols, "window_bits": int(unit.window_bits),
+        "arity": grid.arity, "half": unit.half, "max_rate": max(unit.rates),
+    }
+
+
+def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
+    """Everything the lane's GEMV needs, from one encoded unit.
+
+    Dispatches on the unit's **body kind**, and the two branches share nothing
+    but this function: a TCQ body packs the span-2 trellis planes for
+    ``tessera_gemv_tuple_span2``, a WINDOW body (schema minor 2) packs the
+    shift-register plane for ``tessera_gemv_window``.  ``forest`` is the
+    unit's ``AnchorForest`` under TCQ and may be a bare ``PayloadGrid`` under
+    WINDOW, which has no forest; ``code`` is unused by the window branch for
+    the same reason.  ``gemv_from_packed`` reads the ``"kind"`` key back.
+
+    The TCQ branch refuses what the span-2 kernel does not read: a mixed-rate
+    schedule (one forest per unit there) and an S6b plane at span 2 (that
+    kernel reads the LUT plane's nibbles; the shipping wire is span 2 over a
+    LUT plane).  The window branch reads both scale planes and any mixed
+    schedule, and refuses instead the three post-decode transforms no GEMV on
+    this lane applies: released positions, diagonals, a rotation.
     """
     from .manifest import BodyKind, ScalePlaneKind
 
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
-        raise GrammarError(
-            "the kernel lane has no decode for a window body yet: its GEMV "
-            "would look each position's code up by the column's last "
-            f"{unit.window_bits} bits, which no kernel here does. Refusing at "
-            "the seam rather than packing the body as if it were a trellis."
-        )
+        grid = forest.grid if isinstance(forest, AnchorForest) else forest
+        return _pack_window_unit(unit, grid)
     if unit.span != 2:
         raise GrammarError(f"pack_unit_for_kernel is the span-2 path; this unit is span {unit.span}")
     if unit.scale_plane is not ScalePlaneKind.LUT:
@@ -1187,6 +1529,7 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     select, label, point = pack_kernel_planes(unit.body_bits, rate=forest.rate, memory=code.memory, span=2)
     label_lut, _subset_lut = build_span2_luts(forest, code, device)
     return {
+        "kind": "span2",
         "select": select, "label": label, "point": point,
         "nibbles": pack_scale_nibbles(unit.scale_refine, rows, cols, unit.half),
         "table": lut_scale_table(unit.scale_lut, device),
@@ -1199,7 +1542,15 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
 
 
 def gemv_from_packed(x: torch.Tensor, packed: dict, **kw) -> torch.Tensor:
-    """``tessera_gemv_tuple_span2`` over a ``pack_unit_for_kernel`` result."""
+    """The lane's GEMV over a ``pack_unit_for_kernel`` result, either body."""
+    if packed.get("kind", "span2") == "window":
+        return tessera_gemv_window(
+            x, packed["plane"], packed["offsets"], packed["rates"],
+            packed["table"], packed["values"], packed["scale_plane"],
+            packed["scale_table"], packed["global_scale"], packed["rows"],
+            packed["cols"], packed["window_bits"], packed["arity"],
+            half=packed["half"], max_rate=packed["max_rate"], **kw,
+        )
     return tessera_gemv_tuple_span2(
         x, packed["select"], packed["label"], packed["point"], packed["nibbles"],
         packed["table"], packed["label_lut"], packed["values"],

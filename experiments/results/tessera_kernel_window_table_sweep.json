@@ -1,0 +1,301 @@
+[
+ {
+  "commit": "57d1f67",
+  "label": "L sweep, no encoder, three other tessera GPU jobs resident",
+  "shape": [
+   2048,
+   4096
+  ],
+  "seconds": 6.0,
+  "passes": 2,
+  "records": [
+   {
+    "arm": "span2 E2M1x2 R=7",
+    "pass": 0,
+    "window_bits": null,
+    "ms_per_call": 0.20376406326873814,
+    "calls": 29472,
+    "kernel_self_cuda_ms": 0.1505226,
+    "table_bytes": 0,
+    "epoch": [
+     1788318474.4755418,
+     1788318480.485593
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=10",
+    "pass": 0,
+    "window_bits": 10,
+    "ms_per_call": 0.19699221699177719,
+    "calls": 30464,
+    "kernel_self_cuda_ms": 0.14235122000000003,
+    "table_bytes": 1024,
+    "epoch": [
+     1788318482.4250832,
+     1788318488.4310231
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=12",
+    "pass": 0,
+    "window_bits": 12,
+    "ms_per_call": 0.19920974375082937,
+    "calls": 30144,
+    "kernel_self_cuda_ms": 0.14327422,
+    "table_bytes": 4096,
+    "epoch": [
+     1788318490.33489,
+     1788318496.344597
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=14",
+    "pass": 0,
+    "window_bits": 14,
+    "ms_per_call": 0.20589416034920416,
+    "calls": 29152,
+    "kernel_self_cuda_ms": 0.15340114000000002,
+    "table_bytes": 16384,
+    "epoch": [
+     1788318498.2592778,
+     1788318504.2662082
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=16",
+    "pass": 0,
+    "window_bits": 16,
+    "ms_per_call": 0.37551336669921875,
+    "calls": 16000,
+    "kernel_self_cuda_ms": 0.16228555999999997,
+    "table_bytes": 65536,
+    "epoch": [
+     1788318506.1559348,
+     1788318512.1688583
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=18",
+    "pass": 0,
+    "window_bits": 18,
+    "ms_per_call": 0.6010883075360673,
+    "calls": 10016,
+    "kernel_self_cuda_ms": 0.5547599200000001,
+    "table_bytes": 262144,
+    "epoch": [
+     1788318514.134613,
+     1788318520.1598756
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=10",
+    "pass": 0,
+    "window_bits": 10,
+    "ms_per_call": 0.1991609221051453,
+    "calls": 30144,
+    "kernel_self_cuda_ms": 0.14312644,
+    "table_bytes": 1024,
+    "epoch": [
+     1788318521.9560921,
+     1788318527.9643102
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=12",
+    "pass": 0,
+    "window_bits": 12,
+    "ms_per_call": 0.2025689110642633,
+    "calls": 29632,
+    "kernel_self_cuda_ms": 0.14827747999999993,
+    "table_bytes": 4096,
+    "epoch": [
+     1788318529.7354565,
+     1788318535.7427616
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=14",
+    "pass": 0,
+    "window_bits": 14,
+    "ms_per_call": 0.20830467300330363,
+    "calls": 28832,
+    "kernel_self_cuda_ms": 0.05704976000000004,
+    "table_bytes": 16384,
+    "epoch": [
+     1788318537.5011034,
+     1788318543.5117414
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=16",
+    "pass": 0,
+    "window_bits": 16,
+    "ms_per_call": 0.37949702715632894,
+    "calls": 15840,
+    "kernel_self_cuda_ms": 0.17268162000000012,
+    "table_bytes": 65536,
+    "epoch": [
+     1788318545.2561276,
+     1788318551.272068
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=18",
+    "pass": 0,
+    "window_bits": 18,
+    "ms_per_call": 0.8438581115996356,
+    "calls": 7136,
+    "kernel_self_cuda_ms": 0.7121189400000003,
+    "table_bytes": 262144,
+    "epoch": [
+     1788318553.027492,
+     1788318559.0540051
+    ]
+   },
+   {
+    "arm": "span2 E2M1x2 R=7",
+    "pass": 1,
+    "window_bits": null,
+    "ms_per_call": 0.20364837149455414,
+    "calls": 29472,
+    "kernel_self_cuda_ms": 0.15129833999999995,
+    "table_bytes": 0,
+    "epoch": [
+     1788318559.1228554,
+     1788318565.1295393
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=10",
+    "pass": 1,
+    "window_bits": 10,
+    "ms_per_call": 0.19715490261045823,
+    "calls": 30464,
+    "kernel_self_cuda_ms": 0.14228982,
+    "table_bytes": 1024,
+    "epoch": [
+     1788318565.1655214,
+     1788318571.1763883
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=12",
+    "pass": 1,
+    "window_bits": 12,
+    "ms_per_call": 0.1974833920127467,
+    "calls": 30400,
+    "kernel_self_cuda_ms": 0.1444874399999999,
+    "table_bytes": 4096,
+    "epoch": [
+     1788318571.2118492,
+     1788318577.22009
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=14",
+    "pass": 1,
+    "window_bits": 14,
+    "ms_per_call": 0.20818819137048244,
+    "calls": 28832,
+    "kernel_self_cuda_ms": 0.19446062,
+    "table_bytes": 16384,
+    "epoch": [
+     1788318577.255627,
+     1788318583.2628279
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=16",
+    "pass": 1,
+    "window_bits": 16,
+    "ms_per_call": 0.37036713669756227,
+    "calls": 16224,
+    "kernel_self_cuda_ms": 0.16278390000000006,
+    "table_bytes": 65536,
+    "epoch": [
+     1788318583.3067253,
+     1788318589.3224382
+    ]
+   },
+   {
+    "arm": "window E2M1x2 R=7 L=18",
+    "pass": 1,
+    "window_bits": 18,
+    "ms_per_call": 0.6013027093349359,
+    "calls": 9984,
+    "kernel_self_cuda_ms": 0.4293513799999999,
+    "table_bytes": 262144,
+    "epoch": [
+     1788318589.3636363,
+     1788318595.3717403
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=10",
+    "pass": 1,
+    "window_bits": 10,
+    "ms_per_call": 0.19908527609142782,
+    "calls": 30144,
+    "kernel_self_cuda_ms": 0.1444650799999999,
+    "table_bytes": 1024,
+    "epoch": [
+     1788318595.4168134,
+     1788318601.4243956
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=12",
+    "pass": 1,
+    "window_bits": 12,
+    "ms_per_call": 0.20355914730311991,
+    "calls": 29504,
+    "kernel_self_cuda_ms": 0.19117405999999998,
+    "table_bytes": 4096,
+    "epoch": [
+     1788318601.455327,
+     1788318607.4658926
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=14",
+    "pass": 1,
+    "window_bits": 14,
+    "ms_per_call": 0.20714305224339608,
+    "calls": 28960,
+    "kernel_self_cuda_ms": 0.15103358000000003,
+    "table_bytes": 16384,
+    "epoch": [
+     1788318607.5095048,
+     1788318613.514815
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=16",
+    "pass": 1,
+    "window_bits": 16,
+    "ms_per_call": 0.37903430052477904,
+    "calls": 15840,
+    "kernel_self_cuda_ms": 0.17168598000000007,
+    "table_bytes": 65536,
+    "epoch": [
+     1788318613.5506516,
+     1788318619.5592785
+    ]
+   },
+   {
+    "arm": "window E4M3   R=4 L=18",
+    "pass": 1,
+    "window_bits": 18,
+    "ms_per_call": 0.8447262188335797,
+    "calls": 7104,
+    "kernel_self_cuda_ms": 0.7149924799999998,
+    "table_bytes": 262144,
+    "epoch": [
+     1788318619.5964787,
+     1788318625.602153
+    ]
+   }
+  ],
+  "time": 1788318625.6555567
+ }
+]

@@ -19,7 +19,8 @@ relied on:
   * every TCQ artifact is untouched: same bytes, same minor, same profile id;
   * the profile id binds the body kind and the width, the reader fails
     closed on a manifest that disagrees with it or a table outside the grid,
-    and the kernel lane refuses a body it cannot decode;
+    and the kernel lane decodes the body at the wire's own bytes
+    (``tests/test_kernel_window.py``);
   * the exporter records the body and replays a config at its own meaning.
 """
 import itertools
@@ -321,14 +322,26 @@ def test_a_table_outside_the_grid_is_refused_before_it_indexes_anything():
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="the kernel lane is a CUDA path")
-def test_the_kernel_lane_refuses_a_window_body():
-    from tessera.kernel import pack_unit_for_kernel
+def test_the_kernel_lane_decodes_a_window_body():
+    """The lane packs a window body and decodes it to the reader's weights.
+
+    It refused one until the shift-register GEMV landed; the decode itself
+    lives in ``tests/test_kernel_window.py``, which is where the widths, the
+    grids, the scale planes and the shapes are swept.  This is the seam
+    check: a window unit reaches the kernel lane at all, and it accepts a
+    bare grid where a TCQ unit hands it a forest.
+    """
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
 
     w = _weights(rows=256, cols=512).cuda()
     unit = encode_unit(w, K2, (7,) * 512, CODE, body=WINDOW, window_bits=9,
                        scale_plane=ScalePlaneKind.LUT, scale_refit=0)
-    with pytest.raises(GrammarError, match="window body"):
-        pack_unit_for_kernel(unit, build_forest(7, grid=K2), CODE)
+    packed = pack_unit_for_kernel(unit, K2, CODE)
+    assert packed["kind"] == "window" and packed["window_bits"] == 9
+    reference = reconstruct_unit(unit, K2, None).float()
+    x = torch.zeros(512, device="cuda")
+    x[3] = 1.0
+    assert torch.equal(gemv_from_packed(x, packed, lanes=8, split_k=4), reference[:, 3])
 
 
 # ---------------------------------------------------------------- exporter
