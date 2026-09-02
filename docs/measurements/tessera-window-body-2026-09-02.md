@@ -364,6 +364,33 @@ alone or to the kernel row alone:
   its "+imatrix +LDLQ(gated)" rows are worse than bare by 1.3–1.4× and are
   not a valid comparator until its gate is understood.
 
+## E2M1x2 tuple sweep on the six experts (2026-09-02, late)
+
+`experiments/tessera_bitshift_tuple.py --chunk 256` finished on all six
+experts (`experiments/results/tessera_bitshift_tuple.{json,log}`; tile
+protocol: per-16 fp32 scale, two refits, out-space geomean over the six,
+EXL3 K4 = 0.06736 on the same rows). The window body over the E2M1x2 tuple
+grid against the coset trellis (TCQ, `larsen6` / `ung6` codes), same
+payload:
+
+| bpp | TCQ (larsen6 / ung6) | window L=12 | L=14 | L=16 | window ÷ TCQ (L=12 / 14 / 16) |
+|---|---|---|---|---|---|
+| 4.0 (K=7, the cap) | 0.08563 / 0.08535 | 0.08911 | 0.08566 | 0.08406 | 1.041 / 1.000 / 0.982 |
+| 3.5 (K=6) | 0.15634 / 0.15721 | 0.12148 | 0.11677 | 0.11437 | 0.777 / 0.747 / 0.732 |
+| 3.0 (K=5) | 0.21523 / 0.21657 | 0.17140 | 0.16677 | 0.16394 | 0.796 / 0.775 / 0.762 |
+
+Under A4 (activation leg included) the same ordering holds with smaller
+ratios (4.0: TCQ 0.1212 vs window L=16 0.1201; 3.5: 0.1778 vs 0.1428).
+
+So on the six experts, not just the Gaussian oracle: **below the cap the
+window body is 1.26–1.37× better than the coset trellis at equal bits, and
+at the cap it is level at L=14 and 1.8% better at L=16** — which the kernel
+lane prices at 1.85× GEMV time. The E2M1x2 recipe therefore stays TCQ at
+the cap and becomes window below it, exactly the per-unit split
+`wire_recipe` was built to express. The true-wire (LUT16 plane, production
+encoder) version of this table is what `experiments/tessera_frontier.py`
+is producing.
+
 ## Next
 
 1. ~~`ScalePlaneKind.CHANNEL`~~ **Done** (schema minor 3): one fp16 per

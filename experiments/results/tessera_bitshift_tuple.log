@@ -1,0 +1,199 @@
+
+##### tessera_bitshift_tuple 2026-09-01 20:34:39 args={'rates': [7, 6, 5], 'memories': [10, 12, 14, 16], 'expert_memories': [12, 14, 16], 'kinds': ['free', 'e2m1x2'], 'sigmas': [1.4, 1.7, 2.0, 2.3, 2.6, 3.0], 'rows': 2048, 'gauss_cols': 512, 'chunk': 256, 'seed': 1234, 'layers': [5, 20, 42], 'projs': ['gate_proj', 'up_proj'], 'eval_rows': 1024, 'refits': 2, 'exl3': [4], 'no_gaussian': False, 'no_experts': False, 'out': 'experiments/results/tessera_bitshift_tuple.json'}
+
+### Gaussian oracle on E2M1x2: RMS / 2^-(K/2), each arm at its best global scale
+  K=7 Tessera coset trellis larsen6                      1.4089x  sigma=2.30    2.9s
+  K=7 Tessera coset trellis ung6                         1.4047x  sigma=2.00    2.7s
+  K=7 bitshift free     L=10                             1.3858x  sigma=1.40    1.2s
+  K=7 bitshift free     L=12                             1.2279x  sigma=1.40    5.1s
+  K=7 bitshift free     L=14                             1.1386x  sigma=2.30   34.9s
+  K=7 bitshift free     L=16                             1.0903x  sigma=1.40  180.3s
+  K=7 bitshift e2m1x2   L=10                             1.7907x  sigma=2.30    2.0s
+  K=7 bitshift e2m1x2   L=12                             1.6807x  sigma=2.30    8.1s
+  K=7 bitshift e2m1x2   L=14                             1.6398x  sigma=2.30   30.2s
+  K=7 bitshift e2m1x2   L=16                             1.6229x  sigma=2.30  121.2s
+  K=6 Tessera coset trellis larsen6                      1.3653x  sigma=2.00    4.6s
+  K=6 Tessera coset trellis ung6                         1.3702x  sigma=2.00    4.5s
+  K=6 bitshift free     L=10                             1.2716x  sigma=1.40    1.2s
+  K=6 bitshift free     L=12                             1.1650x  sigma=1.40    5.5s
+  K=6 bitshift free     L=14                             1.1063x  sigma=1.40   27.1s
+  K=6 bitshift free     L=16                             1.0719x  sigma=1.40  119.3s
+  K=6 bitshift e2m1x2   L=10                             1.3740x  sigma=2.00    1.3s
+  K=6 bitshift e2m1x2   L=12                             1.2957x  sigma=2.00    5.5s
+  K=6 bitshift e2m1x2   L=14                             1.2589x  sigma=2.30   29.0s
+  K=6 bitshift e2m1x2   L=16                             1.2267x  sigma=2.30  111.2s
+  K=5 Tessera coset trellis larsen6                      1.3992x  sigma=2.00    4.8s
+  K=5 Tessera coset trellis ung6                         1.4052x  sigma=2.00    4.6s
+  K=5 bitshift free     L=10                             1.1917x  sigma=1.40    1.3s
+  K=5 bitshift free     L=12                             1.1246x  sigma=1.40    5.5s
+  K=5 bitshift free     L=14                             1.0819x  sigma=1.40   29.3s
+  K=5 bitshift free     L=16                             1.0569x  sigma=1.40  117.2s
+  K=5 bitshift e2m1x2   L=10                             1.2017x  sigma=2.00    1.4s
+  K=5 bitshift e2m1x2   L=12                             1.1373x  sigma=2.00    5.5s
+  K=5 bitshift e2m1x2   L=14                             1.0984x  sigma=2.00   29.2s
+  K=5 bitshift e2m1x2   L=16                             1.0766x  sigma=2.00  117.5s
+
+### Six experts, per-16 fp32 block scale, held-out last 1024 rows
+
+== L5.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08816  0.07237  0.11671  0.07672
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09464  0.09114  0.12901  0.09462
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09430  0.09099  0.12902  0.09444
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09847  0.09472  0.13153  0.09804
+      (21.4s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09444  0.09099  0.12885  0.09447
+      (113.4s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09261  0.08950  0.12785  0.09302
+      (497.5s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17272  0.16611  0.18884  0.16799
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17328  0.16754  0.19013  0.16939
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13392  0.12880  0.15775  0.13125
+      (22.5s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12884  0.12414  0.15403  0.12668
+      (119.3s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12610  0.12179  0.15216  0.12439
+      (461.0s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23596  0.22741  0.24396  0.22875
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23684  0.22824  0.24474  0.22961
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18870  0.18215  0.20324  0.18389
+      (12.4s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18350  0.17701  0.19880  0.17879
+      (61.2s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18034  0.17379  0.19593  0.17558
+      (250.2s)
+
+== L5.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08816  0.07465  0.12055  0.07915
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09465  0.09434  0.13346  0.09791
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09431  0.09378  0.13301  0.09739
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09844  0.09769  0.13575  0.10115
+      (12.3s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09442  0.09440  0.13338  0.09798
+      (60.7s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09263  0.09201  0.13174  0.09565
+      (256.5s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17265  0.17187  0.19554  0.17382
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17317  0.17245  0.19597  0.17441
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13384  0.13289  0.16271  0.13541
+      (12.5s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12884  0.12821  0.15896  0.13085
+      (62.4s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12611  0.12556  0.15687  0.12825
+      (257.6s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23612  0.23493  0.25200  0.23636
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23694  0.23665  0.25366  0.23807
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18871  0.18855  0.21021  0.19031
+      (12.4s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18339  0.18295  0.20536  0.18479
+      (60.7s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18029  0.17948  0.20230  0.18135
+      (389.6s)
+
+== L20.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08495  0.06925  0.11155  0.07340
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09473  0.08728  0.12359  0.09064
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09437  0.08696  0.12336  0.09032
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09851  0.09050  0.12578  0.09374
+      (22.0s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09450  0.08719  0.12354  0.09053
+      (117.9s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09271  0.08580  0.12252  0.08921
+      (510.5s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17255  0.15928  0.18106  0.16109
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17307  0.16003  0.18179  0.16184
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13393  0.12403  0.15155  0.12640
+      (24.2s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12882  0.11899  0.14746  0.12144
+      (117.9s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12613  0.11600  0.14509  0.11854
+      (558.0s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23583  0.21950  0.23535  0.22079
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23680  0.22096  0.23676  0.22225
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18866  0.17373  0.19406  0.17542
+      (22.1s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18338  0.16952  0.19044  0.17124
+      (117.9s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18035  0.16706  0.18817  0.16880
+      (545.1s)
+
+== L20.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08492  0.07293  0.11761  0.07732
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09463  0.09148  0.12974  0.09504
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09428  0.09163  0.12993  0.09515
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09847  0.09560  0.13278  0.09896
+      (21.3s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09441  0.09181  0.13008  0.09532
+      (118.7s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09261  0.08992  0.12876  0.09352
+      (612.0s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17255  0.16784  0.19081  0.16973
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17309  0.16816  0.19113  0.17008
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13380  0.13038  0.15949  0.13283
+      (25.1s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12876  0.12501  0.15515  0.12762
+      (120.9s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12602  0.12285  0.15336  0.12544
+      (281.0s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23604  0.22996  0.24664  0.23135
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23690  0.23061  0.24725  0.23200
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18864  0.18356  0.20489  0.18528
+      (12.4s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18331  0.17820  0.20008  0.17999
+      (63.9s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18026  0.17614  0.19838  0.17796
+      (289.2s)
+
+== L42.gate_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08580  0.05132  0.08395  0.05453
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09518  0.06695  0.09443  0.06948
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09484  0.06626  0.09391  0.06881
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09897  0.06969  0.09639  0.07212
+      (12.3s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09500  0.06658  0.09416  0.06913
+      (63.2s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09319  0.06565  0.09348  0.06821
+      (422.7s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17239  0.12093  0.13776  0.12237
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17296  0.12186  0.13859  0.12330
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13424  0.09501  0.11605  0.09681
+      (22.6s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12921  0.09098  0.11275  0.09287
+      (160.8s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12649  0.08927  0.11136  0.09120
+      (789.0s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23593  0.17061  0.18305  0.17169
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23687  0.17211  0.18441  0.17318
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18883  0.13449  0.15009  0.13584
+      (31.9s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18364  0.13130  0.14727  0.13263
+      (174.5s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18046  0.12818  0.14458  0.12955
+      (452.9s)
+
+== L42.up_proj (2048, 4096)
+    EXL3 K=4                                                  4.012  0.08580  0.06673  0.10897  0.07088
+    Tessera-4 K=7 coset larsen6, per-16 fp32 scale refit2     4.000  0.09501  0.08580  0.12154  0.08908
+    Tessera-4 K=7 coset ung6, per-16 fp32 scale refit2        4.000  0.09467  0.08583  0.12152  0.08911
+    Tessera-4 K=7 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  4.006  0.09886  0.08972  0.12433  0.09287
+      (12.8s)
+    Tessera-4 K=7 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  4.007  0.09481  0.08630  0.12187  0.08955
+      (88.2s)
+    Tessera-4 K=7 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  4.008  0.09299  0.08459  0.12070  0.08790
+      (445.2s)
+    Tessera-4 K=6 coset larsen6, per-16 fp32 scale refit2     3.500  0.17257  0.15824  0.17967  0.16005
+    Tessera-4 K=6 coset ung6, per-16 fp32 scale refit2        3.500  0.17312  0.15933  0.18064  0.16114
+    Tessera-4 K=6 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.506  0.13412  0.12224  0.14930  0.12452
+      (21.9s)
+    Tessera-4 K=6 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.507  0.12905  0.11768  0.14569  0.12008
+      (118.6s)
+    Tessera-4 K=6 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.508  0.12633  0.11503  0.14354  0.11745
+      (374.8s)
+    Tessera-4 K=5 coset larsen6, per-16 fp32 scale refit2     3.000  0.23607  0.21607  0.23179  0.21738
+    Tessera-4 K=5 coset ung6, per-16 fp32 scale refit2        3.000  0.23691  0.21780  0.23350  0.21912
+    Tessera-4 K=5 bitshift E2M1x2 L=12, per-16 fp32 scale refit2  3.006  0.18868  0.17216  0.19221  0.17377
+      (12.4s)
+    Tessera-4 K=5 bitshift E2M1x2 L=14, per-16 fp32 scale refit2  3.007  0.18349  0.16749  0.18791  0.16918
+      (62.0s)
+    Tessera-4 K=5 bitshift E2M1x2 L=16, per-16 fp32 scale refit2  3.008  0.18046  0.16499  0.18575  0.16669
+      (264.8s)
+done
