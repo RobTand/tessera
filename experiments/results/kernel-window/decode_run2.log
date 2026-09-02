@@ -1,0 +1,12 @@
+6 process(es) on the card at start
+idle draw before the first arm: {'mean_w': 39.7, 'max_w': 39.7, 'min_w': 39.7, 'n': 3, 'cuda_procs_max': 6, 'cuda_procs_min': 6}
+196 real units
+  1024x3072: fused 23.28 us (203.0 GB/s, 45.0 W, 7 procs) | bf16 tile 24.35 us (323.2 GB/s) | torch eager 4708.5 | compiled 735.2 us  -> 202.3x / 31.6x
+  3072x1024: fused 23.79 us (198.5 GB/s, 40.2 W, 7 procs) | bf16 tile 24.56 us (320.3 GB/s) | torch eager 4649.4 | compiled 425.3 us  -> 195.5x / 17.9x
+  1024x2048: fused 18.68 us (168.6 GB/s, 35.2 W, 7 procs) | bf16 tile 20.12 us (260.8 GB/s) | torch eager 2605.1 | compiled 334.0 us  -> 139.4x / 17.9x
+  2048x1024: fused 18.89 us (166.6 GB/s, 41.7 W, 7 procs) | bf16 tile 19.61 us (267.4 GB/s) | torch eager 2616.9 | compiled 113.1 us  -> 138.5x / 6.0x
+  1024x1024: fused 11.00 us (143.2 GB/s, 42.4 W, 6 procs) | bf16 tile 11.50 us (228.1 GB/s) | torch eager 441.6 | compiled 72.3 us  -> 40.1x / 6.6x
+  cold rotation over 196 units (221 MB of plane): 49.57 us/unit, 68.1 GB/s, 35.8 W mean / 40.3 W max
+  whole-checkpoint decode: 9.72 ms
+
+wrote /mnt/shared/tessera-runs/kernel-window/bench-decode-20260902-125834.json

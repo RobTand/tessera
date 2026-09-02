@@ -1,0 +1,26 @@
+{
+  "when": "2026-09-02T13:07:44-0400",
+  "device": "NVIDIA GB10",
+  "torch": "2.11.0+cu130",
+  "concurrent_gpu_pids": [
+    "2749905, 633 MiB",
+    "2750496, 638 MiB",
+    "2733611, 1365 MiB",
+    "2756920, 700 MiB",
+    "2813754, 37473 MiB"
+  ],
+  "idle_power": {
+    "mean_w": 32.2,
+    "max_w": 32.5,
+    "min_w": 31.6,
+    "n": 3,
+    "cuda_procs_max": 5,
+    "cuda_procs_min": 5
+  },
+  "profile": {
+    "trace": "/mnt/shared/tessera-runs/kernel-window/trace_kernel_window.json",
+    "unit": "model.layers.0.mlp.down_proj:down_proj",
+    "rows": 1024,
+    "cols": 3072
+  }
+}

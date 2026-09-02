@@ -1,0 +1,7 @@
+4 process(es) on the card at start
+idle draw before the first arm: {'mean_w': 33.2, 'max_w': 33.4, 'min_w': 32.7, 'n': 3, 'cuda_procs_max': 4, 'cuda_procs_min': 4}
+SM read-only  256 MiB: 2605.0 us -> 103.0 GB/s  (32.0 W)
+SM read+write 256 MiB: 5224.6 us -> 102.8 GB/s  (32.0 W)
+copy engine   256 MiB: 5293.5 us -> 101.4 GB/s  (32.5 W)
+
+wrote /mnt/shared/tessera-runs/kernel-window/bench-bandwidth-20260902-130832.json
