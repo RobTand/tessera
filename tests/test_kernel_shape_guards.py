@@ -56,8 +56,15 @@ def _call(name, rows, cols):
 
     The tensors are deliberately dummies: every guard under test is a shape
     check on the scalar arguments and fires before a plane is read.
+
+    They are also deliberately **on the CPU**, even when the box has a GPU.
+    That is what keeps ``test_a_legal_shape_is_not_refused`` safe: Triton
+    refuses a host pointer at launch, so no kernel ever runs against planes
+    too small for the declared shape, and no illegal access is left sticky in
+    a CUDA context that the rest of the session would inherit.
     """
     x = torch.zeros(cols)
+    assert not x.is_cuda
     if name == "tessera_gemv_sliced":
         return kernel.tessera_gemv_sliced(
             x, _u8(), _u8(), _f32(), _u8(), 1.0, rows, cols, half=HALF)
@@ -123,10 +130,9 @@ def test_rows_that_do_not_byte_align_a_column_are_refused(name):
 def test_a_legal_shape_is_not_refused(name):
     """The guards are not over-broad: a legal shape gets past them.
 
-    What happens after them is not this test's business -- with no GPU the
-    Triton driver raises, with one the placeholder planes are read out of
-    bounds -- so the assertion is only that a ``GrammarError`` is not what
-    comes back.
+    What the launch then does is not this test's business -- ``_call``'s
+    dummies are host tensors, so the launch never happens on any box -- so
+    the assertion is only that a ``GrammarError`` is not what comes back.
     """
     try:
         _call(name, GOOD_ROWS, GOOD_COLS)

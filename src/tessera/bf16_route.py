@@ -99,9 +99,11 @@ class StreamedBF16Unit:
 
     Everything here is the artifact's own bytes, at the artifact's own rate:
     the packed window plane (``lane_planes.pack_window_planes``, the wire BODY
-    permuted column-major and padded by ``L`` zero bits so position 0 needs no
-    boundary test), the per-column bit offsets and rates, the ``2^L`` bf16
-    table, and one fp16 word per output row times an fp32 global.  Nothing is
+    permuted column-major and led by ``L`` pad bits so position 0 needs no
+    boundary test -- the pad IS ``state_{-1}``, zero for a whole unit and the
+    stored start state for a TP row shard), the per-column bit offsets and
+    rates, the ``2^L`` bf16 table, and one fp16 word per output row times an
+    fp32 global.  Nothing is
     expanded until :func:`stream_bf16_folded` is asked for a tile.
     """
 
