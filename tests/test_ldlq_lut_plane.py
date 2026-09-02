@@ -270,3 +270,50 @@ def test_the_streaming_export_carries_a_hessian_onto_the_four_bit_wire(tmp_path)
     assert config["activation_aware"]["refit_objective"] == "hessian"
     assert json.loads(
         (tmp_path / "plain" / "tessera_config.json").read_text())["activation_aware"] is None
+
+
+@cuda
+def test_the_refit_objective_reaches_the_lut_plane_and_changes_the_bytes(tmp_path):
+    """A named objective the encoder ignores is the silent no-op this task closed.
+
+    ``refit_objective`` is the one setting whose *value* the LUT plane's new
+    code reads: ``"hessian"`` hands ``for_unit`` the whole matrix, ``"h^ALPHA"``
+    a diagonal power, ``"plain"`` nothing at all.  If any two of those reached
+    the same bytes, an arm named after one of them would be measuring another
+    -- so assert all three are distinct, at the same length, and that the
+    config records which one wrote them.
+    """
+    import json
+
+    from safetensors.torch import save_file
+
+    from tessera.export import ActivationSource, export_checkpoint_streaming
+
+    g = torch.Generator().manual_seed(34)
+    tensors = {"model.layers.0.mlp.gate_proj.weight":
+               torch.randn(64, 256, generator=g).bfloat16()}
+    src = tmp_path / "src"
+    src.mkdir()
+    save_file({k: v.contiguous() for k, v in tensors.items()},
+              str(src / "model.safetensors"), metadata={"format": "pt"})
+    plan = {name: CAP for name in tensors}
+    hessians = {ActivationSource.unit_name(n): _hessian(cols=256, seed=7, device="cpu")
+                for n in tensors}
+    provenance = {"source": "wikitext-2 train", "text_sha256": "e" * 64,
+                  "fit_tokens": 16384, "fit_ids_sha256": "f" * 64}
+
+    blobs = {}
+    for objective in ("plain", "h^1.0", "hessian"):
+        out = tmp_path / objective.replace("^", "")
+        export_checkpoint_streaming(
+            src, out, plan, grid=K2, copy_aux=False,
+            extra_config={"source_model": str(src), "inherits": {}},
+            activation=ActivationSource(hessians=hessians, provenance=provenance,
+                                        refit_objective=objective))
+        blobs[objective] = (out / "model.safetensors").read_bytes()
+        config = json.loads((out / "tessera_config.json").read_text())
+        assert config["activation_aware"]["refit_objective"] == objective
+
+    assert len(set(blobs.values())) == 3, (
+        "two refit objectives wrote the same bytes: one of them is not being read")
+    assert len({len(b) for b in blobs.values()}) == 1, "the refit never changes the wire"

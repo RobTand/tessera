@@ -132,6 +132,31 @@ was fit on text it is graded on, and the weight-space sweep is scored on the
 **eval** slice, disjoint from the fit slice the Hessian and the refit were built
 from.
 
+## The decision rule, written before the numbers
+
+Three candidate recipes for "what an exporter does on the LUT plane when it is
+handed a Hessian", chosen before the six-unit geomeans landed so that the rule
+is not fitted to them:
+
+| candidate | LDLQ | refit objective |
+|---|---|---|
+| `plain` | 1.0 / 32 | none (the weights-only refit) |
+| `h^1.0` | 1.0 / 32 | the diagonal of H, normalised |
+| `hessian` | 1.0 / 32 | the exact quadratic -- the CHANNEL plane's default |
+
+**The rule.** The default is the candidate with the better Qwen six-unit
+out-space geomean, *subject to* a GLM six-expert geomean no worse than 1.00x
+against the same wire without levers -- the coordinator's gate, which exists
+because the E2M1 route's wins today are on GLM's experts and must not be paid
+for out of them. If the Qwen geomeans are within 1% (unit 2 already separated
+two candidates by 0.5%), GLM breaks the tie. `plain` stays in the table even
+where it loses, because it is the arm that most obviously cannot regress and a
+reader needs to see the size of what the refit buys over it.
+
+The served leg gates separately and on its own terms: **served KL better than
+0.640** (the same recipe, weights-only, same A4 scales, same teacher) at
+matched bytes.
+
 ## What an H-aware encode costs on this body
 
 The FP8 receipt measured LDLQ at ~2x the plain encode on the window body. On
