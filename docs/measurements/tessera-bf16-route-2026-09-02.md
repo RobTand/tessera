@@ -118,40 +118,47 @@ budget must carry, not a rounding.
 
 ## 4. Decode: three paths, one rendering
 
+**The route does not fold. The twin does, and it is the only thing that does.**
+
 | entry point | what it returns | who calls it |
 |---|---|---|
-| `decode.materialize_bf16(unit, forest, code)` | one `bfloat16` tile | the twin writer, and a resident-mode lane |
-| `decode.materialize_bf16_unscaled(...)` | `(bf16 code tile, fp32 row scale)` | **what a lane should call** |
-| `bf16_route.stream_bf16_tile(streamed)` | one `bfloat16` tile, from the packed wire | streamed resident mode |
-| `bf16_route.stream_bf16_unscaled(streamed)` | the no-fold pair, from the packed wire | **the product mode** |
+| `decode.materialize_bf16(unit, forest, code)` | `(bf16 tile, fp32 row scale)` | **the route** |
+| `bf16_route.stream_bf16(streamed)` | the same pair, from the packed wire | **the route, streamed — the product mode** |
+| `decode.materialize_bf16_folded(...)` | one folded `bfloat16` tile | the twin writer, and `stock.materialize_stock` |
+| `bf16_route.stream_bf16_folded(streamed)` | the same tile, from the packed wire | reproducing a twin from the wire |
 
-**The rounding rule, stated once.** `materialize_bf16` builds the fp32 product
-`grid_value(code) × row_scale × global_scale` through `unit_scale_field` and
-applies **one** round-to-nearest-even at the end. Not two, not a rounded scale:
-two roundings of one product is a rendering the encoder never scored. The test
-asserts `tile == (values.float() * scale[:, None]).to(bfloat16)` bitwise.
+The pair is the default-named entry point deliberately: the safe rendering
+should be the one a caller gets without asking, and the fold should have to be
+spelled.
 
-**And a lane should not do that.** W1 §B is the reason: folding the row scale
-into a bf16 tile costs 0.0011–0.0022 in absolute relative output error on
-*every* arm — EXL3, FP8 RTN, both window grids, every rate — because it is a
-property of bf16's 7-bit mantissa and the activations, not of the weights. Its
-*share* grows as the coding error shrinks: 2.2% at R = 4, **15.9% at R = 7**,
-28.5% on EXL3 K8. A lane holding the wire need not pay it, and the reason is
-the plane's shape rather than a trick: a CHANNEL scale is one factor per
-**output row**, so it commutes with the matmul, `x (s ⊙ W)ᵀ = (x Wᵀ) ⊙ s`. The
-lane runs the stock BF16 GEMM on the *code tile* — exactly bf16 already, since
-every table entry is a bf16 value, so the cast rounds nothing — and applies the
-row scale in fp32 as an epilogue, the same epilogue `lane_planes` already
-builds for this plane on the kernel lane. Measured on random activations
-(64×256 unit, R = 6, L = 8, 512 rows of `randn`): **4.04e-7** relative for the
-epilogue against **1.65e-3** for the fold — the same 0.0015 floor W1 measured
-on real GLM rows, which is the point: it is bf16's mantissa, not the weights.
+**Why.** W1 §B: folding the row scale into a bf16 tile costs 0.0011–0.0022 in
+absolute relative output error on *every* arm — EXL3, FP8 RTN, both window
+grids, every rate — because it is a property of bf16's 7-bit mantissa and the
+activations, not of the weights. Its *share* grows as the coding error shrinks:
+2.2% at R = 4, **15.9% at R = 7**, 28.5% at EXL3-K8 quality. An fp16 fold costs
+0.0000–0.0005; not folding costs nothing at all.
 
-The twin cannot avoid it (one tensor, no scale), so **the twin's served error
-is a ceiling on the route's, not its value.** W1 also measured that an *fp16*
-fold costs 0.0000–0.0005 — an order of magnitude less than bf16 — so a twin
-written in fp16 is a cheaper ceiling if a served gate ever needs a tighter one.
-Not built here.
+**And nothing has to fold**, because of the plane's shape rather than a trick:
+a CHANNEL scale is one factor per **output row**, so it commutes with the
+matmul, `x (s ⊙ W)ᵀ = (x Wᵀ) ⊙ s`. The route runs the stock BF16 GEMM on the
+tile — exactly bf16 already, since every table entry is a bf16 value, so the
+cast rounds nothing — and applies the scale to the GEMM's *output* in fp32,
+`y_i = s_i · Σ_k t_ik x_k`, the same epilogue `lane_planes` already builds for
+this plane on the kernel lane. Measured on random activations (64×256 unit,
+R = 6, L = 8, 512 rows of `randn`): **4.04e-7** relative for the epilogue
+against **1.65e-3** for the fold — the same 0.0015 floor W1 measured on real
+GLM rows, which is the point: it is bf16's mantissa, not the weights.
+
+**The rounding rule for the one thing that folds, stated once.**
+`materialize_bf16_folded` takes the pair, multiplies in fp32, and applies
+**one** round-to-nearest-even. Not two, not a rounded scale: two roundings of
+one product is a rendering the encoder never scored. The test asserts
+`folded == (values.float() * scale[:, None]).to(bfloat16)` bitwise.
+
+The twin cannot avoid the fold (one tensor, no scale), so **the twin's served
+error is a ceiling on the route's, not its value** — §7 prices that ceiling on
+the six GLM units. A twin written in fp16 would be a tighter ceiling (W1's
+0.0000–0.0005); not built here.
 
 ---
 
@@ -173,9 +180,10 @@ parameters.** Both rungs stamped `git: fc2c1c1`.
 | R = 7 (`--q256 1792`) | **7.1292** | 7.1317 | 16.0 | 2132 s | 10.88 s | 1 015 088 026 B |
 
 `bf16_twin_check.py` re-opens both checkpoints and carries no encoder state:
-for every unit it parses the wire bytes, materialises them, and asserts
-**bitwise** equality with the twin tensor; every eighth unit is also decoded by
-`stream_bf16_tile` and compared to the same tensor. It then checks the twin is
+for every unit it parses the wire bytes, materialises them *the twin's
+way* (`materialize_bf16_folded`), and asserts **bitwise** equality with the
+twin tensor; every eighth unit is also decoded by
+`stream_bf16_folded` and compared to the same tensor. It then checks the twin is
 structurally the source — same tensor names, same shapes, every tensor
 `BF16` — and that the config carries no `quantization_config`.
 
@@ -321,11 +329,10 @@ stock layout.
 runtime forbidden from importing Triton imports this module unchanged.
 
 ```python
-from tessera.bf16_route import (BF16_FAMILY,          # "TESSERA_BF16"
-                                prepare_bf16_unit,     # at load
-                                stream_bf16_unscaled,  # product mode
-                                stream_bf16_tile)      # resident/correctness
-from tessera.decode import materialize_bf16, materialize_bf16_unscaled
+from tessera.bf16_route import (BF16_FAMILY,        # "TESSERA_BF16"
+                                prepare_bf16_unit,  # at load
+                                stream_bf16)        # product mode
+from tessera.decode import materialize_bf16        # the same pair, unstreamed
 ```
 
 **At load**, per unit (`parse_unit_artifact` gives `parsed.unit`):
@@ -339,22 +346,23 @@ streamed.resident_bytes            # counted, not estimated -- what the mode hol
 **Product mode (streamed), the call to make:**
 
 ```python
-values, row_scale = stream_bf16_unscaled(streamed)   # (bf16 [out, in], fp32 [out])
-y = torch.nn.functional.linear(x, values)            # stock BF16 GEMM, no fold
-y = y * row_scale                                    # fp32 epilogue on the output rows
+values, row_scale = stream_bf16(streamed)     # (bf16 [out, in], fp32 [out])
+y = torch.nn.functional.linear(x, values)     # stock BF16 GEMM, nothing folded
+y = y * row_scale                             # fp32 epilogue on the output rows
 ```
 
 `values` is `nn.Linear.weight` layout — rows are output channels, which is
-exactly why the scale is an epilogue (§4). **Do not** call `stream_bf16_tile`
+exactly why the scale is an epilogue (§4). **Do not** call `stream_bf16_folded`
 in the product path: it folds, and the fold is a floor of ≈0.0015 relative
 output error that the epilogue does not pay (2.2% of the error at R = 4, 15.9%
 at R = 7).
 
-**Resident / correctness mode** — 16 bpp, a correctness path only, and the
-mode a twin comparison uses: `materialize_bf16(unit, grid, code)` returns the
-one folded tile, and it is *bit-identical* to `stream_bf16_tile(streamed)`.
-`stock.materialize_stock` already routes a CHANNEL-plane BF16 unit to it, so a
-loader that dispatches on the stock helper needs no change.
+**Resident mode** — hold `values` and `row_scale` instead of the wire; the
+GEMM and the epilogue are the same two lines, so the residency choice is not a
+quality choice. **Folded** (`materialize_bf16_folded` /
+`stream_bf16_folded`, bit-identical to each other) exists for the twin and for
+`stock.materialize_stock`; a lane that calls it has silently chosen the twin's
+error for no reason.
 
 **What the route spec should say** (mirroring `TESSERA_FP8`'s row in the
 Gridbook contract): family `TESSERA_BF16`, weight dtype `bfloat16`, activation

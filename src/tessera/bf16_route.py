@@ -16,19 +16,19 @@ spend 7 bits usefully is the one whose alphabet is not the constraint.
 
 **Two residency modes, and only one of them is the product.**
 
-* *Resident*: hold ``materialize_bf16``'s tile.  16 bits a weight, which is
+* *Resident*: hold ``materialize_bf16``'s tile and row scale.  16 bits a weight, which is
   the source precision -- so as a size claim it is nothing at all.  It exists
   as the correctness path: the tile a stock GEMM consumes, byte-identical to
   the exported stock twin, with no decoder in the serve.
 * *Streamed*: hold the wire -- the packed window plane, the ``2^L`` table, the
   fp16 row words -- at the artifact's own 4-8 bpp, and decode when the module
-  runs.  That is the product mode; :func:`stream_bf16_unscaled` is the call,
+  runs.  That is the product mode; :func:`stream_bf16` is the call,
   for the reason below.
 
 Both are the **same bytes**: the streamed decode is checked against
-``materialize_bf16`` at load and the two are bit-identical by construction --
+``decode``'s at load and the two are bit-identical by construction --
 they share ``dequantize``'s expression and the single round-to-nearest-even
-that ``materialize_bf16`` documents.  Pure torch throughout, no Triton: a
+that ``materialize_bf16_folded`` documents.  Pure torch throughout, no Triton: a
 runtime that must not import Triton (Gridbook) imports this module.
 
 **Do not fold the row scale if you do not have to.**  A one-tensor BF16
@@ -42,8 +42,8 @@ BF16 GEMM on the *code tile* -- exactly bf16 already, since every table entry
 is a bf16 value -- and applies the row scale in fp32 as an epilogue, the same
 epilogue ``lane_planes`` builds for this plane on the kernel lane.  Measured
 on random activations that is 2.8e-7 relative against the fold's 1.7e-3.
-:func:`stream_bf16_unscaled` is that path and it is what a lane should call;
-:func:`stream_bf16_tile` is the twin's rendering, kept because the twin has
+:func:`stream_bf16` is that path and it is what a lane should call;
+:func:`stream_bf16_folded` is the twin's rendering, kept because the twin has
 to be reproducible bit for bit.
 """
 from __future__ import annotations
@@ -63,8 +63,8 @@ __all__ = [
     "window_table_values",
     "prepare_bf16_unit",
     "unpack_window_body",
-    "stream_bf16_tile",
-    "stream_bf16_unscaled",
+    "stream_bf16",
+    "stream_bf16_folded",
 ]
 
 #: The name Gridbook's ``tessera_scheme`` gives this family, and the name the
@@ -101,7 +101,7 @@ class StreamedBF16Unit:
     permuted column-major and padded by ``L`` zero bits so position 0 needs no
     boundary test), the per-column bit offsets and rates, the ``2^L`` bf16
     table, and one fp16 word per output row times an fp32 global.  Nothing is
-    expanded until :func:`stream_bf16_tile` is asked for a tile.
+    expanded until :func:`stream_bf16_folded` is asked for a tile.
     """
 
     __slots__ = ("plane", "offsets", "rates", "table", "row_scale",
@@ -230,19 +230,19 @@ def unpack_window_body(
     return body
 
 
-def stream_bf16_unscaled(
+def stream_bf16(
     streamed: StreamedBF16Unit,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """The streamed **no-fold** pair: ``(code tile bf16, row scale fp32)``.
 
-    What a lane should call.  ``stream_bf16_tile`` folds the row scale in and
+    What a lane should call.  ``stream_bf16_folded`` folds the row scale in and
     rounds, because that is what a one-tensor BF16 checkpoint must do; a lane
     holding the wire can instead run the stock BF16 GEMM on the code tile and
     scale the output rows in fp32, since a CHANNEL scale is an output-row
     factor and commutes with the matmul.  The code tile is exact -- every
     table entry is a bf16 value -- so this path rounds the weight nowhere,
     and it avoids the ~0.0015 output-error floor the fold costs at any rate
-    (``decode.materialize_bf16_unscaled``).
+    (``decode.materialize_bf16``).
     """
     body = unpack_window_body(
         streamed.plane, streamed.offsets, streamed.rates,
@@ -263,27 +263,21 @@ def stream_bf16_unscaled(
     )
 
 
-def stream_bf16_tile(streamed: StreamedBF16Unit) -> torch.Tensor:
-    """Decode a resident wire to the ``[rows, cols]`` bf16 tile, in pure torch.
+def stream_bf16_folded(streamed: StreamedBF16Unit) -> torch.Tensor:
+    """The **twin's** rendering from a resident wire: one folded bf16 tile.
 
     Packed window stream -> states -> table gather -> row scale -> one
-    round-to-nearest-even.  The expression is ``materialize_bf16``'s, and the
-    result is bit-identical to it: the code value comes off the *same* table
-    the reader's ``grid_vector_table`` gather produces, the scale off the same
+    round-to-nearest-even.  The expression is
+    ``decode.materialize_bf16_folded``'s and the result is bit-identical to
+    it: the code value comes off the *same* table the reader's
+    ``grid_vector_table`` gather produces, the scale off the same
     ``stored.float() * global`` product broadcast down the row, and the
-    rounding is the single ``.to(torch.bfloat16)`` that function documents.
-    ``test_bf16_route_streamed_matches_materialise`` is the assertion.
+    rounding is that function's single ``.to(torch.bfloat16)``.
+
+    A serving lane wants :func:`stream_bf16` instead -- this exists so that a
+    twin can be reproduced from the wire and checked against the checkpoint,
+    which is what makes a served comparison between them a comparison of one
+    encode.  The fold's cost is the twin's, not the route's.
     """
-    body = unpack_window_body(
-        streamed.plane, streamed.offsets, streamed.rates,
-        streamed.window_bits, streamed.rows,
-    )
-    device = body.device
-    values = torch.zeros(streamed.rows, streamed.cols, dtype=torch.float32, device=device)
-    table = streamed.table.float()
-    for present in sorted({int(r) for r in streamed.rates.tolist()}):
-        which = torch.nonzero(streamed.rates == present).reshape(-1)
-        states = replay_window(body[:, which], streamed.window_bits, present)
-        values[:, which] = table[states]
-    scale = (streamed.row_scale.float() * streamed.global_scale).view(-1, 1)
-    return (values * scale).to(torch.bfloat16)
+    values, scale = stream_bf16(streamed)
+    return (values.float() * scale[:, None]).to(torch.bfloat16)

@@ -31,8 +31,8 @@ from safetensors import safe_open
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from tessera.bf16_route import prepare_bf16_unit, stream_bf16_tile  # noqa: E402
-from tessera.decode import materialize_bf16  # noqa: E402
+from tessera.bf16_route import prepare_bf16_unit, stream_bf16_folded  # noqa: E402
+from tessera.decode import materialize_bf16_folded  # noqa: E402
 from tessera.fused import parse_fused  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 
@@ -109,17 +109,17 @@ def main() -> None:
             continue
         for member, name in zip(members, names):
             parsed = parse_unit_artifact(member.blob, device=args.device)
-            tile = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
+            tile = materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code)
             got = twin_index[name].get_tensor(name).to(args.device)
             checked += 1
             if got.dtype is not torch.bfloat16 or not torch.equal(got, tile):
                 mismatched += 1
                 delta = float((got.float() - tile.float()).abs().max())
-                problems.append(f"{name}: twin != materialize_bf16, max |d| {delta}")
+                problems.append(f"{name}: twin != materialize_bf16_folded, max |d| {delta}")
                 worst = max(worst or 0.0, delta)
             if checked % args.streamed_every == 0:
                 streamed_checked += 1
-                if not torch.equal(stream_bf16_tile(prepare_bf16_unit(parsed.unit)), tile):
+                if not torch.equal(stream_bf16_folded(prepare_bf16_unit(parsed.unit)), tile):
                     streamed_bad += 1
                     problems.append(f"{name}: streamed decode != tile")
             del parsed, tile, got

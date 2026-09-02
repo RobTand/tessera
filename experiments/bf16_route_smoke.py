@@ -18,8 +18,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.alphabet import BF16_GRID, E4M3_GRID  # noqa: E402
-from tessera.bf16_route import prepare_bf16_unit, stream_bf16_tile  # noqa: E402
-from tessera.decode import materialize_bf16, reconstruct_unit  # noqa: E402
+from tessera.bf16_route import prepare_bf16_unit, stream_bf16_folded  # noqa: E402
+from tessera.decode import materialize_bf16_folded, reconstruct_unit  # noqa: E402
 from tessera.export import BF16_WINDOW_BITS, encode_linear_planes, wire_recipe  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact  # noqa: E402
 
@@ -50,8 +50,8 @@ def main() -> None:
         recovered = read_unit_artifact(exported.blob, device=args.device)
         reference = reconstruct_unit(unit, forests, None)
         parsed = parse_unit_artifact(exported.blob, device=args.device)
-        tile = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
-        streamed = stream_bf16_tile(prepare_bf16_unit(parsed.unit))
+        tile = materialize_bf16_folded(parsed.unit, parsed.grid, parsed.code)
+        streamed = stream_bf16_folded(prepare_bf16_unit(parsed.unit))
         row = {
             "bpp": float(exported.bpp),
             "bytes": exported.exact_bytes,
