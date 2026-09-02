@@ -406,3 +406,56 @@ Still not shippable at its own rate: 4.0 bpp exists on the kernel lane only,
 which stock vLLM does not run. Next, in order: activation-aware encoding on
 the CHANNEL plane (LDLQ / `col_weights`, the render leg refuses them today),
 then column smoothing folded into the preceding layer.
+
+## 2026-09-02 (the serving path: a Tessera family inside Gridbook's trellis lane)
+
+The stock lane measured the wire's *values* as served and lost at the stock
+formats' residency; the wire's own 4.0 bpp had no runtime. It now has one in
+build: Gridbook (`/home/rob/gridbook`, an out-of-tree vLLM plugin -- the
+sanctioned CB lane) already carried a trellis lane scaffold (one
+self-describing `wire_bytes` blob per Linear, a `family` scheme, E2M1 W4A4
+and E4M3 W8A8 lane classes decoding to the stock tile for `torch._scaled_mm`,
+a shared decode pool, resident/streamed modes, contract cells with receipts),
+and Tessera's `build_unit_artifact` defaults to `ContainerClass.GRIDBOOK`.
+So the wire-rate product is a **`TESSERA_NVFP4` family in that lane**, not a
+fourth lane: the blob is decoded to the same NVFP4 tile the stock lane
+materialised (byte-identical, so its served numbers are the stock arm's
+0.640), the checkpoint holds the wire (4.0018 bpp on Qwen3-0.6B, 4.0044 on
+disk with the per-unit tables and the container framing), resident mode holds
+4.5 bpp in memory and streamed mode the wire plus one shared tile.
+
+Built today (Tessera `a386407`, `06da06e`; Gridbook worktree
+`/home/rob/gb-tessera-family` branch `tessera/family` on the release-0.9.1 +
+emit-route base, `f108ef6`): `parse_unit_artifact` (the reader's verified
+planes before reconstruction), `lane_planes.py` (the packers, Triton-free, so
+Gridbook imports them and no parser is vendored), `fused.py` (one container
+per vLLM-fused module; roles decoded into row slices; LUT tables moved onto
+one global by an exact binade shift, refused otherwise -- agrees with
+`stock.share_global` on Qwen), `export_gridbook_tessera.py`,
+`gridbook_lane_served.sh`; Gridbook `tessera_scheme.py`, `tessera_ops.py`,
+`tessera_nvfp4_lane.py`, `config.py` dispatch, `docs/TESSERA-LANE.md`, tests
+(scheme, dispatch, lane numerics against `materialize_stock`).
+
+Proven by a real vLLM 0.28 serve of the exported checkpoint: config parsed,
+all 112 modules (fused qkv / gate_up included) dispatched to the lane,
+weights loaded under the fused names, every blob parsed against its scheme,
+every fused group's shared global exact, planes packed -- the load path
+fails only at the native span-2 decoder, which is in flight
+(`csrc/tessera_nvfp4.cu`, opus-high worker, oracle = `materialize_stock`
+byte-for-byte). Container facts: `vllm/vllm-openai:latest` is 0.28.0 /
+torch 2.13, has nvcc but not `cusparse.h`; linking only the *missing* headers
+from the `nvidia/cu13/include` wheel dir (Gridbook's own Dockerfile rule)
+makes its JIT builds work, and Gridbook's E2M1 lane + r256 decoder tests
+pass there (`/home/rob/tessera-runs/gbfam/gbrun.sh`).
+
+Next, in order: (1) the decoder lands → serve → KL must reproduce the stock
+arm's 0.640 within the kernel's nondeterminism floor (the acceptance; a
+different number means a decode defect, not a result); (2) a contract cell +
+receipt (schema bump) so the lane stops resolving `unattested`, then
+PrismaQuant's `_TESSERA_SERVING_LANE_EXISTS`; (3) the window body decoder
+(sub-cap rates) and the E4M3/CHANNEL family (FP8 W8A8 route), each behind the
+same oracle; (4) the routed-MoE cell, which is where Tessera 4.0 beats NVFP4
+4.5 (GLM experts) and the product earns its rung. Dense quality at 4.0 is
+still 1.25× behind production NVFP4 at 4.5 on Qwen; the allocator decides
+where the rung is worth its bytes, and the activation-aware CHANNEL lead is
+unchanged.
