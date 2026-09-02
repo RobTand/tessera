@@ -289,8 +289,9 @@ weight-space error:
 | `layers.2.mlp.down_proj` | 0.02686 | **0.02072** | 0.10643 | **0.22229** |
 | `layers.27.self_attn.o_proj` | **0.07519** | 0.07709 | 0.09729 | 0.10247 |
 
-`h^1.0` wins four of six units and loses one by 0.5%. The full-H geomean win
-is carried entirely by `layers.2.mlp.down_proj`, where it is 23% better on
+`h^1.0` wins four of six units and loses two: `k_proj` by 0.5% and
+`layers.2.mlp.down_proj` by 23%. The full-H geomean win is carried entirely by
+that second unit, where it is 23% better on
 `out` -- and 2.3x **worse** on `plain`, against a 0.095-0.110 band every other
 unit and every other arm sits in. The refit-alone arm on that unit is 3.0x
 worse on `plain` (0.28714). Nothing else in the sweep moves `plain` by more
@@ -351,8 +352,31 @@ either of those.
 
 **The export in flight is `h^1.0`, not `hessian`** -- it was launched off a
 three-unit partial screen while the last three units were still encoding, and
-the ordering inverted when they landed. See the served section for what that
-means and what was done about it.
+the ordering inverted when they landed.
+
+### The deviation, owned
+
+I did not relaunch, and the code default stays `lut16: h^1.0`. The reasoning,
+so it can be overruled on a word rather than discovered later:
+
+- The task budgeted **one** export and said not to tune the arm until it wins.
+  Killing a 9 h export to swap the refit objective is both a second export and
+  a tune.
+- The default's gate is **served KL against 0.640**, not this screen. The rule
+  above chose which candidate to *export*; it was never authorised to set a
+  default by itself. A 1.38% weight-space edge cannot set a default here --
+  only the serve can.
+- So setting the code default to `hessian` would ship a default chosen on a
+  screen, for an arm that will never be served, and would leave the arm that
+  *does* carry served evidence undeclared. That is the worse of the two
+  incoherences.
+- And under either served outcome, relaunching buys nothing: if `h^1.0` misses
+  0.640 the finding is that the H-aware LUT route does not clear its gate, and
+  `hessian` -- which regresses GLM 1.0564x on its own -- is not the arm that
+  rescues it.
+
+This is a deviation from my own rule, not a reading of it. It is recorded here
+rather than resolved, and one instruction reverses it.
 
 ## What this branch changes by default
 
@@ -368,12 +392,24 @@ leg can be finished by anyone, including after this session ends.
 | arm | `ldlqH1` -- `export_tessera_serving.py <src> --grid E2M1x2 --q256 896 --input-scales scales_pqcal.safetensors --stock-twin ... --hessian h_full_qwen06b.pt --refit-metric h^1.0` |
 | why the flag is explicit | the per-plane default was set by *this* receipt; naming the objective keeps the arm meaning the same before and after that change. `test_the_default_on_this_plane_is_the_arm_that_was_measured` pins that the default now writes the same bytes |
 | launched by | `experiments/ldlq_lut_export_arms.sh` (it also launched a full-H arm, killed once the weight-space screen had chosen -- the task asks for ONE export) |
+| **arm mismatch** | the screen that killed the full-H arm was **three of six units**; the completed six-unit geomean inverted and selects `hessian` by 1.38%. The arm being served is therefore the one my pre-registered rule does *not* pick. It was not relaunched -- see "The deviation, owned" above -- so the served number below measures `h^1.0`, and no served number exists or will exist for `hessian` |
 | log | `/mnt/shared/tessera-runs/ldlq-lut/export_ldlqH1.log` |
 | output | `/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin` |
 | to finish | `experiments/ldlq_lut_serve.sh ldlqH1` -> `/mnt/shared/tessera-runs/ldlq-lut/kl_ldlqH1.json` |
 | already armed | a detached waiter on sparklina (`/home/rob/tmp/ldlq_arm_serve.sh`, log `serve_ldlqH1_chain.log`) blocks on the export pid and then runs exactly that command, so the leg lands without a session attached. It takes `serve_lock.sh` like every other serve on this box, on port 8001 under `TESSERA_KL_NAME=tessera-kl-ldlqlut`, and refuses rather than serving a partial twin |
 | comparators | **0.640** (`kl_unrot-k2-w4a4-pqcal.json`, `all.kl_lower_mean`; same recipe, weights-only, same A4 scales, same teacher, same box) and **0.511** (PrismaQuant NVFP4 GPTQ+JSO at 4.5 bpp) |
 | the gate | served KL better than 0.640 at matched bytes |
+
+**What each outcome means, written before the number.** If `ldlqH1` beats
+0.640, the H-aware LUT route clears its gate on the arm the weight-space screen
+*second*-ranked, and the natural follow-up is whether `hessian` would have done
+better -- a question this receipt cannot answer and should not guess at. If it
+does not beat 0.640, the finding is that LDLQ plus a block-scale refit on the
+LUT plane does not pay for itself on the serving metric at 4.0 bpp, the default
+does not move, and the 9.2x encode cost is the reason not to keep tuning: an
+H-aware 4-bit route has to win by enough to justify that price, and a screen
+that says 0.78x in weight space has already failed to predict a serve once on
+this project.
 
 The baseline leg is already controlled: `base` (weights-only, the pre-merge
 exporter) and `base2` (weights-only, the *arm's own* post-merge exporter) are
