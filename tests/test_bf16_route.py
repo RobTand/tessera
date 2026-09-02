@@ -39,10 +39,12 @@ from tessera.bf16_route import (  # noqa: E402
     BF16_FAMILY,
     prepare_bf16_unit,
     stream_bf16_tile,
+    stream_bf16_unscaled,
     window_table_values,
 )
 from tessera.calculator import terminal_rate  # noqa: E402
-from tessera.decode import materialize_bf16, materialize_fp8, reconstruct_unit  # noqa: E402
+from tessera.decode import (  # noqa: E402
+    materialize_bf16, materialize_bf16_unscaled, materialize_fp8, reconstruct_unit)
 from tessera.encode import grid_vector_table, window_table  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
 from tessera.export import (  # noqa: E402
@@ -342,6 +344,49 @@ def test_streamed_decode_refuses_what_it_does_not_apply():
     unit.scale_plane = ScalePlaneKind.LUT
     with pytest.raises(GrammarError, match="one scale per output row"):
         prepare_bf16_unit(unit)
+
+
+def test_the_no_fold_pair_rounds_the_weight_nowhere():
+    """A CHANNEL scale is an output-row factor, so it commutes with the matmul
+    and a lane never has to fold it in.  Two claims, both exact:
+
+    the code tile is already bf16 (every table entry is a bf16 value on this
+    grid, so the cast rounds nothing), and folding is the *only* place a
+    rounding enters -- ``bf16(code * s)`` is the folded tile, to the bit.
+    """
+    _, exported, _, _ = _encode(q256=1536)
+    parsed = parse_unit_artifact(exported.blob)
+    values, scale = materialize_bf16_unscaled(parsed.unit, parsed.grid, parsed.code)
+    assert values.dtype is torch.bfloat16 and scale.shape == (SHAPE[0],)
+    assert torch.equal(values.float(), values.float().to(torch.bfloat16).float())
+    tile = materialize_bf16(parsed.unit, parsed.grid, parsed.code)
+    assert torch.equal(tile, (values.float() * scale[:, None]).to(torch.bfloat16))
+    # And the epilogue really is the more accurate arrangement.
+    torch.manual_seed(7)
+    x = torch.randn(64, SHAPE[1])
+    exact = x @ (values.float() * scale[:, None]).T
+    epilogue = (x @ values.float().T) * scale[None, :]
+    folded = x @ tile.float().T
+    assert float((epilogue - exact).norm()) < float((folded - exact).norm())
+
+
+def test_the_streamed_no_fold_pair_is_the_materialised_one():
+    _, exported, _, _ = _encode(q256=1536)
+    parsed = parse_unit_artifact(exported.blob)
+    got_values, got_scale = stream_bf16_unscaled(prepare_bf16_unit(parsed.unit))
+    values, scale = materialize_bf16_unscaled(parsed.unit, parsed.grid, parsed.code)
+    assert torch.equal(got_values, values) and torch.equal(got_scale, scale)
+
+
+def test_the_no_fold_pair_refuses_a_block_plane():
+    from tessera.alphabet import E4M3_GRID
+
+    w = _weight()
+    _, unit, forests = encode_linear_planes(
+        w, grid=E4M3_GRID, q256=1024, name="u", window_bits=TEST_L, verify=False,
+    )
+    with pytest.raises(GrammarError, match="needs the scalar BF16 grid"):
+        materialize_bf16_unscaled(unit, forests, None)
 
 
 def test_the_family_name_is_spelled_once():
