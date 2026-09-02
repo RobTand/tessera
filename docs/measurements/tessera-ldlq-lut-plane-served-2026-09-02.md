@@ -456,9 +456,13 @@ not policy: they are reachable only by passing a Hessian, which no recipe does
 on its own.
 
 Two things worth saying out loud about that table. The `h^1.0` on the LUT row
-is chosen on a **weight-space screen**; until the served gate below reports, it
-is the best-screened objective for a route that previously did not exist, not a
-served default. And the S6b row is narrower than it looks: across every `q256`
+is **not** what the completed weight-space screen picks -- the six-unit geomean
+selects `hessian` by 1.38%, on a margin carried by one unit. `h^1.0` is in the
+code because it is the arm in flight and so the only one that will carry served
+evidence; the reasoning, and the fact that this is a deviation from my own
+pre-registered rule rather than a reading of it, is under "The deviation,
+owned" above. Until the served gate reports, this row is a default set by
+neither a screen nor a serve, and one instruction reverses it. And the S6b row is narrower than it looks: across every `q256`
 of all three serialisable grids, `wire_recipe` resolves only to LUT and
 CHANNEL, so S6b is not on any exportable wire and its map entry exists to make
 `objective_for` total over the enum.
