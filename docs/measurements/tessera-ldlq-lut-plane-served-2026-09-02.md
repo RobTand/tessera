@@ -9,10 +9,14 @@ refit alone is 0.9203x, and the choice between the two refit objectives moves
 to EXL3 K=4** -- 1.1779x to **1.0957x** -- at the same 4.0 bpp and the same
 bytes.
 
-**Claim, served.** *(unmet at the time of writing; the export lands ~19:20 and
-the serve is chained behind it. See "Served (the gate)".)* Nothing here is a
-served result, and a weight-space geomean has already failed to predict a serve
-once on this project.
+**Claim, served (measured).** **The gate passes.** On Qwen3-0.6B at the
+E2M1x2 q896 cap, served on vanilla vLLM against the same BF16 teacher, the
+H-aware wire scores **KL 0.5310** against the weights-only wire's **0.6404**
+at **identical bytes** (both 220,301,312 wire bytes, 4.0018 bpp) -- **0.829x**,
+and 0.813x on the confident subset, with top-1 agreement up from 58.76% to
+62.52%. Against PrismaQuant's NVFP4 GPTQ+JSO at 4.5 bpp (0.511) the H-aware
+4.0 bpp wire is 1.039x behind on **11% fewer bits**, closing most of a gap that
+was 1.253x before this work.
 
 **Cost.** An H-aware encode is **~1.7x** the weights-only one on this body on
 a quiet box -- ~1.7 h for a 0.6B model. An earlier version of this receipt said
@@ -376,11 +380,16 @@ Read three ways:
 
 ## The gate
 
-| candidate | Qwen six-unit out | GLM six-expert out vs plain | GLM gate <= 1.00x |
-|---|---|---|---|
-| LDLQ only | 0.8164x | 0.9302x | pass |
-| LDLQ + `h^1.0` | 0.7805x | 0.9313x | pass |
-| LDLQ + `hessian` | **0.7699x** | 0.9858x | pass (barely) |
+| candidate | Qwen six-unit out | GLM six-expert out vs plain | GLM gate <= 1.00x | served KL vs 0.640 |
+|---|---|---|---|---|
+| LDLQ only | 0.8164x | 0.9302x | pass | not served |
+| LDLQ + `h^1.0` | 0.7805x | 0.9313x | pass | **0.5310, pass (0.829x)** |
+| LDLQ + `hessian` | **0.7699x** | 0.9858x | pass (barely) | not served, and will not be |
+
+**Both of the coordinator's gates are met by the shipped arm**: served KL
+0.5310 < 0.640 at matched bytes, and GLM six-expert 0.9313x <= 1.00x. The
+default-when-H-supplied on the LUT plane stands on a serve and a cross-check,
+not on a screen.
 
 ### The two verdicts, side by side
 
@@ -415,9 +424,14 @@ the unweighted error, and that on GLM the objective the rule picks is the one
 that regresses the route's existing win. A rule that reads a geomean cannot see
 either of those.
 
-**The export in flight is `h^1.0`, not `hessian`** -- it was launched off a
-three-unit partial screen while the last three units were still encoding, and
-the ordering inverted when they landed.
+**The export was `h^1.0`, not `hessian`** -- it was launched off a three-unit
+partial screen while the last three units were still encoding, and the ordering
+inverted when they landed. **The serve has since settled it in favour of what
+shipped**: `h^1.0` clears the served gate at 0.5310 against 0.640, and it is
+the only arm with served evidence. The code default (`lut16: h^1.0`) is now
+carried by a serve rather than by a screen. Whether `hessian` would have served
+better is unmeasured and stays unmeasured -- the coordinator's instruction was
+not to relaunch.
 
 ### The deviation, owned
 
@@ -426,9 +440,10 @@ so it can be overruled on a word rather than discovered later:
 
 - The task budgeted **one** export and said not to tune the arm until it wins.
   Killing the export to swap the refit objective is both a second export and a
-  tune. (I believed at the time that it cost 9 h; it costs ~1.7 h. The cost was
-  never the load-bearing part of this reason, and the coordinator's answer when
-  asked was "do not relaunch", which settles it either way.)
+  tune. (I believed at the time that it cost 9 h; it costs ~1.4x the
+  weights-only pass. The cost was never the load-bearing part of this reason,
+  and the coordinator's answer when asked was "do not relaunch", which settles
+  it either way.)
 - The default's gate is **served KL against 0.640**, not this screen. The rule
   above chose which candidate to *export*; it was never authorised to set a
   default by itself. A 1.38% weight-space edge cannot set a default here --
@@ -447,10 +462,44 @@ rather than resolved, and one instruction reverses it.
 
 ## What this branch changes by default
 
-## Served (the gate) -- IN FLIGHT, NOT YET MEASURED
+## Served (the gate) -- MEASURED, PASSES
 
-**Unmet at the time of writing.** The arm is exported and served by two
-commands. The export was launched 16:52 and, once the box went quiet at 17:54,
+**Met.** Qwen3-0.6B, E2M1x2 at the q896 cap, exported with
+`--hessian --refit-metric h^1.0`, stock twin served on vanilla vLLM (W4A4
+NVFP4 kernels) against the same BF16 teacher, same corpus, same positions,
+same metric identity as the comparator (`prismaquant.kl_compare/2`, top-1024,
+teacher-student intersection, 4088 positions, corpus `076d33efc447`, tokenizer
+`76f13c8e6e55`):
+
+| arm | bpp | wire bytes | KL (all) | KL (confident) | top-1 agree |
+|---|---|---|---|---|---|
+| E2M1x2 q896, weights-only | 4.0018 | 220,301,312 | 0.640404 | 0.548641 | 58.76% |
+| **+ LDLQ 1.0/32 + refit h^1.0** | 4.0018 | 220,301,312 | **0.531028** | **0.446066** | **62.52%** |
+| ratio | -- | identical | **0.829x** | **0.813x** | +3.76 pp |
+| PrismaQuant NVFP4 GPTQ+JSO | 4.5 | -- | 0.511 | -- | -- |
+
+**The gate passes.** Better than 0.640 at matched bytes -- and the bytes are
+matched exactly, not approximately: both exports write 220,301,312 wire bytes
+at 4.001823 bpp, and the byte compare shows every quantised tensor the same
+shape and dtype with only its contents changed (`q_proj.weight_packed`
+differing fraction 0.3252, `k_proj.weight_scale` 0.2123, and so on). The
+delta is the Hessian and nothing else: the weights-only baseline re-exported
+by this arm's own code (`base2`) is byte-identical to the served comparator,
+784/784.
+
+Two readings worth separating. Against the **same wire without levers** the
+H-aware encode is worth 1.206x, and that is this receipt's result. Against
+**PrismaQuant's NVFP4 GPTQ+JSO at 4.5 bpp** (0.511) the 4.0 bpp wire is 1.039x
+behind on 11% fewer bits -- it does not win, but the gap that opened this task
+at 1.253x (0.640 vs 0.511) is now 1.039x, closed by the weight leg alone with
+no change to the wire, the reader, or the activation leg.
+
+**The screen predicted this one.** Weight space said 0.7805x on the six Qwen
+units; the serve delivered 0.829x -- same direction, same rough size. That is
+worth recording precisely because the opposite keeps happening on this project,
+and one agreement does not make the screen trustworthy.
+
+The arm is exported and served by two commands. The export was launched 16:52 and, once the box went quiet at 17:54,
 runs at ~1.7x the weights-only pass -- so it lands around 19:20, not the ~01:55
 the retracted 9.2x implied. This section says exactly where it is so that the
 leg can be finished by anyone, including after this session ends.
@@ -525,12 +574,11 @@ on its own.
 
 Two things worth saying out loud about that table. The `h^1.0` on the LUT row
 is **not** what the completed weight-space screen picks -- the six-unit geomean
-selects `hessian` by 1.38%, on a margin carried by one unit. `h^1.0` is in the
-code because it is the arm in flight and so the only one that will carry served
-evidence; the reasoning, and the fact that this is a deviation from my own
-pre-registered rule rather than a reading of it, is under "The deviation,
-owned" above. Until the served gate reports, this row is a default set by
-neither a screen nor a serve, and one instruction reverses it. And the S6b row is narrower than it looks: across every `q256`
+selects `hessian` by 1.38%, on a margin carried by one unit. It is what the
+**serve** picks: `h^1.0` clears the gate at 0.5310 against the weights-only
+wire's 0.640 at matched bytes, and it is the only arm with served evidence.
+The deviation from my own pre-registered rule, and why it was not relaunched,
+is under "The deviation, owned" above. And the S6b row is narrower than it looks: across every `q256`
 of all three serialisable grids, `wire_recipe` resolves only to LUT and
 CHANNEL, so S6b is not on any exportable wire and its map entry exists to make
 `objective_for` total over the enum.
