@@ -15,11 +15,15 @@ resident FP8 GEMV per token at any measured shape or model**: summed over a
 model's Linears at M=1 it is **1.065x behind on Qwen3-0.6B**, **2.343x behind on
 Qwen3-4B** and **1.271x behind on the 27B shape list**, against a resident FP8
 tile plus a fused per-token activation quantiser. The reason is **occupancy, not
-bytes**: ncu puts DRAM at 20-22% busy on both kernels, so reading 4 bpp instead
-of 8 buys nothing while the kernel cannot keep the machine's memory pipeline
-fed. The clearest single statement is `17408x5120`, where `_scaled_mm` is
-genuinely DRAM-bound (93.9 GB/s on an 89 MB tile), the fused GEMV reads **half
-the bytes**, and the two are **level (1.02x)**.
+bytes**: on both kernels *no* memory unit ncu exposes on this device is above
+37% of its peak, and L2 -- the unit that stands in front of memory -- is at
+15-22%, so reading 4 bpp instead of 8 buys nothing while the kernel cannot keep
+the memory pipeline fed. (**ncu's DRAM counters are unavailable on GB10** --
+`dram__*` returns n/a on this integrated part -- so nothing below is a measured
+DRAM number; see section 5.) The clearest single statement is `17408x5120`: both
+kernels are slow there, the fused GEMV reads **half the bytes** `_scaled_mm`
+does, and the two are **level (1.02x)**. A kernel whose time does not move when
+its bytes halve is not limited by bytes.
 
 ---
 
@@ -45,7 +49,8 @@ Arms and their conditions:
 | decode | 12:58 | 6-7 | no |
 | gemv | 13:02 | 5 | no |
 | ablate | 13:03 | 5 | no |
-| ncu (all) | 13:04-13:20 | 4-6 | from ~13:06 |
+| ncu gemv 2560x9728, 1024x3072 | 13:04-13:11 | 4-6 | from ~13:06 |
+| ncu decode + the M=4/M=8 sweep | 13:12-13:20 | 4-6 | **yes, two containers** |
 | profile | 13:07 | 5 | **yes, starting** |
 | bandwidth | 13:08 | 4 | **yes** |
 
@@ -54,9 +59,19 @@ at 16:16:22Z by writing `/home/rob/tessera-runs/serve.lock/owner` by hand rather
 than through `experiments/serve_lock.sh` (whose owner line is
 `$$ <utc> $SERVE_LOCK_OWNER`; mine had no pid). By **17:06:20Z** that lock was
 gone and pid 2762875 (`experiments/serve_and_dump_kl.sh`, a BF16 teacher dump)
-held it — it had been *waiting* since ~12:58 and started its vLLM container at
+held it. **It was not the stale rule that removed mine**: `serve_lock.sh` breaks
+a lock only when it is older than 3600 s *and* no container is running, and mine
+was 50 minutes old at 17:06:20Z. The mechanism is unknown; the likeliest is
+another worker's unconditional `serve_lock_release`. Taken with my own mistake
+below, **two different workers deleted a lock they did not hold in one
+afternoon** — that is a systemic hole in the protocol, not one person's slip, and
+it is flagged as such to the coordinator. — it had been *waiting* since ~12:58 and started its vLLM container at
 ~13:06. So the decode, gemv and ablate arms ran with no serve on the box; the
-**profile and bandwidth arms did not**.
+**profile and bandwidth arms did not**, and the later ncu runs (the decoder, and
+the M=4/M=8 comparison) ran with **two** containers up. ncu serialises the
+kernel it profiles and its register/occupancy/percent-of-peak counters are
+architectural, so those are unaffected; its **`Duration` on those later runs is
+the figure to treat as an upper bound**.
 
 At **~17:08Z I then deleted that lock believing it was still mine.** It was not.
 Pid 2726607 acquired it 2.5 minutes later and started a second vLLM, so two
@@ -74,8 +89,12 @@ read+write **102.8**, copy engine **101.4** (256 MiB each,
 `bench-bandwidth-20260902-130832.json`). But `torch._scaled_mm` moved a cold
 12.5 MB FP8 tile at **205.6 GB/s** in the same session. The three probes and the
 one real kernel disagree by 2x and I did not resolve it. **The authority used
-below is ncu's own `Max Bandwidth` percentage**, which is measured against the
-device's counters rather than against any probe of mine.
+below is ncu's own percent-of-peak figures**, which are measured against the
+device's own counters rather than against any probe of mine -- and which are
+therefore unaffected by this discrepancy. What ncu cannot give on GB10 is a DRAM
+counter at all (`dram__*`: n/a), so its `Max Bandwidth` is the maximum over the
+memory pipelines it *can* see (L1/TEX, L2), not a DRAM utilisation. The
+unresolved 103-vs-205 gap is listed again in section 6.
 
 The earlier read-only probe was `torch.sum`, which is a two-stage reduction
 whose second stage is a separate launch: it read **11.5 GB/s** on a box where a
@@ -247,15 +266,17 @@ cache-flushed, so DRAM-cold: 56.16 us):
 
 ```
 Max Bandwidth          21.61 %      Memory Throughput      21.61 %
+L1/TEX Cache Thpt      22.94 %      L2 Cache Throughput    21.61 %
 Compute (SM)           18.00 %      Mem Busy               18.30 %
 Registers Per Thread   255          Local Memory Spilling Requests  64,512
 Theoretical Occupancy  16.67 %      Achieved Occupancy     16.31 %
 Waves Per SM           2            L1/TEX Hit Rate        88.86 %
 ```
 
-255 registers per thread, **64,512 spill requests**, 16.7% occupancy, DRAM ~22%
-busy. The decoder is fast relative to the torch reader and it is **not** at the
-write-out bound. That is an honest miss against "target: bandwidth-bound", and
+255 registers per thread, **64,512 spill requests**, 16.7% occupancy, and no
+memory unit ncu can see above **23%** of its peak (there is no DRAM counter on
+this part). The decoder is fast relative to the torch reader and it is **not** at
+the write-out bound. That is an honest miss against "target: bandwidth-bound", and
 the register pressure is the named lever (section 6).
 
 ### 4b. GEMV at M=1, per Linear shape
@@ -297,7 +318,8 @@ Power 29-37 W, 4-6 concurrent CUDA processes on every row.
 
 As a fraction of the 273 GB/s spec the fused GEMV reads the wire at **12-30%**;
 as a fraction of the 103 GB/s this box's probes measured, **33-80%**. Neither is
-a ceiling: ncu says the DRAM is 80% idle while it runs (section 5).
+a ceiling: ncu says no memory unit it can see is above 37% of peak while it runs
+(section 5).
 
 **Versus BF16.** The fused GEMV beats cuBLAS bf16 on every shape at or above
 1024x2048 for M <= 4, by 1.1x-2.6x. It **loses** at 1024x1024 (11.27 vs 9.91)
@@ -387,8 +409,11 @@ Three instruments, one answer.
 | | 2560x9728 (4B down_proj) | 1024x3072 (0.6B down_proj) |
 |---|---|---|
 | Duration (cache-flushed) | 203.17 us | 29.63 us |
-| **Max Bandwidth** | **20.22%** | **20.64%** |
-| Memory Throughput | 35.91% | 34.74% |
+| **Max Bandwidth** (max over the memory pipelines ncu can see) | **20.22%** | **20.64%** |
+| L1/TEX Cache Throughput | 37.40% | 44.16% |
+| **L2 Cache Throughput** | **14.77%** | **22.35%** |
+| Memory Throughput (SOL) | 35.91% | 34.74% |
+| DRAM | *counter unavailable on GB10* | *unavailable* |
 | Compute (SM) Throughput | 34.84% | 31.00% |
 | Registers Per Thread | 160 | 160 |
 | **Local Memory Spilling** | **0** | **0** |
@@ -399,13 +424,21 @@ Three instruments, one answer.
 | Warp cycles per issued instruction | 7.24 | — |
 | ...of which L1TEX scoreboard stall | **43.0%** | — |
 
-**The DRAM is 80% idle while this kernel runs.** It is not bandwidth-bound; it is
+**No memory unit ncu exposes on this device is above 37% of its peak while this
+kernel runs, and L2 -- the unit standing in front of memory -- is at 15-22%.**
+ncu has **no DRAM counter on GB10** (`dram__bytes_read.sum` and its siblings
+return n/a on this integrated part), so "the DRAM is idle" is not a thing this
+receipt can measure; what it can say is that a kernel saturating memory would
+show a busy L2, and this one does not. It is not bandwidth-bound; it is
 latency-bound at an occupancy of three warps per scheduler out of twelve, and
 43% of its issue cycles are spent waiting on the wire load's L1TEX scoreboard.
 Three warps cannot hide that latency. Halving the weight bytes cannot help until
-the occupancy rises — which is exactly what `17408x5120` shows: `_scaled_mm` is
-DRAM-bound there at 93.9 GB/s on an 89 MB tile, the fused kernel reads half the
-bytes, and it is **level, not 2x faster**.
+the occupancy rises — which is exactly what `17408x5120` shows: both kernels take
+~950 us there, and the fused one gets that time while reading **half** the bytes
+`_scaled_mm` reads. A kernel whose time does not move when its bytes halve is not
+limited by bytes. (I do **not** claim `_scaled_mm` is at its own bandwidth bound
+there: it moved 93.9 GB/s on that shape but 205.6 GB/s on a cold 5120x5120 in the
+same session, so 93.9 is not a ceiling I have established -- see section 6.)
 
 **The ablation agrees** (`bench-ablate-20260902-130333.json`; the same kernel
 with one term compiled out, `tl.constexpr` so the branch is free):
@@ -497,7 +530,7 @@ The parametrisation is built and tested; the *route* is not measured.
 - **CUDA-graph capture of the lane's forward.** Every number here is eager.
 - **The activation-contract gate.** Section 1: W2's call, per principle 14.
 
-## 9. Two corrections to earlier claims in this work
+## 9. Three corrections to earlier claims in this work
 
 - **The initial-window hoist was wrong and is reverted** (`793c09d`). Moving the
   initial-window term behind `if pid_p == 0` — a program-uniform branch, so it
@@ -515,6 +548,18 @@ The parametrisation is built and tested; the *route* is not measured.
   does **not**, and should be read as a preference confirmed by the direction of
   a 5-shape x 3-M x 36-config sweep, not as a measured 8%. History is not
   amended; this is the correction.
+- **"The DRAM is 80% idle" was an over-read of ncu, and this receipt no longer
+  says it.** ncu's `Max Bandwidth` is the maximum over the memory pipelines it
+  can see; on GB10 the `dram__*` counters are **not among them** (n/a on this
+  integrated part), so no number here is a measured DRAM utilisation. What is
+  measured is L1/TEX at 22-44% of peak and **L2 at 15-22%** — and since every
+  byte from memory crosses L2, a kernel saturating memory would show a busy L2.
+  The conclusion ("not bandwidth-bound; occupancy-bound") is unchanged; the word
+  "DRAM" was doing work the instrument had not done. Related: I called
+  `_scaled_mm` "genuinely DRAM-bound at 93.9 GB/s" on 17408x5120 while my own
+  table shows it at 205.6 GB/s on a cold 5120x5120 in the same session. 93.9 is
+  not a bound I established, and the 17408x5120 argument does not need it: both
+  kernels take ~950 us there and the fused one reads half the bytes.
 
 ## 10. Reproducing
 

@@ -68,9 +68,13 @@ __all__ = [
     "window_value_table",
 ]
 
-#: The largest M ``window_gemv`` takes.  The accumulator is ``[MBLK, LANES,
-#: VEC]`` fp32 in registers, so M grows the block linearly; past this the
-#: decode-then-GEMM path is both faster and the contract the lane attests.
+#: The largest M ``window_gemv`` takes.  This is a **register-pressure cap, not
+#: a measured crossover**: the accumulator is ``[MBLK, LANES, VEC]`` fp32 in
+#: registers, so M grows the block linearly -- 209 registers a thread and 14%
+#: occupancy already at M=8 -- and past it the kernel spills rather than runs.
+#: The M at which decode-then-GEMM actually wins has *not* been derived; the two
+#: instruments that measured M=8 disagree.  See the receipt,
+#: ``docs/measurements/tessera-window-kernel-2026-09-02.md`` section 4d.
 GEMV_MAX_M = 8
 
 #: Bits a lane reads in one span.  A lane covers ``VEC`` consecutive codes,
