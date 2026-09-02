@@ -14,10 +14,10 @@ MODEL="$1"; OUT="$2"; ROLE="$3"; LABEL="${4:-}"
 IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
 PORT="${TESSERA_KL_PORT:-8000}"
 CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
-NAME="tessera-kl-serve"
+# The container name must be unique per worker: several agents share this box
+# and a fixed name means one worker's `docker rm -f` reaps another's serve.
+NAME="${TESSERA_KL_NAME:-tessera-kl-serve}"
 LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json).log"
-
-docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  The repeated
 # store_true flag is a no-op stand-in so the argv shape does not change.
@@ -30,6 +30,9 @@ echo "serving $MODEL  ($IMAGE)"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
 trap serve_lock_release EXIT
+# Only after the lock: removing a stale container of our own name is fine,
+# doing it before the lock would race another worker holding the serve.
+docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
