@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Export a dense checkpoint as Tessera wires for Gridbook's Tessera lane.
+"""Export a dense checkpoint as Tessera wires for Tessera's own vLLM plugin.
 
-TWO FAMILIES, ONE LANE.  Gridbook's ``tessera_scheme`` names a family by the
+TWO FAMILIES, ONE PLUGIN.  ``tessera.serving.scheme`` names a family by the
 stock tile a module decodes to: ``TESSERA_NVFP4`` (an E2M1-based grid over the
 LUT plane, span-2 TCQ body -> the NVFP4 tile, W4A4) or ``TESSERA_FP8`` (the
 E4M3 grid over the CHANNEL plane, window body -> the per-channel FP8 pair,
@@ -9,6 +9,10 @@ W8A8).  ``--grid``/``--q256`` set the default per Linear and ``--plan-json``
 overrides it per tensor, so one checkpoint may carry both families and a
 single serve executes each on its own tensor-core path: that is the product
 an allocator targets.
+
+The checkpoint declares ``quantization_config.quant_method: "tessera"``, which
+is what selects the plugin: there is no serve flag to enable it, only
+``TESSERA_SERVE_MODE`` to declare the residency.
 
 ONE BLOB PER vLLM MODULE.  Every role a vLLM fusion stacks (q/k/v, gate/up)
 is encoded as its own Tessera unit and framed into a ``tessera.fused``
@@ -24,11 +28,35 @@ groups moved onto one shared global) that vanilla vLLM serves with no plugin,
 so a served comparison is between one encode and its two servings rather than
 between two encodes.
 
-The manifest states what is on disk and what the lane holds resident per
+The manifest states what is on disk and what the plugin holds resident per
 mode.  ``lm_head`` and the embeddings stay BF16 (PrismaQuant's body-only
 convention); a Linear whose rows are not a whole number of tuples, or a
 fused module not all of whose roles are quantizable, is passed through as
-BF16 and named in ``ignore``.
+BF16 and named in ``ignore``.  Naming it there is not bookkeeping: the plugin
+REFUSES a Linear that is neither declared nor ignored, so one mistyped target
+is a refusal rather than a silently BF16 artifact.
+
+THE ARTIFACT IS TENSOR-PARALLELISM-AGNOSTIC, and this exporter never encodes
+per rank.  One whole unit per role is written once; a serve with tp_size > 1
+loads the whole unit on every rank and cuts it at load
+(``tessera.serving.sharding``), so the same checkpoint serves any TP degree and
+re-sharding is a serve flag rather than a re-export.  Encoding per rank would
+make the bytes a function of the machine they were built for, and a unit cut
+for 4 ranks could not be re-cut for 8.
+
+ROUTED-MoE EXPERTS ARE NOT EXPORTED YET, and are refused by name rather than
+skipped.  A transformers-5 checkpoint packs a layer's experts into 3-D tensors
+(``mlp.experts.gate_up_proj`` ``[E, K, 2N]``, ``...down_proj`` ``[E, N, K]``);
+``quantizable`` separates them from the 2-D body and ``main`` either passes
+them through as BF16 (named in ``ignore``, so the plugin serves the MoE layer
+unquantized instead of refusing it) or, if a plan names one, refuses with the
+tensor and its shape.  When the expert route lands, the work is: encode one
+unit per expert per role, frame them into one container per vLLM MoE module
+(the fused rule below already groups by module name and is rank-agnostic),
+declare ``structure: "routed_moe"`` on the scheme, and decode to the stock
+PACKED expert layouts vLLM's fused-MoE kernels read.  The grouping rule that a
+fused module's roles must share ONE family holds for experts exactly as it does
+for q/k/v: vLLM builds one method per module.
 """
 from __future__ import annotations
 
@@ -114,7 +142,15 @@ def git_hash() -> str:
 
 
 def quantizable(src: Path):
-    """Every 2-D ``.weight`` under ``model.layers`` (body only), with its shape."""
+    """The body's tensors under ``model.layers``, split by RANK.
+
+    Returns ``(shards, shapes, expert_shapes)``: ``shapes`` is every 2-D
+    ``.weight`` (a dense Linear, one blob per vLLM module) and
+    ``expert_shapes`` every ``.weight`` of rank 3 or more -- a transformers-5
+    packed expert stack.  The split is explicit because dropping the second
+    kind silently is how an MoE checkpoint would export as "fully quantized"
+    while its experts stayed BF16 and nothing said so.
+    """
     index = src / "model.safetensors.index.json"
     if index.exists():
         weight_map = json.loads(index.read_text())["weight_map"]
@@ -126,7 +162,7 @@ def quantizable(src: Path):
         for path in sorted(src.glob("*.safetensors")):
             with safe_open(str(path), framework="pt") as handle:
                 shards[path.name] = list(handle.keys())
-    shapes = {}
+    shapes, expert_shapes = {}, {}
     for shard, names in shards.items():
         with safe_open(str(src / shard), framework="pt") as handle:
             for name in names:
@@ -134,7 +170,9 @@ def quantizable(src: Path):
                     shape = tuple(handle.get_slice(name).get_shape())
                     if len(shape) == 2:
                         shapes[name] = shape
-    return shards, shapes
+                    elif len(shape) >= 3:
+                        expert_shapes[name] = shape
+    return shards, shapes, expert_shapes
 
 
 def stock_targets(modules):
@@ -183,10 +221,22 @@ def main():
                 g = grid_for(spec["grid"])
                 check_recipe(g, int(spec["q256"]))
                 overrides[name] = (g, int(spec["q256"]))
-    shards, shapes = quantizable(args.src)
+    shards, shapes, expert_shapes = quantizable(args.src)
+    planned_experts = sorted(set(overrides) & set(expert_shapes))
+    if planned_experts:
+        first = planned_experts[0]
+        raise SystemExit(
+            f"the plan names {len(planned_experts)} packed expert tensor(s), e.g. {first} "
+            f"{list(expert_shapes[first])}: routed-MoE expert export is a follow-up. The wires, "
+            "the container framing and the scheme's structure field are all in place; what is "
+            "missing is the per-expert encode and the decode to vLLM's packed expert layouts. "
+            "Remove them from the plan to pass them through as BF16.")
     unknown = sorted(set(overrides) - set(shapes))
     if unknown:
         raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}")
+    if expert_shapes:
+        print(f"  {len(expert_shapes)} packed expert tensors stay BF16 and are named in ignore "
+              f"(routed-MoE export is a follow-up); e.g. {sorted(expert_shapes)[0]}", flush=True)
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
@@ -334,7 +384,11 @@ def main():
                 twin_records[module] = {"family": family, "members": [module_of(m) for m in members],
                                         "resident_bytes": sum(stock_bytes(stock_tensors[m]) for m in members)}
             scheme = {
-                "family": family, "grid": grid.name, "body": recipe.body.name, "plane": recipe.scale_plane.name,
+                # ``structure`` names what kind of vLLM layer this is: ``dense``
+                # (a LinearBase, one blob per module) today.  The expert route
+                # will declare ``routed_moe`` here rather than change the schema.
+                "family": family, "structure": "dense",
+                "grid": grid.name, "body": recipe.body.name, "plane": recipe.scale_plane.name,
                 "q256": q256, "rows": rows_total, "columns": cols, "wire_bytes": len(blob),
                 "roles": [[r, rows] for r, rows, *_ in roles],
             }
@@ -355,10 +409,16 @@ def main():
     if pending_modules:
         raise SystemExit(f"modules never completed: {sorted(pending_modules)}")
 
+    # A packed expert stack stays BF16; naming its MODULE in ``ignore`` is what
+    # lets the plugin serve that MoE layer unquantized instead of refusing it.
+    for name in expert_shapes:
+        ignore.append(module_of(name).rsplit(".", 1)[0] if name.endswith(".weight") else name)
     ignore = sorted(set(ignore))
     config = json.loads((args.src / "config.json").read_text())
     config["quantization_config"] = {
-        "quant_method": "gridbook", "format": "mixed-precision",
+        # The field that selects Tessera's own vLLM plugin (entry point
+        # ``tessera = tessera.serving:register``).  No serve flag enables it.
+        "quant_method": "tessera", "format": "mixed-precision",
         "config_groups": config_groups, "ignore": ignore,
     }
     (args.out / "config.json").write_text(json.dumps(config, indent=2))
@@ -406,13 +466,13 @@ def main():
     manifest = {
         "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
-               + f" -> gridbook {'+'.join(families)}",
+               + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "stock_twin": str(twin) if twin is not None else None,
         "totals": totals, "modules": module_records,
     }
-    (args.out / "tessera_gridbook_manifest.json").write_text(json.dumps(manifest, indent=2))
+    (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
 
     if twin is not None:
         twin_groups = {}
