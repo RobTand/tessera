@@ -310,3 +310,74 @@ def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
     assert not any(t.rstrip("$").endswith("shared_experts.gate_proj")
                    or t.rstrip("$").endswith("shared_experts.up_proj") for t in declared), (
         "the shared expert's UNMERGED leaves are declared; vLLM builds no such module")
+
+
+# --------------------------------------------------------------------------
+# The MoE router.
+#
+# ``GateLinear(ReplicatedLinear)`` -- gate_linear.py:18 -- reads ``self.weight``
+# directly at all six dispatch tiers (:179-228) and reads ``self.weight.dtype``
+# to CHOOSE the tier (:84,:101,:128,:165,:174).  It never calls
+# ``quant_method.apply``.  A Tessera method installed there is dead code and the
+# ``weight`` it indexes is gone.
+# --------------------------------------------------------------------------
+
+def test_the_moe_router_is_not_a_projection():
+    """``mlp.gate`` vs ``mlp.gate_proj`` is one underscore and two worlds."""
+    assert export.MOE_ROUTER.match("model.language_model.layers.1.mlp.gate.weight")
+    assert not export.MOE_ROUTER.match("model.language_model.layers.0.mlp.gate_proj.weight")
+    assert not export.MOE_ROUTER.match(
+        "model.language_model.layers.1.mlp.experts.3.gate_proj.weight")
+    assert not export.MOE_ROUTER.match(
+        "model.language_model.layers.1.mlp.shared_experts.gate_proj.weight")
+
+
+def test_planning_the_router_is_refused_before_any_encode(tmp_path, monkeypatch):
+    src = _write(tmp_path, _unpacked_checkpoint())
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({
+        "model.language_model.layers.1.mlp.gate.weight": {"grid": "E4M3", "q256": 1024}}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+                                     "--q256", "1024", "--plan-json", str(plan)])
+    with pytest.raises(SystemExit) as caught:
+        export.main()
+    message = str(caught.value)
+    assert "ROUTER" in message, message
+    assert "GateLinear" in message, f"the refusal must name the class that ignores the method: {message}"
+    assert not out.exists() or not list(out.glob("*.safetensors"))
+
+
+def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypatch):
+    """The weight must survive into the checkpoint, unencoded.
+
+    What matters is the passthrough, not the ignore entry: ``GateLinear`` takes
+    no ``quant_config``, so this plugin is never asked about the router and the
+    ignore entry is cosmetic (kept because it documents the passthrough and
+    costs nothing).  What would break is the ENCODE -- it would take
+    ``mlp.gate.weight`` out of the checkpoint and put wire tensors no loader
+    maps in its place.
+
+    The fixture's router is 4x128, which the shape rule would reject anyway, so
+    this uses a router whose dims a default plan WOULD accept -- as the real
+    model's 288x4096 one does.
+    """
+    tensors = _unpacked_checkpoint()
+    tensors["model.language_model.layers.1.mlp.gate.weight"] = torch.zeros(64, HIDDEN)
+    src = _write(tmp_path, tensors)
+    out = tmp_path / "out"
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
+                                     "--grid", "E4M3", "--q256", "1024"])
+    export.main()
+
+    written = json.loads((out / "config.json").read_text())["quantization_config"]
+    declared = {t for g in written["config_groups"].values() for t in g["targets"]}
+    router = "model.language_model.layers.1.mlp.gate"
+    assert not any(t.rstrip("$").endswith(".mlp.gate") for t in declared), (
+        f"the router was declared as a Tessera target, so its weight is gone: {sorted(declared)}")
+    with safetensors_torch.safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        assert f"{router}.weight" in set(handle.keys()), (
+            "the router's weight is not in the exported checkpoint; the routing weight would be "
+            "missing, not quantized")
+    assert router in written["ignore"], (
+        f"the router is not named in ignore: {sorted(written['ignore'])}")

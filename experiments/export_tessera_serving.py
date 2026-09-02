@@ -121,6 +121,28 @@ ROUTED_EXPERT_2D = re.compile(
 #: ``...self_attn`` (the whole attention block, every Linear in it) into the
 #: checkpoint's ``ignore`` list.  A tensor is a packed expert stack because of
 #: where it sits, not because it has three axes.
+#: The MoE ROUTER.  ``mlp.gate`` is not a projection (a dense MLP has
+#: ``gate_proj``, never ``gate``); it is the little Linear that decides which
+#: experts a token visits, and the runtime gives it no quantized route at all.
+#:
+#: ``GateLinear.__init__`` takes no ``quant_config`` and passes none to
+#: ``ReplicatedLinear`` (``layers/fused_moe/router/gate_linear.py:50-58``), so
+#: it always gets ``UnquantizedLinearMethod`` and this plugin is NEVER asked
+#: about the router.  Encoding it therefore does not produce a slow route or a
+#: wrong route: it deletes ``mlp.gate.weight`` from the checkpoint and puts wire
+#: tensors in its place that no loader has a mapping for, and the router either
+#: fails as an unexpected key or is left with the weight it was born with.
+#: Belt and braces, ``GateLinear.forward`` reads ``self.weight`` directly at all
+#: six of its dispatch tiers and never calls ``quant_method.apply`` (:179-228),
+#: choosing the tier from ``self.weight.dtype`` (:84,:101,:128,:165,:174) -- so
+#: even a method that WAS installed would be dead code.
+#:
+#: That is a route status, not a taste: on the pinned build the runtime has no
+#: path that executes these bytes for this module, which is the one carve-out
+#: principle 9 allows.  Attested against
+#: ``prismaquant/glm53-mia-sm121:487ecf187``.
+MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
+
 PACKED_EXPERT_ND = re.compile(
     r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
 
@@ -372,6 +394,18 @@ def main():
             f"{module_of(first)} in config_groups names a module vLLM never creates and the "
             "plugin refuses it at load. Routed-MoE export is declared in its own `moe` block. "
             "Remove them from the plan to pass them through as BF16.")
+    planned_routers = sorted(n for n in overrides if MOE_ROUTER.match(n))
+    if planned_routers:
+        raise SystemExit(
+            f"the plan names {len(planned_routers)} MoE ROUTER tensor(s), e.g. "
+            f"{planned_routers[0]}. vLLM builds the router as GateLinear, which takes no "
+            "quant_config at all, so it always gets UnquantizedLinearMethod and this plugin is "
+            "never asked about it: the wire would replace mlp.gate.weight with tensors no loader "
+            "maps, and the routing weight would be missing rather than quantized. (Its forward "
+            "also reads self.weight directly at every dispatch tier and never calls "
+            "quant_method.apply, so even an installed method would be dead code.) The pinned "
+            "runtime has no route for these bytes here. Remove them from the plan to pass the "
+            "router through as BF16.")
     planned_experts = sorted(set(overrides) & set(expert_shapes))
     if planned_experts:
         first = planned_experts[0]
@@ -401,6 +435,8 @@ def main():
         if args.layers is not None and layer >= args.layers:
             passthrough.append(name); continue
         if name in overrides and overrides[name] is None:
+            passthrough.append(name); continue
+        if MOE_ROUTER.match(name):
             passthrough.append(name); continue
         grid, q256 = overrides.get(name, (default_grid, args.q256))
         if rows % (grid.arity * 32) or cols % 16:
