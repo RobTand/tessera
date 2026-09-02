@@ -207,3 +207,51 @@ def test_the_traceback_offset_survives_a_two_gigabyte_predecessor_buffer():
                                   impl="reference")
     got, sse = viterbi_window(targets, vectors, L, R, chunk=chunk, impl="fused")
     assert torch.equal(got, ref) and sse == sse_ref
+
+
+# ------------------------------------------------- through the real encoder
+
+
+@pytest.mark.parametrize("grid_name, rate, window, plane", [
+    ("E4M3", 4, 10, "CHANNEL"),
+    ("E4M3", 5, 12, "CHANNEL"),
+    ("E2M1x2", 7, 10, "LUT"),
+    ("E2M1x2", 6, 12, "S6B"),
+])
+def test_the_fused_path_is_the_reference_under_every_plane(grid_name, rate, window, plane,
+                                                             monkeypatch):
+    """The unit tests above compare the two machines on raw targets; the
+    wire runs them under a scale plane, with the CHANNEL plane's rows scaled
+    to a modelled sigma and weighted by (s/s.max)^2.  The artifact bytes
+    must be the same bytes either way."""
+    import tessera.encode as encode_mod
+    from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
+    from tessera.encode import encode_unit
+    from tessera.export import build_unit_artifact
+    from tessera.manifest import BodyKind, ScalePlaneKind
+    from tessera.trellis import ConvCode
+
+    grid = E4M3_GRID if grid_name == "E4M3" else tuple_grid(E2M1_GRID, 2, "coset")
+    kind = ScalePlaneKind[plane]
+    code = ConvCode(memory=6)
+    g = torch.Generator().manual_seed(11)
+    w = torch.randn(256, 512, generator=g).cuda()
+    rates = tuple([rate] * 512)
+
+    def run(impl):
+        original = encode_mod.viterbi_window
+
+        def pinned(*args, **kwargs):
+            kwargs["impl"] = impl
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(encode_mod, "viterbi_window", pinned)
+        try:
+            unit = encode_unit(w, grid, rates, code, body=BodyKind.WINDOW, window_bits=window,
+                               scale_plane=kind, scale_refit=1, completion=0)
+        finally:
+            monkeypatch.setattr(encode_mod, "viterbi_window", original)
+        return build_unit_artifact(unit, "unit0", grid, rate * 256, code)[2]
+
+    reference, fused = run("reference"), run("fused")
+    assert reference == fused
