@@ -252,7 +252,109 @@ already is.
 
 ## Weight space: the sweep
 
-*(table)*
+Six Qwen3-0.6B units, E2M1x2 at the q896 cap (the 4.0 bpp wire), scored on
+`out` -- output-space error through 8192 held-out eval rows the refit never
+saw. Geomean over the six, and the ratio against the same wire with no levers:
+
+| arm | out (geomean) | vs baseline |
+|---|---|---|
+| baseline (no LDLQ, plain refit) | 0.06551 | 1.0000x |
+| LDLQ sigma=0.3 block=32 | 0.05277 | 0.8055x |
+| **LDLQ sigma=1.0 block=32** | 0.05348 | 0.8164x |
+| LDLQ sigma=3.0 block=32 | 0.05489 | 0.8380x |
+| refit h^0.5 only | 0.06267 | 0.9566x |
+| refit h^1.0 only | 0.06029 | 0.9203x |
+| refit full-H only | 0.06004 | 0.9165x |
+| LDLQ 1.0/32 + refit h^0.5 | 0.05261 | 0.8031x |
+| LDLQ 1.0/32 + refit h^1.0 | 0.05113 | 0.7805x |
+| LDLQ 1.0/32 + refit full-H | 0.05043 | **0.7699x** |
+
+**LDLQ is the lever.** It is worth 0.82x on its own; the refit adds ~0.04x on
+top of it and is worth 0.92x alone. Both together are 0.77-0.78x. `sigma=1.0`
+is not the best sigma here (0.3 edges it, 0.8055x vs 0.8164x) but it is the
+value the window receipt measured and the one carried forward; the difference
+is 1.3% and re-tuning sigma was not this task.
+
+### The geomean picks the arm four of six units reject
+
+Per unit, `out` and -- because it is the tell -- `plain`, the *unweighted*
+weight-space error:
+
+| unit | LDLQ+h^1.0 out | LDLQ+full-H out | LDLQ+h^1.0 plain | LDLQ+full-H plain |
+|---|---|---|---|---|
+| `layers.0.self_attn.q_proj` | **0.04375** | 0.04822 | 0.10155 | 0.10274 |
+| `layers.1.self_attn.k_proj` | 0.04567 | **0.04542** | 0.09842 | 0.10247 |
+| `layers.13.mlp.down_proj` | **0.08348** | 0.08596 | 0.09788 | 0.09966 |
+| `layers.14.mlp.gate_proj` | **0.05304** | 0.05473 | 0.09862 | 0.10109 |
+| `layers.2.mlp.down_proj` | 0.02686 | **0.02072** | 0.10643 | **0.22229** |
+| `layers.27.self_attn.o_proj` | **0.07519** | 0.07709 | 0.09729 | 0.10247 |
+
+`h^1.0` wins four of six units and loses one by 0.5%. The full-H geomean win
+is carried entirely by `layers.2.mlp.down_proj`, where it is 23% better on
+`out` -- and 2.3x **worse** on `plain`, against a 0.095-0.110 band every other
+unit and every other arm sits in. The refit-alone arm on that unit is 3.0x
+worse on `plain` (0.28714). Nothing else in the sweep moves `plain` by more
+than 15%.
+
+That is the signature of a scale set that has bet the unit's absolute accuracy
+on the calibration Hessian being right about which directions matter. `out` is
+held-out rows, so it is not fit-row overfitting; it is the stronger claim that
+the eval rows agree with the fit rows about the loud directions, which is
+exactly the assumption a served corpus is free to break.
+
+## GLM cross-check
+
+Six GLM-5.3 experts, same wire, same rung, each levered arm against the same
+wire with no levers. The gate is <= 1.00x:
+
+| arm | out | vs plain | a4 | vs plain | vs EXL3 K4 (out) |
+|---|---|---|---|---|---|
+| E2M1x2 TCQ q896, no levers | 0.07935 | 1.0000x | 0.11687 | 1.0000x | 1.1779x |
+| + LDLQ 1.0/32 | 0.07381 | **0.9302x** | 0.11314 | 0.9681x | 1.0957x |
+| + refit h^1.0 only | 0.07926 | 0.9989x | 0.11681 | 0.9995x | 1.1766x |
+| + LDLQ 1.0/32 + refit h^1.0 | 0.07390 | **0.9313x** | 0.11319 | 0.9684x | 1.0970x |
+| + refit full-H only | 0.08382 | **1.0564x** | 0.11988 | 1.0258x | 1.2443x |
+| + LDLQ 1.0/32 + refit full-H | 0.07822 | 0.9858x | 0.11604 | 0.9928x | 1.1612x |
+
+Read three ways:
+
+- **LDLQ carries the GLM gate**, 0.9302x, and it closes 39% of the wire's gap
+  to EXL3 K=4 on these experts (1.1779x -> 1.0957x out-space).
+- **The refit is a no-op on GLM's experts** at `h^1.0`: 0.9989x alone, and it
+  costs LDLQ 0.1% when stacked. That is the flat-`diag(H)` prediction -- these
+  experts' inputs are near-Gaussian, a flat metric is the plain refit, and the
+  same fact is why rotation measured dead here.
+- **The full-H refit regresses GLM**, 1.0564x alone, and it gives back most of
+  LDLQ's win when stacked (0.9858x against LDLQ's own 0.9302x). It passes the
+  <= 1.00x gate only because LDLQ drags it under.
+
+## The gate
+
+| candidate | Qwen six-unit out | GLM six-expert out vs plain | GLM gate <= 1.00x |
+|---|---|---|---|
+| LDLQ only | 0.8164x | 0.9302x | pass |
+| LDLQ + `h^1.0` | 0.7805x | 0.9313x | pass |
+| LDLQ + `hessian` | **0.7699x** | 0.9858x | pass (barely) |
+
+**Applied literally, the pre-registered rule selects `hessian`.** The Qwen
+geomeans are 1.38% apart, which is outside the 1% band that would have sent the
+tie to GLM, and both candidates clear the GLM constraint. I am recording that
+verdict rather than the one I would now prefer, because the rule was written
+before the numbers and re-writing it after them is the failure it exists to
+prevent.
+
+What the rule did not anticipate, and what the table above shows, is that its
+deciding margin is one unit of six, that the same unit shows a 2.3x blowup on
+the unweighted error, and that on GLM the objective the rule picks is the one
+that regresses the route's existing win. A rule that reads a geomean cannot see
+either of those.
+
+**The export in flight is `h^1.0`, not `hessian`** -- it was launched off a
+three-unit partial screen while the last three units were still encoding, and
+the ordering inverted when they landed. See the served section for what that
+means and what was done about it.
+
+## What this branch changes by default
 
 ## Served (the gate) -- IN FLIGHT, NOT YET MEASURED
 
