@@ -390,7 +390,7 @@ exact binade shift (52 of 140 members on Qwen3-0.6B, none refused);
 `vllm/vllm-openai` v0.28.0 loads with no plugin, and served it on native
 kernels for both formats (`FlashInferCutlassNvFp4LinearKernel`,
 `CutlassFP8ScaledMMLinearKernel`); the tensors are ordinary NVFP4/FP8 and
-shard as such; the window Viterbi's graph capture is thread-local behind a
+inherit those formats' TP sharding (inherited, not measured: every serve here was TP=1); the window Viterbi's graph capture is thread-local behind a
 lock, six threads at once bit-exact. The served A/B on Qwen3-0.6B
 (`docs/measurements/tessera-stock-lane-served-2026-09-02.md`) is the honest
 part: **as an NVFP4 encoder at 4.5 resident, Tessera loses to production

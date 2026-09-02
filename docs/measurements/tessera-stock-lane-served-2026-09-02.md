@@ -96,7 +96,10 @@ of text disjoint from the corpus, `experiments/stock_h_weighted_error.py`):
 
 Tessera-8 has 1.6× less weight error than production NVFP4 and *more*
 activation-weighted error in total, and the total is carried by a handful of
-units. `layers.2.mlp.down_proj` has an input channel whose second moment is
+units. (The proxy is a diagonal: it puts Tessera-K2 at 1.066× production
+NVFP4 where the serve reads 1.254×, because GPTQ optimises the full Hessian
+and a diagonal weighting undercounts exactly that compensation; the two
+numbers are consistent, the proxy is just partial.) `layers.2.mlp.down_proj` has an input channel whose second moment is
 2.2 million times the column median (its top four columns hold 96% of the
 Hessian mass); the CHANNEL plane — one fp16 scale per **output row** — gives
 that column nothing, so 7.0e-3 of plain error becomes 1.68e-1 of weighted
@@ -146,6 +149,14 @@ completion is the other case: its exact weights say " Paris", and the A4
 activation path on a 0.6 B model is what it loses. KL 0.47 with 63% top-1
 agreement is an average over a model that is mostly still coherent and has
 lost specific recall — which is what a few catastrophic units do.
+
+**Subnormal block scales: none.** `stock_dequant` decodes a subnormal E4M3
+scale byte correctly in software, and `share_global` accepts a binade shift
+whenever the byte round-trips, so the identity test alone would not show how
+`FlashInferCutlassNvFp4LinearKernel` treats a subnormal block scale. Counted
+over every `weight_scale` tensor (27,525,120 bytes per arm): tessera-k2 and
+nvfp4-prod both carry zero subnormal and zero zero-valued scale bytes, so the
+kernel's subnormal handling never entered the 0.640.
 
 ## What this closes, and what it does not
 
