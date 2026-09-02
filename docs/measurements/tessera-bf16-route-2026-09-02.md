@@ -34,8 +34,8 @@ outputs  /mnt/shared/tessera-runs/bf16/
 Host tests (sparky):
 
 ```
-PYTHONPATH=src pytest tests/test_bf16_route.py -q -p no:randomly     # 28 passed
-PYTHONPATH=src pytest tests -q -p no:randomly                        # 568 passed, 876s
+PYTHONPATH=src pytest tests/test_bf16_route.py -q -p no:randomly     # 29 passed
+PYTHONPATH=src pytest tests -q -p no:randomly                        # 570 passed, 860s
 ```
 
 GPU jobs (sparklina, one GPU, chained so they never contend):
@@ -164,7 +164,56 @@ with `quantization_config` removed and every passthrough tensor copied
 verbatim. That twin is an ordinary checkpoint: vanilla vLLM (or HF) serves it
 with no plugin, which is how a served KL gate will run before the lane exists.
 
-<!-- EXPORT TABLE -->
+**Qwen3-0.6B, 196 units in 112 fused modules, 440 401 920 quantizable
+parameters.** Both rungs stamped `git: fc2c1c1`.
+
+| rung | wire bpp | on-disk bpp | resident-mode bpp | encode | per unit | checkpoint |
+|---|---:|---:|---:|---:|---:|---:|
+| R = 6 (`--q256 1536`) | **6.1292** | 6.1317 | 16.0 | 1832 s | 9.35 s | 960 037 778 B |
+| R = 7 (`--q256 1792`) | **7.1292** | 7.1317 | 16.0 | 2132 s | 10.88 s | 1 015 088 026 B |
+
+`bf16_twin_check.py` re-opens both checkpoints and carries no encoder state:
+for every unit it parses the wire bytes, materialises them, and asserts
+**bitwise** equality with the twin tensor; every eighth unit is also decoded by
+`stream_bf16_tile` and compared to the same tensor. It then checks the twin is
+structurally the source — same tensor names, same shapes, every tensor
+`BF16` — and that the config carries no `quantization_config`.
+
+| rung | units checked | mismatched | streamed re-checked | mismatched | twin `quantization_config` | tensors src / twin | non-bf16 | secs |
+|---|---:|---:|---:|---:|---|---:|---:|---:|
+| R = 6 | 196 | **0** | 24 | **0** | absent | 311 / 311 | 0 | 12.7 |
+| R = 7 | 196 | **0** | 24 | **0** | absent | 311 / 311 | 0 | 13.0 |
+
+No tensor is missing from the twin, none is extra, no shape differs, and every
+tensor is `BF16` — the twin *is* the source checkpoint with 196 tiles replaced.
+
+**And a stock loader agrees.** `bf16_twin_greedy.py` calls
+`AutoModelForCausalLM.from_pretrained(twin, dtype=torch.bfloat16)` with nothing
+else set — no plugin, no `quantization_config`, no trust_remote_code — and
+generates greedily:
+
+| arm | "The capital of France is" | top-1 |
+|---|---|---|
+| BF16 source | ` Paris. The capital of France is also the capital of the Republic of France…` | ` Paris` −0.465 |
+| R = 6 twin | ` Paris. The capital of Italy is Rome. The capital of Spain is Madrid…` | ` Paris` −0.358 |
+| R = 7 twin | ` Paris. The capital of France is also the capital of the French Republic…` | ` Paris` −0.392 |
+
+All three emit byte-identical Python for `def fibonacci(n):`. This is a
+*loadability* check, not a quality measurement — two prompts decide nothing —
+but it is the only direct evidence that the served gate has a checkpoint to run
+on.
+
+**Reading the three rates.** `wire_bpp` is what a lane holds; `on_disk_bpp`
+adds the container's own framing (0.0025 bpp, ~139 KB over 196 units);
+`resident_mode_bpp` is 16.0 by definition — the correctness path, not the
+product. The wire's excess over the nominal R is the CHANNEL rows plus the
+32 KiB table, and on a 0.6B model that is not small: **+0.129 bpp at R = 6**,
+because Qwen3-0.6B's Linears are 1024×3072 and smaller, where a 32 KiB table
+is 0.25 bpp on its own. On a 2048×4096 GLM expert the same table is 0.031 bpp.
+The accountant charges it either way; a menu that quotes one number for
+"R = 6" across shapes is quoting the wrong one (§10e).
+
+
 
 ---
 
@@ -203,7 +252,35 @@ snap       {'cdist_vs_exact': 30, 'exact_vs_rne': 0, 'cdist_vs_rne': 30}
 
 **3. Wire vs memory, and what the 30 entries cost.**
 
-<!-- W1 GPU -->
+On L5.gate_proj (2048×4096), the same tensor W1 carried deepest, encoded four
+times each way. The library arm is the **real wire** (`encode_linear_planes` →
+bytes → `read_unit_artifact`); the W1 arm is `encode_unit` → `reconstruct_unit`
+over W1's grid with its `cdist` table patched in, exactly as W1 ran it. Both
+priced at the same bytes, because both tables are two bytes an entry.
+
+| R | bpp | library `wt` | W1 `wt` | library `out` | W1 `out` | library / W1 (`out`) |
+|---|---:|---:|---:|---:|---:|---:|
+| 4 | 4.0352 | 0.06942 | 0.06942 | 0.06693 | 0.06692 | 1.00019 |
+| 5 | 5.0352 | 0.03572 | 0.03572 | 0.03447 | 0.03445 | 1.00069 |
+| 6 | 6.0352 | 0.01859 | 0.01859 | 0.01788 | 0.01789 | 0.99927 |
+| 7 | 7.0352 | 0.00973 | 0.00973 | 0.00937 | 0.00937 | 1.00033 |
+
+**The 30 entries are worth nothing measurable** — every ratio is within 0.07%,
+in both directions, which is the size of the arms' own noise and not a
+preference. The exact snap is still the right rule (it is what makes the table
+*bf16 rounding*, statable in one line), but the correctness argument for it is
+the 4 GB matrix, not the error.
+
+**And this reproduces W1's published table.** W1's L5.gate_proj BF16 window
+`out` at R = 4..7 was 0.066915 / 0.034449 / 0.017890 / 0.009371; the library
+wire gives 0.06693 / 0.03447 / 0.01788 / 0.00937. The wire is W1's experiment,
+to four or five digits, with the artifact written. `out_bf16` reproduces the
+fold too: 0.00949 at R = 7 against `out` 0.00937 is a fold of 0.00150, against
+W1's 0.001492.
+
+`wire_equals_memory` is `true` at every rung (the reader's tensor is the
+encoder's, bitwise), which is `encode_linear_planes(verify=True)` re-asserted
+from the bytes on the other side.
 
 ---
 
