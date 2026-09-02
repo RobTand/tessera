@@ -42,6 +42,10 @@ where = ["src"]
 # and the CUDA source the NVFP4 route JIT-builds.  An editable install reads
 # the tree and would not notice these missing; a wheel would.
 "tessera.serving" = ["runtime_contract.json", "csrc/*.cu"]
+# The window GEMV's kernel source sits in the library's own csrc, not the
+# serving lane's, and it is JIT-built the same way.  Without this line a wheel
+# installs a module whose first call raises FileNotFoundError.
+"tessera" = ["csrc/*.cu"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
