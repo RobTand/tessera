@@ -52,6 +52,7 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "plan_for",
     "encode_linear",
     "encode_settings_from_config",
     "export_checkpoint",
@@ -855,3 +856,9 @@ def load_tessera_weight(
             raise KeyError(f"{name!r} is not a quantized unit in this checkpoint")
         blob = handle.get_tensor(key)
     return read_unit_artifact(bytes(blob.numpy().tobytes()), device=device)
+
+
+#: The rate schedule and forests ``encode_linear`` hands the encoder for a
+#: grid at a rung, under a public name: a render leg that must stay
+#: bit-identical to the exporter builds its plan here and nowhere else.
+plan_for = _plan_for
