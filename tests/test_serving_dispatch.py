@@ -25,7 +25,8 @@ torch = pytest.importorskip("torch")
 
 from tessera.serving import lane                                    # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
-from tessera.serving.scheme import TESSERA_FP8, TESSERA_NVFP4       # noqa: E402
+from tessera.serving.scheme import (                               # noqa: E402
+    TESSERA_FP8, TESSERA_NVFP4, validate_tessera_scheme)
 
 
 def _install_vllm_stubs():
@@ -472,3 +473,57 @@ def test_a_model_with_no_mapper_is_untouched(monkeypatch):
     before = dict(config.target_scheme), tuple(config.ignore)
     config.apply_vllm_mapper(_Mapper({}))
     assert (config.target_scheme, config.ignore) == before
+
+
+# --------------------------------------------------------------------------
+# The rung a checkpoint declares has to be one the decoder reads.
+#
+# It did not used to be checked at all.  The first allocated Tessera artifact
+# served seven rungs the contract's published set did not name, and nothing
+# refused -- fine in the event, because every one of them decodes, but a rung
+# the reader could not take would have produced a wrong tensor instead of a
+# stop.  The range is derived from the decoder (each rate encoded and taken
+# through this load path), not from what anyone had exported.
+# --------------------------------------------------------------------------
+
+def test_the_allocated_rungs_that_slipped_through_are_inside_the_range(monkeypatch):
+    """R749/R750/R934/R1006/R1083/R1107/R1262, all E4M3, all decodable.
+
+    The receipt's finding was a contract gap, not a wrong artifact, and this
+    keeps it that way: the fix must not retroactively refuse a checkpoint that
+    served correctly.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    for rung in (749, 750, 934, 1006, 1024, 1083, 1107, 1262):
+        scheme = _fp8_scheme(q256=rung)
+        validate_tessera_scheme(scheme, f"m.R{rung}")
+
+
+@pytest.mark.parametrize("rung", [256, 2048])
+def test_the_boundaries_of_the_published_range_are_inside_it(monkeypatch, rung):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    validate_tessera_scheme(_fp8_scheme(q256=rung), "m.edge")
+
+
+@pytest.mark.parametrize("rung", [255, 2049])
+def test_a_rung_outside_the_published_range_refuses_by_number(monkeypatch, rung):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match=f"q256={rung} is outside"):
+        validate_tessera_scheme(_fp8_scheme(q256=rung), "m.past")
+
+
+def test_the_e2m1x2_route_reads_one_rung_and_says_so(monkeypatch):
+    """896 exactly: the grammar caps it above, the native decoder below."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    validate_tessera_scheme(_scheme(q256=896), "m.cap")
+    for rung in (749, 895, 897, 1024):
+        with pytest.raises(ValueError, match="TESSERA_E2M1_K2"):
+            validate_tessera_scheme(_scheme(q256=rung), "m.offcap")
+
+
+def test_a_grid_the_contract_does_not_describe_refuses(monkeypatch):
+    """``TESSERA_NVFP4`` declares it holds ``E2M1`` too; nothing publishes a
+    range for it, and borrowing ``E2M1x2``'s would be the near-miss."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match="publishes no decodable rate range"):
+        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1")

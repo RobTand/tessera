@@ -348,6 +348,11 @@ def test_scheme_and_blob_must_agree(monkeypatch):
     with pytest.raises(ValueError, match="roles"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "roles": [["other", 256]]}, "t")
     with pytest.raises(ValueError, match="sidecar scheme declares"):
+        parse_tessera_blob_for_scheme(blob, {**scheme, "columns": 1024}, "t")
+    # A DISAGREEING rate never reaches that comparison on this route: the reader
+    # takes one rung (896), so any other value is refused earlier, by the rung
+    # gate, and more specifically.
+    with pytest.raises(ValueError, match="outside the rungs this build's decoder reads"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 640}, "t")
 
 

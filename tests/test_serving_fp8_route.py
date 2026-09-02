@@ -84,8 +84,13 @@ def test_the_route_refuses_before_vllm_and_the_family_picks_the_route(monkeypatc
     with pytest.raises(ValueError, match="family must be one of"):
         build_tessera_method({**_scheme(), "family": "TESSERA_INT4"}, "test.layer")
     with pytest.raises(ValueError, match=f"serves {TESSERA_FP8}, not"):
+        # A COHERENT NVFP4 scheme, handed to the wrong builder.  q256 is 896
+        # because that is the only rate the E2M1x2 reader takes -- leaving the
+        # FP8 default here would be refused by the rung gate first, which is a
+        # true refusal but not the one under test.
         route.build_tessera_fp8_method({**_scheme(), "family": TESSERA_NVFP4, "grid": "E2M1x2",
-                                        "plane": "LUT", "body": "TCQ"}, "test.layer", "resident")
+                                        "plane": "LUT", "body": "TCQ", "q256": 896},
+                                       "test.layer", "resident")
 
 
 def test_the_fp8_routes_decoder_is_pure_torch():

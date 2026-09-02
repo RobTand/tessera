@@ -99,7 +99,10 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
                             "formats", "lane_eligibility", "tensor_parallel",
-                            "expert_parallel"})
+                            "expert_parallel"},
+                  # History, not a gate input: a consumer reads the version, and
+                  # the changelog says what the version changed for a person.
+                  optional={"changelog"})
     if contract["schema"] != CONTRACT_SCHEMA:
         raise ValueError(
             f"runtime_contract.schema must be {CONTRACT_SCHEMA!r}, got {contract['schema']!r}")
@@ -112,16 +115,28 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     for i, entry in enumerate(contract["formats"]):
         where = f"runtime_contract.formats[{i}]"
         _require_keys(entry, where,
-                      required={"kind", "family", "name_pattern", "candidate_rungs_q256",
-                                "reader_rate_range_q256", "native_terminal_q256",
-                                "residency_modes"})
+                      required={"kind", "family", "grid", "name_pattern",
+                                "reader_rate_range_q256", "reader_rate_step_q256",
+                                "reader_rate_bound", "attested_rungs_q256",
+                                "native_terminal_q256", "residency_modes"},
+                      optional={"candidate_rungs_q256"})
         if entry["kind"] != FORMAT_KIND:
             raise ValueError(f"{where}.kind must be {FORMAT_KIND!r}, got {entry['kind']!r}")
-        low, high = entry["reader_rate_range_q256"]
-        for rung in entry["candidate_rungs_q256"]:
-            if not low <= rung <= high:
+        alias = entry.get("candidate_rungs_q256")
+        if alias is not None and list(alias) != list(entry["attested_rungs_q256"]):
+            raise ValueError(
+                f"{where}: candidate_rungs_q256 is a DEPRECATED ALIAS of "
+                f"attested_rungs_q256 and must carry the same list, got {alias!r} vs "
+                f"{entry['attested_rungs_q256']!r}. It exists only so a reader written "
+                "against schema v1 keeps reading this document; two names disagreeing "
+                "about one set is the confusion the rename was for.")
+        low, high, step = _reader_rate(entry, where)
+        for rung in entry["attested_rungs_q256"]:
+            if not reader_accepts(rung, low, high, step):
                 raise ValueError(
-                    f"{where}: candidate rung {rung} is outside the reader range [{low}, {high}]")
+                    f"{where}: attested rung {rung} is not one the reader accepts "
+                    f"([{low}, {high}] step {step}). An attested rung is a rung that WAS served; "
+                    "it cannot lie outside what the decoder takes.")
         families[entry["family"]] = entry
 
     block = contract["lane_eligibility"]
@@ -176,7 +191,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"{where}.activation_contract is {cell['activation_contract']!r} but the "
                 f"{cell['family']} route executes {expected!r}")
         unknown_rungs = sorted(set(cell["rungs_q256"])
-                               - set(families[cell["family"]]["candidate_rungs_q256"]))
+                               - set(families[cell["family"]]["attested_rungs_q256"]))
         if unknown_rungs:
             raise ValueError(
                 f"{where}.rungs_q256 names {unknown_rungs}, which the family does not publish")
@@ -193,6 +208,66 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "
             "routed-MoE experts, so the contract makes no expert-parallel claim")
+
+
+def _reader_rate(entry: Mapping[str, Any], where: str) -> tuple[int, int, int]:
+    low, high = entry["reader_rate_range_q256"]
+    step = entry["reader_rate_step_q256"]
+    if not (isinstance(low, int) and isinstance(high, int) and isinstance(step, int)):
+        raise ValueError(f"{where}: the reader rate range and step are integer q256 values")
+    if low > high:
+        raise ValueError(f"{where}: reader_rate_range_q256 is [{low}, {high}], which is empty")
+    if step < 1:
+        raise ValueError(f"{where}: reader_rate_step_q256 must be >= 1, got {step}")
+    return low, high, step
+
+
+def reader_accepts(q256: int, low: int, high: int, step: int) -> bool:
+    """Is ``q256`` on the published grid of rates the decoder reads?"""
+    return low <= q256 <= high and (q256 - low) % step == 0
+
+
+#: ``(route, grid) -> (family, low, high, step)`` for the PACKAGED contract.
+_PACKAGED_RATE_GRID: dict[tuple[str, str], tuple[str, int, int, int]] = {}
+
+
+def _rate_grids(payload: Mapping[str, Any]) -> dict:
+    out = {}
+    for entry in payload["formats"]:
+        route = _FAMILY_TO_ROUTE.get(entry["family"])
+        if route is None:
+            continue
+        low, high, step = _reader_rate(entry, f"runtime_contract format {entry['family']}")
+        out[(route, entry["grid"])] = (entry["family"], low, high, step)
+    return out
+
+
+def reader_rate_grid(route: str, grid: str, contract: Mapping[str, Any] | None = None):
+    """``(family, low, high, step)`` for a (route, grid) pair, or ``None``.
+
+    ``None`` is not "anything goes": it means this build publishes no decodable
+    rate range for that pair, which the caller must treat as a refusal.  The
+    ``TESSERA_NVFP4`` route holds two grids and the contract describes one of
+    them, so resolving by route alone would hand an ``E2M1`` checkpoint the
+    ``E2M1x2`` numbers.
+    """
+    if contract is None:
+        # The gate runs once per Linear at load; re-reading and re-validating
+        # the packaged file each time would put a file read on the load path
+        # for no reason.  Only the packaged contract is cached -- a caller that
+        # passes one in gets it read fresh, which is what the tests need.
+        if not _PACKAGED_RATE_GRID:
+            _PACKAGED_RATE_GRID.update(_rate_grids(load_serving_contract()))
+        return _PACKAGED_RATE_GRID.get((route, grid))
+    payload = contract
+    for entry in payload["formats"]:
+        if entry.get("grid") != grid:
+            continue
+        if _FAMILY_TO_ROUTE.get(entry["family"]) != route:
+            continue
+        low, high, step = _reader_rate(entry, f"runtime_contract format {entry['family']}")
+        return entry["family"], low, high, step
+    return None
 
 
 #: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names

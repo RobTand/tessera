@@ -412,3 +412,86 @@ build on the very image that serves it — and nothing said so, because a blanke
 merely unbuilt. `ext.toolchain_report()` now separates the two, and the tests
 skip only on a genuinely absent toolchain and **fail** when the toolchain is
 present and the build broke.
+
+## 10. The rung set the contract publishes is the set the decoder reads (2026-09-02)
+
+`runtime_contract.json` published `candidate_rungs_q256: [1024]` for
+`TESSERA_E4M3_K1` and `[896]` for `TESSERA_E2M1_K2`, and nothing consumed it.
+The first PrismaQuant-allocated artifact served seven rungs outside that list —
+R749, R750, R934, R1006, R1083, R1107, R1262 — with a clean 112/112 census and
+nothing refusing (receipt: `docs/measurements/tessera-allocated-served-2026-09-02.md`,
+finding in §9). That is not a correctness bug at serve time; it is a contract
+that states a set the runtime neither enforces nor is restricted by, which is
+provenance nothing consumes.
+
+**The bound is now derived from the decoder.** Each candidate rate was encoded
+into a unit, packed exactly as the exporter packs, and taken through the
+plugin's own load path — `parse_tessera_blob_for_scheme` then the route's
+`prepare_*`. What that path accepts is what the contract states. Two different
+mechanisms turn out to bound it, and they are not the same mechanism on the two
+families:
+
+| family | grid | reader range (q256) | step | what bounds it |
+|---|---|---|---|---|
+| `TESSERA_E4M3_K1` | `E4M3` | **[256, 2048]** | 1 | the trellis grammar's shaped domain at both ends: code rate 1..8 over an 8-bit-native alphabet. Continuous — 120 of 120 in-range probes accepted, no interior gap. |
+| `TESSERA_E2M1_K2` | `E2M1x2` | **[896, 896]** | 1 | *above*, the same grammar (rate 7 of arity-2 native 8, so q256 ≤ 896); *below*, the native decoder, which serves the span-2 TCQ body only — under 896 `wire_recipe` writes a WINDOW body and `ops.prepare_tessera_module` refuses it by name. |
+
+So E4M3's published set was two orders of magnitude too narrow and E2M1x2's
+single point was exactly right, for a reason nobody had written down.
+
+The fields changed shape to stop the misreading that opened the gap:
+
+* `reader_rate_range_q256` **is** the decodable set, with `reader_rate_step_q256`
+  making "continuous" a thing a gate can read rather than a thing a list
+  implies, and `reader_rate_bound` naming the mechanism.
+* `candidate_rungs_q256` is renamed **`attested_rungs_q256`**. It never was the
+  decodable set; it is the rungs a `lane_eligibility` cell attests, and the
+  validator still requires every cell's `rungs_q256` to be a subset. Decodable
+  and attested are different claims and now have different names. It is
+  deliberately **not** widened to cover the allocated run's rungs: those were
+  censused by another artifact's receipt, not by a cell here. The old name is
+  **retained as a deprecated alias** carrying the same list (the validator
+  refuses it if the two disagree), so the change is additive and the `schema`
+  string does not move — see the cross-repo note below.
+* Each format entry now names its `grid`. `TESSERA_NVFP4` declares it holds
+  `E2M1` as well as `E2M1x2`, and resolving a range by route alone would have
+  handed an arity-1 checkpoint the arity-2 numbers. A (route, grid) pair the
+  contract does not describe is refused, not served on another pair's figures.
+
+**The gate.** `validate_tessera_scheme` refuses a declared `q256` outside the
+published set, naming the rung and the set. It runs at sidecar-parse time,
+before a parameter exists — the same place the family, grid, body and plane
+refusals already live. The seven rungs that slipped through are all inside the
+E4M3 range, so the fix does not retroactively refuse an artifact that served
+correctly; there is a test that says so by name.
+
+`contract_version` 1 → **2**, with a `changelog` in the file itself. The
+`schema` string stays `tessera.runtime-contract.v1`, and that is a decision, not
+an oversight: see below.
+
+**This file has a consumer in another repository, and the effect on it was
+measured, not assumed.** PrismaQuant reads this exact packaged JSON through
+`importlib.resources` (`prismaquant/tessera_render.py::tessera_serving_contract_path`
+→ `prismaquant/gridbook_lane_eligibility.py::load_published_formats`), and its
+`resolve_payload_rung` reads `reader_rate_range_q256` in production
+(`gridbook_lane_eligibility.py:1025`) to decide whether a format name's rate
+resolves at all. So the two halves of this change land on it differently:
+
+* **The widened E4M3 range changes rate resolution, as it should.** Measured
+  against the v2 file: `TESSERA_E4M3_K1_R749` now resolves to rate 749 where
+  under `[1024, 1024]` it resolved to `None`; `R2049` still resolves to `None`;
+  `TESSERA_E2M1_K2_R768` still resolves to `None`.
+* **It does not widen admission, which is the point of separating the two
+  names.** `tessera_lane_attested` is still `False` for
+  `R1024`/`R749`/`R1262`/`E2M1_K2_R896` — the `lane_eligibility` cells'
+  `rungs_q256` did not move, and PrismaQuant's Tessera serving pin is a
+  fail-closed sentinel until Rob cuts a release tag. Decodable widened;
+  attested did not.
+* **The rename would have broken a v1 reader, so it is additive.** Dropping
+  `candidate_rungs_q256` while `schema` still said `v1` is the same
+  "current and wrong" fault this section exists to close, one field over. With
+  the alias, PrismaQuant's Tessera-facing suite is **60 passed, 0 failed**
+  against this tree (`tests/test_tessera_lane_admission.py` +
+  `tests/test_tessera_formats.py`); without it, one test fails with a
+  `KeyError`. The alias is dropped when the `schema` string moves to v2, which
+  is a coordinated change across both repositories and not this one.

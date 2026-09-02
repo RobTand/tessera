@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 1,
+ "contract_version": 2,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -22,35 +22,47 @@
   {
    "kind": "tessera_wire",
    "family": "TESSERA_E2M1_K2",
+   "grid": "E2M1x2",
    "name_pattern": "TESSERA_E2M1_K2_R{k}",
-   "candidate_rungs_q256": [
-    896
-   ],
    "reader_rate_range_q256": [
     896,
+    896
+   ],
+   "reader_rate_step_q256": 1,
+   "reader_rate_bound": "native_decoder_body_support_and_trellis_shaped_domain",
+   "attested_rungs_q256": [
     896
    ],
    "native_terminal_q256": 1024,
    "residency_modes": [
     "resident",
     "streamed"
+   ],
+   "candidate_rungs_q256": [
+    896
    ]
   },
   {
    "kind": "tessera_wire",
    "family": "TESSERA_E4M3_K1",
+   "grid": "E4M3",
    "name_pattern": "TESSERA_E4M3_K1_R{k}",
-   "candidate_rungs_q256": [
-    1024
-   ],
    "reader_rate_range_q256": [
-    1024,
+    256,
+    2048
+   ],
+   "reader_rate_step_q256": 1,
+   "reader_rate_bound": "trellis_shaped_domain",
+   "attested_rungs_q256": [
     1024
    ],
    "native_terminal_q256": 2048,
    "residency_modes": [
     "resident",
     "streamed"
+   ],
+   "candidate_rungs_q256": [
+    1024
    ]
   }
  ],
@@ -166,5 +178,17 @@
   "axis": "vllm_expert_parallel_size",
   "semantics": "closed_world",
   "units": []
- }
+ },
+ "changelog": [
+  {
+   "contract_version": 2,
+   "date": "2026-09-02",
+   "change": "reader_rate_range_q256 now states what the DECODER accepts, measured by encoding a unit at each candidate rate and running it through the route's own load path; the plugin refuses a declared q256 outside it (it did not before, and an allocated checkpoint carrying seven unlisted rungs served with nothing refusing). E4M3 widened from [1024,1024] to [256,2048] continuous at step 1 -- the bound is the trellis grammar's shaped domain (code rate 1..8 over an 8-bit-native alphabet), not the rungs anyone had exported. E2M1x2 stays the single point 896, bounded BELOW by the native decoder (span-2 TCQ only; the sub-cap WINDOW body has no served decode) and ABOVE by the same grammar (rate 7 of arity-2 native 8). candidate_rungs_q256 renamed attested_rungs_q256 because it never was the decodable set and reading it as one is how the gap opened: it is the rungs a lane_eligibility cell attests. Added an explicit grid to each entry so a (route, grid) pair with no published range refuses rather than resolving to another entry's numbers. candidate_rungs_q256 is retained as a DEPRECATED ALIAS of attested_rungs_q256 -- same list, refused if it disagrees -- so this stays an ADDITIVE change that a v1 reader can still read, which is why the schema string does not move. It is dropped at schema v2."
+  },
+  {
+   "contract_version": 1,
+   "date": "2026-09-01",
+   "change": "First published contract: two dense families, four cells, TP1/EP0."
+  }
+ ]
 }

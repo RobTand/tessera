@@ -101,13 +101,105 @@ def test_the_file_is_reachable_through_importlib_resources():
     assert path.name == "runtime_contract.json"
 
 
-def test_two_families_at_one_rung_each(contract):
+def test_two_families_at_one_attested_rung_each(contract):
     formats = {entry["family"]: entry for entry in contract["formats"]}
     assert sorted(formats) == ["TESSERA_E2M1_K2", "TESSERA_E4M3_K1"]
     for family, rungs in _FAMILY_RUNGS.items():
-        assert formats[family]["candidate_rungs_q256"] == rungs
-        assert formats[family]["reader_rate_range_q256"] == [rungs[0], rungs[0]]
+        assert formats[family]["attested_rungs_q256"] == rungs
         assert formats[family]["residency_modes"] == ["resident", "streamed"]
+
+
+#: MEASURED, not chosen: each rate was encoded and taken through the route's own
+#: load path (``parse_tessera_blob_for_scheme`` then ``prepare_*``), and this is
+#: the accepted set.  Two mechanisms bound it -- the trellis grammar's shaped
+#: domain at both ends on E4M3, and on E2M1x2 the grammar above plus the native
+#: decoder's span-2-TCQ-only support below.
+_READER_RATES = {
+    "TESSERA_E2M1_K2": ("E2M1x2", [896, 896], 1),
+    "TESSERA_E4M3_K1": ("E4M3", [256, 2048], 1),
+}
+
+
+def test_the_reader_range_is_what_the_decoder_takes(contract):
+    formats = {entry["family"]: entry for entry in contract["formats"]}
+    for family, (grid, span, step) in _READER_RATES.items():
+        entry = formats[family]
+        assert entry["grid"] == grid, family
+        assert entry["reader_rate_range_q256"] == span, (
+            f"{family}: the published reader range is not the measured one")
+        assert entry["reader_rate_step_q256"] == step, family
+        assert entry["reader_rate_bound"], f"{family}: no mechanism named for the bound"
+
+
+def test_the_deprecated_alias_is_carried_and_must_agree(contract):
+    """``candidate_rungs_q256`` is kept so the rename stays ADDITIVE.
+
+    PrismaQuant reads this packaged file through ``importlib.resources`` and its
+    ``load_published_formats`` was written against schema v1; dropping a key it
+    reads by name, while the ``schema`` string still says v1, would be the same
+    "current and wrong" fault this change exists to close.  So the alias stays
+    until the schema moves, and it may not disagree with the field it aliases.
+    """
+    for entry in contract["formats"]:
+        assert entry["candidate_rungs_q256"] == entry["attested_rungs_q256"], (
+            f"{entry['family']}: the alias has drifted from what it aliases")
+
+    broken = copy.deepcopy(contract)
+    broken["formats"][0]["candidate_rungs_q256"] = [
+        broken["formats"][0]["attested_rungs_q256"][0] + 1]
+    with pytest.raises(ValueError, match="DEPRECATED ALIAS"):
+        validate_serving_contract(broken)
+
+    # and it is genuinely OPTIONAL: a document without it still validates
+    without = copy.deepcopy(contract)
+    for entry in without["formats"]:
+        entry.pop("candidate_rungs_q256")
+    validate_serving_contract(without)
+
+
+def test_an_attested_rung_outside_the_reader_range_is_refused(contract):
+    """An attested rung is one that WAS served; it cannot be unreadable."""
+    broken = copy.deepcopy(contract)
+    unreadable = [broken["formats"][0]["reader_rate_range_q256"][1] + 1]
+    broken["formats"][0]["attested_rungs_q256"] = unreadable
+    # the alias moves with it, or the alias check fires first and this stops
+    # testing the range at all
+    broken["formats"][0]["candidate_rungs_q256"] = list(unreadable)
+    with pytest.raises(ValueError, match="not one the reader accepts"):
+        validate_serving_contract(broken)
+
+
+def test_an_empty_or_stepless_reader_range_is_refused(contract):
+    for field, value, message in (("reader_rate_range_q256", [2048, 256], "which is empty"),
+                                  ("reader_rate_step_q256", 0, "must be >= 1")):
+        broken = copy.deepcopy(contract)
+        broken["formats"][1][field] = value
+        with pytest.raises(ValueError, match=message):
+            validate_serving_contract(broken)
+
+
+def test_the_reader_grid_resolves_by_route_AND_grid(contract):
+    """``TESSERA_NVFP4`` holds two grids and the contract describes one.
+
+    Resolving by route alone would hand an ``E2M1`` checkpoint the ``E2M1x2``
+    numbers, which is exactly the kind of near-miss this contract exists to
+    stop.
+    """
+    from tessera.serving.contract import reader_accepts, reader_rate_grid
+
+    assert reader_rate_grid("TESSERA_FP8", "E4M3", contract) == (
+        "TESSERA_E4M3_K1", 256, 2048, 1)
+    assert reader_rate_grid("TESSERA_NVFP4", "E2M1x2", contract) == (
+        "TESSERA_E2M1_K2", 896, 896, 1)
+    assert reader_rate_grid("TESSERA_NVFP4", "E2M1", contract) is None, (
+        "the arity-1 E2M1 grid has no published range and must not borrow one")
+    assert reader_rate_grid("TESSERA_FP8", "E2M1x2", contract) is None
+
+    assert reader_accepts(256, 256, 2048, 1) and reader_accepts(2048, 256, 2048, 1)
+    assert not reader_accepts(255, 256, 2048, 1)
+    assert not reader_accepts(2049, 256, 2048, 1)
+    assert reader_accepts(1024, 256, 2048, 128)
+    assert not reader_accepts(1025, 256, 2048, 128), "the step is part of the set"
 
 
 def test_the_four_cells_are_pinned_field_for_field(contract):
