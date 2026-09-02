@@ -64,7 +64,15 @@ fi
 ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"
       --corpus-contract "$CORPUS" --role "$ROLE" --artifact-path "$MODEL")
 [ -n "$LABEL" ] && ARGS+=(--teacher-label "$LABEL")
-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python /home/rob/dq-runs/kl_tool.py "${ARGS[@]}"
+# A dump that fails mid-way must still leave the serve log behind and take the
+# container down: under `set -e` the failure used to exit here, keeping the GPU
+# reserved by a headless serve and recording nothing (2026-09-02, the cuDNN
+# floor arm: one 400 on chunk 7, no log, container still up).
+if ! /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python /home/rob/dq-runs/kl_tool.py "${ARGS[@]}"; then
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  docker rm -f "$NAME" >/dev/null 2>&1
+  echo "dump FAILED for $MODEL; serve log at $LOG"; exit 3
+fi
 
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
