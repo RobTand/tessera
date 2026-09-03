@@ -64,6 +64,12 @@ import threading
 
 __all__ = [
     "TESSERA_NVFP4_ABI_SCHEMA",
+    "NATIVE_EXTENSIONS",
+    "NVFP4_MODULE_PREFIX",
+    "FALLBACK_REFUSED",
+    "FALLBACK_STATUSES",
+    "FALLBACK_SUBSTITUTED",
+    "MATCH_BASENAME_FNMATCH",
     "NativeKernelUnavailableError",
     "StaleExtensionError",
     "IncompleteInstallError",
@@ -71,6 +77,7 @@ __all__ = [
     "get_tessera_ext",
     "require_tessera_ext",
     "reset_for_tests",
+    "substitutes_when_unavailable",
     "toolchain_report",
 ]
 
@@ -79,6 +86,101 @@ __all__ = [
 TESSERA_NVFP4_ABI_SCHEMA = 1
 
 _SYMBOLS = ("tessera_nvfp4_decode_span2_out", "tessera_nvfp4_abi_schema")
+
+#: The module name ``_load_locked`` builds, WITHOUT the build identity it
+#: appends.  A constant rather than a literal in the f-string because the
+#: runtime contract publishes it: the table a fingerprint reads and the name
+#: the load path asks for are one string, so they cannot drift.
+NVFP4_MODULE_PREFIX = "tessera_nvfp4_"
+
+#: The source, relative to this package -- the form the contract publishes, so
+#: a consumer resolves it the same way ``csrc_dir`` does.
+NVFP4_SOURCE = "csrc/tessera_nvfp4.cu"
+
+#: How a consumer turns ``filename_glob`` into a decision: ``fnmatch`` it
+#: against the BASENAME of a mapped ``.so``.  A value, not prose, because the
+#: whole point of publishing the name is that a fingerprint can match it
+#: without knowing whether the string is a stem, a prefix or a pattern.
+MATCH_BASENAME_FNMATCH = "basename_fnmatch"
+
+#: What a serve does when a native extension cannot build.  ``substituted``
+#: means a named substitute decoder ran and the serve is a DIFFERENT numeric
+#: object than the native one; ``refused`` means no serve exists at all, so an
+#: absent ``.so`` and a route record in that mode is an impossible pair.
+FALLBACK_SUBSTITUTED = "substituted"
+FALLBACK_REFUSED = "refused"
+FALLBACK_STATUSES = (FALLBACK_SUBSTITUTED, FALLBACK_REFUSED)
+
+#: The native code this package can load INTO A SERVING PROCESS, as the
+#: runtime contract publishes it.
+#:
+#: WHY IT IS PUBLISHED.  ``runtime_contract.json`` says what the plugin
+#: EXECUTES; this says what it LOADS.  A consumer that keys reproducibility on
+#: extension residency (PrismaQuant's serve fingerprint, its architecture
+#: doc's section 7.4: KL is bit-identical inside one container session and
+#: drifts across them, keyed on whether a lane's ``.so`` was resident) had to
+#: mirror the name in its own repository, which is principle 14 read backwards
+#: -- a claim about THIS runtime, maintained in another one.
+#:
+#: WHY NOT ``optional``.  "This build may not have compiled it" and "the route
+#: runs correctly without it" are two facts, and the second one differs by
+#: RESIDENCY: the resident mode decodes once at load and may substitute
+#: ``tessera.stock.materialize_stock``, while the streamed mode decodes inside
+#: a traced forward where that path's data-dependent shapes cannot run and
+#: refuses instead (``ops.prepare_tessera_module``).  A fingerprint whose job
+#: is to tell a native serve from a fallback serve needs the substitute's NAME
+#: -- the value the route stamps in ``telemetry``'s ``decoder`` field -- not a
+#: boolean that says only "absence is survivable somewhere".
+#:
+#: WHAT BELONGS HERE.  An entry iff the ``.so`` can be resident in a SERVING
+#: process, i.e. some module reachable from ``tessera.serving`` loads it.
+#: ``tessera.kernel_window_gemv`` builds ``tessera_window_gemv`` and is NOT
+#: here: nothing under ``tessera/serving/`` reaches it, so it is producer-side.
+#: ``tests/test_serving_native_extensions.py`` decides that by walking the
+#: import graph, so the day a route loads it the table goes red rather than
+#: staying quietly short.
+NATIVE_EXTENSIONS = [
+    {
+        # The load path's own constant; the built library is
+        # ``<module name>.so`` (``torch.utils.cpp_extension.LIB_EXT``), and
+        # the module name carries a build-identity hash, so the file on disk
+        # is ``tessera_nvfp4_<identity>.so`` and NO exact basename exists to
+        # publish.
+        "module_name_prefix": NVFP4_MODULE_PREFIX,
+        "filename_glob": NVFP4_MODULE_PREFIX + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": NVFP4_SOURCE,
+        "loaded_by": "tessera.serving.ext",
+        "routes": ["TESSERA_NVFP4"],
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "torch_materialize_stock"},
+            "streamed": {"status": FALLBACK_REFUSED, "decoder": None},
+        },
+    },
+]
+
+
+def substitutes_when_unavailable(mode: str,
+                                 module_name_prefix: str = NVFP4_MODULE_PREFIX) -> bool:
+    """May a serve in residency ``mode`` decode without this extension?
+
+    The routes gate on this rather than on a mode comparison of their own, so
+    the published ``when_unavailable`` block IS what the serve does -- the same
+    shape as ``sharding.ROUTE_TP_AXES`` behind ``loader_axes``.  A table that
+    said a mode substitutes where the route refuses would be a claim about a
+    runtime that does not exist.
+    """
+    for entry in NATIVE_EXTENSIONS:
+        if entry["module_name_prefix"] != module_name_prefix:
+            continue
+        behaviour = entry["when_unavailable"].get(mode)
+        if behaviour is None:
+            raise ValueError(
+                f"{module_name_prefix!r} publishes no behaviour for residency {mode!r}; "
+                f"it declares {sorted(entry['when_unavailable'])}")
+        return behaviour["status"] == FALLBACK_SUBSTITUTED
+    raise ValueError(f"no native extension is declared with prefix {module_name_prefix!r}")
 
 _NVCC_HINT = ("install the CUDA toolkit (nvcc) in the serving environment and make sure a "
               "GPU is visible, then restart; the extension builds on first use")
@@ -455,7 +557,7 @@ def _load_locked():
         cc = _target_capability("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
         identity, _payload = _build_identity(torch, source=source, capability=cc,
                                              extra_includes=extra_includes)
-        module_name = f"tessera_nvfp4_{identity}"
+        module_name = f"{NVFP4_MODULE_PREFIX}{identity}"
         root = os.environ.get("TESSERA_EXT_DIR")
         kwargs = {}
         if root:

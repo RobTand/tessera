@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 5,
+ "contract_version": 6,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -18,6 +18,28 @@
    "device": "NVIDIA GB10 (sm_121)"
   }
  },
+ "native_extensions": [
+  {
+   "module_name_prefix": "tessera_nvfp4_",
+   "filename_glob": "tessera_nvfp4_*.so",
+   "match": "basename_fnmatch",
+   "source": "csrc/tessera_nvfp4.cu",
+   "loaded_by": "tessera.serving.ext",
+   "routes": [
+    "TESSERA_NVFP4"
+   ],
+   "when_unavailable": {
+    "resident": {
+     "status": "substituted",
+     "decoder": "torch_materialize_stock"
+    },
+    "streamed": {
+     "status": "refused",
+     "decoder": null
+    }
+   }
+  }
+ ],
  "formats": [
   {
    "kind": "tessera_wire",
@@ -278,6 +300,11 @@
   "units": []
  },
  "changelog": [
+  {
+   "contract_version": 6,
+   "date": "2026-09-03",
+   "change": "native_extensions: the libraries this plugin LOADS into a serving process, beside the routes it EXECUTES. The contract published what runs and nothing about what is resident, so a consumer that keys reproducibility on extension residency -- PrismaQuant's serve fingerprint, whose section 7.4 records that a KL is bit-identical inside one container session and drifts 4-8x across them, keyed on whether a lane's .so was resident -- had to mirror the basename into its own pin file. That is principle 14 read backwards: a claim about THIS runtime, maintained in the other repository, where nothing here could refuse it on drift. Until 2026-09-03 that pattern named no Tessera extension at all, so a serve running Tessera's own native span-2 decode fingerprinted identically to a stock serve -- the one lane whose whole point is a custom decoder was the one lane the identical-residency rule could not see. One entry today: the span-2 NVFP4 decoder. It is published as a module_name_prefix and a filename_glob, NOT as a basename, because there is no exact basename to publish -- ext.py JIT-builds the module under a name carrying a build-identity hash, so the library on disk is tessera_nvfp4_<identity>.so and a consumer matching an exact stem would match nothing. match names the rule a gate applies ('basename_fnmatch'), because prose that said 'this is a prefix' is exactly the kind of field principle 14 refuses. The prefix is the constant _load_locked itself passes to cpp_extension.load, and the validator refuses any block that is not tessera.serving.ext.NATIVE_EXTENSIONS, so the table is DERIVED from the load path rather than typed beside it; tests/test_serving_native_extensions.py walks the import graph from tessera.serving and refuses any JIT load site reachable from it that this table does not declare, which is what keeps the list from going quietly short. when_unavailable replaces the 'optional: true' the issue proposed, because optional conflates two facts and answers the wrong one: what a fingerprint needs is not 'absence is survivable' but WHICH serve ran instead, and that differs by residency -- resident substitutes tessera.stock.materialize_stock and stamps decoder 'torch_materialize_stock' on every route record, streamed refuses outright because that path decodes inside a traced forward. So an absent .so with a streamed route record is an impossible pair, which is a stronger check than a boolean allows. The routes gate on this block rather than on a mode comparison of their own (nvfp4_route -> ext.substitutes_when_unavailable), the same way loader_axes is checked against ROUTE_TP_AXES. tessera_window_gemv stays OUT: the criterion is that the library can be resident in a SERVING process, and nothing reachable from tessera.serving loads it -- verified by the import walk, not by reading, so the day a route wires the window GEMV in, the table goes red. ADDITIVE for a reader: a v5 reader ignores a new top-level key, and no value it already read has moved."
+  },
   {
    "contract_version": 5,
    "date": "2026-09-02",
