@@ -49,8 +49,13 @@ from tessera.serving.build_identity import (
     require_distinct_build,
     require_same_build,
 )
+from tessera.serving.runtime_image import pinned_reference
 
 ROOT = Path(__file__).resolve().parent.parent
+# Read, never copied: the serve-image pin lives in runtime_contract.json and a
+# second literal here would pass while the pin was wrong (issue #100).
+PIN = pinned_reference()
+PIN_DIGEST = PIN.split("@", 1)[1]
 AOT_KEY = "15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec"
 BACKBONE_KEY = "573bb6beb1"
 
@@ -299,17 +304,25 @@ def test_the_cli_writes_the_sidecar_a_later_comparison_reads(tmp_path):
     subprocess.run(
         [sys.executable, "-m", "tessera.serving.build_identity", "stamp",
          "--log", str(log), "--out", str(out), "--cache-root", str(root),
-         "--image", "vllm/vllm-openai:latest", "--serve-mode", "resident",
+         "--image", PIN, "--image-digest", PIN_DIGEST,
+         "--image-local-id", "sha256:" + "89" * 32,
+         "--serve-mode", "resident",
          "--eager", "0", "--deterministic", "0",
          "--artifact-path", "/models/qwen3-0.6b-tessera-k2"],
         env=env, check=True, capture_output=True, text=True)
     rec = json.loads(out.read_text())
     assert rec["schema"] == SCHEMA and rec["complete"] is True
     assert rec["identity"]["serve_mode"] == "resident"
-    assert rec["identity"]["image"] == "vllm/vllm-openai:latest"
+    assert rec["identity"]["image"] == PIN
+    # WHAT RAN, not what was asked for (issue #100).  The resolved manifest
+    # digest is what the fingerprint is over; the local docker id is provenance
+    # only, because the two GB10s report different ids for identical bytes.
+    assert rec["identity"]["image_digest"] == PIN_DIGEST
+    assert rec["provenance"]["image_local_id"] == "sha256:" + "89" * 32
     assert rec["provenance"]["artifact_path"] == "/models/qwen3-0.6b-tessera-k2"
     require_same_build(rec, _stamp(REPLAY_LOG, tmp_path, "again", cache_root=root,
-                                   image="vllm/vllm-openai:latest",
+                                   image=PIN, image_digest=PIN_DIGEST,
+                                   image_local_id="sha256:" + "61" * 32,
                                    serve_mode="resident", eager=False),
                        why="the CLI and the API stamp one build alike")
 

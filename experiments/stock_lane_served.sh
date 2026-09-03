@@ -3,7 +3,8 @@
 # formats vanilla vLLM serves, measured on the gold metric against the
 # production comparators on the same image, same corpus, same box.
 #
-# Arms (all Qwen3-0.6B, all on vllm/vllm-openai:latest = v0.28.0):
+# Arms (all Qwen3-0.6B, all on the pinned vLLM 0.28 image -- the digest in
+# runtime_contract.json, which serve_and_dump_kl.sh refuses to run without):
 #   teacher     BF16 source, re-dumped on THIS image (image-matched)
 #   nvfp4-prod  PrismaQuant production NVFP4 (GPTQ+JSO), W4A4      4.5 bpp resident
 #   tessera-k2  Tessera E2M1x2 q896 -> NVFP4 tensors, W4A4          4.5 bpp resident (4.0 on the wire)
@@ -21,7 +22,8 @@ set -euo pipefail
 R=/home/rob/tessera-runs/stock
 KLDIR=/mnt/shared/tessera-kl
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+source "$(dirname "$0")/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$R
 cd /home/rob/tessera

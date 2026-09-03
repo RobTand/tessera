@@ -65,6 +65,24 @@ not a passed gate.
 packaged `runtime_contract.json` before the first encode (issue #41).
 Overridden refusals land verbatim in the manifest.
 
+### 4.4a "The pinned runtime" is a digest, and a harness refuses without it
+
+The pin is one string, `runtime_contract.json`'s
+`versions.attested_on.image`, and it is a digest reference
+(`vllm/vllm-openai@sha256:...`), not a tag: a tag is a name upstream can
+repoint, so two boxes can hold two builds under it while every receipt
+records the same four words (issue #100). `tessera.serving.runtime_image`
+is the only reader; every wrapper in `experiments/` that starts a container
+gates on it *before* taking the serve lock and refuses -- exit 2 plus a JSON
+record naming the `docker pull` that fixes it -- rather than warning. The
+check is membership in docker's `RepoDigests`, never `.Id`, which is the
+manifest digest under the containerd snapshotter and the config digest under
+overlay2: the same image reads two ids on the two GB10s. Both KL wrappers
+stamp the resolved digest into the build sidecar's `identity`; the local id
+rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
+Images outside the pinned repository (Mia's GLM image) are resolved and
+stamped, not refused.
+
 ### 4.5 The census attests the route, not the quality
 
 `tools/tessera_route_census.py` records, per residency mode, that every

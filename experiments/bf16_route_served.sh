@@ -44,9 +44,10 @@ TEACHER=$KLDIR/qwen_teacher_bf16_v028.json
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 # IMAGE-MATCHED, and it has to be said out loud: serve_and_dump_kl.sh defaults
 # to the GLM image, and the teacher this compares against was dumped on
-# vllm/vllm-openai:latest.  A KL taken against a teacher from another image is
+# the pinned vLLM 0.28 image.  A KL taken against a teacher from another image is
 # a number about two runtimes.
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+source "$(dirname "$0")/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export TESSERA_KL_LOGDIR=$RUNS
 export TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache
 # THE BOX IS SHARED AND THE MODEL IS 0.6B.  Both serve scripts default to

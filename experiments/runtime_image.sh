@@ -45,8 +45,10 @@ runtime_image_require() {
     # Unlike build_identity_stamp, this IS fatal.  A warning nothing reads is a
     # confession log, not a gate (principle 9), and the whole point of #100 is
     # that the previous behaviour -- run whatever `latest` happens to be --
-    # recorded nothing about what ran.
-    echo "$json" >&2
+    # recorded nothing about what ran.  The record goes to stdout so a caller
+    # that captures the wrapper's output has the refusal in a form it can
+    # parse; the CLI has already written the prose to stderr for a reader.
+    echo "$json"
     return 2
   fi
   RUNTIME_IMAGE_DIGEST="$(printf '%s' "$json" | _runtime_image_field resolved_digest)"
