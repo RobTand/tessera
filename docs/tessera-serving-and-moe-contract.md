@@ -483,6 +483,37 @@ said nothing — on GB10 it reads "a kernel is resident", not "the SMs are
 working". That headroom is real and unspent: `src/tessera/encode.py` is
 out of scope here, and the budget above is workable without it.
 
+### 9.6 A wire parameter routes through the expert mapping and is then dropped by the loader
+
+Issue #5's item 3 records `RoutedExperts.build_expert_params_mapping` as
+suffix-agnostic, "so custom suffixes route fine". The mapping is; the loader is
+not, and the difference is silent.
+
+Measured on the pinned build, no GPU
+(`experiments/moe_wire_loader_probe.py`,
+`docs/measurements/tessera-moe-wire-loader-2026-09-03.md`): `load_weights`
+rewrites the checkpoint name to the parameter's before it calls the loader, so
+`...experts.0.gate_proj.wire` arrives as `...experts.w13_wire` — a string
+containing neither `weight` nor `scale`, which are the substrings
+`RoutedExperts.weight_loader`'s dispatch tests. It falls off the end and returns
+`False`, writing nothing and raising nothing. `w13_wire`, `w2_wire` and
+`w13_wire_len` all do; `w13_weight` and `w2_weight`, the same call through the
+same stand-in, return `True` and are written.
+
+The remedy is a value the route sets anyway: `load_weights` calls
+`param.weight_loader`, so a wire parameter registered with a loader of its own
+is loaded by that loader and the dispatch is never in the path. Driven through
+`load_weights` itself, it is invoked, the name is yielded and the parameter is
+written. It is also the only form that can work: a wire row is variable-length
+at a declared stride, and `_load_w13` narrows by half the shard dimension and
+then copies shape-for-shape, so a short blob into a padded row is a size
+mismatch rather than a short write.
+
+This constrains `create_weights` for the expert route. It says nothing about
+the forward: no `ROUTES` entry, no `apply`, no `routed_moe` in
+`scheme.STRUCTURES`, no `lane_eligibility` cell, and no served measurement to
+justify one.
+
 ### 9.5 The serving image could not build the streamed decoder
 
 Found by making the NVFP4 streamed tests fail instead of skip. Three hosts,
