@@ -16,9 +16,19 @@ skipped, and a skipped check is how the finding goes missing):
    ``#37`` reads exactly like a tracked item and is worse than no reference,
    because it stops anyone looking further.
 2. Every finding listed in a triage document carries an explicit disposition --
-   ``[FIXED <sha>]``, ``[#N]`` or ``[DISMISSED]``.  A triage doc that lists a
-   real bug with no disposition is the exact artifact this project keeps
-   mistaking for a tracker.
+   ``[FIXED <sha>]`` or ``[#N]``.  A triage doc that lists a real bug with no
+   disposition is the exact artifact this project keeps mistaking for a tracker.
+
+Deferring is fine; **papering over is not**, and the two are told apart by which
+token is legal where.  ``[DISMISSED]`` is legal only in the Dismissed section,
+whose entries carry the evidence that killed them (an exhaustive sweep, a
+docstring in the dependency, a reproduction that inverts the premise).  A Tier
+A/B item is by construction one that reproduced, so silencing it with
+``[DISMISSED]`` in place would be the paper-over: if it turns out not to be
+real, it MOVES to the Dismissed section with its evidence, it does not acquire a
+token where it stands.  This rule exists because its author broke it -- a §6
+scope note was tagged ``[DISMISSED]`` to satisfy this very test, which is
+bending the record to pass a check.
 """
 from __future__ import annotations
 
@@ -41,7 +51,11 @@ REF = re.compile(r"(?<![\w/])(?:([\w.-]+/[\w.-]+))?#(\d+)\b")
 # reference (a comment, a shell fragment), so those lines are skipped.
 FENCE = re.compile(r"^\s*```")
 
-DISPOSITION = re.compile(r"\[(FIXED\b[^\]]*|DISMISSED|#\d+|[\w.-]+/[\w.-]+#\d+)\]")
+# Legal in a tier list.  ``DISMISSED`` deliberately absent -- see the module
+# docstring: a reproduced finding that turns out not to be real moves to the
+# Dismissed section with its evidence rather than being tagged where it stands.
+DISPOSITION = re.compile(r"\[(FIXED\b[^\]]*|#\d+|[\w.-]+/[\w.-]+#\d+)\]")
+PAPERED_OVER = re.compile(r"\[DISMISSED\]")
 
 # A triage document's finding lists.  Headings are matched loosely because the
 # tier names carry prose ("Tier A -- real, reachable on a shipping path").
@@ -107,11 +121,11 @@ def test_a_triage_document_exists_to_check():
 def test_every_triaged_finding_has_a_disposition(path: Path):
     """Every item under a Tier A/B heading says what happened to it.
 
-    ``[FIXED <sha>]`` (it landed), ``[#N]`` (it is tracked) or ``[DISMISSED]``
-    (it was checked and is not real).  Nothing else counts: "we should look at
-    this" is how a finding goes missing.
+    ``[FIXED <sha>]`` (it landed) or ``[#N]`` (it is tracked and deferred).
+    Nothing else counts: "we should look at this" is how a finding goes missing,
+    and ``[DISMISSED]`` in place is how one gets papered over.
     """
-    undispositioned = []
+    undispositioned, papered = [], []
     in_tier = False
     for lineno, line in _prose_lines(path.read_text()):
         if ANY_HEADING.match(line):
@@ -119,10 +133,17 @@ def test_every_triaged_finding_has_a_disposition(path: Path):
             continue
         if not in_tier or not ITEM.match(line):
             continue
-        if not DISPOSITION.search(line):
-            rel = path.relative_to(ROOT)
+        rel = path.relative_to(ROOT)
+        if PAPERED_OVER.search(line):
+            papered.append(f"{rel}:{lineno} {line.strip()[:88]}")
+        elif not DISPOSITION.search(line):
             undispositioned.append(f"{rel}:{lineno} {line.strip()[:88]}")
+    assert not papered, (
+        "a reproduced finding cannot be dismissed where it stands -- move it to "
+        "the Dismissed section with the evidence that killed it:\n  "
+        + "\n  ".join(papered)
+    )
     assert not undispositioned, (
-        "triaged findings with no disposition -- each needs [FIXED <sha>], "
-        "[#N] or [DISMISSED]:\n  " + "\n  ".join(undispositioned)
+        "triaged findings with no disposition -- each needs [FIXED <sha>] or "
+        "[#N]:\n  " + "\n  ".join(undispositioned)
     )

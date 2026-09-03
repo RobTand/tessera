@@ -55,8 +55,8 @@ Issue references are verified offline against `docs/issues-snapshot.json`
    first ceil(L/R) rows decode wrong. Nothing in `serving/` imports either
    module today, so it is reachable via the public API and the bench harnesses,
    not via a served lane -- but TP row-sharding is a shipped design promise.
-5a. [DISMISSED] **Scope check on all of §6, verified here rather than taken from the
-   report: the served path cannot reach any of it.** `src/tessera/serving/`
+   **Scope of all of §6, established here rather than taken from the report:
+   the served path cannot reach any of it.** `src/tessera/serving/`
    imports no `kernel*` module — it has its own `native_ops.py` and `window.py`,
    and those *do* read `initial_state` (as do `serving/fp8_route.py` and
    `serving/ops.py`). `kernel_window_gemv` and `bf16_route` have **zero
