@@ -19,8 +19,11 @@ container run.
 """
 from __future__ import annotations
 
+import json
+import re
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -256,7 +259,31 @@ def test_a_routed_moe_layer_refuses_and_never_returns_none(monkeypatch, build):
     with pytest.raises(ValueError) as excinfo:
         config.get_quant_method(layer, "model.layers.0.mlp.experts")
     message = str(excinfo.value)
-    assert "flashinfer_b12x" in message and "compressed-tensors" in message
+    assert "compressed-tensors" in message and "flashinfer_b12x" not in message
+
+
+@pytest.mark.parametrize("build", ["real", "named"])
+def test_a_routed_moe_refusal_recommends_no_moe_backend_flag(monkeypatch, build):
+    """Issue #31: the refusal recommended ``--moe-backend flashinfer_b12x``.
+
+    The pinned build refuses that flag on every GLM-5.3-Flash config (all set
+    ``swiglu_limit: 10.0``) and needs no flag at all (``auto`` resolves without
+    one), so the recommendation misdirected an operator twice over.  A refusal
+    does not need to recommend a flag, and which backend a build resolves is
+    that build's answer to give -- so the message must name none.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if build == "real":
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+        layer = object.__new__(RoutedExperts)
+    else:
+        layer = object.__new__(type("RoutedExperts", (), {}))
+    config = _resolved()
+    with pytest.raises(ValueError, match="routed-MoE") as excinfo:
+        config.get_quant_method(layer, "model.layers.0.mlp.experts")
+    message = str(excinfo.value)
+    assert "--moe-backend" not in message
+    assert "flashinfer_b12x" not in message
 
 
 def test_a_world_size_above_one_reaches_its_route(monkeypatch):

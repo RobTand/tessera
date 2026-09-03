@@ -38,8 +38,8 @@ WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s MoE branch is the seam
 version rename cannot slip it into the silent unquantized fallback).
 A Tessera MoE method would: parse one ``tessera.fused`` container
 per expert group, decode the per-expert wires into the STOCK packed expert
-layouts vLLM's fused-MoE kernels read (NVFP4: the packed w13/w2 triple, which
-needs ``--moe-backend flashinfer_b12x`` on GB10; FP8: the per-channel
+layouts vLLM's fused-MoE kernels read (NVFP4: the packed w13/w2 triple, served
+through the build's own fused-MoE oracle; FP8: the per-channel
 compressed-tensors MoE path), and dispatch through vLLM's own fused-MoE
 kernels exactly as the dense routes dispatch through ``torch._scaled_mm``.  The
 scheme already carries ``structure`` for it (``scheme.STRUCTURES``); adding the
@@ -349,7 +349,7 @@ class TesseraConfig(QuantizationConfig):
                 "yet, and vLLM would silently fall back to UnquantizedFusedMoEMethod if this "
                 "returned None, so the refusal is here. The expert route will decode per-expert "
                 "wires into the stock packed expert layouts and run vLLM's own fused-MoE "
-                "kernels (NVFP4 W4A4 needs --moe-backend flashinfer_b12x on GB10; per-channel "
+                "kernels (NVFP4 W4A4 through the build's own fused-MoE oracle; per-channel "
                 "FP8 W8A8 is the compressed-tensors MoE path); it carries no lane_eligibility "
                 "cell because no served measurement covers it. Export the experts to a format "
                 "the pinned runtime serves, or wait for the expert route.")
