@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 5,
+ "contract_version": 6,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -277,7 +277,31 @@
   "semantics": "closed_world",
   "units": []
  },
+ "fused_module": {
+  "schema": "tessera.fused-module.v1",
+  "container": "TSRFUSE1",
+  "fields": {
+   "family": "shared",
+   "structure": "shared",
+   "grid": "shared",
+   "body": "shared",
+   "plane": "shared",
+   "columns": "shared",
+   "q256": "per_member",
+   "rows": "per_member"
+  },
+  "sidecar_q256": "int_or_per_role_list",
+  "mixed_rung_receipt": false,
+  "fields_note": "Inside one vLLM-fused module (q/k/v, gate/up), what every role must SHARE and what is free PER MEMBER. vLLM builds one quant method per module, so the family -- and with it the grid, body, scale plane and input width the route decodes to one tile -- is a module fact. The RATE is not: every decoder in this build reads each role from that role's OWN manifest (fp8_route/bf16_route call prepare_window on unit.body_bits/unit.rates/unit.window_bits per role and concatenate; nvfp4_route packs each role's own rate/arity/memory/half scalars and decodes into that role's row slice). This block is checked against tessera.serving.scheme.FUSED_MODULE_FIELDS, the dict the loader itself gates on, exactly as tensor_parallel.units[].loader_axes is checked against sharding.ROUTE_TP_AXES.",
+  "sidecar_q256_note": "How a fused module's rungs are spelled in the checkpoint's scheme. ONE field, one fact: config_groups[..].scheme.q256 is an integer when every role carries the same rung -- the spelling of every checkpoint written before contract v6, unchanged -- or a list of one integer per role, in the scheme's own roles order, when they differ. A plugin build older than v6 refuses the list form on sight ('q256 must be an integer'), which is the fail-closed direction; a v6 build reads both.",
+  "mixed_rung_receipt_note": "Whether a CONTAINER RECEIPT covers a served module whose members took different rungs. It is false: the relaxation is proven by a decode identity (a real Qwen3-0.6B q/k/v at three rungs decodes element-for-element to what the three roles decode alone -- experiments/fused_member_rung_identity.py, tests/test_fused_member_rungs.py), not by a vLLM serve. This is the same distinction loader_axes draws against max_world_size: what the loader accepts is not what a receipt has covered. lane_eligibility is UNCHANGED by this version, so a mixed-rung module's cells resolve exactly as its members' rungs do individually -- unattested where no cell names the rung, which is the honest status and not a refusal."
+ },
  "changelog": [
+  {
+   "contract_version": 6,
+   "date": "2026-09-03",
+   "change": "fused_module: what a vLLM-fused module's roles must SHARE and what is free PER MEMBER, as a value a producer's group allocator reads instead of guessing (#37). The rate is per member. That was always true of the DECODERS -- fp8_route and bf16_route call prepare_window on each role's own body_bits/rates/window_bits and concatenate, nvfp4_route packs each role's own rate/arity/memory/half scalars into that role's row slice -- but nothing published it, and the only place it was written down was the sidecar, which carried ONE q256 per module and refused any member that disagreed with it. So the exporter grouped a fused module on (grid, q256) equality and passed a mixed-rung group through at source precision, while PrismaQuant's group knapsack (fold ON by default) allocates exactly such groups: two halves of one pipeline describing different sets. The sidecar now spells a mixed group as a per-role q256 list (sidecar_q256), every role's rung goes through the same reader-range gate the module's one rung used to, and each member is compared against its own declared rate at parse. ADDITIVE for readers: formats[], lane_eligibility, tensor_parallel, expert_parallel and quant_method are byte-identical to v5, so a v5 reader that ignores unknown top-level keys gets exactly the answers it got before; what it must NOT do is assume q256 is scalar, and a pre-v6 PLUGIN does not -- it refuses the list form rather than mis-reading it. mixed_rung_receipt is false: the relaxation is proven by a decode identity on a real Qwen3-0.6B q/k/v at rungs 1024/900/1200 (element-for-element against the same roles decoded alone and against tessera.decode.materialize_fp8/materialize_bf16), not by a vLLM serve, and no lane_eligibility cell moved. NVFP4 is unaffected in practice: TESSERA_E2M1_K2 publishes the single point 896, so every member of an NVFP4 group lands on one rung anyway and the gate that says so is the reader range, not a rule about groups."
+  },
   {
    "contract_version": 5,
    "date": "2026-09-02",
