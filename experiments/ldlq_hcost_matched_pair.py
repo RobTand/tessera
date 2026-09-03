@@ -212,26 +212,48 @@ def main():
         "load_at_start": open("/proc/loadavg").read().split()[:3],
         "pairs": {}, "arms": [],
     }
-    for lever in levers:
+    tag_of = lambda lv: {"0": "eager", "1": "graph", "auto": "auto"}.get(lv, lv)
+
+    clear()
+    for lever in levers:                       # warm every lever's path first
         apply_lever(a.lever_env, None if lever == "auto" else lever)
-        tag = {"0": "eager", "1": "graph", "auto": "auto"}.get(lever, lever)
-        clear(); enc(); enc(**ldl_kw)          # warm this lever's path
-        if not a.no_pair:
-            pair = {"A_weights_only": [], "B_ldlq_h": []}
-            for _ in range(a.reps):
+        enc(); enc(**ldl_kw)
+
+    if not a.no_pair:
+        # Interleaved across levers, not merely across A and B.  A sweep that
+        # ran every rep of one lever before starting the next would compare
+        # two arms minutes apart, which is the drift a matched pair exists to
+        # remove -- and on a box shared with a dozen sibling jobs the load can
+        # double inside a minute.  Rep by rep, lever by lever, every arm sees
+        # the same neighbours.  Nothing is cleared between levers: a forced
+        # lever answers for itself (the eager control bypasses the plan cache
+        # by construction), and the steady state with plans warm is the state
+        # the shipping schedule actually runs in.
+        for lever in levers:
+            out["pairs"][tag_of(lever)] = {"A_weights_only": [], "B_ldlq_h": [],
+                                           "load": []}
+        for _ in range(a.reps):
+            for lever in levers:
+                apply_lever(a.lever_env, None if lever == "auto" else lever)
+                pair = out["pairs"][tag_of(lever)]
                 pair["A_weights_only"].append(round(timed(lambda: enc())[0], 3))
                 pair["B_ldlq_h"].append(round(timed(lambda: enc(**ldl_kw))[0], 3))
-            med = lambda v: sorted(v)[len(v) // 2]
+                pair["load"].append(open("/proc/loadavg").read().split()[0])
+        med = lambda v: sorted(v)[len(v) // 2]
+        for pair in out["pairs"].values():
             pair["h_factor"] = round(
                 med(pair["B_ldlq_h"]) / med(pair["A_weights_only"]), 2)
-            pair["load"] = open("/proc/loadavg").read().split()[:3]
-            out["pairs"][tag] = pair
-        if a.profile:
+
+    if a.profile:
+        for lever in levers:
+            apply_lever(a.lever_env, None if lever == "auto" else lever)
+            tag = tag_of(lever)
             out["arms"].append(profile_arm(f"A weights-only [{tag}]",
                                            lambda: enc(), rows * cols))
             out["arms"].append(profile_arm(f"B LDLQ+refit [{tag}]",
                                            lambda: enc(**ldl_kw), rows * cols))
     out["peak_alloc_gib"] = round(torch.cuda.max_memory_allocated() / 2**30, 3)
+    out["load_at_end"] = open("/proc/loadavg").read().split()[:3]
 
     print(json.dumps({k: v for k, v in out.items() if k != "arms"}, indent=2))
     hdr = (f"{'arm':<30} {'wall':>8} {'devbusy':>8} {'devfrac':>8} {'hostgap':>8} "
