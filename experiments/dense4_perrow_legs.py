@@ -197,6 +197,31 @@ def main() -> int:
                                  for k, (a, b) in legs.items()}
             rec["relmed"] = {k: float(torch.sqrt(num[k] / den.clamp_min(1e-300)).median())
                              for k in arms}
+            # Where in the tensor each leg's difference lives.  Rows sorted by
+            # their share of the output energy `den`; every bucket ratio is the
+            # census aggregate restricted to those rows, so the buckets compose
+            # back to the whole-tensor number.
+            order = den.argsort(descending=True)
+            rec["buckets"] = {}
+            n1, n10 = max(1, r // 100), max(1, r // 10)
+            for tag, sel in (("top1", order[:n1]), ("top10", order[:n10]),
+                             ("rest90", order[n10:])):
+                rec["buckets"][tag] = {
+                    "n": int(sel.numel()),
+                    "den_share": float(den[sel].sum() / den.sum()),
+                    **{leg: math.sqrt(float(num[a][sel].sum()) / float(num[b][sel].sum()))
+                       for leg, (a, b) in legs.items()},
+                    "C_over_A": math.sqrt(float(num["C"][sel].sum()) / float(num["A"][sel].sum())),
+                }
+            # Prize: give arm C the comparator's error on the top rows only and
+            # leave every other row alone.  An upper bound on what any per-row
+            # treatment of those rows could buy, measured not assumed.
+            rec["oracle"] = {}
+            for tag, sel in (("top1", order[:n1]), ("top10", order[:n10])):
+                mask = torch.ones(r, dtype=torch.bool, device=den.device)
+                mask[sel] = False
+                mixed = float(num["C"][mask].sum()) + float(num["A"][sel].sum())
+                rec["oracle"][tag] = math.sqrt(mixed / float(den.sum())) / agg["A"]
             first.setdefault(name, agg["B"])
             out.append(rec)
             print(f"[{len(out):3d}] {name:<40} {r}x{c} part {rec['participation']:.3f} "
@@ -251,6 +276,34 @@ def main() -> int:
               f"{t['comp_agg']:>13.4f}{t['comp_rowmed']:>8.4f}"
               f"{t['relmed_C_over_A']:>15.4f}{t['agg_C_over_A']:>8.4f}")
 
+    print("\n== where the difference lives: rows bucketed by their share of output energy")
+    print(f"{'role':<8}{'bucket':<8}{'nrows':>6}{'den share':>11}"
+          f"{'plane':>8}{'gptq':>8}{'body':>7}{'comp':>7}{'C/A':>8}")
+    buckets = {}
+    for role in ROLES:
+        s_ = [u for u in out if u["role"] == role]
+        buckets[role] = {}
+        for tag in ("top1", "top10", "rest90"):
+            b = [u["buckets"][tag] for u in s_]
+            d = {"nrows": statistics.median([x["n"] for x in b]),
+                 "den_share": statistics.median([x["den_share"] for x in b]),
+                 **{leg: geo([x[leg] for x in b])
+                    for leg in ("plane", "gptq", "body", "comp", "C_over_A")}}
+            buckets[role][tag] = d
+            print(f"{role:<8}{tag:<8}{d['nrows']:>6.0f}{d['den_share']:>11.3f}"
+                  f"{d['plane']:>8.4f}{d['gptq']:>8.4f}{d['body']:>7.4f}"
+                  f"{d['comp']:>7.4f}{d['C_over_A']:>8.4f}")
+    print("\n== the prize: arm C given the comparator's error on the top rows only")
+    print(f"{'role':<8}{'C/A now':>9}{'C/A if top1% fixed':>21}{'C/A if top10% fixed':>21}")
+    oracle = {}
+    for role in ROLES:
+        s_ = [u for u in out if u["role"] == role]
+        oracle[role] = {"now": geo([u["agg"]["C"] / u["agg"]["A"] for u in s_]),
+                        "top1": geo([u["oracle"]["top1"] for u in s_]),
+                        "top10": geo([u["oracle"]["top10"] for u in s_])}
+        o = oracle[role]
+        print(f"{role:<8}{o['now']:>9.4f}{o['top1']:>21.4f}{o['top10']:>21.4f}")
+
     print("\n== matched triple, ratio to v_proj in the same layer (H bit-identical)")
     byname = {u["name"]: u for u in out}
     pairs = {}
@@ -275,6 +328,7 @@ def main() -> int:
 
     with open(args.out, "w") as fh:
         json.dump({"units": out, "control": control, "by_role": summ, "pairs": pairs,
+                   "buckets": buckets, "oracle": oracle,
                    "args": vars(args), "partial": False}, fh, indent=1)
     print(f"\nwrote {args.out} [{time.time()-t0:.0f}s]", flush=True)
     return 0
