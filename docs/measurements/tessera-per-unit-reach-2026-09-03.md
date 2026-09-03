@@ -4,8 +4,8 @@
 it is **not worth shipping on E4M3**. The per-unit ceiling at the wire's own
 rung is an **oracle** 0.9723 of the shipped default's h-weighted weight error,
 the oracle is chosen with the answer in hand across 15 arms on 8 units, and the
-one predictor derivable from what the encoder already knows about the unit
-picks the wrong arm on 8 of 8 units at that rung and would land at **1.0805 --
+first-order predictor derivable from what the encoder already knows about the
+unit picks the wrong arm on 8 of 8 units at that rung and would land at **1.0805 --
 worse than doing nothing**. On BF16 the same knob is a gauge up to the grid's dyadic
 residue class and is worth 0.01% at that rung (0.65% at R2048); BF16's large
 per-unit effect lives on the other axis and is already recorded as #48.
@@ -193,7 +193,11 @@ Do not ship a per-unit reach rule. Close #80 with this measurement.
 * The ceiling at the shipping rung is 2.8% of a weight-space screen, which is
   well inside the region where weight-space and served KL have repeatedly
   disagreed in this repo, and it is an oracle rather than a rule.
-* The only derived rule available is net negative (1.0805).
+* The first-order derived predictor -- the random-Gaussian-codebook one-step
+  distortion of section 5, which carries no fitted constant -- is net negative
+  (1.0805). It is not the only rule that could be derived, but a predictor that
+  did better would have to be path-aware, and computing the trellis path is the
+  per-unit search this issue set out to avoid.
 * The cost is not zero even though the bytes are: a per-unit spread is a
   per-unit `encoder_profile_id` and a per-unit schema minor 5, so a checkpoint
   stops having one encoder identity. That is a real price for 2.8% of a screen.
