@@ -110,10 +110,14 @@ def block_ldl(H: torch.Tensor, block: int) -> torch.Tensor:
     diag_blocks = torch.diagonal(
         L.reshape(m, block, m, block), dim1=0, dim2=2
     ).permute(2, 0, 1)                                        # [m, b, b]
-    inverted = torch.linalg.inv(diag_blocks)
     view = L.view(n, m, block)
     for index in range(m):
-        view[:, index, :] = view[:, index, :] @ inverted[index]
+        # Right-divide by the unit-triangular diagonal block without forming
+        # its inverse: ``X = A @ inv(D)`` is ``D^T X^T = A^T``, and ``D`` is
+        # lower-triangular from the Cholesky factor, so ``D^T`` is upper.
+        view[:, index, :] = torch.linalg.solve_triangular(
+            diag_blocks[index].T, view[:, index, :].T, upper=True
+        ).T
     L = view.reshape(n, n).contiguous()
     eye = torch.eye(block, device=L.device, dtype=L.dtype)
     blocked = L.view(m, block, m, block).permute(0, 2, 1, 3)

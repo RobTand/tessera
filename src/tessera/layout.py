@@ -660,18 +660,20 @@ def _steps_of(manifest) -> int:
     """Trellis steps per column, from the BODY plane's declared element count.
 
     The arity is not on the wire, so it is recovered by trying the ones a
-    readable artifact can carry: ``SERIALISABLE_GRIDS`` holds arity 1 and
-    arity 2, and those are the two this loop searches.  A non-power-of-two
-    tuple -- ``k = 3`` over E2M1 is legal to *build* (``alphabet.tuple_grid``)
-    -- would not be found, and cannot arrive either: a grid outside
-    ``SERIALISABLE_GRIDS`` is refused at ``build_unit_artifact`` and no reader
-    can resolve its digest, so no manifest reaches here holding one.  The
-    refusal below says which set it searched rather than claiming no arity
-    works -- and it says so by *formatting the set it searched*, because the
-    two were typed separately until 2026-09-03 and drifted the moment the loop
-    narrowed: the docstring still promised 4 and 8, and the refusal still named
-    them, three commits after the loop stopped trying them.
+    readable artifact can carry: the arities held by
+    ``alphabet.SERIALISABLE_GRIDS``, which this loop derives rather than
+    restates.  A non-power-of-two tuple -- ``k = 3`` over E2M1 is legal to
+    *build* (``alphabet.tuple_grid``) -- would not be found, and cannot arrive
+    either: a grid outside ``SERIALISABLE_GRIDS`` is refused at
+    ``build_unit_artifact`` and no reader can resolve its digest, so no
+    manifest reaches here holding one.  The refusal below says which set it
+    searched rather than claiming no arity works -- and it says so by
+    *formatting the set it searched*, because the two were typed separately
+    until 2026-09-03 and drifted the moment the loop narrowed: the docstring
+    still promised 4 and 8, and the refusal still named them, three commits
+    after the loop stopped trying them.
     """
+    from .alphabet import SERIALISABLE_GRIDS as _GRIDS
     from .trellis import body_bits as _bits
 
     wire = plane_order(manifest.shard is not None and manifest.shard.has_initial_state)
@@ -679,14 +681,15 @@ def _steps_of(manifest) -> int:
         terminal.plane_elements[wire.index(PlaneKind.BODY)]
         for terminal in manifest.terminals
     )
-    # 1 and 2 are the arities a reader can meet: ``arity`` is the grid's tuple
-    # order, and the only serialisable grids are E2M1, E2M1x2, E4M3 and BF16
-    # (``alphabet.SERIALISABLE_GRIDS``).  A wider tuple is refused twice over --
-    # by that registry, and by the 256-code ceiling on the byte-wide
+    # The arities a reader can meet are the tuple orders the registry commits
+    # to: ``arity`` is the grid's tuple order, and a grid outside the registry
+    # has no identity a reader can resolve.  A wider tuple is refused twice
+    # over -- by that registry, and by the 256-code ceiling on the byte-wide
     # ALPHABET/DESCENDANT planes, which E2M1^3's 4096 codes already break.  The
     # 4 and 8 this loop used to try could only mis-attribute a body-bit count
-    # that 1 and 2 had already failed to explain; refusing is the honest answer.
-    searched = (1, 2)
+    # the registry arities had already failed to explain; refusing is the
+    # honest answer.
+    searched = tuple(sorted({grid.arity for grid in _GRIDS.values()}))
     for arity in searched:
         if manifest.geometry.rows % arity:
             continue

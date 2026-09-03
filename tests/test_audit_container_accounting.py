@@ -286,3 +286,56 @@ def test_calculator_terminal_record_carries_no_digest_it_did_not_compute():
     # The point of the sentinel: it is not the digest of the payload it would
     # otherwise have claimed, so nothing can match it by accident.
     assert record.payload_digest != hashlib.sha256(bytes(record.exact_bytes)).digest()
+
+
+def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch):
+    """#34.1: ``layout._steps_of`` must derive its search from SERIALISABLE_GRIDS.
+
+    The arity is not on the wire, so it is recovered by trial.  Hardcoding
+    ``(1, 2)`` repeats the drift 654be54 just fixed (docstring and refusal
+    naming 4 and 8 three commits after the loop narrowed): the next serialised
+    arity would need three coordinated edits.  The rule is the registry --
+    every entry is a permanent wire commitment -- so the loop searches exactly
+    the arities the registry holds.  Extending the registry must extend the
+    search, which a hardcoded pair cannot do.
+    """
+    from types import SimpleNamespace
+
+    from tessera import alphabet as _alphabet
+    from tessera import layout as _layout
+    from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
+
+    wire = CANONICAL_PLANE_ORDER
+    body = wire.index(PlaneKind.BODY)
+    elements = [0] * len(wire)
+    elements[body] = 10**9  # no arity explains it, so this always refuses
+
+    def _refusing_manifest():
+        return SimpleNamespace(
+            shard=None,
+            geometry=SimpleNamespace(rows=8, columns=256),
+            span=1,
+            rates=(1,),
+            terminals=[SimpleNamespace(plane_elements=tuple(elements))],
+        )
+
+    with pytest.raises(GrammarError) as exc:
+        _layout._steps_of(_refusing_manifest())
+    expected = tuple(sorted({grid.arity for grid in _alphabet.SERIALISABLE_GRIDS.values()}))
+    assert str(expected) in str(exc.value), (
+        f"the refusal names {exc.value}, not the registry arities {expected}"
+    )
+
+    # The discriminating half: a registry holding an arity-3 grid must widen
+    # the search.  A hardcoded ``(1, 2)`` keeps refusing with the old set.
+    extended = dict(_alphabet.SERIALISABLE_GRIDS)
+    extended["test-arity-3"] = SimpleNamespace(arity=3)
+    monkeypatch.setattr(_alphabet, "SERIALISABLE_GRIDS", extended)
+    with pytest.raises(GrammarError) as exc2:
+        _layout._steps_of(_refusing_manifest())
+    expected2 = tuple(sorted({grid.arity for grid in extended.values()}))
+    assert 3 in expected2
+    assert str(expected2) in str(exc2.value), (
+        f"extending SERIALISABLE_GRIDS to {expected2} left the refusal at "
+        f"{exc2.value}: the search is a hardcoded pair, not the registry"
+    )
