@@ -84,10 +84,19 @@ if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   echo "REFUSED: spec-decode active"; docker rm -f "$NAME" >/dev/null; exit 2
 fi
 
+# THE BOX'S LOAD, EITHER SIDE OF THE TIMED WINDOWS.  The GPU lock serialises GPU
+# jobs; it does not serialise the CPU-bound ones, and several agents run encodes
+# on this box at once.  A host-driven latency number taken at load 49 is noise,
+# so the load is recorded rather than assumed -- and reported WITH the numbers,
+# because a contended measurement that says so is useful and one that does not
+# is worse than none.  window_gemv_load.py records os.getloadavg() at both ends
+# of each window into the receipt; this is the coarse shell-side bracket.
+echo "--- host load BEFORE the timed windows ---"; uptime
 $PY "$(dirname "$0")/window_gemv_load.py" \
   --url "http://127.0.0.1:${PORT}" --out "$OUT" --arm "$ARM" --mode "$MODE" --regime "$REGIME" \
   || { docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1; exit 3; }
 
+echo "--- host load AFTER the timed windows ---"; uptime
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
 build_identity_stamp "$LOG" "${OUT%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \

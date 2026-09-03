@@ -25,9 +25,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 import urllib.request
+
+
+def load_now() -> dict:
+    """The host's run-queue load, right now.
+
+    Recorded at both ends of every timed window because a latency number taken
+    on a contended box is noise, and a contended number that SAYS SO is still
+    useful while one that does not is worse than nothing.  This box runs many
+    agents' jobs at once and the GPU lock does not serialise the CPU-bound ones,
+    so "I held the lock" is not evidence the box was quiet.  ``nproc`` travels
+    with the reading so load is interpretable as a ratio rather than a bare
+    number.
+    """
+    one, five, fifteen = os.getloadavg()
+    return {"load1": one, "load5": five, "load15": fifteen,
+            "ncpu": os.cpu_count(),
+            "load1_per_cpu": round(one / (os.cpu_count() or 1), 3)}
 
 _HIST = re.compile(r'^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?P<labels>\{[^}]*\})? (?P<value>\S+)$')
 
@@ -148,6 +166,7 @@ def main() -> int:
 
     windows = {}
     marks = {"decode_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    loads = {"decode_start": load_now()}
     b = scrape(args.url)
     windows["decode"] = drive(args.url, args.decode_requests, 32, args.decode_out_tokens)
     a = scrape(args.url)
@@ -155,8 +174,10 @@ def main() -> int:
     windows["decode"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
     windows["decode"]["series_moved"] = moved(b, a)
     marks["decode_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    loads["decode_end"] = load_now()
 
     marks["prefill_start"] = marks["decode_end"]
+    loads["prefill_start"] = load_now()
     b = scrape(args.url)
     windows["prefill"] = drive(args.url, args.prefill_requests,
                                args.prefill_prompt_tokens, 1)
@@ -165,6 +186,7 @@ def main() -> int:
     windows["prefill"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
     windows["prefill"]["series_moved"] = moved(b, a)
     marks["prefill_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    loads["prefill_end"] = load_now()
 
     # The profile, over its own short load.  A profiled forward is not a timed
     # forward, so nothing above is taken from this window.
@@ -185,6 +207,15 @@ def main() -> int:
         "started_utc": started,
         "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "marks_utc": marks,
+        "host_load": loads,
+        # A verdict the receipt carries itself, so a reader does not have to
+        # decide from four raw numbers whether the box was quiet.  The threshold
+        # is one runnable process per core: above that the run queue is
+        # oversubscribed and a host-driven latency number is contended by
+        # definition.  It is a LABEL, never a filter -- the numbers are reported
+        # either way.
+        "contended": max(v["load1_per_cpu"] for v in loads.values()) > 1.0,
+        "max_load1_per_cpu": max(v["load1_per_cpu"] for v in loads.values()),
         "windows": windows,
         "profiled_load": profiled,
     }
@@ -197,6 +228,9 @@ def main() -> int:
               f"TTFT {1000*ttft.get('mean_s', float('nan')):.2f} ms  "
               f"TPOT {1000*tpot.get('mean_s', float('nan')):.3f} ms "
               f"(n={tpot.get('count')})")
+    lo = max(v["load1_per_cpu"] for v in loads.values())
+    print(f"host load1/cpu peaked at {lo:.2f} over the timed windows "
+          f"({'CONTENDED -- report these as contended' if lo > 1.0 else 'box was quiet'})")
     print("->", args.out)
     return 0
 
