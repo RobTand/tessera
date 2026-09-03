@@ -42,7 +42,7 @@ import torch
 
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate_tessera_scheme
-from .sharding import plan_shard, shard_parsed_roles
+from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
 from .telemetry import DECODER_TORCH_WINDOW, emit_route, route_shape
 from .window import PreparedWindow, prepare_window
 
@@ -210,9 +210,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             out_size = int(sum(output_partition_sizes))
             in_size = int(input_size_per_partition)
             # See ``sharding``: the plan is the whole module at TP=1 and is the
-            # shape check it replaces; at TP>1 it names the axis to cut on.
+            # shape check it replaces; at TP>1 it names the axis to cut on.  The
+            # window body's L-bit pad IS state_{-1}, so this route cuts BOTH
+            # axes; the gate is asked anyway, from the one table, so a route
+            # that stops cutting an axis stops serving it in one edit.
             plan = plan_shard(prefix, rows=rows, columns=columns,
                               out_size=out_size, in_size=in_size)
+            require_axis_supported(TESSERA_FP8, plan)
             weight_loader = extra_weight_attrs.get("weight_loader")
             # The whole container as one opaque blob: a blob has no output axis
             # to split.  No static input scale: the A side is per-token dynamic,

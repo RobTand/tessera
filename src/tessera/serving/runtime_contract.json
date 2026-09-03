@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 2,
+ "contract_version": 3,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -165,14 +165,35 @@
    {
     "unit": "TESSERA_E2M1_K2",
     "kind": "tessera_wire_family",
-    "max_world_size": 1
+    "max_world_size": 1,
+    "loader_axes": {
+     "row": {
+      "status": "refused",
+      "reason": "a row shard begins mid-column, so it carries an INITIAL_STATE plane, and the span-2 TCQ decoders this family's route packs for (tessera.lane_planes.pack_unit_for_kernel, csrc/window_gemv.cu) supply state_{-1} = 0 themselves; the loader refuses such a cut on EVERY rank, including rank 0 whose shard would pack, because a group whose ranks disagree about a module hangs on its first collective"
+     },
+     "column": {
+      "status": "sharded",
+      "reason": null
+     }
+    }
    },
    {
     "unit": "TESSERA_E4M3_K1",
     "kind": "tessera_wire_family",
-    "max_world_size": 1
+    "max_world_size": 1,
+    "loader_axes": {
+     "row": {
+      "status": "sharded",
+      "reason": null
+     },
+     "column": {
+      "status": "sharded",
+      "reason": null
+     }
+    }
    }
-  ]
+  ],
+  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for both families because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
  },
  "expert_parallel": {
   "axis": "vllm_expert_parallel_size",
@@ -180,6 +201,11 @@
   "units": []
  },
  "changelog": [
+  {
+   "contract_version": 3,
+   "date": "2026-09-02",
+   "change": "tensor_parallel.units[] gains loader_axes: per axis, what this build's LOADER does with a shard on it ('sharded' or 'refused', plus a prose reason a gate does not read). The seam that cuts a unit landed (tessera.layout.slice_unit + serving/sharding), and the plugin's config gate had gone on refusing every tensor_parallel_size > 1 with a message saying the cutter was not in the build -- narrower than the code and, by then, false. The gate is now keyed on the slicer's PRESENCE, and the per-axis refusal moved to create_weights where the axis is known: TESSERA_E4M3_K1 cuts both axes (the window body's L-bit pad IS state_{-1}), TESSERA_E2M1_K2 cuts columns only (its span-2 TCQ decoders supply state_{-1} = 0 themselves). max_world_size is UNCHANGED at 1 and keeps its meaning -- the largest world size a served receipt covers -- because no multi-rank serve has been run; raising it needs a two-rank serve with a per-rank census and a KL against the single-rank arm, not a passing unit test. The validator no longer refuses a world size above one with the claim that a sharded form needs per-rank wires: it does not, the artifact is TP-agnostic and the cut happens at load. ADDITIVE -- a v1 reader that reads max_world_size still gets 1, which is the conservative answer."
+  },
   {
    "contract_version": 2,
    "date": "2026-09-02",

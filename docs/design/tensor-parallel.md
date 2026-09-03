@@ -1,8 +1,13 @@
 # Tensor parallelism: one artifact, any TP degree
 
 **Status:** the Tessera-side mechanism is built and tested (schema minor 4,
-`layout.slice_unit`, 2026-09-02). The serving plugin's per-rank loader and a
-served two-box TP=2 gate are follow-on work and are named at the end.
+`layout.slice_unit`, 2026-09-02), and so is the serving plugin's per-rank
+loader, including the gate that decides which axis each route may be cut on
+(2026-09-02, #7). **Nothing here has run on two ranks.** The contract still
+publishes `max_world_size: 1` for both families, because that field is an
+attestation and no multi-rank serve has been measured; what it publishes beside
+it is `loader_axes`, which is what the loader *does*. The served two-box TP=2
+gate is the remaining work and is named at the end.
 
 ## The claim
 
@@ -191,7 +196,11 @@ zero.**
   unwritten and untested. `pack_unit_for_kernel` therefore fails closed with a
   message naming the row offset. Packing a shard against the pinned zero would
   decode to plausible wrong weights in silence, which is the one outcome this
-  codebase exists to prevent.
+  codebase exists to prevent. Since 2026-09-02 the *serving* refusal arrives
+  earlier and in the operator's vocabulary: `ROUTE_TP_AXES` marks the NVFP4
+  route's row axis `refused`, so `create_weights` says so with the
+  `tensor_parallel_size` and the layer kind before a blob is read. The packer's
+  refusal stays as the backstop for any other caller.
 
 * The **Triton parsed path**, `kernel_window.prepare_from_parsed`, threads the
   state as a separate kernel argument (`prepare_window_unit(..., initial=)`)
@@ -256,14 +265,43 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
   fused roles independently on the row axis. Unit-tested at tp=2 on both axes
   and both shipping wires against the parent's own decoded slice
   (`tests/test_serving_sharding.py`); the E4M3/window route threads the start
-  state into `prepare_window`'s pad, and the span-2 NVFP4 route inherits
-  `pack_unit_for_kernel`'s refusal of a row shard (so it serves column cuts at
-  any TP and row cuts on rank 0 only). What is still missing is the served
-  gate, below; nothing here has run on two ranks.
+  state into `prepare_window`'s pad. What is still missing is the served gate,
+  below; nothing here has run on two ranks.
+* ~~**The plugin's TP gate**~~ — **built 2026-09-02 (#7).** The loader was
+  reachable and the config gate in front of it was not: `TesseraConfig` refused
+  every `tensor_parallel_size > 1` at method construction, with a message
+  saying `layout.slice_unit` was not in the build. It was — the seam above
+  calls it. The gate is now two gates that answer two questions:
+  `sharding.require_a_cutter` refuses a TP group in a build with **no** slicer
+  (kept rather than deleted: a build without one must refuse rather than hand
+  every rank the whole unit), and `sharding.require_axis_supported` refuses the
+  one **axis** a route's decoders cannot start from, at `create_weights`, where
+  `plan_shard` has just named it. The per-axis answer is one table,
+  `sharding.ROUTE_TP_AXES`: `TESSERA_FP8` cuts both axes, `TESSERA_NVFP4` cuts
+  columns only. `runtime_contract.json` publishes that table as
+  `tensor_parallel.units[].loader_axes` and `contract.validate_serving_contract`
+  refuses a document that disagrees with it, so the published claim and the
+  executed behaviour are one artifact.
+  **The NVFP4 row cut is refused on every rank, including rank 0**, whose shard
+  starts at row 0, carries no INITIAL_STATE plane and would in fact pack:
+  refusing only where it bites would leave rank 0 building a layer while its
+  peers raised, and a group whose ranks disagree about whether a module exists
+  hangs on its first collective instead of failing.
 * **A served two-box TP=2 gate** — the artifact serving correctly on two ranks,
   KL-vs-BF16 against the same artifact served on one. Until that runs, the
-  claim here is "the bytes slice exactly", which is what the tests show, and
-  not "the model serves tensor-parallel".
+  claim here is "the bytes slice exactly, and the loader will attempt a cut",
+  which is what the tests show, and not "the model serves tensor-parallel".
+  Concretely, a TP=2 serve must still confirm four things no unit test reaches:
+  that the two ranks' `create_weights` agree on the axis and neither hangs the
+  group; that the per-rank census names one Tessera route per declared Linear
+  on **both** ranks (a rank silently falling back would look like a slightly
+  worse model); that the all-reduce of a column-cut `down_proj`/`o_proj`
+  reassembles the single-rank output, measured as KL-vs-BF16 against the
+  one-rank arm on the same bytes; and that an E4M3 row cut — the axis only the
+  window body can start — is right *in the serve*, not only in
+  `materialize_fp8`'s byte check at load. Only after that does
+  `max_world_size` move off 1, per family and per axis, and it moves for the
+  family the serve covered and no other.
 * **The span-2 kernel lane's start state** — B1's, if the trellis lane is ever
   wanted under TP. The window lane, which is the shipping E4M3 wire, is done.
 * **A cluster-side shape check** — PrismaQuant's `check_serving_shape` should

@@ -251,12 +251,56 @@ def test_each_cell_executes_the_contract_its_route_module_exposes(contract):
         assert cell["activation_contract"] == by_family[cell["family"]]
 
 
-def test_no_unit_admits_a_world_size_above_one(contract):
+def test_no_unit_attests_a_world_size_above_one(contract):
+    """``max_world_size`` is an ATTESTATION, and nothing has been measured.
+
+    It is 1 not because the bytes cannot shard -- they can, and the loader cuts
+    a unit at load -- but because no multi-rank serve has been run.  Raising it
+    takes a two-rank serve with a per-rank census and a KL against the
+    single-rank arm.
+    """
     units = contract["tensor_parallel"]["units"]
     assert units, "the contract makes a tensor-parallel claim"
     assert {u["unit"] for u in units} == set(_FAMILY_RUNGS)
     for unit in units:
         assert unit["max_world_size"] == 1
+
+
+def test_loader_axes_is_the_table_the_routes_gate_on(contract):
+    """The published per-axis answer IS ``sharding.ROUTE_TP_AXES``.
+
+    Two documents about one runtime is how the plugin came to ship a refusal
+    saying the unit slicer was absent from a build that had it.  This is the
+    same check ``activation_contract`` gets: the value a gate reads is compared
+    against the constant the code itself uses, not against prose.
+    """
+    from tessera.serving.contract import _FAMILY_TO_ROUTE
+    from tessera.serving.sharding import AXES, ROUTE_TP_AXES
+
+    for unit in contract["tensor_parallel"]["units"]:
+        axes = unit["loader_axes"]
+        route = _FAMILY_TO_ROUTE[unit["unit"]]
+        assert sorted(axes) == sorted(AXES)
+        for axis in AXES:
+            assert axes[axis]["status"] == ROUTE_TP_AXES[route][axis]
+
+
+def test_the_published_axes_are_the_ones_the_seam_can_serve(contract):
+    """Named, not merely derived: E4M3 cuts both axes, E2M1x2 cuts columns only.
+
+    The row axis is the body's answer, not the tile's -- the window body's
+    L-bit pad IS ``state_{-1}``, and the span-2 TCQ decoders supply
+    ``state_{-1} = 0`` themselves -- so this is the assertion that would fail if
+    a future edit quietly widened the NVFP4 route's claim without teaching its
+    packer a start state.
+    """
+    axes = {u["unit"]: {a: v["status"] for a, v in u["loader_axes"].items()}
+            for u in contract["tensor_parallel"]["units"]}
+    assert axes["TESSERA_E4M3_K1"] == {"row": "sharded", "column": "sharded"}
+    assert axes["TESSERA_E2M1_K2"] == {"row": "refused", "column": "sharded"}
+    refused = [u for u in contract["tensor_parallel"]["units"]
+               if u["unit"] == "TESSERA_E2M1_K2"][0]["loader_axes"]["row"]
+    assert "INITIAL_STATE" in refused["reason"]
 
 
 # --- what the validator refuses ----------------------------------------------
@@ -322,8 +366,39 @@ def test_an_expert_parallel_claim_is_refused(contract):
         validate_serving_contract(bad)
 
 
-def test_a_sharded_unit_is_refused(contract):
+def test_an_unmeasured_world_size_is_refused(contract):
+    """And the refusal no longer gives a false reason.
+
+    It used to say a sharded form needs per-rank wires.  It does not: the
+    artifact is TP-agnostic, one whole unit per role, and the rank cuts its own
+    shard at load.  What is missing is the measurement, and that is what the
+    message now says.
+    """
     bad = _mutated(contract,
                    lambda c: c["tensor_parallel"]["units"][0].__setitem__("max_world_size", 2))
-    with pytest.raises(ValueError, match="per-rank wires"):
+    with pytest.raises(ValueError, match="ATTESTATION") as excinfo:
+        validate_serving_contract(bad)
+    assert "per-rank wires" not in str(excinfo.value)
+
+
+def test_a_loader_axis_that_disagrees_with_the_code_is_refused(contract):
+    """The document may not widen what the loader does."""
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["units"][0]["loader_axes"]["row"]
+                   .update({"status": "sharded", "reason": None}))
+    with pytest.raises(ValueError, match="ROUTE_TP_AXES"):
+        validate_serving_contract(bad)
+
+
+def test_a_refused_axis_must_carry_a_reason(contract):
+    bad = _mutated(contract,
+                   lambda c: c["tensor_parallel"]["units"][0]["loader_axes"]["row"]
+                   .__setitem__("reason", None))
+    with pytest.raises(ValueError, match="carries no reason"):
+        validate_serving_contract(bad)
+
+
+def test_a_unit_without_loader_axes_is_refused(contract):
+    bad = _mutated(contract,
+                   lambda c: c["tensor_parallel"]["units"][0].pop("loader_axes"))
+    with pytest.raises(ValueError, match=r"missing \['loader_axes'\]"):
         validate_serving_contract(bad)
