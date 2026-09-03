@@ -30,11 +30,22 @@ from fractions import Fraction
 import pytest
 import torch
 
-from tessera.alphabet import E2M1_GRID, E4M3_GRID, build_forest, tuple_grid
+from tessera.alphabet import (
+    BF16_GRID,
+    E2M1_GRID,
+    E4M3_GRID,
+    build_forest,
+    tuple_grid,
+)
 from tessera.calculator import terminal_rate
 from tessera.container import parse, serialize
 from tessera.decode import decode_codes_mixed, reconstruct_unit, replay_window
-from tessera.encode import encode_unit, viterbi_window, window_table
+from tessera.encode import (
+    encode_unit,
+    viterbi_window,
+    window_table,
+    window_table_reach,
+)
 from tessera.errors import GrammarError, ManifestError, TesseraError
 from tessera.export import (
     DEFAULT_BODY,
@@ -45,6 +56,7 @@ from tessera.export import (
     read_checkpoint_config,
 )
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
+from tessera.scale_channel import default_channel_sigma
 from tessera.manifest import WINDOW_BITS_MAX, BodyKind, ScalePlaneKind
 from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
 from tessera.trellis import ConvCode
@@ -172,6 +184,60 @@ def test_window_table_is_deterministic_snapped_and_cached():
         assert window_table(K2, bits, sigma=1.0).numel() == 1 << bits
     with pytest.raises(GrammarError, match="sigma"):
         window_table(K2, 8, sigma=0.0)
+
+
+def test_the_table_says_what_spread_the_grid_actually_delivered():
+    """#84: a grid has a peak, so past a point the table stops widening.
+
+    The clamp is not a defect -- an alphabet is allowed to end -- but it was
+    silent, and a sweep that reports only the realised reach reads the flat
+    curve past the clamp as "the axis stopped mattering".  It has not: on
+    ``L2.mlp.down_proj`` at R2048 the h error runs 1.41x at ratio 1.75 and
+    1.99x at 4.0 with the realised reach pinned at 4.7568 row-RMS throughout.
+    What moves there is the table's *interior*, and ``saturated`` is the
+    number that shows it.
+    """
+    base = default_channel_sigma(E4M3_GRID)
+    inside = window_table_reach(E4M3_GRID, 14, sigma=base, seed=0)
+    assert inside.realised == 384.0 and inside.saturated == 0
+    # Snapping can round the outermost quantile *up*, so "delivered" sits
+    # just above 1 while nothing has clamped.
+    assert 1.0 < inside.delivered < 1.05
+
+    wide = [window_table_reach(E4M3_GRID, 14, sigma=r * base, seed=0)
+            for r in (1.25, 1.5, 2.0, 4.0)]
+    # Realised reach saturates at the grid's peak and never moves again ...
+    assert [w.realised for w in wide] == [448.0] * 4
+    # ... while the request keeps growing, so what was delivered keeps falling
+    assert [round(w.delivered, 3) for w in wide] == [0.949, 0.791, 0.593, 0.297]
+    # ... and the interior keeps deforming, which is the part the reach hides.
+    assert [w.saturated for w in wide] == [4, 36, 358, 4120]
+    assert all(a.saturated < b.saturated for a, b in zip(wide, wide[1:]))
+
+    # BF16 has ~120 binades of margin at each end, so nothing clamps there.
+    bf16 = [window_table_reach(BF16_GRID, 14, sigma=s, seed=0) for s in (1.0, 4.0)]
+    assert [b.saturated for b in bf16] == [0, 0]
+    assert all(0.99 < b.delivered <= 1.0 for b in bf16)
+
+
+def test_the_encoder_records_the_spread_the_grid_delivered():
+    """The clamp happens in the encoder, so the encoder is what records it."""
+    w = _weights()
+    base = default_channel_sigma(E4M3_GRID)
+    rates = (4,) * w.shape[1]
+    common = dict(body=WINDOW, window_bits=10,
+                  scale_plane=ScalePlaneKind.CHANNEL, scale_refit=1)
+    honoured = encode_unit(w, E4M3_GRID, rates, CODE, **common)
+    assert honoured.table_reach is not None
+    assert honoured.table_reach.saturated == 0
+    clamped = encode_unit(w, E4M3_GRID, rates, CODE, **common,
+                          window_sigma=4.0 * base)
+    assert clamped.table_reach.realised == 448.0
+    assert clamped.table_reach.delivered < 0.4
+    assert clamped.table_reach.saturated > 0
+    # Diagnostic, never wire: the field decides no byte, so a table that
+    # clamped and one that did not are told apart only by their contents.
+    assert honoured.table_reach != clamped.table_reach
 
 
 # --------------------------------------------------------------- the seam

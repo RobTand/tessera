@@ -94,7 +94,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tessera.alphabet import BF16_GRID, E4M3_GRID  # noqa: E402
-from tessera.encode import grid_vector_table, window_table  # noqa: E402
+from tessera.encode import (  # noqa: E402
+    grid_vector_table,
+    window_table,
+    window_table_reach,
+)
 from tessera.export import (  # noqa: E402
     BF16_CHANNEL_SIGMA,
     BF16_WINDOW_BITS,
@@ -172,16 +176,30 @@ def reach_stats(w: torch.Tensor, grid, window_bits: int, table_sigma: float,
 
     The same quantities ``initial_channel_scale`` computes, reported rather
     than only acted on: a sweep over the spread is a sweep over this.
+
+    **And what the spread request actually bought** (#84).  A grid has a
+    largest finite magnitude, so past a point the table stops widening: on
+    E4M3 a requested ratio of 4x delivers 1.167x of the shipped reach.  A
+    sweep that reports only ``reach_row_rms`` sees a flat curve past the
+    clamp and reads it as "the axis stopped mattering" -- which is wrong,
+    because the error keeps moving (`L2.mlp.down_proj` R2048: 1.41x at ratio
+    1.75 and 1.99x at 4.0, at one realised reach).  ``table_saturated`` is
+    what separates the two: it is 4 entries at ratio 1.25 and 4120 of 16384
+    at 4.0, and it is the interior deformation the reach cannot show.
     """
-    codes = window_table(grid, window_bits, sigma=table_sigma, seed=0,
-                         half=16, device=w.device)
-    reach = float(grid_vector_table(grid, w.device)[codes.long()].abs().max())
+    facts = window_table_reach(grid, window_bits, sigma=table_sigma, seed=0, half=16)
+    reach = facts.realised
     rms = w.float().pow(2).mean(dim=1).sqrt()
     amax = w.float().abs().amax(dim=1)
     over = (amax * channel_sigma > reach * rms)
     return {
         "reach_grid_units": reach,
         "reach_row_rms": reach / channel_sigma,
+        "requested_reach_grid_units": facts.requested,
+        "requested_reach_row_rms": facts.requested / channel_sigma,
+        "reach_delivered": facts.delivered,
+        "table_saturated": facts.saturated,
+        "table_saturated_fraction": facts.saturated_fraction,
         "rows_over_reach": float(over.float().mean()),
         "max_z": float((amax / rms.clamp_min(1e-30)).max()),
     }

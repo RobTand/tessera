@@ -205,6 +205,15 @@ class EncodedUnit:
     # times ``scale_global``; ``scale_base`` and ``scale_refine`` are empty.
     # Travels on the DIAG_SV plane (``scale_channel.py``).
     scale_rows: "torch.Tensor | None" = None     # [rows] fp16
+    # What the window table's spread request actually bought (#84).  A grid
+    # has a largest finite magnitude, so a spread that would place the
+    # outermost quantile past it clamps and the table stops widening; on E4M3
+    # a 4x request delivers 1.167x of the shipped reach and piles a quarter of
+    # the entries onto 448.  Diagnostic, never wire -- like ``sse``, no plane
+    # holds it and ``unit_artifact`` parses a unit back with it unset -- but
+    # the encoder is where the clamp happens, so the encoder is where it is
+    # recorded rather than left for a caller to re-derive.
+    table_reach: "WindowTableReach | None" = None
     # The reach spellings the encoder was told (schema minor 5): the window
     # table's seed and spread, and the CHANNEL plane's modelled row spread.
     # Recorded so the artifact states what cut it -- ``unit_artifact``
@@ -710,9 +719,16 @@ def viterbi_columns(
 
 
 @functools.lru_cache(maxsize=64)
-def _window_table_cpu(
+def _window_points_cpu(
     grid: PayloadGrid, window_bits: int, sigma: "float | None", seed: int, half: int,
 ) -> torch.Tensor:
+    """The table's points **before** they are snapped: ``[2^window_bits, arity]``.
+
+    Split out of ``_window_table_cpu`` so the spread a caller asked for can be
+    compared with the one the grid delivered (``window_table_reach``).  Both
+    halves are cached, so asking for the reach costs nothing a table build did
+    not already pay.
+    """
     size = 1 << window_bits
     peak = max(abs(v) for v in grid.values)
     # Equal-mass quantiles of the modelled source, one set per coordinate.
@@ -735,10 +751,17 @@ def _window_table_cpu(
     else:
         quantiles = torch.tensor(GAUSSIAN_SOURCE(size, float(sigma)))
     generator = torch.Generator().manual_seed(int(seed))
-    points = torch.stack(
+    return torch.stack(
         [quantiles[torch.randperm(size, generator=generator)] for _ in range(grid.arity)],
         dim=1,
     ).float()                                                   # [size, arity]
+
+
+@functools.lru_cache(maxsize=64)
+def _window_table_cpu(
+    grid: PayloadGrid, window_bits: int, sigma: "float | None", seed: int, half: int,
+) -> torch.Tensor:
+    points = _window_points_cpu(grid, window_bits, sigma, seed, half)
     vectors = grid_vector_table(grid).float()                   # [codes, arity]
     # Nearest grid vector, ties to the lower code: E4M3's duplicate slots
     # (the two former NaNs, the negative zero) sit above the legal byte.
@@ -821,6 +844,70 @@ def window_table(
         raise GrammarError(f"the window source sigma must be positive, got {sigma}")
     table = _window_table_cpu(grid, int(window_bits), sigma, int(seed), int(half))
     return table.to(device) if device is not None else table.clone()
+
+
+@dataclass(frozen=True)
+class WindowTableReach:
+    """What a window table's spread request actually bought, in grid units.
+
+    ``requested`` is the modelled source's outermost quantile -- the spread
+    the caller asked for, before the grid is consulted.  ``realised`` is the
+    outermost entry *after* snapping, which is what the trellis can emit and
+    what ``initial_channel_scale`` scales rows against.  On a grid with a
+    finite peak the two part company: ``delivered`` is their ratio and
+    ``saturated`` counts the entries sitting on the peak.
+    """
+
+    requested: float
+    realised: float
+    delivered: float
+    saturated: int
+    saturated_fraction: float
+    size: int
+
+
+def window_table_reach(
+    grid: PayloadGrid,
+    window_bits: int,
+    *,
+    sigma: "float | None" = None,
+    seed: int = 0,
+    half: int = 16,
+) -> WindowTableReach:
+    """The spread a window table was asked for against the one the grid gave.
+
+    A window table's entries are drawn from the grid, and a grid has a largest
+    finite magnitude.  Ask for a spread that would put the outermost quantile
+    past it and the entry clamps: the table stops widening, silently, and
+    every further widening only piles more quantiles onto the same peak.  On
+    E4M3 that ceiling arrives early -- a requested window/channel ratio of 4x
+    delivers 1.167x of the shipped reach, and 1.25x already delivers all of it
+    (issue #84, measured on 8 dense Qwen3-0.6B units).
+
+    So a sweep that reports only the realised reach reads the flat curve past
+    the clamp as "the axis stopped mattering", and that reading is wrong: the
+    reach stops moving while the error keeps moving, because the interior of
+    the table keeps deforming.  ``saturated`` is the quantity that separates
+    the two, which is why it is reported beside the reach and not instead of
+    it.
+
+    Costs nothing a table build did not already pay: both halves are cached.
+    """
+    points = _window_points_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    table = _window_table_cpu(grid, int(window_bits), sigma, int(seed), int(half))
+    values = grid_vector_table(grid)[table.long()]
+    peak = max(abs(v) for v in grid.values)
+    realised = float(values.abs().max())
+    requested = float(points.abs().max())
+    on_peak = int((values.abs().amax(dim=-1) >= peak - 1e-12).sum())
+    return WindowTableReach(
+        requested=requested,
+        realised=realised,
+        delivered=realised / requested if requested > 0 else 1.0,
+        saturated=on_peak,
+        saturated_fraction=on_peak / float(table.numel() // max(grid.arity, 1)),
+        size=int(table.numel() // max(grid.arity, 1)),
+    )
 
 
 # Past a crossover the fast path is slower than the reference it exists to
@@ -1921,6 +2008,7 @@ def encode_unit(
     table_bytes, global_scale = None, 1.0
     channel_rows = effective_rows = None
     body_reach = None
+    table_reach = None
     if scale_plane is ScalePlaneKind.CHANNEL:
         from .scale_channel import default_channel_sigma, initial_channel_scale
 
@@ -1941,6 +2029,9 @@ def encode_unit(
                 grid, window_bits, sigma=reach_sigma, seed=window_seed, half=half, device=device,
             )
             reach = float(grid_vector_table(grid, device)[reach_codes.long()].abs().max())
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=reach_sigma, seed=window_seed, half=half,
+            )
         else:
             reach = max(
                 float(grid_vector_table(grid, device)[
@@ -1995,6 +2086,14 @@ def encode_unit(
             grid, window_bits, sigma=table_sigma, seed=window_seed, half=half, device=device,
         )
         window_vectors = vectors[window_codes.long()]           # [2^L, arity]
+        # Under a block plane the CHANNEL branch above never ran, so this is
+        # where the table's delivered spread is first known.  Recorded on
+        # every window body and not only the one that needs the reach for a
+        # row start: the clamp is a property of the table (#84).
+        if table_reach is None:
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=table_sigma, seed=window_seed, half=half,
+            )
 
     def current_scale() -> torch.Tensor:
         # The per-position scale the trellis quantises against, ``[rows,
@@ -2414,6 +2513,7 @@ def encode_unit(
         window_seed=reach_seed,
         window_sigma=reach_window_sigma,
         channel_sigma=reach_channel_sigma,
+        table_reach=table_reach,
     )
 
 
