@@ -30,7 +30,11 @@ of the 196 real records differed only there).  The backbone
 (``fused_add_rms_norm.maybe_inplace`` 42 → 0), but it is recorded as
 provenance rather than fingerprinted: vLLM writes that log line only when it
 compiles, so a replay of one build would otherwise not fingerprint as that
-build.
+build.  Issue #29 separately established the 42 → 0 itself is a dump
+artefact -- every graph in the campaign census names the same 56 + 57 call
+sites with only the overload suffix varying, which the functionalization
+pass rewrites -- so there was never a second build difference here to
+fingerprint; see ``experiments/compile_build_forensics.py``.
 
 PRINCIPLE 14.  Every field is derived, never asserted: the AOT and backbone
 keys and the fresh-compile count come from vLLM's own log lines, and the

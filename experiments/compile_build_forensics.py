@@ -46,6 +46,56 @@ IR_OP = re.compile(r"torch\.ops\.vllm_ir\.([a-z_0-9]+)\.([a-z_0-9]+)\(")
 TIMING_KEYS = {"time_taken_ms", "triton_cache_hash"}
 
 
+def normalize_graph_overloads(text: str) -> str:
+    """Strip the overload suffix off ``torch.ops.vllm_ir.<op>.<overload>(``.
+
+    Issue #29: the dumped ``computation_graph.py`` records pass progress at
+    write time -- the pinned functionalization pass rewrites every
+    ``maybe_inplace`` node to ``default``, yet dumps carry 0 to 56 of them --
+    so two dumps of one key can differ in suffixes alone while naming the same
+    call sites.  The substitution is derived from ``IR_OP``, the same pattern
+    the census counts with, so the census and the normalizer cannot disagree;
+    non-``vllm_ir`` overloads (``aten.add.Tensor`` and kin) are another
+    dispatcher's semantics and are left alone.
+    """
+    return IR_OP.sub(lambda m: f"torch.ops.vllm_ir.{m.group(1)}(", text)
+
+
+def compare_graphs(a: Path, b: Path) -> dict | None:
+    """Raw and overload-normalized comparison of two dumped graphs.
+
+    Returns ``None`` when either side is missing.  ``identical_raw`` is the
+    byte comparison the tool always reported; ``identical_modulo_overload``
+    re-compares after :func:`normalize_graph_overloads`.  Raw-different but
+    normalized-identical is an overload relabeling of the same call sites --
+    a dump artefact, not a second source of build-to-build variation -- and
+    ``a_ops_total``/``b_ops_total`` (per-op call counts without the suffix)
+    show it.  Normalized-different is still a different graph.
+    """
+    if not a.is_file() or not b.is_file():
+        return None
+    raw_a, raw_b = a.read_bytes(), b.read_bytes()
+    norm_a, norm_b = normalize_graph_overloads(
+        raw_a.decode(errors="replace")), normalize_graph_overloads(
+        raw_b.decode(errors="replace"))
+    totals_a: dict[str, int] = dict(sorted(
+        collections.Counter(
+            op for op, _ in IR_OP.findall(raw_a.decode(errors="replace"))).items()))
+    totals_b: dict[str, int] = dict(sorted(
+        collections.Counter(
+            op for op, _ in IR_OP.findall(raw_b.decode(errors="replace"))).items()))
+    return {
+        "identical_raw": raw_a == raw_b,
+        "identical_modulo_overload": norm_a == norm_b,
+        "a_sha256_16": hashlib.sha256(raw_a).hexdigest()[:16],
+        "b_sha256_16": hashlib.sha256(raw_b).hexdigest()[:16],
+        "a_norm_sha256_16": hashlib.sha256(norm_a.encode()).hexdigest()[:16],
+        "b_norm_sha256_16": hashlib.sha256(norm_b.encode()).hexdigest()[:16],
+        "a_ops_total": totals_a,
+        "b_ops_total": totals_b,
+    }
+
+
 def _sha(path: Path) -> str | None:
     if not path.is_file():
         return None
@@ -111,6 +161,11 @@ def main() -> int:
     )
     cg = report["computation_graph"]
     cg["identical"] = cg["a_sha256_16"] is not None and cg["a_sha256_16"] == cg["b_sha256_16"]
+    verdict = compare_graphs(a_dir / "computation_graph.py", b_dir / "computation_graph.py")
+    if verdict is not None:
+        cg["identical_modulo_vllm_ir_overload"] = verdict["identical_modulo_overload"]
+        cg["a_vllm_ir_ops_total"] = verdict["a_ops_total"]
+        cg["b_vllm_ir_ops_total"] = verdict["b_ops_total"]
 
     if args.aot_key:
         a_aot = a_root / "torch_compile_cache" / "torch_aot_compile" / args.aot_key
@@ -177,6 +232,11 @@ def main() -> int:
             va, vb = cg["a_vllm_ir_ops"].get(k, 0), cg["b_vllm_ir_ops"].get(k, 0)
             mark = "  <-- differs" if va != vb else ""
             print(f"    {k:<48s} {va:5d} -> {vb:5d}{mark}")
+        if verdict is not None:
+            print(f"  identical modulo vllm_ir overload : {verdict['identical_modulo_overload']}")
+            if verdict["identical_modulo_overload"]:
+                print("  -> same call sites, overload suffixes only: a dump artefact "
+                      "(issue #29), not a second source of build-to-build variation")
     if "autotune" in report:
         at = report["autotune"]
         print(f"autotune records in both    : {at['records_in_both']} "
