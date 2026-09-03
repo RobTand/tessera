@@ -95,6 +95,12 @@ missing one is a load-time refusal.
   (`--layers 0`, host-safe — no encode), a CUDA arm that names the tower beside
   a real body encode, both spellings of a packed stack, and the empty-plan
   refusal below.
+  Re-checked against **pristine master** (`/home/rob/tmp/musefix/ts-86-base`,
+  `82cdf51`) on 2026-09-03 by copying only the test file in and running it
+  there: it fails on the unmodified exporter with all eight vision modules
+  missing, and master's `ignore` carries the six body modules only. The same
+  run also shows master writing a checkpoint with `"quantized_params": 0` and
+  reporting success — the empty-plan hole fixed in `c095d4f`.
 * **On the real checkpoint.** The rule run over every tensor of
   `/mnt/shared/models/GLM-5.3-Flash-4layer` (shapes read from the safetensors
   headers; nothing written) names **125 distinct non-body modules** over 350 tensors (101 before the
