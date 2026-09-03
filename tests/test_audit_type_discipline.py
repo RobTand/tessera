@@ -47,7 +47,7 @@ def test_float_clip_exponent_is_refused_not_silently_degraded():
     # An exact integer clip is unaffected, including the array-scalar types
     # that carry one in practice: the gate is ``__index__``, not ``type is
     # int``, so a numpy integer still composes.
-    import numpy as np
+    np = pytest.importorskip("numpy")
 
     assert compose_half(127, HalfWord(0, 0), 0) == Fraction(1)
     assert compose_half(127, HalfWord(0, 0), np.int64(1)) == Fraction(2)

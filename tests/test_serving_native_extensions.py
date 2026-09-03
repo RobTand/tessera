@@ -230,6 +230,7 @@ def test_the_published_prefix_is_the_constant_the_load_path_asks_for():
 
 def test_the_glob_matches_the_library_torch_actually_writes():
     """The suffix is torch's ``LIB_EXT``, not our guess at a platform."""
+    pytest.importorskip("torch")
     from torch.utils import cpp_extension
 
     entry = ext.NATIVE_EXTENSIONS[0]
@@ -242,6 +243,7 @@ def test_the_glob_matches_the_library_torch_actually_writes():
 
 def test_the_fallback_the_table_publishes_is_the_one_the_route_takes():
     """``when_unavailable`` is what the route gates on, not a parallel note."""
+    pytest.importorskip("torch")
     from tessera.serving.lane import MODE_RESIDENT, MODE_STREAMED
     from tessera.serving.telemetry import DECODERS
 

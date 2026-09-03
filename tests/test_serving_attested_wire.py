@@ -66,6 +66,7 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
     Imports the exporter lazily: it needs torch, and the contract half of the
     suite must stay readable where torch is not installed.
     """
+    pytest.importorskip("torch")
     from tessera.export import recipe_at, recipe_table
 
     seen = 0
@@ -120,6 +121,7 @@ def test_the_validator_speaks_both_dialects_it_compares():
     restating it.  A rename on either side fails here, not silently in a
     validator that stopped comparing what it claims to.
     """
+    pytest.importorskip("torch")
     from tessera.export import _BODY_NAMES as RECIPE_BODY, _PLANE_NAMES as RECIPE_PLANE
     from tessera.serving.contract import _ATTESTED_WIRE_BODY, _ATTESTED_WIRE_PLANE
     from tessera.serving.scheme import ROUTES

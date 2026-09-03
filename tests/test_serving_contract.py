@@ -337,6 +337,7 @@ def test_each_cell_executes_the_contract_its_route_module_exposes(contract):
     Imported lazily: the route modules import torch, and the contract half of
     this file must stay readable where it is not installed.
     """
+    pytest.importorskip("torch")
     from tessera.serving import bf16_route, fp8_route, nvfp4_route
 
     by_family = {

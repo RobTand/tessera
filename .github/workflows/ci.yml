@@ -31,68 +31,16 @@ jobs:
       # its reason, so a test that stops needing torch becomes a deletion here
       # rather than a silent absence.
       - name: bytes-only tests (no torch, no GPU, no model data)
+        # No ignore list.  Most test modules need torch and cannot be
+        # collected here, but WHICH ones is a question each module answers
+        # itself -- `tests/conftest.py` builds `collect_ignore` by trying the
+        # import and skipping only what fails on a missing third-party
+        # dependency.  A module that fails on one of ITS OWN names still
+        # fails the run, which is the breakage this job exists to catch, and
+        # a new torch-needing test file needs no edit here.
         run: |
           PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider \
-            --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py \
-            --ignore=tests/test_audit_container_accounting.py \
-            --ignore=tests/test_audit_doc_claims.py \
-            --ignore=tests/test_audit_sec2.py \
-            --ignore=tests/test_bf16_route.py \
-            --ignore=tests/test_channel_plane.py \
-            --ignore=tests/test_compensate.py \
-            --ignore=tests/test_completion_rate_axis.py \
-            --ignore=tests/test_e4m3_ladder.py \
-            --ignore=tests/test_encoder_fit_caps.py \
-            --ignore=tests/test_export.py \
-            --ignore=tests/test_export_moe_layouts.py \
-            --ignore=tests/test_fused.py \
-            --ignore=tests/test_issue56_column_groups.py \
-            --ignore=tests/test_kernel_shape_guards.py \
-            --ignore=tests/test_kernel_window.py \
-            --ignore=tests/test_kernel_window_gemv.py \
-            --ignore=tests/test_lane_planes.py \
-            --ignore=tests/test_ldl_block_penalty.py \
-            --ignore=tests/test_ldlq_lut_plane.py \
-            --ignore=tests/test_ldlq_window.py \
-            --ignore=tests/test_loadcost_sweep.py \
-            --ignore=tests/test_lut_stop_dtype.py \
-            --ignore=tests/test_merge_guard.py \
-            --ignore=tests/test_payload_grid.py \
-            --ignore=tests/test_profile_reach.py \
-            --ignore=tests/test_rate_menu.py \
-            --ignore=tests/test_recipe_table.py \
-            --ignore=tests/test_refit_trailing.py \
-            --ignore=tests/test_rotate_checkpoint.py \
-            --ignore=tests/test_scale_refit.py \
-            --ignore=tests/test_serving_export_gate.py \
-            --ignore=tests/test_serving_ops_compile.py \
-            --ignore=tests/test_slice_unit.py \
-            --ignore=tests/test_span_and_lut.py \
-            --ignore=tests/test_stock.py \
-            --ignore=tests/test_window_body.py \
-            --ignore=tests/test_window_viterbi_fast.py \
-            --ignore=tests/test_wire.py \
-            --ignore=tests/test_audit_byte_baseline.py \
-            --ignore=tests/test_export_plan_cache.py \
-            --ignore=tests/test_menu_selection_requirement.py \
-            --ignore=tests/test_uniform_control.py \
-            --ignore=tests/test_plan_from_layer_config.py \
-            --deselect tests/test_audit_type_discipline.py::test_float_clip_exponent_is_refused_not_silently_degraded \
-            --deselect tests/test_serving_attested_wire.py::test_every_attested_rung_stamps_the_wire_it_was_cut_on \
-            --deselect tests/test_serving_attested_wire.py::test_the_validator_speaks_both_dialects_it_compares \
-            --deselect tests/test_serving_contract.py::test_each_cell_executes_the_contract_its_route_module_exposes \
-            --deselect tests/test_serving_native_extensions.py::test_the_glob_matches_the_library_torch_actually_writes \
-            --deselect tests/test_serving_native_extensions.py::test_the_fallback_the_table_publishes_is_the_one_the_route_takes
-          # Every --ignore above names a file that cannot collect without
-          # torch: thirty-eight import torch at module top; audit_byte_baseline,
-          # export_plan_cache, menu_selection_requirement and uniform_control
-          # fail one step further down, on a tessera module that needs torch
-          # (scale_channel, export, control); plan_from_layer_config loads an
-          # experiment harness that reads safetensors checkpoints.  Each
-          # --deselect is a single test that collects pure but spends torch at
-          # run time, except the type-discipline one, which spends numpy --
-          # its file's siblings still run.  A test that stops needing its
-          # dependency becomes a deleted flag here, not a silent absence.
+            --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py
 
       # The byte layer must load with no torch in the process -- not just the
       # tests above, but the modules themselves, including the test closure.
