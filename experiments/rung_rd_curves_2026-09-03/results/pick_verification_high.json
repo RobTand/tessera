@@ -1,0 +1,143 @@
+{
+  "schema": "tessera.rung_pick_verification/1",
+  "arms": {
+    "uniform_R1006": {
+      "pick": {
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006,
+        "self_attn.o_proj": 1006,
+        "mlp.gate_proj": 1006,
+        "mlp.up_proj": 1006,
+        "mlp.down_proj": 1006
+      },
+      "kl_full": 0.013726961798965931,
+      "top1_agree": 0.9393346379647749,
+      "wire_bytes": 7865344,
+      "reference": "uniform_R1262",
+      "vs_uniform": 2.155897617340088,
+      "dkl_vs_uniform": 0.007359794806689024,
+      "dkl_bootstrap_se": 0.0007167913136072457,
+      "dkl_ci95": [
+        0.0060272314585745335,
+        0.00882919691503048
+      ],
+      "p_worse_than_uniform": 1.0
+    },
+    "served_allocation": {
+      "pick": {
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083,
+        "self_attn.o_proj": 934,
+        "mlp.gate_proj": 1107,
+        "mlp.up_proj": 1107,
+        "mlp.down_proj": 749
+      },
+      "kl_full": 0.02704443223774433,
+      "top1_agree": 0.9148727984344422,
+      "wire_bytes": 7864832,
+      "reference": "uniform_R1262",
+      "vs_uniform": 4.2474822998046875,
+      "dkl_vs_uniform": 0.020677266642451286,
+      "dkl_bootstrap_se": 0.0019830558449029922,
+      "dkl_ci95": [
+        0.01702614687383175,
+        0.02479642815887928
+      ],
+      "p_worse_than_uniform": 1.0
+    },
+    "uniform_R1262": {
+      "pick": {
+        "self_attn.q_proj": 1262,
+        "self_attn.k_proj": 1262,
+        "self_attn.v_proj": 1262,
+        "self_attn.o_proj": 1262,
+        "mlp.gate_proj": 1262,
+        "mlp.up_proj": 1262,
+        "mlp.down_proj": 1262
+      },
+      "kl_full": 0.006367167457938194,
+      "top1_agree": 0.9562133072407045,
+      "wire_bytes": 9831424,
+      "reference": "uniform_R1262",
+      "vs_uniform": 1.0,
+      "dkl_vs_uniform": 0.0,
+      "dkl_bootstrap_se": 0.0,
+      "dkl_ci95": [
+        0.0,
+        0.0
+      ],
+      "p_worse_than_uniform": 0.0
+    },
+    "AURA_kl_adjoint_pick_R1262": {
+      "pick": {
+        "mlp.down_proj": 1200,
+        "mlp.gate_proj": 1340,
+        "mlp.up_proj": 1340,
+        "self_attn.o_proj": 1340,
+        "self_attn.q_proj": 1150,
+        "self_attn.k_proj": 1150,
+        "self_attn.v_proj": 1150
+      },
+      "kl_full": 0.008770911023020744,
+      "top1_agree": 0.9500978473581213,
+      "wire_bytes": 9826304,
+      "reference": "uniform_R1262",
+      "vs_uniform": 1.3775216341018677,
+      "dkl_vs_uniform": 0.0024037433322519064,
+      "dkl_bootstrap_se": 0.0008941930718719959,
+      "dkl_ci95": [
+        0.0008160256547853351,
+        0.004291297402232885
+      ],
+      "p_worse_than_uniform": 0.99875
+    },
+    "EMPIRICAL_interp_5anchor_pick_R1262": {
+      "pick": {
+        "mlp.down_proj": 1340,
+        "mlp.gate_proj": 1262,
+        "mlp.up_proj": 1262,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1200,
+        "self_attn.k_proj": 1200,
+        "self_attn.v_proj": 1200
+      },
+      "kl_full": 0.007235348224639893,
+      "top1_agree": 0.9574363992172211,
+      "wire_bytes": 9824256,
+      "reference": "uniform_R1262",
+      "vs_uniform": 1.136352777481079,
+      "dkl_vs_uniform": 0.0008681808249093592,
+      "dkl_bootstrap_se": 0.00030275320750661194,
+      "dkl_ci95": [
+        0.0002837385982275009,
+        0.0014618863351643085
+      ],
+      "p_worse_than_uniform": 0.99875
+    },
+    "EMPIRICAL_interp_7anchor_pick_R1262": {
+      "pick": {
+        "mlp.down_proj": 1340,
+        "mlp.gate_proj": 1340,
+        "mlp.up_proj": 1340,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "kl_full": 0.008358178660273552,
+      "top1_agree": 0.9532778864970646,
+      "wire_bytes": 9824256,
+      "reference": "uniform_R1262",
+      "vs_uniform": 1.3126996755599976,
+      "dkl_vs_uniform": 0.0019910121336579323,
+      "dkl_bootstrap_se": 0.0004359702579677105,
+      "dkl_ci95": [
+        0.0011399369686841965,
+        0.0028863337356597185
+      ],
+      "p_worse_than_uniform": 1.0
+    }
+  }
+}

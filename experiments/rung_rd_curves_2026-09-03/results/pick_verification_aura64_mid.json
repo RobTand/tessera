@@ -1,0 +1,74 @@
+{
+  "schema": "tessera.rung_pick_verification/1",
+  "arms": {
+    "uniform_R1006": {
+      "pick": {
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006,
+        "self_attn.o_proj": 1006,
+        "mlp.gate_proj": 1006,
+        "mlp.up_proj": 1006,
+        "mlp.down_proj": 1006
+      },
+      "kl_full": 0.013726961798965931,
+      "top1_agree": 0.9393346379647749,
+      "wire_bytes": 7865344,
+      "reference": "uniform_R1006",
+      "vs_uniform": 1.0,
+      "dkl_vs_uniform": 0.0,
+      "dkl_bootstrap_se": 0.0,
+      "dkl_ci95": [
+        0.0,
+        0.0
+      ],
+      "p_worse_than_uniform": 0.0
+    },
+    "served_allocation": {
+      "pick": {
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083,
+        "self_attn.o_proj": 934,
+        "mlp.gate_proj": 1107,
+        "mlp.up_proj": 1107,
+        "mlp.down_proj": 749
+      },
+      "kl_full": 0.02704443223774433,
+      "top1_agree": 0.9148727984344422,
+      "wire_bytes": 7864832,
+      "reference": "uniform_R1006",
+      "vs_uniform": 1.9701688289642334,
+      "dkl_vs_uniform": 0.0133174704387784,
+      "dkl_bootstrap_se": 0.0016786041669547558,
+      "dkl_ci95": [
+        0.01019594818353653,
+        0.01673191785812378
+      ],
+      "p_worse_than_uniform": 1.0
+    },
+    "AURA_fp32_p64_pick_R1006": {
+      "pick": {
+        "mlp.down_proj": 934,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1044,
+        "self_attn.q_proj": 1200,
+        "self_attn.k_proj": 1200,
+        "self_attn.v_proj": 1200
+      },
+      "kl_full": 0.012998538091778755,
+      "top1_agree": 0.9390900195694716,
+      "wire_bytes": 7865344,
+      "reference": "uniform_R1006",
+      "vs_uniform": 0.9469348192214966,
+      "dkl_vs_uniform": -0.0007284240564331412,
+      "dkl_bootstrap_se": 0.0006313536432571709,
+      "dkl_ci95": [
+        -0.0019826432690024376,
+        0.0004866523086093366
+      ],
+      "p_worse_than_uniform": 0.117
+    }
+  }
+}
