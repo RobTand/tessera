@@ -30,6 +30,7 @@ from typing import List, Sequence
 
 import torch
 
+from .scheme import ROUTES, TESSERA_NVFP4
 from .telemetry import DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK
 
 __all__ = ["PreparedTesseraModule", "prepare_tessera_module", "GROUP_SIZE"]
@@ -307,14 +308,17 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     Moves every role's LUT table onto one shared global (exact binade shift,
     refused otherwise) and packs each role's planes for the native decoder.
 
-    The native decoder serves the span-2 TCQ body over the **LUT** scale plane.
-    Both halves of that are refused by name here: the body a paragraph below,
-    and the plane here.  A CHANNEL-plane unit is a supported export -- a caller
-    that names ``body=BodyKind.TCQ`` over the E4M3 recipe gets exactly one
-    (``export.py``'s recipe resolver) -- and it carries no ``scale_lut`` at
-    all, so without this it reached ``shared_lut_global`` as ``None`` and came
-    back as ``AttributeError: 'NoneType' object has no attribute 'to'``.  An
-    unserved plane is a refusal, and a refusal says which plane.
+    The native decoder serves the grid, body, plane and span
+    ``scheme.ROUTES[TESSERA_NVFP4]`` names -- read off that entry, never
+    restated here, so a fourth family is one ROUTES entry.  Both halves of the
+    old prose ("the span-2 TCQ body", "the LUT scale plane") are refused by
+    name here: the body a paragraph below, and the plane here.  A CHANNEL-plane
+    unit is a supported export -- a caller that names ``body=BodyKind.TCQ``
+    over the E4M3 recipe gets exactly one (``export.py``'s recipe resolver) --
+    and it carries no ``scale_lut`` at all, so without this it reached
+    ``shared_lut_global`` as ``None`` and came back as ``AttributeError:
+    'NoneType' object has no attribute 'to'``.  An unserved plane is a refusal,
+    and a refusal says which plane.
 
     ``allow_torch_fallback`` lets a caller that only needs ONE decode, at load,
     accept the pure-torch decoder when the CUDA extension cannot build.  A
@@ -330,17 +334,37 @@ def prepare_tessera_module(parsed_roles, device=None, *,
         raise ValueError("a Tessera module needs at least one role")
     names = [name for name, _ in parsed_roles]
     units = [p.unit for _, p in parsed_roles]
-    bodies = {p.body.name for _, p in parsed_roles}
-    if bodies != {"TCQ"}:
+    # Derived from the route table, the way validate_tessera_scheme derives
+    # its grid/plane checks: a hand-written literal here is a second place to
+    # remember, and the one that fails at LOAD, hours after the ROUTES-derived
+    # export gate already accepted the wire.
+    route = ROUTES[TESSERA_NVFP4]
+    grids = {p.grid.name for _, p in parsed_roles}
+    if not grids <= set(route["grids"]):
         raise ValueError(
-            f"the native decoder serves the span-2 TCQ body today; roles carry {sorted(bodies)}")
+            f"the native decoder serves {route['grid_kind']} grid {route['grids']} "
+            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
+            f"{sorted(grids)}")
+    bodies = {p.body.name for _, p in parsed_roles}
+    if bodies != {route["body"]}:
+        raise ValueError(
+            f"the native decoder serves the span-{route['span']} {route['body']} body "
+            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
+            f"{sorted(bodies)}")
     from tessera.manifest import ScalePlaneKind
 
     planes = {ScalePlaneKind(u.scale_plane).name for u in units}
-    if planes != {"LUT"}:
+    if planes != {route["plane"]}:
         raise ValueError(
-            f"the native decoder serves the LUT scale plane today; roles carry "
+            f"the native decoder serves the {route['plane']} scale plane "
+            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
             f"{sorted(planes)}")
+    spans = {int(getattr(u, "span", 1)) for u in units}
+    if spans != {route["span"]}:
+        raise ValueError(
+            f"the native decoder reads span-{route['span']} "
+            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry spans "
+            f"{sorted(spans)}")
     tables = [u.scale_lut for u in units]
     globals_ = [float(u.scale_global) for u in units]
     shared, moved = shared_lut_global(tables, globals_, names)
@@ -373,8 +397,8 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     if get_tessera_ext() is None and allow_torch_fallback:
         tile = _torch_fallback_tile(parsed_roles, moved, shared, device)
         return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
-                                     device=device, body="TCQ", decoder=DECODER_TORCH_STOCK,
+                                     device=device, body=route["body"], decoder=DECODER_TORCH_STOCK,
                                      tile=tile)
     require_tessera_ext("Tessera NVFP4 native decode")
     return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
-                                 device=device, body="TCQ", decoder=DECODER_NATIVE_SPAN2)
+                                 device=device, body=route["body"], decoder=DECODER_NATIVE_SPAN2)
