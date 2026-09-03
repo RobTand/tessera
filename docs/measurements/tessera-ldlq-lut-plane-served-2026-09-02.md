@@ -289,10 +289,84 @@ first three figures did.
 
 One consequence worth stating for the route rather than for me: at 19.2x the
 encode cost is a real constraint again. It is affordable on a 0.6B dense model
-(~1.4 h) and it is not obviously affordable on GLM's 4096-column experts, where
-the cost grows with the segment count. **No quiet-box measurement of an
-H-aware GLM expert export exists**; the old 43x came from a contended sweep and
-is withdrawn rather than rescaled.
+(~1.4 h), and the GLM expert cost -- withdrawn above as unmeasured -- has now
+been measured. See the next section.
+
+### The GLM expert cost, and the dial nobody had turned
+
+Measured 2026-09-02 on **sparklina** (the second GB10), load 0.6-1.5 throughout,
+nothing else on the box. One GLM-5.3-Flash expert, `L5.gate_proj` (2048x4096),
+the shipping 4.0 bpp wire (`E2M1x2` TCQ q896). Every rung is listed twice in one
+process so the first pass absorbs CUDA/Triton first-launch cost and the second
+is the measurement; **both passes agreed exactly at every point**, and the
+quality columns are bit-identical to the same arms run on sparky, so the encoder
+is deterministic across boxes and only the seconds are in question.
+
+**The denominators are not the same as 19.2x and must not be quoted together.**
+19.2x is a whole *export*, factorisation included, over 14 mixed-width units.
+The figures here are `encode_linear` + `read_unit_artifact` for ONE unit with the
+LDL factor precomputed outside the timed region (`tessera_window_wire.py` caches
+it in `factors`), while production refactors per tensor (`export.py:370`).
+
+| cols | segments | plain | LDLQ sigma=1 | factor | per segment |
+|---|---|---|---|---|---|
+| 1024 | 32 | 1.01 s | 22.35 s | 22.1x | **0.699 s** |
+| 2048 | 64 | 1.42 s | 44.66 s | 31.4x | **0.698 s** |
+| 4096 | 128 | 2.56 s | 89.89 s | 35.1x | **0.702 s** |
+
+Contention was worth ~15%: the same 4096 arm read 104 s on sparky at CPU user
+80-86% (three audit workers), against 90 s here. Every earlier figure in this
+receipt was taken under that load and is an upper bound.
+
+**The factor widens with the tensor, and it is the denominator that moves.**
+LDLQ is exactly linear in segments -- 0.699/0.698/0.702 s each, flat to 0.6%
+across a 4x width range. The *plain* arm is sublinear (1.01 -> 2.56 s for 4x the
+columns) because the fused Viterbi amortises its fixed cost. So "the cost grows
+with the segment count", the sentence this section used to carry, is right about
+LDLQ and wrong about what it implies: LDLQ costs what everything costs, linear
+in the tensor. What grows is the ratio to a baseline that is getting better.
+
+**And the block size is a free dial, which nobody had turned.** Same tensor,
+same sigma, varying only `ldl_block` -- which changes how many segments the pass
+uses without changing how many columns get encoded:
+
+| `ldl_block` | segments | LDLQ | out-space | a4 (W4A4) | per segment |
+|---|---|---|---|---|---|
+| **32** (`DEFAULT_LDLQ_BLOCK`) | 128 | 89.89 s | 0.07867 | 0.12069 | 0.702 s |
+| 64 | 64 | 45.16 s | 0.07868 | 0.12071 | 0.706 s |
+| 128 | 32 | **23.24 s** | **0.07864** | **0.12066** | 0.726 s |
+
+**3.9x faster at block 128, with quality flat -- marginally better, not worse.**
+
+That table is also the mechanism experiment this receipt has been missing. A
+block-128 segment encodes four times as many columns as a block-32 segment and
+costs the **same 0.70-0.73 s**. Total device work is constant down the column
+(all 4096 columns are encoded either way) while total time falls 3.9x. Fitting
+the three points: **`time = 0.694 s x segments + 1.0 s`** -- so 96 extra
+segments buy 66.6 s of nothing, and the per-segment cost is invariant to the
+work inside the segment.
+
+That is a controlled result, not a timing shape: the work per segment was varied
+4x and the time per segment did not move. It establishes the *class* -- a fixed
+cost per segment dominates, not the work -- and it **refutes the growing-operand
+term** the Qwen profile proposed, which predicts wider segments costing more and
+the total going super-linear in columns. Neither happens.
+
+What it does **not** establish is what that fixed 0.694 s *is*. The GLM profile
+was attempted and is not in this receipt: `torch.profiler` over a 128-segment
+encode reached **121 GB of a shared 121 GB pool** and was killed before it could
+OOM the box. Re-run it on a 512-column unit (16 segments) if the identity
+matters. Until then this receipt names the class and not the culprit -- which is
+the distinction the previous version of this section failed to make in the other
+direction.
+
+**What this changes.** `DEFAULT_LDLQ_BLOCK = 32` (`export.py:155`) appears to
+cost ~4x for nothing on this shape. The open question on issue #13 is therefore
+not "is 30x affordable" but "why is the default 32", and the answer needs (a)
+the sweep repeated on a dense tensor and a second expert, and (b) a check that
+`ldl_block` is not observable in any stored byte, fingerprint or cache key --
+if it is, moving the default makes every existing receipt irreproducible and is
+not a free perf change.
 
 ### Where the time goes -- profiled, and the hypothesis was wrong
 
@@ -360,8 +434,10 @@ the H-aware slowdown is idle GPU, and nothing -- not the fused window Viterbi,
 which this body does not reach -- has closed the launch-bound gap here.
 
 The 43x on a 4096-column GLM expert was measured inside a sweep with the same
-contention problem and is **not** re-derived here; treat it as unmeasured until
-it is run on a quiet box.
+contention problem. It has since been re-run on a quiet box and is **35.1x**
+encode-only at `ldl_block=32`, falling to **9.0x** at block 128 with quality
+flat -- see "The GLM expert cost, and the dial nobody had turned" above. The
+43x is superseded, not merely withdrawn.
 
 The `ldlqH1` artifact took 7949 s wall, but it was contended for part of that;
 a quiet whole-model H-aware export projects to ~4900 s against the weights-only
@@ -594,8 +670,10 @@ LUT plane does not pay for itself on the serving metric at 4.0 bpp, the default
 does not move, and a screen that says 0.78x in weight space has already failed to predict a
 serve once on this project. The encode cost is no longer the argument against
 the route on a 0.6B dense model -- ~1.4 h -- so if it misses the gate, it
-misses on quality; on GLM's 4096-column experts the cost is unmeasured and may
-well be the argument.
+misses on quality. On GLM's 4096-column experts the cost is now measured and is
+also not the argument: 35.1x encode-only at the default block size, and **9.0x
+at `ldl_block=128` with output-space error flat to marginally better**. The dial
+that sets it had never been turned.
 
 The baseline leg is already controlled: `base` (weights-only, the pre-merge
 exporter) and `base2` (weights-only, the *arm's own* post-merge exporter) are
