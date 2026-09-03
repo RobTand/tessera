@@ -43,9 +43,41 @@ def load_now() -> dict:
     number.
     """
     one, five, fifteen = os.getloadavg()
-    return {"load1": one, "load5": five, "load15": fifteen,
-            "ncpu": os.cpu_count(),
-            "load1_per_cpu": round(one / (os.cpu_count() or 1), 3)}
+    out = {"load1": one, "load5": five, "load15": fifteen,
+           "ncpu": os.cpu_count(),
+           "load1_per_cpu": round(one / (os.cpu_count() or 1), 3)}
+    out.update(_meminfo())
+    return out
+
+
+def _meminfo() -> dict:
+    """Available memory and swap in use, beside the run queue.
+
+    LOAD AVERAGE IS NOT A SUFFICIENT CONTENTION LABEL ON THIS BOX, and the
+    #83 campaign proved it the expensive way: the armB/eager arm peaked at
+    load1/cpu 2.49 and ran EIGHT TIMES slower than the armA/eager arm, which
+    peaked HIGHER at 3.413.  The difference was not the run queue at all --
+    armB ran while 13 of 15 GB of swap were in use and the box was thrashing.
+    A reader handed only the load numbers would have concluded the slower arm
+    was the less contended one and read an 8x memory-pressure artifact as a
+    lane result.  GB10 shares one physical pool between GPU and host, so a
+    serve is exposed to host memory pressure directly.
+    """
+    out: dict = {}
+    try:
+        info = {}
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                k, _, v = line.partition(":")
+                info[k] = float(v.split()[0]) / (1024 * 1024)  # kB -> GiB
+        out["mem_available_gib"] = round(info.get("MemAvailable", 0.0), 1)
+        out["mem_total_gib"] = round(info.get("MemTotal", 0.0), 1)
+        swap_total = info.get("SwapTotal", 0.0)
+        out["swap_used_gib"] = round(swap_total - info.get("SwapFree", 0.0), 1)
+        out["swap_total_gib"] = round(swap_total, 1)
+    except OSError:
+        pass
+    return out
 
 #: vLLM 0.28 publishes per-output-token latency as
 #: ``vllm:request_time_per_output_token_seconds``; the name this script first
@@ -225,8 +257,15 @@ def main() -> int:
         # oversubscribed and a host-driven latency number is contended by
         # definition.  It is a LABEL, never a filter -- the numbers are reported
         # either way.
-        "contended": max(v["load1_per_cpu"] for v in loads.values()) > 1.0,
+        # Contended if EITHER the run queue is oversubscribed or the box is
+        # swapping.  Both legs are needed: see _meminfo -- the arm that was 8x
+        # slower had the LOWER load average, and only the swap reading caught it.
+        "contended": (max(v["load1_per_cpu"] for v in loads.values()) > 1.0
+                      or max(v.get("swap_used_gib", 0.0) for v in loads.values()) > 1.0),
         "max_load1_per_cpu": max(v["load1_per_cpu"] for v in loads.values()),
+        "max_swap_used_gib": max(v.get("swap_used_gib", 0.0) for v in loads.values()),
+        "min_mem_available_gib": min(v.get("mem_available_gib", 0.0)
+                                     for v in loads.values()),
         "windows": windows,
         "profiled_load": profiled,
     }
@@ -243,8 +282,12 @@ def main() -> int:
               f"ITL {1000*itl.get('mean_s', float('nan')):.3f} ms "
               f"(n={itl.get('count')})")
     lo = max(v["load1_per_cpu"] for v in loads.values())
-    print(f"host load1/cpu peaked at {lo:.2f} over the timed windows "
-          f"({'CONTENDED -- report these as contended' if lo > 1.0 else 'box was quiet'})")
+    sw = max(v.get("swap_used_gib", 0.0) for v in loads.values())
+    av = min(v.get("mem_available_gib", 0.0) for v in loads.values())
+    quiet = lo <= 1.0 and sw <= 1.0
+    print(f"host load1/cpu peaked at {lo:.2f}, swap in use peaked at {sw:.1f} GiB, "
+          f"available memory bottomed at {av:.1f} GiB "
+          f"({'box was quiet' if quiet else 'CONTENDED -- report these as contended'})")
     print("->", args.out)
     return 0
 
