@@ -120,14 +120,50 @@ arm-B streamed arms. Arm B is not run resident because the resident route never
 reaches the GEMV lane, so a resident arm B is the same serve as a resident arm A
 by construction.
 
-| arm | mode | regime | verdict | modules | decode pair | prefill pair |
+**All six censuses read `verdict: served`, 112/112 declared modules in both
+phases, with `problems: []`.** Every route reports policy `TESSERA_FP8:<mode>`
+and activation contract `fp8_per_token_dynamic` — the contract is unchanged by
+the lane, which is the point (§5, #88).
+
+| arm | mode | regime | verdict | served/total | decode `(symbol, decoder)` | prefill `(symbol, decoder)` |
 |---|---|---|---|---|---|---|
-| armA | resident | eager | PENDING | | | |
-| armA | resident | compiled | PENDING | | | |
-| armA | streamed | eager | PENDING | | | |
-| armA | streamed | compiled | PENDING | | | |
-| armB | streamed | eager | PENDING | | | |
-| armB | streamed | compiled | PENDING | | | |
+| armA | resident | eager | served | 112/112 | `(_scaled_mm, torch_window)` | `(_scaled_mm, torch_window)` |
+| armA | resident | compiled | served | 112/112 | `(_scaled_mm, torch_window)` | `(_scaled_mm, torch_window)` |
+| armA | streamed | eager | served | 112/112 | **`(tessera_window_gemv::gemv, window_gemv)`** | `(_scaled_mm, window_gemv)` |
+| armA | streamed | compiled | served | 112/112 | `(_scaled_mm+gemv, torch_window+window_gemv)` | `(_scaled_mm+gemv, torch_window+window_gemv)` |
+| armB | streamed | eager | served | 112/112 | `(_scaled_mm, torch_window)` | `(_scaled_mm, torch_window)` |
+| armB | streamed | compiled | served | 112/112 | `(_scaled_mm, torch_window)` | `(_scaled_mm, torch_window)` |
+
+Read down the decode column, four facts:
+
+1. **The GEMV runs, and the census names it.** `armA/streamed/eager` decode is the
+   only cell reporting the symbol `tessera_window_gemv::gemv` — on all 112
+   modules. That is the observation #10 never took.
+2. **Its prefill is not the GEMV, by the lane's own rule.** `armA/streamed/eager`
+   prefill reports `(_scaled_mm, window_gemv)`: the lane *prepared* (hence its
+   decoder), the many-row forward went to the materialised GEMM (hence
+   `_scaled_mm`), exactly as `GEMV_MAX_M = 8` says it must. **So the two arms
+   differ in both phases, not just decode** — in prefill arm A decodes through
+   the lane's kernel while arm B decodes in torch, and only then do both call
+   `_scaled_mm`.
+3. **`resident` is untouched by the lane** — the same `(_scaled_mm, torch_window)`
+   as arm B. This is why a resident arm B was not run: it would be the same serve.
+4. **The compiled rows do separate the arms**, arm A stamping the combined pair
+   and arm B the torch pair, because no lane was prepared in arm B. That is still
+   **dispatch, not launch**: the combined pair is stamped statically for every M.
+
+The serve logs agree independently, and this is the cross-check that does not go
+through the census at all — count of `"the window GEMV lane did not prepare"`:
+
+```
+0    census-armA-resident-eager.log        0    census-armA-streamed-eager.log
+0    census-armA-resident-compiled.log     0    census-armA-streamed-compiled.log
+112  census-armB-streamed-eager.log      112  census-armB-streamed-compiled.log
+```
+
+**0 in every arm A, exactly 112 in every arm B** — one refusal per declared
+module, each `OSError: [Errno 30] Read-only file system`. The arms are the two
+states the route is meant to have, and nothing else differs.
 
 A preflight pair of resident censuses taken at master `c71f37b` (before this
 branch's `experiments/` commits) read `served`, 112/112 in both phases, on
