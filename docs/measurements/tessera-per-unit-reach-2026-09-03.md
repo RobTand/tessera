@@ -6,9 +6,9 @@ rung is an **oracle** 0.9723 of the shipped default's h-weighted weight error,
 the oracle is chosen with the answer in hand across 15 arms on 8 units, and the
 one predictor derivable from what the encoder already knows about the unit
 picks the wrong arm on 8 of 8 units at that rung and would land at **1.0805 --
-worse than doing nothing**. On BF16 the same knob is an exact gauge and worth
-nothing at all; BF16's large per-unit effect lives on the other axis and is
-already recorded as #48.
+worse than doing nothing**. On BF16 the same knob is a gauge up to the grid's dyadic
+residue class and is worth 0.01% at that rung (0.65% at R2048); BF16's large
+per-unit effect lives on the other axis and is already recorded as #48.
 
 Nothing in this document changes the encoder. No default moved, no digest
 moved, no wire byte moved.
@@ -34,8 +34,8 @@ code they are two different things, and the sweeps confirm the reading:
 * **`channel_sigma` multiplier `m`** (at `window_sigma=None`). `encode.py:1700`
   makes the table track the channel scale, so the table's nominal spread and the
   row's move together. The codebook in row-RMS units would be invariant -- and on
-  BF16 it *is*, exactly (every `m` arm in the BF16 tables below is 1.000 to four
-  digits, dyadic or not). On E4M3 it is not, for one reason: the table's outermost
+  BF16 it is, to a rounding: exactly at dyadic multipliers, and within 0.05% at
+  R1024 / 1.75% at R2048 elsewhere. On E4M3 it is not, for one reason: the table's outermost
   entry is snapped onto the grid, and the grid stops at 448. So `m` is a **pure
   reach clamp**: realised `reach_rms` = 384/sigma0 = 4.0773 while the top entry
   fits, then 448/(m*sigma0) once it does not -- 3.8055 at m=1.25, 3.1712 at 1.5,
@@ -103,21 +103,43 @@ At R2048 the split is cleaner -- everything except `L2.mlp.down_proj` wants a
 narrower reach -- but two of those numbers are not a reach effect at all. See
 "the non-dyadic table" below.
 
-## BF16 -- the spread axis is an exact gauge
+## BF16 -- the spread axis is a gauge up to the grid's residue class
 
-Every `channel_sigma` multiplier on BF16 leaves the h error **exactly** where it
-was, at both rungs: 1.000 at m = 0.5, 0.75, 1.25, 1.5 and 2, on all eight units.
-`reach_rms` stays 4.0000 throughout. BF16's mantissa is wide enough that snapping
-the table commutes with scaling it, so the codebook in row-RMS units is
-invariant and the knob is a gauge -- the prediction
-`experiments/bf16_l_sigma_sweep.py`'s docstring registers, confirmed at both
-rungs. **The per-unit reach lever is worth 0.0000 on BF16's `channel_sigma`.**
+`channel_sigma` multipliers on BF16, h error relative to `m=1`, `reach_rms`
+constant at 4.0000 throughout (the BF16 table's outermost entry scales exactly
+with sigma, so this axis never touches a clamp):
 
-The `rho` axis on BF16 is a different story and a large one: unbounded reach,
-and a per-unit oracle of **0.7602** at R2048 (`k_proj` 0.498 at rho1.5,
-`gate_proj` 0.461 at rho2, `q_proj` 0.558 at rho2) against 0.9875 at R1024. That
-is #48's 14-15% finding read per unit, on the 16-bit route, which has no serving
-lane and no served KL. It is recorded here, not acted on.
+| unit | m0.5 | m0.75 | m1.25 | m1.5 | m2 | | m0.5 | m0.75 | m1.25 | m1.5 | m2 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| | *R1024* | | | | | | *R2048* | | | | |
+| `L2.self_attn.k_proj` | 1.0000 | 1.0005 | 0.9997 | 1.0005 | 1.0000 | | 1.0000 | 0.9874 | 0.9877 | 0.9874 | 1.0000 |
+| `L2.self_attn.q_proj` | 1.0000 | 1.0000 | 0.9998 | 1.0000 | 1.0000 | | 1.0000 | 0.9961 | 0.9947 | 0.9961 | 1.0000 |
+| `L14.mlp.gate_proj` | 1.0000 | 1.0000 | 1.0001 | 1.0000 | 1.0000 | | 1.0000 | 1.0004 | 0.9945 | 1.0004 | 1.0000 |
+| `L27.self_attn.o_proj` | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | | 1.0000 | 0.9996 | 0.9985 | 0.9996 | 1.0000 |
+| `L14.self_attn.v_proj` | 1.0000 | 1.0000 | 0.9999 | 1.0000 | 1.0000 | | 1.0000 | 0.9994 | 0.9979 | 0.9994 | 1.0000 |
+| `L2.mlp.up_proj` | 1.0000 | 0.9999 | 1.0000 | 0.9999 | 1.0000 | | 1.0000 | 0.9999 | 0.9995 | 0.9999 | 1.0000 |
+| `L14.mlp.down_proj` | 1.0000 | 0.9999 | 0.9999 | 0.9999 | 1.0000 | | 1.0000 | 0.9954 | 0.9933 | 0.9954 | 1.0000 |
+| `L2.mlp.down_proj` | 1.0000 | 0.9998 | 1.0000 | 0.9998 | 1.0000 | | 1.0000 | 0.9825 | 0.9955 | 0.9825 | 1.0000 |
+| **geomean** | 1.0000 | 1.0000 | 0.9999 | 1.0000 | 1.0000 | | 1.0000 | 0.9951 | 0.9952 | 0.9951 | 1.0000 |
+| **oracle** | | | | | **0.9999** | | | | | | **0.9935** |
+
+**Dyadic multipliers are an exact gauge** -- `m=0.5` and `m=2` are 1.0000 on all
+eight units at both rungs -- because BF16 is closed under scaling by two away
+from the exponent extremes and nearest-value snapping commutes with it, so the
+codebook in row-RMS units is the same object. `m=0.75` and `m=1.5` give
+column-for-column identical numbers for the same reason (they differ by a factor
+of two). What is left is the **residue class**: a non-dyadic multiplier snaps the
+table's quantiles onto different grid points, which is worth at most 0.05% per
+unit at R1024 and 0.02-1.75% per unit at R2048.
+
+**So the per-unit lever this issue is about is worth 0.01% on BF16 at R1024 and
+0.65% at R2048** -- under 1% at both rungs, oracle, before any rule.
+
+BF16's large per-unit effect is on the `rho` axis, where the reach is unbounded:
+a per-unit oracle of **0.7602** at R2048 (`k_proj` 0.498 at rho1.5, `gate_proj`
+0.461 at rho2, `q_proj` 0.558 at rho2) against 0.9875 at R1024. That is #48's
+14-15% finding read per unit, on the 16-bit route, which has no serving lane and
+no served KL. It is recorded here, not acted on.
 
 ## The derived predictor, and why it fails
 
