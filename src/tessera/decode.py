@@ -396,10 +396,10 @@ def release_order(
 ) -> torch.Tensor:
     """S9's release placement at an **explicit** per-superblock count vector.
 
-    ``encode._canonical_release_order`` is this function at the Bresenham
-    spread of a single total, and a test binds the two so they cannot drift.
-    A *shard* needs the general form, because its counts are not a Bresenham
-    spread of anything: they are the restriction of its parent's.
+    ``encode._canonical_release_order`` is this function at
+    ``grammar.release_quota`` of a single total, and a test binds the two so
+    they cannot drift.  A *shard* needs the general form, because its counts
+    are not a quota over anything: they are the restriction of its parent's.
 
     Why the restriction is well defined -- the threshold argument.  Within one
     superblock the parent released the ``n`` positions of largest decoded
@@ -443,18 +443,6 @@ def release_order(
     if not chosen:
         return torch.zeros(0, dtype=torch.long, device=device)
     return torch.cat(chosen)
-
-
-def bresenham_release_counts(total: int, blocks: int) -> "tuple[int, ...]":
-    """The uniform spread ``encode._canonical_release_order`` applies.
-
-    ``blocks`` is ``grammar.superblock_count`` -- the ceiling -- so the spread
-    reaches a trailing partial superblock like any other.  It is one block per
-    granule the layout writes, which is the property that keeps the release
-    quota and the plane's granularity describing the same partition.
-    """
-    per, remainder = divmod(total, blocks)
-    return tuple(per + (1 if index < remainder else 0) for index in range(blocks))
 
 
 def _grid_and_forests(forest):

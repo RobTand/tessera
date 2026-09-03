@@ -22,8 +22,11 @@ from tessera.grammar import (
     completion_capacity,
     descendant_set_size,
     prefix_cardinality,
+    release_quota,
     root_from_q256,
+    superblock_count,
     superblock_quota_ok,
+    superblock_widths,
     validate_descendant_map,
     validate_rate_schedule,
 )
@@ -146,3 +149,102 @@ def test_rates_outside_the_shaped_domain_are_rejected():
 def test_inexact_quota_is_rejected():
     with pytest.raises(GrammarError, match="inexact quota"):
         validate_rate_schedule((1, 1, 1), Fraction(2))
+
+
+# ------------------------------------------------------- the release quota
+#
+# Issue #27.  The quota over a partial trailing superblock used to be an equal
+# *count* per superblock, which on a narrow tail is an equal count over unequal
+# blocks: up to ``superblock_columns`` times the release density of the rest of
+# the unit, and enough to ask a block for more releases than it has positions.
+# The quota is width-proportional instead, and these are the three properties
+# that makes it: it is exact, it never overruns, and at a complete width it is
+# element for element what the equal-count spread was -- which is why the bytes
+# of every artifact ever written are unchanged.
+
+
+def _equal_count_spread(total, blocks):
+    """The spread ``release_quota`` replaced, kept here as the oracle."""
+    per, remainder = divmod(total, blocks)
+    return tuple(per + (1 if index < remainder else 0) for index in range(blocks))
+
+
+@pytest.mark.parametrize(
+    "columns,widths",
+    [
+        (256, (256,)),
+        (128, (128,)),
+        (512, (256, 256)),
+        (640, (256, 256, 128)),
+        (257, (256, 1)),
+        (320, (256, 64)),
+        (1024, (256, 256, 256, 256)),
+    ],
+)
+def test_superblock_widths_partition_the_columns(columns, widths):
+    assert superblock_widths(columns, 256) == widths
+    assert sum(widths) == columns
+    assert len(widths) == superblock_count(columns, 256)
+
+
+@pytest.mark.parametrize("blocks", range(1, 9))
+def test_release_quota_is_the_equal_count_spread_at_a_complete_width(blocks):
+    """The compatibility property, and the reason this change moved no bytes.
+
+    At equal widths every exact share is ``total / blocks`` and every
+    fractional part is equal, so the largest-remainder award falls to the
+    lowest indices -- which is exactly what ``divmod`` front-loading did.  A
+    cumulative-floor Bresenham would *not* have this property (at 3 blocks and
+    a remainder of 2 it awards blocks 1 and 2, not 0 and 1), and would have
+    moved the released set of every unit whose column count is a whole number
+    of superblocks.
+    """
+    columns = blocks * 256
+    totals = set(range(0, 400))
+    totals |= {blocks * k + r for k in (1, 7, 133, 4001) for r in range(blocks)}
+    for total in sorted(totals):
+        assert release_quota(total, columns, 256) == _equal_count_spread(
+            total, blocks
+        ), (blocks, total)
+
+
+@pytest.mark.parametrize("columns", [1, 3, 128, 255, 256, 257, 320, 384, 640, 897])
+@pytest.mark.parametrize("rows", [1, 8, 64])
+def test_release_quota_never_overruns_a_superblock(columns, rows):
+    """The refusal ``encode._canonical_release_order`` guards is unreachable at
+    any legal total: a superblock's count never exceeds its positions."""
+    widths = superblock_widths(columns, 256)
+    positions = rows * columns
+    totals = set(range(0, min(positions, 300)))
+    totals |= set(range(max(0, positions - 20), positions + 1))
+    totals |= {positions // 2, positions // 7}
+    for total in sorted(t for t in totals if 0 <= t <= positions):
+        counts = release_quota(total, columns, 256)
+        assert sum(counts) == total
+        assert len(counts) == len(widths)
+        for count, width in zip(counts, widths):
+            assert count <= rows * width, (total, counts, widths)
+
+
+@pytest.mark.parametrize("columns", [320, 384, 640, 768, 1024])
+def test_release_quota_holds_the_density_equal_not_the_count(columns):
+    """Every superblock is within one release of its exact share, which is the
+    width-proportional reading of the promise the equal count made against
+    every *other* superblock.  On a complete width the two coincide; on a
+    partial one only this holds."""
+    widths = superblock_widths(columns, 256)
+    for total in (96, 1000, 3000, 4000):
+        counts = release_quota(total, columns, 256)
+        for count, width in zip(counts, widths):
+            share = total * width / columns
+            assert abs(count - share) < 1, (total, counts, widths)
+
+
+def test_release_quota_refuses_a_negative_total():
+    with pytest.raises(GrammarError, match="must not be negative"):
+        release_quota(-1, 512, 256)
+
+
+def test_superblock_widths_refuses_a_zero_column_unit():
+    with pytest.raises(GrammarError, match="must be positive"):
+        superblock_widths(0, 256)

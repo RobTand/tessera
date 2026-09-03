@@ -41,6 +41,8 @@ __all__ = [
     "validate_rate_schedule",
     "superblock_quota_ok",
     "superblock_count",
+    "superblock_widths",
+    "release_quota",
     "bits_per_position",
     "prefix_cardinality",
     "validate_descendant_map",
@@ -328,6 +330,80 @@ def superblock_count(n_columns: int, superblock_columns: int) -> int:
     if superblock_columns <= 0:
         raise GrammarError(f"superblock_columns must be positive: {superblock_columns}")
     return max(1, -(-n_columns // superblock_columns))
+
+
+def superblock_widths(n_columns: int, superblock_columns: int) -> tuple[int, ...]:
+    """How many columns each superblock actually holds.
+
+    The companion to :func:`superblock_count`: the count says how many
+    granules the partition has, this says how big each one is.  They are one
+    fact, so they live together -- a caller that ceilings the count and then
+    assumes every granule is ``superblock_columns`` wide has re-floored the
+    partition by another route.
+
+    Every superblock spans the same rows, so a superblock's *width* is the
+    only thing that varies across the partition: its share of any per-position
+    quantity -- positions, release slots -- is its share of the columns.
+    """
+    if n_columns <= 0:
+        raise GrammarError(f"n_columns must be positive: {n_columns}")
+    blocks = superblock_count(n_columns, superblock_columns)
+    return tuple(
+        min(superblock_columns, n_columns - index * superblock_columns)
+        for index in range(blocks)
+    )
+
+
+def release_quota(
+    total: int, n_columns: int, superblock_columns: int
+) -> tuple[int, ...]:
+    """Per-superblock release counts: ``total`` at a uniform release density.
+
+    A release is a per-*position* object, and a superblock's positions are
+    ``rows * width`` -- the rows are common to every superblock, so the exact
+    share of a superblock is ``total * width / n_columns``.  That exact share
+    is the objective; this returns the integer vector nearest to it that still
+    sums to ``total``, which is the largest-remainder award: floor every share,
+    then hand the leftover to the largest fractional parts, lowest superblock
+    index first.  No superblock is more than one release from its own exact
+    share, which is the width-proportional reading of the promise the equal
+    count spread used to make against every *other* superblock.
+
+    Why width-proportional and not equal-count.  ``layout._superblock_counts``
+    already argues this for BODY and COMPLETION -- "a granule's count has to be
+    the bits that granule's columns actually carry" -- and RELEASE is the same
+    partition.  Equal-count is that argument's special case, correct exactly
+    when every superblock is complete, and on a trailing partial one it asks a
+    narrow block for a release *density* up to ``superblock_columns`` times the
+    rest of the unit.  It can therefore ask for more releases than the block
+    has positions: on a 64x257 unit an equal-count quota overran at a total of
+    130 of 16448 positions, capping the whole unit at 0.79% released.  Under
+    this quota that overrun cannot happen at all: ``total <= positions``
+    implies ``count <= rows * width`` for every superblock, because
+    ``floor(total * width / n_columns) <= rows * width`` with equality only
+    when ``total == positions``, where the leftover is zero.
+
+    Why largest-remainder and not a cumulative-floor Bresenham.  Both are
+    exact and both are width-proportional; they differ in *which* blocks take
+    the leftover, and only one of them reduces to the spread already on the
+    wire.  At equal widths every share is ``total / blocks`` and every
+    fractional part is equal, so the tie-break awards the leftover to the
+    lowest indices -- the ``divmod`` front-loading this replaced, element for
+    element.  A cumulative-floor Bresenham back-loads instead (at 3 blocks and
+    a remainder of 2 it awards blocks 1 and 2, not 0 and 1), which would have
+    moved the released set of every unit whose column count *is* a whole
+    number of superblocks -- a wire change with no reason behind it.
+    """
+    if total < 0:
+        raise GrammarError(f"release total must not be negative: {total}")
+    widths = superblock_widths(n_columns, superblock_columns)
+    counts = [total * width // n_columns for width in widths]
+    leftover = total - sum(counts)
+    fractions = [total * width % n_columns for width in widths]
+    order = sorted(range(len(widths)), key=lambda index: (-fractions[index], index))
+    for index in order[:leftover]:
+        counts[index] += 1
+    return tuple(counts)
 
 
 def superblock_quota_ok(

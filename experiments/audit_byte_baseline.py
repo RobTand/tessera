@@ -43,6 +43,15 @@ produces, and ``shared_lut_global``'s subnormal range check lives in the fused
 lane, which ``encode_linear`` never calls.  Both are pinned by unit tests
 instead.
 
+``release`` is the third half, and it exists because the first two are blind to
+the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
+keyword at all, so no ``encode`` row can carry a release and no artifact on this
+box carries one either (issue #27, 2026-09-03 -- one of 642 ``.tessera`` files
+has a RELEASE plane, at 512 columns).  A change to the release quota therefore
+reported "0 changed" through a harness that could not see it.  These rows go
+through ``encode_unit``/``build_unit_artifact`` directly, at both a complete and
+a partial trailing superblock, and hash the placement as well as the bytes.
+
 CPU only, by construction -- it runs while a GPU measurement is in flight.
 """
 
@@ -254,6 +263,64 @@ def encode_hashes() -> dict:
     return out
 
 
+#: ``(label, grid factory, q256, rows, cols, released)`` for the RELEASE plane.
+#: 512 columns is a whole number of superblocks and 640 and 320 are not, which
+#: is the only distinction the release quota draws.
+def _release_cases():
+    return [
+        ("e2m1-cap-512c-rel3000",  E2M1_GRID, None, 32, 512, 3000),
+        ("e2m1-cap-640c-rel3000",  E2M1_GRID, None, 32, 640, 3000),
+        ("e2m1-cap-320c-rel96",    E2M1_GRID, None, 32, 320,   96),
+        ("e2m1-cap-640c-rel4000",  E2M1_GRID, None,  8, 640, 4000),
+    ]
+
+
+def release_hashes() -> dict:
+    from tessera.encode import encode_unit
+    from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
+    from tessera.manifest import ScalePlaneKind
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact
+
+    code = ConvCode(memory=6)
+    out = {}
+    for label, grid, q256, rows, cols, released in _release_cases():
+        if q256 is None:
+            q256 = tcq_cap_q256(grid)
+        recipe = wire_recipe(grid, q256)
+        torch.manual_seed(zlib.crc32(label.encode()) & 0xFFFF)
+        weight = torch.randn(rows, cols) * 0.02
+        sigma = (
+            recipe.channel_sigma
+            if recipe.scale_plane is ScalePlaneKind.CHANNEL
+            else None
+        )
+        try:
+            rates, forests = _plan_for(grid, q256, cols, recipe.body, sigma)
+            unit = encode_unit(
+                weight, forests, rates, code, completion=0,
+                released_positions=released, span=recipe.span,
+                scale_plane=recipe.scale_plane, body=recipe.body,
+                window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+                window_sigma=recipe.window_sigma,
+                channel_sigma=recipe.channel_sigma, scale_refit=2,
+            )
+            _m, _r, blob = build_unit_artifact(
+                unit, label, forests, q256 * grid.arity, code
+            )
+        except Exception as exc:        # a refusal is part of the baseline
+            out[f"{label}/bytes"] = f"REFUSED {type(exc).__name__}: {exc}"
+            out[f"{label}/placement"] = f"REFUSED {type(exc).__name__}: {exc}"
+            continue
+        out[f"{label}/bytes"] = hashlib.sha256(blob).hexdigest()
+        # The placement, hashed separately: the bytes would also move if the
+        # codes moved, and this half localises the change to the quota.
+        out[f"{label}/placement"] = hashlib.sha256(
+            unit.release_index.cpu().numpy().tobytes()
+        ).hexdigest()
+    return out
+
+
 def decode_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact  # late: keeps import cheap
 
@@ -284,16 +351,17 @@ def main() -> int:
         before = json.load(open(a.diff[0]))
         after = json.load(open(a.diff[1]))
         changed = 0
-        for section in ("encode", "decode"):
+        for section in ("encode", "release", "decode"):
             b, c = before.get(section, {}), after.get(section, {})
             for key in sorted(set(b) | set(c)):
                 if b.get(key) != c.get(key):
                     changed += 1
                     print(f"{section} CHANGED {key}\n    before {b.get(key)}\n    after  {c.get(key)}")
-        print(f"{changed} changed of {sum(len(before.get(s, {})) for s in ('encode','decode'))}")
+        print(f"{changed} changed of "
+              f"{sum(len(before.get(s, {})) for s in ('encode', 'release', 'decode'))}")
         return 1 if changed else 0
 
-    report = {"encode": encode_hashes()}
+    report = {"encode": encode_hashes(), "release": release_hashes()}
     if not a.encode_only:
         report["decode"] = decode_hashes()
     text = json.dumps(report, indent=2, sort_keys=True)
@@ -302,9 +370,12 @@ def main() -> int:
         value = len(_value_cases())
         # The split is printed, not just the total: a reader of a "0 changed"
         # needs to know how much of it was shape arithmetic, since that is the
-        # half that answered zero to the CHANNEL fixes (issue #39).
+        # half that answered zero to the CHANNEL fixes (issue #39), and how
+        # much was the release rows, which the encode matrix structurally
+        # cannot carry (issue #27).
         print(f"wrote {a.path}: {len(report['encode'])} encodes "
               f"({len(report['encode']) - value} shape, {value} value), "
+              f"{len(report['release'])} release rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)
