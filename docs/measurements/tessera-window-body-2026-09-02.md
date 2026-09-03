@@ -47,8 +47,25 @@ the `L − R` bits of history every position shares with its predecessors.
 
 **At 4.0 bpp on E4M3 under a per-channel plane the window body beats EXL3
 K4 in output space, and executed W8A8 is level with EXL3's W4A16 at the
-same bytes.** Six-tensor geomeans, free start, table not charged (see the
-caveats for both):
+same bytes -- on six Gaussian-input GLM-5.3-Flash routed experts, in an
+output-space weight screen with no served arm.** Six-tensor geomeans, free
+start, table not charged (see the caveats for both):
+
+**Scope, on the sentence and not only in the caveats.** Every number in this
+receipt is measured on the six experts named in the header (L5/20/42 x
+gate/up, expert 0), whose inputs are Gaussian -- rotation is measured dead
+there, 1.003x (`tessera-stock-lane-served-2026-09-02.md`, "the 0.940x EXL3
+number was measured on GLM-5.3-Flash routed experts, whose inputs are
+Gaussian"). It is a weight-leg screen, not a serving metric, and **this family
+inverts on dense inputs**: served on dense Qwen3-0.6B the same E4M3/CHANNEL
+window wire lost 23x to per-channel FP8 RTN at the same 8-bit residency, and
+7.4x after the reach fix (`tessera-stock-lane-served-2026-09-02.md`,
+`tessera-dense-reach-fix-2026-09-02.md`), with the same gap reading 2.9x in
+weight space (`tessera16-alphabet-floor-2026-09-02.md`) -- the CHANNEL plane
+is blind to outlier input columns, which dense `k_proj`/`down_proj` carry and
+these experts do not (`docs/design/window-gemv-a-side.md` §6 says the same of
+the A-side penalty: it does not license a transfer to dense models). Quote the
+ratios below as this artifact's, never as a general EXL3 result.
 
 | arm (per-channel E4M3, LS refit ×2) | bpp | wt | out | a4 | a8 |
 |---|---|---|---|---|---|
@@ -100,8 +117,11 @@ the encode, and most of it given back to the table.
    unit. Against EXL3's rate–distortion slope (~3.3% per 0.05 bpp) the L=16
    margin shrinks by ~4%; L=14's by ~1%. The pinned `bpp` column carries it.
 3. **Scale plane.** The E4M3 arms use one fp32 scale per output row (LS
-   refit): the layout the served FP8 W8A8 path consumes, and **not yet a
-   Tessera `ScalePlaneKind`**. On the wire's per-16 LUT plane a 256×1024
+   refit): the layout the served FP8 W8A8 path consumes, and ~~**not yet a
+   Tessera `ScalePlaneKind`**~~ -- it is one now: `ScalePlaneKind.CHANNEL`,
+   schema minor 3, an fp16 row scale on `DIAG_SV`, and the E4M3 recipe's
+   default plane (`docs/schema/prismaquant.tessera.v1.md` §1c, and *What is
+   not established* below for the true-wire arms it was re-measured on). On the wire's per-16 LUT plane a 256×1024
    Gaussian smoke had window L=12 level with the TCQ body at R=4 (0.0680
    vs 0.0683): the amax-bounded per-16 source is where the anchor forest
    already fits well, and the window's gain is a property of the plane as

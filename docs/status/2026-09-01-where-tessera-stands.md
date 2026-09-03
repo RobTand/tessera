@@ -235,7 +235,10 @@ axis. Below the E2M1x2 cap it is 1.3× better than the coset trellis at the
 same bytes (3.5 bpp); on E4M3 under a per-channel plane, L=14 is 1.2× better
 than the convolutional trellis and 1.07× better than EXL3 K4 in output space
 at 4.0 bpp — and W8A8 on the FP8 tensor core is level with EXL3's W4A16 at
-the same bytes. At the E2M1x2 cap the structured coset table stays better
+the same bytes. All of that is six Gaussian-input GLM-5.3-Flash routed experts
+in a weight-leg screen with no served arm; the same wire served on dense Qwen
+loses 23× to FP8 RTN at equal residency (7.4× after the reach fix, later on
+this page), because the CHANNEL plane does not see outlier input columns. At the E2M1x2 cap the structured coset table stays better
 until L≥14–16. `BodyKind.WINDOW` / `window_bits` are manifest fields bound
 into the profile id; `encode_linear(body=BodyKind.WINDOW, window_bits=L)`
 writes it; `DEFAULT_BODY` stays TCQ until (a) a window GEMV exists in the

@@ -149,7 +149,11 @@ weight the tile does not need, and it is not the layout the kernel reads.
 Measured on six GLM experts at 4.0 bpp
 (`docs/measurements/tessera-window-body-2026-09-02.md`): the window body
 over a per-channel plane is 1.07× better than over the LUT plane at the
-same bytes, and pinned at L=14 is 0.94× of EXL3 K4 in output space. An
+same bytes, and pinned at L=14 is 0.94× of EXL3 K4 in output space — both on
+those six experts, whose inputs are Gaussian, in a weight-leg screen; the same
+wire served on dense Qwen loses 7.4× to FP8 RTN at equal residency
+(`docs/measurements/tessera-dense-reach-fix-2026-09-02.md`), so the plane's
+advantage is measured where outlier input columns are absent. An
 E4M3 unit over this plane materialises into the stock per-channel FP8
 tensor (`decode.materialize_fp8`) exactly as an E2M1 unit materialises into
 NVFP4 — the same plane Gridbook's FP8-CB family carries.

@@ -40,6 +40,10 @@ dimensions against deep memory and one. Measured on the same rows at 4.0
 bpp, the memory corner wins: FP8-CB K32 is 1.28× behind EXL3 in output
 space where the window body at L=14 is 0.94× of it
 (`tessera8-targets-2026-09-01.md` §4, `tessera-window-body-2026-09-02.md`).
+Both numbers are the same six Gaussian-input GLM-5.3-Flash experts in a
+weight-leg screen; served on dense Qwen the E4M3 window wire loses 7.4× to
+FP8 RTN at equal residency (23× before the reach fix), so this ordering is
+the experts' and not a general one.
 
 ## 2. What is one code today
 
