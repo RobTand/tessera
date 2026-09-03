@@ -52,6 +52,13 @@ def main() -> None:
     ap.add_argument("--model", default="/home/rob/models/Qwen3-0.6B")
     ap.add_argument("--out", default="/home/rob/tessera-runs/ldlq/h_full_qwen06b.pt")
     ap.add_argument("--acts-out", default="/home/rob/tessera-runs/ldlq/x_eval_qwen06b.pt")
+    ap.add_argument("--eval-h-out", default=None,
+                    help="also accumulate the HELD-OUT second moment "
+                         "``x_eval^T x_eval / n`` for EVERY Linear and write it "
+                         "here. ``tr(E H_eval E^T)`` is ``|X_eval E^T|^2`` exactly, "
+                         "so an out-space score over the whole roster needs this "
+                         "and not 196 activation dumps; per-row it is "
+                         "``e_r H_eval e_r^T``, which is what a per-row census reads")
     ap.add_argument("--fit-tokens", type=int, default=16384)
     ap.add_argument("--eval-tokens", type=int, default=8192)
     ap.add_argument("--seqlen", type=int, default=512)
@@ -92,6 +99,8 @@ def main() -> None:
 
     acc: "dict[str, torch.Tensor]" = {}
     counts: "dict[str, int]" = {}
+    acc_ev: "dict[str, torch.Tensor]" = {}
+    counts_ev: "dict[str, int]" = {}
     keep: "dict[str, list]" = {u: [] for u in a.eval_units}
     mode = {"phase": "fit"}
 
@@ -103,8 +112,14 @@ def main() -> None:
                     acc[name] = torch.zeros(x.shape[1], x.shape[1], device=x.device)
                 acc[name].addmm_(x.T, x)
                 counts[name] = counts.get(name, 0) + x.shape[0]
-            elif name in keep:
-                keep[name].append(x.to(torch.float16).cpu())
+            else:
+                if name in keep:
+                    keep[name].append(x.to(torch.float16).cpu())
+                if a.eval_h_out:
+                    if name not in acc_ev:
+                        acc_ev[name] = torch.zeros(x.shape[1], x.shape[1], device=x.device)
+                    acc_ev[name].addmm_(x.T, x)
+                    counts_ev[name] = counts_ev.get(name, 0) + x.shape[0]
         return fn
 
     handles = [m.register_forward_hook(hook(n)) for n, m in targets.items()]
@@ -135,6 +150,16 @@ def main() -> None:
         torch.save({"x": {n: torch.cat(v) for n, v in keep.items() if v},
                     "provenance": payload["provenance"]}, a.acts_out)
         print(f"wrote {a.acts_out}  ({sum(1 for v in keep.values() if v)} units)")
+    if a.eval_h_out:
+        # Same provenance block: the identity fields name the FIT rows this
+        # matrix is disjoint from, and ``eval_ids_sha256`` names its own rows.
+        torch.save({"H": {n: (acc_ev[n] / counts_ev[n]).cpu() for n in acc_ev},
+                    "counts": counts_ev,
+                    "provenance": {**payload["provenance"],
+                                   "role": "HELD-OUT second moment x_eval^T x_eval / n; "
+                                           "scores, never fits"}},
+                   a.eval_h_out)
+        print(f"wrote {a.eval_h_out}  ({len(acc_ev)} held-out Hessians)")
     ratios = sorted(float(H.diagonal().max() / H.diagonal().median())
                     for H in payload["H"].values())
     print(f"  diag max/median: median {ratios[len(ratios) // 2]:.0f}  max {ratios[-1]:.0f}")
