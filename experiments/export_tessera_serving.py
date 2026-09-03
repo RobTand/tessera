@@ -666,6 +666,20 @@ def main():
                     passthrough.append(m)
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
+    if not plan and args.layers is None:
+        # An export that quantized NOTHING used to report success and write a
+        # checkpoint with an empty ``config_groups``, which the plugin refuses
+        # at load ("a Tessera checkpoint declares its wires in
+        # config_groups").  Same shape of fault as #86: silent here, expensive
+        # there.  ``--layers 0`` is how a passthrough copy is asked for on
+        # purpose, so it stays legal.
+        raise SystemExit(
+            f"nothing was planned: all {len(shapes)} dense body weights were passed through. A "
+            "Linear is planned only when its rows are a whole number of tuples (grid.arity * 32) "
+            "and its columns a multiple of 16; a plan naming PASSTHROUGH, or a menu whose grid "
+            "no tensor here fits, leaves nothing to encode. The checkpoint would carry an empty "
+            "config_groups and the plugin refuses that at load. Pass --layers 0 to write a "
+            "passthrough copy deliberately.")
 
     input_scales = {}
     if args.input_scales:

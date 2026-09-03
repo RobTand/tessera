@@ -167,3 +167,34 @@ def test_the_vision_tower_is_named_beside_a_real_body_encode(tmp_path, monkeypat
     assert not missing, f"vision Linears neither declared nor ignored: {missing}"
     assert not (ignore & {t.rstrip("$") for t in declared}), (
         "a module is both declared and ignored; the plugin refuses that at parse")
+
+
+def test_an_export_that_plans_nothing_is_refused(tmp_path, monkeypatch):
+    """The same failure family: silent at export, refused at load.
+
+    A menu no tensor here fits leaves ``plan`` empty, and the exporter used to
+    write a checkpoint with an empty ``config_groups`` and report success.
+    ``TesseraConfig.from_config`` refuses that ("a Tessera checkpoint declares
+    its wires in config_groups"), hours later.  ``--layers 0`` stays legal: it
+    is how a passthrough copy is asked for on purpose.
+    """
+    src = _write(tmp_path)
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    # Every dense body weight passed through by name.
+    plan.write_text(json.dumps({
+        n: "PASSTHROUGH" for n in
+        ("model.language_model.layers.0.self_attn.q_proj.weight",
+         "model.language_model.layers.0.self_attn.k_proj.weight",
+         "model.language_model.layers.0.self_attn.v_proj.weight",
+         "model.language_model.layers.0.self_attn.o_proj.weight",
+         "model.language_model.layers.0.mlp.gate_proj.weight",
+         "model.language_model.layers.0.mlp.up_proj.weight",
+         "model.language_model.layers.0.mlp.down_proj.weight")}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+                                     "--q256", "1024", "--plan-json", str(plan)])
+    with pytest.raises(SystemExit) as caught:
+        export.main()
+    assert "nothing was planned" in str(caught.value), str(caught.value)
+    assert not out.exists() or not list(out.glob("*.safetensors")), (
+        "the refusal fired only after writing the checkpoint")
