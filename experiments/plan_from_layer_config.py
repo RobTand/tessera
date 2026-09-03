@@ -107,6 +107,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.control import (  # noqa: E402
     control_block,
     grid_for_name,
+    selection_requirement,
     uniform_control,
     units_from_plan,
 )
@@ -487,6 +488,14 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
     if with_control:
         provenance["uniform_control"] = uniform_control_block(
             plan, shapes, rule=control_rule)
+    # The menu's selection requirement (tessera#2, docs/ARCHITECTURE.md
+    # §4.10): a plan at more than one (grid, rung) embodies a rung selection
+    # the surrogate made, and it ships only validated-surrogate-selected.
+    # Stamped, never refused -- writing the plan it was given is this
+    # converter's job, the same reason the unserved control above records
+    # rather than refuses -- but a mixed-rung plan is warned about where it
+    # is printed, because silence there is how #1 shipped.
+    provenance["selection"] = selection_requirement(units_from_plan(plan, shapes))
     return plan, provenance
 
 
@@ -576,6 +585,15 @@ def main(argv=None):
         print("    unserved: this is the arm the candidate has to beat at the same bytes")
     elif block:
         print(f"  uniform control: NOT BUILT -- {block['refusal']}")
+    selection = provenance.get("selection")
+    if selection is not None and selection["requires_validation"]:
+        pairs = ", ".join(f"{grid} R{q256}" for grid, q256 in selection["distinct_rungs"])
+        print(f"  SELECTION WARNING: this plan sits at {len(selection['distinct_rungs'])} "
+              f"distinct (grid, rung) pairs ({pairs}), so it embodies a rung selection "
+              f"no served KL has validated.  The menu requires "
+              f"{selection['mode_required']} selection (docs/ARCHITECTURE.md §4.10, "
+              f"tessera#2): serve the byte-matched uniform control "
+              f"(experiments/uniform_control.py verify) before this plan ships.")
     if args.write_uniform_plan is not None:
         units = units_from_plan(plan, shapes)
         control = uniform_control(units, rule=args.control_rule)

@@ -22,6 +22,9 @@ This module is that control, promoted out of the receipt's drivers:
   totals, so a post-export check can hand it two manifests;
 * :func:`control_block` renders the pair -- and, when the two KLs are known,
   the verdict -- as the JSON an artifact carries beside its bpp.
+* :func:`selection_requirement` says whether a plan embodies a rung
+  selection at all, and stamps the menu's requirement when it does:
+  validated-surrogate selection (``docs/ARCHITECTURE.md`` §4.10, tessera#2).
 
 **What is held fixed.**  The control varies *only the rung*.  A unit the
 candidate plans as BF16 stays BF16 in the control, and the control uses the
@@ -70,6 +73,8 @@ __all__ = [
     "CONTROL_SCHEMA",
     "GRID_NAMES",
     "DEFAULT_MAX_RELATIVE_SLACK",
+    "REQUIRED_SELECTION_MODE",
+    "SELECTION_SCHEMA",
     "ByteMatch",
     "PlannedUnit",
     "RateMenu",
@@ -81,6 +86,7 @@ __all__ = [
     "grid_for_name",
     "plan_wire_bits",
     "rate_menu",
+    "selection_requirement",
     "uniform_control",
     "unit_wire_bits",
     "units_from_plan",
@@ -803,3 +809,85 @@ def control_block(
     if note:
         block["note"] = note
     return block
+
+
+#: The selection mode the continuous Tessera menu requires
+#: (``docs/ARCHITECTURE.md`` §4.10, tessera#2): the rungs were chosen by the
+#: surrogate, so a served KL -- the candidate against its byte-matched uniform
+#: control -- selects before anything ships.  ``COST_MODE=aura`` is not an
+#: accepted substitute until someone measures AURA on a rung sweep; until
+#: then it is unmeasured on exactly the failure of tessera#1.
+REQUIRED_SELECTION_MODE = "validated-surrogate"
+
+SELECTION_SCHEMA = "tessera.menu_selection.v1"
+
+_SELECTION_REASON = (
+    "a plan at more than one (grid, rung) embodies a rung selection, and the "
+    "surrogate that chose it is measured to invert the answer: 2.00x worse "
+    "served KL than the byte-matched uniform arm at 4.0 bpp, 95% of the gap "
+    "on the seven units the surrogate itself priced (tessera#1, measured in "
+    "docs/measurements/tessera-allocated-served-2026-09-02.md §5 and §7).  "
+    "docs/ARCHITECTURE.md §4.10 requires validated-surrogate selection for "
+    "this menu (tessera#2)."
+)
+
+
+def selection_requirement(units: Iterable[PlannedUnit]) -> dict:
+    """Whether this plan embodies a rung selection, and what that requires.
+
+    The test is on the plan itself, never on a roster: the distinct (grid,
+    rung) pairs over the plan's own Tessera units.  One pair means the plan
+    is the null hypothesis -- one rung at matched bytes is what the gate
+    tests *against* -- so there is no selection for the validated-surrogate
+    gate to check.  More than one pair means the surrogate chose rungs, and
+    the block says so with ``validated: False``: no KL has been served here,
+    and serving the byte-matched uniform control
+    (``experiments/uniform_control.py verify``, whose verdict
+    :func:`control_block` records) is what flips that answer, not building
+    the plan.  A plan with no Tessera units has no rate axis at all.
+    """
+    members = tuple(units)
+    pairs = sorted(
+        {(unit.grid, int(unit.q256)) for unit in members if unit.is_tessera}
+    )
+    if not pairs:
+        return {
+            "schema": SELECTION_SCHEMA,
+            "mode_required": REQUIRED_SELECTION_MODE,
+            "requires_validation": False,
+            "validated": True,
+            "distinct_rungs": [],
+            "detail": (
+                "no Tessera units: no rate axis, so no rung selection"
+            ),
+            "reason": _SELECTION_REASON,
+        }
+    if len(pairs) == 1:
+        grid, q256 = pairs[0]
+        return {
+            "schema": SELECTION_SCHEMA,
+            "mode_required": REQUIRED_SELECTION_MODE,
+            "requires_validation": False,
+            "validated": True,
+            "distinct_rungs": [[grid, q256]],
+            "detail": (
+                f"one (grid, rung) pair ({grid} R{q256}): the plan embodies "
+                "no rung selection, so there is nothing for the "
+                "validated-surrogate gate to check"
+            ),
+            "reason": _SELECTION_REASON,
+        }
+    return {
+        "schema": SELECTION_SCHEMA,
+        "mode_required": REQUIRED_SELECTION_MODE,
+        "requires_validation": True,
+        "validated": False,
+        "distinct_rungs": [[grid, q256] for grid, q256 in pairs],
+        "detail": (
+            f"{len(pairs)} distinct (grid, rung) pairs: a rung selection the "
+            "surrogate made and no served KL has validated.  Serve the "
+            "byte-matched uniform control (experiments/uniform_control.py "
+            "verify) and record its verdict before this plan ships."
+        ),
+        "reason": _SELECTION_REASON,
+    }
