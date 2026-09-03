@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T22:22:29Z",
+ "generated": "2026-09-03T23:05:13Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -322,7 +322,7 @@
     "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.039x, in q_proj and k_proj)"
    },
    "13": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "H-aware encode costs 19.2x (matched-pair control); mechanism is ~28% device work, ~72% launch/host"
    },
    "14": {
@@ -470,7 +470,7 @@
     "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
    },
    "47": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
    },
    "48": {
@@ -650,7 +650,7 @@
     "title": "initial_channel_scale lands its reach bound with round-to-nearest, so 16% of the rows it raised clip anyway"
    },
    "88": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The A-side doc forbids the dispatch master already ships: window-gemv-a-side.md \u00a75 item 1 vs 6c521ea"
    },
    "89": {
@@ -662,7 +662,7 @@
     "title": "BF16 has a wire and no serving route"
    },
    "90": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "#81's sibling: under a CHANNEL plane, window_sigma equal to the resolved channel_sigma is the same encoder and gets a different id, a bigger artifact and minor 5"
    },
    "91": {
@@ -676,6 +676,10 @@
    "93": {
     "state": "OPEN",
     "title": "A dropped arm is invisible: the pair stage's byte-match audit counts survivors, not the grid"
+   },
+   "94": {
+    "state": "OPEN",
+    "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
    }
   }
  }
