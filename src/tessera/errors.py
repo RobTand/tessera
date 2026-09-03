@@ -65,3 +65,12 @@ class IdentityError(TesseraError):
 class ProvenanceError(TesseraError):
     """Input closure failed the ancestry or denylist check (doc S14 ledger
     invariant, build item 11)."""
+
+
+class ControlNotByteMatchedError(TesseraError):
+    """A rate-axis candidate and its uniform control do not weigh the same.
+
+    Two arms labelled "4.0 bpp" that differ by a percent in bytes are not a
+    control; the comparison silently prices the difference as quality.  Raised
+    by :func:`tessera.control.assert_byte_matched`.
+    """
