@@ -224,8 +224,7 @@ def test_an_ldlq_encode_ships_the_same_bytes_under_every_lever(lever, monkeypatc
             return original(*args, **kwargs)
 
         window_plan_cache_clear()
-        if impl != "reference":
-            monkeypatch.setattr(encode_mod, "viterbi_window", pinned)
+        monkeypatch.setattr(encode_mod, "viterbi_window", pinned)
         try:
             unit = encode_unit(w, E4M3_GRID, rates, code, body=BodyKind.WINDOW,
                                window_bits=window, scale_plane=ScalePlaneKind.CHANNEL,

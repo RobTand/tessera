@@ -120,7 +120,15 @@ _WINDOW_GRAPH_MIN_CALLS = 2
 #: call -- because persisting one would pin the whole tensor's traceback (at
 #: L=14, R=4 over 3072 columns, 545 MiB) to save the ~17 ms its own capture
 #: costs, which is 3% of that call for half a gigabyte.
-_WINDOW_PLAN_CACHE = 4
+#:
+#: The shipping schedule asks for few shapes.  Bresenham spreads a fractional
+#: rate over the columns, so at the served rung (E4M3, q256=1042) every one of
+#: the 96 LDLQ blocks of ``model.layers.0.mlp.down_proj`` carries the same two
+#: rates ({4: 2856, 5: 216} columns) and therefore the same two widths -- four
+#: keys for the whole unit, each recurring in every block, so each earns the
+#: capture it is given.  Eight leaves margin for a mixed unit without letting
+#: residency run: each of these plans is ~33 MiB at the LDLQ shape.
+_WINDOW_PLAN_CACHE = 8
 #: Plans are **per thread**, and that is a correctness requirement rather than
 #: a tuning choice: a plan owns the fronts and the traceback its Viterbi
 #: writes, so two threads sharing one would overwrite each other's states, and
@@ -628,6 +636,17 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     plans, seen = _window_maps()
     key = (device, rows, cols, arity, size, rate, chunk, has_weights,
            _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""))
+
+    def fresh(owns):
+        return _WindowPlan(device=device, rows=rows, cols=cols, arity=arity,
+                           size=size, rate=rate, chunk=chunk,
+                           has_weights=has_weights, owns_input=owns)
+
+    if forced is False:
+        # Ahead of the lookup on purpose: ``0`` is the eager control, and a
+        # plan cached earlier under ``auto`` must not replay a graph behind it.
+        return fresh(False), False
+
     plan = plans.get(key)
     if plan is not None:
         plans.move_to_end(key)
@@ -639,13 +658,6 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     while len(seen) > 64:
         seen.popitem(last=False)
 
-    def fresh(owns):
-        return _WindowPlan(device=device, rows=rows, cols=cols, arity=arity,
-                           size=size, rate=rate, chunk=chunk,
-                           has_weights=has_weights, owns_input=owns)
-
-    if forced is False:
-        return fresh(False), False
     batches = len(_layout(device, size, cols, chunk)[2])
     if batches >= _GRAPH_MIN_BATCHES:
         return fresh(False), True                         # captures inside this call
