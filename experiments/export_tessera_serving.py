@@ -1035,7 +1035,13 @@ def main():
         # claims to summarise (#86).  Both counts are zero on a dense model,
         # which is the same statement in the other direction.
         "routed_moe": {
-            "structure": "passed_through_bf16",
+            # ``disposition``, NOT ``structure``.  ``structure`` is the scheme's
+            # gate-read field, whose only legal values are ``scheme.STRUCTURES``
+            # and whose reserved name for this case is the block's own key,
+            # ``routed_moe``.  A producer-written free string under that field
+            # name is the confusion principle 14 exists to prevent, even though
+            # nothing in ``tessera.serving`` reads this file.
+            "disposition": "passed_through_bf16",
             "reason": "this exporter writes no routed-MoE wires; the expert route is #5",
             "packed_source_tensors": len(expert_shapes),
             "unpacked_source_tensors": len(routed_shapes),
