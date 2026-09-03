@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0`–`4`; see §1a–§1d, and §1e for a width that needs no minor) |
+| 10 | 2 | schema minor (`0`–`5`; see §1a–§1d, §1f for the reach record, and §1e for a width that needs no minor) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -99,9 +99,12 @@ A window manifest asked to encode at minor 1 is refused.
 rate set, the grid and the scale-plane tag — and **not** the convolutional
 code or the forest rule, because neither takes part in decoding it. A TCQ
 profile is unchanged. The table travels on the plane under the payload
-digest; the parameters that built it (a seed and a source model) are
-recorded in the checkpoint config for replay and the merge guard, never
-read by a decoder.
+digest; the spellings that built it (a seed and a source spread) travel on
+the manifest's reach record and are bound into the profile id since minor 5
+(§1f), and are recorded in the checkpoint config for replay and the merge
+guard. A decoder still never rebuilds the table from them: it takes the
+table off the plane, and takes the spellings off the manifest only to
+recompute the digest.
 
 **Accounting.** The table is charged on the ALPHABET plane, inline, per
 unit: `2^L` bytes — `0.0156` bpp at `L = 14` and `0.0625` at `L = 16` on a
@@ -387,6 +390,57 @@ Blackwell SM's budget). On the byte-wide grids the plane is an *index* into
 the grid's value table and the kernel materialises the values; on this grid
 the two coincide.
 
+### 1f. Schema minor 5 (2026-09-03): the reach record
+
+Minor 5 appends one optional record to the canonical manifest, **after** the
+minor-4 shard section:
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `has_reach` | uint | `0` = no reach record, and nothing follows. `1` = the record follows. |
+| `reach.window_seed` | uint | The window table's seed. Stored normalised: `0` unless the body is WINDOW. |
+| `reach.has_window_sigma` | uint | `0` = the grid-derived default; `1` = an explicit spread follows. |
+| `reach.window_sigma` | ratio | The window table's source spread in grid units, when explicit. Stored normalised: absent unless the body is WINDOW. |
+| `reach.has_channel_sigma` | uint | `0` = the grid-derived default; `1` = an explicit spread follows. |
+| `reach.channel_sigma` | ratio | The CHANNEL plane's modelled row spread in grid units, when explicit. Stored normalised: absent unless the plane is CHANNEL. |
+
+**Why it exists.** `encoder_profile_id` sold itself as the statement that
+two artifacts were cut by the same encoder, but it digested neither
+`window_sigma` nor `channel_sigma` — reach parameters, and reach moves bytes:
+the reach-aware per-row start took the 4.07-bpp E4M3 wire from served KL
+0.470 to 0.151 at an unchanged wire. Two units with the same profile id and
+different spreads were different bytes, and any consumer treating id
+equality as byte equality — a cache resume key, a merge guard, an A/B that
+assumes one arm is a re-cut of the other — read them as the same object
+(issue #77).
+
+**What is bound, and where the line is.** The record stores a spelling
+exactly where that spelling moves bytes — the window seed and spread under
+a WINDOW body, the row spread under a CHANNEL plane — and the profile id
+binds exactly the stored spellings (`reach:seed=`, `reach:window_sigma=`,
+`reach:channel_sigma=`, appended only when non-default). `None` spells the
+grid-derived default, the convention the checkpoint config's `wire.recipes`
+already uses. A default spelling adds no tag and no record, so a default
+build digests to what it always did and writes at the minor it always did:
+every default artifact is byte-identical across this bump, and only a
+non-default reach re-bases its profile id. What is *not* bound is everything
+the wire deliberately leaves to the config's merge guard — refit counts,
+trellis weighting, Hessian provenance — which move bytes but are encoder
+settings, not decoder inputs, and are compared field-by-field in
+`tessera_config.json`, not by profile id.
+
+**Reading.** A minor-5 reader takes the record off the manifest and
+recomputes the digest with it, so a manifest whose reach disagrees with the
+profile fails closed at the digest search like every earlier identity field.
+A manifest with no record recomputes the untagged digest, so every artifact
+written before this minor still verifies. A header below minor 5 carrying a
+reach record cannot occur, because the manifest declares minor 5 whenever
+the record is present.
+
+**Writing.** `serialize` writes the lowest minor a manifest needs. A record
+that binds nothing — default spellings, or spellings a TCQ body over a
+block plane never reads — is refused at construction, not written.
+
 ## 2. Decisions this schema makes
 
 The design document leaves these open. Deciding them *is* item 1a.
@@ -587,6 +641,12 @@ is verified, not assumed. A **window body** (minor 2) digests
 `body:window,L=<window_bits>` in place of the convolutional code and the
 forest rule (§1b); the reader recomputes it from the manifest's `body` and
 `window_bits`, so a manifest that lies about either fails the digest search.
+The **reach spellings** (minor 5, §1f) digest the same conditional way --
+`reach:seed=`, `reach:window_sigma=` under a WINDOW body,
+`reach:channel_sigma=` under a CHANNEL plane, each appended only when
+non-default -- and the reader recomputes them from the manifest's reach
+record, so a manifest that lies about its reach fails the digest search
+like every earlier identity field.
 
 ## 6. Frozen constants
 

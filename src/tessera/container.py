@@ -73,8 +73,16 @@ SCHEMA_MAJOR = 1
 #: below row 0, adds the INITIAL_STATE plane to the wire order ahead of BODY.
 #: A whole unit carries no shard record and writes at the minor it always did,
 #: so every artifact written before this bump is byte-identical.
-SCHEMA_MINOR = 4
-SCHEMA_MINORS_READ = (0, 1, 2, 3, 4)
+#: Minor 5 (2026-09-03) appends the reach record -- the encoder's window
+#: seed/spread and row spread (``manifest.ReachParams``) -- after the shard
+#: section, present only when a spelling moves bytes, and bound into the
+#: encoder profile id.  A default build carries no record and writes at the
+#: minor it always did, so every default artifact is byte-identical; a reader
+#: takes the record off the manifest and recomputes the digest with it, so a
+#: manifest whose reach disagrees with the profile fails closed at the digest
+#: search like every earlier identity field.
+SCHEMA_MINOR = 5
+SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5)
 
 _HEADER = struct.Struct("<8sHHIII")
 

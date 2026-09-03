@@ -55,6 +55,7 @@ __all__ = [
     "ScalePlane",
     "BodyKind",
     "WINDOW_BITS_MAX",
+    "ReachParams",
     "ShardOrigin",
     "TerminalRecord",
     "Manifest",
@@ -356,6 +357,91 @@ class ScalePlane:
 
 
 @dataclass(frozen=True)
+class ReachParams:
+    """The encoder's reach spellings: what the table and the row scales were
+    modelled against (schema minor 5).
+
+    ``window_seed``/``window_sigma`` parameterise the window table
+    (``encode.window_table``): the seed permutes the quantiles, the spread
+    selects them -- ``None`` the amax-bounded source a block plane delivers.
+    ``channel_sigma`` is the modelled source spread the CHANNEL plane's rows
+    start at (``scale_channel.initial_channel_scale``) -- ``None`` the grid's
+    derived default (``scale_channel.default_channel_sigma``), the same
+    convention the checkpoint config's ``wire.recipes`` already uses: the
+    record spells what the encoder was told, and the encoder resolves ``None``
+    per grid at encode time.
+
+    Only spellings that move bytes are ever stored: ``window_seed`` and
+    ``window_sigma`` under a WINDOW body, ``channel_sigma`` under a CHANNEL
+    plane (``unit_artifact._normalize_reach`` is the one place that rule
+    lives).  A default spelling (seed 0, spread ``None``) binds nothing, so
+    no record is written for it and the manifest keeps the minor it always
+    had -- which is what keeps every default artifact byte-identical across
+    this bump.  The profile id binds exactly the stored spellings, so two
+    minor-5 artifacts with equal ids were cut under equal reach terms.
+
+    Sigmas ride the wire as exact ratios (``canonical`` carries no floats --
+    the same spelling ``ScalePlane`` globals use), so a stored spread that is
+    not a positive finite float, or not exactly representable, or not
+    writable to the wire, is refused here, where the field has a name.
+    """
+
+    window_seed: int = 0
+    window_sigma: "float | None" = None
+    channel_sigma: "float | None" = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.window_seed, bool) or not isinstance(self.window_seed, int):
+            raise ManifestError(
+                f"the window seed must be an integer, got {self.window_seed!r}"
+            )
+        if self.window_seed < 0:
+            raise ManifestError(
+                f"the window seed must not be negative, got {self.window_seed}"
+            )
+        for name in ("window_sigma", "channel_sigma"):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ManifestError(
+                    f"the {name} must be a positive float or None, got {value!r}"
+                )
+            if not value > 0:
+                raise ManifestError(
+                    f"the {name} must be positive, got {value!r}"
+                )
+            if value in (float("inf"), float("-inf")):
+                raise ManifestError(
+                    f"the {name} must be finite, got {value!r}"
+                )
+            object.__setattr__(self, name, float(value))
+            _require_wire_ratio(f"reach {name}", Fraction(float(value)))
+
+    def encode(self, writer: Writer) -> None:
+        writer.uint(self.window_seed)
+        for name in ("window_sigma", "channel_sigma"):
+            value = getattr(self, name)
+            writer.uint(0 if value is None else 1)
+            if value is not None:
+                writer.ratio(Fraction(float(value)))
+
+    @classmethod
+    def decode(cls, reader: Reader) -> "ReachParams":
+        seed = reader.uint()
+        sigmas = []
+        for name in ("window_sigma", "channel_sigma"):
+            flag = reader.uint()
+            if flag not in (0, 1):
+                raise ManifestError(
+                    f"the reach record's {name} presence flag must be 0 or 1, "
+                    f"got {flag}"
+                )
+            sigmas.append(None if not flag else float(reader.ratio()))
+        return cls(seed, *sigmas)
+
+
+@dataclass(frozen=True)
 class ShardOrigin:
     """Where a unit sits inside the unit it was cut from (schema minor 4).
 
@@ -545,6 +631,13 @@ class Manifest:
     # writes at the minor it needed before the field existed, so every
     # artifact ever written is byte-identical across this bump.
     shard: "ShardOrigin | None" = None
+    # Schema minor 5 (2026-09-03).  ``reach`` is the encoder's reach
+    # spellings (``ReachParams``) -- present only when a spelling moves bytes
+    # (a non-default window seed/spread under a WINDOW body, a non-default
+    # row spread under a CHANNEL plane) and bound into the encoder profile
+    # id.  A default build carries None and writes at the minor it always
+    # did, byte for byte.
+    reach: "ReachParams | None" = None
 
     @property
     def plane_order(self) -> "tuple[PlaneKind, ...]":
@@ -560,8 +653,12 @@ class Manifest:
         cannot resolve, so a manifest carrying it declares the minor that
         can.  Minor 4 (2026-09-02) appends the shard record, and a shard cut
         below row 0 also changes the plane order, so an earlier reader must
-        not try.
+        not try.  Minor 5 (2026-09-03) appends the reach record, which an
+        earlier reader cannot recompute the profile id without, so a
+        manifest carrying one declares the minor that can.
         """
+        if self.reach is not None:
+            return 5
         if self.shard is not None:
             return 4
         if self.scale_plane.kind is ScalePlaneKind.CHANNEL:
@@ -587,6 +684,19 @@ class Manifest:
                 )
         elif self.window_bits:
             raise ManifestError("window_bits is only meaningful under a window body")
+        if self.reach is not None and not (
+            (self.body is BodyKind.WINDOW
+             and (self.reach.window_seed or self.reach.window_sigma is not None))
+            or (self.scale_plane.kind is ScalePlaneKind.CHANNEL
+                and self.reach.channel_sigma is not None)
+        ):
+            raise ManifestError(
+                "a reach record binds a spelling that moves bytes -- a "
+                "non-default window seed or spread under a WINDOW body, or a "
+                "non-default row spread under a CHANNEL plane; this manifest "
+                f"carries {self.reach!r} over a {self.body.name} body and a "
+                f"{self.scale_plane.kind.name} plane, which binds nothing"
+            )
         if len(self.payload_digest) != DIGEST_BYTES:
             raise ManifestError("malformed payload_digest")
         if not self.terminals:
@@ -840,6 +950,10 @@ class Manifest:
             writer.uint(1 if self.shard is not None else 0)
             if self.shard is not None:
                 self.shard.encode(writer)
+        if minor >= 5:
+            writer.uint(1 if self.reach is not None else 0)
+            if self.reach is not None:
+                self.reach.encode(writer)
         return writer.bytes
 
     @classmethod
@@ -895,6 +1009,10 @@ class Manifest:
         if schema_minor >= 4:
             if reader.uint():
                 shard = ShardOrigin.decode(reader)
+        reach = None
+        if schema_minor >= 5:
+            if reader.uint():
+                reach = ReachParams.decode(reader)
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -910,6 +1028,7 @@ class Manifest:
             body=body,
             window_bits=window_bits,
             shard=shard,
+            reach=reach,
         )
 
     def manifest_digest(self) -> bytes:

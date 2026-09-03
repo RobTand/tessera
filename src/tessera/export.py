@@ -8,7 +8,8 @@ verbatim, and record the identity a reader needs to accept the result.
 **Rungs are addressed by ``(grid, q256)``, not by name.**  A rung *name* like
 ``TESSERA_E2M1_K2_R896`` is PrismaQuant's label for an allocator candidate; the
 thing the wire commits to is ``encoder_profile_id``, which hashes the code, the
-forest construction, the rate set and the grid digest.  Keeping the parser on
+forest construction, the rate set, the grid digest and -- since schema minor
+5, conditionally -- the reach spellings that move bytes.  Keeping the parser on
 the producer side and the identity on the wire means a mislabelled artifact is
 still *unambiguous* -- the reader rebuilds the grid from the profile id and
 refuses anything it cannot reproduce.  Two spellings of one spec is the failure

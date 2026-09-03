@@ -1000,6 +1000,14 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
         window_bits=int(getattr(unit, "window_bits", 0)),
         window_codes=unit.window_codes,
         scale_rows=scale_rows,
+        # The reach spellings are a property of the encoding, not of the
+        # extent: a shard is decoded by its parent's table against its
+        # parent's row-spread convention, so it carries them across untouched
+        # and rebuilds under its parent's profile id.  A parent that predates
+        # the fields yields the defaults, which bind nothing.
+        window_seed=int(getattr(unit, "window_seed", 0)),
+        window_sigma=getattr(unit, "window_sigma", None),
+        channel_sigma=getattr(unit, "channel_sigma", None),
         row_offset=r0 + int(getattr(unit, "row_offset", 0)),
         col_offset=c0 + int(getattr(unit, "col_offset", 0)),
         initial_state=state,

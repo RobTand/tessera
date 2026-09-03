@@ -580,6 +580,10 @@
    "9": {
     "state": "CLOSED",
     "title": "BF16 has a wire and no serving route"
+   },
+   "77": {
+    "state": "OPEN",
+    "title": "encoder_profile_id does not bind window_sigma or channel_sigma, so equal ids do not mean equal bytes"
    }
   }
  }
