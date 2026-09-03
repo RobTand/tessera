@@ -210,9 +210,13 @@ one commit so a reader does not have to check that two commits describe the same
 > **So the served numerical output of the GEMV kernel is not measured by this
 > campaign.** That is a gap in the deliverable, stated rather than papered over,
 > and section 4's missing trace compounds it: the strongest evidence here that
-> the kernel ran at all is the eager census decode record
-> `(tessera_window_gemv::gemv, window_gemv)`, 113 modules. It ran; what it
-> computed, as served, has not been compared to anything.
+> the kernel ran at all is the eager census decode record, and it is good
+> evidence as far as it goes: `symbol: tessera_window_gemv::gemv`,
+> `decoder: window_gemv`, `state: served`, **112 modules**, at shapes
+> `M1:N1024:K2048` and friends -- M = 1, which is the regime the kernel exists
+> for. The same serve's prefill regime records `torch._scaled_mm` at `M64:...`.
+> So the kernel ran, at the right shape, on every module. **What it computed, as
+> served, has not been compared to anything.**
 
 **What the two-arm KL does establish: the lane's presence does not perturb the
 path it does not serve.** On the eager pair the two
