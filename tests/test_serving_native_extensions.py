@@ -296,24 +296,6 @@ def test_every_declared_extension_is_actually_loadable_from_serving():
             f"{entry['filename_glob']} is published and no reachable code loads it")
 
 
-def test_the_producer_side_window_gemv_is_out_of_reach_of_serving():
-    """The claim RobTand/tessera#28's scope note makes, checked not read.
-
-    ``tessera.kernel_window_gemv`` JIT-loads ``tessera_window_gemv`` and is
-    producer-side today.  If issue #10/#42 wires the window GEMV into a route,
-    this fails and the entry is owed -- which is the point of asserting it here
-    rather than in a comment.  It is a TRIPWIRE, not a rule: once that entry
-    exists this test has done its work and is deleted in the same change, since
-    it would go on failing for a table that is now correct.
-    """
-    everything = scan_jit_extension_loads(SRC, ["tessera.kernel_window_gemv"])
-    assert any(s["name"] == "tessera_window_gemv" for s in everything), (
-        "the scanner no longer sees the window GEMV's own load site, so its absence from the "
-        "serving walk below would prove nothing")
-    reachable = scan_jit_extension_loads(SRC, _serving_modules())
-    assert not [s for s in reachable if s["module"] == "tessera.kernel_window_gemv"]
-
-
 # --- the scanner itself has teeth ---------------------------------------------
 
 def test_the_scanner_finds_an_undeclared_loader_through_an_import(tmp_path):

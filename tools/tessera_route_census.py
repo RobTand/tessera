@@ -12,9 +12,11 @@ the same objects the serve dispatched through.
 
 It exits non-zero unless every Tessera module, in both shapes, reports
 ``state == "served"``, a ``<family>:<mode>`` policy equal to the family the
-checkpoint declares for that module, that route's activation contract, the
-expected GEMM symbol and the native decoder -- so the JSON it writes is a
-receipt only when the run also passed.
+checkpoint declares for that module, that route's activation contract, and a
+``(symbol, decoder)`` pair the route owns for the driven regime (the streamed
+FP8 route reports the window-GEMV pair in the decode regime and the
+materialised pair in batch) -- so the JSON it writes is a receipt only when
+the run also passed.
 
 usage::
 
@@ -108,7 +110,7 @@ def main() -> int:
 
     import tessera
     import tessera.serving as serving
-    from tessera.serving import bf16_route, fp8_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_gemv, fp8_route, nvfp4_route
     from tessera.serving.contract import CENSUS_PHASE_REGIMES, load_serving_contract
     from tessera.serving.lane import TESSERA_MODE_ENV
     from tessera.serving.scheme import (
@@ -133,6 +135,17 @@ def main() -> int:
     # scale is an epilogue), and a hardcoded symbol read that as a refusal on
     # every module of a route it had simply never been told about.
     symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
+    # The streamed FP8 route serves two launches: the window GEMV in the
+    # decode regime, the materialised tile under ``_scaled_mm`` in batch (and
+    # wherever the GEMV lane did not prepare).  The pairs each regime may
+    # report live where the dispatch lives (``fp8_gemv.census_expected``), not
+    # in a second spelling here; every other family reports one pair.
+    fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
+
+    def _expected(family, regime):
+        if family == TESSERA_FP8:
+            return fp8_expected[regime]
+        return {(symbol_for[family], decoder_for[family])}
     missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
     if missing:
         raise SystemExit(
@@ -225,16 +238,20 @@ def main() -> int:
                 problems.append(f"{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
             if r["contract"] != contract_for[family]:
                 problems.append(f"{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
-            if r["symbol"] != symbol_for[family]:
-                problems.append(
-                    f"{phase}: {name} symbol={r['symbol']!r} != {symbol_for[family]!r}")
             if r["policy"] != f"{family}:{mode}":
                 problems.append(f"{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
-            if r.get("decoder") != decoder_for[family] and not args.allow_fallback_decoder:
+            # The (symbol, decoder) pair, not each half alone: the streamed FP8
+            # route reports the GEMV pair in the decode regime and the
+            # materialised pair in batch (``fp8_gemv.census_expected`` owns the
+            # sets), and a half-wise comparison would read either half as a
+            # refusal on every module of the other regime.
+            want = _expected(family, CENSUS_PHASE_REGIMES[phase])
+            if ((r["symbol"], r.get("decoder")) not in want
+                    and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
                 problems.append(
-                    f"{phase}: {name} decoder={r.get('decoder')!r} != {decoder_for[family]!r}; the "
-                    "native route was not taken (pass --allow-fallback-decoder to record that "
-                    "deliberately)")
+                    f"{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
+                    f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
+                    "report a pair its route owns")
         missing = sorted(set(declared) - set(tess))
         if missing:
             problems.append(

@@ -200,6 +200,12 @@ def test_pair_is_the_stock_pair_byte_for_byte(monkeypatch, mode):
     got, want, layer, method, (weight, scale) = _drive(monkeypatch, mode)
     if mode == MODE_RESIDENT:
         tile = layer.weight_fp8.view(torch.uint8)
+    elif getattr(layer, "tessera_gemv", None) is not None:
+        # The GEMV lane verified its repack against these same bytes at load;
+        # read them back through the lane's own decode.
+        from tessera.serving import fp8_gemv as _gemv
+        tile, lane_scale = _gemv.holder_decode(layer.tessera_gemv)
+        assert torch.equal(lane_scale, scale)
     else:
         tile = layer.tessera_prepared.decode()
     assert torch.equal(tile, weight)
@@ -242,12 +248,23 @@ def test_the_two_modes_are_numerically_identical(monkeypatch):
 
 @requires_cuda
 def test_streamed_holds_the_packed_wire_and_no_resident_tile(monkeypatch):
-    _g, _w, a, _m, _ = _drive(monkeypatch, MODE_STREAMED, roles=(("weight", 128),), cols=512)
+    _g, _w, a, _m, _ = _drive(monkeypatch, MODE_STREAMED, roles=(("weight", 512),), cols=512)
     for name in ("wire_bytes", "weight_fp8", "decode_buf"):
         assert not hasattr(a, name), name
+    if getattr(a, "tessera_gemv", None) is not None:
+        # The repacked wire, not the torch planes and not a tile: rows are a
+        # multiple of the lane's 512-row tile here, so no padding enters and
+        # the same wire-vs-tile cap the torch planes met applies.
+        from tessera.serving import fp8_gemv as _gemv
+        holder = a.tessera_gemv
+        assert holder is not None and a.tessera_prepared is None
+        assert holder.resident_bytes() < 512 * 512 * 4.5 / 8 + 65536
+        p1, p2 = _gemv.holder_decode(holder), _gemv.holder_decode(holder)
+        assert torch.equal(p1[0], p2[0]) and p1[0].data_ptr() != p2[0].data_ptr()
+        return
     prepared = a.tessera_prepared
     assert prepared is not None
-    assert prepared.wire_bytes_resident() < 128 * 512 * 4.5 / 8 + 65536   # ~ the wire, not the 8-bit tile
+    assert prepared.wire_bytes_resident() < 512 * 512 * 4.5 / 8 + 65536   # ~ the wire, not the 8-bit tile
     p1, p2 = prepared.decode(), prepared.decode()
     assert torch.equal(p1, p2) and p1.data_ptr() != p2.data_ptr()
 
@@ -305,4 +322,9 @@ def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch):
     assert rec is not None and rec["policy"] == f"{TESSERA_FP8}:streamed" and rec["state"] == "served"
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "fp8_per_token_dynamic"
     assert rec["symbol"] == "torch._scaled_mm"
-    assert rec["decoder"] == telemetry.DECODER_TORCH_WINDOW == layer.tessera_decoder
+    # The drive above is a 32-row prefill: the tile path either way, but the
+    # tile's producer is the lane that prepared the module.
+    if getattr(layer, "tessera_gemv", None) is not None:
+        assert rec["decoder"] == telemetry.DECODER_WINDOW_GEMV == layer.tessera_decoder
+    else:
+        assert rec["decoder"] == telemetry.DECODER_TORCH_WINDOW == layer.tessera_decoder

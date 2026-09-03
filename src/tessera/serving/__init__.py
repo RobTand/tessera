@@ -18,10 +18,12 @@ compile-cache key because it changes the traced forward.
 
 WHAT IT NEEDS.  A vLLM process on a device whose compiled ops include the
 quantizers each route uses; the NVFP4 route additionally builds one CUDA
-extension on first use (``ext``).  The FP8 route is pure torch.  Nothing here
-is imported unless a Tessera checkpoint is being served: this module imports
-neither torch nor vLLM at module level, so a producer can read the packaged
-contract on a machine with no GPU.
+extension on first use (``ext``), and the streamed FP8 route builds the window
+GEMV the same way where the lane serves the unit, falling back to its torch
+window decode where it cannot.  Nothing here is imported unless a Tessera
+checkpoint is being served: this module imports neither torch nor vLLM at
+module level, so a producer can read the packaged contract on a machine with
+no GPU.
 
 SCOPE.  Dense Linears, TP=1, both residency modes, eager and compiled.  Routed
 MoE, tensor parallelism above one and expert parallelism are refused by name

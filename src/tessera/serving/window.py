@@ -34,7 +34,8 @@ prepared module; the eager path re-checks the fingerprints, a compiled
 forward skips the untraceable data-pointer comparison.
 
 Pure torch throughout: this decoder needs no CUDA extension, which is why the
-FP8 route has no native-kernel dependency at all.
+FP8 route serves without one wherever the window GEMV lane did not prepare
+(``fp8_gemv``) -- the resident mode always, the streamed mode as its fallback.
 """
 from __future__ import annotations
 
