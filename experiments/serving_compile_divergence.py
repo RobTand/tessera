@@ -33,6 +33,17 @@ Guards, because a comparison of the wrong pair would look like a result: an
 same ``artifact_path`` and the same corpus contract sha, and every row asserts
 the tokenizer digest matches.  A missing dump is reported, not skipped.
 
+Since #30 every row also carries the **build identity** of its two arms, read
+from the ``<dump>.build.json`` sidecars the serve wrappers stamp
+(``tessera.serving.build_identity``): what compiled artifact each arm actually
+served, digested from the contents of the compile-cache slot rather than from
+the AOT key, which does not distinguish two builds.  Two rows *claim* something
+about the build -- one is a rebuild, one is a replay -- and those two are
+checked and refused on mismatch, because reading them the wrong way round would
+report 0.000000 as evidence that rebuilds agree.  Every dump taken before the
+stamp existed reads ``unstamped``: reported in the row and in ``problems``, and
+still compared, since an archive that cannot be read is not a safer archive.
+
 Usage::
 
     TMPDIR=/home/rob/tmp CUDA_VISIBLE_DEVICES="" python experiments/serving_compile_divergence.py \
@@ -47,6 +58,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from tessera.serving import build_identity as bid  # noqa: E402
 
 DUMPS = Path("/mnt/shared/tessera-kl")
 KL_TOOL = Path("/home/rob/dq-runs/kl_tool.py")
@@ -106,8 +121,63 @@ COMPARISONS: list[tuple[str, str, str, str, str]] = [
 ]
 
 
+# Which rows make a claim about the compiled BUILD, and therefore have to be
+# checked against the build identities the serve wrappers now stamp (issue
+# #30).  Only two rows do: the whole point of the build_vs_build family is that
+# one of its rows is a rebuild and the other is a replay, and reading them the
+# wrong way round would report 0.000000 as evidence that rebuilds agree.  Every
+# other row compares two different things (two regimes, two lanes, two
+# artifacts) where the builds are allowed to differ, so it is annotated, not
+# constrained.  Rows dumped before the stamp existed report "unstamped" and
+# still compute -- an archive that cannot be read is not a safer archive.
+BUILD_EXPECTATION: dict[str, str] = {
+    "plugin K2 resident compiled: chain build vs fresh build": "distinct",
+    "plugin K2 resident compiled: build replayed by a second serve": "same",
+}
+
+
 def _meta(name: str) -> dict:
     return json.loads((DUMPS / f"{name}.meta.json").read_text())
+
+
+def _build(name: str) -> dict | None:
+    path = DUMPS / f"{name}.build.json"
+    return bid.load(path) if path.is_file() else None
+
+
+def _build_check(label: str, teacher: str, student: str,
+                 problems: list[str]) -> dict:
+    """Read both arms' build identities; report, and refuse what was declared."""
+    a, b = _build(teacher), _build(student)
+    expect = BUILD_EXPECTATION.get(label)
+    missing = [n for n, r in ((teacher, a), (student, b)) if r is None]
+    if missing:
+        note = f"{label}: build identity not stamped for {', '.join(missing)}"
+        if expect:
+            problems.append(
+                note + f" -- this row claims the two arms are a '{expect}' build pair "
+                "and nothing on disk supports that")
+        return {"status": "unstamped", "expected": expect,
+                "fingerprints": {teacher: a and a["build_fingerprint"],
+                                 student: b and b["build_fingerprint"]}}
+    verdict = bid.compare(a, b)
+    status = "same_build" if verdict["same_build"] else "different_build"
+    if expect:
+        require = (bid.require_same_build if expect == "same"
+                   else bid.require_distinct_build)
+        try:
+            require(a, b, why=label)
+        except bid.BuildIdentityError as exc:
+            problems.append(str(exc))
+            status = "REFUSED"
+    return {
+        "status": status,
+        "expected": expect,
+        "differs": verdict["differs"],
+        "incomplete": verdict["incomplete"],
+        "fingerprints": {teacher: a["build_fingerprint"],
+                         student: b["build_fingerprint"]},
+    }
 
 
 def _identity(meta: dict) -> dict:
@@ -169,11 +239,13 @@ def main() -> int:
                     f"{label}: {family} across two artifacts "
                     f"({tid['artifact_path']} vs {sid['artifact_path']})")
                 continue
+        build = _build_check(label, teacher, student, problems)
         res = _compare(teacher, student, label, workdir, args.python)
         rows.append({
             "family": family,
             "label": label,
             "note": note,
+            "build": build,
             "teacher": teacher,
             "student": student,
             "artifact_path": tid["artifact_path"],
@@ -186,7 +258,7 @@ def main() -> int:
         })
 
     payload = {
-        "schema": "tessera.serving_compile_divergence/1",
+        "schema": "tessera.serving_compile_divergence/2",
         "dumps": str(DUMPS),
         "rows": rows,
         "problems": problems,
@@ -201,10 +273,12 @@ def main() -> int:
         if not sel:
             continue
         print(f"\n== {family} ==")
-        print(f"  {'comparison':<{width}}  {'KL >=':>9}  {'top-1':>7}  {'p99':>8}  note")
+        print(f"  {'comparison':<{width}}  {'KL >=':>9}  {'top-1':>7}  {'p99':>8}  "
+              f"{'build':<15}  note")
         for r in sel:
             print(f"  {r['label']:<{width}}  {r['kl_lower_mean']:9.6f}  "
-                  f"{r['top1_agree_pct']:6.2f}%  {r['kl_lower_p99']:8.4f}  {r['note']}")
+                  f"{r['top1_agree_pct']:6.2f}%  {r['kl_lower_p99']:8.4f}  "
+                  f"{r['build']['status']:<15}  {r['note']}")
     if problems:
         print("\n== problems ==")
         for p in problems:

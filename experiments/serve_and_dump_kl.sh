@@ -23,6 +23,21 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 # store_true flag is a no-op stand-in so the argv shape does not change.
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
 
+# Which compiled build served this dump, recorded beside it (issue #30).
+source "$(dirname "$0")/build_identity.sh"
+# This wrapper does NOT pin a compile-cache root by default -- every arm gets
+# the container's own ephemeral ~/.cache/vllm, which is what the eager arms it
+# was written for want.  A graph-mode campaign should set TESSERA_KL_VLLM_CACHE
+# to a host directory: without it the stamp can only read the AOT key out of
+# the log, and the key does not identify the build (both of the two builds
+# 0.017117 apart sit under one key), so the sidecar says complete:false and
+# refuses to certify a later comparison either way.
+VLLM_CACHE_ARG=""
+if [ -n "${TESSERA_KL_VLLM_CACHE:-}" ]; then
+  mkdir -p "$TESSERA_KL_VLLM_CACHE"
+  VLLM_CACHE_ARG="-v ${TESSERA_KL_VLLM_CACHE}:/root/.cache/vllm"
+fi
+
 echo "serving $MODEL  ($IMAGE)"
 # Mount the model's own directory, not just /mnt/shared: a path the container
 # cannot see is not reported as a missing file, it is reported as a malformed
@@ -37,6 +52,8 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
   -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
+  ${VLLM_CACHE_ARG} \
+  $(build_identity_docker_env) \
   ${TESSERA_KL_DOCKER_EXTRA:-} \
   "$IMAGE" \
   "$MODEL" --served-model-name kl-target \
@@ -85,4 +102,8 @@ fi
 
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
+# Stamp AFTER the container is down: a stamp that failed before the reap would
+# leave a headless serve holding the GPU, which is the 2026-09-02 bug above.
+build_identity_stamp "$LOG" "${OUT%.json}.build.json" "${TESSERA_KL_VLLM_CACHE:-}" \
+  "$IMAGE" "" "${TESSERA_KL_EAGER:-1}" "$MODEL"
 echo "dumped -> $OUT   (serve log $LOG)"

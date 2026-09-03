@@ -1,11 +1,19 @@
 {
- "schema": "tessera.serving_compile_divergence/1",
+ "schema": "tessera.serving_compile_divergence/2",
  "dumps": "/mnt/shared/tessera-kl",
  "rows": [
   {
    "family": "eager_vs_compiled",
    "label": "plugin E4M3 resident",
    "note": "FP8 route, q1024 uniform",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_e8-resident": null,
+     "qwen_tessera_e8-resident-graph": null
+    }
+   },
    "teacher": "qwen_tessera_e8-resident",
    "student": "qwen_tessera_e8-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-e4m3",
@@ -20,6 +28,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin E4M3 streamed",
    "note": "FP8 route, q1024 uniform",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_e8-streamed": null,
+     "qwen_tessera_e8-streamed-graph": null
+    }
+   },
    "teacher": "qwen_tessera_e8-streamed",
    "student": "qwen_tessera_e8-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-e4m3",
@@ -34,6 +50,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin K2 resident",
    "note": "NVFP4 route, q896",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_k2-resident": null,
+     "qwen_tessera_k2-resident-graph": null
+    }
+   },
    "teacher": "qwen_tessera_k2-resident",
    "student": "qwen_tessera_k2-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-k2",
@@ -48,6 +72,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin K2 resident (fresh build)",
    "note": "NVFP4 route, second build",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_k2-resident": null,
+     "qwen_tessera_k2-resident-graph-fresh": null
+    }
+   },
    "teacher": "qwen_tessera_k2-resident",
    "student": "qwen_tessera_k2-resident-graph-fresh",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-k2",
@@ -62,6 +94,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin K2 streamed",
    "note": "NVFP4 route, q896",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_k2-streamed": null,
+     "qwen_tessera_k2-streamed-graph": null
+    }
+   },
    "teacher": "qwen_tessera_k2-streamed",
    "student": "qwen_tessera_k2-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-k2",
@@ -76,6 +116,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin mixed resident",
    "note": "both routes in one body",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_mixed-resident": null,
+     "qwen_tessera_mixed-resident-graph": null
+    }
+   },
    "teacher": "qwen_tessera_mixed-resident",
    "student": "qwen_tessera_mixed-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-mixed",
@@ -90,6 +138,14 @@
    "family": "eager_vs_compiled",
    "label": "plugin mixed streamed",
    "note": "both routes in one body",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_mixed-streamed": null,
+     "qwen_tessera_mixed-streamed-graph": null
+    }
+   },
    "teacher": "qwen_tessera_mixed-streamed",
    "student": "qwen_tessera_mixed-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-mixed",
@@ -104,6 +160,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook E4M3 resident",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_e8-resident": null,
+     "qwen_gridbook_e8-resident-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_e8-resident",
    "student": "qwen_gridbook_e8-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-gridbook",
@@ -118,6 +182,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook E4M3 streamed",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_e8-streamed": null,
+     "qwen_gridbook_e8-streamed-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_e8-streamed",
    "student": "qwen_gridbook_e8-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-gridbook",
@@ -132,6 +204,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook K2 resident",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_k2-resident-v14": null,
+     "qwen_gridbook_k2-resident-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_k2-resident-v14",
    "student": "qwen_gridbook_k2-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-k2-gridbook",
@@ -146,6 +226,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook K2 streamed",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_k2-streamed": null,
+     "qwen_gridbook_k2-streamed-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_k2-streamed",
    "student": "qwen_gridbook_k2-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-k2-gridbook",
@@ -160,6 +248,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook mixed resident",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_mixed-resident": null,
+     "qwen_gridbook_mixed-resident-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_mixed-resident",
    "student": "qwen_gridbook_mixed-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-mixed-gridbook",
@@ -174,6 +270,14 @@
    "family": "eager_vs_compiled",
    "label": "gridbook mixed streamed",
    "note": "same bytes, other lane",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_mixed-streamed": null,
+     "qwen_gridbook_mixed-streamed-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_mixed-streamed",
    "student": "qwen_gridbook_mixed-streamed-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-mixed-gridbook",
@@ -188,6 +292,14 @@
    "family": "eager_vs_compiled",
    "label": "allocated 4.0 resident",
    "note": "FP8 route, four rungs",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_alloc4-resident": null,
+     "qwen_tessera_alloc4-resident-graph": null
+    }
+   },
    "teacher": "qwen_tessera_alloc4-resident",
    "student": "qwen_tessera_alloc4-resident-graph",
    "artifact_path": "/mnt/shared/tessera-runs/allocated/qwen3-0.6b-alloc-4.0",
@@ -202,6 +314,14 @@
    "family": "eager_vs_compiled",
    "label": "uniform R1006 resident",
    "note": "FP8 route, one rung",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_tessera_unif1006-resident": null,
+     "qwen_tessera_unif1006-resident-graph": null
+    }
+   },
    "teacher": "qwen_tessera_unif1006-resident",
    "student": "qwen_tessera_unif1006-resident-graph",
    "artifact_path": "/mnt/shared/tessera-runs/allocated/qwen3-0.6b-uniform-R1006",
@@ -216,6 +336,14 @@
    "family": "eager_vs_compiled",
    "label": "stock twin K2 (vanilla vLLM NVFP4)",
    "note": "materialised NVFP4 bytes, no plugin",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_stock_tessera-k2": null,
+     "qwen_stock_tessera-k2-graph": null
+    }
+   },
    "teacher": "qwen_stock_tessera-k2",
    "student": "qwen_stock_tessera-k2-graph",
    "artifact_path": "/home/rob/tessera-runs/stock/qwen3-0.6b-tessera-k2-q896-nvfp4",
@@ -230,6 +358,14 @@
    "family": "build_vs_build",
    "label": "plugin K2 resident compiled: chain build vs fresh build",
    "note": "two builds of one graph",
+   "build": {
+    "status": "unstamped",
+    "expected": "distinct",
+    "fingerprints": {
+     "qwen_tessera_k2-resident-graph": null,
+     "qwen_tessera_k2-resident-graph-fresh": null
+    }
+   },
    "teacher": "qwen_tessera_k2-resident-graph",
    "student": "qwen_tessera_k2-resident-graph-fresh",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-k2",
@@ -244,6 +380,14 @@
    "family": "build_vs_build",
    "label": "plugin K2 resident compiled: build replayed by a second serve",
    "note": "one build, served twice",
+   "build": {
+    "status": "unstamped",
+    "expected": "same",
+    "fingerprints": {
+     "qwen_tessera_k2-resident-graph": null,
+     "qwen_tessera_k2-resident-graph-rep": null
+    }
+   },
    "teacher": "qwen_tessera_k2-resident-graph",
    "student": "qwen_tessera_k2-resident-graph-rep",
    "artifact_path": "/home/rob/tessera-runs/tsplugin/qwen3-0.6b-tessera-k2",
@@ -258,6 +402,14 @@
    "family": "lane_vs_lane",
    "label": "K2 resident compiled: plugin vs gridbook",
    "note": "the receipt's 0.0176",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_k2-resident-graph": null,
+     "qwen_tessera_k2-resident-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_k2-resident-graph",
    "student": "qwen_tessera_k2-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-k2-gridbook",
@@ -272,6 +424,14 @@
    "family": "lane_vs_lane",
    "label": "K2 resident compiled (fresh build): plugin vs gridbook",
    "note": "the rebuild",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_k2-resident-graph": null,
+     "qwen_tessera_k2-resident-graph-fresh": null
+    }
+   },
    "teacher": "qwen_gridbook_k2-resident-graph",
    "student": "qwen_tessera_k2-resident-graph-fresh",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-k2-gridbook",
@@ -286,6 +446,14 @@
    "family": "lane_vs_lane",
    "label": "K2 resident eager: plugin vs gridbook",
    "note": "the eager control",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_k2-resident-v14": null,
+     "qwen_tessera_k2-resident": null
+    }
+   },
    "teacher": "qwen_gridbook_k2-resident-v14",
    "student": "qwen_tessera_k2-resident",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-k2-gridbook",
@@ -300,6 +468,14 @@
    "family": "lane_vs_lane",
    "label": "E4M3 resident compiled: plugin vs gridbook",
    "note": "the FP8 route's compiled arm",
+   "build": {
+    "status": "unstamped",
+    "expected": null,
+    "fingerprints": {
+     "qwen_gridbook_e8-resident-graph": null,
+     "qwen_tessera_e8-resident-graph": null
+    }
+   },
    "teacher": "qwen_gridbook_e8-resident-graph",
    "student": "qwen_tessera_e8-resident-graph",
    "artifact_path": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-gridbook",
@@ -311,5 +487,8 @@
    "kl_confident": 0.0
   }
  ],
- "problems": []
+ "problems": [
+  "plugin K2 resident compiled: chain build vs fresh build: build identity not stamped for qwen_tessera_k2-resident-graph, qwen_tessera_k2-resident-graph-fresh -- this row claims the two arms are a 'distinct' build pair and nothing on disk supports that",
+  "plugin K2 resident compiled: build replayed by a second serve: build identity not stamped for qwen_tessera_k2-resident-graph, qwen_tessera_k2-resident-graph-rep -- this row claims the two arms are a 'same' build pair and nothing on disk supports that"
+ ]
 }
