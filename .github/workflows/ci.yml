@@ -23,9 +23,107 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
+      # Bytes-only tests: everything here collects and runs with no torch, no
+      # GPU and no model data.  The byte layer (``tessera.layout`` without its
+      # slicing half, plus container, manifest, grammar, planes and friends)
+      # is stdlib-only by design, and this job proves that structurally: the
+      # interpreter above has no torch to import.  Every exclusion below names
+      # its reason, so a test that stops needing torch becomes a deletion here
+      # rather than a silent absence.
       - name: bytes-only tests (no torch, no GPU, no model data)
-        run: PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider
-             --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py
+        run: |
+          PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider \
+            --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py \
+            --ignore=tests/test_audit_container_accounting.py \
+            --ignore=tests/test_audit_doc_claims.py \
+            --ignore=tests/test_audit_sec2.py \
+            --ignore=tests/test_bf16_route.py \
+            --ignore=tests/test_channel_plane.py \
+            --ignore=tests/test_compensate.py \
+            --ignore=tests/test_completion_rate_axis.py \
+            --ignore=tests/test_e4m3_ladder.py \
+            --ignore=tests/test_encoder_fit_caps.py \
+            --ignore=tests/test_export.py \
+            --ignore=tests/test_export_moe_layouts.py \
+            --ignore=tests/test_fused.py \
+            --ignore=tests/test_issue56_column_groups.py \
+            --ignore=tests/test_kernel_shape_guards.py \
+            --ignore=tests/test_kernel_window.py \
+            --ignore=tests/test_kernel_window_gemv.py \
+            --ignore=tests/test_lane_planes.py \
+            --ignore=tests/test_ldl_block_penalty.py \
+            --ignore=tests/test_ldlq_lut_plane.py \
+            --ignore=tests/test_ldlq_window.py \
+            --ignore=tests/test_loadcost_sweep.py \
+            --ignore=tests/test_lut_stop_dtype.py \
+            --ignore=tests/test_merge_guard.py \
+            --ignore=tests/test_payload_grid.py \
+            --ignore=tests/test_profile_reach.py \
+            --ignore=tests/test_rate_menu.py \
+            --ignore=tests/test_recipe_table.py \
+            --ignore=tests/test_refit_trailing.py \
+            --ignore=tests/test_rotate_checkpoint.py \
+            --ignore=tests/test_scale_refit.py \
+            --ignore=tests/test_serving_export_gate.py \
+            --ignore=tests/test_serving_ops_compile.py \
+            --ignore=tests/test_slice_unit.py \
+            --ignore=tests/test_span_and_lut.py \
+            --ignore=tests/test_stock.py \
+            --ignore=tests/test_window_body.py \
+            --ignore=tests/test_window_viterbi_fast.py \
+            --ignore=tests/test_wire.py \
+            --ignore=tests/test_audit_byte_baseline.py \
+            --ignore=tests/test_export_plan_cache.py \
+            --ignore=tests/test_menu_selection_requirement.py \
+            --ignore=tests/test_uniform_control.py \
+            --ignore=tests/test_plan_from_layer_config.py \
+            --deselect tests/test_audit_type_discipline.py::test_float_clip_exponent_is_refused_not_silently_degraded \
+            --deselect tests/test_serving_attested_wire.py::test_every_attested_rung_stamps_the_wire_it_was_cut_on \
+            --deselect tests/test_serving_attested_wire.py::test_the_validator_speaks_both_dialects_it_compares \
+            --deselect tests/test_serving_contract.py::test_each_cell_executes_the_contract_its_route_module_exposes \
+            --deselect tests/test_serving_native_extensions.py::test_the_glob_matches_the_library_torch_actually_writes \
+            --deselect tests/test_serving_native_extensions.py::test_the_fallback_the_table_publishes_is_the_one_the_route_takes
+          # Every --ignore above names a file that cannot collect without
+          # torch: thirty-eight import torch at module top; audit_byte_baseline,
+          # export_plan_cache, menu_selection_requirement and uniform_control
+          # fail one step further down, on a tessera module that needs torch
+          # (scale_channel, export, control); plan_from_layer_config loads an
+          # experiment harness that reads safetensors checkpoints.  Each
+          # --deselect is a single test that collects pure but spends torch at
+          # run time, except the type-discipline one, which spends numpy --
+          # its file's siblings still run.  A test that stops needing its
+          # dependency becomes a deleted flag here, not a silent absence.
+
+      # The byte layer must load with no torch in the process -- not just the
+      # tests above, but the modules themselves, including the test closure.
+      # ``tessera.slicing`` (the torch half of ``layout``) must stay
+      # unimported: reaching for a cutter name is what pulls torch in, and
+      # only reaching for one.
+      - name: byte-layer modules import without torch
+        run: |
+          PYTHONPATH=src:tests python - <<'PY'
+          import sys
+          import tessera.alphabet
+          import tessera.canonical
+          import tessera.container
+          import tessera.errors
+          import tessera.exact
+          import tessera.grammar
+          import tessera.layout
+          import tessera.manifest
+          import tessera.planes
+          import tessera.provenance
+          import tessera.trellis
+          import conftest
+          assert "torch" not in sys.modules, (
+              "the byte layer pulled torch in: "
+              + str([m for m in sys.modules if m.split(".")[0] == "torch"])
+          )
+          assert "tessera.slicing" not in sys.modules, (
+              "importing tessera.layout eagerly pulled its torch half in"
+          )
+          print("byte layer loads with no torch")
+          PY
 
       # S14's ledger invariant is absolute: no prohibited-source artifact
       # participates.  `provenance.py` ships the MECHANISM and the list is
