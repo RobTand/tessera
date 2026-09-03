@@ -304,7 +304,7 @@ def tuple_grid(base: PayloadGrid, k: int, partition: str = "coset") -> PayloadGr
 def lloyd_max_grid(
     size: int,
     sigma: float = 1.0,
-    iterations: int = 80,
+    iterations: int = 1000,
     samples: int = 1 << 15,
     name: "str | None" = None,
 ) -> PayloadGrid:
@@ -734,12 +734,19 @@ def build_forest(
 
 
 def _lloyd_levels(
-    source: "tuple[float, ...]", size: int, iterations: int = 40,
+    source: "tuple[float, ...]", size: int, iterations: int = 1000,
 ) -> "list[float]":
     """Lloyd-Max levels for an arbitrary SORTED source.
 
     Assignment is by bisection on the midpoints rather than a scan over levels,
     which is what makes this affordable to call once per forest build.
+
+    The descent ends at its fixed point: the update is a deterministic
+    function of the levels, so a pass that reproduces them exactly would
+    reproduce itself forever, and there is nothing left to descend.  The
+    equality test is exact, which needs no tolerance and guesses none.
+    ``iterations`` is only the safety backstop bounding the pass count; every
+    forest-build source tried reaches the fixed point in the low hundreds.
     """
     from bisect import bisect
 
@@ -750,11 +757,14 @@ def _lloyd_levels(
         buckets: "list[list[float]]" = [[] for _ in range(size)]
         for sample in source:
             buckets[bisect(cuts, sample)].append(sample)
-        levels = [
+        updated = [
             sum(bucket) / len(bucket) if bucket else levels[index]
             for index, bucket in enumerate(buckets)
         ]
-        levels.sort()
+        updated.sort()
+        if updated == levels:
+            break
+        levels = updated
     return levels
 
 
