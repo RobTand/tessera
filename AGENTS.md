@@ -128,6 +128,13 @@ person or agent — changing the code.
 
 - Targeted tests for every touched module, plus the byte-baseline audit if
   anything about rendering, planes or layout moved.
+- **Never compute the master baseline suite to prove your branch is clean.**
+  Run your *branch* suite once; for each test that fails there -- and only
+  those -- run that one file against a pristine master checkout. That answers
+  the only question a baseline was ever asked ("was this already broken?") in
+  seconds instead of a full suite. A delegating coordinator states the known
+  baseline in the brief; fifteen agents recomputing one number in parallel put
+  a 121 GB box into swap on 2026-09-03.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
