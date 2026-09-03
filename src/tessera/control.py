@@ -87,7 +87,6 @@ __all__ = [
     "SELECTION_SCHEMA",
     "PROMOTION_SCHEMA",
     "GLM_GATE",
-    "SERVED_KL_BAR",
     "ByteMatch",
     "PlannedUnit",
     "PlanePromotion",
@@ -917,11 +916,6 @@ PROMOTION_SCHEMA = "tessera.plane_promotion.v1"
 #: issue #65 pins it.  A caller that holds a tighter bar passes it in.
 GLM_GATE = 1.00
 
-#: The served leg's bar on the LUT plane: served KL better than 0.640 -- the
-#: same recipe, weights-only, same A4 scales, same teacher -- at matched
-#: bytes.  The 2026-09-02 receipt wrote it; issue #65 pins it.
-SERVED_KL_BAR = 0.640
-
 _PROMOTION_REASON = (
     "a per-plane default is set by a screen and a cross-check, and the screen "
     "that sets it must be won by the arm that ships: the 2026-09-02 receipt "
@@ -980,7 +974,7 @@ def assert_plane_promotion(
     unit_ratios: Sequence[float],
     glm_ratio: float,
     served_kl: "float | None",
-    served_bar: float = SERVED_KL_BAR,
+    served_bar: float,
     glm_bar: float = GLM_GATE,
     where: str = "the per-plane promotion",
 ) -> PlanePromotion:
@@ -995,6 +989,18 @@ def assert_plane_promotion(
     must beat its bar.  A served number for a different arm is not evidence
     for the promoted one, and no served number at all is a screen, not a
     result.
+
+    ``served_bar`` has no default on purpose.  It is *the incumbent's own
+    served KL at matched bytes* -- the same quantity ``unit_ratios`` is a
+    ratio against -- so it moves every time the incumbent does, and a
+    module-level constant would be the wrong number the moment one is
+    promoted.  The 2026-09-02 receipt's own bar, 0.640, is the *stock* wire's
+    served KL, which was the incumbent for "levers vs no levers" and is not
+    the incumbent for anything since: the LUT plane's incumbent is `h^1.0` at
+    0.5310.  Defaulting to 0.640 would have let a candidate serving 0.60 clear
+    this leg while regressing the arm it replaces by 13%, which is the same
+    class of error as the unit legs above and would have been made by the
+    gate written to refuse it.
     """
     if not isinstance(candidate, str) or not candidate:
         raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
