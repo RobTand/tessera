@@ -354,7 +354,7 @@ def _fp32_bound(tile_f32, scale, x):
 def test_streamed_prepares_the_gemv_holder_and_drops_the_torch_planes(monkeypatch):
     """An in-range unit (R = 4) holds the repacked wire, not the torch planes --
     and the lane's kernel decode is the verified tile, bit for bit."""
-    _g, _w, layer, _m, (values, scale) = _drive(monkeypatch, MODE_STREAMED, q256=1024)
+    _g, layer, _m, _x, (values, scale) = _drive(monkeypatch, MODE_STREAMED, q256=1024)
     assert layer.tessera_gemv is not None
     assert layer.tessera_prepared is None
     assert not hasattr(layer, "weight_bf16")
@@ -387,7 +387,7 @@ def test_an_out_of_range_unit_serves_through_torch_and_says_so(monkeypatch):
 @requires_cuda
 def test_resident_does_not_prepare_the_gemv(monkeypatch):
     """The resident lane already holds the tile; the GEMV is the streamed route's."""
-    _g, _w, layer, _m, _r = _drive(monkeypatch, MODE_RESIDENT, q256=1024)
+    _g, layer, _m, _x, _r = _drive(monkeypatch, MODE_RESIDENT, q256=1024)
     assert layer.tessera_gemv is None
     assert layer.tessera_prepared is None
     assert layer.weight_bf16.dtype == torch.bfloat16
@@ -509,8 +509,8 @@ def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monke
     recompile: no int() on the token dim in the trace."""
     from tessera.serving.telemetry import read_route
     torch._dynamo.reset()
-    _got, _want, layer, method, _ = _drive(monkeypatch, MODE_STREAMED, q256=1024,
-                                           m=2, seed=15)
+    _got, layer, method, _x, _r = _drive(monkeypatch, MODE_STREAMED, q256=1024,
+                                         m=2, seed=15)
     assert layer.tessera_gemv is not None
     compiled = torch.compile(lambda x: method.apply(layer, x))
 
