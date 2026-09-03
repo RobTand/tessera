@@ -105,18 +105,33 @@ input, no plane, no schedule and no `encoder_profile_id` input is touched.
 
 ## Test evidence
 
-Both suites run on **sparklina** (sparky was at 14 GB available of 121 with
-swap nearly full and load 60; per the coordinator's advisory a pytest suite is
-neither GPU-heavy compute nor a timing run, so it does not take `gpulock.sh`).
-Master tree at `82cdf51` and this branch's tree, same box, same venv, back to
-back, `pytest -q -p no:cacheprovider`, exit status read directly:
+Per the coordinator's revised procedure, no full master baseline is computed —
+the one I had started was **killed** when that instruction landed.  The branch
+suite is run once, and only files that fail on the branch get checked against
+pristine master.
 
-* master baseline: __BASELINE__
-* this branch: __AFTER__
+**Decisive files, all three green** (`pytest -q -p no:cacheprovider`,
+sparky, on a scratch copy whose only difference from the committed branch is
+two docstring/comment paragraphs — verified with `diff`, no code differs):
 
-Targeted evidence taken earlier on sparky, on a scratch copy:
-`tests/test_ldl_block_penalty.py` + `tests/test_compensate.py` 33 passed;
-`tests/test_ldlq_lut_plane.py` 38 passed.
+* `tests/test_ldl_block_penalty.py` + `tests/test_compensate.py` — **33 passed**
+  (25.75 s), including every new floor test and the CUDA stitching-path test.
+* `tests/test_ldlq_lut_plane.py` — **38 passed** (102.83 s), including the
+  identity factor at `ldl_block=4` on both bodies and the chooser-picked
+  sub-group block.
+
+**Full branch suite:** running on sparklina at
+`/home/rob/tmp/ts95/after_tree` (`PYTHONPATH=.../after_tree/src`), output at
+`/home/rob/tmp/ts95/after.txt`, exit status appended to
+`/home/rob/tmp/ts95/status2.txt`.  It had not finished at the time of writing:
+sparklina's load average was 66 with the whole fleet on it, and the run was
+still in its first few hundred tests.  **Not reported as green.**  Whoever
+picks this up should read those two files rather than re-running the suite.
+No failure had appeared in its output up to that point.
+
+Box choice: sparky was at 14 GB available of 121 with swap nearly full and
+load 60, so both suites went to sparklina; a pytest suite is neither GPU-heavy
+compute nor a timing run, so it does not take `gpulock.sh`.
 
 ## Off-task fixes
 
