@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 3,
+ "contract_version": 4,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -24,6 +24,7 @@
    "family": "TESSERA_E2M1_K2",
    "grid": "E2M1x2",
    "name_pattern": "TESSERA_E2M1_K2_R{k}",
+   "activation_contract": "e2m1_group16_ue4m3_static",
    "reader_rate_range_q256": [
     896,
     896
@@ -47,6 +48,7 @@
    "family": "TESSERA_E4M3_K1",
    "grid": "E4M3",
    "name_pattern": "TESSERA_E4M3_K1_R{k}",
+   "activation_contract": "fp8_per_token_dynamic",
    "reader_rate_range_q256": [
     256,
     2048
@@ -70,6 +72,7 @@
    "family": "TESSERA_BF16_K1",
    "grid": "BF16",
    "name_pattern": "TESSERA_BF16_K1_R{k}",
+   "activation_contract": "bf16_unquantized",
    "reader_rate_range_q256": [
     256,
     4096
@@ -235,6 +238,11 @@
   "units": []
  },
  "changelog": [
+  {
+   "contract_version": 4,
+   "date": "2026-09-02",
+   "change": "formats[] rows gain activation_contract: the A-side contract the route for that family EXECUTES, as a value a gate can read. It was published only on lane_eligibility cells, so a family with no cell yet -- exactly TESSERA_BF16_K1, whose v3 entry landed unattested -- published its activation contract in changelog PROSE and nowhere a gate could reach, which is the principle-14 failure that field exists to prevent: a consumer could not tell 'unquantised by design' from 'nobody filled it in'. PrismaQuant's lane preflight found it within the hour, deriving an executes glob for a family whose A side it could not price. The value is checked against tessera.serving.scheme.ROUTES[route]['activation_contract'] -- the dict the routes themselves dispatch on -- exactly as loader_axes is checked against ROUTE_TP_AXES, so the document and the code cannot drift; and every cell's activation_contract must equal its family's row, so the two places that carry it cannot disagree. The A side is a claim about execution, not about attestation: the row says what the decoder feeds the GEMM, the cell says a receipt covered it, and TESSERA_BF16_K1 now honestly publishes bf16_unquantized with attested_rungs_q256 still empty. ADDITIVE: a v3 reader ignores the new field, and the cells it already read are unchanged."
+  },
   {
    "contract_version": 3,
    "date": "2026-09-02",
