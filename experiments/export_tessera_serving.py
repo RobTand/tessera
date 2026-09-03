@@ -14,6 +14,19 @@ product an allocator targets.  The 16-bit route exists because the E4M3
 upward, so above ~6 bpp an 8-bit tile has nothing left to buy
 (``docs/measurements/tessera-bf16-route-2026-09-02.md``).
 
+TWO OF THE THREE HAVE A PLUGIN ROUTE.  ``TESSERA_BF16`` has a wire and no
+route (#9), so the plugin publishes no decode for it and ``--grid BF16``
+now needs ``--allow-unserveable``; what gets served from that arm is its
+``--stock-twin``, an ordinary BF16 checkpoint.
+
+WHAT THIS SCRIPT MAY WRITE IS WHAT THE PLUGIN PUBLISHES A DECODE FOR.
+``check_recipe`` gates the default ``(grid, q256)`` and every ``--plan-json``
+override against the packaged ``runtime_contract.json`` before the first
+encode, so a wire the pinned runtime cannot read is refused at export rather
+than at load (#41).  The encoder is untouched: ``wire_recipe`` still writes
+the sub-cap window body and every research encode of it still runs.  The
+override is ``--allow-unserveable``, and it is stamped into the manifest.
+
 The checkpoint declares ``quantization_config.quant_method: "tessera"``, which
 is what selects the plugin: there is no serve flag to enable it, only
 ``TESSERA_SERVE_MODE`` to declare the residency.
@@ -94,6 +107,8 @@ from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
+from tessera.serving.contract import load_serving_contract  # noqa: E402
+from tessera.serving.scheme import refuse_unserveable_wire  # noqa: E402
 from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 
@@ -180,18 +195,56 @@ def family_for(grid) -> str:
     return FP8 if grid.name == "E4M3" else NVFP4
 
 
-def check_recipe(grid, q256: int):
-    """The recipe the lane decodes for this family, or a refusal."""
+def check_recipe(grid, q256: int, where: "str | None" = None, *,
+                 allow_unserveable: bool = False, overrides: "list | None" = None):
+    """The recipe this plugin build publishes a decode for, or a refusal.
+
+    THE SEAM IS HERE, and it is the export-time half of the load-time gate.
+    ``refuse_unserveable_wire`` lives in ``tessera.serving.scheme`` -- beside
+    ``validate_tessera_scheme``, off the same ``ROUTES`` table and the same
+    packaged ``runtime_contract.json``, importable without torch -- so the
+    producer and the consumer read one authority rather than two opinions.
+    What lives HERE is only the call, and it is placed before the first encode:
+    the plan's default grid and every ``--plan-json`` override are checked at
+    argument time, which is every path into the encode loop.  A refusal that
+    arrives after the encode is not a refusal; it is a bill.
+
+    It refuses at the SERVING boundary and nowhere else.  ``wire_recipe`` and
+    ``encode_linear`` keep their full range: sub-cap ``E2M1x2`` is the rate
+    frontier's own body of work and every research encode of it still runs.
+    This script is the one that writes ``quant_method: "tessera"``, so this is
+    where the pinned runtime's reach becomes a constraint.
+
+    IT FAILS CLOSED WITH AN EXPLICIT, STAMPED OVERRIDE, which is the shape
+    principle 9 gives this carve-out: refuse unless the run carries an explicit
+    per-run override, and stamp it on the artifact.  ``--allow-unserveable``
+    is that override, and it exists because one real workflow needs it: the
+    16-bit route (``--grid BF16``) has a wire and no plugin route (#9), and the
+    reason to export it is the ``--stock-twin``, which vanilla vLLM serves with
+    no plugin at all.  Overridden refusals land verbatim in the manifest's
+    ``serving_gate`` block, so an artifact that cannot be served says so in its
+    own bytes rather than in a shell history.
+    """
     recipe = wire_recipe(grid, q256)
-    family = family_for(grid)
-    if family == NVFP4 and not (recipe.body.name == "TCQ" and recipe.span == 2 and recipe.scale_plane.name == "LUT"):
-        raise SystemExit(
-            f"the NVFP4 route decodes the span-2 TCQ body over the LUT plane today; "
-            f"{grid.name} q256={q256} is {recipe.body.name} span {recipe.span} over {recipe.scale_plane.name}")
-    if family in (FP8, BF16) and not (recipe.body.name == "WINDOW" and recipe.scale_plane.name == "CHANNEL"):
-        raise SystemExit(
-            f"the {family} route decodes the window body over the CHANNEL plane; "
-            f"{grid.name} q256={q256} is {recipe.body.name} over {recipe.scale_plane.name}")
+    target = where or f"--grid {grid.name} --q256 {q256}"
+    try:
+        refuse_unserveable_wire(grid.name, q256, recipe.body.name, recipe.scale_plane.name,
+                                span=recipe.span, target=target)
+    except ValueError as exc:
+        if not allow_unserveable:
+            raise SystemExit(
+                f"{exc}\n\nThis script writes a checkpoint that declares quant_method "
+                "\"tessera\", so a wire the plugin cannot decode is refused HERE rather than "
+                "hours later at load. Pass --allow-unserveable to write it anyway as a research "
+                "artifact: the refusal is then stamped verbatim into the manifest's "
+                "serving_gate block, and the checkpoint still will not load under this "
+                "plugin build.") from exc
+        print(f"  --allow-unserveable: writing a wire this plugin build cannot decode. {exc}",
+              flush=True)
+        if overrides is not None:
+            overrides.append({"target": target, "grid": grid.name, "q256": int(q256),
+                              "body": recipe.body.name, "plane": recipe.scale_plane.name,
+                              "refusal": str(exc)})
     return recipe
 
 
@@ -371,6 +424,12 @@ def main():
                          "diagonal h^1.0 on the LUT plane")
     ap.add_argument("--refit-reach-floor", action="store_true",
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
+    ap.add_argument("--allow-unserveable", action="store_true",
+                    help="write wires this plugin build publishes no decode for (see check_recipe). "
+                         "The checkpoint is then a RESEARCH artifact that will not load under this "
+                         "plugin; every refusal is stamped verbatim into the manifest's "
+                         "serving_gate block. Needed today by --grid BF16, whose wire has no "
+                         "plugin route and whose --stock-twin is what gets served.")
     args = ap.parse_args()
 
     # The activation-aware settings fire when, and only when, a Hessian is
@@ -389,7 +448,12 @@ def main():
         activation = ActivationSource.from_capture(args.hessian, **settings)
 
     default_grid = grid_for(args.grid)
-    check_recipe(default_grid, args.q256)
+    # Every path into the encode loop passes through here: a tensor takes the
+    # default (grid, q256) or a --plan-json override, and both are gated before
+    # a single unit is encoded.
+    gate_overrides: list = []
+    check_recipe(default_grid, args.q256,
+                 allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
     overrides = {}
     if args.plan_json:
         for name, spec in json.loads(args.plan_json.read_text()).items():
@@ -403,7 +467,8 @@ def main():
                 overrides[name] = None
             else:
                 g = grid_for(spec["grid"])
-                check_recipe(g, int(spec["q256"]))
+                check_recipe(g, int(spec["q256"]), where=name,
+                             allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
                 overrides[name] = (g, int(spec["q256"]))
     src_config = json.loads((args.src / "config.json").read_text())
     shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
@@ -733,6 +798,17 @@ def main():
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
+        # What the SERVING gate decided, in the artifact rather than in a shell
+        # history: which contract version bounded it, whether the run carried
+        # the override, and the verbatim refusal for every wire written anyway.
+        # An empty list is the shippable state; a non-empty one says this
+        # checkpoint will not load under the plugin build named here.
+        "serving_gate": {
+            "contract": "tessera/serving/runtime_contract.json",
+            "contract_version": load_serving_contract()["contract_version"],
+            "allow_unserveable": bool(args.allow_unserveable),
+            "unserveable_overrides": gate_overrides,
+        },
         "stock_twin": str(twin) if twin is not None else None,
         "totals": totals, "modules": module_records,
     }

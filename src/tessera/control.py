@@ -58,6 +58,7 @@ from .manifest import BodyKind, ScalePlaneKind
 __all__ = [
     "BF16",
     "CONTROL_SCHEMA",
+    "GRID_NAMES",
     "DEFAULT_MAX_RELATIVE_SLACK",
     "ByteMatch",
     "PlannedUnit",
@@ -98,6 +99,13 @@ _GRID_BY_NAME = {
     "BF16": BF16_GRID,
 }
 
+#: The exporter's ``--grid`` vocabulary, as one tuple rather than as a sentence
+#: in a refusal message.  A test enumerates it to cross every rung the wire can
+#: emit against the rungs the serving plugin publishes a decode for (#41), so a
+#: grid added here without a served range is a failing test rather than a
+#: checkpoint that refuses at load.
+GRID_NAMES = ("E2M1", "E2M1x2", "E4M3", "BF16")
+
 _BITS_CACHE: "dict[tuple, Fraction]" = {}
 
 
@@ -116,8 +124,8 @@ def grid_for_name(name: str) -> PayloadGrid:
         if suffix.isdigit() and int(suffix) >= 1:
             return tuple_grid(E2M1_GRID, int(suffix))
     raise GrammarError(
-        f"unknown grid {name!r}; one of E2M1, E2M1x2 (NVFP4 route), E4M3 "
-        "(FP8 route) or BF16 (the 16-bit route)"
+        f"unknown grid {name!r}; one of {', '.join(GRID_NAMES)} "
+        "(E2M1/E2M1x2 the NVFP4 route, E4M3 the FP8 route, BF16 the 16-bit route)"
     )
 
 

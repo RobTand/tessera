@@ -202,6 +202,14 @@ the six GLM units. A twin written in fp16 would be a tighter ceiling (W1's
 
 ## 5. Export
 
+> **Command correction, 2026-09-02 (#41).** The serving exporter now refuses a
+> wire this plugin build publishes no decode for, and `BF16` is one: no route in
+> `serving.scheme.ROUTES` holds the grid (#9). The arm below reproduces with
+> **`--allow-unserveable`**, which writes it as a research artifact and stamps
+> the refusal into the manifest's `serving_gate` block. Nothing about the bytes
+> or the twin changes; only the flag. See
+> `docs/tessera-serving-and-moe-contract.md` §11.
+
 `experiments/export_tessera_serving.py --grid BF16` writes modules declaring
 family `TESSERA_BF16`, and `--stock-twin DIR` writes, alongside it, a plain
 BF16 safetensors of the decoded tiles under the *source's own tensor names*,

@@ -52,6 +52,8 @@ __all__ = [
     "ROUTES",
     "GROUP_SIZE",
     "is_tessera_scheme",
+    "route_for_grid",
+    "refuse_unserveable_wire",
     "validate_tessera_scheme",
     "parse_tessera_blob_for_scheme",
 ]
@@ -83,9 +85,17 @@ STRUCTURES = (STRUCTURE_DENSE,)
 #: per-row fp32 scale comes from.  ``tile`` is the stock tensor the route
 #: decodes to, ``columns_multiple`` the K quantum its mainloop needs, and
 #: ``activation_contract`` what it executes on the A side.
+#:
+#: ``body``/``span`` name the trellis body the route's decoder reads, and they
+#: are the same fact its own module already refuses by name at load
+#: (``ops.prepare_tessera_module`` for NVFP4, ``fp8_route`` for FP8).  They are
+#: written here because the PRODUCER needs them too: ``refuse_unserveable_wire``
+#: is the export-time half of the same rule, and the exporter used to carry its
+#: own copy in an if/elif -- a third statement about one decoder.
 ROUTES: dict[str, dict] = {
     TESSERA_NVFP4: {
         "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
+        "body": "TCQ", "span": 2,
         "short": "NVFP4",
         "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
         "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
@@ -94,6 +104,7 @@ ROUTES: dict[str, dict] = {
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
+        "body": "WINDOW", "span": 1,
         "short": "FP8",
         "builder": ("tessera.serving.fp8_route", "build_tessera_fp8_method"),
         "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
@@ -167,6 +178,97 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
             "promise to understand, which is a wrong tensor rather than a refusal. Re-export at "
             "a rung inside the range, or publish a measured range that contains this one in "
             "runtime_contract.json.")
+
+
+def route_for_grid(grid: str) -> "str | None":
+    """The route in THIS build that holds ``grid``, or ``None``.
+
+    Derived from ``ROUTES`` rather than written a second time: a grid reaches a
+    route because that route lists it, and a build that gains a route gains its
+    grids here with no edit.  ``None`` is the honest answer for a grid Tessera
+    can ENCODE and this plugin has no decoder for -- ``BF16`` today, whose wire
+    exists (``tessera.bf16_route``) and whose route does not (#9).
+    """
+    for family, route in ROUTES.items():
+        if grid in route["grids"]:
+            return family
+    return None
+
+
+def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
+                            *, span: "int | None" = None, target: str) -> str:
+    """Refuse, AT EXPORT, a wire this plugin build publishes no decode for.
+
+    The producer's output range was wider than the consumer's input range, in
+    the one direction nothing checked (#41).  ``export.wire_recipe`` writes the
+    WINDOW body over LUT16 for every sub-cap ``E2M1x2`` unit -- the shipping
+    default below q256 896 -- and the contract publishes ``E2M1x2`` as the
+    single point 896, so a legal low-rate unit encoded fine and was refused at
+    LOAD, hours later, on the operator rather than at export on the exporter.
+
+    This is principle 9's one carve-out for a producer-side refusal: a MEASURED
+    platform fact -- the pinned runtime has no native route for these bytes --
+    and not a taste-based ban on a format.  It is therefore scoped to the
+    SERVING boundary: research and measurement encode sub-cap ``E2M1x2``
+    constantly (the whole rate-frontier body of work does) and are untouched.
+    ``encode_linear``, ``wire_recipe`` and the rung axis stay exactly as wide as
+    they were; what narrows is only what may be written into a checkpoint that
+    declares ``quant_method: "tessera"``.
+
+    Principle 14: every bound it reads comes from the packaged
+    ``runtime_contract.json`` (``contract.reader_rate_grid`` /
+    ``reader_accepts``) or from ``ROUTES``, the table the loader itself gates
+    on.  Nothing here hardcodes 896: the day a measured range widens, the file
+    changes and this gate follows it.
+
+    Returns the route the wire would take.  Raises ``ValueError`` naming the
+    unit, the ``(route, grid, q256)`` it asked for, the range this build
+    publishes, and the fact that the rung is still encodable for research.
+    """
+    from .contract import reader_accepts, reader_rate_grid
+
+    q256 = int(q256)
+    still_legal = (
+        "The rung is still legal to ENCODE -- this refusal is about what THIS plugin build can "
+        "decode, not about the wire -- so a research or measurement artifact at this rung is "
+        "unaffected; it just cannot be served by this build.")
+    route = route_for_grid(grid)
+    if route is None:
+        held = ", ".join(f"{f} holds {r['grids']}" for f, r in ROUTES.items())
+        raise ValueError(
+            f"tessera export {target!r}: no route in this plugin build holds grid {grid!r}, so "
+            f"there is nothing for a q256={q256} wire on it to be served by ({held}). "
+            + still_legal)
+    found = reader_rate_grid(route, grid)
+    if found is None:
+        raise ValueError(
+            f"tessera export {target!r}: {route} holds grid {grid!r}, but runtime_contract.json "
+            f"publishes no decodable rate range for the pair ({route}, {grid!r}) -- so this build "
+            f"promises no rung it can read there, and a q256={q256} wire would be refused at "
+            f"load. A range is published when a rung has been taken through the decoder and "
+            f"measured, never asserted here. " + still_legal)
+    family, low, high, step = found
+    if not reader_accepts(q256, low, high, step):
+        span_text = f"[{low}, {high}]" + (f" step {step}" if step != 1 else " (every integer)")
+        raise ValueError(
+            f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs this "
+            f"build's decoder reads for {family} -- runtime_contract.json publishes {span_text}. "
+            f"Writing it would produce a checkpoint {route} refuses at load. Re-export inside the "
+            f"range, or publish a measured range that contains this rung. " + still_legal)
+    expected_plane = ROUTES[route]["plane"]
+    if plane != expected_plane:
+        raise ValueError(
+            f"tessera export {target!r}: {route} decodes the {expected_plane} scale plane to its "
+            f"{ROUTES[route]['tile']} tile; this wire carries the {plane!r} plane, which has no "
+            f"{ROUTES[route]['short']} tile. " + still_legal)
+    expected_body, expected_span = ROUTES[route]["body"], ROUTES[route]["span"]
+    if body != expected_body or (span is not None and int(span) != expected_span):
+        carries = f"{body} span {span}" if span is not None else str(body)
+        raise ValueError(
+            f"tessera export {target!r}: {route} decodes the span-{expected_span} "
+            f"{expected_body} body; grid {grid!r} at q256={q256} resolves to {carries}, which "
+            f"this build has no in-forward decoder for. " + still_legal)
+    return route
 
 
 def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
