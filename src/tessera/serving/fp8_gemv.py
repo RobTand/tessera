@@ -54,6 +54,7 @@ __all__ = [
     "GEMV_MAX_M",
     "m_tile",
     "COMPILED_SYMBOL",
+    "STREAMED_APPLY_OP",
     "COMPILED_DECODER",
     "PreparedFp8Gemv",
     "prepare_fp8_gemv",
@@ -82,6 +83,14 @@ ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 #: is the pair, in one string each owned here and read by the census.
 COMPILED_SYMBOL = f"{GEMM_SYMBOL}+{GEMV_SYMBOL}"
 COMPILED_DECODER = f"{DECODER_TORCH_WINDOW}+{DECODER_WINDOW_GEMV}"
+
+#: The op the streamed GEMV lane dispatches through -- the node a compiled
+#: forward contains when the holder prepared, and nothing at all when it did
+#: not.  A constant because the compile-cache identity declares it
+#: (``compile_identity.note_traced_dispatch``) and the custom-op registration
+#: below reads it: the string a key is built from and the string torch
+#: dispatches on must be one string.
+STREAMED_APPLY_OP = "tessera::fp8_streamed_apply"
 
 #: Tensors per role in the flattened op arguments, in order.
 _ROLE_TENSORS = ("words", "items_1", "items_4", "perm", "table", "scale",
@@ -297,7 +306,7 @@ def _materialised_path(a_q: torch.Tensor, a_scale: torch.Tensor, scale_b: torch.
 # dim, no mutation of an aliased pool (the failure ``ops`` documents at
 # length), no data-pointer comparison.  The ``(tensors, meta)`` flattening is
 # the same shape as ``ops._nvfp4_decode_module``'s ``(planes, scalars)``.
-@torch.library.custom_op("tessera::fp8_streamed_apply", mutates_args=())
+@torch.library.custom_op(STREAMED_APPLY_OP, mutates_args=())
 def streamed_apply(a_q: torch.Tensor, a_scale: torch.Tensor, scale_b: torch.Tensor,
                    tensors: List[torch.Tensor], meta: List[int],
                    rows: int, cols: int) -> torch.Tensor:

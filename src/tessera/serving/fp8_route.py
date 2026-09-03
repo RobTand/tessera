@@ -51,6 +51,7 @@ from typing import Optional, Sequence
 import torch
 
 from . import fp8_gemv
+from .compile_identity import note_traced_dispatch
 from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate_tessera_scheme
@@ -323,6 +324,20 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     layer.tessera_decoder = DECODER_WINDOW_GEMV
             # streamed without a GEMV lane: the prepared planes stay; the tile
             # is decoded per forward
+            #
+            # THE LANE IS DECIDED HERE, AND THE LANE IS A DIFFERENT GRAPH
+            # (issue #91).  ``apply`` below branches on ``tessera_gemv``, a
+            # Python attribute Dynamo resolves at trace time, so this module's
+            # forward traces either one opaque ``tessera::fp8_streamed_apply``
+            # node or a window decode plus ``torch._scaled_mm`` -- over
+            # byte-identical sources, in one residency mode.  Declaring the op
+            # here folds it into vLLM's compile-cache key, which is still
+            # unhashed at weight load; without it the two graphs share one
+            # cached forward and the second serve replays the first's.
+            note_traced_dispatch(
+                prefix,
+                fp8_gemv.STREAMED_APPLY_OP
+                if getattr(layer, "tessera_gemv", None) is not None else GEMM_SYMBOL)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
