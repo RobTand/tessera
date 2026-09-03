@@ -322,19 +322,24 @@ def test_auto_stops_at_the_crossover_and_fused_asked_for_is_still_honoured(monke
 
     monkeypatch.setattr(window_viterbi, "viterbi_window_fused", counted)
 
+    # The window has to be wide enough to hold a rate one ABOVE the crossover,
+    # since ``rate <= window_bits`` is a grammar rule.  Derived, not written:
+    # the crossover moved from 7 to 11 when the R=8 spill was fixed, and a
+    # hardcoded L=10 turned that into two unrelated-looking test failures.
+    L = max(10, enc.WINDOW_FUSED_MAX_RATE + 1)
     torch.manual_seed(0)
     targets = torch.randn(64, 32, device="cuda")
-    vectors = torch.randn(1 << 10, 1, device="cuda")
+    vectors = torch.randn(1 << L, 1, device="cuda")
 
-    below = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE)
+    below = enc.viterbi_window(targets, vectors, L, enc.WINDOW_FUSED_MAX_RATE)
     assert calls == [enc.WINDOW_FUSED_MAX_RATE], "auto must take the fused path at the crossover"
 
     calls.clear()
-    above = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1)
+    above = enc.viterbi_window(targets, vectors, L, enc.WINDOW_FUSED_MAX_RATE + 1)
     assert calls == [], "auto must not take the fused path above the crossover"
 
     calls.clear()
-    asked = enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1,
+    asked = enc.viterbi_window(targets, vectors, L, enc.WINDOW_FUSED_MAX_RATE + 1,
                                impl="fused")
     assert calls == [enc.WINDOW_FUSED_MAX_RATE + 1], "an explicit fused request is honoured"
 
@@ -355,12 +360,133 @@ def test_the_crossover_is_movable_for_a_box_whose_crossover_differs(monkeypatch)
                         lambda *a, **k: (calls.append(a[3]), real(*a, **k))[1])
     monkeypatch.setenv("TESSERA_WINDOW_FUSED_MAX_RATE", str(enc.WINDOW_FUSED_MAX_RATE + 1))
 
+    L = max(10, enc.WINDOW_FUSED_MAX_RATE + 1)
     torch.manual_seed(0)
     targets = torch.randn(64, 32, device="cuda")
-    vectors = torch.randn(1 << 10, 1, device="cuda")
-    enc.viterbi_window(targets, vectors, 10, enc.WINDOW_FUSED_MAX_RATE + 1)
+    vectors = torch.randn(1 << L, 1, device="cuda")
+    enc.viterbi_window(targets, vectors, L, enc.WINDOW_FUSED_MAX_RATE + 1)
     assert calls == [enc.WINDOW_FUSED_MAX_RATE + 1]
 
     monkeypatch.setenv("TESSERA_WINDOW_FUSED_MAX_RATE", "eight")
     with pytest.raises(GrammarError):
-        enc.viterbi_window(targets, vectors, 10, 4)
+        enc.viterbi_window(targets, vectors, L, 4)
+
+
+# ---------------------------------------------------------------------------
+# The R = 8 cliff (issue #11).  It was not a slow kernel getting slower: the
+# class-minimum scan's flat unroll spilled 690 bytes per thread at R = 8 and
+# nothing at R <= 7, and 690 bytes of local memory inside a serial dependent
+# chain ran 9.1x SLOWER than the reference the kernel exists to replace.
+# ``window_viterbi._scan_unroll`` spells the scan as a runtime loop instead.
+#
+# These pin the mechanism, not the clock.  A wall-clock assertion would be a
+# flake on a shared box; a spill count is a property of the compiled kernel and
+# is the same number on an idle box and a loaded one.
+
+
+def _compiled_step(L, rate, arity=1):
+    """The ``_step`` kernel a real encode launches, after it has launched.
+
+    ``n_regs``/``n_spills`` are populated on the ``CompiledKernel`` the launch
+    returns, so this wraps the module's kernel handle rather than reaching into
+    a Triton cache -- what comes back is the kernel that ran, at the constexprs
+    it ran with.
+    """
+    from tessera import window_viterbi
+
+    class _Spy:
+        def __init__(self, jit):
+            self.jit, self.compiled = jit, []
+
+        def __getitem__(self, grid):
+            inner = self.jit[grid]
+
+            def call(*args, **kwargs):
+                out = inner(*args, **kwargs)
+                self.compiled.append(out)
+                return out
+
+            return call
+
+    torch.manual_seed(0)
+    targets = torch.randn(64, 64, device="cuda")
+    vectors = torch.randn(1 << L, arity, device="cuda")
+    step, tb, init, copy = window_viterbi._kernels()
+    spy = _Spy(step)
+    window_viterbi._CACHE["k"] = (spy, tb, init, copy)
+    try:
+        viterbi_window(targets, vectors, L, rate, impl="fused")
+    finally:
+        window_viterbi._CACHE["k"] = (step, tb, init, copy)
+    return spy.compiled[-1]
+
+
+@pytest.mark.parametrize("rate", [1, 2, 4, 6, 7, 8])
+def test_the_step_kernel_spills_at_no_rate_the_wire_can_carry(rate):
+    """R = 8 is not a corner: it is Tessera-8 and the whole BF16 route.
+
+    The wire's rate domain is 1..8 (code rate 1..8 over an 8-bit-native
+    alphabet), so a spill anywhere in it is a spill on artifacts that ship.
+    """
+    ck = _compiled_step(14, rate)
+    spills = getattr(ck, "n_spills", None)
+    assert spills == 0, (
+        f"the fused window step spills {spills} bytes at R={rate} (n_regs="
+        f"{getattr(ck, 'n_regs', None)}); a spill inside the class scan's dependent "
+        "chain is a local-memory round trip per predecessor, which is what made R=8 "
+        "9.1x slower than the reference")
+
+
+def test_auto_takes_the_fused_path_at_every_rate_the_wire_can_carry():
+    """The crossover must sit above the wire, not inside it.
+
+    It sat at 7 while the cliff was unfixed, which meant every Tessera-8 and
+    every BF16-route encode silently ran the reference.  With the scan fixed
+    the fused path is 8.1x faster than the reference at R = 8, so nothing in
+    the wire's domain should be dispatched away from it.
+    """
+    from tessera import encode as enc
+
+    assert enc.WINDOW_FUSED_MAX_RATE >= 8, (
+        f"WINDOW_FUSED_MAX_RATE={enc.WINDOW_FUSED_MAX_RATE} excludes rate 8, which the "
+        "wire carries")
+
+    from tessera import window_viterbi
+
+    calls = []
+    real = window_viterbi.viterbi_window_fused
+    torch.manual_seed(0)
+    targets = torch.randn(64, 32, device="cuda")
+    vectors = torch.randn(1 << 10, 1, device="cuda")
+    original = window_viterbi.viterbi_window_fused
+    window_viterbi.viterbi_window_fused = lambda *a, **k: (calls.append(a[3]), real(*a, **k))[1]
+    try:
+        for rate in (1, 2, 4, 6, 7, 8):
+            enc.viterbi_window(targets, vectors, 10, rate)
+    finally:
+        window_viterbi.viterbi_window_fused = original
+    assert calls == [1, 2, 4, 6, 7, 8], f"auto skipped the fused path at some rate: took {calls}"
+
+
+@pytest.mark.parametrize("rate", [4, 7, 8])
+def test_both_scan_spellings_are_one_answer(rate, monkeypatch):
+    """The unroll is a machine choice, so it may not move a single byte.
+
+    The flat unroll is still reachable through the environment; if the two
+    spellings ever disagreed on a state or on the ``sse`` float, the knob would
+    be a correctness knob and would have to go.
+    """
+    from tessera import window_viterbi
+
+    torch.manual_seed(0)
+    targets = torch.randn(96, 48, device="cuda")
+    vectors = torch.randn(1 << 12, 1, device="cuda")
+
+    monkeypatch.setenv(window_viterbi._SCAN_UNROLL_ENV, "0")
+    flat_states, flat_sse = viterbi_window(targets, vectors, 12, rate, impl="fused")
+    monkeypatch.delenv(window_viterbi._SCAN_UNROLL_ENV)
+    loop_states, loop_sse = viterbi_window(targets, vectors, 12, rate, impl="fused")
+    ref_states, ref_sse = viterbi_window(targets, vectors, 12, rate, impl="reference")
+
+    assert torch.equal(flat_states, loop_states) and flat_sse == loop_sse
+    assert torch.equal(loop_states, ref_states) and loop_sse == ref_sse

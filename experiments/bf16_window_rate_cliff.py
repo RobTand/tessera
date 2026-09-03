@@ -18,13 +18,21 @@ across impls at every rate):
     fused       0.753 s  1.474 s 65.004 s  44.09x   <- and 9.8x SLOWER at R=8
                                                        than the path it replaces
 
-So the cliff is the Triton step kernel's, not the encoder's.  See
-``docs/measurements/tessera-bf16-route-2026-09-02.md`` section 11: the
-*measured* fix is a dispatch rule in ``viterbi_window`` (prefer the reference
-above the crossover -- bit-exact, ~10x faster at R = 8 by the table above);
-the ``_tile`` change is a hypothesis and may spill worse, since widening
-``BL`` also widens the ``[BC, BL, FAN]`` branch-cost tile.  Neither is applied
-here: ``encode.py`` is shared with other branches mid-measurement.
+So the cliff is the Triton step kernel's, not the encoder's.
+
+**RESOLVED 2026-09-02** (issue #11,
+``docs/measurements/tessera-window-viterbi-scan-2026-09-02.md``).  The cause is
+a **register spill**: the class-minimum scan's flat unroll holds one live value
+per hoisted load, and at R = 8 that is 690 spilled bytes a thread where R = 7
+spills none -- read off the compiled kernel by
+``experiments/window_viterbi_r8_diagnosis.py``, which is the companion to this
+script and needs no timing.  The ``_tile`` hypothesis above is **refuted**: a
+wider ``BL`` puts MORE elements under each hoisted load.  Spelling the scan as
+a runtime loop takes R = 8 from 38.2 s to 0.49 s here, and is 1.07-3.2x faster
+at R = 4-7 as well, bit-exact at every rate.  The dispatch rule this script
+recommended shipped and has now been withdrawn (the crossover moved 7 -> 11).
+This script is kept as the cliff's original discriminator; run it with
+``TESSERA_WINDOW_SCAN_UNROLL=0`` to reproduce the numbers in its own table.
 
 Run::
 

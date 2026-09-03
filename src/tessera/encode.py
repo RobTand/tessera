@@ -482,23 +482,35 @@ def window_table(
     return table.to(device) if device is not None else table.clone()
 
 
-# The fused step kernel's class-minimum loop is fully unrolled to ``FAN - 1``
-# while its tile is ``2048 // FAN`` lanes wide, so the loop doubles per bit of
-# rate exactly as the tile falls under a warp -- and past a crossover the fast
-# path is slower than the reference it exists to replace.  Measured on one
-# tensor in one process, 1024x1024 at L = 14, identical states and identical
-# sse at every rate (docs/measurements/tessera-bf16-route-2026-09-02.md, 11):
+# Past a crossover the fast path is slower than the reference it exists to
+# replace, so ``auto`` stops taking it.  This is a measured crossover, not a
+# taste: either side of it the two machines return the same answer, and the
+# constant names the rate at which the faster machine stops being faster.
+# ``TESSERA_WINDOW_FUSED_MAX_RATE`` moves it for a box whose crossover sits
+# elsewhere.
 #
-#     R           6        7         8
-#     reference   6.548    6.544     6.631   s   (flat, as the algebra demands:
-#     fused       0.753    1.474    65.004   s    low * FAN = 2^L per step)
-#                 8.7x     4.4x      0.10x       fused vs reference
+# It was 7, and 7 was a workaround.  The kernel did not get gradually slower
+# with the rate: it fell off a cliff at R = 8 (65 s against the reference's
+# 6.6 s), and the constant was set below the cliff rather than the cliff being
+# fixed.  The cause was the class-minimum scan's flat unroll spilling 690
+# bytes per thread at R = 8 and nothing at R <= 7
+# (``window_viterbi._scan_unroll``, and the registers are read off the
+# compiled kernel by ``experiments/window_viterbi_r8_diagnosis.py``).  With
+# the scan spelled as a runtime loop the cliff is gone and every rate is
+# faster than it was, so the crossover moves to where the *algorithm* runs
+# out.  Re-measured on GB10, 1024x1024 at L = 14, one process, identical
+# states and identical sse at every rate
+# (``experiments/window_viterbi_scan_unroll_sweep.py``):
 #
-# so ``auto`` stops here.  This is a measured crossover, not a taste: either
-# side of it the two machines return the same answer, and the constant names
-# the rate at which the faster machine stops being faster.  ``TESSERA_WINDOW_
-# FUSED_MAX_RATE`` moves it for a box whose crossover sits elsewhere.
-WINDOW_FUSED_MAX_RATE = 7
+#     R            4      6      7      8      9     10     11     12
+#     reference  4.08   4.00   4.13   3.97   4.14   4.19   4.47   4.30  s
+#     fused      0.16   0.19   0.29   0.49   0.89   1.67   3.16   6.01  s
+#              25.3x  20.8x  14.2x   8.1x   4.6x   2.5x   1.4x  0.72x
+#
+# The wire's own rate domain is 1..8 (code rate 1..8 over an 8-bit-native
+# alphabet), so every rate an artifact can carry now runs fused; 11 is where
+# a caller reaching past the wire stops being served by the kernel.
+WINDOW_FUSED_MAX_RATE = 11
 
 
 def _fused_max_rate() -> int:

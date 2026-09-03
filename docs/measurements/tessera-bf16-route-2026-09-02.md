@@ -838,7 +838,17 @@ outlier work identified as the hard ones.
   unmeasured is the six-**expert** GLM R = 8 geomean and, with it, a
   BF16-vs-EXL3-K8 number on more than one tensor.
 - **R = 8 costs 40-80x R = 7, and the cost is the window kernel's, not the
-  family's.** On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
+  family's.** *(2026-09-02, later the same day: the attribution below stands
+  and the diagnosis under it is now COMPLETE, so read the two proposals at the
+  end of this bullet as history. The extra 20-40x this bullet could not account
+  for is a **register spill** -- 690 bytes per thread at R = 8 and none at
+  R <= 7, read off the compiled kernel -- and the fix is the class scan's
+  spelling, not `_tile`: the candidate `BL` widening is REFUTED, because a
+  wider tile puts more elements under each hoisted load. The dispatch rule this
+  bullet proposed shipped as `WINDOW_FUSED_MAX_RATE = 7` and has now been
+  withdrawn: the fused path is 8.1x faster than the reference at R = 8 and the
+  crossover moved to 11. See
+  `docs/measurements/tessera-window-viterbi-scan-2026-09-02.md`, issue #11.)* On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
   identical code path, both arms) the encode seconds run **2, 3, 5, 10** at
   R = 4, 5, 6, 7 -- a clean 2x per bit -- and then **424 (E4M3) / 639 (BF16)**
   at R = 8; on `gate_proj` the R = 8 pair is 820 / 740 against the same 10 s at

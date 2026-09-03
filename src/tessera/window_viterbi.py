@@ -30,10 +30,13 @@ takes four things the kernels do deliberately:
     never contracts.
   * that flag is *not sufficient* on Blackwell, and the multiply that feeds
     an add is written as inline asm.  See ``_mul``.
-  * the class minimum is an unrolled scan over the ``2^R`` predecessors with
-    a strict ``<``, so the winner is the *first* minimal index.  That is what
+  * the class minimum is a scan over the ``2^R`` predecessors with a strict
+    ``<``, so the winner is the *first* minimal index.  That is what
     ``torch.min(dim=0)`` returns (verified on this box for CPU and CUDA,
     including the all-``inf`` classes at step 0, where every candidate ties).
+    The scan is spelled as a runtime loop rather than a flat unroll
+    (``_scan_unroll``) -- which changes how many loads are in flight and not
+    the order the selects run in, so it changes the clock and not the bytes.
   * the branch cost is associated exactly as the reference associates it:
     ``(d*d) * w`` per coordinate, then the arity sum, then ``best + branch``.
 
@@ -145,7 +148,7 @@ def _build():
               cols, steps, step, low,
               ARITY: tl.constexpr, FAN: tl.constexpr, SIZE: tl.constexpr,
               HAS_W: tl.constexpr, BACK_U8: tl.constexpr,
-              BL: tl.constexpr, BC: tl.constexpr):
+              BL: tl.constexpr, BC: tl.constexpr, SCAN_UNROLL: tl.constexpr):
         """One trellis step over a tile of ``BL`` classes x ``BC`` columns.
 
         The front is ``[width, SIZE]`` -- a column's states contiguous -- so
@@ -167,14 +170,27 @@ def _build():
         base = ci[:, None] * SIZE                                # [BC, 1]
 
         # --- the class minimum over 2^R predecessors, first minimal index.
+        # Two spellings of ONE scan.  The body is the same six lines either
+        # way -- load, compare strictly, two selects -- so the answer is the
+        # same answer; what differs is how many of the ``FAN - 1`` loads the
+        # compiler is allowed to have in flight, which is the whole of the
+        # R = 8 cliff (see ``_scan_unroll``).
         best = tl.load(front_in + base + li[None, :], mask=m2, other=float("inf"))
         pred = tl.zeros([BC, BL], dtype=tl.int32)
-        for f in tl.static_range(1, FAN):
-            v = tl.load(front_in + base + (f * low + li)[None, :], mask=m2,
-                        other=float("inf"))
-            take = v < best
-            best = tl.where(take, v, best)
-            pred = tl.where(take, f, pred)
+        if SCAN_UNROLL <= 0:
+            for f in tl.static_range(1, FAN):
+                v = tl.load(front_in + base + (f * low + li)[None, :], mask=m2,
+                            other=float("inf"))
+                take = v < best
+                best = tl.where(take, v, best)
+                pred = tl.where(take, f, pred)
+        else:
+            for f in tl.range(1, FAN, loop_unroll_factor=SCAN_UNROLL):
+                v = tl.load(front_in + base + (f * low + li)[None, :], mask=m2,
+                            other=float("inf"))
+                take = v < best
+                best = tl.where(take, v, best)
+                pred = tl.where(take, f, pred)
 
         # --- the traceback: the winning predecessor's top R bits, per class.
         # int64: at L=16, R=4 the per-column traceback stride is steps*low =
@@ -235,6 +251,76 @@ def _kernels():
     return _CACHE["k"]
 
 
+#: How many iterations of the class scan the IR unroller may fuse.  ``<= 0``
+#: is ``tl.static_range`` -- the flat unroll every rate ran until 2026-09-02,
+#: kept reachable so the measurement below can be reproduced and so a box
+#: whose scheduler behaves differently can have it back.  A measurement knob,
+#: never a correctness one: both spellings run the same six-line body in the
+#: same order and return the same states and the same ``sse`` float, which
+#: ``test_window_viterbi_fast`` pins at every rate.
+_SCAN_UNROLL_ENV = "TESSERA_WINDOW_SCAN_UNROLL"
+
+
+def _scan_unroll(fan: int, bl: int, bc: int, warps: int) -> int:
+    """How the class-minimum scan is spelled, and the measurement that fixed it.
+
+    The class minimum is ``FAN - 1`` INDEPENDENT masked loads feeding a
+    dependent select chain.  Flat-unrolled, the scheduler hoists the loads to
+    cover their latency and holds one live value per hoisted load per element
+    a thread owns; the tile ``[BC, BL]`` shrinks as ``2048 / FAN`` while the
+    iteration count grows as ``FAN``, so the live set grows like ``FAN``
+    however the tile is sized.  Reading ``n_regs``/``n_spills`` off the
+    launched kernel on GB10 at L = 14
+    (``experiments/window_viterbi_r8_diagnosis.py``):
+
+        R          4     5     6     7      8
+        n_regs    40    64    96   128     40
+        n_spills   0     0     0     0    690    <- ptxas gives up and spills
+
+    690 bytes of local memory inside a serial chain is issue #11's cliff:
+    38.2 s against the reference's 4.2 s, where R = 7 took 0.93 s.  It is a
+    step function, not a trend -- R = 7's live set fits in 128 registers and
+    R = 8's does not fit in 255.  So the fix is not a wider tile (issue #11's
+    candidate, which puts MORE elements under each hoisted load): it is to
+    stop asking for the flat unroll.
+
+    A runtime ``tl.range`` holds one load live whatever ``FAN`` is, and the
+    sweep says it is not merely a rescue at R = 8 but faster at every rate --
+    the flat unroll was costing 2-3x wherever the live set was large enough to
+    crowd the file and not yet large enough to spill
+    (``experiments/window_viterbi_scan_unroll_sweep.py``, 1024x1024 at L = 14,
+    seconds, states and ``sse`` identical to the reference in every cell):
+
+        R              4      6      7       8
+        flat unroll  0.173  0.498  0.927  38.190
+        loop x32     0.161  0.193  0.290   0.490
+                     1.07x  2.58x  3.20x   77.9x
+
+    which is why the policy is uniform rather than a threshold: there is no
+    rate at which the flat unroll wins, so there is no rate that needs it.
+    It holds off L = 14 too -- L = 12 (R = 4/6/8: 2.7x / 2.2x / 74x) and
+    L = 16 (R = 4/8: 1.04x / 81x), and at arity 2 (R = 7/8: 1.54x / 2.4x).
+
+    THE FACTOR IS MEASURED, NOT DERIVED.  1, 2, 4, 8, 16, 32, 64 and 128 were
+    timed at R = 8 (1.49, 0.84, 0.55, 0.57, 0.50, 0.49, 0.48, 0.48 s) and
+    8/16/32 across R = 4..8; 32 is at or within 3% of the best in every cell
+    and spills nowhere, at L = 12, 14 and 16.  The tile arguments are taken
+    because a future ``_tile`` may make the right factor depend on them; today
+    it does not, and saying so is cheaper than pretending it does.
+    """
+    return 32
+
+
+def _resolve_scan_unroll(fan: int, bl: int, bc: int, warps: int) -> int:
+    raw = os.environ.get(_SCAN_UNROLL_ENV)
+    if raw is None or raw == "":
+        return _scan_unroll(fan, bl, bc, warps)
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{_SCAN_UNROLL_ENV}={raw!r} is not an integer unroll factor") from exc
+
+
 def _tile(fan: int, low: int, n: int):
     """Class/column tile and warp count: about two thousand elements a
     program, never wider than the problem.  Every choice writes identical
@@ -291,6 +377,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     nxt = torch.empty(width, size, dtype=torch.float32, device=device)
 
     bl, bc, warps = _tile(fan, low, width)
+    scan_unroll = _resolve_scan_unroll(fan, bl, bc, warps)
     grid = (triton.cdiv(low, bl), triton.cdiv(width, bc))
     bs = min(size, 1024)
     cgrid = (triton.cdiv(size, bs), triton.cdiv(width, max(1, 2048 // bs)))
@@ -319,7 +406,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
                 a, b, back, tuples, tuples if wrows is None else wrows, table,
                 ctl, cols, steps, step, low,
                 ARITY=arity, FAN=fan, SIZE=size, HAS_W=wrows is not None,
-                BACK_U8=back_u8, BL=bl, BC=bc,
+                BACK_U8=back_u8, BL=bl, BC=bc, SCAN_UNROLL=scan_unroll,
                 num_warps=warps, enable_fp_fusion=False,
             )
             a, b = b, a
