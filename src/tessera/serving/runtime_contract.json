@@ -1,6 +1,6 @@
 {
- "schema": "tessera.runtime-contract.v1",
- "contract_version": 7,
+  "schema": "tessera.runtime-contract.v1",
+  "contract_version": 8,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -53,10 +53,22 @@
    ],
    "reader_rate_step_q256": 1,
    "reader_rate_bound": "native_decoder_body_support_and_trellis_shaped_domain",
-   "attested_rungs_q256": [
-    896
-   ],
-   "native_terminal_q256": 1024,
+    "attested_rungs_q256": [
+     896
+    ],
+    "attested_wire": [
+     {
+      "q256": 896,
+      "body": "tcq",
+      "span": 2,
+      "plane": "lut16",
+      "window_bits": 0,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": null
+     }
+    ],
+    "native_terminal_q256": 1024,
    "residency_modes": [
     "resident",
     "streamed"
@@ -77,10 +89,22 @@
    ],
    "reader_rate_step_q256": 1,
    "reader_rate_bound": "trellis_shaped_domain",
-   "attested_rungs_q256": [
-    1024
-   ],
-   "native_terminal_q256": 2048,
+    "attested_rungs_q256": [
+     1024
+    ],
+    "attested_wire": [
+     {
+      "q256": 1024,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": null
+     }
+    ],
+    "native_terminal_q256": 2048,
    "residency_modes": [
     "resident",
     "streamed"
@@ -101,10 +125,22 @@
    ],
    "reader_rate_step_q256": 1,
    "reader_rate_bound": "trellis_shaped_domain",
-   "attested_rungs_q256": [
-    1792
-   ],
-   "native_terminal_q256": 4096,
+    "attested_rungs_q256": [
+     1792
+    ],
+    "attested_wire": [
+     {
+      "q256": 1792,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     }
+    ],
+    "native_terminal_q256": 4096,
    "residency_modes": [
     "resident",
     "streamed"
@@ -318,9 +354,14 @@
   "sidecar_q256_note": "How a fused module's rungs are spelled in the checkpoint's scheme. ONE field, one fact: config_groups[..].scheme.q256 is an integer when every role carries the same rung -- the spelling of every checkpoint written before contract v6, unchanged -- or a list of one integer per role, in the scheme's own roles order, when they differ. A plugin build older than v6 refuses the list form on sight ('q256 must be an integer'), which is the fail-closed direction; a v6 build reads both.",
   "mixed_rung_receipt_note": "Whether a CONTAINER RECEIPT covers a served module whose members took different rungs. It is false: the relaxation is proven by a decode identity (a real Qwen3-0.6B q/k/v at three rungs decodes element-for-element to what the three roles decode alone -- experiments/fused_member_rung_identity.py, tests/test_fused_member_rungs.py), not by a vLLM serve. This is the same distinction loader_axes draws against max_world_size: what the loader accepts is not what a receipt has covered. lane_eligibility is UNCHANGED by this version, so a mixed-rung module's cells resolve exactly as its members' rungs do individually -- unattested where no cell names the rung, which is the honest status and not a refusal."
  },
- "changelog": [
-  {
-   "contract_version": 7,
+  "changelog": [
+   {
+    "contract_version": 8,
+    "date": "2026-09-03",
+    "change": "attested_wire: the wire each attested rung was cut on, beside the rung (#55). attested_rungs_q256 says a receipt covered rung 1792; two encoders can write two byte strings at one rung -- the window table the decoder reads lives on the ALPHABET plane, so anything that moves the table moves the bytes while the rung, the route and the decoder stand still -- and until now the table said nothing about which bytes at 1792 (it mentioned no spread at all). So every formats[] row stamps one wire.recipes entry per attested rung -- the checkpoint's own vocabulary, in the spelling a checkpoint's config already records per rung -- and the validator refuses a stamp that forgets a rung, names one the family does not attest, or carries a body/span/plane the route does not decode (tessera.serving.scheme.ROUTES, the table the loader itself gates on). A producer preflight compares its checkpoint's wire.recipes entry at that rung against the stamp and tells 'attested on these bytes' from 'attested on this rung'. The three stamps are the pinned wire (sigma null everywhere): the v5 BF16 receipt (docs/measurements/tessera-bf16-route-served-2026-09-02.md) and the earlier E2M1x2/E4M3 receipts all predate any reach term, so until the served A/B at R=7 (the #48 gate) re-cuts the attestation on reach-term bytes, the honest reading of the BF16 row is 'route attested at 1792; KL receipt on the pinned wire', and now the table says so itself. The route attestation stands across window-table changes -- the decoder takes the table off the ALPHABET plane and the same kernel decodes the new bytes -- which is why this is a stamp and not a re-attestation. ADDITIVE for a reader that reads keys by name and ignores the ones it does not know: every key a v7 reader read is byte-identical. It is a version bump, not a silent addition, for a reader that validates: a document without attested_wire is refused, which is what contract_version 8 says -- exactly as v4 did for activation_contract."
+   },
+   {
+    "contract_version": 7,
    "date": "2026-09-03",
    "change": "native_extensions: the libraries this plugin LOADS into a serving process, beside the routes it EXECUTES. The contract published what runs and nothing about what is resident, so a consumer that keys reproducibility on extension residency -- PrismaQuant's serve fingerprint, whose section 7.4 records that a KL is bit-identical inside one container session and drifts 4-8x across them, keyed on whether a lane's .so was resident -- had to mirror the basename into its own pin file. That is principle 14 read backwards: a claim about THIS runtime, maintained in the other repository, where nothing here could refuse it on drift. Until 2026-09-03 that pattern named no Tessera extension at all, so a serve running Tessera's own native span-2 decode fingerprinted identically to a stock serve -- the one lane whose whole point is a custom decoder was the one lane the identical-residency rule could not see. One entry today: the span-2 NVFP4 decoder. It is published as a module_name_prefix and a filename_glob, NOT as a basename, because there is no exact basename to publish -- ext.py JIT-builds the module under a name carrying a build-identity hash, so the library on disk is tessera_nvfp4_<identity>.so and a consumer matching an exact stem would match nothing. match names the rule a gate applies ('basename_fnmatch'), because prose that said 'this is a prefix' is exactly the kind of field principle 14 refuses. The prefix is the constant _load_locked itself passes to cpp_extension.load, and the validator refuses any block that is not tessera.serving.ext.NATIVE_EXTENSIONS, so the table is DERIVED from the load path rather than typed beside it; tests/test_serving_native_extensions.py walks the import graph from tessera.serving and refuses any JIT load site reachable from it that this table does not declare, which is what keeps the list from going quietly short. when_unavailable replaces the 'optional: true' the issue proposed, because optional conflates two facts and answers the wrong one: what a fingerprint needs is not 'absence is survivable' but WHICH serve ran instead, and that differs by residency -- resident substitutes tessera.stock.materialize_stock and stamps decoder 'torch_materialize_stock' on every route record, streamed refuses outright because that path decodes inside a traced forward. So an absent .so with a streamed route record is an impossible pair, which is a stronger check than a boolean allows. The routes gate on this block rather than on a mode comparison of their own (nvfp4_route -> ext.substitutes_when_unavailable), the same way loader_axes is checked against ROUTE_TP_AXES. tessera_window_gemv stays OUT: the criterion is that the library can be resident in a SERVING process, and nothing reachable from tessera.serving loads it -- verified by the import walk, not by reading, so the day a route wires the window GEMV in, the table goes red. ADDITIVE for a reader: a v5 or v6 reader ignores a new top-level key, and no value it already read has moved -- verified, not asserted: PrismaQuant's own contract_answer() over the v6 and v7 payloads is byte-identical."
   },
