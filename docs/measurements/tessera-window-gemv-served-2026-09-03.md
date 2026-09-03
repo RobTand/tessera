@@ -157,9 +157,15 @@ the lane, which is the point (§5, #88).
 
 Read down the decode column, four facts:
 
-1. **The GEMV runs, and the census names it.** `armA/streamed/eager` decode is the
-   only cell reporting the symbol `tessera_window_gemv::gemv` — on all 112
-   modules. That is the observation #10 never took.
+1. **The GEMV runs, at the shape it exists for, and the census names it.**
+   `armA/streamed/eager` decode is the only cell reporting the symbol
+   `tessera_window_gemv::gemv` — on all 112 modules, `state: served`, at shapes
+   `M1:N1024:K2048`, `M1:N1024:K3072`, `M1:N4096:K1024`, `M1:N6144:K1024`. **M = 1.**
+   The same serve's prefill regime records `torch._scaled_mm` at `M64:...`. That
+   is the observation #10 never took, and the shapes are what make it more than a
+   label: the kernel was entered in the regime it was written for, not merely
+   selected. (It is also, read the other way, why §3's KL says nothing about the
+   kernel — the KL's scored forwards are M = 512.)
 2. **Its prefill is not the GEMV, by the lane's own rule.** `armA/streamed/eager`
    prefill reports `(_scaled_mm, window_gemv)`: the lane *prepared* (hence its
    decoder), the many-row forward went to the materialised GEMM (hence
