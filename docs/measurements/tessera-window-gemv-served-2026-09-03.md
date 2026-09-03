@@ -1,11 +1,17 @@
 # The window GEMV, served: census, two-arm KL and latency (2026-09-03)
 
-> **STATUS: IN PROGRESS.** Sections 1, 2 (method), 5 and 6 are established and
-> final. The numbers in §2 (counts), §3 (KL) and §4 (latency) are **pending** —
-> the campaign was queued behind six other agents' jobs on sparky's GPU lock at
-> the time of writing. Every pending number is marked `PENDING`; nothing in this
-> document is a placeholder standing in for a measurement that was taken and
-> disliked.
+> **STATUS: the census and the KL are measured and final. The latency is
+> deferred.** §2 (census) is complete: six serves, all four mode x regime
+> combinations. §3 (KL) is complete for three of four arms and the eager A/B --
+> the comparison #83 asked for -- is decisive; the fourth arm is re-queued and is
+> marked `PENDING`. §4 (latency) is **deferred to a quiet box** and states why:
+> sparky ran at load 33-68 on 20 CPUs and went into swap, the two arms taken
+> differ by 8x where the kernel difference is at most ~2x, and no latency claim is
+> made from them. One deliverable is **missing rather than deferred** and §4 says
+> so plainly: no profile trace was captured for any arm, because the harness
+> enabled the profiler with an environment variable vLLM 0.28 does not have.
+> Nothing in this document is a placeholder standing in for a measurement that was
+> taken and disliked.
 
 **What this is.** Issue #10 wired `fp8_gemv.streamed_apply` into the streamed
 `TESSERA_FP8` route and proved it bit-exact against the torch decoder at load.
@@ -174,7 +180,59 @@ one commit so a reader does not have to check that two commits describe the same
 
 ## 3. The served KL, two arms, byte-identical bytes
 
-PENDING. Method: `kl_tool.py dump` against each served arm, then `compare`
+**Result: the window-GEMV lane is arithmetically identical to the path it
+replaces, and the evidence is stronger than the KL.** On the eager pair the two
+arms' served logprob dumps are **bit-identical** -- 0 of 8,380,400 values differ,
+in both the top-K token ids and their logprobs:
+
+| eager pair | arrays | values compared | differing | max abs delta |
+|---|---|---|---|---|
+| armA vs armB, `ids` (int32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
+| armA vs armB, `lps` (float32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
+
+That is the headline rather than the KL agreement, because it is a much harder
+claim. `ids` is the **top-1024 set plus the prompt token at each of 4088 scored
+positions**, so its ordering tracks the logits directly: any numerical difference
+between the two paths would have reordered ties and shown up as differing ids
+long before it moved a mean. It did not. The two arms produced the same logits,
+value for value.
+
+This is not a vacuous comparison of an arm against itself. The census (section 2)
+records a different decoder in each arm, and the serve logs record the GEMV lane
+refusing **112 of 112** modules in arm B and **0 of 112** in arm A. The routes
+genuinely differed; the arithmetic did not.
+
+### The KL, for completeness
+
+Against the image-matched teacher, all four figures agreeing to full float
+precision on the eager pair, as bit-identical dumps require:
+
+| arm | regime | KL `all` mean | `confident` mean | p99 | max |
+|---|---|---|---|---|---|
+| armA (GEMV) | eager | 0.46599389451679424 | 0.3845310749133978 | 2.8054884270366567 | 7.624929 |
+| armB (torch) | eager | 0.46599389451679424 | 0.3845310749133978 | 2.8054884270366567 | 7.624929 |
+| armA (GEMV) | compiled | 0.4668730966935983 | 0.3867850368604267 | 2.7715860806290746 | -- |
+| armB (torch) | compiled | PENDING (lost to the startup memory race; re-queued) | | | |
+
+Arm A vs arm B, eager: **delta +0.000000, ratio 1.0000x, on the mean and on the
+tail alike.** The tail is reported beside the mean because a lower mean KL can
+hide a heavier tail, and for a lane meant to be arithmetically equivalent to what
+it replaces, tail movement would have been the interesting result. There is none.
+
+**A note on the eager/compiled difference, which is not this lane's.** armA
+compiled reads 0.46687 against armA eager's 0.46599. The two dumps differ almost
+everywhere (only 71,564 of 4,190,200 ids equal), which is what a compiled forward
+reordering a top-1024 set looks like and *not* a corpus mismatch -- both dumps
+carry the same corpus `source_sha256` and the same 4088 scored positions. This
+divergence is present in the arm that uses the GEMV lane and belongs to the
+eager-vs-compiled question tracked separately in #16; it is reported here and not
+chased. Whether armB compiled lands on 0.46687 (lane-neutral under compile too)
+or on 0.46599 (a GEMV-specific interaction) is the one open question this
+measurement leaves, and it is what the re-queued arm answers.
+
+### Method
+
+Method: `kl_tool.py dump` against each served arm, then `compare`
 against the image-matched teacher `qwen_teacher_bf16_v028.json.npz`, corpus
 contract `corpus_qwen_n8_s512.json` (**Qwen-tokenized** — the default contract is
 GLM-tokenized and `kl_tool` refuses the mismatch; the refusal was not worked
@@ -185,12 +243,81 @@ the interesting result rather than the mean.
 
 ## 4. The latency
 
-PENDING, and **scoped down deliberately**: the four streamed arms
-(armA/armB x eager/compiled) are taken, the two armA-resident arms are not.
-Resident never reaches the GEMV lane, so those two serves would have bought
-context rather than evidence, at ~30 minutes of a box five other agents were
-queued for. The streamed arms are kept because they carry the **profile**, and
-which kernels launched is not load-sensitive even when the timing is.
+**Result: DEFERRED to a quiet box, and no latency claim is made from this
+campaign.** Two arms were taken before the box degraded; both are reported below,
+both are labelled contended, and **no A-vs-B ratio is computed from them.** This
+is the honest outcome rather than a missing one: the numbers exist, they are
+recorded, and they are not evidence about the lane.
+
+### What was measured, and why it is not a result
+
+| arm | regime | TTFT | TPOT (engine) | ITL | decode wall/req | peak load1/cpu | swap in use |
+|---|---|---|---|---|---|---|---|
+| armA (GEMV) | eager | 70.34 ms | 43.541 ms (n=12) | 43.541 ms (n=1524) | 5,602 ms | 3.413 | moderate |
+| armB (torch) | eager | 541.69 ms | 349.367 ms (n=12) | 349.367 ms (n=1524) | 44,913 ms | 2.49 | 13 of 15 GiB |
+
+**The two arms differ by 8x. The kernel difference cannot be 8x** -- #10's
+in-process bench puts it at 1.28-2.08x at M=1 -- so what this table measures is
+the box, not the lane. Reporting `43.5 ms vs 349.4 ms` as a lane result would
+have been the single worst error available in this task.
+
+**And the load average alone would have pointed the wrong way.** armB, the arm
+that was 8x slower, had the *lower* peak load1/cpu (2.49 vs 3.413). The run queue
+was not what slowed it: armB ran while 13 of 15 GiB of swap were in use and
+sparky was thrashing, after thirteen agents started full test suites at once.
+A reader given only the load numbers would have concluded the slower arm was the
+less contended one. That is why the receipt now records available memory and swap
+beside the load average, and why `contended` is true on either leg (`c6d6064`).
+
+### The box-level instrument agrees, and it is the one that settles it
+
+`nvidia_smi.gpu_power_draw`, node sparky, NVIDIA GB10, over each receipt's own
+`marks_utc` window:
+
+| arm | window (UTC) | GPU power | fraction of ~140 W envelope |
+|---|---|---|---|
+| armA/eager | 23:18:31-23:19:39 | 17-31 W | 12-22% |
+| armB/eager | 23:23:31-23:32:33 | ~44 W sustained | ~31% |
+| idle baseline | 21:54-22:24 | 17.0 W median | 12% |
+
+**Neither arm was GPU-bound.** armA sat within a few watts of the 17 W idle floor
+for its whole window -- the GPU was very nearly doing nothing while the client saw
+5.6 s per request. This is exactly the reading principle 15 exists for: on GB10
+`gpu_utilization` would have reported a resident kernel and said nothing, while
+power against the envelope says the work was not on the GPU at all. Both arms'
+time went to host contention.
+
+Work per joule is deliberately **not** ranked here. Ranking it would require the
+work to be the thing consuming the joules, and it demonstrably was not.
+
+### The profile is missing, and that is a defect in this harness
+
+**No trace was captured for any arm.** The serve was asked for profiling with
+`-e VLLM_TORCH_PROFILER_DIR=/prof`, and **vLLM 0.28 has no such variable** --
+profiling moved onto a config object reached from the command line as one json
+argument, `--profiler-config`. The engine did not fail; it warned
+(`Unknown vLLM environment variable detected: VLLM_TORCH_PROFILER_DIR`) and
+served without profiling, so `/start_profile` was never registered and every
+driver POST returned 404 into a receipt field. Fixed in `dd42ff4`, verified
+against the image (`arg_utils.py:1652` adds the flag;
+`entrypoints/serve/profile/api_router.py:21` is the route it enables) rather than
+guessed, and an empty trace directory is now said out loud at the end of a run.
+
+**This costs a stated deliverable and the doc says so rather than working
+around it.** A compiled route record stamps the combined `(symbol, decoder)` pair
+from the trace whatever runs underneath it, so the compiled census proves
+**dispatch, not launch**. A kernel name in a chrome trace is the only thing that
+proves the GEMV kernel actually ran under a compiled forward, and this campaign
+has none. Section 2's compiled verdicts should be read with that limit attached.
+The deferred quiet-box run carries the fix and will produce the trace.
+
+### Scope, stated
+
+The two armA-resident arms were not taken. Resident never reaches the GEMV lane,
+so those serves would have bought context rather than evidence, at ~30 minutes of
+a box nine other agents were queued for. armB's latency arms were dropped once
+the deferral was decided: they exist only for an A-vs-B ratio this report does not
+compute, and the census plus the 112 refusals already establish armB's route.
 
 Method, and why it is not #10's bench: every number is read from the
 **serving process**. `vllm:time_to_first_token_seconds` and
