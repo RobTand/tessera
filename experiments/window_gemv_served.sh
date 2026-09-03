@@ -117,6 +117,35 @@ print('verdict', d['verdict'])
 sys.exit(0 if d['verdict']=='served' else 1)"
 }
 
+# RETRY THE STARTUP MEMORY-PROFILING RACE, and only that.
+#
+# vLLM asserts during startup that free GPU memory does not RISE while it
+# profiles ("Initial free memory 78.06 GiB, current free memory 79.55 GiB"),
+# and it dies if another process releases memory in that window.  Holding the
+# box lock does not prevent this: several agents run GPU work on this box
+# outside the lock, so the lock serialises the jobs that take it and nothing
+# else.  This cost two arms of the first #83 campaign -- one KL and one latency
+# -- both of them simply unlucky in their timing rather than broken.
+#
+# It is retried because it is a RACE, not a result: the same arm succeeds on the
+# next attempt.  Nothing else is retried, because anything else that kills a
+# serve is a finding and must be seen.
+MEM_RACE='Error in memory profiling'
+retry_mem_race() {  # log-glob attempts -- command...
+  local glob=$1 attempts=$2; shift 3
+  local i
+  for i in $(seq 1 "$attempts"); do
+    "$@" && return 0
+    if ! grep -lq "$MEM_RACE" $glob 2>/dev/null; then
+      echo "  failed, and NOT the memory-profiling race -- not retrying"; return 1
+    fi
+    echo "  attempt $i lost the startup memory-profiling race (another agent's job"
+    echo "  freed GPU memory mid-startup); retrying in 30s"
+    sleep 30
+  done
+  return 1
+}
+
 kl_one() {  # arm mode regime
   local arm=$1 mode=$2 regime=$3
   local name=ts83-$arm-$mode-$regime
@@ -124,11 +153,15 @@ kl_one() {  # arm mode regime
   echo "=== KL $arm/$mode/$regime  $(date -Is)"
   local extra=""
   [ "$arm" = armB ] && extra="$ARMB_EXTRA"
-  EXT=$EXT_A VLLM_CACHE=$RUNS/vllm-cache-$arm \
-    TESSERA_LANE_EAGER=$eager TESSERA_KL_NAME=tessera-ts83-$name \
-    TESSERA_LANE_DOCKER_EXTRA="$extra" \
-    "$GPULOCK" experiments/tessera_plugin_served.sh "$RUNS/$arm" "$name" "$mode" \
-    2>&1 | tee "$RUNS/kl-$name.log"
+  _kl_attempt() {
+    EXT=$EXT_A VLLM_CACHE=$RUNS/vllm-cache-$arm \
+      TESSERA_LANE_EAGER=$eager TESSERA_KL_NAME=tessera-ts83-$name \
+      TESSERA_LANE_DOCKER_EXTRA="$extra" \
+      "$GPULOCK" experiments/tessera_plugin_served.sh "$RUNS/$arm" "$name" "$mode" \
+      2>&1 | tee "$RUNS/kl-$name.log"
+    [ -f "$RUNS/kl_tessera_$name.json" ]
+  }
+  retry_mem_race "$RUNS/serve_qwen_tessera_ts83-$name.log $RUNS/kl-$name.log" 3 -- _kl_attempt
 }
 
 if [ "$STAGE" = census ] || [ "$STAGE" = all ]; then
