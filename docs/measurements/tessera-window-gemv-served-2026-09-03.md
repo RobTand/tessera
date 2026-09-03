@@ -334,7 +334,13 @@ recorded, and they are not evidence about the lane.
 | armA (GEMV) | eager | 70.34 ms | 43.541 ms (n=12) | 43.541 ms (n=1524) | 5,602 ms | 3.413 | not in receipt |
 | armB (torch) | eager | 541.69 ms | 349.367 ms (n=12) | 349.367 ms (n=1524) | 44,913 ms | 2.49 | not in receipt |
 
-Both receipts predate `c6d6064`, so **neither carries a swap reading** and the
+A third receipt, `latency-armA-streamed-compiled.json`, exists because that arm
+was re-run for its **trace**; it was taken at load 48-56 and its timings are not
+reported here for the same reason the two above carry no ratio. Kernel names are
+not load-sensitive; timings are.
+
+Both receipts in the table predate `c6d6064`, so **neither carries a swap
+reading** and the
 column says so rather than inventing one. The swap figures quoted below are
 box-level, from `free -g` on sparky at 19:30 and 19:41 local (13 of 15 GiB, then
 10 of 15), which brackets armB's window (23:23-23:32 UTC = 19:23-19:32 local) and
@@ -523,6 +529,9 @@ Under `/home/rob/tessera-runs/ts83/`:
   `prof-<arm>-<mode>-<regime>/` directories exist and are **empty**: no trace was
   captured, for the reason given in §4. They are left in place rather than
   deleted so the gap is visible where a reader goes looking for it.
+- `prof-armA-streamed-compiled/` — the one non-empty trace directory
+  (`rank0.*.pt.trace.json.gz` is the engine-core trace with the kernel names),
+  summarised into `trace-armA-streamed-compiled.json`.
 - `power-baseline.json` — the idle series above.
 - `campaign.log`, `gapfill.log` — the run logs, including every arm that failed
   and why.
