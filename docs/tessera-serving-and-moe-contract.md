@@ -436,6 +436,20 @@ Three faults, all at plan time, all silent (fixed; see
   classifier decides the plan, `ignored_modules` decides the ignore list, and
   only the first is still this section's.
 
+  Making `.weight` optional **widens** the classifier, and the widened edge is
+  pinned rather than assumed. `<moe>.experts.<projection>` with no suffix is
+  admitted *before* the suffix test, so its rank is no longer checked by the
+  `len(shape) >= 3` branch; "nothing else in a decoder layer is called
+  `experts.<projection>`" would be an assertion about every checkpoint yet to
+  exist, and that is the same shape as the rank assumption the third fault
+  above already retired. A bare name of rank < 3 therefore **refuses at plan
+  time**, by name and rank: a packed stack stacks experts, so it carries an
+  expert axis, and both available guesses are wrong in the expensive direction
+  (as an expert stack it leaves the module BF16 and named in `ignore`; as a
+  dense Linear it declares a module vLLM never builds). No checkpoint on this
+  box triggers it — it is the guard that keeps the *next* layout from being
+  filed silently.
+
 Measured after the fix: **49 dense Linears (was 0), 2592 routed expert leaves
 across layers [1, 2, 3], 0 packed stacks** on GLM-5.3-Flash-4layer; and on
 `/mnt/shared/models/Qwen3.8-Flash-Next`, **96 packed stacks over 48 FusedMoE

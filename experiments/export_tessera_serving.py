@@ -479,6 +479,25 @@ def quantizable(src: Path):
                     continue
                 shape = tuple(handle.get_slice(name).get_shape())
                 if bare_packed:
+                    # RANK IS STILL ASKED, and a bare name that fails it is
+                    # REFUSED rather than filed.  "Nothing else in a decoder
+                    # layer is called ``experts.<projection>``" would be an
+                    # assertion about every checkpoint yet to exist, and that
+                    # is the same shape as the ``len(shape) >= 3`` rule §9.2
+                    # already retired once.  A packed stack stacks experts, so
+                    # it has an expert axis; a two-axis tensor under this name
+                    # is something this exporter has not been shown, and the
+                    # honest answer is to say so before the encode rather than
+                    # to file it in whichever bucket happens to be nearest.
+                    if len(shape) < 3:
+                        raise SystemExit(
+                            f"{name} {list(shape)} is named like a packed expert stack "
+                            f"(``<moe>.experts.<projection>``) but has rank {len(shape)}, and a "
+                            "packed stack carries an expert axis. Refusing rather than guessing: "
+                            "filing it as an expert stack would leave the module BF16 and named "
+                            "in ignore, and filing it as a dense Linear would declare a module "
+                            "vLLM never builds -- and neither is a fact about this tensor. Teach "
+                            "the exporter this architecture's layout explicitly.")
                     expert_shapes[name] = shape
                 elif len(shape) >= 3:
                     # Only an expert stack by NAME; anything else of rank 3 is

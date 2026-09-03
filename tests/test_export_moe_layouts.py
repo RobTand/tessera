@@ -508,3 +508,35 @@ def test_the_real_packed_source_is_classified_as_experts():
     modules = {m for n, shape in packed.items() for m in export.ignored_modules(n, shape)}
     assert len(modules) == 48, sorted(modules)[:4]
     assert all(m.endswith(".mlp.experts") for m in modules), sorted(modules)[:4]
+
+
+def test_a_rank_2_bare_packed_name_is_refused_not_guessed(tmp_path):
+    """Admitting the bare spelling widened the classifier; this pins the edge.
+
+    ``quantizable`` now reads ``<moe>.experts.<projection>`` with no
+    ``.weight`` (through the ``.weight``-spelled probe), and the only
+    checkpoint layout known to write that spelling writes a 3-D stack.  A 2-D tensor under the same name is a layout this
+    exporter has not been shown, and both available answers are wrong in the
+    expensive direction: filed as an expert stack it leaves the module BF16
+    and named in ``ignore``; filed as a dense Linear it puts a module in
+    ``config_groups`` that vLLM never builds, which the plugin refuses at
+    LOAD -- after the encode.  So it refuses, at plan time, by name and rank.
+
+    This is the same failure the ``len(shape) >= 3`` rule already made once
+    (a ``k_conv1d.weight`` called an expert stack, docstring item 4); the
+    lesson is not to trade one silent rank assumption for another.
+    """
+    t = _unpacked_checkpoint()
+    for e in range(EXPERTS):
+        for proj in ("gate_proj", "up_proj", "down_proj"):
+            t.pop(f"model.language_model.layers.1.mlp.experts.{e}.{proj}.weight")
+    bare = "model.language_model.layers.1.mlp.experts.gate_up_proj"
+    t[bare] = torch.zeros(2 * PACKED_INTER, HIDDEN)     # rank 2, bare name
+    src = _write(tmp_path, t, _config(inter=PACKED_INTER))
+
+    with pytest.raises(SystemExit) as caught:
+        export.quantizable(src)
+
+    message = str(caught.value)
+    assert bare in message, message
+    assert "rank 2" in message, message
