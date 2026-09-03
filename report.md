@@ -85,6 +85,30 @@ readings are reported separately and never averaged.
   on a box with 78 GB available, so the risk it guards against is not the risk
   present here. The matched-pair timing measurement, where quiet conditions
   are the measurement, is a different case and is treated as one.
+- **`gpuslot.sh` landed mid-run and the three exports were not restarted onto
+  it.** The pool is three slots; my three arms would have taken all of them for
+  eighteen hours, which is the blockade the split exists to prevent, and the
+  restart would have cost about an hour of aggregate progress to get there. The
+  arms stay where they are, the count falls to two when b32 lands, and every
+  new long launch goes through `gpuslot.sh` while the sequential matched pair
+  goes through `gpulock.sh`.
+
+## Two controls that fail in opposite directions, so both are reported
+
+The encode cost is quoted twice, under conditions named each time, because
+neither design is the number on its own:
+
+* **Concurrent** — the three arms encoded side by side. They see the same
+  background load *simultaneously* and interfere with each other symmetrically.
+* **Sequential** — `b32 -> b4 -> b32` back to back on a quiet box under
+  `gpulock.sh`. No mutual interference, but the arms see different load at
+  different times and the box can drift under them, which is exactly how the
+  LUT-plane receipt's three retracted figures went wrong.
+
+The two failure modes point in opposite directions: the concurrent pair is
+biased by interference it shares, the sequential pair by drift it does not.
+Reporting both with their conditions named is more honest than picking one and
+calling it the number.
 
 ## Projected wall clock, recorded before the run lands
 
