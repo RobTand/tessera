@@ -2,7 +2,8 @@
 """Read issue #50's ceiling run into the four tables the verdict needs.
 
 ``lut_landing_ceiling.py`` writes every number; this prints them in the order
-a reader has to see them:
+a reader has to see them.  Since section 5 it imports ``tessera.control``, so
+it runs in the same venv the ceiling run does rather than on bare stdlib.
 
 1. **the identity check** -- on every ``table`` arm, the sink's reconstruction
    against ``stock_dequant`` of the same unit.  A ceiling arm can only be
@@ -20,13 +21,30 @@ a reader has to see them:
    ``continuous`` and ``landed`` are the plane the unit ends on with and
    without the landing, at FROZEN codes, so ``sqrt(continuous/landed)`` is the
    codes-frozen ``hfit`` ceiling and the end-to-end number above is the same
-   quantity with the trellis allowed to re-adapt.
+   quantity with the trellis allowed to re-adapt.  It gives the **size** of the
+   landing leg within one arm and never an ordering **across** arms: the
+   recorded costs are that call's own quadratic, and for a 1-D metric a
+   parabola equal to the weighted error only up to a constant, so a 1-D arm's
+   number is not comparable to a full-H arm's (``refit_diagnostics``' own
+   contract).
+5. **the two orderings, paired** -- ``tessera.control.landing_ordering`` over
+   the geomeans of 3, as one value with ``same_best``/``same_order`` and the
+   inverted arm pairs.  Issue #85: on the wire Gauss-Seidel wins and Jacobi is
+   third; with the landing removed Jacobi is first.  This is the reading a
+   refit-objective decision owes, and it is why the ceiling run is not
+   optional -- 4 cannot produce it.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from tessera.control import landing_ordering                  # noqa: E402
 
 
 def geo(units, arm, field):
@@ -142,6 +160,25 @@ def main() -> None:
         if rs:
             g = math.exp(sum(math.log(x) for x in rs) / len(rs))
             print(f"{'GEOMEAN':<22} {label[:40]:<40} {'':>12} {'':>10} {g:8.4f}")
+
+    print("\n== 5. the two orderings, paired (tessera.control.landing_ordering)")
+    on_wire, disabled = {}, {}
+    for label, gr in groups:
+        if "none" not in gr:
+            continue
+        on_wire[label] = geo(units, gr["table"], "out")
+        disabled[label] = geo(units, gr["none"], "out")
+    if len(on_wire) < 2:
+        print("   fewer than two arms carry both landings: no ordering to pair")
+    else:
+        pair = landing_ordering(on_wire, disabled)
+        print(f"   wire order    : {' < '.join(pair.wire_order)}")
+        print(f"   landing=none  : {' < '.join(pair.disabled_order)}")
+        print(f"   same_best     : {pair.same_best}")
+        print(f"   same_order    : {pair.same_order}")
+        for a, b in pair.inversions:
+            print(f"   INVERTED      : {a} vs {b}")
+        print(json.dumps(pair.to_json(), indent=2))
 
 
 if __name__ == "__main__":
