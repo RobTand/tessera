@@ -175,7 +175,20 @@ runtime was never ambiguous, our instrument was.
 message `No compiled silu_and_mul nvfp4 quantization kernel for SM ` and an
 `_sm1xxa` variant of the symbol, so whether the fused kernel exists for a given
 target is a further question. The stamped record says so rather than implying the
-pattern always lands. Sizing the effect is a throughput measurement I did not
+pattern always lands.
+
+That open question is not benign. `No compiled silu_and_mul nvfp4 quantization
+kernel for SM ` is a `TORCH_CHECK` message, so the guard's failure mode is a
+*raise at the first compiled forward*, not a silent slow path. This fix turns the
+`fuse_act_quant` pass on for the stock twin, and every compiled-mode receipt of a
+stock twin on record was taken while the twin declared `mixed-precision` — i.e.
+with that pass off. No compiled serve has ever exercised a derived-format twin on
+this image. **The twin's next compiled serve should go through
+`experiments/serve_smoke_graph.sh` before any speed number is taken from it.** I
+did not run that serve here (load; and one serve per box), so it is stated as the
+gate it is, not as a completed check.
+
+Sizing the effect is a throughput measurement I did not
 take and was not asked for — and could not honestly have taken today, with sparky
 at load 60 and 14 GB of 121 available.
 
