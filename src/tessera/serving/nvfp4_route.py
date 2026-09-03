@@ -35,6 +35,7 @@ from typing import Optional
 
 import torch
 
+from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
 from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_tessera_blob_for_scheme, \
@@ -161,9 +162,13 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
                 device = torch.device("cuda")
             # The pure-torch decoder can stand in only where ONE decode, at
             # load, is the whole job: the streamed residency decodes inside a
-            # traced forward, where it cannot run.
+            # traced forward, where it cannot run.  Read from the table the
+            # runtime contract PUBLISHES (``ext.NATIVE_EXTENSIONS``'s
+            # ``when_unavailable``) rather than compared here, so the document
+            # and the executed behaviour are one artifact.
             prepared = prepare_tessera_module(
-                roles, device=device, allow_torch_fallback=(self._mode == MODE_RESIDENT))
+                roles, device=device,
+                allow_torch_fallback=substitutes_when_unavailable(self._mode))
             layer.tessera_prepared = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_roles = prepared.role_names
