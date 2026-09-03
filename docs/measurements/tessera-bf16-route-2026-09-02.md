@@ -128,7 +128,16 @@ entries (§6), and the exact path matches bf16 round-to-nearest-even on all
 `export.BF16_RECIPE` — WINDOW body, span 1, CHANNEL scale plane, `L = 14`,
 `window_seed = 0`, `window_sigma = None`, `channel_sigma = 1.0`. It is
 `E4M3_RECIPE` with the alphabet swapped, deliberately: the brief asks for the
-E4M3 default unless a measurement says otherwise, and none does. `channel_sigma`
+E4M3 default unless a measurement says otherwise, and none does.
+
+> **Superseded on `window_sigma`, 2026-09-03 (#48).** A measurement does say
+> otherwise, and it is the spread rather than the constant. `BF16_RECIPE` now
+> names `window_sigma = 1.0` — byte-identical to `None` here, because
+> `channel_sigma` is 1.0 — and `wire_recipe` scales it per rung as
+> `sqrt(max(R, 4)/4)`, so the body's reach in row-RMS grows with the rate
+> instead of staying at the R=4 value. Bytes move at every BF16 rung above
+> R=4; the rest of this section stands.
+> `docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md`. `channel_sigma`
 is **stated, not searched** — `_default_sigma` would build a 4096×65 536
 float64 distance matrix per candidate, and it is degenerate on a grid with 8
 exponent bits, where the nearest-value error is scale-free rather than having

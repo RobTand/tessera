@@ -27,6 +27,15 @@ on `wt` on 4 of 4 (geomean **0.813x at identical bytes**) and on `h` on 3 of 4
 (geomean 0.742x). Spending it needs a wire change, because `BF16_RECIPE` leaves
 `window_sigma=None` and so pins the ratio to 1 by construction.
 
+> **Spent, 2026-09-03 (#48).** `BF16_RECIPE` now carries an explicit
+> `window_sigma` and `wire_recipe` scales it per rung as `sqrt(max(R, 4)/4)`.
+> The `0.813x` above reproduces through the built path to within the
+> non-dyadic gauge tolerance (0.02%), the rule is the interior optimum on four
+> rungs it was never fitted to, and below the reference it is floored because
+> the law loses there. Not a wire, schema or contract change — the table is on
+> the ALPHABET plane and a reader never rebuilds it. Still weight space:
+> `docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md`.
+
 **Claim (#18, GLM).** The one-tensor result holds on six experts. BF16 at R=8
 beats **EXL3 K=8** on the weight leg 6/6 (geomean `wt` **0.867x**) and is level
 in out-space (**1.004x**), at 8.0352 bpp against 8.0117 -- nearly matched, not

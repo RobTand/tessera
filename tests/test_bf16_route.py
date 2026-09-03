@@ -22,6 +22,7 @@ Three claims, each with its own failure mode:
 Everything here is CPU: the route has no Triton path of its own, and the
 window Viterbi's reference implementation is the definition.
 """
+import math
 import sys
 from fractions import Fraction
 from pathlib import Path
@@ -54,7 +55,9 @@ from tessera.errors import GrammarError  # noqa: E402
 from tessera.export import (  # noqa: E402
     BF16_CHANNEL_SIGMA,
     BF16_RECIPE,
+    BF16_REACH_REFERENCE_RATE,
     BF16_WINDOW_BITS,
+    BF16_WINDOW_SIGMA,
     E4M3_RECIPE,
     encode_linear_planes,
     recipe_at,
@@ -230,6 +233,81 @@ def test_a_rung_above_the_table_widens_the_table():
     assert recipe_at(table, 16 * 256).window_bits == 16
     # A no-op on the grids that ship today: their cap is below the table.
     assert {r.recipe for r in recipe_table(E4M3_GRID)} == {E4M3_RECIPE}
+
+
+def test_the_reach_term_moves_with_the_rung():
+    """Issue #48: the body's reach in row-RMS is a per-rung recipe field.
+
+    Before this it was pinned by construction -- ``window_sigma`` unset ties
+    the table's spread to the row scale, so the ratio that *is* the reach was
+    1 at every rung alike, and the measurement says that value is optimal at
+    R=4 and 19% off at R=8.  The law is ``sqrt(R/R0)``: the loading factor of
+    a quantizer over a Gaussian source, whose optimum balances a granular term
+    in ``A^2 2^(-2R)`` against the tail past ``A``.
+    """
+    assert BF16_RECIPE.window_sigma == BF16_WINDOW_SIGMA is not None
+    for rate in (4, 5, 6, 7, 8, 12, 16):
+        recipe = wire_recipe(BF16_GRID, rate * 256)
+        assert recipe.window_sigma == pytest.approx(
+            BF16_WINDOW_SIGMA * math.sqrt(rate / BF16_REACH_REFERENCE_RATE))
+    # Monotone in the rung, and never below the reference (see the floor).
+    spreads = [wire_recipe(BF16_GRID, q).window_sigma for q in range(256, 4097, 256)]
+    assert spreads == sorted(spreads)
+    assert min(spreads) == BF16_WINDOW_SIGMA
+
+
+def test_the_reference_rung_is_the_pinned_wire_byte_for_byte():
+    """The reference rung must be a re-parameterisation, not a change.
+
+    ``encode_unit`` resolves both the table's spread and the reach start to
+    ``channel_sigma`` when ``window_sigma`` is unset, and the recipe's
+    reference value *is* ``channel_sigma``, so naming it must produce the same
+    file the unset spread did.  Asserted three ways: the resolved fields, the
+    table those fields build, and the bytes.
+    """
+    recipe = wire_recipe(BF16_GRID, BF16_REACH_REFERENCE_RATE * 256)
+    assert recipe.window_sigma == recipe.channel_sigma == BF16_CHANNEL_SIGMA
+    assert torch.equal(window_table(BF16_GRID, TEST_L, sigma=recipe.window_sigma, seed=0),
+                       window_table(BF16_GRID, TEST_L, sigma=recipe.channel_sigma, seed=0))
+    w = _weight()
+    through_recipe, *_ = encode_linear_planes(
+        w, grid=BF16_GRID, q256=1024, name="u", window_bits=TEST_L)
+    spelled_out, *_ = encode_linear_planes(
+        w, grid=BF16_GRID, q256=1024, name="u", window_bits=TEST_L,
+        window_sigma=BF16_CHANNEL_SIGMA)
+    assert through_recipe.blob == spelled_out.blob
+
+
+def test_the_reach_term_is_floored_at_the_reference_rung():
+    """Below R0 the law asks for *less* reach, and the measurement says no.
+
+    Measured on the four dense Qwen units at identical bytes, the law's
+    smaller reach is 0.04% / 0.6% / 1.7% *worse* on ``wt`` at R=1 / 2 / 3, on
+    4 of 4 units at each.  At R=1 and R=2 there is a mechanism: the per-row
+    start clamps any row whose largest weight would fall outside the body's
+    reach, the law's spread pushes 99.8-100.0% of the rows into that clamp,
+    and once every row is clamped the reach is a gauge (the row scale is set
+    from its amax either way) with nothing left to buy -- both brackets read
+    1.0000.  At R=3 the clamp holds only 0.66-0.96 of the rows and the law
+    still loses by the most; no mechanism was established there.  Either way
+    the recipe floors at the rung it is calibrated on rather than shipping a
+    measured regression:
+    ``docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md``.
+    """
+    for rate in (1, 2, 3, 4):
+        assert wire_recipe(BF16_GRID, rate * 256).window_sigma == BF16_WINDOW_SIGMA
+
+
+def test_the_reach_term_is_bf16_only_and_the_table_stays_readable():
+    """E4M3's spread is not free to move the same way -- its table already
+    runs to the format's own ceiling (#36) -- so nothing here is applied to
+    it.  And the term is keyed on the rung's whole-bit rate, not on ``q256``:
+    a spread that varied per q256 would give every checkpoint a recipe table
+    with one row per rung instead of one per rate."""
+    assert all(entry.recipe.window_sigma is None for entry in recipe_table(E4M3_GRID))
+    table = recipe_table(BF16_GRID)
+    assert len(table) <= 2 * BF16_GRID.payload_bits
+    assert all(isinstance(entry.recipe.window_sigma, float) for entry in table)
 
 
 def test_the_tcq_body_is_not_offered_on_this_grid():

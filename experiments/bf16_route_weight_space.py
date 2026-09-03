@@ -62,7 +62,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tessera.alphabet import BF16_GRID, E4M3_GRID  # noqa: E402
-from tessera.export import E4M3_WINDOW_BITS, encode_linear_planes  # noqa: E402
+from tessera.export import (  # noqa: E402
+    BF16_CHANNEL_SIGMA,
+    E4M3_WINDOW_BITS,
+    encode_linear_planes,
+)
 from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 
 E4M3_MAX = 448.0
@@ -116,14 +120,37 @@ def fp8_floor(w: torch.Tensor) -> torch.Tensor:
     return e4m3_rtn(w / scale) * scale
 
 
-def wire(w: torch.Tensor, grid, q256: int, name: str, window_bits: int):
-    """Encode to real bytes and read them back.  ``(hat, bpp, secs)``."""
+def wire(w: torch.Tensor, grid, q256: int, name: str, window_bits: int,
+         window_sigma: "float | None" = None):
+    """Encode to real bytes and read them back.  ``(hat, bpp, secs)``.
+
+    ``window_sigma=None`` takes the recipe's, which since #48 is **per rung**
+    on BF16 (``export._window_sigma_for``): the body's reach in row-RMS grows
+    as ``sqrt(R)`` instead of staying at the R=4 value.  Every BF16 arm at
+    R != 4 therefore writes different bytes than it did before that change,
+    and the receipts measured under the pinned spread -- the six-expert R=8
+    table in issue #18 among them -- reproduce with
+    ``--pinned-reach``, which passes ``BF16_CHANNEL_SIGMA`` here.
+    """
     started = time.time()
     exported, _unit, _forests = encode_linear_planes(
         w, grid=grid, q256=q256, name=name, window_bits=window_bits, verify=True,
+        **({} if window_sigma is None else {"window_sigma": float(window_sigma)}),
     )
     hat = read_unit_artifact(exported.blob, device=w.device)
     return hat, float(exported.bpp), time.time() - started
+
+
+def pinned_reach(a, grid):
+    """``BF16_CHANNEL_SIGMA`` under ``--pinned-reach`` on BF16, else ``None``.
+
+    The pre-#48 wire tied the window table's spread to the row scale, so the
+    body's reach was the R=4 value at every rung.  The flag reproduces the
+    receipts measured under it; without it the BF16 arms carry the recipe's
+    per-rung reach, which is what ships.  E4M3 is unaffected either way -- its
+    recipe still leaves the spread unset.
+    """
+    return BF16_CHANNEL_SIGMA if (a.pinned_reach and grid.name == "BF16") else None
 
 
 def crossover(res: dict, rungs) -> dict:
@@ -209,7 +236,8 @@ def stage_glm(a):
             rec("FP8 RTN LS-refit", fp8_floor(w), 8.0 + 32 / w.shape[1])
             for q in a.rungs:
                 for label, grid in (("e4m3", E4M3_GRID), ("bf16", BF16_GRID)):
-                    hat, bpp, secs = wire(w, grid, q, tname, a.window_bits)
+                    hat, bpp, secs = wire(w, grid, q, tname, a.window_bits,
+                                          pinned_reach(a, grid))
                     rec(f"{label}_q{q}", hat, bpp, secs)
                     del hat
                     torch.cuda.empty_cache()
@@ -290,7 +318,8 @@ def stage_dense(a):
             rec("NVFP4 GPTQ+JSO (production)", nvfp4(name, rows, cols), 4.5)
         for q in a.rungs:
             for label, grid in (("e4m3", E4M3_GRID), ("bf16", BF16_GRID)):
-                hat, bpp, secs = wire(w, grid, q, name, a.window_bits)
+                hat, bpp, secs = wire(w, grid, q, name, a.window_bits,
+                                      pinned_reach(a, grid))
                 rec(f"{label}_q{q}", hat, bpp, secs)
                 del hat
                 torch.cuda.empty_cache()
@@ -350,6 +379,9 @@ def main() -> None:
     ap.add_argument("--window-bits", type=int, default=E4M3_WINDOW_BITS)
     ap.add_argument("--eval-rows", type=int, default=1024)
     ap.add_argument("--exl3", type=int, nargs="+", default=[4, 5, 6, 8])
+    ap.add_argument("--pinned-reach", action="store_true",
+                    help="encode BF16 at the pre-#48 spread (reach pinned to "
+                         "the R=4 value at every rung) to reproduce older receipts")
     ap.add_argument("--out", default="weight_space.json")
     a = ap.parse_args()
     {"glm": stage_glm, "dense": stage_dense}[a.stage](a)
