@@ -1,6 +1,6 @@
 # The window GEMV, served: census, two-arm KL and latency (2026-09-03)
 
-> **STATUS: the census is measured and final. The KL is measured but does not
+> **STATUS: the census and the KL are measured and final. The KL does not
 > reach the kernel. The latency is deferred.** §2 (census) is complete: six
 > serves, all four mode x regime combinations, 112/112. §3 (KL) is complete for
 > three of four arms, **and it does not measure what #83 asked for**: the dump
@@ -9,7 +9,10 @@
 > there, which establishes that the lane does not perturb the many-row path -- a
 > real null, and a smaller claim than "bit-exact as served". **The served KL of
 > the GEMV kernel itself is not taken by this campaign**; §3 says what would take
-> it. The fourth arm is re-queued and marked `PENDING`.
+> it. All four arms are measured: both regimes give **0 of 8,380,400 differing
+> values** between the arms, and the eager-vs-compiled difference is identical in
+> the arm that uses the lane and the arm that does not, so it belongs to the
+> compiled forward (#16) and not to this lane.
 > §4 (latency) is **deferred to a quiet box** and states why:
 > sparky ran at load 33-68 on 20 CPUs and went into swap, the two arms taken
 > differ by 8x where the kernel difference is at most ~2x, and no latency claim is
@@ -218,8 +221,14 @@ in both the top-K token ids and their logprobs:
 
 | eager pair | arrays | values compared | differing | max abs delta |
 |---|---|---|---|---|
-| armA vs armB, `ids` (int32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
-| armA vs armB, `lps` (float32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
+| **eager** armA vs armB, `ids` (int32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
+| **eager** armA vs armB, `lps` (float32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
+| **compiled** armA vs armB, `ids` | 1 | 4,190,200 | **0** | 0 |
+| **compiled** armA vs armB, `lps` | 1 | 4,190,200 | **0** | 0 |
+
+Both regimes, then: **0 of 8,380,400 values differ in each**, on byte-identical
+bytes, with the GEMV lane refusing 0/112 modules in arm A and 112/112 in arm B in
+both.
 
 `ids` is the **top-1024 set plus the prompt token at each of 4088 scored
 positions**, so its ordering tracks the logits directly: any numerical difference
@@ -249,25 +258,29 @@ precision on the eager pair, as bit-identical dumps require:
 | armA (GEMV) | eager | 0.46599389451679424 | 0.3845310749133978 | 2.8054884270366567 | 7.624929 |
 | armB (torch) | eager | 0.46599389451679424 | 0.3845310749133978 | 2.8054884270366567 | 7.624929 |
 | armA (GEMV) | compiled | 0.4668730966935983 | 0.3867850368604267 | 2.7715860806290746 | -- |
-| armB (torch) | compiled | PENDING (lost to the startup memory race; re-queued) | | | |
+| armB (torch) | compiled | 0.4668730966935983 | 0.3867850368604267 | 2.7715860806290746 | -- |
 
 Arm A vs arm B, eager: **delta +0.000000, ratio 1.0000x, on the mean and on the
 tail alike** -- on prefill-scored positions both arms served through
 `_scaled_mm`. The tail is reported beside the mean because a lower mean KL can
 hide a heavier tail; there is no tail movement to report either.
 
-**A note on the eager/compiled difference, which is not this lane's.** armA
-compiled reads 0.46687 against armA eager's 0.46599. The two dumps differ almost
+**The eager/compiled difference is now shown NOT to be this lane's, rather than
+argued.** armA compiled reads 0.46687 against armA eager's 0.46599 -- and armB
+compiled reads **0.4668730966935983, identical to armA compiled to the last
+digit**, with bit-identical dumps. The divergence is therefore the same size in
+the arm that uses the GEMV lane and the arm that does not: it is a property of
+the compiled forward, not of the lane. The two dumps differ almost
 everywhere (only 71,564 of 4,190,200 ids equal), which is what a compiled forward
 reordering a top-1024 set looks like and *not* a corpus mismatch -- both dumps
 carry the same corpus `source_sha256` and the same 4088 scored positions. This
 divergence is present in the arm that uses the GEMV lane and belongs to the
 eager-vs-compiled question tracked separately in #16; it is reported here and not
 chased. Whether armB compiled lands on 0.46687 (lane-neutral under compile too)
-or on 0.46599 is a question about compiled **materialisation**, not about the
-GEMV lane, for the same reason the rest of this section is: the scored forwards
-are M = 512 in both arms. The re-queued arm completes the table; it does not
-close the gap named at the top of this section.
+It landed on 0.46687 -- lane-neutral under compile too. This is a question about
+compiled **materialisation**, not about the GEMV lane, for the same reason the
+rest of this section is: the scored forwards are M = 512 in both arms. Completing
+the table does not close the gap named at the top of this section.
 
 ### What would close it
 
