@@ -84,7 +84,7 @@ class RotationState(IntEnum):
 
 class ContainerClass(IntEnum):
     CT_LEGAL = 0  # compressed-tensors: unrotated, diagonal-free or folded
-    GRIDBOOK = 1  # the only consumer of Tessera bytes
+    GRIDBOOK = 1  # legacy Gridbook-lane name; Tessera's own serving plugin reads these bytes now
     REQUANT_DERIVED = 2  # T-nvfp4-RQ, a separate derived artifact
 
 

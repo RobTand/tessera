@@ -93,18 +93,27 @@ The exhaustive tests are the point. Four results worth naming:
   last being the cited 2.5008 less exactly 0.0008 bpp of side overhead. That is
   round-8 P0-1.3's "re-derived, not quoted".
 
-## What it deliberately does not contain
+## What build items 1a/1b deliberately did not contain
 
-Gated by the document, not omitted by oversight:
+The 1a/1b scope, kept for the record -- not this tree's current scope. Gated
+by the document at that time, not omitted by oversight, the package then held
+only the schema, the bytes-only parser, the footprint accountant, and the
+item-11 calculator:
 
-- **No encoder.** Arm 2's minimal measurement encoder is the first gated-work
-  request after final review.
-- **No trellis decoder.** Parse is not decode. Gridbook owns the decoder, and
-  arm 4b's full-layout skeleton precedes any reader or kernel work.
+- **Encoder: absent at 1a/1b.** Arm 2's minimal measurement encoder was the
+  first gated-work request after final review. It has since landed as
+  `src/tessera/encode.py`.
+- **Trellis decoder: absent at 1a/1b.** Parse was not decode, and the decode
+  lived outside this package at that time, gated behind arm 4b. It has since
+  landed as `src/tessera/decode.py` with the self-housed serving plugin
+  (`src/tessera/serving/`, contract v7, which imports no gridbook); Gridbook
+  withdrew its lane at contract v15.
 - **No rate-1/rate-2 alphabet convention.** Build item 2, explicitly owed.
   Alphabets and descendant maps are content-addressed blobs, validated
   structurally only.
-- **No menu, DP, export, or serving wiring.** §16: nothing precedes 1b passing.
+- **Menu, DP, export, and serving wiring: absent at 1a/1b.** §16: nothing
+  preceded 1b passing. Checkpoint export has since landed as
+  `src/tessera/export.py` and serving as `src/tessera/serving/`.
 - **No populated denylist.** `provenance.py` ships the content-addressed
   ancestry *mechanism*; the prohibited identities live in the round-7 review
   record, outside this project's input scope.
@@ -136,9 +145,8 @@ src/tessera/
   fp8.py           exact E4M3FN / E8M0 tables — no rounding anywhere
   scale_codec.py   §6b: legality, canonicalisation, 65,536-word census
   grammar.py       §6: roots, Bresenham quota, completion, release, partition
-  canonical.py     integer-only canonical encoding and the hash domain
-  bitio.py         MSB-first bit packing, padding charged
-  planes.py        §9 typed plane descriptors, canonical order
+   canonical.py     integer-only canonical encoding and the hash domain
+   planes.py        §9 typed plane descriptors, canonical order
   manifest.py      branch identity, terminal records, content-addressed IDs
   layout.py        plane extents from declared parameters (no coding decisions)
   container.py     header/manifest/plane-region codec, fail-closed parse
