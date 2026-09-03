@@ -183,6 +183,36 @@ other localises the change. Re-baselining across the amendment reports the
 four new keys as `before None` and leaves all 32 pre-existing digests
 untouched (`4 changed of 36`, all four the new `bf16-*` keys).
 
+**Amended 2026-09-03 (issue #39): 23 encodes, 22 decodes -- 18 shape, 5 value.**
+The matrix above is `randn` weights with no refit metric, no LDL factor and no
+completion, so it proves *shape* arithmetic and nothing else. Measured, not
+argued: revert the CHANNEL refit's `B > 0` hold -- the very fix this handover's
+batch made -- and the 18-encode matrix prints `0 changed of 18`. That is why the
+`0 changed of 36` receipt above was correct and meant nothing, as the fixing
+worker said at the time. Five **value** cases now encode a real 16x128 weight
+slice of `model.layers.2.mlp.down_proj` against that unit's real Hessian
+(`tests/data/audit_value_slice.pt`, cut by
+`experiments/make_audit_value_slice.py`) through `ActivationSource`, so what is
+hashed is the recipe an export selects: the full-H CHANNEL objective, LDLQ, the
+reach floor, the LUT plane's diagonal metric, and `completion > 0`. The same
+revert now prints `3 changed of 23` -- every CHANNEL value case, and no shape
+case. The metric is what the condition needs, not the weights: `randn` rows
+under the real H fire `B <= 0` 9 times in 128 row-refits, so the batch's "no
+Gaussian row goes `B <= 0`" holds only on the plain arm. A synthetic H does not
+substitute -- neither an independent-column one at a diagonal max/median of
+4.4e12 nor a rank-4/16/64 factor structure fires it at all, because the
+condition lives in H's off-diagonals. The value matrix costs +13% of the encode
+half's wall-clock (15.7s against 117s on a box at load 108).
+`tests/test_audit_byte_baseline.py` runs the mutation rather than describing it,
+and pins the blindness of the shape half alongside it, so the corpus cannot
+shrink back to one that reaches nothing while still printing a total.
+
+Still out of the encode matrix's reach, and not claimed by it: `land_at_least`'s
+`inf` branch needs a floor above fp16's range over the unit's global scale,
+which no real slice produces, and `shared_lut_global`'s subnormal check is in
+the fused lane, which `encode_linear` never calls. Both are pinned by
+`tests/test_math_audit_scale_and_trellis.py` instead.
+
 A fix may legitimately change future bytes. It may never change what today's
 bytes mean, and the decode half of the baseline is what says so.
 
