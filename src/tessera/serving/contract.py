@@ -14,6 +14,23 @@ honest status and not a refusal.  Today the table is DENSE-ONLY on sm_121, at
 one rung per family, both residency modes -- exactly the axes the served
 receipts cover.  Routed-MoE experts, TP>1 and any other rung are not in it.
 
+WHAT THE BYTES WERE.  A cell says a receipt covered a rung; it cannot say
+*which bytes* at that rung, and two encoders can write two byte strings at
+one rung -- the window table the decoder reads lives on the ALPHABET plane,
+so anything that moves the table moves the bytes while the rung, the route
+and the decoder stand still.  Beside ``attested_rungs_q256``, then, each
+``formats[]`` row carries ``attested_wire``: one ``wire.recipes`` entry per
+attested rung -- the checkpoint's own vocabulary, in the spelling a
+checkpoint's config already records per rung -- saying which bytes the
+receipt was cut on.  A producer preflight compares its checkpoint's entry at
+that rung against the stamp and tells "attested on these bytes" from
+"attested on this rung".  Coverage (one entry per attested rung, no other)
+and the body/span/plane (the route's own ``scheme.ROUTES`` row) are refused
+here; that the stamp is still what the exporter writes is pinned in
+``tests/test_serving_attested_wire.py``, so a bytes-moving encode change
+trips there instead of letting the attestation silently describe bytes no
+fresh export writes.
+
 TWO CLAIMS ABOUT TENSOR PARALLELISM, AND THEY ARE NOT THE SAME.
 ``tensor_parallel.units[].max_world_size`` is an ATTESTATION: the largest world
 size a served receipt covers.  It is 1, and it stays 1 until a multi-rank serve
@@ -399,6 +416,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                                 "activation_contract",
                                 "reader_rate_range_q256", "reader_rate_step_q256",
                                 "reader_rate_bound", "attested_rungs_q256",
+                                "attested_wire",
                                 "native_terminal_q256", "residency_modes"},
                       optional={"candidate_rungs_q256"})
         # The A side, where a gate can read it.  It belongs on the ROW and not
@@ -462,6 +480,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                     f"{where}: attested rung {rung} is not one the reader accepts "
                     f"([{low}, {high}] step {step}). An attested rung is a rung that WAS served; "
                     "it cannot lie outside what the decoder takes.")
+        _validate_attested_wire(entry, route, where)
         families[entry["family"]] = entry
 
     block = contract["lane_eligibility"]
@@ -625,3 +644,93 @@ _FAMILY_TO_ROUTE = {
     "TESSERA_E4M3_K1": "TESSERA_FP8",
     "TESSERA_BF16_K1": "TESSERA_BF16",
 }
+
+#: The checkpoint's spelling of a body/plane beside the route's spelling of
+#: the same fact.  ``attested_wire`` speaks ``wire.recipes`` -- the
+#: vocabulary a checkpoint's config records per rung
+#: (``export._BODY_NAMES`` / ``export._PLANE_NAMES``) -- while the authority
+#: it is checked against speaks ``scheme.ROUTES``.  The map between the two
+#: dialects is written once here, and
+#: ``tests/test_serving_attested_wire.py`` compares both ends against their
+#: sources, so a rename on either side fails there rather than drifting here.
+_ATTESTED_WIRE_BODY = {"tcq": "TCQ", "window": "WINDOW"}
+_ATTESTED_WIRE_PLANE = {"s6b": "S6B", "lut16": "LUT", "channel": "CHANNEL"}
+
+
+def _validate_attested_wire(entry: Mapping[str, Any], route: str, where: str) -> None:
+    """``attested_wire`` must be the wire each attested rung was cut on (#55).
+
+    Checked in two halves, because they are two different claims.  COVERAGE:
+    exactly one entry per rung in ``attested_rungs_q256`` -- a stamp that
+    forgot a rung leaves bytes undescribed, and one that names a rung the
+    family does not attest describes nothing.  SUBSTANCE: a body/span/plane
+    the route decodes, read off ``scheme.ROUTES`` -- the table the loader
+    itself gates on -- so a stamp no decoder in this build would read is a
+    refusal here rather than a receipt for bytes that cannot serve.  The
+    spreads (``sigma``/``channel_sigma``) are typed -- a number, or null for
+    the pinned wire -- but not re-derived: they transcribe the receipt, and
+    the receipt is prose.  What keeps the transcription honest is the
+    tripwire in ``tests/test_serving_attested_wire.py``, which compares every
+    stamp against what the exporter writes at that rung today.
+    """
+    from .scheme import ROUTES
+
+    stamped = entry["attested_wire"]
+    if not isinstance(stamped, list):
+        raise ValueError(
+            f"{where}.attested_wire must be a JSON array, one entry per attested rung")
+    rungs = entry["attested_rungs_q256"]
+    for i, item in enumerate(stamped):
+        at = f"{where}.attested_wire[{i}]"
+        _require_keys(item, at,
+                      required={"q256", "body", "span", "plane",
+                                "window_bits", "seed", "sigma", "channel_sigma"})
+        q256 = item["q256"]
+        if not isinstance(q256, int) or q256 not in set(rungs):
+            raise ValueError(
+                f"{at}.q256 is {q256!r}, which {entry['family']} does not attest "
+                f"(attested_rungs_q256 {list(rungs)}); a wire stamp beside a rung no receipt "
+                "covers is a receipt for nothing")
+    if sorted(item["q256"] for item in stamped) != sorted(rungs):
+        raise ValueError(
+            f"{where}.attested_wire must carry one entry per attested rung "
+            f"{sorted(rungs)}, got {[item['q256'] for item in stamped]}; a rung with no stamp "
+            "has bytes no receipt describes, and a stamp is meaningless anywhere else")
+    expected = ROUTES[route]
+    for i, item in enumerate(stamped):
+        at = f"{where}.attested_wire[{i}]"
+        body = _ATTESTED_WIRE_BODY.get(item["body"])
+        if body is None:
+            raise ValueError(
+                f"{at}.body {item['body']!r} is not a wire body the exporter spells "
+                "(tessera.export._BODY_NAMES); a stamp outside the checkpoint's own "
+                "vocabulary is nothing a preflight can compare")
+        if body != expected["body"] or item["span"] != expected["span"]:
+            raise ValueError(
+                f"{at} stamps {item['body']!r} span {item['span']!r}, but {route} decodes the "
+                f"span-{expected['span']} {expected['body']} body (tessera.serving.scheme.ROUTES). "
+                "A stamp the route does not decode cannot be what a served receipt was cut on.")
+        plane = _ATTESTED_WIRE_PLANE.get(item["plane"])
+        if plane is None:
+            raise ValueError(
+                f"{at}.plane {item['plane']!r} is not a scale plane the exporter spells "
+                "(tessera.export._PLANE_NAMES); a stamp outside the checkpoint's own "
+                "vocabulary is nothing a preflight can compare")
+        if plane != expected["plane"]:
+            raise ValueError(
+                f"{at} stamps the {item['plane']!r} plane, but {route} decodes the "
+                f"{expected['plane']} plane to its {expected['tile']} tile "
+                "(tessera.serving.scheme.ROUTES). "
+                "A stamp the route does not decode cannot be what a served receipt was cut on.")
+        for field in ("window_bits", "seed"):
+            if not isinstance(item[field], int):
+                raise ValueError(
+                    f"{at}.{field} is {item[field]!r}; a wire.recipes entry carries integers "
+                    "here, and a stamp that does not spell one is nothing a preflight can compare")
+        for field in ("sigma", "channel_sigma"):
+            value = item[field]
+            if value is not None and not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"{at}.{field} is {value!r}; a modelled source spread in grid units is a "
+                    "number, or null for the pinned wire (sigma unset). A stamp that spells "
+                    "neither is nothing a preflight can compare")
