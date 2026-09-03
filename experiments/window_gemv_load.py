@@ -64,6 +64,25 @@ def scrape(url: str) -> dict:
     return out
 
 
+def moved(before: dict, after: dict) -> dict:
+    """Every vLLM series that CHANGED over the window, with its delta.
+
+    Insurance, and cheap: if a histogram is renamed between vLLM releases the
+    two stems read below silently return ``None`` and the receipt would say
+    nothing about a serve that cost a lock slot to take.  Recording what
+    actually moved makes the number recoverable from the receipt instead of
+    from a second serve.
+    """
+    out = {}
+    for k, v in after.items():
+        if not k.startswith("vllm:"):
+            continue
+        d = v - before.get(k, 0.0)
+        if d:
+            out[k] = d
+    return out
+
+
 def delta(before: dict, after: dict, stem: str):
     """Mean of one histogram over the window, or None when it did not move."""
     s = after.get(stem + "_sum", 0.0) - before.get(stem + "_sum", 0.0)
@@ -117,6 +136,7 @@ def main() -> int:
     a = scrape(args.url)
     windows["decode"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
     windows["decode"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    windows["decode"]["series_moved"] = moved(b, a)
     marks["decode_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     marks["prefill_start"] = marks["decode_end"]
@@ -126,6 +146,7 @@ def main() -> int:
     a = scrape(args.url)
     windows["prefill"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
     windows["prefill"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    windows["prefill"]["series_moved"] = moved(b, a)
     marks["prefill_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     # The profile, over its own short load.  A profiled forward is not a timed

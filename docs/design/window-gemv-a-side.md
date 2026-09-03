@@ -275,7 +275,20 @@ depends on dict order.
 **Both:**
 
 1. The A side they wire to is `bf16_unquantized`. Neither may dispatch the
-   GEMV inside `TESSERA_FP8`'s `apply()`.
+   GEMV inside `TESSERA_FP8`'s `apply()` **on raw activations** -- that would
+   silently change the executed contract, which is the whole of this rule's
+   reason. *(Corrected 2026-09-03 against `master`: the rule as first written
+   said "neither may dispatch the GEMV inside `TESSERA_FP8`'s `apply()`" full
+   stop, and #10 shipped exactly that dispatch -- `fp8_route.py:352-356` calls
+   `fp8_gemv.streamed_apply` from the FP8 route's `apply()`. It is not a
+   violation, because it takes a third option this section did not state: the
+   route's own per-token FP8 quantiser runs first and the kernel is handed the
+   **dequantised** values, which is exact since every E4M3 code is exact in
+   bf16. So the executed contract stays `fp8_per_token_dynamic` and the census
+   reads the contract that ran. What ships there is A8 arithmetic executed by a
+   W?A16 kernel -- not the A16 product this document is deciding about, and
+   §4's "one artifact cannot mix the two A sides per module without mixing
+   families" is untouched. Issue #88.)*
 2. **#52 first.** `window_gemv` decides on the token dim in Python
    (`kernel_window_gemv.py:516` `_m_tile(M)`, `:522` the pad, `:536` `out[:M]`)
    and its 51 tests contain no `torch.compile` arm. Every route here is served
