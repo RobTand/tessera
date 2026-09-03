@@ -81,8 +81,15 @@ def main() -> int:
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
+    # RECURSIVE.  vLLM 0.28 does not always drop traces at the top of the
+    # configured directory -- config/profiler.py documents a `capture_traces`
+    # subdirectory for the capture mode -- and a summariser that globs one level
+    # reports "no trace files" for a run that actually produced them.  Given the
+    # trace is the only evidence a compiled census cannot supply, failing to FIND
+    # one is as costly here as failing to take one.
     files = ([args.path] if os.path.isfile(args.path)
-             else sorted(glob.glob(os.path.join(args.path, "*.json*"))))
+             else sorted(glob.glob(os.path.join(args.path, "**", "*.json*"),
+                                   recursive=True)))
     if not files:
         raise SystemExit(f"no trace files under {args.path}")
     out = [summarise(f) for f in files]
