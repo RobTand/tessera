@@ -567,6 +567,19 @@ def materialize_nvfp4(
     rows, cols = codes.shape
     if cols % 2:
         raise GrammarError(f"{cols} columns cannot pack 2 nibbles to a byte")
+    # One E4M3 per ``half`` columns: without a whole number of groups the
+    # scale plane has ``rows * ceil(cols/half)`` elements while the NVFP4
+    # layout wants ``rows * (cols // half)``, and the reshape below dies as
+    # a bare RuntimeError.  Refuse by name instead, with the same message
+    # ``kernel._require_column_groups`` states for the kernel lane
+    # (restated, not imported: this module is what that module imports).
+    if half <= 0 or cols % half:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {half}-groups; the scale "
+            "plane has no group for the remainder, so the last "
+            f"{cols % half if half > 0 else cols} columns would leave the dot "
+            "product (GEMV) or index one group past the plane (GEMM)"
+        )
     low = codes[:, 0::2].to(torch.uint8)
     high = codes[:, 1::2].to(torch.uint8)
     packed = (low & 0xF) | ((high & 0xF) << 4)
