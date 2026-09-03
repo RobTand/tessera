@@ -310,18 +310,44 @@ proper, or about any other build.
 `NVFP4_BACKENDS_WITH_CLAMP`, so an explicit `--moe-backend flashinfer_b12x`
 raises `ValueError` on this config, and the auto list is filtered to the
 clamp-capable backends — `FLASHINFER_TRTLLM`, `FLASHINFER_CUTEDSL`,
-`FLASHINFER_CUTLASS`, `VLLM_CUTLASS`, `MARLIN`, `EMULATION`, `HUMMING`. Which
-of those is backed on sm121 is **not measured**.
+`FLASHINFER_CUTLASS`, `VLLM_CUTLASS`, `MARLIN`, `EMULATION`, `HUMMING`.
 
-**Scope: build `487ecf187`, this model's config.** This does not contradict the
-route status recorded for GLM NVFP4 MoE elsewhere, which was measured on a
-config without a `swiglu_limit`, and it does not generalise to GLM proper
-without re-measuring. It has one consequence that is not scoped, though: the
+> **Measured 2026-09-02** (#6, `docs/measurements/nvfp4-moe-oracle-2026-09-02.md`,
+> `experiments/nvfp4_moe_oracle_probe.py`), and three things in the paragraph
+> above need widening or answering:
+>
+> * **"Which of those is backed on sm121" is no longer unmeasured.** Five of the
+>   seven admit this device by their own `_supports_current_device()`
+>   (`FLASHINFER_CUTLASS`, `VLLM_CUTLASS`, `MARLIN`, `HUMMING`, `EMULATION`);
+>   `FLASHINFER_TRTLLM` and `FLASHINFER_CUTEDSL` are family-100 kernels and do
+>   not. Asked to resolve on GLM-5.3-Flash's MoE dimensions with the W4A4 keys,
+>   the oracle returns **`FLASHINFER_CUTLASS` / `FlashInferExperts`** — clamped
+>   *and* unclamped, so the clamp does not change the answer on sm121, because
+>   the backends it removes are the ones the device rejects anyway. `auto`
+>   reaches it with **no flag at all**.
+> * **The scope is the GLM-5.3-Flash family, not this model.** Every
+>   GLM-5.3-Flash `config.json` on this box sets `swiglu_limit: 10.0` under
+>   `text_config` — proper, BF16, 4layer, and the Tessera and EXL3 exports. The
+>   4-layer model inherited the clamp; it did not introduce it.
+> * **`FLASHINFER_B12X` is excluded from auto-selection outright**, not only by
+>   the clamp filter: "intentionally excluded from auto-selection until the
+>   upstream CUTLASS SM121 MMA op guard is resolved". The explicit flag is the
+>   only path to it, and on any clamped config that path raises. Unclamped, it
+>   resolves fine here, so the clamp is the whole blocker — and closing it means
+>   `FlashInferB12xExperts` implementing the SwiGLU clamp, which it does not
+>   (`flashinfer_b12x_moe.py` contains no `swiglu`, `clamp` or `limit`).
+>
+> Still open, and why #6 stays blocked: that is the **oracle's** resolution on a
+> constructed config, not a served MoE. A `requires_serve_flags` cell needs a
+> route someone has served.
+
+**Scope: build `487ecf187`.** It has one consequence that is not scoped: the
 sentence in `serving/config.py`'s MoE refusal that says NVFP4 W4A4 "needs
 `--moe-backend flashinfer_b12x` on GB10" is an *asserted* runtime claim of the
-kind principle 14 forbids, and on this model it is false. It is corrected when
-the MoE route lands, not before, so that the correction and its evidence travel
-together.
+kind principle 14 forbids, and on this family it is false twice over — the flag
+is refused, and no flag is needed. It is corrected when the MoE route lands, not
+before, so that the correction and its evidence travel together; tracked as
+**#31** so the deferral cannot become a loss.
 
 The FP8 oracle carries no analogous clamp filter, so **the TESSERA_FP8 family
 (E4M3 wire, WINDOW body, CHANNEL plane -> per-channel FP8 W8A8) is the first
