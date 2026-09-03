@@ -10,10 +10,22 @@ the file hash moves and the tensor does not. There is no dyadic value left to
 find. The identical shift on E4M3 costs +5 to +19% at x2 and +70 to +98% at x4.
 
 **Claim (#18, L).** At 4 bpp the default `L = 14` is on both the `wt` and the
-`h` frontier and nothing here argues with it. **At 8 bpp it is off the `h`
-frontier in both axes**: `L = 10` is 10.8% better on `h` for 0.127 bpp *less*,
-and L=12/14/16 are strictly dominated. Weight-space, four dense units,
-proposal only -- there is no BF16 lane to serve on.
+`h` frontier and nothing here argues with it. **At 8 bpp `wt` is the wrong gate
+for L**: `wt` decreases monotonically in L on 4 of 4 units at both rungs, so a
+`wt`-gated sweep always answers "deeper", while `h` is non-monotone on 4 of 4 at
+R=8 and its optimum is unit-dependent (L = 8, 10, 16, 16 on the four). In the
+geomean L=10 is 10.8% better on `h` than the default for 0.127 bpp *less* -- but
+two of the four units keep L=14 and L=16 on their own `h` frontier, so that is a
+geomean statement and not a verdict on the constant. Weight space, four dense
+units, proposal only -- there is no BF16 lane to serve on.
+
+**Claim (#18, reach).** The `window_sigma`/`channel_sigma` **ratio** is the real
+knob (the constant alone is the gauge above), and **the right value is
+rung-dependent**. At 4 bpp the default ratio is the `wt` optimum on 4 of 4
+units. At 8 bpp it is not: `0.707` -- reach 5.66 row-RMS instead of 4.00 -- wins
+on `wt` on 4 of 4 (geomean **0.813x at identical bytes**) and on `h` on 3 of 4
+(geomean 0.742x). Spending it needs a wire change, because `BF16_RECIPE` leaves
+`window_sigma=None` and so pins the ratio to 1 by construction.
 
 **Claim (#18, GLM).** The one-tensor result holds on six experts. BF16 at R=8
 beats **EXL3 K=8** on the weight leg 6/6 (geomean `wt` **0.867x**) and is level
@@ -24,9 +36,12 @@ matched. Against the E4M3 wire it is **4.23x** better for +0.0156 bpp.
 served on master, moved by the LDLQ-on-LUT work at byte-identical bytes -- and
 *not* by the reach-aware per-row start, which is provably not on that path. The
 residual is a **weight-leg** residual: on held-out rows the weight leg alone is
-**1.035x**, against 1.039x served. And it **concentrates**: over 51 Linears
-Tessera at 4.0 bpp beats NVFP4 at 4.5 on five of seven roles and loses only
-`q_proj` (1.077) and `k_proj` (1.105).
+**1.035x**, against 1.039x served. And it **concentrates**: over 94 of the 196
+Linears, Tessera at 4.0 bpp beats NVFP4 at 4.5 on `hq` on five of seven roles
+and loses only `q_proj` (1.090) and `k_proj` (1.128). The census geomean is not
+converged -- 0.954 at n=51, 0.975 at n=94 -- and once each role carries its own
+measured in-sample discount the overall reads ~1.011 out-of-sample, which is the
+served 1.039x arriving by a second route.
 
 **Retracted within this document:** an intermediate reading of the 4-bit census
 said the residual had left the weight leg entirely. It had not; the census
@@ -78,7 +93,7 @@ downward. The default sits on a **one-sided cliff** with all of its margin
 below -- filed as issue #36, because that is the wire we ship and it was found
 by accident.
 
-## #18, part 1: L is the axis, and at 8 bpp the default is off the h frontier
+## #18, part 1: L is the axis, and `wt` is the wrong gate for it
 
 `--stage dense-l`, four dense Qwen Linears, `window_sigma` tracking
 `channel_sigma`, geomean, every arm priced at the bytes it wrote:
@@ -103,10 +118,31 @@ frontier(wt) R1024 L=8,10,12,14,16   R2048 L=8,10,12,14,16
 frontier(h)  R1024 L=8,10,12,14,16   R2048 L=8,10
 ```
 
-**On `wt` every L is on the frontier at both rungs; on `h` the R=8 frontier
-stops at L=10.** L=12, 14 and 16 are strictly dominated there -- more bytes
-*and* more H-weighted error. The default L=14 costs +0.127 bpp over L=10 and is
-10.8% worse on `h`.
+**On `wt` every L is on the frontier at both rungs; on the *geomean* `h` the
+R=8 frontier stops at L=10.** L=12, 14 and 16 are strictly dominated there --
+more bytes *and* more H-weighted error. The default L=14 costs +0.127 bpp over
+L=10 and is 10.8% worse on `h`.
+
+**That is a geomean statement, and the four units disagree with it.** Per unit
+at R=8, from the same `dense_l.json`:
+
+| unit | best-`h` L | `h` frontier | best-`wt` L |
+|---|---|---|---|
+| `2.mlp.down_proj` | 16 | 8, 14, 16 | 16 |
+| `2.self_attn.q_proj` | **8** | 8 | 16 |
+| `2.self_attn.k_proj` | 16 | 8, 10, 14, 16 | 16 |
+| `14.mlp.gate_proj` | 10 | 8, 10 | 16 |
+
+Two of the four keep L=14 *and* L=16 on their own `h` frontier; one wants the
+shallowest table in the sweep. So "L=14 is off the frontier at 8 bpp" is true of
+the geomean and false on half the units, and this sweep does not have the
+sample to say which L any individual unit should carry.
+
+What *is* uniform across all four is the disagreement between the two axes:
+**`wt` decreases monotonically in L on every unit at both rungs, and `h` is
+non-monotone in L on every unit at R=8.** A sweep gated on `wt` therefore always
+answers "deeper", at every unit, at every rung -- which is exactly what makes it
+the wrong gate.
 
 Which is the same inversion issue #18 already names: "an alphabet worth 4.3x on
 plain error and nothing on the H-weighted columns is a reach problem, not an
@@ -114,19 +150,38 @@ alphabet one". Swept on L, the two axes disagree in sign at 8 bpp. `wt` improves
 monotonically with L because a deeper table resolves the bulk more finely; `h`
 gets worse because the extra depth buys reach the H-heavy columns do not want.
 
-At 4 bpp the default is on both frontiers and nothing here argues with it.
+At 4 bpp there is no such conflict: L=16 minimises both metrics on three of the
+four units, `down_proj` ties L=14 with L=16 on `h` to five digits, and the
+default L=14 is on both frontiers everywhere.
 
 **Proposal, not a flip.** This is weight space on four dense units. Principle 3
 says a screen does not promote, and there is no BF16 lane to serve on, so
 `BF16_WINDOW_BITS` stays at 14 and the finding is recorded. What it does say is
-that whoever builds the BF16 lane should carry `L` as a per-rung choice rather
-than one constant, and should gate it on `h` or a serve, never on `wt`.
+that whoever builds the BF16 lane should carry `L` as a per-rung -- and, on this
+evidence, possibly per-unit -- choice rather than one constant, and should gate
+it on `h` or a serve, **never on `wt`**, which is monotone and will always
+answer "deeper".
 
-## #18, part 1: reach is the mechanism, measured directly
+## #18, part 1: reach is the mechanism, and the default is right at 4 bpp and wrong at 8
 
 `--stage reach` pins the table (`window_sigma = 1.0`) and moves only
 `channel_sigma`, so the ratio -- the table's spread against the row's -- is the
-sole variable. `model.layers.2.mlp.down_proj`, R=4:
+sole variable, and `channel_sigma` *is* that ratio for the duration of this
+stage. Reach in row-RMS units is `4.0 / channel_sigma`. Four dense Qwen
+Linears, both rungs, every arm at **identical bytes within its unit and rung**,
+control repeated in place:
+
+| rung | best `wt` | best `h` | 0.707 vs default, `wt` | 0.707 vs default, `h` |
+|---|---|---|---|---|
+| R=4 | **1.0 on 4 of 4** | 1.414, 1.0, 0.707, 1.0 | 1.0265 (worse) | 1.0272 (worse) |
+| R=8 | **0.707 on 4 of 4** | 1.414, 0.5, 0.707, 0.5 | **0.8127** | **0.7416** |
+
+(units in the per-unit columns are `2.mlp.down_proj`, `2.self_attn.q_proj`,
+`2.self_attn.k_proj`, `14.mlp.gate_proj`, in that order; geomeans over the four.)
+
+**At 4 bpp the default is the `wt` optimum on every unit**, and it is a genuine
+interior optimum -- moving the ratio 2x either way costs 1.4% to 24%. The
+single-unit table that started this section, `2.mlp.down_proj` at R=4:
 
 | channel_sigma | bpp | wt | h | reach (row RMS) | rows over reach |
 |---|---|---|---|---|---|
@@ -137,19 +192,49 @@ sole variable. `model.layers.2.mlp.down_proj`, R=4:
 | 1.414 | 4.08854 | 0.07479 | **0.05754** | 2.83 | 100% |
 | 2.0 | 4.08854 | 0.07479 | 0.05754 | 2.00 | 100% |
 
-Three things worth keeping:
+**At 8 bpp the default is off the optimum, uniformly and by a lot.** Every one
+of the four units prefers `channel_sigma = 0.707` -- reach 5.66 row-RMS instead
+of 4.00 -- on `wt`, by a geomean of **0.813x at identical bytes**, and three of
+the four prefer it on `h` too (geomean 0.742x; per-unit 1.053, 0.714, 0.534,
+0.753). Two of them want to go further still: `q_proj` and `gate_proj` both
+minimise `h` at `channel_sigma = 0.5`, reach 8.0 row-RMS, with 0.0% and 0.3% of
+rows clipped.
 
-* **The `wt` optimum is at the default**, and it is a genuine interior optimum
-  -- 2x either way costs 1.4% to 24%.
-* **More than half the rows already exceed reach at the default**, and that is
-  the *good* setting. Clipping the extremes to resolve the bulk is the right
-  trade at 4 bits, which is why "rows over reach" is a diagnostic and not a
-  defect.
-* **`h` wants slightly more clipping than `wt` does** (1.414 beats 1.0 by 1.4%),
-  the same direction as the L result: the H-weighted objective prefers
-  resolution over range. The `1.414` and `2.0` arms produce **identical bytes**
-  because every row is clipped and the reach-aware start lands them all at the
-  same place -- the clamp saturating, not a coincidence.
+Which is the same shape as the L result and points the same way: **the right
+reach is rung-dependent.** A 4-bit table has to buy resolution by giving up
+range; an 8-bit table does not, and paying the 4-bit price at 8 bits costs about
+19% of the weight error for nothing.
+
+Three corrections to what a single unit suggested, kept here because the
+single-unit reading was in an earlier draft of this document:
+
+* **"`h` wants more clipping than `wt` does" is `down_proj`'s behaviour, not a
+  rule.** `down_proj` wants more clipping at both rungs (best `h` at 1.414);
+  `q_proj` and `gate_proj` want *much less* at R=8 (best `h` at 0.5, the least
+  clipping in the sweep); `k_proj` sits between. The direction is unit-dependent
+  and the two attention projections lean the opposite way from the MLP
+  down-projection -- the same split that shows up in #12's per-role census.
+* **"More than half the rows already exceed reach at the default" is
+  `down_proj`'s 54.9%.** The other three are 29.4%, 23.4% and 26.0%. The
+  qualitative point survives -- clipping a quarter to a half of the rows is the
+  *good* setting at 4 bits, so "rows over reach" is a diagnostic and not a
+  defect -- but the number is not a constant.
+* **The 1.414 and 2.0 arms produce identical bytes on `down_proj` only.** There
+  every row is clipped at both settings and the reach-aware start lands them in
+  the same place; on the other three the shas differ, because 99.8-99.95% of
+  rows are clipped at 1.414 and 100% at 2.0, and the handful of unclipped rows
+  still move.
+
+**And none of this is spendable through `BF16_CHANNEL_SIGMA`.** Part 1 of this
+section is why: with `window_sigma=None` -- which is what `BF16_RECIPE` carries
+(`DEFAULT_WINDOW_SIGMA`) -- the table is built at `sigma = channel_sigma`, both
+ends move together, the ratio stays pinned at 1, and the constant is a gauge.
+This stage could move the ratio only because it pinned `window_sigma = 1.0`
+explicitly. So the finding is a **wire proposal, not a constant to retune**: to
+spend it the BF16 recipe needs an explicit reach term -- a `window_sigma` per
+rung, or equivalently a reach constant -- and `wire_recipe` would have to carry
+it the way it already carries `window_bits`. Nothing changes here: weight space,
+four dense units, no BF16 lane to serve on, principle 3.
 
 ## #18, part 2: six GLM experts, R=8
 
@@ -214,20 +299,29 @@ calibrated on PrismaQuant's own activations elsewhere and is scored
 carry **held-out** activation rows (`x_eval_qwen06b.pt`, the eval slice,
 disjoint from the fit slice `H` was accumulated on; neither arm saw them):
 
-| unit | C/A on `hq` | C/A on `out` |
-|---|---|---|
-| `0.self_attn.q_proj` | 1.0251 | 1.0395 |
-| `1.self_attn.k_proj` | 1.1184 | 1.1346 |
-| `13.mlp.down_proj` | 0.9190 | 0.9750 |
-| `14.mlp.gate_proj` | 0.9633 | 0.9874 |
-| `2.mlp.down_proj` | 1.2858 | 1.2740 |
-| `27.self_attn.o_proj` | 0.7627 | 0.8511 |
-| **geomean** | **0.9992** | **1.0353** |
+| unit | C/A on `hq` | C/A on `out` | `out`/`hq` |
+|---|---|---|---|
+| `0.self_attn.q_proj` | 1.0251 | 1.0395 | **1.0140** |
+| `1.self_attn.k_proj` | 1.1184 | 1.1346 | **1.0145** |
+| `13.mlp.down_proj` | 0.9190 | 0.9750 | 1.0609 |
+| `14.mlp.gate_proj` | 0.9633 | 0.9874 | 1.0251 |
+| `2.mlp.down_proj` | 1.2858 | 1.2740 | 0.9908 |
+| `27.self_attn.o_proj` | 0.7627 | 0.8511 | 1.1159 |
+| **geomean** | **0.9992** | **1.0353** | **1.0361** |
 
-**The census metric flatters the arm fit to it by 3.6%**, on five of six units,
-and the sixth agrees within 1%. Every `hq` number the census produces has to
-carry that discount before it is read as a statement about held-out behaviour.
-All six repeat controls were bit-exact.
+**The census metric flatters the arm fit to it by 3.6% in the geomean**, on five
+of six units, and the sixth agrees within 1%. Every `hq` number the census
+produces has to carry that discount before it is read as a statement about
+held-out behaviour. All six repeat controls were bit-exact.
+
+**The discount is not uniform, and its spread is wider than itself: 0.99x to
+1.12x.** That matters because it is not a constant you may multiply through a
+per-role table -- `o_proj`, whose 0.763 is the largest win in the census, has
+the largest discount (1.116) and so wins by less than `hq` says; `q_proj` and
+`k_proj`, which carry the loss, have the *smallest* (1.014) and so lose by
+almost exactly what `hq` says. The per-role numbers below are therefore quoted
+raw, with the discount given as a range and the two roles that matter given
+their own measured value.
 
 ## What the residual is, once the metric is honest
 
@@ -251,30 +345,55 @@ loses `2.mlp.down_proj` by 27%.
 
 ## And it does concentrate: the residual is q_proj and k_proj
 
-`dense4_residual_census.py` across the first **51 of 196** Qwen3-0.6B Linears
-(it runs the model in sorted-name order, so this is layers 0-15 plus the
-alphabetical wrap, every role represented 7-8 times). All three arms per unit,
-one process, the weights-only arm re-run at the end bit-exact:
+`dense4_residual_census.py` across the first **94 of 196** Qwen3-0.6B Linears
+(it runs the model in sorted-name order, every role represented 13-14 times).
+All three arms per unit, one process, the weights-only arm re-run at the end
+bit-exact:
 
 | role | n | A `hq` (NVFP4 4.5) | C `hq` (Tessera 4.0) | B/A | **C/A** |
 |---|---|---|---|---|---|
-| `down_proj` | 8 | 0.08365 | 0.07154 | 1.1360 | **0.8552** |
-| `o_proj` | 7 | 0.07284 | 0.06285 | 1.3921 | **0.8628** |
-| `up_proj` | 7 | 0.07591 | 0.07009 | 1.2239 | **0.9233** |
-| `gate_proj` | 8 | 0.04737 | 0.04492 | 1.3850 | **0.9483** |
-| `v_proj` | 7 | 0.06303 | 0.06014 | 1.2419 | **0.9541** |
-| `q_proj` | 7 | 0.04580 | 0.04931 | 1.4387 | **1.0767** |
-| `k_proj` | 7 | 0.04077 | 0.04504 | 1.4428 | **1.1049** |
-| **all** | 51 | | | **1.3155** | **0.9544** |
+| `o_proj` | 13 | 0.06995 | 0.06027 | 1.4181 | **0.8616** |
+| `down_proj` | 14 | 0.07543 | 0.06650 | 1.1632 | **0.8816** |
+| `up_proj` | 14 | 0.06875 | 0.06550 | 1.2685 | **0.9527** |
+| `v_proj` | 13 | 0.06956 | 0.06716 | 1.2570 | **0.9655** |
+| `gate_proj` | 14 | 0.04578 | 0.04517 | 1.4244 | **0.9866** |
+| `q_proj` | 13 | 0.04620 | 0.05036 | 1.4333 | **1.0899** |
+| `k_proj` | 13 | 0.04426 | 0.04992 | 1.4620 | **1.1280** |
+| **all** | 94 | | | **1.3403** | **0.9754** |
+
+**The geomean is not converged and is drifting the wrong way.** At n=51 it was
+`C/A` 0.9544; at n=94 it is 0.9754. The *ordering* of the roles is stable and
+`q_proj`/`k_proj` are the only losers in both cuts, but the overall figure has
+moved 2.2% in 43 units and should not be quoted as a converged number until the
+run finishes. What the additional 43 units did not do is change the shape.
 
 Two readings.
 
-**The residual is not spread; it is `q_proj` and `k_proj`.** Tessera at 4.0 bpp
-beats production NVFP4 at 4.5 on five of seven roles by 5-15%, and loses the
-two attention projections by 8-10%. Apply the 3.6% in-sample discount measured
-above and the picture is roughly: `down_proj` 0.886, `o_proj` 0.894, `up_proj`
-0.957, `gate_proj` 0.982, `v_proj` 0.988, `q_proj` 1.116, `k_proj` 1.145,
-overall 0.989. **Two roles carry the whole gap.**
+**The residual is not spread; it is `q_proj` and `k_proj`.** On `hq` Tessera at
+4.0 bpp beats production NVFP4 at 4.5 on five of seven roles by 1-14% and loses
+the two attention projections by 9-13%. The in-sample discount that turns those
+into held-out statements is a **range, 0.99x to 1.12x**, and multiplying the
+geomean through would be the same borrowing error the census itself fell into,
+so each role below carries its *own* measured discount where the out-check had a
+unit of that role, and the geomean only where it did not:
+
+| role | `hq` C/A | discount | out-space C/A | discount source |
+|---|---|---|---|---|
+| `o_proj` | 0.8616 | 1.1159 | **0.962** | own (n=1) |
+| `down_proj` | 0.8816 | 1.0253 | **0.904** | own (n=2) |
+| `up_proj` | 0.9527 | 1.0361 | **0.987** | geomean |
+| `v_proj` | 0.9655 | 1.0361 | **1.000** | geomean |
+| `gate_proj` | 0.9866 | 1.0251 | **1.011** | own (n=1) |
+| `q_proj` | 1.0899 | 1.0140 | **1.105** | own (n=1) |
+| `k_proj` | 1.1280 | 1.0145 | **1.144** | own (n=1) |
+| **all** | 0.9754 | 1.0361 | **~1.011** | geomean |
+
+**Two roles carry the loss, and the discount does not rescue the rest.** What it
+does do is a coherence check worth more than the table: the discounted overall,
+**~1.011**, sits between the n=51 reading (0.954 raw) and the served whole-model
+**1.039x**, and it has moved *toward* the served number as the census has grown.
+A weight-leg census on half the model that lands within 3% of the served gap is
+the same claim arriving twice by different routes.
 
 That is the shape a per-role decision exploits. `q_proj` and `k_proj` are fused
 siblings on the serving side and must share a format, which makes them one
@@ -282,13 +401,15 @@ decision rather than two -- and PrismaQuant's allocator exists to make exactly
 that decision. A uniform-format comparison is the wrong frame for a route whose
 error is this role-dependent.
 
-**LDLQ + the H-solved refit is worth 1.38x on the weight leg**, uniformly:
-`B/A` 1.3155 against `C/A` 0.9544. The lever is not a tail effect -- it is
-1.14x to 1.44x on every role, and it is largest exactly where the weights-only
-wire was furthest behind.
+**LDLQ + the H-solved refit is worth 1.37x on the weight leg**, uniformly:
+`B/A` 1.3403 against `C/A` 0.9754. The lever is not a tail effect -- it is
+1.16x to 1.46x on every role, and it is largest exactly where the weights-only
+wire was furthest behind. It is also the steadiest number in the census: 1.3155
+at n=51, 1.3403 at n=94.
 
-Caveats: 51 of 196 units, `hq` (so read every number with the 3.6% discount),
-and weight leg only. The remaining 145 are running; the partial JSON is at
+Caveats: 94 of 196 units and drifting, `hq` (so read every number with the 0.99x-1.12x
+discount above, and only `q_proj`/`k_proj` with a discount measured on their own
+role), and weight leg only. The remaining 102 are running; the partial JSON is at
 `/mnt/shared/tessera-runs/ldlq-lut/dense4_residual_census.json`.
 
 ## Method
@@ -310,10 +431,17 @@ compared against are the gate.
 
 ## What a GPU run must still confirm
 
-* Any change to `BF16_WINDOW_BITS`, or a per-rung `L`, needs a served A/B at
-  matched bytes in **one** vLLM session against the current default -- KL drifts
-  4-8x across sessions.
+* Any change to `BF16_WINDOW_BITS`, or a per-rung `L`, or a per-rung reach
+  ratio, needs a served A/B at matched bytes in **one** vLLM session against the
+  current default -- KL drifts 4-8x across sessions.
 * Whether the R=8 `h`-frontier result transfers from dense Qwen to GLM experts
-  (`--stage glm-l`).
+  (`--stage glm-l`; running at the time of writing, output
+  `/mnt/shared/tessera-runs/bf16/qsweep/glm_l.json`).
+* Whether the rung-dependent reach result survives more than four units, and
+  whether the unit-dependent `h` direction tracks role the way #12's census
+  does. Both of the reach findings that are uniform (the `wt` optimum at each
+  rung) are uniform over n=4.
 * The full 196-Linear per-role decomposition of the 4-bit residual, and whether
-  the 3.6% in-sample discount measured on six units holds across all of them.
+  the in-sample discount measured on six units holds across all of them -- and
+  in particular that the 1.4% measured on the two `q_proj`/`k_proj` units in
+  that set is not an artefact of n=2.

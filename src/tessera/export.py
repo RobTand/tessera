@@ -569,6 +569,18 @@ BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #:
 #: What remains searchable is ``L`` and the ``window_sigma``/``channel_sigma``
 #: *ratio* -- the table's spread against the row's, which is what sets reach.
+#: Searched (same issue, ``--stage reach``, which pins ``window_sigma = 1.0``
+#: so that ``channel_sigma`` *is* the ratio) and **the right ratio is
+#: rung-dependent**: over four dense Qwen Linears at identical bytes, the
+#: default ratio 1.0 minimises ``wt`` on 4 of 4 at R=4, and at R=8 a ratio of
+#: 0.707 -- reach 5.66 row-RMS instead of 4.00 -- wins on ``wt`` on 4 of 4
+#: (geomean 0.813x) and on ``h`` on 3 of 4 (geomean 0.742x).  Spending that
+#: needs a **wire change**, not a new value for this constant: ``BF16_RECIPE``
+#: leaves ``window_sigma`` at ``DEFAULT_WINDOW_SIGMA`` (``None``), which pins
+#: the ratio to 1 by construction and is what makes this constant a gauge in
+#: the first place.  Weight space, four units, no BF16 lane to serve on, so
+#: nothing here is promoted; see
+#: ``docs/measurements/tessera-bf16-gauge-and-dense4-residual-2026-09-02.md``.
 BF16_CHANNEL_SIGMA = 1.0
 BF16_RECIPE = WireRecipe(
     body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.CHANNEL,
