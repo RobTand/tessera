@@ -120,9 +120,19 @@ def test_the_tessera_route_fails_the_predicate_on_quant_method_not_on_format():
 def test_the_record_carries_the_runtime_it_was_read_in():
     attested = VLLM_FP4_PREDICATE_ATTESTATION
     assert attested["version"] == "0.28.0"
+    assert attested["image_id"].startswith("sha256:")
+    assert attested["box"] == "sparky"
     assert attested["predicate"]["path"] == "vllm/config/model.py"
     assert '"nvfp4" in quant_config.get("format", "").lower()' in attested["predicate"]["source"]
     assert "enforce-eager" in attested["scope"]
+    # The tag floats between the boxes (tessera#100), so a record naming only
+    # the tag would not say which build answered.
+    assert attested["image"] == "vllm/vllm-openai:latest"
+    assert len(attested["image_id"]) == len("sha256:") + 64
+    # Resolved, not deferred: a stamped "pending" would be a record that reads
+    # like an answer and is not one.
+    assert attested["nvfp4_pattern_built"].startswith("yes.")
+    assert "PENDING" not in attested["nvfp4_pattern_built"]
 
 
 def test_the_predicate_is_the_quoted_source_and_not_a_paraphrase():

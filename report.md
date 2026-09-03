@@ -54,6 +54,11 @@ Read in `vllm/vllm-openai:latest` on **sparky**, image id
 reporting `vllm.__version__ == "0.28.0"`, at
 `/usr/local/lib/python3.12/dist-packages/vllm`. Not taken from the issue text.
 
+The image id is part of the reading, not decoration: the tag floats and the two
+boxes are holding **different** images under it (filed as #100), so a record
+naming only the tag would not say which build answered. Both are in the stamped
+attestation.
+
 **The predicate is where the issue says it is** —
 `config/model.py:2096-2108`, verbatim:
 
@@ -96,9 +101,10 @@ flag,** which is why the label mattered:
   (`config/vllm.py:1392-1399`), so `is_custom_op_enabled("silu_and_mul")` is
   False.
 - `+quant_fp8` is appended only when `has_blocked_weights()`
-  (`config/vllm.py:1368-1375`), which tests for
-  `QuantizationStrategy.BLOCK` (`compressed_tensors.py:969-977`). Neither an
-  NVFP4 group (group-16) nor a per-channel FP8 group is BLOCK.
+  (`config/vllm.py:1368-1375`), which tests for `QuantizationStrategy.BLOCK`
+  (`compressed_tensors.py:969-977`). The groups these exporters write declare
+  `"strategy": "tensor_group"` (NVFP4, `export_stock_compressed.py:69,75`) and
+  `"strategy": "channel"` (FP8, `:82`). Neither is BLOCK.
 
 So both other disjuncts are False and the format string decides the flag.
 
@@ -106,7 +112,10 @@ So both other disjuncts are False and the format string decides the flag.
 compilation mode `NONE` (`config/vllm.py:1284-1290`) and no fusion pass runs on
 either arm. The KL harnesses in `experiments/` serve eager by default
 (`serve_and_dump_kl.sh:24`, `tessera_plugin_served.sh:50`), so this predicate
-cannot have moved any KL number already on record. It bites on a **speed**
+cannot have moved any KL number taken through those harnesses. (I did not sweep
+for a compiled-mode stock-arm KL receipt; the compiled-mode lane receipts on
+record are `quant_method: tessera`, where the predicate is False either way.) It
+bites on a **speed**
 comparison against a competitor checkpoint under a default compiled serve, which
 is exactly the comparison the issue says is unpriced.
 
@@ -118,18 +127,36 @@ the substitution never fires: this change moves a compile flag, not a byte in
 memory. Worth stating, because "derive the format" could otherwise read as a
 change to what gets loaded.
 
-**One leg I did not attest.** `SiluMulNvfp4QuantPattern` is registered only when
+**The pattern the flag would add is really built, so the difference is real.**
+`SiluMulNvfp4QuantPattern` is registered only when
 `silu_and_mul_nvfp4_quant_supported`
 (`compilation/passes/fusion/act_quant_fusion.py:36-40, 298-299`), i.e. when
-`torch.ops._C.silu_and_mul_nvfp4_quant` exists in the build. `torch.ops._C` is
-populated by `vllm/_C_stable_libtorch.abi3.so`, which raises
-`ImportError: libcuda.so.1` in a CPU container — an early reading of mine that
-said the op was absent was that artifact, not evidence, and is retracted. The
-GPU-visible reading was queued behind a long `gpulock` queue on both boxes; the
-recorded attestation therefore says the flag is what gates the pattern and does
-not claim which way it resolves. It does not change the fix: the label is wrong
-on its own terms, and the same checkpoint served by anyone else's stack answers
-the predicate differently from ours.
+`torch.ops._C.silu_and_mul_nvfp4_quant` exists in the build. It does:
+
+```
+$ strings $V/_C_stable_libtorch.abi3.so | grep "silu_and_mul_nvfp4_quant("
+silu_and_mul_nvfp4_quant(Tensor! result, Tensor! result_block_scale, Tensor input, Tensor input_global_scale) -> ()
+$ strings $V/_C_stable_libtorch.abi3.so | grep "cutlass_scaled_fp4_mm("   # positive control
+cutlass_scaled_fp4_mm(Tensor! out, Tensor a, Tensor b, ... ) -> ()
+```
+
+read out of the binary, with the op that serves NVFP4 on this image as the
+positive control and a nonsense name (0 hits) as the negative.
+
+A correction on how that was established: an earlier reading of mine reported the
+op **absent**, taken by `hasattr(torch.ops._C, ...)` in a CPU container. It was an
+artifact — `torch.ops._C` is populated by `vllm/_C_stable_libtorch.abi3.so`, which
+raises `ImportError: libcuda.so.1` without a GPU, so every name came back False
+including `cutlass_scaled_fp4_mm`, which demonstrably serves. That reading is
+retracted; the control is what caught it.
+
+**What is still not attested** is the per-SM guard. The same binary carries the
+message `No compiled silu_and_mul nvfp4 quantization kernel for SM ` and an
+`_sm1xxa` variant of the symbol, so whether the fused kernel exists for a given
+target is a further question. The stamped record says so rather than implying the
+pattern always lands. Sizing the effect is a throughput measurement I did not
+take and was not asked for — and could not honestly have taken today, with sparky
+at load 60 and 14 GB of 121 available.
 
 ## Tests
 

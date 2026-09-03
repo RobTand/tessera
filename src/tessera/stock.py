@@ -307,6 +307,10 @@ MIXED_PRECISION = "mixed-precision"
 #: makes a stamped record stale, and the version is what lets someone see that.
 VLLM_FP4_PREDICATE_ATTESTATION = {
     "image": "vllm/vllm-openai:latest",
+    # The tag floats and the two boxes do not hold the same bytes under it
+    # (tessera#100), so the id is part of the reading, not decoration.
+    "image_id": "sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    "box": "sparky",
     "version": "0.28.0",
     "read": "2026-09-03",
     "predicate": {
@@ -341,17 +345,28 @@ VLLM_FP4_PREDICATE_ATTESTATION = {
         "sets fuse_act_quant = enable_act_fusion, and under the default compiled "
         "backend custom_ops resolves to ['none'] (config/vllm.py:1392-1399) so "
         "neither silu_and_mul nor quant_fp8 is enabled -- +quant_fp8 is appended "
-        "only for blocked weights (config/vllm.py:1368-1375), and neither NVFP4 "
-        "group nor per-channel FP8 group is QuantizationStrategy.BLOCK.  So on a "
+        "only for blocked weights (config/vllm.py:1368-1375), which tests for "
+        "QuantizationStrategy.BLOCK (compressed_tensors.py:969-977), and the groups "
+        "these exporters write declare strategy 'tensor_group' (NVFP4) and 'channel' "
+        "(FP8), neither of which is BLOCK.  So on a "
         "default compiled serve this predicate is the ONLY thing switching "
         "fuse_act_quant, and it switched it off for us and on for a uniform-NVFP4 "
         "checkpoint from anyone else."
     ),
     "nvfp4_pattern_built": (
-        "SiluMulNvfp4QuantPattern is registered only when "
+        "yes.  SiluMulNvfp4QuantPattern is registered only when "
         "silu_and_mul_nvfp4_quant_supported "
         "(compilation/passes/fusion/act_quant_fusion.py:36-40,298-299), i.e. when the "
-        "op is in this build's torch.ops._C.  PENDING."
+        "op is in this build's torch.ops._C, and it is: the schema "
+        "'silu_and_mul_nvfp4_quant(Tensor! result, Tensor! result_block_scale, "
+        "Tensor input, Tensor input_global_scale) -> ()' is in "
+        "vllm/_C_stable_libtorch.abi3.so beside the cutlass_scaled_fp4_mm schema "
+        "that serves NVFP4 on this image.  Read out of the binary rather than off a "
+        "loaded runtime, because the extension needs libcuda to import.  What is NOT "
+        "read here is the per-SM guard: the same binary carries the message 'No "
+        "compiled silu_and_mul nvfp4 quantization kernel for SM ' and an "
+        "_sm1xxa variant of the symbol, so whether the fused kernel exists for a "
+        "given target is a further question this record does not answer."
     ),
 }
 
