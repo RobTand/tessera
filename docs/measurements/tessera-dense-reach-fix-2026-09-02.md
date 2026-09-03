@@ -9,7 +9,9 @@ the time (87,870 of 344,064 rows; 59% of `down_proj` rows, 48% of `o_proj`,
 17-26% of the rest, up to 30 sigma), and the clipped entries sit in the
 Hessian-dominant columns. `initial_channel_scale(work, sigma, reach=...)` now
 starts every row whose max would land past the body's reach at the sigma that
-puts it exactly on the reach; rows inside the reach are the plain RMS start
+puts it on the reach to within one fp16 word -- the landing rounds to nearest,
+so 29,609 of 87,870 raised rows start one ulp low and clip the very weight the
+raise exists for (issue #87); rows inside the reach are the plain RMS start
 byte for byte. The CHANNEL plane already stores one fp16 scale per row, so the
 wire, the table, the decoder, the kernel and Gridbook's lane are untouched.
 
