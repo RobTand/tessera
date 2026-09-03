@@ -213,14 +213,21 @@ CALL OK, out nonzero: True
 ```
 
 `silu_and_mul_nvfp4_quant(out, block_scale, x, global_scale)` returns without
-raising on sm121 and writes nonzero packed output. The `TORCH_CHECK` does not
-fire on this target. Combined with the registration reading below, the pattern
-registers here *and* its kernel runs here, so turning `fuse_act_quant` on for the
-twin does not introduce a crash. The stamped record carries both.
+raising on sm121 and writes nonzero packed output.
 
-What is still not attested is the *size* of the fusion's effect. Sizing the effect is a throughput measurement I did not
-take and was not asked for — and could not honestly have taken today, with sparky
-at load 60 and 14 GB of 121 available.
+**That rules out exactly one thing: the per-SM raise does not fire on this
+target.** It is one op call at M=4, N=128; it is not a statement that the fused
+path is correct at serving shapes, and it is not a compiled serve. The true fact
+underneath my retracted crash paragraph survives and I am keeping it: **no
+compiled serve has ever exercised a derived-format twin on this image** — every
+compiled-mode receipt of a stock twin on record was taken while the twin declared
+`mixed-precision`, i.e. with `fuse_act_quant` off. So the pattern's effect on the
+twin's compiled KL and throughput is *unmeasured*. Unmeasured, not a gate: the
+crash risk that would have made it a gate is what the op call retired.
+
+The *size* of the fusion's effect is likewise unmeasured. It is a throughput
+measurement I did not take and was not asked for — and could not honestly have
+taken today, with sparky at load 60 and 14 GB of 121 available.
 
 ## Tests
 
@@ -250,6 +257,19 @@ Run once, on **sparklina** (the quiet box), from a copy of this branch at
     PYTHONPATH=. python -m pytest -q -p no:randomly
 
 RESULT_PLACEHOLDER
+
+### How the GPU readings were taken, including where I went off the lock
+
+The two `--gpus all` runs above (the op registration listing, and the op call)
+were run **directly on sparky, not through `/home/rob/tmp/arb/gpulock.sh`**. I
+had queued the reading on the lock first; the queue was deep on a box at load 60,
+and I judged a container that imports a library and returns is not the GPU-heavy
+compute or timing run the lock is for — the same reasoning that took pytest off
+it. That judgement is arguable: a vLLM import in a fresh container is a few GB of
+host memory on a box that was in swap. Recording it rather than leaving it
+implicit. Both runs returned in seconds and neither took a timing number, so
+nothing here depends on the box being quiet. The now-redundant queued lock job
+was mine and I killed it, freeing its slot.
 
 No full master baseline was computed: fifteen agents were running one
 concurrently and that is what put sparky into swap. The question a baseline

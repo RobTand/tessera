@@ -381,8 +381,12 @@ VLLM_FP4_PREDICATE_ATTESTATION = {
         "silu_and_mul_nvfp4_quant(out, block_scale, x, global_scale) returns "
         "without raising and writes nonzero packed output, so the "
         "'No compiled silu_and_mul nvfp4 quantization kernel for SM ' TORCH_CHECK "
-        "in the binary does not fire on this target.  The pattern registers and "
-        "its kernel runs here."
+        "does not fire on this target.  That is ALL the call shows: one invocation "
+        "at M=4, N=128, not a correctness claim at serving shapes and not a "
+        "compiled serve.  What remains unmeasured is the pattern's effect on the "
+        "twin -- no compiled serve has exercised a derived-format twin on this "
+        "image, since every compiled-mode stock-twin receipt on record was taken "
+        "while the twin declared mixed-precision, with fuse_act_quant off."
     ),
     "gpu_reading": {
         "box": "sparky",
