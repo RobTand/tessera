@@ -149,7 +149,14 @@ the interesting result rather than the mean.
 
 ## 4. The latency
 
-PENDING. Method, and why it is not #10's bench: every number is read from the
+PENDING, and **scoped down deliberately**: the four streamed arms
+(armA/armB x eager/compiled) are taken, the two armA-resident arms are not.
+Resident never reaches the GEMV lane, so those two serves would have bought
+context rather than evidence, at ~30 minutes of a box five other agents were
+queued for. The streamed arms are kept because they carry the **profile**, and
+which kernels launched is not load-sensitive even when the timing is.
+
+Method, and why it is not #10's bench: every number is read from the
 **serving process**. `vllm:time_to_first_token_seconds` and
 `vllm:time_per_output_token_seconds` off `/metrics`, differenced across each
 driven window, so they describe the requests driven and nothing else; client wall
