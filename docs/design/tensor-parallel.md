@@ -126,15 +126,19 @@ digest off it, so the whole contract is one call.
 
 ```python
 parsed = parse_unit_artifact(blob, device=device)   # or the streamed reader
-lo, hi = rank * (n // tp), (rank + 1) * (n // tp)
-shard = slice_unit(parsed, rows=(lo, hi))           # column-parallel Linear
-shard = slice_unit(parsed, cols=(lo, hi))           # row-parallel Linear
+# The row range is the MEMBER's own, off the size vLLM asked for -- not an even
+# split, because a replicated role is cut into fewer shards than there are ranks:
+shards = member_rows // out_partition          # exact, or the shapes disagree
+lo = (rank // (tp // shards)) * out_partition  # ranks per shard, 1 when even
+shard = slice_unit(parsed, rows=(lo, lo + out_partition))   # column-parallel Linear
+lo = rank * in_size_per_partition                           # the input axis IS even
+shard = slice_unit(parsed, cols=(lo, lo + in_size_per_partition))  # row-parallel
 ```
 
 | vLLM layer | what is split | the call | note |
 |---|---|---|---|
 | `ColumnParallelLinear` | output features = **rows** | `rows=(lo, hi)` | |
-| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **But `plan_shard` does not agree yet:** it derives the axis from `out_size * tp == rows`, which a replicated-KV QKV module fails, and refuses with a message naming the wrong cause. Moot while every world above one was refused; reachable since #7. Tracked as #32 |
+| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **`plan_shard` agrees since #32:** it takes `output_partition_sizes` and the declared roles as **lists**, gives every member its own `RoleShard(lo, hi, shards)`, and asks `can_shard` with the member's own `shards` — which is `num_kv_heads`, not `tp` |
 | `RowParallelLinear` (`o_proj`, `down_proj`) | input features = **columns** | `cols=(lo, hi)` | |
 | `FusedMoE` with expert parallelism | whole experts | no slicing | EP moves units, it does not cut them |
 | `FusedMoE` with tensor parallelism inside an expert | as the dense cases | `rows=` for w1/w3, `cols=` for w2 | |
@@ -262,8 +266,12 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
   writing the shard and reading it back, so the route downstream holds a
   `ParsedUnit` whose manifest describes the rows this rank actually has — the
   shard record, the restricted release counts and all. `shard_parsed_roles` cuts
-  fused roles independently on the row axis. Unit-tested at tp=2 on both axes
-  and both shipping wires against the parent's own decoded slice
+  fused roles independently on the row axis, each to the range `plan_shard`
+  derived from that member's own `output_partition_sizes` entry — so a KV role
+  vLLM replicates is cut into `num_kv_heads` shards rather than `tp` of them,
+  and two ranks holding the same rows is planned rather than refused (#32).
+  Unit-tested at tp=2 on both axes and both shipping wires against the parent's
+  own decoded slice, and at tp=4 over 2 shards for the replicated case
   (`tests/test_serving_sharding.py`); the E4M3/window route threads the start
   state into `prepare_window`'s pad. What is still missing is the served gate,
   below; nothing here has run on two ranks.

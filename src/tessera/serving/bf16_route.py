@@ -265,12 +265,14 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
         # -- load -------------------------------------------------------
         def create_weights(self, layer, input_size_per_partition, output_partition_sizes,
                            input_size, output_size, params_dtype, **extra_weight_attrs):
-            out_size = int(sum(output_partition_sizes))
             in_size = int(input_size_per_partition)
             # See ``sharding``: the plan is the whole module at TP=1 and is the
             # shape check it replaces; at TP>1 it names the axis to cut on.
-            plan = plan_shard(prefix, rows=rows, columns=columns,
-                              out_size=out_size, in_size=in_size)
+            # The LISTS, not their sums: ``output_partition_sizes`` is the
+            # per-member answer and the declared roles are its counterpart, and
+            # a fused container's members are cut independently (#32).
+            plan = plan_shard(prefix, roles=declared["roles"], columns=columns,
+                              out_partitions=output_partition_sizes, in_size=in_size)
             # And the per-axis answer, asked here because here is where the
             # axis is known.  This route cuts both, for the reason
             # ``ROUTE_TP_AXES`` records; the call is what keeps the published

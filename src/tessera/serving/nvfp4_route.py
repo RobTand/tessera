@@ -97,7 +97,7 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
     declared = validate_tessera_scheme(scheme, prefix)
     if declared["family"] != TESSERA_NVFP4:
         raise ValueError(f"{prefix}: the NVFP4 route serves {TESSERA_NVFP4}, not {declared['family']}")
-    rows, columns, wire_bytes = declared["rows"], declared["columns"], declared["wire_bytes"]
+    columns, wire_bytes = declared["columns"], declared["wire_bytes"]
     assert columns % GROUP_SIZE == 0
     groups = columns // GROUP_SIZE
 
@@ -115,7 +115,6 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
         # -- load -------------------------------------------------------
         def create_weights(self, layer, input_size_per_partition, output_partition_sizes,
                            input_size, output_size, params_dtype, **extra_weight_attrs):
-            out_size = int(sum(output_partition_sizes))
             in_size = int(input_size_per_partition)
             # Which slice of the whole unit this rank serves.  At TP=1 the plan
             # is the whole module and this is the shape check it replaces; at
@@ -123,8 +122,11 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # inside a packer: this route decodes the span-2 TCQ body, whose
             # kernel supplies state_{-1} = 0 itself, so a ROW cut is refused on
             # every rank before a byte is read (see ``sharding.ROUTE_TP_AXES``).
-            plan = plan_shard(prefix, rows=rows, columns=columns,
-                              out_size=out_size, in_size=in_size)
+            # The LISTS, not their sums: ``output_partition_sizes`` is the
+            # per-member answer and the declared roles are its counterpart, and
+            # a fused container's members are cut independently (#32).
+            plan = plan_shard(prefix, roles=declared["roles"], columns=columns,
+                              out_partitions=output_partition_sizes, in_size=in_size)
             require_axis_supported(TESSERA_NVFP4, plan)
             weight_loader = extra_weight_attrs.get("weight_loader")
             # The on-disk parameter names are the wire's, unchanged by the move

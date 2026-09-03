@@ -32,11 +32,11 @@ from __future__ import annotations
 
 import pytest
 
-from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, ShardPlan,
-                                      _shard_unit_for_rank, _unit_extent,
-                                      check_shard_granularity, plan_shard,
-                                      shard_granularity, shard_parsed_roles,
-                                      tp_rank_and_size)
+from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, RoleShard,
+                                      ShardPlan, _shard_unit_for_rank,
+                                      _unit_extent, check_shard_granularity,
+                                      plan_shard, shard_granularity,
+                                      shard_parsed_roles, tp_rank_and_size)
 
 torch = pytest.importorskip("torch")
 needs_cuda = pytest.mark.skipif(not torch.cuda.is_available(),
@@ -103,41 +103,121 @@ def _without_tessera_layout(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_layout)
 
 
+def _plan(rows, columns, *, out, in_, rank, tp):
+    """A dense one-role plan, the shape most of these tests are about."""
+    return plan_shard("m", roles=[("weight", rows)], columns=columns,
+                      out_partitions=[out], in_size=in_, tp_rank=rank, tp_size=tp)
+
+
+def _seam_plan(rows, columns, axis, *, rank, tp, shards):
+    """A one-role plan cut ``shards`` ways on ``axis``, for driving the seam.
+
+    Built through ``plan_shard`` rather than by hand so the seam is always
+    exercised against a plan the planner would actually produce.
+    """
+    if axis == AXIS_ROWS:
+        return _plan(rows, columns, out=rows // shards, in_=columns, rank=rank, tp=tp)
+    return _plan(rows, columns, out=rows, in_=columns // shards, rank=rank, tp=tp)
+
+
 def test_one_rank_is_the_whole_module():
-    plan = plan_shard("m", rows=1024, columns=2048, out_size=1024, in_size=2048,
-                      tp_rank=0, tp_size=1)
+    plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
+                      in_size=2048, tp_rank=0, tp_size=1)
     assert plan.is_whole and plan.axis is None
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
 
 
 def test_an_output_split_is_the_row_axis():
     """ColumnParallel / MergedColumnParallel / QKVParallel: rows over ranks."""
-    plan = plan_shard("m", rows=1024, columns=2048, out_size=256, in_size=2048,
-                      tp_rank=1, tp_size=4)
+    plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[256],
+                      in_size=2048, tp_rank=1, tp_size=4)
     assert plan.axis == AXIS_ROWS
     assert (plan.shard_rows, plan.shard_columns) == (256, 2048)
+    assert (plan.role("weight").lo, plan.role("weight").hi) == (256, 512)
+    assert plan.role("weight").shards == 4
 
 
 def test_an_input_split_is_the_column_axis():
     """RowParallel: the input width over ranks, every row present."""
-    plan = plan_shard("m", rows=1024, columns=2048, out_size=1024, in_size=512,
-                      tp_rank=3, tp_size=4)
+    plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
+                      in_size=512, tp_rank=3, tp_size=4)
     assert plan.axis == AXIS_COLUMNS
     assert (plan.shard_rows, plan.shard_columns) == (1024, 512)
+    assert (plan.role("weight").lo, plan.role("weight").hi) == (1536, 2048)
 
 
 def test_a_replicated_linear_inside_a_tp_group_is_a_whole_unit():
     """Whole shapes at tp_size > 1 are a replicated layer, not a defect."""
-    plan = plan_shard("m", rows=1024, columns=2048, out_size=1024, in_size=2048,
-                      tp_rank=2, tp_size=4)
+    plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
+                      in_size=2048, tp_rank=2, tp_size=4)
     assert plan.axis is None
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
 
 
+def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
+    """GQA with ``num_kv_heads < tp``: two ranks hold the SAME k/v rows.
+
+    vLLM replicates KV heads when there are fewer of them than ranks
+    (``QKVParallelLinear.__init__``: ``num_kv_head_replicas = tp //
+    total_num_kv_heads``), and its own loader then reads
+    ``start_idx = (tp_rank // num_kv_head_replicas) * shard_size``.  So the
+    per-rank sizes sum to MORE than the container's rows and no even split of
+    it exists -- which is ordinary, not a checkpoint disagreement.
+
+    16 query heads, 8 KV heads, head_size 64, over 16 ranks: q is cut 16 ways,
+    k and v 8 ways with two ranks per shard.
+    """
+    roles = [("q_proj", 16 * 64), ("k_proj", 8 * 64), ("v_proj", 8 * 64)]
+    for rank in (0, 1, 2, 15):
+        plan = plan_shard("model.layers.0.self_attn.qkv_proj", roles=roles, columns=2048,
+                          out_partitions=[64, 64, 64], in_size=2048,
+                          tp_rank=rank, tp_size=16)
+        assert plan.axis == AXIS_ROWS
+        # The tile this rank computes: three heads, not rows/16.
+        assert (plan.shard_rows, plan.shard_columns) == (192, 2048)
+        q, k, v = plan.role("q_proj"), plan.role("k_proj"), plan.role("v_proj")
+        assert (q.lo, q.hi, q.shards) == (64 * rank, 64 * rank + 64, 16)
+        for member in (k, v):
+            assert (member.lo, member.hi) == (64 * (rank // 2), 64 * (rank // 2) + 64)
+            assert member.shards == 8, "8 KV heads is 8 shards, whatever the world size"
+    # Ranks 0 and 1 hold IDENTICAL k rows, and different q rows.
+    a, b = (plan_shard("qkv", roles=roles, columns=2048, out_partitions=[64, 64, 64],
+                       in_size=2048, tp_rank=r, tp_size=16) for r in (0, 1))
+    assert (a.role("k_proj").lo, a.role("k_proj").hi) == (b.role("k_proj").lo, b.role("k_proj").hi)
+    assert a.role("q_proj").lo != b.role("q_proj").lo
+
+
+def test_a_single_kv_head_is_replicated_whole_to_every_rank():
+    """MQA: one KV head, so every rank holds the k role entire and uncut."""
+    roles = [("q_proj", 8 * 64), ("k_proj", 64), ("v_proj", 64)]
+    plan = plan_shard("qkv", roles=roles, columns=1024, out_partitions=[64, 64, 64],
+                      in_size=1024, tp_rank=3, tp_size=8)
+    assert plan.axis == AXIS_ROWS
+    assert plan.role("k_proj").is_whole and plan.role("k_proj").shards == 1
+    assert not plan.role("q_proj").is_whole
+
+
+def test_a_replication_factor_that_is_not_whole_is_refused_by_that_name():
+    """6 ranks over 4 KV heads: no whole number of ranks per shard.
+
+    The refusal has to name the replication, because that is the relation that
+    failed -- an operator told "neither the whole module nor a 1/6 split" would
+    go looking for a checkpoint/serve shape disagreement that is not there.
+    """
+    roles = [("q_proj", 12 * 64), ("k_proj", 4 * 64), ("v_proj", 4 * 64)]
+    with pytest.raises(ValueError) as e:
+        plan_shard("qkv", roles=roles, columns=1024, out_partitions=[128, 64, 64],
+                   in_size=1024, tp_rank=0, tp_size=6)
+    msg = str(e.value)
+    assert "'k_proj'" in msg and "4 shards for 6 ranks" in msg
+    assert "4 does not divide 6" in msg and "REPLICATED" in msg
+    assert "neither the whole module" not in msg, "that message is for a shape disagreement"
+
+
 def test_a_shape_that_is_neither_whole_nor_a_clean_split_is_refused_with_both_shapes():
     with pytest.raises(ValueError) as e:
-        plan_shard("model.layers.0.mlp.down_proj", rows=1024, columns=2048,
-                   out_size=300, in_size=2048, tp_rank=0, tp_size=4)
+        plan_shard("model.layers.0.mlp.down_proj", roles=[("weight", 1024)], columns=2048,
+                   out_partitions=[300], in_size=2048, tp_rank=0, tp_size=4)
     msg = str(e.value)
     assert "model.layers.0.mlp.down_proj" in msg
     assert "1024x2048" in msg and "300x2048" in msg
@@ -146,15 +226,15 @@ def test_a_shape_that_is_neither_whole_nor_a_clean_split_is_refused_with_both_sh
 def test_a_wrong_shape_on_one_rank_still_says_a_wire_is_bound_to_its_shape():
     """The TP=1 message is the one this replaced; it must not have got vaguer."""
     with pytest.raises(ValueError, match="a wire is bound to its shape"):
-        plan_shard("m", rows=1024, columns=2048, out_size=999, in_size=2048,
-                   tp_rank=0, tp_size=1)
+        plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[999],
+                   in_size=2048, tp_rank=0, tp_size=1)
 
 
 def test_nonsensical_coordinates_are_refused():
     for rank, size in ((4, 4), (-1, 2), (0, 0)):
         with pytest.raises(ValueError, match="TP coordinates"):
-            plan_shard("m", rows=8, columns=8, out_size=4, in_size=8,
-                       tp_rank=rank, tp_size=size)
+            plan_shard("m", roles=[("weight", 8)], columns=8, out_partitions=[4],
+                       tp_rank=rank, tp_size=size, in_size=8)
 
 
 def test_the_seam_returns_the_same_object_on_one_rank():
@@ -164,8 +244,8 @@ def test_the_seam_returns_the_same_object_on_one_rank():
     that the seam returns before it can inspect anything.
     """
     unit = object()
-    assert _shard_unit_for_rank(unit, 0, 1, None) is unit
-    assert _shard_unit_for_rank(unit, 0, 1, AXIS_ROWS) is unit
+    plan = _plan(1024, 2048, out=1024, in_=2048, rank=0, tp=1)
+    assert _shard_unit_for_rank(unit, plan, plan.role("weight")) is unit
 
 
 @needs_cuda
@@ -181,12 +261,68 @@ def test_the_seam_cuts_a_real_unit_into_the_parents_own_rows(units, label, axis)
     extent = rows if axis == AXIS_ROWS else columns
     half = extent // 2
     for rank in (0, 1):
-        shard = _shard_unit_for_rank(parsed, rank, 2, axis)
+        plan = _seam_plan(rows, columns, axis, rank=rank, tp=2, shards=2)
+        shard = _shard_unit_for_rank(parsed, plan, plan.role("weight"))
         assert shard is not parsed
         got = _decode_unit(shard, parsed)
         want = (whole[rank * half:(rank + 1) * half, :] if axis == AXIS_ROWS
                 else whole[:, rank * half:(rank + 1) * half])
         assert torch.equal(got, want), f"{label} {axis} rank {rank}"
+
+
+@needs_cuda
+def test_the_seam_cuts_a_replicated_role_to_the_same_rows_on_two_ranks(units):
+    """The #32 case, decoded: 4 ranks over 2 KV shards, and the pairs match.
+
+    This is the property the plan-level test cannot prove.  A shard of the right
+    SHAPE on every rank would pass every structural check and serve wrong
+    logits; what has to hold is that ranks 0 and 1 decode to the parent's rows
+    ``[0:32)`` -- the same rows, bit for bit -- and ranks 2 and 3 to ``[32:64)``.
+
+    Driven through ``shard_parsed_roles``, which is the routes' own entry point,
+    so the re-parse is in the loop too.
+    """
+    parsed = units["e4m3"]
+    whole = _decode(parsed)
+    rows, columns = _unit_extent(parsed)
+    head = rows // 2                       # two KV "heads" of 32 rows, four ranks
+    got = []
+    for rank in range(4):
+        plan = plan_shard("model.layers.0.self_attn.qkv_proj",
+                          roles=[("k_proj", rows)], columns=columns,
+                          out_partitions=[head], in_size=columns, tp_rank=rank, tp_size=4)
+        role = plan.role("k_proj")
+        assert role.shards == 2, "two shards for four ranks: this is the replicated case"
+        assert (role.lo, role.hi) == (head * (rank // 2), head * (rank // 2) + head)
+        out = shard_parsed_roles([("k_proj", parsed)], plan)
+        assert len(out) == 1 and out[0][0] == "k_proj"
+        got.append(_decode(out[0][1]))
+    for rank, shard in enumerate(got):
+        want = whole[head * (rank // 2):head * (rank // 2) + head, :]
+        assert torch.equal(shard, want), f"rank {rank} decoded the wrong rows"
+    assert torch.equal(got[0], got[1]) and torch.equal(got[2], got[3])
+    assert not torch.equal(got[0], got[2])
+
+
+@needs_cuda
+def test_the_seam_hands_back_a_role_this_rank_holds_entire(units):
+    """One KV head over four ranks: no cut, and no round trip either.
+
+    ``is_whole`` is not a shortcut bolted on -- a range covering the extent is
+    not a cut, and returning the parse untouched is what keeps a replicated
+    role free.  Identity is the assertion, because a copy here would be a
+    silent per-rank cost on every MQA module.
+    """
+    parsed = units["e4m3"]
+    rows, columns = _unit_extent(parsed)
+    plan = plan_shard("qkv", roles=[("q_proj", rows), ("k_proj", rows)], columns=columns,
+                      out_partitions=[rows // 4, rows], in_size=columns,
+                      tp_rank=2, tp_size=4)
+    assert plan.role("k_proj").is_whole and plan.role("q_proj").shards == 4
+    out = dict(shard_parsed_roles([("q_proj", parsed), ("k_proj", parsed)], plan))
+    assert out["k_proj"] is parsed
+    assert torch.equal(_decode(out["q_proj"]),
+                       _decode(parsed)[rows // 2:rows // 2 + rows // 4, :])
 
 
 @needs_cuda
@@ -199,13 +335,15 @@ def test_the_seam_refuses_a_cut_the_wire_cannot_express_and_names_the_granularit
     """
     parsed = units["e4m3-mixed"]
     assert shard_granularity(parsed) == (1, 256)
+    four = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_COLUMNS, rank=1, tp=4, shards=4)
     with pytest.raises(ValueError) as e:
-        _shard_unit_for_rank(parsed, 1, 4, AXIS_COLUMNS)
+        _shard_unit_for_rank(parsed, four, four.role("weight"))
     msg = str(e.value)
     assert "256" in msg and "column" in msg
     assert "tensor_parallel_size" in msg      # the operator's way out, in the message
     # ... and two ranks, which the granularity does divide, is not refused.
-    assert _shard_unit_for_rank(parsed, 1, 2, AXIS_COLUMNS) is not parsed
+    two = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_COLUMNS, rank=1, tp=2, shards=2)
+    assert _shard_unit_for_rank(parsed, two, two.role("weight")) is not parsed
 
 
 @needs_cuda
@@ -217,8 +355,9 @@ def test_the_seam_names_the_slicer_when_the_build_cannot_cut(monkeypatch, units)
     but it is the exception now, so it is provoked rather than assumed.
     """
     _without_tessera_layout(monkeypatch)
+    plan = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_ROWS, rank=1, tp=4, shards=4)
     with pytest.raises(NotImplementedError) as e:
-        _shard_unit_for_rank(units["e4m3"], 1, 4, AXIS_ROWS)
+        _shard_unit_for_rank(units["e4m3"], plan, plan.role("weight"))
     msg = str(e.value)
     assert "tessera.layout.slice_unit" in msg
     assert "tensor_parallel_size=1" in msg
@@ -227,14 +366,18 @@ def test_the_seam_names_the_slicer_when_the_build_cannot_cut(monkeypatch, units)
 @needs_cuda
 def test_the_seam_refuses_a_cut_with_no_axis(units):
     """``axis=None`` above one rank is a caller bug, not a whole-module shortcut."""
+    plan = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_ROWS, rank=1, tp=2, shards=2)
+    plan = ShardPlan(plan.prefix, plan.rows, plan.columns, plan.shard_rows,
+                     plan.shard_columns, plan.tp_rank, plan.tp_size, None, plan.roles)
     with pytest.raises(ValueError, match="no axis"):
-        _shard_unit_for_rank(units["e4m3"], 1, 2, None)
+        _shard_unit_for_rank(units["e4m3"], plan, plan.role("weight"))
 
 
 def test_sharding_roles_is_identity_on_one_rank():
     """The path a route took before TP: the same list, same objects."""
     roles = [("q_proj", object()), ("k_proj", object()), ("v_proj", object())]
-    plan = plan_shard("qkv", rows=1024, columns=2048, out_size=1024, in_size=2048,
+    plan = plan_shard("qkv", roles=[("q_proj", 512), ("k_proj", 256), ("v_proj", 256)],
+                      columns=2048, out_partitions=[512, 256, 256], in_size=2048,
                       tp_rank=0, tp_size=1)
     assert shard_parsed_roles(roles, plan) is roles
 
@@ -255,11 +398,11 @@ def test_sharding_roles_cuts_and_re_derives_the_parse(units, axis):
     whole = _decode(parsed)
     rows, columns = _unit_extent(parsed)
     if axis == AXIS_ROWS:
-        plan = plan_shard("mlp.gate_up", rows=rows, columns=columns,
-                          out_size=rows // 2, in_size=columns, tp_rank=1, tp_size=2)
+        plan = plan_shard("mlp.gate_up", roles=[("weight", rows)], columns=columns,
+                          out_partitions=[rows // 2], in_size=columns, tp_rank=1, tp_size=2)
     else:
-        plan = plan_shard("mlp.down_proj", rows=rows, columns=columns,
-                          out_size=rows, in_size=columns // 2, tp_rank=1, tp_size=2)
+        plan = plan_shard("mlp.down_proj", roles=[("weight", rows)], columns=columns,
+                          out_partitions=[rows], in_size=columns // 2, tp_rank=1, tp_size=2)
     assert plan.axis == axis
     out = shard_parsed_roles([("weight", parsed)], plan)
     assert len(out) == 1 and out[0][0] == "weight"
@@ -294,9 +437,9 @@ def test_granularity_is_none_and_the_check_a_no_op_without_the_cutter(monkeypatc
     _without_tessera_layout(monkeypatch)
     sentinel = object()
     assert shard_granularity(sentinel) is None
-    plan = plan_shard("m", rows=1024, columns=2048, out_size=256, in_size=2048,
-                      tp_rank=0, tp_size=4)
-    check_shard_granularity(plan, sentinel)     # no raise
+    plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[256],
+                      in_size=2048, tp_rank=0, tp_size=4)
+    check_shard_granularity(plan, plan.role("weight"), sentinel)     # no raise
 
 
 @needs_cuda
@@ -306,16 +449,14 @@ def test_granularity_refusal_names_the_granularity(monkeypatch, units):
 
     parsed = units["e4m3"]
     monkeypatch.setattr(sharding, "shard_granularity", lambda unit: (24, 40))
-    plan = ShardPlan("m", rows=UNIT_ROWS, columns=UNIT_COLS, shard_rows=16,
-                     shard_columns=UNIT_COLS, tp_rank=0, tp_size=4, axis=AXIS_ROWS)
+    plan = _seam_plan(UNIT_ROWS, UNIT_COLS, AXIS_ROWS, rank=0, tp=4, shards=4)
     with pytest.raises(ValueError) as e:
-        sharding.check_shard_granularity(plan, parsed)
+        sharding.check_shard_granularity(plan, plan.role("weight"), parsed)
     assert "24" in str(e.value) and "16" in str(e.value)
 
-    plan = ShardPlan("m", rows=UNIT_ROWS, columns=UNIT_COLS, shard_rows=UNIT_ROWS,
-                     shard_columns=128, tp_rank=0, tp_size=4, axis=AXIS_COLUMNS)
+    plan = _seam_plan(UNIT_ROWS, 512, AXIS_COLUMNS, rank=0, tp=4, shards=4)
     with pytest.raises(ValueError) as e:
-        sharding.check_shard_granularity(plan, parsed)
+        sharding.check_shard_granularity(plan, plan.role("weight"), parsed)
     assert "40" in str(e.value) and "128" in str(e.value)
 
 
@@ -406,13 +547,21 @@ def test_the_seam_speaks_tessera_layouts_axis_vocabulary():
     assert (AXIS_ROWS, AXIS_COLUMNS) == ("row", "column")
 
 
-def test_bounds_are_equal_parts_and_refuse_an_uneven_split():
-    from tessera.serving.sharding import _bounds
+def test_an_even_split_is_equal_parts_and_an_uneven_one_is_refused():
+    """What ``_bounds`` used to assert, now asserted of the planner.
 
-    assert _bounds(1024, 0, 4) == (0, 256)
-    assert _bounds(1024, 3, 4) == (768, 1024)
-    with pytest.raises(ValueError, match="equal shards"):
-        _bounds(1023, 0, 2)
+    The even split is no longer a separate function: a role's range comes off
+    the sizes vLLM asked for, and equal parts are what those sizes describe
+    when nothing is replicated.  An extent that does not divide is refused by
+    the planner, naming the role -- ``_bounds`` could only say the arithmetic
+    failed, not which member it failed for.
+    """
+    for rank, want in ((0, (0, 256)), (3, (768, 1024))):
+        plan = _plan(1024, 2048, out=256, in_=2048, rank=rank, tp=4)
+        role = plan.role("weight")
+        assert (role.lo, role.hi) == want and role.shards == 4
+    with pytest.raises(ValueError, match="does not divide 1023"):
+        _plan(1023, 2048, out=511, in_=2048, rank=0, tp=2)
 
 
 def test_the_pad_really_is_state_minus_one():
@@ -487,8 +636,7 @@ def test_the_fp8_route_serves_a_row_shard_as_the_parents_own_rows(units):
     half = UNIT_ROWS // 2
 
     for rank in (0, 1):
-        plan = plan_shard("m", rows=UNIT_ROWS, columns=UNIT_COLS, out_size=half,
-                          in_size=UNIT_COLS, tp_rank=rank, tp_size=2)
+        plan = _plan(UNIT_ROWS, UNIT_COLS, out=half, in_=UNIT_COLS, rank=rank, tp=2)
         assert plan.axis == AXIS_ROWS
         roles = shard_parsed_roles([("weight", parent)], plan)
         module = prepare_tessera_fp8_module(roles, device="cuda")

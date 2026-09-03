@@ -52,16 +52,42 @@ build's loader DOES, checked against this module so the two cannot drift.  A
 two-rank serve is therefore something this build will attempt and nothing has
 measured, and that distinction is machine-readable rather than a footnote.
 
-WHICH AXIS.  vLLM's parallel Linears split one of the two axes and tell the
-method by the sizes they ask for, so the axis is DERIVED from the shapes
-rather than sniffed off a class name:
+WHICH AXIS, AND WHICH ROWS.  vLLM's parallel Linears split one of the two axes
+and tell the method by the sizes they ask for, so the axis is DERIVED from the
+shapes rather than sniffed off a class name:
 
 * ``ColumnParallelLinear`` / ``MergedColumnParallelLinear`` / ``QKVParallelLinear``
-  split the OUTPUT: ``sum(output_partition_sizes) * tp == rows``.  Each fused
-  role is split independently -- q, k and v each give every rank its own rows --
-  which is why the seam is applied per role, in stacking order.
+  split the OUTPUT.  Each fused role is split INDEPENDENTLY -- q, k and v each
+  give every rank its own rows -- and ``output_partition_sizes`` is that
+  per-role answer, one entry per member, in the container's stacking order.
+  So the question "which rows does this rank hold" is asked ONCE PER ROLE,
+  against the role's own rows, and never of the container as a whole.
 * ``RowParallelLinear`` splits the INPUT: ``input_size_per_partition * tp ==
-  columns``.  One role, cut along columns.
+  columns``.  One role, cut along columns, and there the split is even.
+
+A ROLE IS NOT ALWAYS CUT ``tp`` WAYS.  Under grouped-query attention with
+``num_kv_heads < tp`` vLLM REPLICATES the KV heads: every rank gets a whole
+head, so ``num_kv_heads`` distinct shards are shared by ``tp`` ranks and two
+ranks legitimately hold the SAME k/v rows.  The number of distinct shards is
+therefore a property of the role and not of the world::
+
+    shards_i   = role_rows_i // out_partition_i      # exact, or the shapes disagree
+    replicas_i = tp_size // shards_i                 # ranks per shard, 1 when even
+    index_i    = tp_rank // replicas_i               # which shard THIS rank holds
+    rows_i     = (index_i * out_partition_i, (index_i + 1) * out_partition_i)
+
+That is vLLM's own arithmetic, read back off the two numbers it hands the
+loader rather than re-derived from head geometry it never passes: ``linear.py``
+``QKVParallelLinear.weight_loader`` computes ``shard_rank = self.tp_rank //
+self.num_kv_head_replicas`` and ``start_idx = shard_rank * shard_size``, and
+``num_kv_head_replicas = tp_size // total_num_kv_heads`` is exactly
+``tp_size // shards_i`` when ``out_partition_i`` is one head.  No branch on a
+member's NAME, no ``num_heads``/``head_size`` in this module's signature: the
+sizes carry the answer, and summing them away was the whole defect (#32).
+
+``shards_i`` is also what ``tessera.layout.can_shard`` must be asked -- it
+answers "into how many EQUAL shards", and asking it ``tp_size`` for a
+replicated role would test a finer cut than the one being made.
 
 MoE: expert parallelism assigns WHOLE units to ranks (no cut at all, the
 granularity is one expert), and tensor parallelism inside an expert is the same
@@ -87,6 +113,7 @@ __all__ = [
     "have_unit_slicer",
     "require_a_cutter",
     "require_axis_supported",
+    "RoleShard",
     "ShardPlan",
     "plan_shard",
     "can_shard",
@@ -236,11 +263,50 @@ def require_axis_supported(family: str, plan: "ShardPlan") -> None:
 
 
 @dataclass(frozen=True)
+class RoleShard:
+    """Which part of ONE role this rank holds, on the plan's axis.
+
+    ``lo``/``hi`` are half-open and are the role's OWN coordinates -- a fused
+    container is framing and each member is its own unit (``fused.py``), so the
+    range that gets cut is the member's, not an offset into the stack.
+
+    ``shards`` is how many DISTINCT ranges the role's extent is divided into.
+    It equals ``tp_size`` for an ordinary split and is SMALLER when vLLM
+    replicates the role across ranks -- ``tp_size // shards`` ranks then hold
+    each range, and two of them holding identical rows is the intended
+    arrangement, not a collision.  It is the number ``layout.can_shard`` has to
+    be asked, because that function answers "into how many EQUAL shards".
+    """
+
+    name: str
+    extent: int
+    lo: int
+    hi: int
+    shards: int
+
+    @property
+    def is_whole(self) -> bool:
+        """This rank holds the role entire -- replicated, or not cut at all."""
+        return self.lo == 0 and self.hi == self.extent
+
+
+@dataclass(frozen=True)
 class ShardPlan:
     """What one rank serves of one module.
 
-    ``axis`` is None exactly when there is nothing to cut (``tp_size == 1``),
-    and then ``shard_rows``/``shard_columns`` are the module's own.
+    ``axis`` is None exactly when there is nothing to cut (``tp_size == 1``, or
+    a replicated Linear inside a group), and then ``shard_rows``/
+    ``shard_columns`` are the module's own.
+
+    ``shard_rows`` is ``sum(output_partition_sizes)`` -- the height of the tile
+    THIS RANK computes.  Under KV replication that is not ``rows // tp_size``,
+    and the routes hand it to ``scale_b.view(1, N)``, so it is carried rather
+    than re-derived.
+
+    ``roles`` is the per-member answer, in the container's stacking order: one
+    ``RoleShard`` each, carrying the range to cut and the shard count to ask
+    ``can_shard`` with.  It is the whole reason this is a plan and not a pair
+    of integers -- q, k and v are cut differently under GQA.
     """
 
     prefix: str
@@ -251,10 +317,26 @@ class ShardPlan:
     tp_rank: int
     tp_size: int
     axis: Optional[str] = None
+    roles: Tuple[RoleShard, ...] = ()
 
     @property
     def is_whole(self) -> bool:
         return self.tp_size == 1 and self.axis is None
+
+    def role(self, name: str) -> RoleShard:
+        """The plan for one member, BY NAME.
+
+        By name and not by position: ``parse_tessera_blob_for_scheme`` has
+        already refused a container whose members differ from the declared
+        roles, so the names are the reliable key, and a positional lookup here
+        would be a second ordering to keep in step.
+        """
+        for role in self.roles:
+            if role.name == name:
+                return role
+        raise ValueError(
+            f"{self.prefix}: no shard plan for the role {name!r}; the plan covers "
+            f"{[r.name for r in self.roles]}, which is what the scheme declared")
 
 
 def tp_rank_and_size() -> Tuple[int, int]:
@@ -298,7 +380,7 @@ def shard_granularity(unit) -> Optional[Tuple[int, int]]:
     return int(row_gran), int(col_gran)
 
 
-def can_shard(unit, tp: int, axis: str) -> Optional[bool]:
+def can_shard(unit, shards: int, axis: str) -> Optional[bool]:
     """``layout.can_shard``, or None when the cutter is absent.
 
     Asked BEFORE a cut rather than inferred from the granularity, because the
@@ -306,65 +388,127 @@ def can_shard(unit, tp: int, axis: str) -> Optional[bool]:
     carries a RELEASE plane is confined to whole 256-column superblocks, and
     ``can_shard`` is where that lives.  None means "cannot answer", which
     callers treat as "refuse", never as "yes".
+
+    The argument is ``shards`` and not ``tp_size``: ``layout.can_shard``
+    answers "into how many EQUAL shards", and a role vLLM replicates across the
+    group is cut into fewer of them than there are ranks (``RoleShard.shards``).
+    Passing the world size there would test a finer cut than the one being made
+    and refuse legal ones.
     """
     try:
         from tessera.layout import can_shard as _can_shard
     except Exception:
         return None
-    return bool(_can_shard(unit, int(tp), axis))
+    return bool(_can_shard(unit, int(shards), axis))
 
 
-def plan_shard(prefix: str, *, rows: int, columns: int, out_size: int, in_size: int,
+def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int,
                tp_rank: Optional[int] = None, tp_size: Optional[int] = None) -> ShardPlan:
-    """Decide, from the sizes vLLM asks for, which axis this rank is a slice of.
+    """Decide, from the sizes vLLM asks for, which slice of each role this rank is.
 
-    Refuses -- with both shapes in the message -- when the layer's request is
-    neither the whole module nor a clean split of one axis of it.  That is the
-    case where a checkpoint and a serve disagree about a module's geometry, and
-    silently serving the wrong rows is the failure worth being loud about.
+    ``roles`` is the checkpoint's ``[(name, rows)]`` in stacking order --
+    ``validate_tessera_scheme``'s own field -- and ``out_partitions`` is vLLM's
+    ``output_partition_sizes``, the per-member output size THIS RANK computes.
+    Both are LISTS on purpose: a fused container's members are cut
+    independently, and summing them to two scalars is what made a
+    replicated-KV QKV module unplannable (#32).  ``columns`` and ``in_size``
+    stay scalars because the input axis is one width, evenly split.
+
+    THE TWO LISTS ARE PAIRED BY POSITION, and that is a dependency worth
+    stating: vLLM passes no names with ``output_partition_sizes``, so the
+    correspondence rests on the container's stacking order being the layer's.
+    It is not assumed blind -- ``parse_tessera_blob_for_scheme`` refuses a
+    container whose members are not exactly the declared roles in order, that
+    order is the row order the exporter packed (``fused.pack_fused``), and it
+    is the order the SERVED tp=1 tile is stacked in, so a mis-ordering would
+    already be wrong at one rank.  The per-role divisibility check below is the
+    only cross-check available here; it catches a mis-ordering whenever the
+    roles differ in size, and cannot when they do not.
+
+    Refuses -- with the module's shape, the role and the relation that failed --
+    when the request is neither the whole module nor a split this wire can
+    express.  A checkpoint and a serve disagreeing about a module's geometry is
+    the failure worth being loud about; head replication is NOT that failure,
+    and does not get that message.
     """
     if tp_rank is None or tp_size is None:
         derived_rank, derived_size = tp_rank_and_size()
         tp_rank = derived_rank if tp_rank is None else tp_rank
         tp_size = derived_size if tp_size is None else tp_size
-    rows, columns, out_size, in_size = int(rows), int(columns), int(out_size), int(in_size)
+    roles = tuple((str(name), int(rows)) for name, rows in roles)
+    out_partitions = tuple(int(size) for size in out_partitions)
+    if not roles:
+        raise ValueError(f"{prefix}: a module has at least one role; the scheme declared none")
+    columns, in_size = int(columns), int(in_size)
     tp_rank, tp_size = int(tp_rank), int(tp_size)
     if tp_size < 1 or not 0 <= tp_rank < tp_size:
         raise ValueError(f"{prefix}: nonsensical TP coordinates rank {tp_rank} of {tp_size}")
+    rows = sum(role_rows for _name, role_rows in roles)
+    out_size = sum(out_partitions)
+    shape = (f"{prefix}: tessera module is {rows}x{columns}; rank {tp_rank} of {tp_size} wants "
+             f"{out_size}x{in_size}")
+
     if out_size == rows and in_size == columns:
         # Whole module.  True at tp_size == 1, and also on a replicated Linear
         # inside a TP group -- which is a whole unit per rank, not a cut.
-        return ShardPlan(prefix, rows, columns, rows, columns, tp_rank, tp_size, None)
+        return ShardPlan(prefix, rows, columns, rows, columns, tp_rank, tp_size, None,
+                         tuple(RoleShard(name, role_rows, 0, role_rows, 1)
+                               for name, role_rows in roles))
     if tp_size == 1:
         raise ValueError(
             f"{prefix}: tessera module is {rows}x{columns} but the layer wants "
             f"{out_size}x{in_size} on one rank; a wire is bound to its shape")
-    if in_size == columns and out_size * tp_size == rows:
-        axis, shard_rows, shard_columns = AXIS_ROWS, out_size, columns
-    elif out_size == rows and in_size * tp_size == columns:
-        axis, shard_rows, shard_columns = AXIS_COLUMNS, rows, in_size
-    else:
+    if out_size == rows:
+        # The output is whole, so the cut is on the input: RowParallelLinear.
+        # One width over the ranks, evenly -- there is no per-role structure on
+        # this axis, because every role reads every input feature.
+        if in_size * tp_size != columns:
+            raise ValueError(
+                f"{shape}, which holds every output row but is not a 1/{tp_size} split of its "
+                f"{columns} input columns; a row-parallel Linear gives each rank the same "
+                f"{columns}/{tp_size} of them, and every role reads every input feature so "
+                f"there is no per-member range on this axis.")
+        c0 = tp_rank * in_size
+        return ShardPlan(prefix, rows, columns, rows, in_size, tp_rank, tp_size, AXIS_COLUMNS,
+                         tuple(RoleShard(name, columns, c0, c0 + in_size, tp_size)
+                               for name, _role_rows in roles))
+    if in_size != columns:
         raise ValueError(
-            f"{prefix}: tessera module is {rows}x{columns}; rank {tp_rank} of {tp_size} wants "
-            f"{out_size}x{in_size}, which is neither the whole module nor a 1/{tp_size} split "
-            "of exactly one of its axes")
-    return ShardPlan(prefix, rows, columns, shard_rows, shard_columns, tp_rank, tp_size, axis)
-
-
-def _bounds(extent: int, tp_rank: int, tp_size: int) -> Tuple[int, int]:
-    """This rank's half-open span of ``extent``, in equal parts.
-
-    Equal parts only: an uneven split is refused upstream by
-    ``check_shard_granularity`` rather than rounded here, because a rank that
-    quietly held a different number of rows than its peers would produce a
-    wrong all-gather and no error.
-    """
-    if extent % tp_size:
+            f"{shape}, which cuts BOTH axes. A vLLM parallel Linear splits exactly one: the "
+            f"output (ColumnParallel and its merged/QKV forms) or the input (RowParallel).")
+    if len(out_partitions) != len(roles):
         raise ValueError(
-            f"{extent} does not divide into {tp_size} equal shards; this should have been "
-            "refused by check_shard_granularity before any cut was attempted")
-    per = extent // tp_size
-    return tp_rank * per, (tp_rank + 1) * per
+            f"{shape}. The checkpoint declares {len(roles)} roles "
+            f"{[name for name, _ in roles]} but the layer asks for {len(out_partitions)} output "
+            f"partitions {list(out_partitions)}; a fused container's members and a layer's "
+            f"output partitions are the same list in the same order, so the two disagree about "
+            f"how this module is fused -- which is a checkpoint/serve mismatch, not a shard.")
+    placed = []
+    for (name, role_rows), out in zip(roles, out_partitions):
+        if out <= 0 or role_rows % out:
+            raise ValueError(
+                f"{shape}. Its role {name!r} is {role_rows} rows and this rank asks for {out} of "
+                f"them, which does not divide {role_rows}: vLLM gives every rank the SAME size "
+                f"for a member, so a member's rows are a whole number of equal shards. The "
+                f"checkpoint and the serve disagree about this module's geometry.")
+        shards = role_rows // out
+        if shards > tp_size:
+            raise ValueError(
+                f"{shape}. Its role {name!r} is {role_rows} rows in shards of {out}, which is "
+                f"{shards} shards for only {tp_size} ranks: this rank asks for less than "
+                f"1/{tp_size} of the role, so some of its rows would be served by nobody. The "
+                f"checkpoint and the serve disagree about this module's geometry.")
+        if tp_size % shards:
+            raise ValueError(
+                f"{shape}. Its role {name!r} is {role_rows} rows in shards of {out}, which is "
+                f"{shards} shards for {tp_size} ranks -- and {shards} does not divide {tp_size}, "
+                f"so there is no whole number of ranks per shard. A role held by fewer shards "
+                f"than there are ranks is REPLICATED (this is how vLLM serves KV heads under "
+                f"GQA), and replication needs {tp_size}/{shards} to be an integer.")
+        index = tp_rank // (tp_size // shards)
+        placed.append(RoleShard(name, role_rows, index * out, index * out + out, shards))
+    return ShardPlan(prefix, rows, columns, out_size, columns, tp_rank, tp_size, AXIS_ROWS,
+                     tuple(placed))
 
 
 def _unit_extent(unit) -> Tuple[int, int]:
@@ -386,60 +530,75 @@ def _unit_extent(unit) -> Tuple[int, int]:
     return int(steps), int(columns)
 
 
-def _shard_unit_for_rank(unit, tp_rank: int, tp_size: int, axis: Optional[str]):
-    """THE SEAM.  The unit this rank serves, cut from the whole one.
+def _shard_unit_for_rank(unit, plan: ShardPlan, role: RoleShard):
+    """THE SEAM.  The unit this rank serves of ONE role, cut from the whole one.
 
-    ``tp_size == 1`` returns the SAME OBJECT -- identity, not a copy -- so a
-    caller holding a parsed view of it may keep that view, and so a TP-capable
-    build serves byte-identical bytes to one without this function.
+    The range is the PLAN's, not this function's: ``plan_shard`` read it off
+    the sizes vLLM asked for, and a seam that re-derived it by splitting the
+    extent ``tp_size`` ways would be the even-split assumption again -- correct
+    for q, wrong for a replicated k (#32).  So there is no arithmetic here, only
+    a cut.
 
-    Above one rank this asks ``tessera.layout.can_shard`` and then calls
+    Returns the SAME OBJECT -- identity, not a copy -- when this rank holds the
+    role entire: ``tp_size == 1``, a replicated Linear, or a role vLLM
+    replicates across the group.  A caller holding a parsed view of it may then
+    keep that view, and a TP-capable build serves byte-identical bytes to one
+    without this function.
+
+    Above that this asks ``tessera.layout.can_shard`` and then calls
     ``tessera.layout.slice_unit``, which returns a STANDALONE unit: it decodes
     through the same ``tessera.decode`` entry points to exactly
     ``decode(parent)[r0:r1, c0:c1]``, bit for bit, with no re-encoding.  The
     caller must re-derive its parsed view of what comes back -- a shard's planes
     are its own, and a stale parse describes the parent's.
 
-    ``can_shard`` is asked rather than inferred, and it is asked BEFORE the cut
-    so the refusal can name the granularity: ``slice_unit`` would refuse too,
-    but with an offset the operator cannot map back to a ``tensor_parallel_size``.
+    ``can_shard`` is asked with ``role.shards`` and not with ``plan.tp_size``:
+    it answers "into how many EQUAL shards", and a replicated role is cut into
+    fewer of them than there are ranks.  It is asked rather than inferred, and
+    BEFORE the cut so the refusal can name the granularity: ``slice_unit``
+    would refuse too, but with an offset the operator cannot map back to a
+    ``tensor_parallel_size``.
 
     Only this rank's shard is cut, so the cost is O(1) in the TP degree.
     """
-    if tp_size == 1:
+    if plan.tp_size == 1:
         return unit
-    if axis is None:
+    if plan.axis is None:
         raise ValueError(
-            f"rank {tp_rank} of {tp_size} asked for a cut with no axis; plan_shard reports "
-            "axis=None only for a module served whole (replicated), which is not cut")
+            f"rank {plan.tp_rank} of {plan.tp_size} asked for a cut with no axis; plan_shard "
+            "reports axis=None only for a module served whole (replicated), which is not cut")
+    if role.is_whole:
+        return unit
     try:
         from tessera.layout import slice_unit
     except Exception as exc:
         raise NotImplementedError(
             f"tensor parallelism needs tessera.layout.slice_unit, which is not in this build "
-            f"({exc}): rank {tp_rank} of {tp_size} asked for a {axis} slice of a unit this "
-            "plugin can only serve whole.  Serve with tensor_parallel_size=1, or install a "
-            "Tessera carrying the unit slicer.") from exc
+            f"({exc}): rank {plan.tp_rank} of {plan.tp_size} asked for a {plan.axis} slice of a "
+            "unit this plugin can only serve whole.  Serve with tensor_parallel_size=1, or "
+            "install a Tessera carrying the unit slicer.") from exc
     rows, columns = _unit_extent(unit)
-    if can_shard(unit, tp_size, axis) is not True:
+    extent = rows if plan.axis == AXIS_ROWS else columns
+    if extent != role.extent:
+        raise ValueError(
+            f"{plan.prefix}: role {role.name!r} is {extent} {plan.axis}s on the wire but the plan "
+            f"was made for {role.extent}; the parsed container and the declared scheme disagree")
+    if can_shard(unit, role.shards, plan.axis) is not True:
         granularity = shard_granularity(unit)
         row_gran, col_gran = granularity if granularity is not None else (None, None)
-        extent = rows if axis == AXIS_ROWS else columns
-        gran = row_gran if axis == AXIS_ROWS else col_gran
+        gran = row_gran if plan.axis == AXIS_ROWS else col_gran
         raise ValueError(
-            f"this unit cannot be cut {tp_size} ways on the {axis} axis ({extent} {axis}s, "
-            f"granularity {gran}).  A row cut lands on a trellis super-symbol and a column cut "
-            "of a unit carrying a RELEASE plane or a mixed rate schedule is confined to whole "
-            "256-column superblocks; serve with a tensor_parallel_size that divides it, or "
-            "with 1.")
-    if axis == AXIS_ROWS:
-        r0, r1 = _bounds(rows, tp_rank, tp_size)
-        return slice_unit(unit, rows=(r0, r1), cols=(0, columns))
-    c0, c1 = _bounds(columns, tp_rank, tp_size)
-    return slice_unit(unit, rows=(0, rows), cols=(c0, c1))
+            f"this unit cannot be cut {role.shards} ways on the {plan.axis} axis ({extent} "
+            f"{plan.axis}s, granularity {gran}).  A row cut lands on a trellis super-symbol and a "
+            "column cut of a unit carrying a RELEASE plane or a mixed rate schedule is confined "
+            "to whole 256-column superblocks; serve with a tensor_parallel_size that divides it, "
+            "or with 1.")
+    if plan.axis == AXIS_ROWS:
+        return slice_unit(unit, rows=(role.lo, role.hi), cols=(0, columns))
+    return slice_unit(unit, rows=(0, rows), cols=(role.lo, role.hi))
 
 
-def check_shard_granularity(plan: ShardPlan, unit) -> None:
+def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
     """Refuse a split the wire cannot express, naming the granularity.
 
     A unit is not a matrix of independent rows: the body packs along both axes
@@ -448,35 +607,39 @@ def check_shard_granularity(plan: ShardPlan, unit) -> None:
     authority on those; when it is absent the caller has already refused at the
     seam, so this is a no-op rather than a guess.
 
-    ``layout.can_shard`` is asked FIRST and is the binding answer: granularity
-    is necessary, not sufficient.  A column cut of a unit carrying a RELEASE
-    plane is confined to whole 256-column superblocks, and only ``can_shard``
-    knows that.  The granularity is then used to say the useful thing in the
-    refusal -- a number the operator can act on.
+    Asked PER ROLE, against the role's own range.  The container's total is the
+    wrong number: q, k and v are cut independently and to different widths
+    under GQA, so a module-level ``shard_rows`` would measure a width no role
+    actually holds.  Both ends of the range are checked -- a legal width
+    starting on an illegal offset is the replicated case's own failure mode.
+
+    ``layout.can_shard`` is asked FIRST, with the role's shard count, and is the
+    binding answer: granularity is necessary, not sufficient.  A column cut of a
+    unit carrying a RELEASE plane is confined to whole 256-column superblocks,
+    and only ``can_shard`` knows that.  The granularity is then used to say the
+    useful thing in the refusal -- a number the operator can act on.
     """
-    if plan.axis is None:
+    if plan.axis is None or role.is_whole:
         return
     granularity = shard_granularity(unit)
     if granularity is None:
         return
     row_gran, col_gran = granularity
-    if can_shard(unit, plan.tp_size, plan.axis) is False:
-        extent = plan.rows if plan.axis == AXIS_ROWS else plan.columns
-        gran = row_gran if plan.axis == AXIS_ROWS else col_gran
+    gran = row_gran if plan.axis == AXIS_ROWS else col_gran
+    if can_shard(unit, role.shards, plan.axis) is False:
         raise ValueError(
-            f"{plan.prefix}: this unit cannot be cut {plan.tp_size} ways on the {plan.axis} "
-            f"axis ({extent} {plan.axis}s, granularity {gran}).  A column cut of a unit with a "
-            "RELEASE plane or a mixed rate schedule is confined to whole 256-column "
-            "superblocks; serve with a tensor_parallel_size that divides it, or with 1.")
-    if plan.axis == AXIS_ROWS and plan.shard_rows % row_gran:
+            f"{plan.prefix}: role {role.name!r} cannot be cut {role.shards} ways on the "
+            f"{plan.axis} axis ({role.extent} {plan.axis}s, granularity {gran}).  A column cut of "
+            "a unit with a RELEASE plane or a mixed rate schedule is confined to whole "
+            "256-column superblocks; serve with a tensor_parallel_size that divides it, or "
+            "with 1.")
+    width = role.hi - role.lo
+    if width % gran or role.lo % gran:
         raise ValueError(
-            f"{plan.prefix}: {plan.rows} rows over {plan.tp_size} ranks is {plan.shard_rows} per "
-            f"rank, not a multiple of this unit's row granularity {row_gran}")
-    if plan.axis == AXIS_COLUMNS and plan.shard_columns % col_gran:
-        raise ValueError(
-            f"{plan.prefix}: {plan.columns} columns over {plan.tp_size} ranks is "
-            f"{plan.shard_columns} per rank, not a multiple of this unit's column granularity "
-            f"{col_gran}")
+            f"{plan.prefix}: role {role.name!r} is {role.extent} {plan.axis}s over "
+            f"{plan.tp_size} ranks, giving this rank [{role.lo}, {role.hi}) -- {width} "
+            f"{plan.axis}s at offset {role.lo}, which is not a multiple of this unit's "
+            f"{plan.axis} granularity {gran}")
 
 
 def _reparse_shard(parsed, sharded, label: str):
@@ -506,24 +669,30 @@ def shard_parsed_roles(parsed_roles, plan: ShardPlan):
     """``[(name, parsed)]`` for the whole module -> this rank's roles.
 
     Fused roles are cut INDEPENDENTLY on the row axis, which is what vLLM does
-    with q/k/v and gate/up: rank *r* holds its own slice of each.  On the column
-    axis there is one role and the whole of it is cut.
+    with q/k/v and gate/up: rank *r* holds its own slice of each -- and under
+    GQA with ``num_kv_heads < tp`` its slice of k and v is one another rank
+    holds too.  The plan already says which range that is, per role, so this
+    function looks it up by name and cuts; it computes no offsets of its own.
+    On the column axis there is one range and every role gets it.
 
     What comes back is a list of ``ParsedUnit``s again -- re-derived from the
     shard's own bytes -- because that is what every route's ``prepare_*_module``
-    consume, and because a shard's planes are its own.
+    consume, and because a shard's planes are its own.  A role this rank holds
+    entire is passed through as THE SAME OBJECT, so a replicated k costs no
+    round trip.
     """
     if plan.is_whole or plan.axis is None:
         return parsed_roles
     out = []
     for name, parsed in parsed_roles:
+        role = plan.role(name)
         # Asked with the PARSE, not with ``parsed.unit``: the superblock and the
         # arity live on the parse, and the defaults (256, 1) are wrong for a
         # k-tuple grid -- so a bare unit would be measured against the wrong
         # granularity and a legal cut refused (or an illegal one allowed).
-        check_shard_granularity(plan, parsed)
-        sharded = _shard_unit_for_rank(parsed, plan.tp_rank, plan.tp_size, plan.axis)
-        if sharded is parsed:                       # pragma: no cover - tp_size == 1 is is_whole
+        check_shard_granularity(plan, role, parsed)
+        sharded = _shard_unit_for_rank(parsed, plan, role)
+        if sharded is parsed:                       # this rank holds the role entire
             out.append((name, parsed))
             continue
         out.append((name, _reparse_shard(

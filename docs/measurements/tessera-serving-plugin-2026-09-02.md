@@ -49,7 +49,7 @@ by 0.017117.
 | residency flag | `serving/flags.py` | `TESSERA_SERVE_MODE=resident|streamed`, latched once per process |
 | compile identity | `serving/compile_identity.py` | folds the mode into `additional_config` before any AOT hash |
 | telemetry | `serving/telemetry.py` | `emit_route` / `route_shape`, the census's evidence |
-| TP seam | `serving/sharding.py` | `plan_shard`, `_shard_unit_for_rank`, `shard_parsed_roles` (section 6) |
+| TP seam | `serving/sharding.py` | `plan_shard`, `RoleShard`, `_shard_unit_for_rank`, `shard_parsed_roles` (section 6) |
 | the attested table | `serving/runtime_contract.json` | `tessera.runtime-contract.v1`, read via `importlib.resources` |
 | census tool | `tools/tessera_route_census.py` | serves, walks the modules, reports what each one actually ran |
 
@@ -396,17 +396,31 @@ names exactly:
 
 What the plugin does with them:
 
-* `plan_shard(prefix, rows, columns, out_size, in_size)` **derives the axis
-  from the sizes vLLM asks for** -- `out_size * tp == rows` is a row split
-  (ColumnParallel / MergedColumnParallel / QKVParallel), `in_size * tp ==
-  columns` is a column split (RowParallel) -- never from a class name.  A
-  Linear replicated inside a TP group asks for the whole shape and gets a whole
-  plan.  Anything else refuses naming both shapes.
-* `_shard_unit_for_rank(unit, tp_rank, tp_size, axis)` is the seam: identity at
-  `tp_size == 1` (asserted by object identity, so a TP-capable build serves
-  byte-identical bytes to one without it), and above one it calls `slice_unit`
-  for **this rank's shard only**, which is what makes the cost O(1) in the TP
-  degree.
+* `plan_shard(prefix, roles, columns, out_partitions, in_size)` **derives the
+  axis and every member's own row range from the sizes vLLM asks for** --
+  `sum(out_partitions) == rows` with a narrowed `in_size` is a column split
+  (RowParallel), anything narrower on the output is a row split (ColumnParallel
+  / MergedColumnParallel / QKVParallel) -- never from a class name.  A Linear
+  replicated inside a TP group asks for the whole shape and gets a whole plan.
+  Anything else refuses naming the module's shape, the role and the relation
+  that failed.
+
+  > **Superseded 2026-09-03 (#32).**  This read
+  > `plan_shard(prefix, rows, columns, out_size, in_size)` and derived the axis
+  > from `out_size * tp == rows`.  Summing `output_partition_sizes` threw away
+  > the per-member answer, and under GQA with `num_kv_heads < tp` vLLM
+  > replicates KV heads: the per-rank sizes then sum to *more* than the
+  > container's rows, no even split exists, and a legitimate module was refused
+  > with the message meant for a checkpoint/serve shape disagreement.  The
+  > planner now takes the lists.
+
+* `_shard_unit_for_rank(unit, plan, role)` is the seam: identity when this rank
+  holds the role entire -- `tp_size == 1`, a replicated Linear, or a role vLLM
+  replicates across the group (asserted by object identity, so a TP-capable
+  build serves byte-identical bytes to one without it) -- and otherwise it calls
+  `slice_unit` on **the range the plan already computed**, for this rank only,
+  which is what makes the cost O(1) in the TP degree.  It computes no offsets:
+  an even split derived here would be right for q and wrong for a replicated k.
 * `runtime_contract.json` publishes `tensor_parallel.max_world_size: [1]` per
   family, and `config._require_tp1` refuses a larger world at method
   construction.  The refusal is a field and a gate, not prose.
