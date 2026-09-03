@@ -1,0 +1,67 @@
+wire: E2M1x2 q256=896 -> body TCQ plane LUT span 2 L=0
+H from wikitext-2-raw-v1/train (local datasets cache)  fit 16384 tok  eval 8192 tok
+
+== model.layers.27.self_attn.o_proj (1024, 2048)  eval rows 8192  blocks/row 128
+    arm                                                        out     plain       hwt      hfit      s
+    control [LDLQ 1.0/32 + refit h^1.0]                    0.07519   0.09729   0.09800   0.06427   23.4
+      free plane (continuous)  [control [LDLQ 1.0/32 + refit h^1.0]]   0.07401   0.09473   0.09466   0.06390    0.0
+      free per-block E4M3      [control [LDLQ 1.0/32 + refit h^1.0]]   0.07553   0.09704   0.09741   0.06492    0.0
+      oracle assign (own 16)   [control [LDLQ 1.0/32 + refit h^1.0]]   0.07519   0.09729   0.09800   0.06427    0.0
+      oracle table+assign (16) [control [LDLQ 1.0/32 + refit h^1.0]]   0.07519   0.09729   0.09800   0.06427    0.1
+    LDLQ 1.0/32 + refit full-H (Jacobi)                    0.07709   0.10247   0.10423   0.06532   23.7
+      free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07188   0.11358   0.10325   0.05849    2.6
+      free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07516   0.11886   0.10635   0.06187    0.6
+      oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07584   0.11903   0.10692   0.06262    0.6
+      oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07587   0.11306   0.10580   0.06274    0.8
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)              0.07585   0.10843   0.10453   0.06351   31.4
+      free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07177   0.11573   0.10319   0.05842    6.9
+      free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07506   0.12052   0.10601   0.06167    1.4
+      oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07557   0.12040   0.10651   0.06241    1.4
+      oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07548   0.11483   0.10535   0.06248    2.0
+    control [LDLQ 1.0/32 + refit h^1.0] REPEAT             0.07519   0.09729   0.09800   0.06427   38.9
+    -- drift control: bytes IDENTICAL  out 0.075189 -> 0.075189 (+0.0000%)
+
+== geomean over units -- out-space (held-out) and hfit (the fit rows' own quadratic, the one the refit is monotone in)
+    arm                                                              out      hfit
+      free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07506   0.06167
+      free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07516   0.06187
+      free per-block E4M3      [control [LDLQ 1.0/32 + refit h^1.0]]   0.07553   0.06492
+      free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07177   0.05842
+      free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07188   0.05849
+      free plane (continuous)  [control [LDLQ 1.0/32 + refit h^1.0]]   0.07401   0.06390
+      oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07557   0.06241
+      oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07584   0.06262
+      oracle assign (own 16)   [control [LDLQ 1.0/32 + refit h^1.0]]   0.07519   0.06427
+      oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]   0.07548   0.06248
+      oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Jacobi)]   0.07587   0.06274
+      oracle table+assign (16) [control [LDLQ 1.0/32 + refit h^1.0]]   0.07519   0.06427
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)                    0.07585   0.06351
+    LDLQ 1.0/32 + refit full-H (Jacobi)                          0.07709   0.06532
+    control [LDLQ 1.0/32 + refit h^1.0]                          0.07519   0.06427
+    control [LDLQ 1.0/32 + refit h^1.0] REPEAT                   0.07519   0.06427
+
+== the ceiling, per encoder arm: what the landing costs and what is reachable
+
+    control [LDLQ 1.0/32 + refit h^1.0] REPEAT
+      landed                     out 0.07519          hfit 0.06427
+
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)
+      landed                     out 0.07585          hfit 0.06351
+      free                       out 0.07177 (0.9462x)  hfit 0.05842 (0.9198x)
+      free-e4m3                  out 0.07506 (0.9896x)  hfit 0.06167 (0.9710x)
+      oracle-assign              out 0.07557 (0.9963x)  hfit 0.06241 (0.9827x)
+      oracle-table               out 0.07548 (0.9951x)  hfit 0.06248 (0.9837x)
+
+    LDLQ 1.0/32 + refit full-H (Jacobi)
+      landed                     out 0.07709          hfit 0.06532
+      free                       out 0.07188 (0.9325x)  hfit 0.05849 (0.8953x)
+      free-e4m3                  out 0.07516 (0.9750x)  hfit 0.06187 (0.9472x)
+      oracle-assign              out 0.07584 (0.9838x)  hfit 0.06262 (0.9586x)
+      oracle-table               out 0.07587 (0.9842x)  hfit 0.06274 (0.9605x)
+
+    control [LDLQ 1.0/32 + refit h^1.0]
+      landed                     out 0.07519          hfit 0.06427
+      free                       out 0.07401 (0.9843x)  hfit 0.06390 (0.9942x)
+      free-e4m3                  out 0.07553 (1.0045x)  hfit 0.06492 (1.0101x)
+      oracle-assign              out 0.07519 (1.0000x)  hfit 0.06427 (1.0000x)
+      oracle-table               out 0.07519 (1.0000x)  hfit 0.06427 (1.0000x)

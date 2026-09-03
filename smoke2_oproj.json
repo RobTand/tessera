@@ -1,0 +1,440 @@
+{
+ "args": {
+  "model": "/home/rob/models/Qwen3-0.6B",
+  "h": "/mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt",
+  "acts": "/mnt/shared/tessera-runs/ldlq/x_eval_qwen06b.pt",
+  "grid": "E2M1x2",
+  "q256": 896,
+  "sigma": 1.0,
+  "block": 32,
+  "alpha": 1.0,
+  "units": [
+   "model.layers.27.self_attn.o_proj"
+  ],
+  "no_oracle_table": false,
+  "out": "/home/rob/tmp/i50-lut-ceiling/smoke2_oproj.json"
+ },
+ "provenance": {
+  "source": "wikitext-2-raw-v1/train (local datasets cache)",
+  "text_sha256": "a5c5fd091a3486361e71eae1132fff141aeadd0ae51ebf688da4661752f853d3",
+  "text_chars": 295562,
+  "model": "/home/rob/models/Qwen3-0.6B",
+  "seqlen": 512,
+  "fit_tokens": 16384,
+  "fit_ids_sha256": "229c6f72307f70502d4b7f77c388fe54561f48489301a917a30c151599c3e38b",
+  "eval_tokens": 8192,
+  "eval_ids_sha256": "30ec7255e69341724ede7745a07aed8892e8867e36995a2c9ae85814671b25c3",
+  "kl_corpus_split": "wikitext-2 TEST -- disjoint from this TRAIN capture",
+  "dtype": "fp32 accumulation of x^T x, divided by the token count"
+ },
+ "units": {
+  "model.layers.27.self_attn.o_proj": {
+   "control [LDLQ 1.0/32 + refit h^1.0]": {
+    "out": 0.07518874108791351,
+    "plain": 0.0972944051027298,
+    "hweighted": 0.09800315831332608,
+    "hfit": 0.06427290734385038,
+    "secs": 23.3932843208313,
+    "sha256": "66d4b8624c57b84e4f80d4cdfca239921f338e1015d51060c9c8ee555e68225b",
+    "refit_landed": [
+     -1464.15380859375,
+     -1464.8175048828125,
+     -1465.005615234375,
+     -1465.1021728515625
+    ],
+    "refit_continuous": [
+     -1465.32666015625,
+     -1465.830810546875,
+     -1465.9801025390625,
+     -1466.0550537109375
+    ],
+    "refit_before": [
+     -1463.24853515625,
+     -1464.5638427734375,
+     -1464.87109375,
+     -1465.0152587890625
+    ],
+    "refit_stepped": [
+     -1465.32666015625,
+     -1465.830810546875,
+     -1465.9801025390625,
+     -1466.0550537109375
+    ],
+    "refit_reverted": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "  free plane (continuous)  [control [LDLQ 1.0/32 + refit h^1.0]]": {
+    "out": 0.07400583475828171,
+    "plain": 0.09472658485174179,
+    "hweighted": 0.09465967128847512,
+    "hfit": 0.06390325823450087,
+    "secs": 0.019918203353881836,
+    "sweeps": 2,
+    "fit_cost": 13.255290985107422,
+    "fit_cost_cd": 13.255290985107422,
+    "fit_cost_exact": 13.255290985107422,
+    "exact_over_cd": 1.0,
+    "negatives": 0
+   },
+   "  free per-block E4M3      [control [LDLQ 1.0/32 + refit h^1.0]]": {
+    "out": 0.07552820444107056,
+    "plain": 0.09703736007213593,
+    "hweighted": 0.09741478973712246,
+    "hfit": 0.06492099579222185,
+    "secs": 0.0407099723815918,
+    "sweeps": 2,
+    "fit_cost": 14.038124084472656,
+    "candidates": 37
+   },
+   "  oracle assign (own 16)   [control [LDLQ 1.0/32 + refit h^1.0]]": {
+    "out": 0.07518874108791351,
+    "plain": 0.0972944051027298,
+    "hweighted": 0.09800315831332608,
+    "hfit": 0.06427290734385038,
+    "secs": 0.02512502670288086,
+    "sweeps": 1,
+    "fit_cost": 14.208212852478027
+   },
+   "  oracle table+assign (16) [control [LDLQ 1.0/32 + refit h^1.0]]": {
+    "out": 0.07518874108791351,
+    "plain": 0.0972944051027298,
+    "hweighted": 0.09800315831332608,
+    "hfit": 0.06427290734385038,
+    "secs": 0.1343834400177002,
+    "rounds": 1,
+    "fit_cost": 14.208212852478027
+   },
+   "LDLQ 1.0/32 + refit full-H (Jacobi)": {
+    "out": 0.07708847522735596,
+    "plain": 0.10246668756008148,
+    "hweighted": 0.10422742408968584,
+    "hfit": 0.06532209674984417,
+    "secs": 23.71924066543579,
+    "sha256": "4c58aee4dfb93221663503495e2fd85dc0ed6f82df1cbcee210eb7cff7ff5dcc",
+    "refit_landed": [
+     23.346881866455078,
+     23.28825569152832,
+     23.26226234436035,
+     23.25162696838379
+    ],
+    "refit_continuous": [
+     21.843952178955078,
+     21.785507202148438,
+     21.765893936157227,
+     21.75078010559082
+    ],
+    "refit_before": [
+     23.568382263183594,
+     23.496604919433594,
+     23.448488235473633,
+     23.41737937927246
+    ],
+    "refit_stepped": [
+     21.843952178955078,
+     21.785507202148438,
+     21.765893936157227,
+     21.75078010559082
+    ],
+    "refit_reverted": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Jacobi)]": {
+    "out": 0.07188459485769272,
+    "plain": 0.11357881873846054,
+    "hweighted": 0.10324540738476462,
+    "hfit": 0.05848573420269834,
+    "secs": 2.558844804763794,
+    "sweeps": 142,
+    "fit_cost": 18.639446258544922,
+    "fit_cost_cd": 18.639537811279297,
+    "fit_cost_exact": 18.639446258544922,
+    "exact_over_cd": 0.9999950882508299,
+    "negatives": 0
+   },
+   "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Jacobi)]": {
+    "out": 0.07516051828861237,
+    "plain": 0.11886411160230637,
+    "hweighted": 0.10635234344831959,
+    "hfit": 0.06187036798695683,
+    "secs": 0.5615835189819336,
+    "sweeps": 16,
+    "fit_cost": 20.859241485595703,
+    "candidates": 46
+   },
+   "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Jacobi)]": {
+    "out": 0.0758403092622757,
+    "plain": 0.11902906745672226,
+    "hweighted": 0.10691784444093347,
+    "hfit": 0.06261686293459684,
+    "secs": 0.5743494033813477,
+    "sweeps": 19,
+    "fit_cost": 21.365631103515625
+   },
+   "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Jacobi)]": {
+    "out": 0.07587222009897232,
+    "plain": 0.11305756121873856,
+    "hweighted": 0.10580210065867315,
+    "hfit": 0.0627393496647311,
+    "secs": 0.8083763122558594,
+    "rounds": 1,
+    "fit_cost": 21.44930076599121
+   },
+   "LDLQ 1.0/32 + refit full-H (Gauss-Seidel)": {
+    "out": 0.07585152983665466,
+    "plain": 0.10842502117156982,
+    "hweighted": 0.10452908242312722,
+    "hfit": 0.06351028206811193,
+    "secs": 31.392744302749634,
+    "sha256": "ef66f58f2e9354455d06613c028c8ca25d726edfb503901faedfc4481c0883b8",
+    "refit_landed": [
+     22.39383316040039,
+     22.117158889770508,
+     21.985191345214844,
+     21.979671478271484
+    ],
+    "refit_continuous": [
+     19.681007385253906,
+     19.52847671508789,
+     19.500211715698242,
+     19.532039642333984
+    ],
+    "refit_before": [
+     23.568382263183594,
+     22.77668571472168,
+     22.498886108398438,
+     22.426334381103516
+    ],
+    "refit_stepped": [
+     19.681007385253906,
+     19.52847671508789,
+     19.500211715698242,
+     19.532039642333984
+    ],
+    "refit_reverted": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": {
+    "out": 0.07176756858825684,
+    "plain": 0.11573117971420288,
+    "hweighted": 0.10318676797072314,
+    "hfit": 0.0584168688742888,
+    "secs": 6.915858745574951,
+    "sweeps": 153,
+    "fit_cost": 18.595577239990234,
+    "fit_cost_cd": 18.595666885375977,
+    "fit_cost_exact": 18.595577239990234,
+    "exact_over_cd": 0.9999951792325441,
+    "negatives": 0
+   },
+   "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": {
+    "out": 0.07506074011325836,
+    "plain": 0.12051617354154587,
+    "hweighted": 0.10601129936367641,
+    "hfit": 0.06166891216293632,
+    "secs": 1.403449535369873,
+    "sweeps": 14,
+    "fit_cost": 20.723623275756836,
+    "candidates": 51
+   },
+   "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": {
+    "out": 0.07557284832000732,
+    "plain": 0.12040354311466217,
+    "hweighted": 0.10651153764623704,
+    "hfit": 0.062411072817454866,
+    "secs": 1.4438364505767822,
+    "sweeps": 21,
+    "fit_cost": 21.225425720214844
+   },
+   "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": {
+    "out": 0.07548043876886368,
+    "plain": 0.11482831835746765,
+    "hweighted": 0.10535111900440859,
+    "hfit": 0.062475252652742994,
+    "secs": 2.0272958278656006,
+    "rounds": 1,
+    "fit_cost": 21.269102096557617
+   },
+   "control [LDLQ 1.0/32 + refit h^1.0] REPEAT": {
+    "out": 0.07518874108791351,
+    "plain": 0.0972944051027298,
+    "hweighted": 0.09800315831332608,
+    "hfit": 0.06427290734385038,
+    "secs": 38.94667840003967,
+    "sha256": "66d4b8624c57b84e4f80d4cdfca239921f338e1015d51060c9c8ee555e68225b",
+    "refit_landed": [
+     -1464.15380859375,
+     -1464.8175048828125,
+     -1465.005615234375,
+     -1465.1021728515625
+    ],
+    "refit_continuous": [
+     -1465.32666015625,
+     -1465.830810546875,
+     -1465.9801025390625,
+     -1466.0550537109375
+    ],
+    "refit_before": [
+     -1463.24853515625,
+     -1464.5638427734375,
+     -1464.87109375,
+     -1465.0152587890625
+    ],
+    "refit_stepped": [
+     -1465.32666015625,
+     -1465.830810546875,
+     -1465.9801025390625,
+     -1466.0550537109375
+    ],
+    "refit_reverted": [
+     0,
+     0,
+     0,
+     0
+    ]
+   },
+   "_drift": {
+    "bytes_identical": true,
+    "out_first": 0.07518874108791351,
+    "out_last": 0.07518874108791351
+   }
+  }
+ },
+ "geomean_out": {
+  "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.07506074011325835,
+  "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.07516051828861237,
+  "  free per-block E4M3      [control [LDLQ 1.0/32 + refit h^1.0]]": 0.07552820444107057,
+  "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.07176756858825682,
+  "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.0718845948576927,
+  "  free plane (continuous)  [control [LDLQ 1.0/32 + refit h^1.0]]": 0.07400583475828172,
+  "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.07557284832000734,
+  "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.0758403092622757,
+  "  oracle assign (own 16)   [control [LDLQ 1.0/32 + refit h^1.0]]": 0.07518874108791353,
+  "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.07548043876886368,
+  "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.0758722200989723,
+  "  oracle table+assign (16) [control [LDLQ 1.0/32 + refit h^1.0]]": 0.07518874108791353,
+  "LDLQ 1.0/32 + refit full-H (Gauss-Seidel)": 0.07585152983665468,
+  "LDLQ 1.0/32 + refit full-H (Jacobi)": 0.07708847522735596,
+  "control [LDLQ 1.0/32 + refit h^1.0]": 0.07518874108791353,
+  "control [LDLQ 1.0/32 + refit h^1.0] REPEAT": 0.07518874108791353
+ },
+ "geomean_hfit": {
+  "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.06166891216293631,
+  "  free per-block E4M3      [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.061870367986956824,
+  "  free per-block E4M3      [control [LDLQ 1.0/32 + refit h^1.0]]": 0.06492099579222184,
+  "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.058416868874288784,
+  "  free plane (continuous)  [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.058485734202698335,
+  "  free plane (continuous)  [control [LDLQ 1.0/32 + refit h^1.0]]": 0.06390325823450088,
+  "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.06241107281745488,
+  "  oracle assign (own 16)   [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.06261686293459684,
+  "  oracle assign (own 16)   [control [LDLQ 1.0/32 + refit h^1.0]]": 0.06427290734385038,
+  "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Gauss-Seidel)]": 0.062475252652743,
+  "  oracle table+assign (16) [LDLQ 1.0/32 + refit full-H (Jacobi)]": 0.06273934966473109,
+  "  oracle table+assign (16) [control [LDLQ 1.0/32 + refit h^1.0]]": 0.06427290734385038,
+  "LDLQ 1.0/32 + refit full-H (Gauss-Seidel)": 0.06351028206811193,
+  "LDLQ 1.0/32 + refit full-H (Jacobi)": 0.06532209674984417,
+  "control [LDLQ 1.0/32 + refit h^1.0]": 0.06427290734385038,
+  "control [LDLQ 1.0/32 + refit h^1.0] REPEAT": 0.06427290734385038
+ },
+ "ceiling": {
+  "control [LDLQ 1.0/32 + refit h^1.0] REPEAT": {
+   "landed_out": 0.07518874108791353,
+   "landed_hfit": 0.06427290734385038
+  },
+  "LDLQ 1.0/32 + refit full-H (Gauss-Seidel)": {
+   "landed_out": 0.07585152983665468,
+   "landed_hfit": 0.06351028206811193,
+   "free": {
+    "out": 0.07176756858825682,
+    "out_x": 0.9461584854360536,
+    "hfit": 0.058416868874288784,
+    "hfit_x": 0.9198017544881836
+   },
+   "free-e4m3": {
+    "out": 0.07506074011325835,
+    "out_x": 0.9895745052855324,
+    "hfit": 0.06166891216293631,
+    "hfit_x": 0.9710067433931274
+   },
+   "oracle-assign": {
+    "out": 0.07557284832000734,
+    "out_x": 0.9963259605014233,
+    "hfit": 0.06241107281745488,
+    "hfit_x": 0.9826924205835175
+   },
+   "oracle-table": {
+    "out": 0.07548043876886368,
+    "out_x": 0.9951076653484756,
+    "hfit": 0.062475252652743,
+    "hfit_x": 0.9837029630216583
+   }
+  },
+  "LDLQ 1.0/32 + refit full-H (Jacobi)": {
+   "landed_out": 0.07708847522735596,
+   "landed_hfit": 0.06532209674984417,
+   "free": {
+    "out": 0.0718845948576927,
+    "out_x": 0.9324947035945967,
+    "hfit": 0.058485734202698335,
+    "hfit_x": 0.8953437980821989
+   },
+   "free-e4m3": {
+    "out": 0.07516051828861237,
+    "out_x": 0.9749903350266367,
+    "hfit": 0.061870367986956824,
+    "hfit_x": 0.9471583287335984
+   },
+   "oracle-assign": {
+    "out": 0.0758403092622757,
+    "out_x": 0.9838086567233421,
+    "hfit": 0.06261686293459684,
+    "hfit_x": 0.9585862372788304
+   },
+   "oracle-table": {
+    "out": 0.0758722200989723,
+    "out_x": 0.9842226075324935,
+    "hfit": 0.06273934966473109,
+    "hfit_x": 0.9604613566676541
+   }
+  },
+  "control [LDLQ 1.0/32 + refit h^1.0]": {
+   "landed_out": 0.07518874108791353,
+   "landed_hfit": 0.06427290734385038,
+   "free": {
+    "out": 0.07400583475828172,
+    "out_x": 0.9842675071757259,
+    "hfit": 0.06390325823450088,
+    "hfit_x": 0.99424875698602
+   },
+   "free-e4m3": {
+    "out": 0.07552820444107057,
+    "out_x": 1.0045148162909143,
+    "hfit": 0.06492099579222184,
+    "hfit_x": 1.0100833846663304
+   },
+   "oracle-assign": {
+    "out": 0.07518874108791353,
+    "out_x": 1.0,
+    "hfit": 0.06427290734385038,
+    "hfit_x": 1.0
+   },
+   "oracle-table": {
+    "out": 0.07518874108791353,
+    "out_x": 1.0,
+    "hfit": 0.06427290734385038,
+    "hfit_x": 1.0
+   }
+  }
+ }
+}
