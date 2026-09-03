@@ -548,9 +548,9 @@ class SlicedUnit(EncodedUnit):
     the path it always did.
 
     ``release_counts`` is the per-superblock release count vector.  A whole
-    unit does not carry one (its counts are the Bresenham spread of the total,
-    which the reader regenerates); a shard must, because its counts are the
-    *restriction* of its parent's and no spread reproduces them.
+    unit does not carry one (its counts are ``grammar.release_quota`` of the
+    total, which the reader regenerates); a shard must, because its counts are
+    the *restriction* of its parent's and no quota reproduces them.
     """
 
     row_offset: int = 0

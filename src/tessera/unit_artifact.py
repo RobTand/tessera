@@ -313,10 +313,10 @@ def build_unit_artifact(
             f"{'a' if start is not None else 'no'} start state; a shard cut "
             "below row 0 carries both or neither"
         )
-    # Only a shard puts its release counts on the wire.  A whole unit's are the
-    # Bresenham spread of the total, which the reader regenerates -- and writing
-    # them anyway would change the RELEASE descriptor's granularity and with it
-    # the bytes of every unit that carries releases.
+    # Only a shard puts its release counts on the wire.  A whole unit's are
+    # ``grammar.release_quota`` of the total, which the reader regenerates --
+    # and writing them anyway would change the RELEASE descriptor's
+    # granularity and with it the bytes of every unit that carries releases.
     release_counts = (
         (getattr(unit, "release_counts", ()) or None)
         if getattr(unit, "parent_rows", 0)
@@ -697,11 +697,12 @@ def _shard_state(manifest, chunks, device):
 def _release_placement(manifest, decoded, cols: int, n_released: int):
     """Which positions the RELEASE plane overrides, in plane order.
 
-    A whole unit's per-superblock counts are the Bresenham spread of the
-    total, which the reader regenerates (``encode._canonical_release_order``).
-    A **shard**'s are not a spread of anything -- they are the restriction of
-    its parent's -- so they travel on the wire as the RELEASE descriptor's
-    per-superblock ``counts`` and are read back here.
+    A whole unit's per-superblock counts are ``grammar.release_quota`` of the
+    total -- the total at a uniform release density -- which the reader
+    regenerates (``encode._canonical_release_order``).  A **shard**'s are not a
+    quota over anything -- they are the restriction of its parent's -- so they
+    travel on the wire as the RELEASE descriptor's per-superblock ``counts``
+    and are read back here.
     """
     from .decode import release_order
     from .encode import _canonical_release_order

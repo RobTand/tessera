@@ -71,8 +71,8 @@ the shard, at the counts the restriction gives, and the decoded magnitudes it
 ranks by are the parent's own (the shard's body replays to the same codes and
 its scale field is the parent's restricted).
 
-The counts, though, are *not* a Bresenham spread of the shard's total, and no
-spread reproduces them — so a shard writes the RELEASE descriptor with
+The counts, though, are *not* the release quota of the shard's total, and no
+quota reproduces them — so a shard writes the RELEASE descriptor with
 `PER_SUPERBLOCK` granularity and its counts on the wire, where a whole unit
 writes one total and lets the reader respread it. And because the placement is
 defined *within* a superblock, a released unit cuts columns only on superblock

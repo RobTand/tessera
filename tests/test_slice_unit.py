@@ -38,7 +38,6 @@ import torch
 
 from tessera.alphabet import SERIALISABLE_GRIDS
 from tessera.decode import (
-    bresenham_release_counts,
     decode_codes,
     decode_codes_mixed,
     reconstruct_unit,
@@ -47,7 +46,7 @@ from tessera.decode import (
     replay_window,
 )
 from tessera.encode import _canonical_release_order, encode_unit
-from tessera.grammar import superblock_count
+from tessera.grammar import release_quota, superblock_count
 from tessera.errors import GrammarError, ManifestError
 from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
 from tessera.layout import (
@@ -575,16 +574,17 @@ def test_slice_release_admits_only_widths_where_ceiling_equals_floor(width, ok):
             _slice_release(unit, rows, columns, 0, rows, 0, width, superblock)
 
 
-def test_release_order_generalises_the_bresenham_spread():
-    """``decode.release_order`` at the Bresenham counts *is* the encoder's own
-    placement.  The shard needs the general form; this binds the two so they
-    cannot drift."""
+@pytest.mark.parametrize("cols", [256, 257, 320, 512, 640])
+def test_release_order_generalises_the_release_quota(cols):
+    """``decode.release_order`` at ``grammar.release_quota`` *is* the encoder's
+    own placement.  The shard needs the general form; this binds the two so
+    they cannot drift -- at a partial trailing superblock too, which is where
+    the quota and an equal count stop agreeing."""
     torch.manual_seed(2)
-    cols, rows, superblock = 512, 16, 256
+    rows, superblock = 16, 256
     decoded = torch.randn(rows, cols)
-    for total in (0, 1, 7, 64, 129):
-        blocks = max(1, cols // superblock)
-        counts = bresenham_release_counts(total, blocks)
+    for total in (0, 1, 7, 64, 129, rows * cols):
+        counts = release_quota(total, cols, superblock)
         assert torch.equal(
             release_order(decoded, cols, superblock, counts),
             _canonical_release_order(decoded, cols, superblock, total),

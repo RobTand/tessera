@@ -18,9 +18,11 @@ from tessera.encode import _pack_scales, encode_unit
 from tessera.errors import GrammarError
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
 from tessera.trellis import ConvCode
+from tessera.grammar import release_quota, superblock_widths
 from tessera.unit_artifact import (
     build_unit_artifact,
     encoder_profile_id,
+    parse_unit_artifact,
     read_unit_artifact,
 )
 from tessera.wire import (
@@ -199,25 +201,85 @@ def test_release_reaches_a_trailing_partial_superblock():
 
 
 @pytest.mark.parametrize("cols", [320, 384, 512, 640, 768])
-def test_release_placement_survives_the_bytes_at_every_width(cols):
-    """A regression pin, not a fail-before test: it passed under the floor too,
-    because encoder and decoder floored alike.  It exists because the reader
-    regenerates a whole unit's placement from the total alone, so any future
-    change to the partition has to move both sides at once -- at *every* column
-    count, including the ones where the ceiling and the floor differ."""
-    _, unit = _unit(cols=cols, q256=640, released=64)
-    assert unit.released_positions == 64
+@pytest.mark.parametrize("released", [0, 1, 64, 3000])
+def test_release_placement_survives_the_bytes_at_every_width(cols, released):
+    """The writer's quota and the reader's respread are the same function.
+
+    The reader regenerates a whole unit's placement from the *total* alone
+    (``unit_artifact._release_placement``), so the two sides agree only if they
+    apportion that total the same way.  Element for element, not as a set and
+    not merely as a decode: a placement that recovered the same positions in a
+    different order would still be a drift, because the RELEASE plane's codes
+    are stored in placement order and nothing else names them.
+    """
+    rows = 64
+    _, unit = _unit(rows=rows, cols=cols, q256=640, released=released)
+    assert unit.released_positions == released
+    assert unit.release_index.numel() == released
     _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+    recovered = parse_unit_artifact(blob).unit
+    assert torch.equal(recovered.release_index, unit.release_index)
+    assert torch.equal(recovered.release_code, unit.release_code)
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, CODE))
+    # ...and the placement is the quota's, superblock for superblock.
+    superblock = 256
+    counts = release_quota(released, cols, superblock)
+    placed = ((unit.release_index % cols) // superblock).tolist()
+    assert tuple(placed.count(b) for b in range(len(counts))) == counts
 
 
-def test_release_refuses_a_superblock_quota_it_cannot_fill():
-    """A trailing partial superblock holds fewer positions than a complete one,
-    so a uniform quota can overrun it.  Truncating silently would place fewer
-    releases than asked, and the reader -- which respreads the *placed* count --
-    would then recover a different set.  Refuse instead."""
-    with pytest.raises(GrammarError, match="releases .* of .* positions"):
-        _unit(rows=8, cols=640, q256=640, released=8 * 640 - 1)
+@pytest.mark.parametrize("cols", [320, 640])
+def test_release_fills_the_unit_where_an_equal_count_quota_refused(cols):
+    """Issue #27, fail-before.  An equal *count* per superblock asks a narrow
+    trailing block for the same number of releases as a full one -- up to
+    ``superblock_columns`` times the density -- and so overruns it long before
+    the unit is full: on 8x640 the equal-count quota refused at a total of
+    4000 of 5120 positions, and on 64x320 at 12000 of 20480.  The
+    width-proportional quota holds the *density* equal instead, so every total
+    the unit has positions for is placeable, up to and including all of them.
+    """
+    rows = 8
+    positions = rows * cols
+    for released in (positions // 2, positions - 1, positions):
+        _, unit = _unit(rows=rows, cols=cols, q256=640, released=released)
+        assert unit.release_index.numel() == released
+        assert len(set(unit.release_index.tolist())) == released
+        _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+        assert torch.equal(
+            parse_unit_artifact(blob).unit.release_index, unit.release_index
+        )
+
+
+def test_release_refuses_more_positions_than_the_unit_has():
+    """What the overrun guard is *for*, once the quota is width-proportional.
+
+    At a legal total the guard cannot fire -- a superblock's share of
+    ``total <= rows * cols`` is at most its ``rows * width`` positions, which
+    ``tests/test_grammar.py`` proves directly over every width.  What is left
+    for it to catch is an *illegal* total: asking for more releases than the
+    unit has positions, which it refuses at the first superblock whose share
+    overruns, before the layout's own range check ever sees the count.
+    """
+    with pytest.raises(GrammarError, match="superblock 0 releases 2049 of 2048"):
+        _unit(rows=8, cols=640, q256=640, released=8 * 640 + 1)
+
+
+def test_release_density_is_equal_across_a_partial_superblock():
+    """The principle ``layout._superblock_counts`` already applies to BODY and
+    COMPLETION -- "a granule's count has to be the bits that granule's columns
+    actually carry" -- read for RELEASE, whose per-position quantity is
+    positions.  A 640-column unit's last superblock is half-width and takes
+    half the releases, not the same number.
+    """
+    rows, cols, superblock = 8, 640, 256
+    _, unit = _unit(rows=rows, cols=cols, q256=640, released=4000)
+    widths = superblock_widths(cols, superblock)
+    assert widths == (256, 256, 128)
+    placed = ((unit.release_index % cols) // superblock).tolist()
+    counts = [placed.count(b) for b in range(len(widths))]
+    assert counts == [1600, 1600, 800]
+    density = {c / (rows * w) for c, w in zip(counts, widths)}
+    assert density == {4000 / (rows * cols)}
 
 
 def test_decoder_derives_its_own_scale():
