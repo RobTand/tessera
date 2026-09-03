@@ -19,8 +19,11 @@ container run.
 """
 from __future__ import annotations
 
+import json
+import re
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -256,7 +259,68 @@ def test_a_routed_moe_layer_refuses_and_never_returns_none(monkeypatch, build):
     with pytest.raises(ValueError) as excinfo:
         config.get_quant_method(layer, "model.layers.0.mlp.experts")
     message = str(excinfo.value)
-    assert "flashinfer_b12x" in message and "compressed-tensors" in message
+    assert "compressed-tensors" in message and "flashinfer_b12x" not in message
+
+
+@pytest.mark.parametrize("build", ["real", "named"])
+def test_a_routed_moe_refusal_recommends_no_moe_backend_flag(monkeypatch, build):
+    """Issue #31: the refusal recommended ``--moe-backend flashinfer_b12x``.
+
+    The pinned build refuses that flag on every GLM-5.3-Flash config (all set
+    ``swiglu_limit: 10.0``) and needs no flag at all (``auto`` resolves without
+    one), so the recommendation misdirected an operator twice over.  A refusal
+    does not need to recommend a flag, and which backend a build resolves is
+    that build's answer to give -- so the message must name none.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if build == "real":
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+        layer = object.__new__(RoutedExperts)
+    else:
+        layer = object.__new__(type("RoutedExperts", (), {}))
+    config = _resolved()
+    with pytest.raises(ValueError, match="routed-MoE") as excinfo:
+        config.get_quant_method(layer, "model.layers.0.mlp.experts")
+    message = str(excinfo.value)
+    assert "--moe-backend" not in message
+    assert "flashinfer_b12x" not in message
+
+
+@pytest.mark.parametrize("build", ["real", "named"])
+def test_a_routed_moe_refusal_points_at_the_measured_oracle_receipt(monkeypatch, build):
+    """Issue #6: the clamp refusal is recorded, not asserted.
+
+    On a clamped config the pinned build's own oracle refuses the explicit
+    backend and resolves ``auto`` somewhere an operator cannot guess, so the
+    refusal points at the receipt that measured it
+    (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``) instead of naming a
+    backend.  A pointer at a missing receipt is as bad as an asserted flag, so
+    this resolves it: the file must exist, and its companion result JSON must
+    record both the refusal and the resolution.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if build == "real":
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+        layer = object.__new__(RoutedExperts)
+    else:
+        layer = object.__new__(type("RoutedExperts", (), {}))
+    config = _resolved()
+    with pytest.raises(ValueError, match="routed-MoE") as excinfo:
+        config.get_quant_method(layer, "model.layers.0.mlp.experts")
+    message = str(excinfo.value)
+    match = re.search(r"docs/measurements/[\w.\-]+\.md", message)
+    assert match is not None, f"the refusal points at no measurement receipt: {message!r}"
+    root = Path(__file__).resolve().parent.parent
+    receipt = root / match.group(0)
+    assert receipt.is_file(), f"the refusal points at a missing receipt: {match.group(0)}"
+    assert "swiglu_limit" in receipt.read_text(), \
+        f"{receipt.name} does not record the clamp finding the refusal points at"
+    # The result JSON lives beside the probe, not the receipt: the receipt's §5
+    # scope note is what ties them, so this names the probe output directly.
+    results = json.loads(
+        (root / "experiments/results/nvfp4_moe_oracle_probe.json").read_text())
+    assert results["cases"]["clamped_explicit_b12x"]["raised"] == "ValueError"
+    assert "selected" in results["cases"]["clamped_auto"]
 
 
 def test_a_world_size_above_one_reaches_its_route(monkeypatch):
