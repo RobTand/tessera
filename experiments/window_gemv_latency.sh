@@ -19,6 +19,20 @@
 # ranked as work per joule.  This script prints its own wall-clock window in
 # UTC so the Netdata query can be cut to exactly it.
 #
+# HOW THE PROFILER IS ENABLED, AND WHY IT IS A CLI FLAG AND NOT AN ENV VAR.
+# vLLM 0.28 has no VLLM_TORCH_PROFILER_DIR: profiling moved onto a config object
+# (vllm/config/profiler.py), reached from the command line as ONE json argument,
+# --profiler-config.  Setting the old env var does not fail -- the engine prints
+# "Unknown vLLM environment variable detected" and carries on WITHOUT profiling,
+# and because the /start_profile route is only registered when the profiler is
+# configured, the driver's start_profile POST then returns 404 and the run
+# produces no trace at all.  That is exactly what happened to every arm of the
+# 2026-09-03 campaign, and it is the same shape of bug as the TPOT stem this
+# script's loader also had to fix: a name that silently no-ops across a vLLM
+# release.  Verified against the image rather than guessed --
+# vllm/engine/arg_utils.py:1652 adds "--profiler-config", and
+# vllm/entrypoints/serve/profile/api_router.py:21 is the route it enables.
+#
 # THE PROFILE IS ALSO THE COMPILED CENSUS'S ONLY REAL EVIDENCE.  A compiled
 # route record stamps the combined ``(symbol, decoder)`` pair from the trace
 # whatever runs underneath it, so the compiled census proves dispatch, not
@@ -61,7 +75,6 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
   -e TESSERA_SERVE_MODE="$MODE" \
   -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.45}" \
-  -e VLLM_TORCH_PROFILER_DIR=/prof \
   $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
@@ -70,6 +83,7 @@ dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -
 pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 2048 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.45}" \
+  --profiler-config '"'"'{"profiler":"torch","torch_profiler_dir":"/prof"}'"'"' \
   '"${EAGER_FLAG}"' --trust-remote-code' >/dev/null
 
 for i in $(seq 1 240); do
@@ -101,6 +115,18 @@ docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
 build_identity_stamp "$LOG" "${OUT%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \
   "$MODE" "$([ "$REGIME" = compiled ] && echo 0 || echo 1)" "$MODEL"
+# A MISSING TRACE IS REPORTED LOUDLY, NOT LEFT IN A FIELD NOBODY READS.  The
+# loader treats a failed /start_profile as non-fatal and records it in the
+# receipt, which is right -- a latency run should not be thrown away because
+# profiling broke -- but on the 2026-09-03 campaign that error sat unread in
+# four receipts while the trace was the one piece of evidence a compiled census
+# cannot supply.  Say it here, where the run is watched.
+if [ -z "$(ls -A "$PROF" 2>/dev/null)" ]; then
+  echo "!!! NO TRACE under $PROF -- this arm has NO kernel-launch evidence."
+  echo "!!! A compiled census proves DISPATCH, not LAUNCH; without a trace the"
+  echo "!!! compiled arm cannot show the GEMV kernel actually ran."
+  grep -m1 "Unknown vLLM environment variable\|start_profile.*404" "$LOG" || true
+fi
 echo "--- GEMV lane refusals in this serve (must be 0 for an engaged arm, 112 for the fallback) ---"
 grep -c "the window GEMV lane" "$LOG" || true
 echo "-> $OUT ; trace under $PROF"
