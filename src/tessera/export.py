@@ -847,6 +847,7 @@ def encode_linear_planes(
     ldl_block: int = DEFAULT_LDLQ_BLOCK,
     refit_metric: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -872,6 +873,13 @@ def encode_linear_planes(
     switch.  The default stays ``0`` so the exporter's rung names keep meaning
     the rate they have always meant -- ``q256`` alone -- and a caller that wants
     the other axis asks for it.
+
+    ``refit_gauss_seidel`` orders the LUT plane's metric-aware block-scale
+    refit as a sequential sweep instead of a parallel step (issue #35).  It is
+    a measurement option and is reachable only from here, deliberately: it has
+    no ``ActivationSource`` field, so no ``export_checkpoint`` run can set it
+    and no ``tessera_config.json`` can be written that a merge guard has no
+    field to compare.  Promoting it means adding both, in one change.
 
     ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
     activation-aware encoder settings (``encode_unit``): the input Hessian's
@@ -915,6 +923,7 @@ def encode_linear_planes(
         window_sigma=window_sigma, channel_sigma=channel_sigma,
         ldl=ldl, ldl_block=ldl_block, refit_metric=refit_metric,
         refit_reach_floor=refit_reach_floor,
+        refit_gauss_seidel=refit_gauss_seidel,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares

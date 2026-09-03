@@ -398,3 +398,114 @@ def test_the_default_on_this_plane_is_the_arm_that_was_measured(tmp_path):
         "the LUT plane's default is not the h^1.0 arm the receipt measured")
     assert out["default"] != out["full_h"], (
         "the two objectives reach the same bytes, so the plane is not reading one")
+
+
+# --------------------------------------------------------------------------
+# Issue #35: the Gauss-Seidel sweep of the same block-scale refit.
+#
+# It is a different OPTIMISER for one objective, opt-in and encoder-side.  So
+# the tests are of three kinds: it must still be monotone in the metric it
+# claims to descend, it must be a strictly better STEP than the Jacobi one it
+# replaces (that is the whole hypothesis, and it is checkable before any wire
+# is involved), and it must refuse every context where it would silently be
+# the parallel step under another name.
+# --------------------------------------------------------------------------
+
+
+def _step_record(fixture, H, gauss_seidel):
+    """The refit's pre-landing point: step + line search, no table.
+
+    Read out of the refit's own diagnostic sink rather than reimplemented,
+    because a test that recomputes the arithmetic it is checking tests the
+    test.
+    """
+    from tessera.encode import refit_diagnostics
+    work, units, half, table, index, eff, glob = fixture
+    with refit_diagnostics() as diag:
+        _refit_scales_lut(work, units, half, table, index, eff, glob,
+                          metric=H, gauss_seidel=gauss_seidel)
+    assert len(diag) == 1
+    return diag[0]
+
+
+def test_gauss_seidel_is_a_strictly_better_step_than_jacobi():
+    """The hypothesis, isolated from the table and the trellis.
+
+    Under a coupled metric the sequential sweep solves each block against a
+    residual that already carries the blocks before it, so the point the STEP
+    reaches is better than the parallel step's.  ``stepped`` is that point and
+    is the only leg #35 is about: what happens after it -- the non-positive
+    revert and the sixteen-entry landing -- is common to both optimisers and
+    can give the whole gain back, which is a measurement, not a bug in this
+    assertion.
+    """
+    fixture = _lut_fixture(seed=11, cols=128)
+    H = _hessian(cols=128, seed=11, device="cpu", coupling=4.0)
+    jac = _step_record(fixture, H, False)
+    gs = _step_record(fixture, H, True)
+    assert jac["before"] == pytest.approx(gs["before"])
+    assert gs["stepped"] < jac["stepped"] < gs["before"]
+
+
+def test_gauss_seidel_is_monotone_under_its_own_metric():
+    """The guard is the same guard: the plane the unit has is a candidate."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=12, cols=128)
+    for H in (_hessian(cols=128, seed=12, device="cpu"),
+              _hessian(cols=128, seed=13, device="cpu", coupling=4.0)):
+        _, _, new_eff = _refit_scales_lut(
+            work, units, half, table, index, eff, glob,
+            metric=H, gauss_seidel=True)
+        assert _cost(work, units, new_eff, half, H) <= _cost(work, units, eff, half, H) + 1e-9
+
+
+def test_gauss_seidel_off_is_the_refit_that_was_there():
+    """The byte claim, at the function it is made about."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=14, cols=128)
+    H = _hessian(cols=128, seed=14, device="cpu", coupling=4.0)
+    a = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H)
+    b = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                          metric=H, gauss_seidel=False)
+    assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
+    assert torch.equal(a[2], b[2])
+
+
+@cuda
+def test_the_sweep_reaches_the_bytes_and_leaves_the_wire_alone():
+    """An arm named after a setting that changed no byte is the failure this
+    catches; a wire that changed length would be the other one."""
+    w = _weights(seed=15).bfloat16()
+    H = _hessian(seed=15)
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    jac = encode_linear(w, grid=K2, q256=CAP, name="x",
+                        ldl=L, ldl_block=32, refit_metric=H).blob
+    gs = encode_linear(w, grid=K2, q256=CAP, name="x", ldl=L, ldl_block=32,
+                       refit_metric=H, refit_gauss_seidel=True).blob
+    assert jac != gs
+    assert len(jac) == len(gs), "the wire is unchanged"
+
+
+@cuda
+def test_the_sweep_is_refused_where_it_would_be_the_parallel_step():
+    """Every context where a sequential sweep computes the parallel numbers,
+    refused by its own message rather than accepted as a silent no-op."""
+    w = _weights(seed=16).bfloat16()
+    H = _hessian(seed=16)
+    h = H.diagonal() / H.diagonal().mean()
+    with pytest.raises(GrammarError, match="without refit_metric"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_gauss_seidel=True)
+    with pytest.raises(GrammarError, match="separable"):
+        encode_linear(w, grid=K2, q256=CAP, name="x",
+                      refit_metric=h, refit_gauss_seidel=True)
+    with pytest.raises(GrammarError, match="LUT plane"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=H,
+                      scale_plane=ScalePlaneKind.CHANNEL, refit_gauss_seidel=True)
+
+
+def test_the_diagnostic_sink_is_off_unless_asked_for():
+    """It is a measurement instrument, not a side effect of encoding."""
+    from tessera import encode as enc
+    from tessera.encode import refit_diagnostics
+    assert enc._REFIT_DIAG is None
+    with refit_diagnostics() as diag:
+        assert enc._REFIT_DIAG is diag
+    assert enc._REFIT_DIAG is None
