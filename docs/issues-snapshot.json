@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T15:54:27Z",
+ "generated": "2026-09-03T17:18:04Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -28,7 +28,7 @@
     "title": "check_serving_shape fails OPEN on an unknown profile id while serving_lane_route fails closed: a typo turns a shape refusal into an admission"
    },
    "121": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Shipcard: carry the byte-matched uniform control's verdict beside the bpp"
    },
    "122": {
@@ -36,7 +36,7 @@
     "title": "Stale Tessera DEV pin: 7 of test_tessera_menu.py red on master because the contract moved to v2"
    },
    "123": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "D34 residue: 111 undated Gridbook mentions in 41 module docstrings, and the one that misstates a capability"
    },
    "124": {
@@ -48,7 +48,7 @@
     "title": "build_candidates(cost_mode=) is a dead kwarg after the trellis surface was archived"
    },
    "126": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "artifact_bpp under-prices the TCQ-at-cap rung by 512 bytes a unit: the ALPHABET and DESCENDANT planes are not charged"
    },
    "127": {
@@ -56,7 +56,7 @@
     "title": "Nothing reads the currency a Tessera cost table declares"
    },
    "128": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Rescue the super-item menu byte-identity golden from the closed trellis PR"
    },
    "129": {
@@ -64,7 +64,7 @@
     "title": "promote_serving_units raises a bare KeyError on an unranked format"
    },
    "130": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Striped production-cache renders do not keep the same calibration rows as an unstriped one"
    },
    "131": {
@@ -76,15 +76,15 @@
     "title": "The group knapsack's per-member rung licence is a docstring, not the contract's fused_module block"
    },
    "133": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The serve fingerprint's Tessera extension basenames are a hand-copy of a hand-written pin; contract v7 publishes them"
    },
    "134": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two more Tessera memos are sized by a round number, and one of them measured 0 hits / 13832 misses"
    },
    "135": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "`--render-scope assignment` narrows the activation hook set, so the cost cache and the export cache are different renderings"
    },
    "136": {
@@ -116,7 +116,7 @@
     "title": "The Tessera contract publishes when_unavailable and the serve manifest consumes none of it: a substituted-decoder serve is a different hash with no name on it"
    },
    "143": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "TESSERA_SERVE_MODE is absent from the serve manifest, so two residency modes fingerprint identically"
    },
    "144": {
@@ -134,6 +134,90 @@
    "147": {
     "state": "OPEN",
     "title": "activation_hook_scope is provenance nothing reads: no gate compares the cost cache's rendering to the export cache's"
+   },
+   "148": {
+    "state": "OPEN",
+    "title": "Five family-keyed Tessera memos are sized 64/64/256/64/64 against a roster that moved twice this week"
+   },
+   "149": {
+    "state": "OPEN",
+    "title": "The Tessera campaign expands one menu per Linear, 37,861 times for 25 distinct answers"
+   },
+   "150": {
+    "state": "OPEN",
+    "title": "The lane-wiring test trusts a hand-kept roster, so a bogus tessera declaration passes once the set is updated in lockstep"
+   },
+   "151": {
+    "state": "OPEN",
+    "title": "The owners test pins the name set, so a swapped resource-owner mapping passes untouched"
+   },
+   "152": {
+    "state": "OPEN",
+    "title": "The shipped-lanes test covers a hand-written pair list, so a broken shipped lane slips past once its row is dropped"
+   },
+   "153": {
+    "state": "OPEN",
+    "title": "The families test pins today's four names, so a dropped fifth family passes silently"
+   },
+   "154": {
+    "state": "OPEN",
+    "title": "Two byte-identity sweeps enumerate three families, so a BF16 misprice passes both"
+   },
+   "155": {
+    "state": "OPEN",
+    "title": "The bounds test pins three families' intervals, so a new family's wrong DP interval passes"
+   },
+   "156": {
+    "state": "OPEN",
+    "title": "ship_gate's endpoint binding and threshold contract are written into the receipt and replayed by nothing, so a wrong-server receipt passes verify"
+   },
+   "157": {
+    "state": "OPEN",
+    "title": "native_export arm metrics are stamped into the smoke receipt and replayed by nothing, so a fabricated arm record passes"
+   },
+   "158": {
+    "state": "OPEN",
+    "title": "The build forensic block stamps ten keys into the shipcard and verify reads one, so the card carries provenance theater in its byte reservation"
+   },
+   "159": {
+    "state": "OPEN",
+    "title": "Fisher row-weight clip 64 caps the measured objective below n_rows, in two copies"
+   },
+   "160": {
+    "state": "OPEN",
+    "title": "The confident-lane cut _CONFIDENT_PROB = 0.5 is an intuition number whose authority lives outside the repo"
+   },
+   "161": {
+    "state": "OPEN",
+    "title": "MIN_TRELLIS_STEPS = 8 refuses block schedules the wire itself accepts"
+   },
+   "162": {
+    "state": "OPEN",
+    "title": "Lane gate slots are derived from the lane spec but the slot vocabulary is still two enumerated tuples, so a fourth lane cannot declare a new one"
+   },
+   "163": {
+    "state": "OPEN",
+    "title": "The default lane's executed-activation list is a citation with line numbers, so a refactor silently keeps a stale A-side price"
+   },
+   "164": {
+    "state": "OPEN",
+    "title": "CLAUDE.md promises TARGET_PROFILE and CB shell defaults the driver removed, so a reader mis-resolves lane and menu"
+   },
+   "165": {
+    "state": "OPEN",
+    "title": "Tessera's priced A-side is never compared to the contract cells' activation_contract, so producer and runtime can disagree at no gate"
+   },
+   "166": {
+    "state": "OPEN",
+    "title": "CLAUDE.md sells archived coordinate-descent polish as the live shipping guarantee, so a plan budgets a stage that never runs"
+   },
+   "167": {
+    "state": "OPEN",
+    "title": "DIAGRAM-2 says the Tessera lane has no exporter while the driver grew one, so the diagram understates what ships"
+   },
+   "168": {
+    "state": "OPEN",
+    "title": "E2M1 carries two SM floors in one tree (100 and 120), and two live gates read different ones"
    },
    "19": {
     "state": "CLOSED",
@@ -242,7 +326,7 @@
     "title": "BF16 route: (L, sigma) unsearched, and the GLM expert evidence is one tensor"
    },
    "19": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The attested menu path could not allocate at all, and only unit tests said otherwise"
    },
    "2": {
@@ -390,7 +474,7 @@
     "title": "route_for_grid resolves by dict order; a second route over one grid would silently own the export gate"
    },
    "52": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "kernel_window_gemv branches on the token dim in Python and has no compiled arm in its tests"
    },
    "53": {
@@ -433,9 +517,61 @@
     "state": "OPEN",
     "title": "The census calls it \"prefill\" and the contract calls it \"batch\"; the per-(family, regime) expectation both #10 and #47 need has no mapping"
    },
+   "62": {
+    "state": "OPEN",
+    "title": "export._plan_for is sized 256 against a per-(rung, width) key space nobody has counted"
+   },
+   "63": {
+    "state": "OPEN",
+    "title": "The 4.07-bpp wire win is quoted against a 4.5-bpp resident, so an 8.0-resident arm ships as a 4-bit win"
+   },
+   "64": {
+    "state": "OPEN",
+    "title": "Window-body EXL3 win is scoped to six Gaussian-input GLM experts and stated without scope, so it reads as general"
+   },
+   "65": {
+    "state": "OPEN",
+    "title": "The hessian-vs-h1.0 rule is decided by a 1.38% geomean from one unit while the served gate measures the other arm"
+   },
+   "66": {
+    "state": "OPEN",
+    "title": "`_lloyd_levels` caps Lloyd at 40 iterations while levels are still moving, leaving sub-cap forests 21.6% above their descended SSE at E4M3 R=4"
+   },
+   "67": {
+    "state": "OPEN",
+    "title": "The forest fit descends Lloyd on every 4th sample, and the full 16k source fits 1-4% better anchors at E4M3 R=2-4"
+   },
+   "68": {
+    "state": "OPEN",
+    "title": "`_fit_lut` caps swap refinement at 2 passes, and a longer descent lowers the plane cost ~1% on 2 of 3 synthetic halves"
+   },
+   "69": {
+    "state": "OPEN",
+    "title": "README and schema section 7 still sell the 1a/1b scope (no encoder, no serving, Gridbook owns the decode) after the tree grew all four"
+   },
    "7": {
     "state": "CLOSED",
     "title": "Tensor parallelism: NVFP4 row shards refused, and the contract still says max_world_size 1"
+   },
+   "70": {
+    "state": "OPEN",
+    "title": "Schema section 3 prices the ALPHABET element at 8-or-16 bits, so a BF16 table built per the table is refused by the normative 8"
+   },
+   "71": {
+    "state": "OPEN",
+    "title": "route_for_grid docstring still says the BF16 grid has no route, so readers mistrust the export gate it feeds"
+   },
+   "72": {
+    "state": "OPEN",
+    "title": "prepare_tessera_*_module hardcodes the grid/body/plane ROUTES publishes, so a new grid passes export and dies at load"
+   },
+   "73": {
+    "state": "OPEN",
+    "title": "get_quant_method sniffs MoE class names, so a renamed MoE layer falls through to a silent unquantized fallback"
+   },
+   "74": {
+    "state": "OPEN",
+    "title": "formats[].residency_modes is required but never checked against lane.MODES, so a wrong residency list validates"
    },
    "8": {
     "state": "CLOSED",

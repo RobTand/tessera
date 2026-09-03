@@ -295,12 +295,20 @@ depends on dict order.
    decoder at prefill has two decoders per family, so the census expectation
    becomes per-`(family, regime)`. Design it once for both issues, and land
    **#53** and **#61** with it: `decoder_for` is unguarded and would `KeyError`
-   mid-run, and the two sides do not agree on the regime's *name* -- the
+   mid-run, and the two sides did not agree on the regime's *name* -- the
    contract declares `["decode", "batch"]`
    (`runtime_contract.json:127-129`) while the census's phases are `prefill`
-   and `decode` (`tools/tessera_route_census.py:145,148`), with no mapping
-   anywhere, because nothing reads the regime axis yet. A per-`(family, regime)`
-   map is the first thing that does.
+   and `decode`, and nothing mapped between them, because nothing read the
+   regime axis. A per-`(family, regime)` map is the first thing that does.
+   **The naming half landed (#61):** `contract.CENSUS_PHASE_REGIMES` is the one
+   table both sides read -- the census resolves its phase names through it and
+   stamps the contract's regime into every `histogram` entry, and
+   `validate_serving_contract` refuses a contract whose declared regimes are
+   not exactly that table's values, so a rename or a third regime fails at
+   contract load rather than at the per-module `decoder_for` lookup on a loaded
+box. What is still open here
+   is the per-`(family, regime)` *expectation* itself (`decoder_for` is still
+   keyed by family alone) and **#53**'s sibling guard.
 5. **The A/B protocol.** Two arms, two KLs, two latencies -- never an identity
    check (§2). The matched pair is a hardlinked directory pair whose
    `config.json` differs only in the declared family, the

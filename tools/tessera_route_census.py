@@ -21,6 +21,17 @@ usage::
     tessera_route_census.py <checkpoint-dir> <out.json> \
         [--expect-modules N] [--prompt-tokens 64] [--gpu-memory-utilization 0.3]
 
+The two forwards it drives are the two regimes ``lane_eligibility`` declares.
+The census calls them by the shape it drove (``prefill``, ``decode``) because
+its receipt is keyed by those names and served receipts quote them; the
+contract calls them ``batch`` and ``decode``.  One table maps the pair --
+``tessera.serving.contract.CENSUS_PHASE_REGIMES`` -- the census resolves its
+phase names through it and stamps the contract's word into every histogram
+entry, and ``load_serving_contract`` refuses a contract whose declared regimes
+are not exactly that table's values.  So a per-(family, regime) expectation can
+join the two sides, and a rename or a third regime fails before the first model
+load rather than at a per-module ``KeyError`` after two.
+
 Run it inside the serving image with the plugin installed (the same container
 the KL dumps ran in); ``TESSERA_SERVE_MODE`` selects the residency exactly as
 it does for ``vllm serve``.
@@ -35,6 +46,14 @@ import platform
 import subprocess
 import sys
 import time
+
+
+#: The regimes this tool can actually drive, in the contract's vocabulary: one
+#: many-row forward and one one-row forward.  It is a statement about this
+#: tool's two ``llm.generate`` calls, not about the contract -- which is why a
+#: regime declared there and absent here is a refusal below rather than a
+#: silently unobserved cell.
+DRIVEN_REGIMES = ("batch", "decode")
 
 
 def census(model):
@@ -90,6 +109,7 @@ def main() -> int:
     import tessera
     import tessera.serving as serving
     from tessera.serving import bf16_route, fp8_route, nvfp4_route
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES, load_serving_contract
     from tessera.serving.lane import TESSERA_MODE_ENV
     from tessera.serving.scheme import (
         ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
@@ -120,6 +140,27 @@ def main() -> int:
             "the census does not know would be counted as a mismatch on every module. Add "
             "its contract and decoder above rather than widening the comparison.")
 
+    # ONE regime vocabulary (issue #61).  ``load_serving_contract`` refuses a
+    # contract whose ``lane_eligibility.regimes`` are not exactly this table's
+    # values, and the phase names below are resolved THROUGH the table rather
+    # than written a second time here.  Both checks run before the first model
+    # load (85-160 s each in tessera-bf16-route-served-2026-09-02.md), because
+    # the one outcome a receipt tool must not have is failing at a per-module
+    # lookup with two loaded models behind it.
+    load_serving_contract()
+    undrivable = sorted(set(CENSUS_PHASE_REGIMES.values()) - set(DRIVEN_REGIMES))
+    if undrivable:
+        raise SystemExit(
+            f"the contract declares the regime(s) {undrivable}, which this census does not "
+            f"drive (it drives {list(DRIVEN_REGIMES)}). A declared regime no forward exercises "
+            "is a cell nothing observes; add the forward here rather than widening the table.")
+    phase_of = {regime: phase for phase, regime in CENSUS_PHASE_REGIMES.items()}
+    if len(phase_of) != len(CENSUS_PHASE_REGIMES):
+        raise SystemExit(
+            f"CENSUS_PHASE_REGIMES maps two phases onto one regime ({dict(CENSUS_PHASE_REGIMES)}); "
+            "the join is then ambiguous in the direction this tool reads it.")
+    batch_phase, decode_phase = phase_of["batch"], phase_of["decode"]
+
     with open(os.path.join(args.model, "config.json")) as fh:
         cfg = json.load(fh)
     qc = cfg.get("quantization_config", {})
@@ -142,10 +183,10 @@ def main() -> int:
     phases = {}
     # One forward over M = len(ids) rows, sample one token, stop.
     outs = llm.generate([prompt], SamplingParams(max_tokens=1, temperature=0.0))
-    phases["prefill"] = llm.apply_model(census)[0]
+    phases[batch_phase] = llm.apply_model(census)[0]
     # Decode steps follow; the last forward is one row wide.
     outs = llm.generate([prompt], SamplingParams(max_tokens=8, temperature=0.0))
-    phases["decode"] = llm.apply_model(census)[0]
+    phases[decode_phase] = llm.apply_model(census)[0]
     generated = outs[0].outputs[0].text
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
@@ -160,6 +201,10 @@ def main() -> int:
             for r in tess.values())
         by_family = collections.Counter(str(r["policy"]).split(":")[0] for r in tess.values())
         histogram[phase] = {
+            # The contract's word for the shape this phase drove, so a
+            # per-(family, regime) expectation joins the receipt to a cell
+            # without either side guessing the other's vocabulary.
+            "regime": CENSUS_PHASE_REGIMES[phase],
             "tessera_modules": len(tess),
             "tessera_modules_by_family": dict(sorted(by_family.items())),
             "other_route_modules": len(other),
@@ -197,9 +242,9 @@ def main() -> int:
         if args.expect_modules is not None and len(tess) != args.expect_modules:
             problems.append(
                 f"{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
-    if phases["prefill"] and phases["decode"]:
-        shapes = [(phases["prefill"][n].get("shape", ""), phases["decode"][n].get("shape", ""))
-                  for n in phases["prefill"] if n in phases["decode"]]
+    if phases[batch_phase] and phases[decode_phase]:
+        shapes = [(phases[batch_phase][n].get("shape", ""), phases[decode_phase][n].get("shape", ""))
+                  for n in phases[batch_phase] if n in phases[decode_phase]]
         if args.compiled:
             # A compiled forward writes the record from the trace, where the
             # token dimension is symbolic: ``route_shape`` spells it ``M*`` and
@@ -211,7 +256,9 @@ def main() -> int:
             if bad:
                 problems.append(f"compiled records must be shape-polymorphic (M*); got {bad[:3]}")
         elif all(p == d for p, d in shapes):
-            problems.append("prefill and decode records carry the same shape; only one shape was exercised")
+            problems.append(
+                f"{batch_phase} and {decode_phase} records carry the same shape; only one "
+                "shape was exercised")
 
     receipt = {
         "schema": "tessera.serving.route_census/1",
