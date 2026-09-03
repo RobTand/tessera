@@ -180,7 +180,8 @@ def main() -> None:
                     refit_metric=H, refit_gauss_seidel=True)
             jac = f"LDLQ {a.sigma}/{a.block} + refit full-H"
             run(jac, "table", refit_metric=H)
-            run(f"{jac} | landing=none", "none", refit_metric=H)
+            for landing in ("grid", "none"):
+                run(f"{jac} | landing={landing}", landing, refit_metric=H)
             last = run(f"drift control LAST [{ctl}]", "table", dup_ok=True,
                        refit_metric=hmetric)
             first = res[f"drift control FIRST [{ctl}]"]

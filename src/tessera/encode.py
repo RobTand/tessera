@@ -1210,12 +1210,130 @@ def _nearest(targets: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     return (targets[:, None] - table[None, :]).abs().argmin(dim=1)
 
 
+def _fit_lut_exact(
+    targets: torch.Tensor,
+    weights: torch.Tensor,
+    global_scale: float,
+    entries: int = LUT_ENTRIES,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The same objective as ``_fit_lut``, solved exactly rather than greedily.
+
+    ``_fit_lut`` minimises ``sum_b w_b (s_b - nearest(table, s_b))^2`` over
+    sixteen E4M3 values by greedy backward elimination plus swap passes.  That
+    objective is a **one-dimensional weighted k-median with the medians drawn
+    from a sorted finite candidate set**, and that problem has an exact
+    O(entries * n_candidates^2) dynamic program -- so the greedy is a heuristic
+    where an explicit exists (AGENTS.md principle 2), and issue #50's question
+    "how much does the sixteen-entry landing give back" cannot be attributed
+    between *the solver* and *the sixteen-entry budget* until the solver is
+    exact.
+
+    **Why the decomposition is exact.**  Sort the targets.  For a chosen
+    ascending table ``v_{i1} < ... < v_{iE}`` every target lands on its nearest
+    entry, so the assignment is decided by the midpoints between *consecutive*
+    chosen entries and by nothing else.  The cost therefore splits into a left
+    tail (targets below ``v_{i1}``), one term per consecutive chosen pair, and
+    a right tail (targets at or above ``v_{iE}``) -- a shortest path through
+    the candidates, which is what the DP walks.  Each term is read off
+    prefix sums of ``w``, ``w s`` and ``w s^2`` in float64, so a segment's cost
+    is O(1) and the whole table costs O(E * n^2) with n <= 119.
+
+    The candidate bracket is ``_fit_lut``'s, and it is lossless rather than a
+    budget: it runs from the largest grid value below the smallest target to
+    the smallest grid value above the largest, and an entry outside that
+    interval is dominated by the bracket's own endpoint (every target is on one
+    side of it), so the DP's optimum over the bracket is the optimum over the
+    whole E4M3 grid.
+
+    Returns ``(bytes[entries] uint8 ascending, values[entries] float32)``,
+    ``_fit_lut``'s contract exactly.  The chosen indices come out of the DP
+    strictly ascending, so the bytes are strictly ascending and distinct with
+    no re-sort -- which is what the manifest requires of a LUT table.
+    """
+    device = targets.device
+    grid_values = e4m3_positive_values(device) * global_scale
+    live = weights > 0
+    if not bool(live.any()):
+        first_byte = E4M3_NORMAL_BYTES[0]
+        return (
+            torch.arange(first_byte, first_byte + entries, dtype=torch.uint8, device=device),
+            grid_values[:entries],
+        )
+    # float64 on the CPU: the DP's arithmetic is the one place the fit's
+    # answer is decided, the tensors are small, and a segment cost is a
+    # difference of prefix sums, which is where float32 would lose the
+    # sub-ulp residual the fit is choosing between.
+    s = targets[live].detach().double().cpu()
+    w = weights[live].detach().double().cpu()
+    order = torch.argsort(s)
+    s, w = s[order].contiguous(), w[order].contiguous()
+    n_t = int(s.numel())
+    lo, hi = float(s[0]), float(s[-1])
+    gv = grid_values.detach().double().cpu()
+    first = max(int((gv < lo).sum()) - 1, 0)
+    last = min(int((gv <= hi).sum()) + 1, gv.numel())
+    while last - first < entries:
+        if first > 0:
+            first -= 1
+        if last - first < entries and last < gv.numel():
+            last += 1
+    cand = gv[first:last].contiguous()
+    n = int(cand.numel())
+
+    zero = torch.zeros(1, dtype=torch.float64)
+    P0 = torch.cat([zero, torch.cumsum(w, 0)])
+    P1 = torch.cat([zero, torch.cumsum(w * s, 0)])
+    P2 = torch.cat([zero, torch.cumsum(w * s * s, 0)])
+
+    def seg(a: torch.Tensor, b: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        """``sum_{a <= k < b} w_k (s_k - v)^2`` from the prefix sums."""
+        return (P2[b] - P2[a]) - 2.0 * v * (P1[b] - P1[a]) + v * v * (P0[b] - P0[a])
+
+    # ``idx[k]`` = the first target at or above ``cand[k]``.
+    idx = torch.searchsorted(s, cand)
+    lo_i = torch.zeros(n, dtype=idx.dtype)
+    hi_i = torch.full((n,), n_t, dtype=idx.dtype)
+    left = seg(lo_i, idx, cand)            # [n] targets below cand[k] -> cand[k]
+    right = seg(idx, hi_i, cand)           # [n] targets at/above cand[k] -> cand[k]
+
+    # ``pair[i, j]`` (i < j) = the cost of the targets strictly between two
+    # consecutive chosen entries, each on the nearer of the two.
+    mid = (cand[:, None] + cand[None, :]) * 0.5
+    m = torch.searchsorted(s, mid.reshape(-1).contiguous()).reshape(n, n)
+    ai = idx[:, None].expand(n, n)
+    bj = idx[None, :].expand(n, n)
+    pair = seg(ai, m, cand[:, None]) + seg(m, bj, cand[None, :])
+    pair = torch.where(
+        torch.arange(n)[:, None] < torch.arange(n)[None, :],
+        pair, torch.full_like(pair, float("inf")),
+    )
+
+    best = left.clone()                                   # one entry chosen
+    back = torch.zeros(entries, n, dtype=torch.long)
+    for m_ in range(1, entries):
+        tot = best[:, None] + pair                        # [prev, next]
+        best, arg = tot.min(dim=0)
+        back[m_] = arg
+    j = int((best + right).argmin())
+    chosen = [j]
+    for m_ in range(entries - 1, 0, -1):
+        j = int(back[m_][j])
+        chosen.append(j)
+    chosen_t = torch.tensor(sorted(chosen), dtype=torch.long, device=device)
+    FIRST = E4M3_NORMAL_BYTES[0]
+    return (
+        (chosen_t + (first + FIRST)).to(torch.uint8),
+        grid_values[chosen_t + first],
+    )
+
+
 def _fit_lut(
     targets: torch.Tensor,
     weights: torch.Tensor,
     global_scale: float,
     entries: int = LUT_ENTRIES,
     swaps: int = 32,
+    exact: bool = False,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """Choose ``entries`` DISTINCT E4M3 scales minimising the weighted error.
 
@@ -1243,7 +1361,13 @@ def _fit_lut(
     "improvement" is rounding noise, not a descent step, so the threshold
     is ``torch.finfo(cost.dtype).eps`` scaled by the current cost, never a
     constant -- and every production caller takes this default.
+
+    ``exact=True`` (issue #50, opt-in and default off) hands the same objective
+    to :func:`_fit_lut_exact`, which solves it by dynamic program instead of
+    greedily.  Everything above stays the description of the default path.
     """
+    if exact:
+        return _fit_lut_exact(targets, weights, global_scale, entries)
     device = targets.device
     grid_values = e4m3_positive_values(device) * global_scale          # [119]
     live = weights > 0
@@ -1451,6 +1575,7 @@ def _refit_scales_lut_metric(
     global_scale: float,
     metric: torch.Tensor,
     gauss_seidel: bool = False,
+    exact_fit: bool = False,
 ):
     """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
 
@@ -1601,7 +1726,8 @@ def _refit_scales_lut_metric(
     won = "kept"
     if _LUT_LANDING == "table":
         old_table = _lut_values(table_bytes, global_scale)
-        new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel())
+        new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel(),
+                                        exact=exact_fit)
 
         # Three candidates, scored on the full quadratic: the plane the unit
         # already has, the same table re-assigned to the new targets, and the
@@ -1677,6 +1803,7 @@ def _refit_scales_lut(
     global_scale: float,
     metric: "torch.Tensor | None" = None,
     gauss_seidel: bool = False,
+    exact_fit: bool = False,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -1696,7 +1823,7 @@ def _refit_scales_lut(
     if metric is not None:
         return _refit_scales_lut_metric(
             work, units, half, table_bytes, index, effective, global_scale, metric,
-            gauss_seidel=gauss_seidel,
+            gauss_seidel=gauss_seidel, exact_fit=exact_fit,
         )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
@@ -1726,7 +1853,8 @@ def _refit_scales_lut(
         return index, float((A * c * c - 2.0 * B * c).sum())
 
     old_table = _lut_values(table_bytes, global_scale)
-    new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel())
+    new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel(),
+                                    exact=exact_fit)
     old_index, old_cost = exact_cost(old_table)
     new_index, new_cost = exact_cost(new_table)
     if new_cost < old_cost:
@@ -1765,6 +1893,7 @@ def encode_unit(
     refit_metric_trailing: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
 
@@ -2158,6 +2287,26 @@ def encode_unit(
                 "(CHANNEL's row scales are independent under H and its refit is "
                 "already the exact minimiser), so this would be silently ignored"
             )
+    if refit_lut_exact:
+        # The exact fit is a different SOLVER for one objective: the weighted
+        # k-median ``_fit_lut`` already states.  It changes what the refit's
+        # table is, so it needs a refit to run and a table for that refit to
+        # choose; off the LUT plane there is no table, and at ``scale_refit=0``
+        # the amax plane is written byte for byte and no fit is re-run.  Refuse
+        # each rather than accept a flag that names an arm that did nothing --
+        # exactly what ``refit_gauss_seidel`` refuses above, for the same reason.
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_lut_exact solves the LUT plane's sixteen-entry table fit "
+                f"exactly; the {scale_plane.name} plane has no such table, so this "
+                "would be silently ignored"
+            )
+        if scale_refit == 0:
+            raise GrammarError(
+                "refit_lut_exact chooses the table a scale REFIT fits, and "
+                "scale_refit=0 runs none: the amax plane is written byte for byte "
+                "and the argument would be silently ignored"
+            )
     if _LUT_LANDING != "table":
         # A ceiling read (``lut_landing``, issue #50) is only a ceiling on the
         # thing it removes.  Off the LUT plane there is no table to remove; with
@@ -2319,6 +2468,7 @@ def encode_unit(
             table_bytes, refine, effective = _refit_scales_lut(
                 work, units, half, table_bytes, refine, effective, global_scale,
                 metric=metric_now, gauss_seidel=refit_gauss_seidel,
+                exact_fit=refit_lut_exact,
             )
         else:
             base_byte, refine, effective = _refit_scales(
