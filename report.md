@@ -2,6 +2,20 @@
 
 Status: **in progress.** This file is written as the run goes, not at the end.
 
+## What this run settles, and what it no longer settles
+
+It was funded to decide whether `DEFAULT_LDLQ_BLOCK` flips 32 -> 4. **The
+encode cost below takes that question off the table before the KL arrives:** if
+block 4 is ~8x the encode model-wide, a *global* default of 4 charges GLM's
+experts 8x for an axis that is flat there (0.4% across 16->256), and a flip to
+another round number is the wrong shape of fix whatever the KL says.
+
+What is left is the question behind it, and it is the one worth the wall
+clock: **does the weight-space win carry to served KL at all?** If it does not,
+then the derived-block work -- #95, and a `choose_ldl_block` in the export path
+after it -- is not worth building either, and #12's dense-4 story goes back to
+the drawing board.
+
 ## The question
 
 Does `ldlq_block=4` beat the `DEFAULT_LDLQ_BLOCK = 32` on **served** KL for
@@ -11,6 +25,16 @@ below it (1.0421 -> 0.9629 against NVFP4 GPTQ+JSO at 4.5 bpp). That is a
 screen, and this repo does not promote on screens.
 
 ## The arms
+
+Three are being encoded, not two, and the reason is the encode cost rather
+than curiosity. `b4` is the arm the issue's recommendation names and the arm
+whose per-unit ratios the gate already has; `b8` crosses parity in weight space
+on the same six units (6 of 6 wins, geomean 0.937x against b32) at half the
+encode, so it answers "does it carry" for half the wall clock. Both were
+launched because the box went from load 3 to load 89 within half an hour of the
+first launch and a 20-hour dead end is not a risk worth carrying for a third
+core. **Whichever is served is named explicitly wherever a number is quoted.**
+
 
 Both exports come out of **one checkout at one commit**,
 `82cdf513aff3d013e05a804d3e0085422445c704`, through one script
@@ -43,7 +67,8 @@ candidate between them, on one box, one image, one corpus, one teacher, eager
 inductor build nondeterminism in the compiled forward, and an eager serve has
 none). If the two default dumps agree, nothing between them drifted. If they
 disagree, that disagreement is the error bar on the delta and is reported as
-one. `experiments/ldlq_block_serve_ab.sh` is that chain.
+one. `experiments/ldlq_block_serve_ab.sh` is that chain. The two default
+readings are reported separately and never averaged.
 
 ## Box and lock decisions, stated rather than assumed
 
