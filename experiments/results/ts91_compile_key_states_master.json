@@ -1,0 +1,31 @@
+{
+ "distinct_keys": 1,
+ "keys": {
+  "every module on the torch-window fallback": "3c4a1a5af0407a9f5c4eec6fc8c2b1932d1507144832b8e51670d4cd7cf25a1c",
+  "every module on the window-GEMV lane": "3c4a1a5af0407a9f5c4eec6fc8c2b1932d1507144832b8e51670d4cd7cf25a1c",
+  "mixed: the even layers refused": "3c4a1a5af0407a9f5c4eec6fc8c2b1932d1507144832b8e51670d4cd7cf25a1c",
+  "mixed: the odd layers refused": "3c4a1a5af0407a9f5c4eec6fc8c2b1932d1507144832b8e51670d4cd7cf25a1c"
+ },
+ "one_state_twice_is_one_key": true,
+ "records": {
+  "every module on the torch-window fallback": {
+   "serve_mode": "streamed",
+   "version": "0.1.0"
+  },
+  "every module on the window-GEMV lane": {
+   "serve_mode": "streamed",
+   "version": "0.1.0"
+  },
+  "mixed: the even layers refused": {
+   "serve_mode": "streamed",
+   "version": "0.1.0"
+  },
+  "mixed: the odd layers refused": {
+   "serve_mode": "streamed",
+   "version": "0.1.0"
+  }
+ },
+ "schema": "tessera.serving.compile_key_states/1",
+ "states": 4,
+ "vllm": "0.28.0"
+}
