@@ -121,9 +121,14 @@ The step is a *coordinate* optimum, so honesty about what is not exact:
 
 The accept test is where the cross terms come back: the candidate planes are
 scored on the **full quadratic**, and the plane the unit already has is one of
-the candidates, so the step is monotone in the metric's own error and the
-alternation with the trellis stays monotone
-(`test_the_metric_refit_is_monotone_under_its_own_metric`).
+the candidates, so the **step** is monotone in the metric's own error
+(`test_the_metric_refit_is_monotone_under_its_own_metric`, which asserts the
+step and only the step). The *alternation* with the trellis is not monotone
+here and this doc originally said it was: the Viterbi's branch metric never
+sees `metric`, so an H-weighted refit and the trellis pass after it descend
+different errors by construction. Corrected 2026-09-02 with the math audit's
+§5; no number in this doc moves, because none of them was read off that
+claim.
 
 **The failure this design had to avoid, and the test that would catch it.** A
 Jacobi step that the guard rejects on every pass would leave the "+ refit" arm

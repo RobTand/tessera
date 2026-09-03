@@ -648,7 +648,18 @@ def _manifest_granularity(manifest):
 
 
 def _steps_of(manifest) -> int:
-    """Trellis steps per column, from the BODY plane's declared element count."""
+    """Trellis steps per column, from the BODY plane's declared element count.
+
+    The arity is not on the wire, so it is recovered by trying the ones a
+    readable artifact can carry: ``SERIALISABLE_GRIDS`` holds arity 1 and
+    arity 2 today, and 4 and 8 are pre-provisioned here so a wider tuple grid
+    needs no change on this line.  A non-power-of-two tuple -- ``k = 3`` over
+    E2M1 is legal to *build* (``alphabet.tuple_grid``) -- would not be found,
+    and cannot arrive either: a grid outside ``SERIALISABLE_GRIDS`` is refused
+    at ``build_unit_artifact`` and no reader can resolve its digest, so no
+    manifest reaches here holding one.  The refusal below says which set it
+    searched rather than claiming no arity works.
+    """
     from .trellis import body_bits as _bits
 
     wire = plane_order(manifest.shard is not None and manifest.shard.has_initial_state)
@@ -665,8 +676,8 @@ def _steps_of(manifest) -> int:
         if sum(_bits(rate, steps, manifest.span) for rate in manifest.rates) == elements:
             return steps
     raise GrammarError(
-        f"the BODY plane declares {elements} bits, which no arity over this "
-        "rate schedule produces"
+        f"the BODY plane declares {elements} bits, which no arity in "
+        f"(1, 2, 4, 8) over this rate schedule produces"
     )
 
 

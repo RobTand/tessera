@@ -285,6 +285,14 @@ def superblock_quota_ok(
 
     A trailing partial superblock is not required to keep it; only complete
     superblocks are constrained, which is what makes importance placement legal.
+
+    Read the boundary case literally: a unit narrower than one superblock has
+    no complete superblock, so this returns True for **any** schedule over it.
+    That is the semantic, not a hole, and neither caller is left unguarded by
+    it.  ``Manifest.__post_init__`` runs ``validate_rate_schedule`` -- the
+    whole-unit quota, which is exact at every width -- on the line before this
+    one; ``artifact.build_artifact`` refuses a column count that is not a
+    whole number of superblocks before it asks.
     """
     if superblock_columns <= 0:
         raise GrammarError(f"superblock_columns must be positive: {superblock_columns}")

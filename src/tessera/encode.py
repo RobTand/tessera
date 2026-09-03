@@ -115,6 +115,31 @@ class EncodedUnit:
     scale_refine: torch.Tensor   # [halves] uint8, 4-bit refinement word
     release_index: torch.Tensor  # [n_released] int64, flat position indices
     release_code: torch.Tensor   # [n_released] int64, the override nibble
+    # The encoder's own error figure, always in TARGET units (``work / scale``,
+    # never weight units) -- and three different quantities depending on how
+    # the unit was encoded, which is why nothing ranks arms by it:
+    #
+    #  * ``scale_refit >= 1`` or ``ldl`` (every shipping setting, since
+    #    ``export.DEFAULT_SCALE_REFIT`` is 4): the plain
+    #    ``sum((work / scale - units)^2)``, recomputed after the last refit and
+    #    measured against the WEIGHT -- not against an LDLQ-compensated target,
+    #    which would flatter every compensated arm.
+    #  * ``scale_refit == 0`` with ``trellis_weighting="none"``: the same
+    #    quantity, as the Viterbi accumulated it rather than recomputed.
+    #  * ``scale_refit == 0`` with ``trellis_weighting="scale"``: the Viterbi's
+    #    WEIGHTED total, ``sum((scale / column-max scale)^2 * (work / scale -
+    #    units)^2)``.  Smaller than the other two by construction and not
+    #    comparable with them.
+    #
+    # And it is PRE-RELEASE at every setting: ``released_positions`` overrides
+    # codes after this is computed and nothing recomputes it, so a released
+    # unit's ``sse`` describes the encode before its own last stage.
+    #
+    # Nothing in ``src/`` reads it.  ``tests/test_ldlq_*`` compare it between
+    # two runs at one setting; ``experiments/tessera_wire_default_check.py``
+    # and ``tessera_conv_code_check.py`` record it into their JSON, and every
+    # arm of both lands in the first case (each varies the weighting only at
+    # ``scale_refit=4``).  No published figure is read off it.
     sse: float
     rotation: RotationState = RotationState.NONE
     rotation_block: int = 1
@@ -541,6 +566,17 @@ def viterbi_window(
     cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
     bytes per position per column.
 
+    ``chunk`` is exact in the states and approximate in the float.  Columns
+    are independent, so the returned states are bit-identical at every chunk
+    size; ``sse``, however, is accumulated one chunk at a time in fp32 and so
+    depends on how the columns were partitioned.  Measured on 32x96 CPU
+    targets at L=8, R=2: identical states at chunk 7/16/32/96/512, and
+    ``sse`` spread over 3.05e-05 on a total of 910.09 -- about one ulp per
+    partial sum.  A figure anyone quotes is recomputed from the codes, not
+    read off this return; the equality tests that do read it hold ``chunk``
+    fixed, which is also the sense in which the fused path below returns "the
+    identical sse float".
+
     ``impl`` picks the machine, never the answer.  ``"reference"`` is the
     torch chain below -- the definition, and the only path on CPU;
     ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
@@ -690,8 +726,19 @@ def _refit_scales(
     on ``A`` and ``B``: three base candidates are tried, each half rounds to its
     nearest ``(d, m)`` under that base, and a group keeps the word it had
     wherever no candidate lowers its error.  No group ends worse than it began,
-    and the trellis pass that follows is optimal for the new plane, so the
-    alternation in ``encode_unit`` is monotone in weight-space squared error.
+    so the *step* is monotone in weight-space squared error.
+
+    The *alternation* in ``encode_unit`` is monotone only where the trellis
+    pass that follows descends that same error, and two settings stop it from
+    doing so.  ``trellis_weighting="none"`` -- ``encode_unit``'s signature
+    default -- minimises the per-half normalised error instead; only
+    ``"scale"`` weights each position by its scale squared, which per column
+    is the same argmin as the true squared error, and that is what the
+    exporter ships (``export.DEFAULT_TRELLIS_WEIGHTING``).  And under ``ldl``
+    the trellis minimises the error against the LDLQ-compensated target while
+    this step refits against ``work``, whatever the weighting.  Outside those
+    two cases each half can undo the other's gain, and only the trailing refit
+    is guaranteed.
 
     Words are emitted canonical: a group whose halves both carry ``d = 1`` is
     written one base higher with ``d = 0``, the form ``scale_codec`` names.
@@ -968,8 +1015,12 @@ def _refit_scales_lut_metric(
     (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
     given the others.  The accept test is where the cross terms come back: the
     candidate planes are scored on the **full quadratic**, and the plane the
-    unit already has is one of the candidates, so the step is monotone in the
-    metric's own error and the alternation with the trellis stays monotone.
+    unit already has is one of the candidates, so the *step* is monotone in
+    the metric's own error.  The *alternation* with the trellis is not: the
+    Viterbi's branch metric never sees ``metric``, so under an H-weighted
+    refit the two halves descend different errors by construction.  ``ldl``
+    and ``trellis_weighting="none"`` separate them further, exactly as in
+    ``_refit_scales``.
 
     Landing is unchanged and needs no rounding rule of its own: the table holds
     exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
@@ -1503,7 +1554,9 @@ def encode_unit(
         # plane never interleave, and the identity-factor tests pin that on the
         # LUT plane's two bodies as they already did on CHANNEL.
         ldl_factor = ldl.to(device=device, dtype=torch.float32)
-        # Descending block starts; only the lowest-index block may be short.
+        # Descending block starts.  No block is ever short: ``cols %
+        # ldl_block`` is refused above, so ``max(..., 0)`` is the floor on a
+        # case this function cannot reach, not a short trailing block.
         block_spans = [
             (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
         ]
@@ -1573,11 +1626,14 @@ def encode_unit(
             )
     if scale_refit or ldl is not None:
         # The plane moved after the last pass; the codes are unchanged and
-        # decode against the new plane.  Report the error in ITS target units
-        # so ``sse`` means one thing at every setting -- and under LDLQ that
-        # must be the error against the WEIGHT, not against the compensated
-        # target the last block was measured on, or the number would flatter
-        # every compensated arm by construction.
+        # decode against the new plane.  Report the error in ITS target units,
+        # unweighted -- and under LDLQ that must be the error against the
+        # WEIGHT, not against the compensated target the last block was
+        # measured on, or the number would flatter every compensated arm by
+        # construction.  This is one of ``EncodedUnit.sse``'s three meanings,
+        # not a normalisation of all of them: a ``scale_refit=0`` unit never
+        # reaches this line and keeps whatever the Viterbi accumulated, which
+        # ``trellis_weighting`` decides.
         scale = current_scale()
         units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
         sse = float(((work / scale - units) ** 2).sum())
