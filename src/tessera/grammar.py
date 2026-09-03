@@ -172,20 +172,34 @@ def root_from_q256(q256: int) -> Fraction:
 
 
 def q256_from_root(root: Fraction) -> int:
-    """Inverse of :func:`root_from_q256`; raises if not an integral q256."""
+    """Inverse of :func:`root_from_q256`; raises if not an integral q256.
+
+    The domain is the same one ``root_from_q256`` accepts.  It was not: this
+    direction mapped a zero root to ``0``, which the other direction rejects,
+    so the round trip broke at exactly the value a mis-derived root lands on.
+    """
     scaled = root * Q256_UNIT
     if scaled.denominator != 1:
         raise GrammarError(f"root {root} does not land on an integral q256")
+    if scaled <= 0:
+        raise GrammarError(f"root {root} is not positive: q256 must be positive")
     return int(scaled)
 
 
 @dataclass(frozen=True)
 class RateSchedule:
-    """A per-column rate assignment realising a root exactly."""
+    """A per-column rate assignment realising a root exactly.
+
+    ``cap=None`` defers the upper bound to whoever resolves the payload grid,
+    the same deferral ``_check_rate`` documents.  A manifest holds a schedule
+    it cannot yet bound -- its grid is committed in ``encoder_profile_id`` and
+    resolved after validation -- so a schedule built at the E2M1 cap could not
+    describe a real E4M3 unit at all.
+    """
 
     rates: tuple[int, ...]
     root: Fraction
-    cap: int = C_FULL_BITS
+    cap: "int | None" = C_FULL_BITS
 
     @property
     def total_body_bits_per_row(self) -> int:
@@ -325,26 +339,37 @@ def prefix_cardinality(
 
 
 def validate_descendant_map(
-    rate: int, completion: int, descendant_map: dict[int, tuple[int, ...]]
+    rate: int,
+    completion: int,
+    descendant_map: dict[int, tuple[int, ...]],
+    cap: int = C_FULL_BITS,
 ) -> None:
     """Validate a stored descendant map structurally (doc S6).
 
     Checks, in order: the map is keyed by exactly the alphabet's anchors; every
-    descendant set has size ``2**c``; every descendant is a legal 16-grid code;
-    and, at ``c = 3 - R`` only, the descendant sets **partition** the grid --
+    descendant set has size ``2**c``; every descendant is a legal grid code;
+    and, at ``c = cap - R`` only, the descendant sets **partition** the grid --
     every code is a descendant of exactly one anchor.
+
+    ``cap`` is the payload grid's width minus one, the same parameter
+    ``completion_capacity`` takes: 3 over E2M1's 16 codes, 7 over E4M3's 256.
+    The grid's size is **derived** from it rather than passed alongside it --
+    ``2^(R+1) * 2^(cap-R) == 2^(cap+1)`` is the cardinality identity this
+    module proves, so a second parameter could only disagree with the first.
+    Hardcoding cap 3 and 16 codes here refused every legal rate of TESSERA-8.
 
     The alphabet's *content* is not validated: the rate-1/rate-2
     set-partitioning convention is build item 2 and is not defined here.
     """
-    _check_rate(rate)
-    capacity = completion_capacity(rate)
+    _check_rate(rate, cap)
+    capacity = completion_capacity(rate, cap)
+    grid_codes = 1 << (cap + 1)
     if not 0 <= completion <= capacity:
         raise GrammarError(
             f"completion {completion} exceeds capacity {capacity} at rate {rate}"
         )
 
-    expected_anchors = alphabet_size(rate)
+    expected_anchors = alphabet_size(rate, cap)
     if len(descendant_map) != expected_anchors:
         raise GrammarError(
             f"descendant map has {len(descendant_map)} anchors, "
@@ -364,8 +389,11 @@ def validate_descendant_map(
         if len(set(descendants)) != len(descendants):
             raise GrammarError(f"anchor {anchor}: duplicate descendants")
         for code in descendants:
-            if not 0 <= code < GRID_CODES:
-                raise GrammarError(f"anchor {anchor}: code {code} off the 16-grid")
+            if not 0 <= code < grid_codes:
+                raise GrammarError(
+                    f"anchor {anchor}: code {code} off the "
+                    f"{grid_codes}-code grid"
+                )
             if code in seen:
                 raise GrammarError(
                     f"code {code} is a descendant of both anchor {seen[code]} "
@@ -373,8 +401,8 @@ def validate_descendant_map(
                 )
             seen[code] = anchor
 
-    if completion == capacity and len(seen) != GRID_CODES:
+    if completion == capacity and len(seen) != grid_codes:
         raise GrammarError(
-            f"at c = 3 - R = {capacity} the descendant sets must partition the "
-            f"{GRID_CODES}-code grid; they cover {len(seen)}"
+            f"at c = cap - R = {capacity} the descendant sets must partition "
+            f"the {grid_codes}-code grid; they cover {len(seen)}"
         )

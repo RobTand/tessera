@@ -421,6 +421,18 @@ read different bytes:
   (finding F5).
 - `counts` arity follows `count_granularity`: `WHOLE_PLANE` carries exactly one
   count (finding F6).
+- A `PER_SUPERBLOCK` plane carries one granule per superblock the unit spans,
+  **including a trailing partial one**, and each count is the sum over that
+  granule's own columns — not the plane total spread evenly across the
+  granules. The two agree for complete superblocks, because the rate quota
+  makes every complete superblock carry the same bits; they disagree for a
+  partial one, and it is the partial one a seeking consumer lands wrong on.
+  `ceil(columns / superblock_columns)` granules, and the count is a sum
+  (2026-09-02 audit §2 P0-4/P0-5).
+- `geometry.quantizable_params` is at most `rows × columns`. It is the
+  denominator of every bpp figure the artifact quotes, so an unbounded value
+  understates the rate by however much it likes. Below the position count is
+  legitimate — that is what the exclusion convention is for.
 
 ## 3c. Truncation, integrity, and canonical bytes
 
@@ -434,7 +446,11 @@ must not be the unverified one.
    match a real truncation length, but the bytes at that length are not the
    bytes it describes. The shape is validated in `Manifest.__post_init__`
    (finding F8), alongside the bound that no terminal may claim more elements
-   than its plane declares (finding F2).
+   than its plane declares (finding F2). On a plane with granule structure
+   (`PER_SUPERBLOCK`, `PER_BLOCK`) the cut must also land on a **quota
+   boundary** — a running prefix sum of that plane's `counts`, `0` and the full
+   extent included. A count in the middle of a granule prices exactly and
+   describes a stream no granule boundary matches (2026-09-02 audit §2 P0-3).
 2. **Every terminal carries `payload_digest`** over its own byte prefix — 32
    bytes per terminal. The whole-artifact digest covers only the untruncated
    bytes, so without this a truncation carries no integrity check at all

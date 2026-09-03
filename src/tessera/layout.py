@@ -163,6 +163,12 @@ def _counts_for(
     if kind is PlaneKind.SCALE_BASE:
         if spec is not None and not spec.with_scale_base:
             return 0
+        if positions % geometry.group_weights:
+            raise GrammarError(
+                f"{positions} weight positions is not a whole number of "
+                f"{geometry.group_weights}-weight groups; a floored count "
+                "would silently leave the trailing weights scaleless"
+            )
         return positions // geometry.group_weights
     if kind is PlaneKind.COMPLETION:
         if spec is None:
@@ -179,6 +185,12 @@ def _counts_for(
     if kind is PlaneKind.SCALE_REFINE:
         if spec is not None and not spec.with_scale_refine:
             return 0
+        if positions % geometry.half_weights:
+            raise GrammarError(
+                f"{positions} weight positions is not a whole number of "
+                f"{geometry.half_weights}-weight halves; a floored count "
+                "would silently leave the trailing weights scaleless"
+            )
         return positions // geometry.half_weights
     if kind is PlaneKind.RELEASE:
         return max_released if spec is None else spec.released_positions
@@ -190,6 +202,43 @@ def _counts_for(
             return 0
         return geometry.columns
     raise GrammarError(f"unhandled plane kind {kind}")
+
+
+def _superblock_counts(
+    kind: PlaneKind,
+    geometry: Geometry,
+    rates: tuple[int, ...],
+    spec: "TerminalSpec | None",
+    superblocks: int,
+    cap: int,
+    arity: int,
+    span: int,
+) -> "tuple[int, ...]":
+    """Per-superblock element counts, summed over each superblock's own columns.
+
+    The restart table is the segment-local seek contract -- the offsets a GPU
+    consumer enters the stream at without a host parse -- so a granule's count
+    has to be the bits that granule's columns actually carry.  Spreading the
+    plane total evenly across the granules instead (``divmod``) coincides with
+    that only when every superblock carries the same bits, which is true for a
+    complete superblock under the rate quota and false for a trailing partial
+    one.  A ``sum`` check at the call site binds the two together, so the
+    granules can never describe a different plane from the one that was built.
+    """
+    steps = geometry.rows // arity
+    superblock = geometry.superblock_columns
+    counts = []
+    for index in range(superblocks):
+        window = slice(index * superblock, (index + 1) * superblock)
+        if kind is PlaneKind.BODY:
+            counts.append(sum(_body_bits(rate, steps, span) for rate in rates[window]))
+        elif spec is None:
+            counts.append(
+                sum(completion_capacity(rate, cap) for rate in rates[window]) * steps
+            )
+        else:
+            counts.append(sum(spec.completion_bits[window]) * steps)
+    return tuple(counts)
 
 
 def content_byte_length(descriptor: PlaneDescriptor) -> int:
@@ -259,10 +308,13 @@ def build_planes(
     DIAG_SV plane is present at ``rows`` fp16 words with DIAG_SU absent.
 
     Counts are per-superblock granules for position-domain planes, which is the
-    granularity a legal truncation respects.  ``max_released`` declares the
-    RELEASE plane's full extent: every terminal is a prefix of the declared
-    extent, so a terminal may never claim more released positions than the
-    plane declares.
+    granularity a legal truncation respects, and a trailing partial superblock
+    is a granule of its own.  ``max_released`` declares the RELEASE plane's full
+    extent: every terminal is a prefix of the declared extent, so a terminal may
+    never claim more released positions than the plane declares.  Passing both
+    ``max_released`` and a ``spec`` that names a different count is refused --
+    the extent and the terminal's slice of it are one decision, and one
+    parameter silently winning over the other hid the disagreement.
 
     ``spec`` declares the terminal this unit is built for, and it is what makes
     the COMPLETION plane's extent follow the depth the encoder actually used
@@ -279,7 +331,22 @@ def build_planes(
     otherwise the region written and the ranges a terminal computes disagree by
     ``16 * (rows + columns)`` bits and every offset after DIAG_SU is wrong.
     """
-    superblocks = max(1, len(rates) // geometry.superblock_columns)
+    # Ceiling, not floor: a trailing partial superblock is a granule of its own.
+    # ``superblock_quota_ok`` already declares such a superblock legal (it
+    # constrains only *complete* ones), so flooring it away was the layout
+    # refusing to describe a shape the grammar admits -- and the restart table
+    # it wrote then had one entry fewer than the stream had segments.
+    superblocks = max(1, -(-len(rates) // geometry.superblock_columns))
+    if spec is not None and max_released and max_released != spec.released_positions:
+        # One parameter cannot mean both the plane's full extent and the
+        # terminal's slice of it.  When a caller declares both, they are the
+        # same decision and must agree; silently preferring one hid the other.
+        raise PlaneLayoutError(
+            f"the RELEASE plane is declared at {max_released} released "
+            f"positions and the terminal spec claims "
+            f"{spec.released_positions}: the extent and the terminal's slice "
+            "of it are one decision"
+        )
     if release_counts is not None and len(release_counts) != superblocks:
         raise PlaneLayoutError(
             f"RELEASE declares {len(release_counts)} superblock counts, the "
@@ -313,10 +380,14 @@ def build_planes(
             counts = tuple(release_counts)
         elif kind in (PlaneKind.BODY, PlaneKind.COMPLETION):
             granularity = CountGranularity.PER_SUPERBLOCK
-            per, remainder = divmod(total, superblocks)
-            counts = tuple(
-                per + (1 if index < remainder else 0) for index in range(superblocks)
+            counts = _superblock_counts(
+                kind, geometry, rates, spec, superblocks, cap, arity, span
             )
+            if sum(counts) != total:
+                raise PlaneLayoutError(
+                    f"{kind.name}: the per-superblock counts sum to "
+                    f"{sum(counts)}, the plane holds {total}"
+                )
         else:
             granularity = CountGranularity.WHOLE_PLANE
             counts = (total,)
@@ -413,7 +484,13 @@ def build_terminal(
         total_bytes += by_kind[kind].byte_length(count)
 
     if plane_region is None:
-        payload_digest = hashlib.sha256(bytes(total_bytes)).digest()
+        # No bytes were supplied, so no bytes were hashed.  ``sha256(zeros)``
+        # is a well-formed 32-byte digest that verifies against a zero region,
+        # which is a plausible-looking lie about data nobody hashed; the
+        # all-zero sentinel is not a digest of anything and cannot be mistaken
+        # for one.  Callers that only price a terminal (``calculator``) read
+        # ``exact_bpp`` and never this field.
+        payload_digest = ZERO_DIGEST
     else:
         if len(plane_region) < total_bytes:
             raise PlaneLayoutError(
