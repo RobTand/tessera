@@ -1,0 +1,167 @@
+#!/usr/bin/env python3
+"""Drive a served Tessera arm and read the latency the ENGINE measured.
+
+Two loads, because the window GEMV serves one of the two regimes and the
+materialised path serves the other:
+
+* **decode**: a short prompt and many output tokens at concurrency 1, so
+  almost every forward is ``M = 1`` -- the shape ``fp8_gemv.streamed_apply``
+  routes to the kernel.
+* **prefill**: a long prompt and one output token, so the cost is the
+  many-row forward the GEMV refuses by name and the materialised path serves.
+
+The numbers reported are ``vllm:time_to_first_token_seconds`` and
+``vllm:time_per_output_token_seconds`` -- vLLM's own histograms, differenced
+across each load, so they describe the requests this script drove and nothing
+else.  Client-side wall clock is recorded beside them as a cross-check, never
+as the headline: a client number folds in HTTP and this box's scheduler.
+
+The torch profile is taken over a SECOND, shorter decode load, because a
+profiled forward is not a timed forward -- profiling a run and quoting its
+latency would be quoting the profiler.  The trace answers a different
+question: which kernels launched.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import time
+import urllib.request
+
+_HIST = re.compile(r'^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?P<labels>\{[^}]*\})? (?P<value>\S+)$')
+
+
+def _get(url: str, timeout: float = 600.0) -> str:
+    with urllib.request.urlopen(url, timeout=timeout) as fh:
+        return fh.read().decode()
+
+
+def _post(url: str, payload: dict | None, timeout: float = 600.0) -> dict | None:
+    data = b"" if payload is None else json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data,
+                                 headers={"content-type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as fh:
+        body = fh.read().decode()
+    return json.loads(body) if body.strip() else None
+
+
+def scrape(url: str) -> dict:
+    """``metric name -> value`` for the ``_sum``/``_count`` series we read."""
+    out: dict[str, float] = {}
+    for line in _get(url + "/metrics").splitlines():
+        if line.startswith("#"):
+            continue
+        m = _HIST.match(line.strip())
+        if not m:
+            continue
+        name = m.group("name")
+        if name.endswith("_sum") or name.endswith("_count"):
+            try:
+                out[name] = out.get(name, 0.0) + float(m.group("value"))
+            except ValueError:
+                pass
+    return out
+
+
+def delta(before: dict, after: dict, stem: str):
+    """Mean of one histogram over the window, or None when it did not move."""
+    s = after.get(stem + "_sum", 0.0) - before.get(stem + "_sum", 0.0)
+    n = after.get(stem + "_count", 0.0) - before.get(stem + "_count", 0.0)
+    if n <= 0:
+        return None
+    return {"mean_s": s / n, "sum_s": s, "count": n}
+
+
+def completion(prompt_tokens: int, max_tokens: int) -> dict:
+    # A token-id prompt, so "512 tokens" is 512 tokens and not a tokenizer's
+    # opinion of a string.
+    ids = [(i * 7919) % 100000 + 1000 for i in range(prompt_tokens)]
+    return {"model": "kl-target", "prompt": ids, "max_tokens": max_tokens,
+            "temperature": 0.0, "stream": False}
+
+
+def drive(url: str, n: int, prompt_tokens: int, max_tokens: int) -> dict:
+    t0 = time.time()
+    for _ in range(n):
+        _post(url + "/v1/completions", completion(prompt_tokens, max_tokens))
+    wall = time.time() - t0
+    return {"requests": n, "prompt_tokens": prompt_tokens, "max_tokens": max_tokens,
+            "wall_s": wall, "wall_s_per_request": wall / n}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--arm", required=True)
+    ap.add_argument("--mode", required=True)
+    ap.add_argument("--regime", required=True)
+    ap.add_argument("--decode-requests", type=int, default=12)
+    ap.add_argument("--decode-out-tokens", type=int, default=128)
+    ap.add_argument("--prefill-requests", type=int, default=12)
+    ap.add_argument("--prefill-prompt-tokens", type=int, default=512)
+    ap.add_argument("--warmup-requests", type=int, default=4)
+    args = ap.parse_args()
+
+    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # Warm up: the first forwards of a compiled serve pay capture, and the
+    # first of any serve pays allocator growth.  Neither belongs in the number.
+    drive(args.url, args.warmup_requests, 32, 32)
+    drive(args.url, 2, args.prefill_prompt_tokens, 1)
+
+    windows = {}
+    marks = {"decode_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    b = scrape(args.url)
+    windows["decode"] = drive(args.url, args.decode_requests, 32, args.decode_out_tokens)
+    a = scrape(args.url)
+    windows["decode"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
+    windows["decode"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    marks["decode_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    marks["prefill_start"] = marks["decode_end"]
+    b = scrape(args.url)
+    windows["prefill"] = drive(args.url, args.prefill_requests,
+                               args.prefill_prompt_tokens, 1)
+    a = scrape(args.url)
+    windows["prefill"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
+    windows["prefill"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    marks["prefill_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    # The profile, over its own short load.  A profiled forward is not a timed
+    # forward, so nothing above is taken from this window.
+    profiled = None
+    try:
+        _post(args.url + "/start_profile", None)
+        profiled = {"decode": drive(args.url, 2, 32, 24),
+                    "prefill": drive(args.url, 2, args.prefill_prompt_tokens, 1)}
+        _post(args.url + "/stop_profile", None, timeout=900.0)
+        # The trace is flushed asynchronously; give the writer a moment.
+        time.sleep(20)
+    except Exception as exc:  # noqa: BLE001 -- a missing profile is reported, not fatal
+        profiled = {"error": f"{type(exc).__name__}: {exc}"}
+
+    receipt = {
+        "schema": "tessera.window_gemv.served_latency/1",
+        "arm": args.arm, "serve_mode": args.mode, "forward": args.regime,
+        "started_utc": started,
+        "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "marks_utc": marks,
+        "windows": windows,
+        "profiled_load": profiled,
+    }
+    with open(args.out, "w") as fh:
+        json.dump(receipt, fh, indent=1, sort_keys=True)
+    for name, w in windows.items():
+        ttft = w.get("ttft") or {}
+        tpot = w.get("tpot") or {}
+        print(f"{name}: wall {w['wall_s_per_request']*1000:.2f} ms/req  "
+              f"TTFT {1000*ttft.get('mean_s', float('nan')):.2f} ms  "
+              f"TPOT {1000*tpot.get('mean_s', float('nan')):.3f} ms "
+              f"(n={tpot.get('count')})")
+    print("->", args.out)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
