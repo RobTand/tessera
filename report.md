@@ -5,7 +5,13 @@
 Two ways, both inside the pinned image `prismaquant/glm53-mia-sm121:487ecf187`:
 file reads, and a **real construction** of the GLM vision tower on meta device
 with a *recording* quant config (run on sparklina, CPU only, no GPU and no
-serve — the tower is 99 Linears and needs no weights to answer this):
+serve — the tower is 99 Linears and needs no weights to answer this). The run
+is durable, not just recounted here: script, `docker run` line and verbatim
+output are committed at
+`docs/measurements/glm53-vision-tower-prefixes-2026-09-03.md`. It is a module
+construction rather than a checkpoint load, which answers the question asked
+because both the prefix string and the `quant_method` are fixed in `__init__`
+and no weight file can change either.
 
 * **The vision tower is built as `LinearBase` — 99 of them — and the plugin is
   never asked about it.** Constructed with a recording config, all 99 offers
@@ -32,6 +38,14 @@ serve — the tower is 99 Linears and needs no weights to answer this):
   the image builds the MTP `fc` **with** the real quant config
   (`models/qwen3_next_mtp.py:75-82`), which is the shape that would reach the
   refusal.
+
+* **The names also survive the mapper.** `ignore` entries are prefix-mapped,
+  not only looked up: vLLM passes `hf_to_vllm_mapper.get_unstacked_mapper()`,
+  and `WeightsMapper._map_name` returns `None` only for a rule whose value is
+  `None`. Neither GLM mapper has one (three prefix rules on the model class;
+  `orig_to_new_stacked` only on the tower) — read in the image. And a name the
+  mapper *did* drop would be a refusal, not a silent thinning:
+  `TesseraConfig.apply_vllm_mapper` raises.
 
 **So the honest severity is:** the code fault is real and settled by reading
 (no non-body tensor could reach `ignore`), and the consequence is *latent* on
@@ -77,15 +91,17 @@ missing one is a load-time refusal.
   > `['model.visual.blocks.0.attn.qkv', 'model.visual.blocks.0.attn.proj',
   > 'model.visual.blocks.0.mlp.gate_up_proj', ...]`
 
-  Six tests: the rule itself, an end-to-end export with a vision tower
+  Five tests: the rule itself, an end-to-end export with a vision tower
   (`--layers 0`, host-safe — no encode), a CUDA arm that names the tower beside
   a real body encode, both spellings of a packed stack, and the empty-plan
   refusal below.
 * **On the real checkpoint.** The rule run over every tensor of
   `/mnt/shared/models/GLM-5.3-Flash-4layer` (shapes read from the safetensors
-  headers; nothing written) names **101 distinct non-body modules** — 24×
-  `attn.qkv`, `attn.proj`, `mlp.gate_up_proj`, `mlp.down_proj`, the four
-  merger modules, `lm_head`, `model.language_model.embed_tokens` — and the only
+  headers; nothing written) names **125 distinct non-body modules** over 350 tensors (101 before the
+  merged-qkv alias commit added the second `qkv_proj` spelling) — 24×
+  `attn.qkv` + `attn.qkv_proj`, `attn.proj`, `mlp.gate_up_proj`,
+  `mlp.down_proj`, the merger modules, `lm_head`,
+  `model.language_model.embed_tokens` — and the only
   rank≥2 tensors it declines to name are the six `*_conv1d` and the two vision
   convs (`patch_embed.proj` rank 5, `downsample` rank 4). A 45 GB passthrough
   copy was not written: it would prove nothing the header read does not.

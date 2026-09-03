@@ -192,9 +192,14 @@ PACKED_EXPERT_ND = re.compile(
 #: ``Glm5NextVisionAttention`` builds its projection at
 #: ``f"{prefix}.qkv_proj" if quant_config else f"{prefix}.qkv"``
 #: (``models/glm5next/nvidia/multimodal.py:167``) -- while the tensor on disk is
-#: ``...attn.qkv.weight``.  Which name exists depends on whether that runtime
+#: ``...attn.qkv.weight`` and the module ATTRIBUTE path is ``...attn.qkv``.  The
+#: run, its script and its verbatim output are
+#: ``docs/measurements/glm53-vision-tower-prefixes-2026-09-03.md``.
+#: Which name exists depends on whether that runtime
 #: passes a quant config, which the producer cannot know; an ignore entry is
-#: only ever LOOKED UP, so carrying both spellings costs nothing and carrying
+#: only ever LOOKED UP or prefix-mapped -- never silently dropped, since
+#: ``TesseraConfig.apply_vllm_mapper`` refuses a name the mapper maps away --
+#: so carrying both spellings costs nothing and carrying
 #: one is a load-time refusal in whichever world the runtime turns out to be
 #: in.  Body attention never reaches here: its q/k/v arrive unmerged and the
 #: FUSED table already names ``qkv_proj``.
