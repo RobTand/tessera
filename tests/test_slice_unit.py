@@ -31,6 +31,7 @@ a served two-box TP=2 gate.
 import hashlib
 import pathlib
 import random
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -46,9 +47,16 @@ from tessera.decode import (
     replay_window,
 )
 from tessera.encode import _canonical_release_order, encode_unit
+from tessera.grammar import superblock_count
 from tessera.errors import GrammarError, ManifestError
 from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
-from tessera.layout import SlicedUnit, can_shard, shard_granularity, slice_unit
+from tessera.layout import (
+    SlicedUnit,
+    _slice_release,
+    can_shard,
+    shard_granularity,
+    slice_unit,
+)
 from tessera.manifest import BodyKind, ScalePlaneKind, ShardOrigin
 from tessera.planes import (
     CANONICAL_PLANE_ORDER,
@@ -520,6 +528,51 @@ def test_fused_and_eager_replay_agree_on_a_shard(units, monkeypatch, fused):
 
 
 # ------------------------------------------------------------- the RELEASE plane
+
+
+def test_release_partition_counts_the_trailing_partial_superblock():
+    """``block_of = column // superblock`` produces ``ceil(cols/superblock)``
+    block indices, so the quota has to run over that many.  Flooring it meant a
+    640-column unit's positions 512..639 could never be released, while
+    ``layout.build_planes`` -- which ceilings -- allocated their granule anyway.
+    """
+    torch.manual_seed(3)
+    superblock, rows = 256, 16
+    for cols, blocks in ((512, 2), (640, 3), (384, 2), (320, 2), (128, 1)):
+        assert superblock_count(cols, superblock) == blocks
+        decoded = torch.randn(rows, cols)
+        index = _canonical_release_order(decoded, cols, superblock, 3 * blocks)
+        touched = sorted(set(((index % cols) // superblock).tolist()))
+        assert touched == list(range(blocks)), cols
+
+
+@pytest.mark.parametrize(
+    "width,ok",
+    [(256, True), (512, True), (128, True), (1, True), (384, False), (640, False)],
+)
+def test_slice_release_admits_only_widths_where_ceiling_equals_floor(width, ok):
+    """A regression pin, not a fail-before test: ``_slice_release``'s guard
+    already admitted only a union of whole superblocks or a cut inside one, and
+    on exactly those widths the ceiling and the floor agree.  That is why
+    moving the shard path onto ``superblock_count`` cannot move a shard's
+    counts -- and this is the property that has to keep holding for it.
+    """
+    superblock, rows, columns = 256, 4, 1024
+    unit = SimpleNamespace(
+        body_bits=torch.zeros(rows, columns),
+        release_index=torch.tensor([0, 1, columns + 2]),
+        release_code=torch.tensor([3, 5, 7]),
+    )
+    if ok:
+        assert superblock_count(width, superblock) == max(1, width // superblock)
+        _, _, counts = _slice_release(
+            unit, rows, columns, 0, rows, 0, width, superblock
+        )
+        assert len(counts) == superblock_count(width, superblock)
+    else:
+        assert superblock_count(width, superblock) != max(1, width // superblock)
+        with pytest.raises(GrammarError, match="only on superblock boundaries"):
+            _slice_release(unit, rows, columns, 0, rows, 0, width, superblock)
 
 
 def test_release_order_generalises_the_bresenham_spread():

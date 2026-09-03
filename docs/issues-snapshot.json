@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T00:41:06Z",
+ "generated": "2026-09-03T01:18:51Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -156,6 +156,10 @@
    "26": {
     "state": "OPEN",
     "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
+   },
+   "27": {
+    "state": "OPEN",
+    "title": "Release quota over a partial superblock is equal-count, not width-proportional"
    },
    "3": {
     "state": "OPEN",

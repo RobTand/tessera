@@ -36,7 +36,12 @@ import torch
 from .encode import EncodedUnit
 from .errors import GrammarError, PlaneLayoutError
 from .exact import bits_to_bytes
-from .grammar import C_FULL_BITS, RELEASE_BITS, completion_capacity
+from .grammar import (
+    C_FULL_BITS,
+    RELEASE_BITS,
+    completion_capacity,
+    superblock_count,
+)
 from .trellis import body_bits as _body_bits
 from .manifest import (
     BodyKind,
@@ -335,8 +340,10 @@ def build_planes(
     # ``superblock_quota_ok`` already declares such a superblock legal (it
     # constrains only *complete* ones), so flooring it away was the layout
     # refusing to describe a shape the grammar admits -- and the restart table
-    # it wrote then had one entry fewer than the stream had segments.
-    superblocks = max(1, -(-len(rates) // geometry.superblock_columns))
+    # it wrote then had one entry fewer than the stream had segments.  The
+    # count lives in ``grammar`` so the release quota cannot floor what the
+    # granules ceiling.
+    superblocks = superblock_count(len(rates), geometry.superblock_columns)
     if spec is not None and max_released and max_released != spec.released_positions:
         # One parameter cannot mean both the plane's full extent and the
         # terminal's slice of it.  When a caller declares both, they are the
@@ -1031,7 +1038,11 @@ def _slice_release(unit, rows, columns, r0, r1, c0, c1, superblock):
             f"only on superblock boundaries: columns [{c0}, {c1}) is neither a "
             f"union of {superblock}-column superblocks nor inside one"
         )
-    blocks = max(1, width // superblock)
+    # The guard above admits only widths where the ceiling and the floor agree
+    # -- a union of whole superblocks, or a cut inside one -- so this is the
+    # same number either way; it counts through ``grammar`` so the shard path
+    # and the whole-unit path can never drift apart.
+    blocks = superblock_count(width, superblock)
     flat = unit.release_index.long()
     row = flat // columns
     col = flat % columns
