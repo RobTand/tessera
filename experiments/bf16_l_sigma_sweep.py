@@ -76,6 +76,13 @@ Stages::
     # L at matched bytes, small units and large ones
     env $E $P experiments/bf16_l_sigma_sweep.py --stage dense-l --out OUT/dense_l.json
     env $E $P experiments/bf16_l_sigma_sweep.py --stage glm-l   --out OUT/glm_l.json
+
+    # the PAIR: L x ratio jointly, across the rate range, against a
+    # byte-matched shipped reference built at the rung that spends the same
+    # bytes.  Pre-registered reading in the comment above ``PAIR_BITS``.
+    env $E $P experiments/bf16_l_sigma_sweep.py --stage pair-glm \\
+        --layers 5 20 42 --projs gate_proj up_proj --out OUT/pair_glm.json
+    env $E $P experiments/bf16_l_sigma_sweep.py --stage pair-dense --out OUT/pair_dense.json
 """
 from __future__ import annotations
 
@@ -102,6 +109,23 @@ from tessera.export import (  # noqa: E402
 )
 from tessera.scale_channel import default_channel_sigma  # noqa: E402
 from tessera.unit_artifact import read_unit_artifact  # noqa: E402
+
+# The grid the pair stage owes, the label a cell is spelled with, and the
+# reader that checks a finished file against both -- one implementation, so a
+# writer and a reader cannot drift on which cells exist (#93).
+from pair_grid_audit import (  # noqa: E402
+    CANDIDATE_MISSING,
+    CONTROL_BASELINE_MISSING,
+    CONTROL_REPEAT_MISSING,
+    NO_BYTE_MATCH,
+    REFERENCE_MISSING,
+    audit_lines,
+    audit_rung,
+    cell_label,
+    control_line,
+    control_status,
+    pair_arm_key,
+)
 
 # The same sources, the same held-out rows and the same metric definitions the
 # route's own weight-space receipt used, so these numbers sit beside those.
@@ -594,13 +618,457 @@ def summarise_sweep(b: Bench, axis_name: str) -> None:
         b.log(f"    frontier({ax}) {f}")
 
 
+# ---------------------------------------------------------------- stage pair
+#
+# THE PRE-REGISTERED READING.  Written before the stage was run; the commit
+# that adds it precedes every artifact it produced, which is the only proof
+# of pre-registration that survives a rewrite of this comment.
+#
+# **What is already searched, and what is not.**  ``channel_sigma`` is a
+# dyadic gauge on this grid (``--stage gauge``, four dense units, decoded
+# tensor bit-identical over 16x).  The two axes that are left -- the table's
+# width ``L`` and the table/row spread *ratio* ``window_sigma /
+# channel_sigma`` -- have each been swept with **the other held at its
+# shipped value**: ``--stage dense-l``/``glm-l`` moved ``L`` at ratio 1.0,
+# and #48 moved the ratio at ``L=14``.  A pair is not searched by two
+# one-dimensional sweeps through the same point unless the axes are
+# separable, and nothing has measured whether they are.  That is this stage.
+#
+# **Hypothesis, stated with its mechanism.**  ``L`` buys code resolution and
+# the ratio buys reach, and they spend the same resource: a table of ``2^L``
+# entries laid over ``ratio * channel_sigma`` grid units of range.  Widening
+# the reach at fixed ``L`` therefore thins the table, so *if the axes
+# interact at all*, deeper ``L`` should be worth more at wider ratio and the
+# optimal ratio should widen with ``L``.  H0 (separable): the argmin over
+# ratio is the same at every ``L`` and the argmin over ``L`` is the same at
+# every ratio, at every rung.  H1 (interacting): they move together in the
+# direction above.  H2 (interacting the other way) is possible and would
+# falsify the mechanism rather than the interaction.
+#
+# **The gate metric, and why not ``wt``.**  ``wt`` is disqualified in
+# advance: it decreases monotonically in ``L`` on 4 of 4 dense units at both
+# rungs (#18 thread), so a sweep gated on it answers "deeper" before it
+# starts.  The gate is ``h`` on the dense set (the captured diagonal) and
+# ``out`` on the GLM experts (the held-out capture rows, the same rows the
+# route's own receipt scored).  ``wt`` is still reported, as a control on
+# the gate rather than as evidence.
+#
+# **Matched bytes, exactly, not by slope.**  ``L`` costs bytes and the ratio
+# does not: an arm at ratio r != 1 is *bit-for-bit the same size* as the
+# shipped arm, so its ratio is read directly.  An arm at ``L != 14`` is not,
+# and the rate axis is continuous in ``q256``, so the reference is built
+# rather than interpolated: for each ``L`` this encodes the **shipped pair
+# (L=14, ratio 1.0) at the rung whose bpp equals that arm's**, and asserts
+# the two bpp are equal to within 1e-9.  A table 0.09 bpp wide on a GLM
+# expert is 0.75 bpp on a 1024x1024 Qwen Linear, which is exactly where the
+# thread's two-point 1.903x-per-bpp slope would be doing the deciding.
+#
+# **The decision rule, per rung and per population.**  A *unit win* is the
+# candidate beating its own byte-matched shipped reference on the gate
+# metric.  The encoder is deterministic and every arm here is a real
+# difference, not a draw from a distribution, so "win" is strict inequality;
+# a 1% margin count is reported beside it because a 0.2% win is a true
+# statement about a number nobody should spend a wire change on.
+#
+#   * ADOPT-WORTHY (the strongest verdict this stage can reach):  a strict
+#     majority of per-unit wins AND a geomean below 1.00 on the gate metric
+#     AND the six-expert GLM cross-check no worse than 1.00x.
+#   * CONFIRMED:  the shipped pair (14, 1.0) is the argmin, or nothing else
+#     clears the bar above.  This is a full answer and changes nothing.
+#   * INCONCLUSIVE:  wins and geomean disagree, or the optimum sits on the
+#     edge of the swept grid and is unbracketed.
+#
+# **No default flips out of this stage regardless of the outcome**, and that
+# is settled before the numbers exist.  Moving the ratio needs an explicit
+# ``window_sigma`` in ``BF16_RECIPE`` and moving ``L`` moves
+# ``BF16_WINDOW_BITS``; both change the bytes and the ``encoder_profile_id``
+# -- a wire change -- and the BF16 route has no serving lane, so nothing
+# here is promotable under principle 3 in any case.  An adopt-worthy result
+# is recorded as the measured optimum for the reach term #48 describes and
+# #84 bounds, not spent.
+
+#: The pair.  ``L`` from the width the route ships (14) one step either way;
+#: ratios bracketing #48's BF16 turnover (best at 1.25-1.5 on ``wt`` and
+#: 1.5-1.75 on ``h`` at R=8, rising past 2.0), including 1.4142 = the
+#: ``channel_sigma = 0.707`` this issue's own reach sweep found.
+PAIR_BITS = [12, 14, 16]
+PAIR_RATIOS = [1.0, 1.25, 1.4142135623730951, 1.75]
+
+
+def table_bpp(window_bits: int, numel: int) -> float:
+    """The ALPHABET plane's cost on a BF16 table: one 16-bit word per entry."""
+    return (1 << window_bits) * 16 / numel
+
+
+def bytematched_rung(q256: int, window_bits: int, default_bits: int,
+                     numel: int) -> "int | None":
+    """The rung at which the shipped ``L`` spends exactly this ``L``'s bytes.
+
+    ``q256`` is the rate in 1/256 bits per weight and the axis is continuous
+    in it, so the byte match is *built* -- ``None`` only if the table delta
+    is not an integral number of q256 steps on this shape, in which case the
+    caller must say it interpolated instead of pretending it did not.
+    """
+    delta = (table_bpp(window_bits, numel) - table_bpp(default_bits, numel)) * 256
+    step = round(delta)
+    if abs(delta - step) > 1e-6 or q256 + step <= 0:
+        return None
+    return q256 + int(step)
+
+
+# ``pair_arm_key`` and the grid rule live in ``pair_grid_audit`` (#93), so the
+# stage that writes a file and the reader that checks one share one spelling
+# of a label and one definition of "the grid this run asked for".  A second
+# copy here is how a writer and a reader come to disagree about which cells
+# exist, which is the failure the audit is supposed to catch.
+
+
+def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
+                  *, h=None, x=None, y=None, ny=None) -> dict:
+    """One unit's joint ``(L, ratio)`` grid at every rung, plus its references."""
+    numel = w.numel()
+    default_L = a.window_bits
+    axes = ("wt", "h") if x is None else ("wt", "h", "out")
+    res: dict = {"rows": int(w.shape[0]), "cols": int(w.shape[1]), "numel": numel,
+                 "gate": a.gate, "default_L": default_L}
+    for q in a.rungs:
+        Ls = [L for L in a.pair_bits if L * 256 >= q]
+        refs = {L: (q if L == default_L else bytematched_rung(q, L, default_L, numel))
+                for L in Ls}
+        b.log(f"\n== {tname} {tuple(w.shape)}  R={q / 256:g}  grid=bf16  "
+              f"gate={a.gate}  L={Ls}  ratios={[round(r, 4) for r in a.pair_ratios]}")
+        b.log(f"    byte-matched shipped rungs (L=14 spending each L's bytes): "
+              + ", ".join(f"L{L}->R{refs[L]}" if refs[L] else f"L{L}->NONE"
+                          for L in Ls))
+        b.header(("bpp", *axes, "reach_rms", "over"))
+        arms = [(q, default_L, 1.0, "")]
+        arms += [(q, L, r, "") for L in Ls for r in a.pair_ratios
+                 if not (L == default_L and r == 1.0)]
+        arms += [(refs[L], default_L, 1.0, f" [bytematch L={L}]")
+                 for L in Ls if L != default_L and refs[L] is not None]
+        arms += [(q, default_L, 1.0, " [repeat]")]
+        for qq, L, ratio, tag in arms:
+            arm = pair_arm_key(qq, L, ratio) + tag
+            if arm in res:
+                continue
+            # ratio 1.0 is ``window_sigma=None``, the value the recipe stores,
+            # so the reference arms exercise the shipped path and not a
+            # re-spelling of it.
+            ws = None if ratio == 1.0 else ratio * BF16_CHANNEL_SIGMA
+            st = reach_stats(w, BF16_GRID, L,
+                             BF16_CHANNEL_SIGMA if ws is None else ws,
+                             BF16_CHANNEL_SIGMA)
+            got = try_arm(b, arm, lambda qq=qq, L=L, ws=ws: encode_arm(
+                w, BF16_GRID, qq, name, window_bits=L, window_sigma=ws,
+                channel_sigma=BF16_CHANNEL_SIGMA))
+            if got is None:
+                continue
+            hat, bpp, s, secs = got
+            r = {"bpp": bpp, "sha": s, "tsha": tensor_sha(hat), "secs": secs,
+                 "q256": qq, "rung": q, "L": L, "ratio": ratio,
+                 "table_bpp": table_bpp(L, numel),
+                 "reach_rms": st["reach_row_rms"], "over": st["rows_over_reach"],
+                 **st, **score(w, hat, h=h, x=x, y=y, ny=ny)}
+            res[arm] = r
+            b.row(arm, r, ("bpp", *axes, "reach_rms", "over"))
+            del hat
+            torch.cuda.empty_cache()
+        first, last = pair_arm_key(q, default_L, 1.0), \
+            pair_arm_key(q, default_L, 1.0) + " [repeat]"
+        # The control is recorded either way (#96).  It used to be written
+        # only ``if last in res``, so a rung whose repeat died -- the arm most
+        # likely to, since it runs last, after every wide table has churned
+        # the allocator -- carried no ``_control`` key at all and read exactly
+        # like a rung whose contamination check passed.  An absent check is a
+        # fact about the run, not the absence of one.
+        if last in res and first in res:
+            res[f"R{q}_control"] = check_repeat_tensor(b, res[first], res[last],
+                                                       f"R{q} shipped pair")
+            res[f"R{q}_control"]["ran"] = True
+        else:
+            res[f"R{q}_control"] = {
+                "arm": f"R{q} shipped pair", "ran": False,
+                "reason": (CONTROL_BASELINE_MISSING if first not in res
+                           else CONTROL_REPEAT_MISSING)}
+        ctl = control_line(q, control_status(res[f"R{q}_control"]))
+        if ctl:
+            b.log("    " + ctl)
+        # The byte match is an assertion, not a hope: each candidate is
+        # compared only against a reference it is provably the same size as.
+        cmp: dict = {}
+        # Why a cell is not in ``cmp``.  The stage is the only place that
+        # knows this -- a reader of the finished file sees an absence and can
+        # say no more than "absent" -- so it is recorded here rather than
+        # reconstructed later (#93).
+        dropped: dict = {}
+        for L in Ls:
+            # The reference is stored under its own tagged key, so build the
+            # same string here: looking up the untagged one silently drops
+            # every arm at a width the shipped recipe does not carry, which
+            # is exactly the set this stage exists to price.
+            ref_key = None if refs[L] is None else (
+                pair_arm_key(refs[L], default_L, 1.0)
+                + ("" if L == default_L else f" [bytematch L={L}]"))
+            ref = res.get(ref_key) if ref_key else None
+            for ratio in a.pair_ratios:
+                key = pair_arm_key(q, L, ratio)
+                if key not in res or ref is None:
+                    # Both can be gone at once, and which to re-run depends
+                    # on knowing that, so say both rather than the first.
+                    why = ([] if refs[L] is not None else [NO_BYTE_MATCH]) \
+                        + ([] if key in res else [CANDIDATE_MISSING]) \
+                        + ([] if ref is not None or refs[L] is None
+                           else [REFERENCE_MISSING])
+                    dropped[cell_label(L, ratio)] = "; and ".join(why)
+                    continue
+                gap = abs(res[key]["bpp"] - ref["bpp"])
+                cmp[key] = {
+                    "ref": ref_key, "bpp_gap": gap,
+                    "bytes_matched": gap < 1e-9,
+                    **{f"{ax}_ratio": res[key][ax] / ref[ax] for ax in axes
+                       if ax in ref and ref[ax] > 0},
+                }
+        res[f"R{q}_vs_shipped"] = cmp
+        # The denominator is the grid the run ASKED for, never the rows that
+        # survived into ``cmp``: a count taken from the survivors reports
+        # "N of N" over any number of dropped arms, which is how a table
+        # missing half its rows once printed a clean bill of health (#93).
+        audit = audit_rung(q, a.pair_bits, a.pair_ratios, cmp, reasons=dropped)
+        res[f"R{q}_grid_audit"] = audit
+        for line in audit_lines(audit):
+            b.log("    " + line)
+        gate = a.gate
+        if not cmp:
+            b.log(f"    no arm at R{q} has a byte-matched reference; "
+                  "nothing to read here")
+            continue
+        best = min((v[f"{gate}_ratio"], k) for k, v in cmp.items()
+                   if f"{gate}_ratio" in v)
+        # An argmin over a subset of the grid is not the grid's argmin, and
+        # saying so is the whole of #93: the one artifact the broken revision
+        # wrote named an arm that was not the best by 28% on the gate.
+        b.log(f"    best on {gate} at matched bytes: {best[1]} at {best[0]:.4f}x"
+              + ("" if audit["complete"] else
+                 f"  -- OVER {audit['present']} OF {audit['expected']} CELLS, "
+                 "not the grid"))
+        for L in Ls:
+            row = [(v[f"{gate}_ratio"], res[k]["ratio"]) for k, v in cmp.items()
+                   if res[k]["L"] == L and f"{gate}_ratio" in v]
+            if row:
+                b.log(f"      L={L:<3} best ratio {min(row)[1]:g} "
+                      f"({min(row)[0]:.4f}x)  " + "  ".join(
+                          f"r{rr:g}={vv:.4f}" for vv, rr in row))
+    return res
+
+
+def stage_pair_dense(a) -> None:
+    """The joint grid on dense Qwen Linears, gated on the captured diagonal."""
+    b = Bench(a.out)
+    a.gate = a.gate or "h"
+    src = open_all(DENSE_SRC)
+    H = {k: v.cuda().float() for k, v in torch.load(DENSE_H).items()}
+    b.doc = {"args": vars(a), "grid": "bf16", "population": "dense-qwen",
+             "gate": a.gate, "units": {}}
+    for name in a.units:
+        w = src[name + ".weight"].get_tensor(name + ".weight").cuda().float().contiguous()
+        b.doc["units"][name] = run_pair_unit(b, a, name, w, name, h=H[name])
+        b.save()
+        del w
+        torch.cuda.empty_cache()
+    summarise_pair(b)
+    b.save()
+    b.log(f"\nwrote {a.out}")
+
+
+def stage_pair_glm(a) -> None:
+    """The joint grid on GLM routed experts, gated on held-out ``out``.
+
+    Scope, stated once and inherited by every number below: the capture
+    holds the **MoE block's input** rows, so ``out`` is this expert's error
+    over all of them and not over the subset the router would send it, and
+    only projections reading the hidden dim are expressible (``down_proj``
+    would need the intermediate activations, which are not captured).  The
+    expert index is swept, which the earlier six-tensor sets did not do:
+    "six experts" there means six (layer, proj) cells of expert 0.
+    """
+    index = json.load(open(f"{GLM_SRC}/model.safetensors.index.json"))["weight_map"]
+    b = Bench(a.out)
+    a.gate = a.gate or "out"
+    b.doc = {"args": vars(a), "grid": "bf16", "population": "glm-experts",
+             "gate": a.gate, "units": {}}
+    for layer in a.layers:
+        blob = torch.load(
+            f"{GLM_ACT}/model__language_model__layers__{layer}__mlp__experts.pt",
+            map_location="cpu", weights_only=False)
+        xa = blob["inputs"].float()
+        x = xa[xa.shape[0] - a.eval_rows:].contiguous().cuda()
+        del xa, blob
+        h = (x * x).sum(dim=0)
+        for expert in a.experts:
+            for proj in a.projs:
+                name = (f"model.language_model.layers.{layer}.mlp.experts."
+                        f"{expert}.{proj}.weight")
+                with safe_open(f"{GLM_SRC}/{index[name]}", framework="pt") as f:
+                    w = f.get_tensor(name).contiguous().cuda().float()
+                tname = f"L{layer}.e{expert}.{proj}"
+                if w.shape[1] != x.shape[1]:
+                    raise SystemExit(
+                        f"{tname}: this stage feeds the experts' input "
+                        f"activations ({x.shape[1]} wide) and {proj} reads "
+                        f"{w.shape[1]}; only projections on the hidden dim are "
+                        "expressible from this capture.")
+                y = x @ w.T
+                b.doc["units"][tname] = run_pair_unit(
+                    b, a, tname, w, name, h=h, x=x, y=y, ny=y.norm())
+                b.save()
+                del w, y
+                torch.cuda.empty_cache()
+        del x, h
+        torch.cuda.empty_cache()
+    summarise_pair(b)
+    b.save()
+    b.log(f"\nwrote {a.out}")
+
+
+def summarise_pair(b: "Bench") -> None:
+    """Per-unit wins first, then the geomean -- never the geomean alone.
+
+    Every ratio here is against the **byte-matched shipped pair**, so a row
+    reading below 1.0 is that arm beating ``(L=14, ratio 1.0)`` at bytes the
+    two provably share, on units counted one at a time.
+    """
+    gate = b.doc["gate"]
+    units = b.doc["units"]
+    n = len(units)
+    # The rungs come from the run's own ``args``, the same source the reader
+    # uses, not from the units that happen to carry a ``_vs_shipped`` key: a
+    # rung derived from what survived is the #93 mistake one line up from
+    # where #93 fixed it.  It cannot bite today (``run_pair_unit`` writes the
+    # key for every rung, empty or not) and it is spelled correctly here so it
+    # cannot start to.
+    rungs = sorted(int(q) for q in b.doc["args"]["rungs"])
+    b.doc["summary"] = {}
+    b.doc["summary_grid_audit"] = grid = {}
+    axes = ("wt", "h", "out")
+    for q in rungs:
+        cmps = {u: res.get(f"R{q}_vs_shipped", {}) for u, res in units.items()}
+        # A summary derived from part of a grid is not a summary of the grid.
+        # Every (unit, rung) is re-audited against the run's own recorded
+        # ``args`` before anything below is printed, so the check is on the
+        # grid that was ASKED for and not on whatever reached this function
+        # (#93).  This flags rather than raises: the per-arm rows underneath
+        # are still the measurements, and destroying a long sweep's output at
+        # the summary step would lose them.
+        per_unit = {u: audit_rung(q, b.doc["args"]["pair_bits"],
+                                  b.doc["args"]["pair_ratios"], c,
+                                  reasons=(units[u].get(f"R{q}_grid_audit")
+                                           or {}).get("missing"))
+                    for u, c in cmps.items()}
+        grid[f"R{q}"] = {"complete": all(v["complete"] for v in per_unit.values()),
+                         "units": per_unit}
+        for u, audit in sorted(per_unit.items()):
+            if audit["complete"] and not audit["unmatched"]:
+                continue
+            for line in audit_lines(audit):
+                b.log(f"    {u}: {line}")
+        # The summary looks at the controls too, and counts them over the
+        # units the run has rather than over the ones that reported (#96).
+        ctls = {u: control_status(units[u].get(f"R{q}_control")) for u in units}
+        grid[f"R{q}"]["controls"] = ctls
+        grid[f"R{q}"]["controls_passed"] = sum(1 for v in ctls.values()
+                                               if v["passed"])
+        for u, st in sorted(ctls.items()):
+            line = control_line(q, st)
+            if line:
+                b.log(f"    {u}: {line}")
+        b.log(f"    contamination controls: "
+              f"{grid[f'R{q}']['controls_passed']} of {n} unit(s) at R{q} "
+              "carry a repeat that is byte- and tensor-identical")
+        if not grid[f"R{q}"]["complete"]:
+            b.log(f"    REFUSING TO READ R{q} AS A GRID: the rows below cover "
+                  "a subset of the (L, ratio) cells this run asked for, so "
+                  "any argmin or separability verdict over them is an argmin "
+                  "over the subset (#93)")
+        arms = sorted({k for c in cmps.values() for k in c},
+                      key=lambda k: (int(k.split("L=")[1].split()[0]),
+                                     float(k.split("r=")[1])))
+        b.log(f"\n== R={q / 256:g}: {n} unit(s), each arm against the "
+              f"byte-matched shipped pair (L=14, r=1); gate = {gate}")
+        b.log("    " + f"{'arm':<20}{'wins':>8}{'/n':>4}" + f"{'win@1%':>8}"
+              + "".join(f"{ax + ' geo':>10}" for ax in axes) + f"{'bpp':>10}")
+        table = {}
+        for arm in arms:
+            vals = {ax: [c[arm][f"{ax}_ratio"] for c in cmps.values()
+                         if arm in c and f"{ax}_ratio" in c[arm]] for ax in axes}
+            g = [v for v in vals.get(gate, []) if v == v]
+            if len(g) != n:
+                # Not a hole in the grid but a hole across the population, and
+                # equally invisible before #93: an arm measured on some units
+                # and not others cannot be geomeaned over the set, and used to
+                # leave the table without a word.
+                b.log(f"    incomplete across units: {arm} has {len(g)} of "
+                      f"{n} unit(s) on {gate}; not summarised")
+                grid.setdefault(f"R{q}", {}).setdefault("partial_arms", {})[arm] = {
+                    "units_with_gate": len(g), "units": n,
+                    "missing_units": sorted(u for u in units
+                                            if arm not in cmps[u])}
+                continue
+            bpps = [units[u][arm]["bpp"] for u in units if arm in units[u]]
+            row = {
+                "n": n, "wins": sum(1 for v in g if v < 1.0),
+                "wins_1pct": sum(1 for v in g if v < 0.99),
+                "per_unit": {u: cmps[u][arm].get(f"{gate}_ratio")
+                             for u in units if arm in cmps[u]},
+                "bpp": sum(bpps) / len(bpps),
+                **{f"{ax}_geomean": geomean(vals[ax]) for ax in axes
+                   if len(vals[ax]) == n},
+            }
+            table[arm] = row
+            b.log("    " + f"{arm.split(' ', 1)[1]:<20}{row['wins']:>8}{n:>4}"
+                  f"{row['wins_1pct']:>8}"
+                  + "".join(f"{row.get(ax + '_geomean', float('nan')):10.4f}"
+                            for ax in axes)
+                  + f"{row['bpp']:10.5f}")
+        b.doc["summary"][f"R{q}"] = table
+        if not table:
+            continue
+        # Separability: does the best ratio depend on L, and the best L on ratio?
+        best_r = {}
+        for L in sorted({int(k.split("L=")[1].split()[0]) for k in table}):
+            row = [(v[f"{gate}_geomean"], float(k.split("r=")[1]))
+                   for k, v in table.items()
+                   if int(k.split("L=")[1].split()[0]) == L]
+            best_r[L] = min(row)[1]
+            b.log(f"      L={L:<3} best ratio {min(row)[1]:g} ({min(row)[0]:.4f}x "
+                  f"geomean, {table[[k for k in table if int(k.split('L=')[1].split()[0]) == L and float(k.split('r=')[1]) == min(row)[1]][0]]['wins']}/{n} units)")
+        best_L = {}
+        for ratio in sorted({float(k.split("r=")[1]) for k in table}):
+            row = [(v[f"{gate}_geomean"], int(k.split("L=")[1].split()[0]))
+                   for k, v in table.items() if float(k.split("r=")[1]) == ratio]
+            best_L[ratio] = min(row)[1]
+            b.log(f"      r={ratio:<6g} best L {min(row)[1]} ({min(row)[0]:.4f}x geomean)")
+        b.doc["summary"][f"R{q}_separability"] = {
+            "best_ratio_at_L": best_r, "best_L_at_ratio": best_L,
+            "ratio_argmin_independent_of_L": len(set(best_r.values())) == 1,
+            "L_argmin_independent_of_ratio": len(set(best_L.values())) == 1,
+        }
+        b.log(f"      separable? best-ratio same at every L: "
+              f"{len(set(best_r.values())) == 1}; best-L same at every ratio: "
+              f"{len(set(best_L.values())) == 1}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stage", required=True,
-                    choices=["gauge", "reach", "dense-l", "glm-l"])
+                    choices=["gauge", "reach", "dense-l", "glm-l",
+                             "pair-dense", "pair-glm"])
     ap.add_argument("--units", nargs="+", default=DENSE_UNITS)
     ap.add_argument("--layers", type=int, nargs="+", default=[5, 42])
     ap.add_argument("--projs", nargs="+", default=["gate_proj"])
+    # The expert index the GLM stages address.  Every "six expert" set on this
+    # issue to date is six (layer, proj) cells of expert 0; sweeping this is
+    # what widens the population rather than the shape.
+    ap.add_argument("--experts", type=int, nargs="+", default=[0])
     ap.add_argument("--rung", type=int, default=1024)
     ap.add_argument("--rungs", type=int, nargs="+", default=[1024, 2048])
     ap.add_argument("--window-bits", type=int, default=BF16_WINDOW_BITS)
@@ -620,11 +1088,19 @@ def main() -> None:
     ap.add_argument("--table-ratios", type=float, nargs="+", default=[1.0])
     ap.add_argument("--eval-rows", type=int, default=1024)
     ap.add_argument("--exl3", type=int, nargs="+", default=[4, 6, 8])
+    # The joint stage: the pair, not two sweeps through one point.
+    ap.add_argument("--pair-bits", type=int, nargs="+", default=PAIR_BITS)
+    ap.add_argument("--pair-ratios", type=float, nargs="+", default=PAIR_RATIOS)
+    ap.add_argument("--gate", choices=["wt", "h", "out"], default=None,
+                    help="the metric the reading is gated on; wt is "
+                         "disqualified in advance (monotone in L) and is "
+                         "reported as a control, never as the gate")
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     {"gauge": stage_gauge, "reach": stage_reach,
-     "dense-l": stage_dense_l, "glm-l": stage_glm_l}[a.stage](a)
+     "dense-l": stage_dense_l, "glm-l": stage_glm_l,
+     "pair-dense": stage_pair_dense, "pair-glm": stage_pair_glm}[a.stage](a)
 
 
 if __name__ == "__main__":
