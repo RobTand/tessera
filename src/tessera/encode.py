@@ -46,7 +46,7 @@ from .diagonals import (
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
-from .grammar import superblock_count
+from .grammar import release_quota
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -1769,24 +1769,26 @@ def _canonical_release_order(
     vector").  So placement is free but the counts are charged, and this
     returns the flat indices in the order the decoder will reconstruct them.
 
-    Counts are spread across superblocks by the same exact Bresenham quota the
-    rate schedule uses, so the total is met exactly with no superblock more
-    than one release away from any other.  A quality-driven allocation is S9's
+    Counts come from ``grammar.release_quota``: the total at a *uniform
+    release density*, so every superblock is within one release of its own
+    exact width-proportional share.  A quality-driven allocation is S9's
     lambda-greedy pass; this is the uniform baseline it has to beat.
 
-    The block count is ``grammar.superblock_count`` -- a **ceiling**, the same
-    one the layout gives a granule to.  It used to be a floor here and in
+    The partition is ``grammar.superblock_count`` blocks of
+    ``grammar.superblock_widths`` columns -- a **ceiling**, the same one the
+    layout gives a granule to.  The count used to be a floor here and in
     ``decode.release_order``, which meant the quota ran over one block fewer
     than ``block_of`` produces and **no release could ever land in a trailing
     partial superblock**: on a 640-column unit positions 512..639 were
     unreachable, while the layout allocated the granule for them anyway.  The
     round trip did not notice, because encoder and decoder floored alike.
+    Ceiling the count then made the *spread* wrong in the other direction --
+    an equal count over unequal blocks -- which is what the quota fixes; see
+    its docstring for why the density, not the count, is the thing to hold
+    equal.
     """
-    from .decode import bresenham_release_counts
-
     device = decoded.device
-    blocks = superblock_count(cols, superblock)
-    counts = bresenham_release_counts(total, blocks)
+    counts = release_quota(total, cols, superblock)
 
     flat = decoded.abs().reshape(-1)
     position = torch.arange(flat.numel(), device=device)
@@ -1798,16 +1800,17 @@ def _canonical_release_order(
             continue
         members = position[block_of == index]
         if count > members.numel():
-            # A trailing partial superblock holds fewer positions than a
-            # complete one, so a uniform quota can overrun it.  Truncating
-            # silently would place fewer releases than ``total``, and the
-            # reader -- which regenerates this order from the *placed* count --
-            # would then respread a different total and recover a different
-            # set.  Refuse instead of corrupting exactly the positions release
-            # exists to protect.  This is a real behaviour change and not only
-            # a guard: an equal-count quota over unequal blocks caps releases
-            # on a narrow trailing superblock, and whether the quota should be
-            # width-proportional instead is open as #27.
+            # Unreachable at any *legal* total: ``release_quota`` gives a
+            # superblock at most ``ceil(total * width / cols)`` releases, and
+            # ``total <= rows * cols`` bounds that by ``rows * width``, the
+            # positions the superblock has.  What it still catches is an
+            # illegal one -- more releases than the unit has positions -- and
+            # it catches it here, before ``layout``'s own range check, because
+            # the encoder places before it lays out.  It must never truncate:
+            # the reader regenerates this order from the placed count, so
+            # placing fewer releases than declared makes it respread a
+            # different total and recover a different set, corrupting exactly
+            # the positions release exists to protect.
             raise GrammarError(
                 f"superblock {index} releases {count} of {members.numel()} "
                 "positions"
