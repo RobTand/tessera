@@ -245,17 +245,46 @@ weights. Ahead of BODY, no legal truncation can separate the two. Every
 consumer that indexes `plane_elements` positionally takes its order from
 `Manifest.plane_order`.
 
-**RELEASE under a shard.** A whole unit's per-superblock release counts are the
-Bresenham spread of the total over `ceil(columns / superblock_columns)`
+**RELEASE under a shard.** A whole unit's per-superblock release counts are
+`grammar.release_quota` of the total over `ceil(columns / superblock_columns)`
 superblocks — the same ceiling §3b gives a granule to, so the quota reaches a
-trailing partial superblock like any other — which the reader regenerates. A
-uniform quota can overrun a partial superblock, which holds fewer positions
-than a complete one; a writer that would place fewer releases than it declares
-refuses instead, because the reader respreads the *placed* count and would
-otherwise recover a different set. A shard's are the
-*restriction* of its parent's, which no spread reproduces, so a shard writes
-the RELEASE descriptor with `PER_SUPERBLOCK` granularity and its counts on the
-wire. The restriction is well defined because S9's placement is a **threshold**
+trailing partial superblock like any other — which the reader regenerates. The
+quota is **width-proportional**: a superblock's exact share is `total * width /
+columns`, and the integer vector nearest that share which still sums to `total`
+is the largest-remainder award (floor every share, hand the leftover to the
+largest fractional parts, lowest superblock index first). Every superblock
+therefore carries the same release *density*, which is the same principle §3b
+applies to the BODY and COMPLETION granules: a granule's count is what that
+granule's columns actually carry.
+
+Read the width-proportional quota as the wire meaning of the released set. It
+replaced an equal-count spread on 2026-09-03 (issue #27). The two agree element
+for element whenever every superblock is complete — at equal widths every share
+and every fractional part is equal, so the leftover goes to the lowest indices,
+which is what the equal-count spread did — so the bytes and the decode of every
+unit whose column count is a whole number of superblocks are unchanged. They
+disagree only for a released unit whose column count is **not** a whole number
+of superblocks, where an equal count asked a narrow trailing superblock for up
+to `superblock_columns` times the density of the rest of the unit. That is a
+meaning change without a schema minor, and it is scoped: no such artifact
+exists, because the equal-count quota refused most of that range outright (a
+64×257 unit capped at 130 of 16448 positions) and because no exporter path
+places a release at all — `export.encode_linear_planes` has no
+`released_positions` keyword, so every unit it writes takes `encode_unit`'s
+default of 0. RELEASE is exercised only by tests and by the future S9 λ-greedy
+allocation. Measured 2026-09-03: of 642 `.tessera` files on the build box, one
+carries a RELEASE plane and it is 512 columns wide — a complete superblock
+count, where the two quotas agree.
+
+Under the width-proportional quota a writer can no longer overrun a partial
+superblock: `total <= rows * columns` bounds a superblock's count by
+`rows * width`, the positions it has. The refusal survives as the guard on that
+property, and on a shard's explicit counts, where it is still reachable. It is
+never a truncation: a writer that placed fewer releases than it declares would
+make the reader respread a different total and recover a different set. A
+shard's counts are the *restriction* of its parent's, which no quota
+reproduces, so a shard writes the RELEASE descriptor with `PER_SUPERBLOCK`
+granularity and its counts on the wire. The restriction is well defined because S9's placement is a **threshold**
 set within each superblock — the top `n` by decoded `|value|`, ties by
 ascending position — and the intersection of a threshold set with any subset is
 the top `k` of that subset in the same order.
