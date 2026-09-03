@@ -652,8 +652,8 @@ def _steps_of(manifest) -> int:
 
     The arity is not on the wire, so it is recovered by trying the ones a
     readable artifact can carry: ``SERIALISABLE_GRIDS`` holds arity 1 and
-    arity 2 today, and 4 and 8 are pre-provisioned here so a wider tuple grid
-    needs no change on this line.  A non-power-of-two tuple -- ``k = 3`` over
+    arity 2 today, and 4 and 8 are also tried, though no serialisable grid
+    carries them.  A non-power-of-two tuple -- ``k = 3`` over
     E2M1 is legal to *build* (``alphabet.tuple_grid``) -- would not be found,
     and cannot arrive either: a grid outside ``SERIALISABLE_GRIDS`` is refused
     at ``build_unit_artifact`` and no reader can resolve its digest, so no

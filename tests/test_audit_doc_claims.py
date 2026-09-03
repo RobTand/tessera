@@ -64,6 +64,27 @@ def test_e2m1_forest_planes_cost_two_to_the_rate_plus_one_plus_the_code_space(
     assert len(forest.alphabet_plane()) + len(forest.descendant_plane()) == expected
 
 
+def _e2m1_forest_bytes(rates):
+    return sum(
+        len(build_forest(r, grid=E2M1_GRID).alphabet_plane())
+        + len(build_forest(r, grid=E2M1_GRID).descendant_plane())
+        for r in sorted(set(rates))
+    )
+
+
+def test_a_shipped_e2m1_schedule_carries_20_to_56_forest_bytes():
+    """A Bresenham schedule mixes only the two rates bracketing its root, so
+    the shipped range is narrower than the legal one.  Both numbers are in
+    ``docs/schema/prismaquant.tessera.v1.md``; this pins them."""
+    shipped = {
+        (1,): 20, (1, 2): 44, (2, 3): 56, (3,): 32, (2,): 24,
+    }
+    for rates, expected in shipped.items():
+        assert _e2m1_forest_bytes(rates) == expected, rates
+    assert max(shipped.values()) == 56
+    assert _e2m1_forest_bytes((1, 2, 3)) == 76        # the non-Bresenham bound
+
+
 def test_the_forest_planes_are_512_bytes_at_the_e2m1x2_cap():
     """The only 8-bit-grid rung ``wire_recipe`` still writes a TCQ body for."""
     grid = tuple_grid(E2M1_GRID, 2)

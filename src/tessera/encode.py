@@ -138,8 +138,10 @@ class EncodedUnit:
     # Nothing in ``src/`` reads it.  ``tests/test_ldlq_*`` compare it between
     # two runs at one setting; ``experiments/tessera_wire_default_check.py``
     # and ``tessera_conv_code_check.py`` record it into their JSON, and every
-    # arm of both lands in the first case (each varies the weighting only at
-    # ``scale_refit=4``).  No published figure is read off it.
+    # arm of both is the same UNWEIGHTED quantity -- the ``scale_refit=4``/``6``
+    # arms by the first case, and the one ``refit0`` arm by the second, since
+    # it runs at the signature default ``"none"`` where the Viterbi's
+    # accumulation *is* that number.  No published figure is read off it.
     sse: float
     rotation: RotationState = RotationState.NONE
     rotation_block: int = 1

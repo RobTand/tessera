@@ -290,9 +290,10 @@ def superblock_quota_ok(
     no complete superblock, so this returns True for **any** schedule over it.
     That is the semantic, not a hole, and neither caller is left unguarded by
     it.  ``Manifest.__post_init__`` runs ``validate_rate_schedule`` -- the
-    whole-unit quota, which is exact at every width -- on the line before this
-    one; ``artifact.build_artifact`` refuses a column count that is not a
-    whole number of superblocks before it asks.
+    whole-unit quota, which is exact at every width -- a few lines above the
+    call (``manifest.py``: ``validate_rate_schedule``, then the ``window_bits``
+    check, then this); ``artifact.build_artifact`` refuses a column count that
+    is not a whole number of superblocks before it asks.
     """
     if superblock_columns <= 0:
         raise GrammarError(f"superblock_columns must be positive: {superblock_columns}")

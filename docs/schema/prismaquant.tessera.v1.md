@@ -170,12 +170,15 @@ price a TCQ unit's ALPHABET/DESCENDANT forest planes. Those bytes are
 `sum over the distinct rates R present of 2^(R+1) + 2^(cap+1)` — one byte
 per anchor, plus one flattened forest per rate holding the grid's whole code
 space — so they are a function of the schedule and the grid alone and **not
-of the shape**: 20–76 B on E2M1 over rates 1–3, and exactly 512 B at the
-E2M1x2 cap, which are the only two places `wire_recipe` still writes a TCQ
-body at all. A schedule carrying every legal rate of an 8-bit grid would
-reach 2300 B. That is 0.00007–0.0022 bpp on a 2048×4096 unit, so a byte
-quotation that must match `ExportedUnit.exact_bytes` at small shapes reads
-the container, not the accountant.
+of the shape**. On E2M1 a Bresenham schedule mixes only the two rates
+bracketing its root, so a shipped unit carries **20–56 B** (measured: 20 at
+rate 1 alone, 44 over {1,2}, 56 over {2,3}, 32 at rate 3 alone; 76 B is the
+bound an importance-placed schedule using all three would reach), and
+exactly **512 B** at the E2M1x2 cap — the only two places `wire_recipe`
+still writes a TCQ body at all. A schedule carrying every legal rate of an
+8-bit grid would reach 2300 B. That is 0.00002–0.0022 bpp on a 2048×4096
+unit, so a byte quotation that must match `ExportedUnit.exact_bytes` at
+small shapes reads the container, not the accountant.
 
 ### 1d. Schema minor 4 (2026-09-02): the shard record and the INITIAL_STATE plane
 
