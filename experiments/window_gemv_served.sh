@@ -150,6 +150,14 @@ kl_one() {  # arm mode regime
   local arm=$1 mode=$2 regime=$3
   local name=ts83-$arm-$mode-$regime
   local eager=1; [ "$regime" = compiled ] && eager=0
+  # Skip-if-exists, as census_one does: a gap-fill re-run after a lost arm
+  # should cost the lost arm and not the three that already landed, each of
+  # which is a serve on a box several agents queue for.  Delete the receipt to
+  # force a re-run.
+  if [ -f "$RUNS/kl_tessera_$name.json" ]; then
+    echo "=== KL $arm/$mode/$regime already measured at $RUNS/kl_tessera_$name.json"
+    return 0
+  fi
   echo "=== KL $arm/$mode/$regime  $(date -Is)"
   local extra=""
   [ "$arm" = armB ] && extra="$ARMB_EXTRA"
