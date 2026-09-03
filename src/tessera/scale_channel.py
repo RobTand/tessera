@@ -53,15 +53,41 @@ _FP16_MAX = 65504.0
 
 
 @lru_cache(maxsize=16)
+def _ladder_relative_error(scalar: torch.Tensor, sample: torch.Tensor, sigma: float) -> float:
+    """The ladder's criterion: nearest-value RTN error of ``sample * sigma`` on
+    the grid's scalar values, relative to the variance quantised."""
+    scaled = sample * sigma
+    err = (scaled.unsqueeze(1) - scalar.unsqueeze(0)).abs().min(dim=1).values
+    return float((err * err).mean() / (sigma * sigma))
+
+
 def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
     """The RTN-optimal Gaussian spread on the grid's scalar values, in grid units.
 
     Derived from the objective rather than chosen: over a dyadic ladder of
-    spreads below the grid's peak, the one whose nearest-value error on a
-    unit Gaussian is smallest, relative to the variance quantised.  On E2M1
-    this lands near ``peak / 2.7``; on E4M3, whose values are log-spaced, the
-    error is flat over a wide band and the ladder picks one point in it.
-    Deterministic: the source is ``GAUSSIAN_SOURCE``'s fixed quantile sample.
+    spreads below the grid's peak, ``peak * 2^(-k/4)`` for ``k`` in 0..39,
+    the one whose nearest-value error on a unit Gaussian is smallest,
+    relative to the variance quantised.  On E2M1 this lands near ``peak /
+    2.7`` and the criterion is a real bowl.  Deterministic: the source is
+    ``GAUSSIAN_SOURCE``'s fixed quantile sample.
+
+    **On E4M3 the criterion is a gauge, not a bowl** (issue #36, measured in
+    ``docs/measurements/tessera-e4m3-reach-cliff-2026-09-03.md``).  The grid
+    is log-spaced and closed under x2 inside its normal range, so the
+    relative error is the same in every binade to floating-point noise:
+    ``rel(k) == rel(k + 4)`` for every rung from k=8 down, with a 1.1% ripple
+    inside a binade from the mantissa phase of the 4096-sample Gaussian.  The
+    first rung under the sample's own ceiling (``3.67 sigma < 448``, k=8) is
+    within 0.1% of the best; k=9 wins by ``1e-13`` and is kept because the
+    comparison is strict and it is visited first.  So the pick's *binade* is
+    decided by iteration order, and the ceiling it happens to sit 0.247
+    binades below is the ladder sample's (``448 / 3.67 = 122``), not the L=14
+    window table's (``448 / z_max(14) = 448 / 4.01 = 111.8``).  That margin is
+    what keeps the shipped table's top at 384 rather than pinned at 448; it
+    is asserted, not designed (``tests/test_e4m3_reach_ceiling.py``).  The
+    axis the encode actually depends on -- the body's reach in row-RMS units
+    -- is invisible to this ladder because a dyadic step below the ceiling
+    does not move it.
     """
     scalar = torch.tensor(sorted(set(values)), dtype=torch.float64)
     peak = float(scalar.abs().max())
@@ -69,10 +95,7 @@ def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
     best, best_err = None, None
     for k in range(0, 40):
         sigma = peak * 2.0 ** (-k / 4)
-        # Nearest grid value to each sample expressed in grid units.
-        scaled = sample * sigma
-        err = (scaled.unsqueeze(1) - scalar.unsqueeze(0)).abs().min(dim=1).values
-        rel = float((err * err).mean() / (sigma * sigma))
+        rel = _ladder_relative_error(scalar, sample, sigma)
         if best_err is None or rel < best_err:
             best, best_err = sigma, rel
     return float(best)
