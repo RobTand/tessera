@@ -32,6 +32,18 @@ route is not merely flag-gated: it is plugin-gated.  That is a machine-readable
 cell field, not prose, because a producer's export gate has to be able to
 refuse an artifact whose serve command would not install the plugin.
 
+WHAT IT EXECUTES AND WHAT IT LOADS ARE TWO CLAIMS.  ``formats`` and
+``lane_eligibility`` say what a serve runs; ``native_extensions`` says which
+libraries it can map into the serving process, and it is here because a
+consumer needs the second one: PrismaQuant's serve fingerprint holds two KLs
+comparable only across serves whose native-extension residency matches, so a
+lane whose ``.so`` it cannot name reads as a stock serve.  With no table to
+read it mirrored the basename in its own repository, which is this principle
+failing one repository over.  The block is published as a prefix and a glob
+rather than a basename because ``ext`` JIT-builds the module under a
+build-identity hash, and it answers "what ran instead" per RESIDENCY rather
+than with an ``optional`` flag -- see ``_validate_native_extensions``.
+
 READING IT.  ``load_serving_contract()`` returns the parsed JSON;
 ``contract_path()`` the packaged file, for a consumer that wants to hash or
 copy it verbatim.  Neither imports torch or vLLM: a producer reads this table
@@ -205,6 +217,132 @@ def _validate_fused_module(block: Any, where: str) -> None:
             "claim from what the loader accepts and must not be inferred from it")
 
 
+def _validate_native_extensions(entries: Any, where: str) -> None:
+    """``native_extensions`` must BE ``ext.NATIVE_EXTENSIONS``, and be legible.
+
+    The contract publishes what the plugin EXECUTES; this block publishes what
+    it LOADS, because a consumer that keys reproducibility on native-extension
+    residency has no other machine-readable source and was mirroring the name
+    in its own repository -- principle 14's failure, one repository over.
+
+    Two things are checked and they are different.  First AUTHORITY: the block
+    equals :data:`ext.NATIVE_EXTENSIONS`, whose ``module_name_prefix`` is the
+    very constant ``ext._load_locked`` asks ``cpp_extension.load`` for, so the
+    published name is the loaded name by construction rather than by care.
+    Second LEGIBILITY: a consumer must not have to guess whether the published
+    string is a stem, a prefix or a pattern, so ``match`` names the rule and
+    ``filename_glob`` is checked to actually match a filename this load path
+    can produce -- the JIT module name carries a build-identity hash, so no
+    exact basename exists to publish.
+
+    ``when_unavailable`` is per RESIDENCY and not an ``optional`` boolean on
+    purpose: "this build may not have compiled it" and "the route runs without
+    it" are two facts, and the second differs by mode (resident substitutes a
+    named decoder, streamed refuses).  A fingerprint that exists to tell those
+    serves apart needs the substitute's name, and needs to know that an absent
+    extension with a streamed route record is an impossible pair.
+
+    Imported here rather than at module scope for the reason ``loader_axes``
+    gives: this module is read by a producer with no torch, and ``ext`` and
+    ``lane`` are torch-free, but keeping the contract reader's module-level
+    dependencies to ``json`` is the property that keeps that true.
+    """
+    import fnmatch
+    import os
+    from importlib import util as importlib_util
+
+    from .ext import FALLBACK_REFUSED, FALLBACK_STATUSES, MATCH_BASENAME_FNMATCH, \
+        NATIVE_EXTENSIONS, csrc_dir
+    from .lane import MODES
+    from .scheme import ROUTES
+
+    if not isinstance(entries, list):
+        raise ValueError(f"{where} must be a JSON array")
+    if entries != list(NATIVE_EXTENSIONS):
+        raise ValueError(
+            f"{where} is not what this build loads. It must equal "
+            "tessera.serving.ext.NATIVE_EXTENSIONS, whose module_name_prefix is the constant "
+            "the JIT load path itself asks cpp_extension.load for; a document that named a "
+            "different extension -- or forgot one -- would be a claim about a runtime that "
+            f"does not exist. Published {entries!r}, loaded {list(NATIVE_EXTENSIONS)!r}.")
+    seen: set[str] = set()
+    for i, entry in enumerate(entries):
+        at = f"{where}[{i}]"
+        _require_keys(entry, at,
+                      required={"module_name_prefix", "filename_glob", "match", "source",
+                                "loaded_by", "routes", "when_unavailable"})
+        prefix = entry["module_name_prefix"]
+        if not isinstance(prefix, str) or not prefix:
+            raise ValueError(f"{at}.module_name_prefix must be a non-empty string")
+        if prefix in seen:
+            raise ValueError(f"{at}.module_name_prefix {prefix!r} is declared twice")
+        seen.add(prefix)
+        if entry["match"] != MATCH_BASENAME_FNMATCH:
+            raise ValueError(
+                f"{at}.match is {entry['match']!r}; this contract publishes exactly "
+                f"{MATCH_BASENAME_FNMATCH!r} -- fnmatch the glob against the BASENAME of a "
+                "mapped .so. The rule is a value because a consumer cannot otherwise tell a "
+                "stem from a prefix from a pattern.")
+        glob = entry["filename_glob"]
+        # The library torch writes is ``<module name><LIB_EXT>`` and the module
+        # name is ``<prefix><build identity>``, so the pattern is the prefix
+        # with the identity and the suffix globbed.  Checked by MEANING, not by
+        # spelling: a name this load path can produce must match.
+        if not isinstance(glob, str) or not fnmatch.fnmatch(f"{prefix}0123456789abcdef.so", glob):
+            raise ValueError(
+                f"{at}.filename_glob {glob!r} does not match a library name the load path can "
+                f"produce ({prefix}<build identity>.so); a glob that matches nothing a serve "
+                "maps is a fingerprint that reports every serve identical")
+        source = entry["source"]
+        if not isinstance(source, str) or not source.startswith("csrc/"):
+            raise ValueError(
+                f"{at}.source must be a path under 'csrc/' relative to this package, got "
+                f"{source!r}")
+        if not os.path.isfile(os.path.join(csrc_dir(), source[len("csrc/"):])):
+            raise ValueError(
+                f"{at}.source {source!r} is not packaged with this build; a contract may not "
+                "publish an extension whose sources did not ship")
+        loaded_by = entry["loaded_by"]
+        if not isinstance(loaded_by, str) or not loaded_by.startswith(f"{__package__}."):
+            raise ValueError(
+                f"{at}.loaded_by is {loaded_by!r}; an entry belongs in this table only when the "
+                f"library can be resident in a SERVING process, so it is loaded by a "
+                f"{__package__}.* module. A producer-side extension does not belong here.")
+        if importlib_util.find_spec(loaded_by) is None:
+            raise ValueError(f"{at}.loaded_by names no module in this build: {loaded_by!r}")
+        routes = entry["routes"]
+        if not isinstance(routes, list) or not routes:
+            raise ValueError(f"{at}.routes must name at least one route that needs it")
+        unknown = sorted(set(routes) - set(ROUTES))
+        if unknown:
+            raise ValueError(
+                f"{at}.routes names {unknown}, which this package does not serve "
+                f"(tessera.serving.scheme.ROUTES)")
+        behaviours = entry["when_unavailable"]
+        if not isinstance(behaviours, Mapping) or sorted(behaviours) != sorted(MODES):
+            raise ValueError(
+                f"{at}.when_unavailable must answer for exactly the residencies "
+                f"{sorted(MODES)}: what a serve does without this library is a different answer "
+                "per mode, which is why this is not an 'optional' boolean")
+        for mode in MODES:
+            spot = f"{at}.when_unavailable[{mode!r}]"
+            _require_keys(behaviours[mode], spot, required={"status", "decoder"})
+            status, decoder = behaviours[mode]["status"], behaviours[mode]["decoder"]
+            if status not in FALLBACK_STATUSES:
+                raise ValueError(
+                    f"{spot}.status {status!r} is not one of {list(FALLBACK_STATUSES)}")
+            if status == FALLBACK_REFUSED and decoder is not None:
+                raise ValueError(
+                    f"{spot} refuses and still names a decoder {decoder!r}; a refused serve does "
+                    "not exist, so there is nothing for a census to have recorded")
+            if status != FALLBACK_REFUSED and not (isinstance(decoder, str) and decoder):
+                raise ValueError(
+                    f"{spot} substitutes and names no decoder; the substitute's name is the "
+                    "whole value of this field -- it is the value the route stamps in "
+                    "tessera.serving.telemetry's 'decoder' field, and it is how a fingerprint "
+                    "tells a native serve from a fallback one")
+
+
 def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     """Refuse a contract this package would not itself honour.
 
@@ -217,8 +355,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
-                            "formats", "lane_eligibility", "tensor_parallel",
-                            "expert_parallel", "fused_module"},
+                            "native_extensions", "formats", "lane_eligibility",
+                            "tensor_parallel", "expert_parallel", "fused_module"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -229,6 +367,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         raise ValueError(
             f"runtime_contract.quant_method.canonical must be {REQUIRES_PLUGIN!r}: it is the "
             "checkpoint field that selects this plugin")
+
+    _validate_native_extensions(contract["native_extensions"],
+                                "runtime_contract.native_extensions")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):

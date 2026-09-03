@@ -773,3 +773,68 @@ future runtime that makes the rate module-level turns the fold off by measured
 fact rather than by anyone remembering to. That is a PrismaQuant-side change and
 is deliberately left to PrismaQuant; what #37 owed was the value to read, and
 v6 publishes it.
+
+## 13. The contract publishes what the plugin loads, not only what it runs (2026-09-03, #28)
+
+`runtime_contract.json` said what a Tessera serve **executes** — the families,
+their reader-rate ranges, the `activation_contract` each route feeds the GEMM,
+the cells a receipt covers — and nothing about what it **loads**. Those are
+different claims, and one consumer needs the second one.
+
+PrismaQuant's `tools/serve_fingerprint.py` mechanises §7.4 of its architecture
+doc: a KL is bit-identical inside one container session and drifts 4–8× across
+them, keyed on whether a lane's CUDA `.so` was resident in the serving process.
+Its `EXTENSION_PATTERN` is the alternation of basenames whose residency it
+records. With no table here to read, PrismaQuant mirrored ours into its own pin
+file (`serving_extension_basenames`) — a claim about **this** runtime,
+maintained in the other repository, which is principle 14 read backwards.
+Until 2026-09-03 that pattern named no Tessera extension at all, so a serve
+running Tessera's own native span-2 decode fingerprinted identically to a stock
+serve: the one lane whose whole point is a custom decoder was the one lane the
+identical-residency rule could not see.
+
+**`native_extensions` is the table.** `contract_version` 6 → **7**, additive: a
+v5 or v6 reader ignores a new top-level key and no value it already read has
+moved. (It was authored against v5 and landed after §12 took v6; the renumber
+is bookkeeping -- the block, not the integer, is the claim, and PrismaQuant's
+`contract_answer()` over the v6 and v7 payloads is byte-identical.)
+One entry today, the span-2 NVFP4 decoder.
+
+**It is a glob, not a basename, and the rule is a value.** `ext.py` JIT-builds
+the module under a name carrying a build-identity hash, so the library on disk
+is `tessera_nvfp4_<identity>.so` and **no exact basename exists to publish**. A
+consumer must therefore know whether the published string is a stem, a prefix or
+a pattern — so the entry carries `module_name_prefix`, `filename_glob`, and
+`match: "basename_fnmatch"`, which names the rule a gate applies. Prose saying
+"this is a prefix" is exactly the kind of field principle 14 refuses.
+
+**`when_unavailable` replaces the `optional: true` the issue proposed.**
+`optional` conflates "this build may not have compiled it" with "the route runs
+correctly without it", and answers neither question a fingerprint asks. What a
+fingerprint needs is *which serve ran instead*, and that differs by residency:
+`resident` decodes once at load and may substitute
+`tessera.stock.materialize_stock`, stamping `decoder: "torch_materialize_stock"`
+on every route record; `streamed` decodes inside a traced forward, where that
+path's data-dependent shapes cannot run, and refuses outright. So an absent
+`.so` together with a streamed route record is an *impossible pair* — a stronger
+check than a boolean can express. `nvfp4_route` gates on this block
+(`ext.substitutes_when_unavailable`) rather than on a mode comparison of its
+own, the same way `loader_axes` is checked against `sharding.ROUTE_TP_AXES`.
+
+**The table is derived, not typed beside the code.** `module_name_prefix` is the
+constant `ext._load_locked` itself passes to `cpp_extension.load`, and
+`validate_serving_contract` refuses any block that is not
+`tessera.serving.ext.NATIVE_EXTENSIONS`. That makes the published name the
+loaded name by construction — but it cannot tell whether the list is *short*.
+`tests/test_serving_native_extensions.py` answers that separately: it walks the
+import graph from `tessera.serving` (function-local imports included — 40
+first-party modules today) and refuses any native-load site reachable from it
+that the table does not declare, reading each site's module name out of the AST
+and failing rather than skipping when it cannot.
+
+**`tessera_window_gemv` stays out, and that is checked rather than asserted.**
+The criterion for an entry is that the library can be resident in a *serving*
+process. `tessera.kernel_window_gemv` JIT-loads one, but nothing reachable from
+`tessera.serving` imports it, so it is producer-side. That is the scope note on
+#28, and it is now a test: if #10/#42 wires the window GEMV into a route, the
+walk reaches it and the table goes red instead of staying quietly short.
