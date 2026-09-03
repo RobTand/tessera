@@ -57,6 +57,11 @@ Receipt: `shape_census.json`.
   in one process — and is why the pre-change tree had to be swept by rebinding
   the constant from the harness.
 
+One knob semantic moves with this: `TESSERA_WINDOW_GRAPH=1` used to capture
+per call and drop the graph with the call; it now persists a plan on the first
+sight of a narrow shape. `0` and unset are unchanged in what they compute, and
+all three return the reference's bytes.
+
 The epilogue (transpose, `cost.min`, `sse += float(final.sum())`, traceback)
 stays on the host stream and in its original order, so the returned `sse`
 float is bit-identical and not merely close.
@@ -70,23 +75,32 @@ torch chain that defines the trellis, not another run of the same kernels.
 
 FILLED IN BELOW.
 
+## Review corrections (this branch's own code — not separable)
+
+`8a164a6` and `bbd8f0f` are defects in the mechanism this task adds, caught in
+review before any number was taken. They are listed separately so the diff can
+be read in stages, but none of them can be dropped without breaking the change
+they correct.
+
+* the end-to-end LDLQ test's reference arm did not pin `impl="reference"`; it
+  compared fused against fused, and the `lever=None` case passed by running one
+  configuration twice. Deliverable 3 was not asserted until this was fixed.
+* `TESSERA_WINDOW_GRAPH=0` read the plan cache before it read the lever, so a
+  thread that had cached a plan under `auto` and then asked for the eager
+  control replayed a graph. The forced-eager branch now precedes the lookup,
+  which is what makes `0` an A/B control at all — the measurement below depends
+  on it.
+* the plan cache held four shapes and the shipping schedule asks for exactly
+  four; raised to eight, priced from the buffers (`bbd8f0f`) rather than from a
+  millisecond figure nobody had measured.
+
 ## Off-task fixes
 
-Each is a separate commit.
-
-* `8a164a6` — the end-to-end LDLQ test's reference arm did not pin
-  `impl="reference"`; it compared fused against fused and the `lever=None` case
-  passed by running one configuration twice.
-* `8a164a6` — `TESSERA_WINDOW_GRAPH=0` read the plan cache before it read the
-  lever, so a thread that had cached a plan under `auto` and then asked for the
-  eager control replayed a graph. The forced-eager branch now precedes the
-  lookup, which is what makes `0` an A/B control at all.
-* `8a164a6` — the plan cache held four shapes and the shipping schedule asks
-  for exactly four; raised to eight with the measured shape census recorded
-  beside it.
-* `e85c6f9` — the matched-pair harness ran every rep of one lever before
-  starting the next, so its arms were matched inside a lever and unmatched
-  between them. Interleaved rep by rep, with per-rep load recorded.
+* `e85c6f9` — `experiments/ldlq_hcost_matched_pair.py` (issue #13's harness,
+  not this branch's code) ran every rep of one lever before starting the next,
+  so its arms were matched inside a lever and unmatched between them — and the
+  arms that get compared are the ones across levers. Interleaved rep by rep,
+  with per-rep load recorded. Separable: take or drop it independently.
 
 ## Not fixed, and why
 
