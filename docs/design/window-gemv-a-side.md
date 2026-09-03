@@ -17,6 +17,22 @@ surface; §4 states both and says which fields decide between them.
 Nothing here changes what ships. The E4M3/W8A8 family stays exactly as it is,
 and the A16 family is not a default until a served A/B says so (principle 3).
 
+**Verified 2026-09-03, second pass.** Every number and file:line here was
+re-checked against the receipts and against `master`, and
+`experiments/window_gemv_a_side.py` re-run against `master`'s `src` (both facts
+hold). The decision stands unchanged; three things below moved:
+
+* §3b -- the served A8 arm on this wire is **0.1046**, not 0.1512 (LDLQ + full-H
+  refit at the same bytes, now the exporter's default given a Hessian). It
+  strengthens the A16 argument rather than changing it.
+* §4 -- A16's GEMM cost at *decode* shapes is **measured**, not unmeasured, and
+  is not one number: 1.6-2.2x the A8 lane on the 4B lists and 0.73-0.80x on
+  Qwen3-0.6B. It is also the price of every unit the GEMV refuses. Prefill
+  stays unmeasured.
+* §5 -- the **M=2 -> MT=4 item is refuted as a blanket rule** by the GEMV
+  receipt's own quiet-box addendum (#59), and the per-`(family, regime)` seam
+  item gained #61 alongside #53.
+
 ---
 
 ## 1. The A sides this codebase can express over the E4M3 window wire, today
@@ -121,12 +137,25 @@ vanilla vLLM 0.28:
 
 | arm | A side | bpp wire / resident | KL |
 |---|---|---:|---:|
-| Tessera-8 E4M3 window, reach-aware start | **A8** | 4.07 / 8.0 | **0.1512** |
+| **Tessera-8 E4M3 window, reach-aware + LDLQ + full-H refit** -- the current arm | **A8** | 4.071 / 8.025 | **0.1046** |
+| Tessera-8 E4M3 window, reach-aware start, no LDLQ | A8 | 4.07 / 8.0 | 0.1512 |
 | Tessera-8 E4M3 window, pre-reach | A8 | 4.07 / 8.0 | 0.4699 |
 | FP8 RTN per-channel | A8 | 8.0 / 8.0 | 0.0205 |
 | production NVFP4 GPTQ+JSO | A4 | 4.5 / 4.5 | 0.5106 |
 | Tessera E2M1x2 q896 | A4 | 4.00 / 4.5 | 0.6404 |
 | `TESSERA_BF16` route, q1792 (`tessera-bf16-route-served-2026-09-02.md`) | A16 | 7.129 / 16.0 | 0.004923 |
+
+The A8 arm on this wire moved after this decision was first written:
+`tessera-ldlq-window-served-2026-09-02.md` takes it from 0.1512 to
+**0.104577** at the *same* 4.07-bpp wire (LDLQ sigma=1 block=32 plus a
+row-scale refit under the exact input Hessian), and that recipe is now what the
+exporter applies whenever it is handed a Hessian
+(`export.DEFAULT_LDLQ_SIGMA/_BLOCK/_REFIT_OBJECTIVE`). It changes no conclusion
+here and it moves the argument the same way §3a does: the weight leg improved
+to 0.692x while the A8 leg is a constant, so the gap to FP8 RTN at 8 bpp closed
+from 7.4x to **5.1x** and the lead over production NVFP4 at 4.5 bpp widened
+from 3.4x to **4.9x**. Every statement below about "the served arm" means this
+row.
 
 **There is no served A16 arm of the E4M3 window wire.** The A16 row above is a
 different grid at a different rung, and it is not a control for this question.
@@ -165,14 +194,47 @@ products -- W8A8 over the FP8 tensor core, W?A16 over a bf16 GEMM and the GEMV
 -- are declared separately because they *are* separate, with the quality gap of
 §3a between them.
 
-**(a)'s cost, stated with the win.** A16 gives up the FP8 tensor core at
-prefill: `fp8_route.py:271` records that `bf16 x fp8` is refused by
-`_scaled_mm` on this hardware, so an unquantised A side means a 16-bit GEMM on
-an upcast tile -- roughly half the tensor-core rate, and a 2 byte/weight
-transient in streamed mode against the FP8 route's 1. **Unmeasured**: no
-prefill A/B of a bf16 GEMM against `_scaled_mm` at these shapes exists, and the
-GEMV receipt's bf16 column is explicitly a contended upper bound (§5 of that
-doc). Also: one artifact cannot mix the two A sides per module without mixing
+**(a)'s cost, stated with the win.** A16 gives up the FP8 tensor core:
+`fp8_route.py:271` records that `bf16 x fp8` is refused by `_scaled_mm` on this
+hardware, so an unquantised A side means a 16-bit GEMM on the decoded tile, and
+a 2 byte/weight transient in streamed mode against the FP8 route's 1.
+
+**What that costs at decode shapes is measured**, on a quiet box, by the GEMV
+receipt's own addendum -- and it is not one number. Its `bf16_linear` arm is
+`torch.nn.functional.linear(x, W_bf16)` on a resident bf16 weight
+(`experiments/bench_kernel_window_gemv.py:352-353`), i.e. exactly the GEMM a
+resident-mode A16 route runs, and `fp8_lane_quant_plus_mm` (`:360-363`) is
+exactly `fp8_route.apply()`'s shape. Per-token totals from
+`/home/rob/tessera-runs/gemv/quiet_sparky.json/bench_gemv_quietbox_20260902-185032.json`
+(`procs 1-1`):
+
+| model | bf16 GEMM / FP8 lane, M=1 | M=2 | M=4 | M=8 |
+|---|---:|---:|---:|---:|
+| Qwen3-4B | 2.07x | 1.63x | 1.62x | 1.62x |
+| Qwen3-4B-fused | 2.19x | 1.73x | 1.72x | 1.72x |
+| **Qwen3-0.6B** -- the model this wire is served on | **0.80x** | **0.74x** | **0.73x** | **0.73x** |
+
+So the sign of A16's GEMM cost depends on the shapes: on the 4B lists it is
+1.6-2.2x the A8 lane, and on Qwen3-0.6B it is *cheaper*, because the lane's
+per-token quantiser is a fixed per-call cost (0.6B M=1: 5840 us lane against
+3061 us for the `_scaled_mm` alone) that dominates small GEMMs. The earlier
+"contended upper bound" reading of that column was stale -- the addendum
+re-took it, and the contended figure was inflated ~1.9x (4B M=1: 73866 us
+against 38956 us quiet).
+
+**This is the price of every unit the GEMV refuses.** Under (a) the A16 family
+serves rate-3 columns, rate-1 columns at `mt >= 4`, any `window_bits != 14`,
+any `INITIAL_STATE` shard and any rate outside {1, 2, 4} through
+`torch.mm` on the decoded tile -- at the ratios above rather than at the GEMV's.
+On a Bresenham mixed-rate artifact that is most of the units, which is a cost of
+declaring the family, not of the kernel.
+
+**Prefill remains unmeasured.** Every ratio above is M <= 8; no bf16-GEMM-
+vs-`_scaled_mm` A/B at prefill shapes (M ~ 512) exists, and the numbers above
+do not extrapolate there -- the fixed quant cost that makes A16 look good on
+0.6B amortises away as M grows, and the tensor-core rate ratio takes over.
+
+Also: one artifact cannot mix the two A sides per module without mixing
 families, and `FUSED_MODULE_FIELDS` makes the family a module fact -- so
 choosing the GEMV is a re-export, not an env-var flip.
 
@@ -232,7 +294,13 @@ depends on dict order.
    *is* the same object). A route that uses the kernel at M <= 8 and the torch
    decoder at prefill has two decoders per family, so the census expectation
    becomes per-`(family, regime)`. Design it once for both issues, and land
-   **#53** with it (`decoder_for` is unguarded and would `KeyError` mid-run).
+   **#53** and **#61** with it: `decoder_for` is unguarded and would `KeyError`
+   mid-run, and the two sides do not agree on the regime's *name* -- the
+   contract declares `["decode", "batch"]`
+   (`runtime_contract.json:127-129`) while the census's phases are `prefill`
+   and `decode` (`tools/tessera_route_census.py:145,148`), with no mapping
+   anywhere, because nothing reads the regime axis yet. A per-`(family, regime)`
+   map is the first thing that does.
 5. **The A/B protocol.** Two arms, two KLs, two latencies -- never an identity
    check (§2). The matched pair is a hardlinked directory pair whose
    `config.json` differs only in the declared family, the
@@ -252,13 +320,19 @@ depends on dict order.
   own `Repacked` can serve prefill too -- `decode_values` (`kernel_window_gemv.py:559-580`) is a full-tile decode over the same words, gated only on
   `unit.family == "value"`, and the E4M3 unit's table already holds bf16
   values.
-* **M=2 -> MT=4** is per-unit, not per-M: `4 if 1 not in unit.rep.rates else 2`,
-  because `:517-521` refuses `mt >= 4` on a rate-1 column and `:526` drops
-  `rpl` to 8. It does not belong in `_m_tile`, and under #52 the M-tile has to
-  leave the traced region anyway -- which is where a per-unit choice lives.
-  Profile before and after on a quiet box (sparklina): the existing kernel
-  numbers were taken with 6-8 CUDA processes resident and are contended upper
-  bounds.
+* **M=2 -> MT=4: do not build it as stated -- see #59.** The GEMV receipt's own
+  quiet-box addendum refutes the "free ~8%" in the aggregate: padding M=2 to
+  MT=4 runs the M=4 launch, and on a quiet box (`procs 1-1`, same kernel --
+  the only diff since that run is `_refuse_start_state`) that is **+11.6% /
+  +4.7% / +21.4%** per token on the Qwen3-4B, 4B-fused and 0.6B Linear lists.
+  Per shape it is shape-dependent, not a pure artifact: MT=4 still wins the
+  wide-output shapes by 6-11% and reproduces contended almost exactly
+  (4096x2560: 0.936 contended, 0.940 quiet), and inverts by 4-48% on the
+  narrow-output ones that the model lists are mostly made of. So a *per-shape*
+  choice is still open, with a threshold derived rather than read off twelve
+  shapes; the blanket M-only rule is a regression. The rate-1 refusal
+  (`:517-521`) and the `rpl` drop (`:526`) still apply to whatever is built,
+  and under #52 the M-tile has to leave the traced region anyway.
 
 **#47 specifically (the BF16 route / value family):**
 
@@ -280,14 +354,19 @@ whoever owns the pricing read, not to either of these issues.
 
 * It does not make A16 the default. The evidence for A16 is a **screen** --
   output-space error on six GLM routed-expert projections, whose inputs are
-  Gaussian (rotation measured dead there at 1.003x). The one served number on
-  this wire is the A8 arm. A default change needs the A/B of §5.
+  Gaussian (rotation measured dead there at 1.003x). Every served number on
+  this wire is an A8 arm (0.1046 today, §3b). A default change needs the A/B
+  of §5.
 * It does not say the A8 penalty measured on GLM experts transfers to dense
   models. It might be larger or smaller: dense Qwen inputs carry the
   outlier columns the CHANNEL plane is blind to
   (`tessera-stock-lane-served-2026-09-02.md`, `layers.2.mlp.down_proj`), and
   those interact with a per-token activation quantiser in a way nothing here
   measures.
-* It says nothing about prefill throughput. The bf16-GEMM-vs-`_scaled_mm` cost
-  of A16 at prefill shapes is unmeasured, and the GEMV's own "vs bf16" column
-  is a contended upper bound by its receipt's own §5.
+* It says nothing about **prefill** throughput. §4 now carries the decode-shape
+  cost of A16's GEMM from the receipt's quiet-box addendum (1.6-2.2x the A8 lane
+  on the 4B lists, 0.73-0.80x on 0.6B), but no bf16-GEMM-vs-`_scaled_mm` A/B at
+  prefill shapes exists and those ratios do not extrapolate to M ~ 512.
+* It does not verify the second-grid spelling end to end. §4 cites the scheme
+  gate, the decoder and the one refusal that needs a branch; nothing was loaded
+  into vLLM, and no GPU work was run for this document.
