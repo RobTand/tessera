@@ -22,7 +22,9 @@ The pass order is forced by what each stage needs:
 
 from __future__ import annotations
 
+import collections
 import os
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 
@@ -57,6 +59,10 @@ __all__ = [
     "grid_value_table",
     "require_memory",
     "LUT_ENTRIES",
+    "LUT_LANDING_MODES",
+    "LUT_LANDING_WIRE",
+    "lut_landing",
+    "refit_diagnostics",
 ]
 
 
@@ -217,11 +223,20 @@ class EncodedUnit:
         return int(self.release_index.numel())
 
 
+@functools.lru_cache(maxsize=32)
 def _transition_tables(code: ConvCode, device):
     """For each next state, its two predecessors and the subsets they emit.
 
     A rate-1/2 code has exactly two branches into every state, so these are
     dense tables and the Viterbi step becomes two gathers and a min.
+
+    Memoised on ``(code, device)`` because it is neither cheap nor variable:
+    the loop below is ``2 * states`` Python iterations each writing ONE element
+    into a CUDA tensor, so a call is a few hundred single-element host-to-device
+    copies -- and it depends on nothing but the code.  ``viterbi_columns`` used
+    to build it per call, which under LDLQ is once per column block per refit
+    pass (issue #13).  The returned tensors are read-only to every caller and
+    are shared, which is also what a CUDA-graph capture needs: a stable address.
     """
     states = code.states
     prev = torch.zeros(2, states, dtype=torch.long, device=device)
@@ -244,8 +259,14 @@ def _transition_tables(code: ConvCode, device):
     return prev, subset
 
 
+@functools.lru_cache(maxsize=32)
 def _descendant_values(forest: AnchorForest, completion: int, device):
-    """``[n_anchors, 2^c, arity]`` of the reconstructions reachable at level c."""
+    """``[n_anchors, 2^c, arity]`` of the reconstructions reachable at level c.
+
+    Memoised for the reason ``_transition_tables`` is: it builds a nested
+    Python list of ``anchors * 2^c * arity`` floats and ships it to the device,
+    and it is a function of the forest and the completion level alone.
+    """
     grid = forest.grid
     table = [
         [grid.vector(code) for code in forest.reachable(anchor, completion)]
@@ -254,9 +275,320 @@ def _descendant_values(forest: AnchorForest, completion: int, device):
     return torch.tensor(table, device=device, dtype=torch.float32)
 
 
+@functools.lru_cache(maxsize=32)
 def _subset_table(tcq: TCQ, device):
-    """``[4, 2^(R-1)]`` of anchor indices, by subset."""
+    """``[4, 2^(R-1)]`` of anchor indices, by subset.
+
+    ``TCQ.subsets`` is a property that re-derives the partition on every read;
+    memoised here for the same reason as its two neighbours above.
+    """
     return torch.tensor(tcq.subsets, device=device, dtype=torch.long)
+
+
+@functools.lru_cache(maxsize=32)
+def _anchor_block_table(forest: AnchorForest, device):
+    """``[n_anchors, 2^(cap-R)]`` of the forest's codes, on ``device``.
+
+    ``encode_unit``'s trellis pass built this with ``torch.tensor(forest.blocks,
+    ...)`` per call, which is a Python tuple-of-tuples walked on the host and
+    copied over the bus -- once per LDLQ column block per refit pass.
+    """
+    return torch.tensor(forest.blocks, device=device, dtype=torch.long)
+
+
+#: Whether the TCQ Viterbi's step loop is replayed as a CUDA graph.  Unset
+#: lets the reuse rule in ``viterbi_columns`` decide, "0" forces the eager
+#: loop everywhere, "1" captures as soon as a shape repeats.  A measurement
+#: knob, never a correctness one: both spellings run the same ops in the same
+#: order on the same buffers and return the same states and the same ``sse``
+#: float, which ``tests/test_tcq_graph.py`` pins.
+_TCQ_GRAPH_ENV = "TESSERA_TCQ_GRAPH"
+#: How many calls one shape must draw before capture is worth its cost.  It is
+#: paid once per shape and saves on every call after, so the question is only
+#: whether a shape recurs at all.  Measured on Qwen3-0.6B ``layers.0.mlp.
+#: down_proj``, cropped to 512x512 so both arms run in one process on one
+#: tree: the *weights-only* encode makes four calls of one shape, and capture
+#: still wins it -- 2.50 s eager against 1.51 s captured.  So two is not a
+#: threshold this shape needs protecting from.  One call is: a shape seen once
+#: would pay a capture it never replays, which the first-call reference path
+#: avoids.
+_TCQ_GRAPH_MIN_CALLS = 2
+#: How many shapes hold buffers at once, per thread.  A plan's ``choice``
+#: plane is ``supers * cols * states`` bools, so this is real residency and is
+#: bounded.  Measured on the unit below, the whole plan costs 80 MiB: peak
+#: allocation over a Qwen3-0.6B ``down_proj`` encode went 0.295 -> 0.375 GiB.
+_TCQ_PLAN_CACHE = 4
+#: Plans are **per thread**, and that is a correctness requirement, not a
+#: tuning choice.  A plan owns the buffers its Viterbi writes, so two threads
+#: sharing one would overwrite each other's front, traceback and outputs --
+#: and PrismaBuild's workers encode units concurrently in one process.  The
+#: table memos above are shared because they are read-only; these are not.
+_TCQ_LOCAL = threading.local()
+
+
+def _tcq_maps():
+    plans = getattr(_TCQ_LOCAL, "plans", None)
+    if plans is None:
+        plans = _TCQ_LOCAL.plans = collections.OrderedDict()
+        _TCQ_LOCAL.seen = collections.OrderedDict()
+    return plans, _TCQ_LOCAL.seen
+
+
+class _TCQPlan:
+    """One TCQ Viterbi's tensors, and the graph that replays its step loop.
+
+    ``run`` is **the definition** of the vectorised coset trellis -- the
+    reference path and the graph path both execute this method, so they cannot
+    drift.  What differs between them is only where the tensors come from: the
+    reference path builds a plan per call and throws it away, and the graph
+    path keeps one per shape so the addresses are stable enough to capture.
+
+    Why a graph at all (issue #13): the step loop is ``supers`` Python
+    iterations of about forty small kernels, plus a traceback of the same
+    length.  Its wall cost is therefore fixed per CALL and almost independent
+    of how many columns the call carries -- which is exactly what the issue
+    measured, ``0.694 s`` a segment whether the segment was 32 columns wide or
+    4096.  LDLQ turns one call into ``cols / ldl_block`` calls, so that fixed
+    cost is what multiplies.  Nothing about the arithmetic is slow; the launch
+    stream is.  Capturing the loop once per shape and replaying it is
+    principle 10's answer and the same one ``window_viterbi`` already took.
+    """
+
+    __slots__ = ("device", "rows", "cols", "arity", "steps", "supers", "span",
+                 "states", "points", "point_dtype", "shift", "memory",
+                 "targets", "weights", "tuples", "wrows", "dvals", "subsets",
+                 "prev", "subset_of", "roll", "column", "cost_a", "cost_b",
+                 "taken", "cost", "end", "choice", "picked", "fold",
+                 "anchors", "bits", "graph")
+
+    def __init__(self, *, device, rows, cols, dtype, weight_dtype, forest,
+                 code, completion, span, owns_input):
+        grid = forest.grid
+        self.device, self.rows, self.cols = device, rows, cols
+        self.arity = grid.arity
+        self.steps = steps = rows // self.arity
+        self.span = span
+        self.supers = supers = steps // span
+        self.states = states = code.states
+        self.memory = code.memory
+        self.prev, self.subset_of = _transition_tables(code, device)
+        self.dvals = _descendant_values(forest, completion, device)  # [A,2^c,k]
+        self.subsets = _subset_table(TCQ(forest, code), device)      # [4, P]
+        self.points = points = self.subsets.shape[1]
+        # The traceback stores the winning point index per (step, column,
+        # subset).  A byte holds it up to rate 9; above that the index must
+        # widen or it wraps silently -- the same "a code is a nibble"
+        # assumption that corrupted the body plane at rate 9.  Width follows
+        # the rate; it is never assumed.
+        self.point_dtype = torch.uint8 if points <= 256 else torch.int32
+        self.shift = points.bit_length() - 1
+        # A captured graph reads its inputs from fixed addresses, so a
+        # persistent plan owns them and the caller copies in; a per-call plan
+        # points straight at the caller's tensors and copies nothing.
+        self.targets = (torch.empty(rows, cols, dtype=dtype, device=device)
+                        if owns_input else None)
+        self.weights = (torch.empty(rows, cols, dtype=weight_dtype, device=device)
+                        if owns_input and weight_dtype is not None else None)
+        self.tuples = self.wrows = None
+        # The front's type is the one the reference reaches: it starts as the
+        # fp32 ``torch.full`` and is promoted by the first branch cost, which
+        # carries ``promote(targets, dvals)`` and ``dvals`` is fp32.  Starting
+        # there is value-identical -- the only fp32 values in the front at that
+        # point are the ``inf`` and the ``0.0`` this fill writes, and both are
+        # exact in every wider type.
+        cost_dtype = torch.promote_types(dtype, torch.float32)
+        self.cost_a = torch.empty(cols, states, dtype=cost_dtype, device=device)
+        self.cost_b = torch.empty(cols, states, dtype=cost_dtype, device=device)
+        self.taken = torch.empty(cols, states, dtype=torch.long, device=device)
+        self.cost = None
+        self.end = torch.empty(cols, dtype=torch.long, device=device)
+        self.choice = torch.empty(supers, cols, states, dtype=torch.bool, device=device)
+        self.picked = torch.empty(steps, cols, SUBSET_COUNT,
+                                  dtype=self.point_dtype, device=device)
+        # The fold's argument per stored position: which label ``v`` position
+        # i took, indexed by the accumulated label after it.  Empty at L = 1.
+        self.fold = torch.empty(supers, max(span - 1, 0), cols, SUBSET_COUNT,
+                                dtype=torch.uint8, device=device)
+        self.roll = torch.arange(SUBSET_COUNT, device=device)
+        self.column = torch.arange(cols, device=device)
+        self.anchors = torch.empty(steps, cols, dtype=torch.long, device=device)
+        self.bits = torch.empty(steps, cols, dtype=torch.long, device=device)
+        self.graph = None
+
+    def bind(self, targets, weights):
+        """Point the plan at this call's targets, copying only if it owns them."""
+        if self.targets is None:
+            source_t, source_w = targets, weights
+        else:
+            self.targets.copy_(targets)
+            source_t = self.targets
+            if weights is None:
+                source_w = None
+            else:
+                self.weights.copy_(weights)
+                source_w = self.weights
+        # [steps, arity, cols]: a tuple is ``arity`` CONSECUTIVE ROWS of one
+        # column, because the trellis runs down columns and the k positions of
+        # a code have to share one branch decision.
+        self.tuples = source_t.reshape(self.steps, self.arity, self.cols)
+        self.wrows = (None if source_w is None
+                      else source_w.reshape(self.steps, self.arity, self.cols))
+
+    def run(self):
+        """The exact Viterbi, writing into this plan's tensors."""
+        cols, arity, span = self.cols, self.arity, self.span
+        dvals, subsets, points = self.dvals, self.subsets, self.points
+        prev, subset_of, roll = self.prev, self.subset_of, self.roll
+        tuples, wrows = self.tuples, self.wrows
+        picked, fold, choice = self.picked, self.fold, self.choice
+        cost, spare, taken = self.cost_a, self.cost_b, self.taken
+        cost.fill_(float("inf"))
+        cost[:, 0] = 0.0
+        flat_subsets = subsets.reshape(-1)
+        for sup in range(self.supers):
+            acc = None
+            for offset in range(span):
+                step = sup * span + offset
+                target = tuples[step].t().reshape(cols, 1, 1, arity)   # [cols,1,1,k]
+                # Anticipated-completion metric, in k dimensions: score the
+                # best reachable descendant under squared Euclidean distance.
+                # At k=1 the sum is over one term and this is bit-identical to
+                # the scalar form.
+                sq = (target - dvals.unsqueeze(0)) ** 2                # [cols,A,2^c,k]
+                if wrows is not None:
+                    sq = sq * wrows[step].t().reshape(cols, 1, 1, arity)
+                err = sq.sum(dim=3).amin(dim=2)                        # [cols,A]
+                by_subset = err[:, flat_subsets].reshape(cols, SUBSET_COUNT, points)
+                best, point = by_subset.min(dim=2)                     # [cols, 4]
+                picked[step] = point.to(self.point_dtype)
+                if acc is None:
+                    acc = best
+                    continue
+                terms = torch.stack(
+                    [acc[:, (roll - v) % SUBSET_COUNT] + best[:, v : v + 1]
+                     for v in range(SUBSET_COUNT)],
+                    dim=2,
+                )                                                      # [cols, 4, 4]
+                acc, arg = terms.min(dim=2)
+                # The fold is exact in COST and not in labels.  ``trellis.TCQ``
+                # enumerates the ``4^(L-1)`` label assignments lexicographically
+                # and keeps the first strict minimum; this keeps the first
+                # minimum of each 4x4 step in turn.  Both reach the same
+                # super-symbol cost -- that is what makes the fold a valid
+                # substitute for the enumeration -- but when two assignments
+                # tie they can land on different labels, and hence on different
+                # stored bytes.  Measured: never at ``L = 2`` (exhaustive over
+                # binary error tables, and 6000 random end-to-end trials agree
+                # exactly); at ``L = 3`` about one column in 5000, e.g. labels
+                # ``(2,0,1)`` from the oracle against ``(2,1,0)`` here at
+                # identical cost.  So the two encoders are equal-cost, not
+                # byte-identical, above ``L = 2``.  Making them agree is a
+                # determinism change that rewrites those columns' bytes; it is
+                # written down here rather than taken.
+                fold[sup, offset - 1] = arg.to(torch.uint8)
+
+            branch = torch.stack(
+                [cost[:, prev[side]] + acc[:, subset_of[side]] for side in (0, 1)]
+            )                                                    # [2, cols, states]
+            # ``out=`` rather than a rebinding, so the winner lands in a
+            # tensor this plan owns and a captured graph writes the same
+            # address every replay.  The pair ping-pongs for the same reason a
+            # rebinding would: the next step reads the front the last one
+            # wrote, and nothing reads the one it is about to overwrite.
+            torch.min(branch, dim=0, out=(spare, taken))
+            cost, spare = spare, cost
+            choice[sup] = taken.bool()
+        self.cost = cost
+        end = self.end
+        torch.argmin(cost, dim=1, out=end)                       # [cols]
+
+        anchors, bits, column = self.anchors, self.bits, self.column
+        state = end
+        for sup in range(self.supers - 1, -1, -1):
+            side = choice[sup][column, state].long()             # [cols]
+            label = subset_of[side, state]                       # super-label
+            # ``side`` says which *predecessor* won, which is not the input
+            # bit.  For this code ``next = (bit << m-1) | (state >> 1)``, so
+            # both predecessors of a state share one input bit and it is read
+            # off the state itself.  Emitting ``side`` instead would produce a
+            # stream that replays to different anchors -- the round-trip test
+            # catches it.
+            select = (state >> (self.memory - 1)) & 1
+            labels = [None] * span
+            for offset in range(span - 1, 0, -1):
+                v = fold[sup, offset - 1][column, label].long()
+                labels[offset] = v
+                label = (label - v) % SUBSET_COUNT
+            labels[0] = label
+            for offset in range(span):
+                step = sup * span + offset
+                pt = picked[step][column, labels[offset]].long()
+                anchors[step] = subsets[labels[offset], pt]
+                head = select if offset == 0 else labels[offset]
+                bits[step] = (head << self.shift) | pt
+            state = prev[side, state]
+
+    def capture(self):
+        """Warm on a side stream, then capture ``run`` as one graph.
+
+        Serialised process-wide, and for the reasons ``window_viterbi``'s own
+        capture block records: under CUDA's default ``global`` error mode any
+        CUDA call from another thread while a capture is open faults it, and
+        even ``thread_local`` mode leaves two captures' begin/end bookkeeping
+        to invalidate each other.  The lock is shared with that module so a
+        window capture and a TCQ capture cannot overlap either.  The one call
+        no mode permits while a capture is open anywhere is a device-wide
+        ``torch.cuda.synchronize()``; nothing in this package makes one.
+        """
+        from .window_viterbi import _CAPTURE_LOCK
+
+        with _CAPTURE_LOCK:
+            warm = torch.cuda.Stream()
+            warm.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(warm):
+                self.run()
+            torch.cuda.current_stream().wait_stream(warm)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
+                self.run()
+        self.graph = graph
+
+    def replay(self):
+        if self.graph is None:
+            self.run()
+        else:
+            self.graph.replay()
+
+    def sse(self) -> float:
+        return float(self.cost.gather(1, self.end.unsqueeze(1)).sum())
+
+
+def _tcq_plan(key, *, device, rows, cols, dtype, weight_dtype, forest, code,
+              completion, span):
+    """The persistent plan for one shape, captured once it has earned it."""
+    plans, _ = _tcq_maps()
+    plan = plans.get(key)
+    if plan is not None:
+        plans.move_to_end(key)
+        return plan
+    plan = _TCQPlan(device=device, rows=rows, cols=cols, dtype=dtype,
+                    weight_dtype=weight_dtype, forest=forest, code=code,
+                    completion=completion, span=span, owns_input=True)
+    plans[key] = plan
+    while len(plans) > _TCQ_PLAN_CACHE:
+        plans.popitem(last=False)
+    return plan
+
+
+def tcq_plan_cache_clear() -> None:
+    """Drop this thread's cached plans and their graphs.
+
+    For tests, and for a caller that wants the residency back.  It clears the
+    calling thread's maps only, which is the same scope they are built in.
+    """
+    plans, seen = _tcq_maps()
+    plans.clear()
+    seen.clear()
 
 
 def viterbi_columns(
@@ -266,6 +598,7 @@ def viterbi_columns(
     completion: int,
     span: int = 1,
     weights: "torch.Tensor | None" = None,
+    impl: str = "auto",
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """Exact Viterbi down every column at once.
 
@@ -298,7 +631,19 @@ def viterbi_columns(
     super-symbol and ``[label | point]`` at the others (``R + 1`` bits); at
     ``L = 1`` every position is ``[select | point]`` and this function is
     bit-identical to the per-position encoder it replaces.
+
+    ``impl`` picks the machine, never the answer, exactly as it does on
+    ``viterbi_window``.  ``"reference"`` builds a plan for this call alone and
+    runs its step loop eagerly; ``"graph"`` keeps a plan per shape and replays
+    a captured CUDA graph of the same loop; ``"auto"`` is ``"graph"`` on CUDA
+    once a shape has been asked for ``_TCQ_GRAPH_MIN_CALLS`` times, and
+    ``"reference"`` before that and on CPU.  Both run ``_TCQPlan.run``, so
+    the states, the body field and the ``sse`` float are the same object graph
+    evaluated the same way -- the difference is the launch stream, which is
+    what issue #13 measured and what a graph removes.
     """
+    if impl not in ("auto", "reference", "graph"):
+        raise GrammarError(f"unknown viterbi_columns impl {impl!r}")
     device = targets.device
     rows, cols = targets.shape
     grid = forest.grid
@@ -316,114 +661,52 @@ def viterbi_columns(
             "super-symbols; the multidimensional trellis needs the column "
             "length to be a multiple of its span"
         )
-    supers = steps // span
-    tcq = TCQ(forest, code)
-    states = code.states
-    prev, subset_of = _transition_tables(code, device)
-    dvals = _descendant_values(forest, completion, device)      # [A, 2^c, arity]
-    subsets = _subset_table(tcq, device)                        # [4, P]
-    points = subsets.shape[1]
-    # The traceback stores the winning point index per (step, column, subset).
-    # A byte holds it up to rate 9; above that the index must widen or it wraps
-    # silently -- the same "a code is a nibble" assumption that corrupted the
-    # body plane at rate 9.  Width follows the rate; it is never assumed.
-    point_dtype = torch.uint8 if points <= 256 else torch.int32
 
-    # [steps, arity, cols]: a tuple is ``arity`` CONSECUTIVE ROWS of one
-    # column, because the trellis runs down columns and the k positions of a
-    # code have to share one branch decision.
-    tuples = targets.reshape(steps, arity, cols)
-    wrows = None if weights is None else weights.reshape(steps, arity, cols)
+    weight_dtype = None if weights is None else weights.dtype
+    key = (device, rows, cols, targets.dtype, weight_dtype, forest, code,
+           completion, span)
+    forced = os.environ.get(_TCQ_GRAPH_ENV, "")
+    if impl == "auto":
+        if device.type != "cuda" or forced == "0":
+            impl = "reference"
+        elif forced == "1":
+            impl = "graph"
+        else:
+            _, seen_map = _tcq_maps()
+            seen = seen_map.get(key, 0) + 1
+            seen_map[key] = seen
+            seen_map.move_to_end(key)
+            while len(seen_map) > 64:
+                seen_map.popitem(last=False)
+            impl = "graph" if seen >= _TCQ_GRAPH_MIN_CALLS else "reference"
+    if impl == "graph" and device.type != "cuda":
+        raise GrammarError("the captured TCQ trellis needs a CUDA device")
 
-    cost = torch.full((cols, states), float("inf"), device=device)
-    cost[:, 0] = 0.0
-    choice = torch.zeros(supers, cols, states, dtype=torch.bool, device=device)
-    picked = torch.zeros(steps, cols, SUBSET_COUNT, dtype=point_dtype, device=device)
-    # The fold's argument per stored position: which label ``v`` position i
-    # took, indexed by the accumulated label after it.  Empty at L = 1.
-    fold = torch.zeros(
-        supers, max(span - 1, 0), cols, SUBSET_COUNT, dtype=torch.uint8, device=device
-    )
-    roll = torch.arange(SUBSET_COUNT, device=device)
+    if impl == "reference":
+        plan = _TCQPlan(device=device, rows=rows, cols=cols,
+                        dtype=targets.dtype, weight_dtype=weight_dtype,
+                        forest=forest, code=code, completion=completion,
+                        span=span, owns_input=False)
+        plan.bind(targets, weights)
+        plan.run()
+        return plan.anchors, plan.bits, plan.sse()
 
-    for sup in range(supers):
-        acc = None
-        for offset in range(span):
-            step = sup * span + offset
-            target = tuples[step].t().reshape(cols, 1, 1, arity)     # [cols,1,1,k]
-            # Anticipated-completion metric, in k dimensions: score the best
-            # reachable descendant under squared Euclidean distance.  At k=1
-            # the sum is over one term and this is bit-identical to the
-            # scalar form.
-            sq = (target - dvals.unsqueeze(0)) ** 2                       # [cols,A,2^c,k]
-            if weights is not None:
-                sq = sq * wrows[step].t().reshape(cols, 1, 1, arity)
-            err = sq.sum(dim=3).amin(dim=2)                              # [cols,A]
-            by_subset = err[:, subsets.reshape(-1)].reshape(cols, SUBSET_COUNT, points)
-            best, point = by_subset.min(dim=2)                       # [cols, 4]
-            picked[step] = point.to(point_dtype)
-            if acc is None:
-                acc = best
-                continue
-            terms = torch.stack(
-                [acc[:, (roll - v) % SUBSET_COUNT] + best[:, v : v + 1]
-                 for v in range(SUBSET_COUNT)],
-                dim=2,
-            )                                                        # [cols, 4, 4]
-            acc, arg = terms.min(dim=2)
-            # The fold is exact in COST and not in labels.  ``trellis.TCQ``
-            # enumerates the ``4^(L-1)`` label assignments lexicographically
-            # and keeps the first strict minimum; this keeps the first minimum
-            # of each 4x4 step in turn.  Both reach the same super-symbol cost
-            # -- that is what makes the fold a valid substitute for the
-            # enumeration -- but when two assignments tie they can land on
-            # different labels, and hence on different stored bytes.  Measured:
-            # never at ``L = 2`` (exhaustive over binary error tables, and 6000
-            # random end-to-end trials agree exactly); at ``L = 3`` about one
-            # column in 5000, e.g. labels ``(2,0,1)`` from the oracle against
-            # ``(2,1,0)`` here at identical cost.  So the two encoders are
-            # equal-cost, not byte-identical, above ``L = 2``.  Making them
-            # agree is a determinism change that rewrites those columns' bytes;
-            # it is written down here rather than taken.
-            fold[sup, offset - 1] = arg.to(torch.uint8)
-
-        branch = torch.stack(
-            [cost[:, prev[side]] + acc[:, subset_of[side]] for side in (0, 1)]
-        )                                                        # [2, cols, states]
-        cost, taken = branch.min(dim=0)
-        choice[sup] = taken.bool()
-
-    end = cost.argmin(dim=1)                                     # [cols]
-    sse = float(cost.gather(1, end.unsqueeze(1)).sum())
-
-    anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
-    bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
-    column = torch.arange(cols, device=device)
-    shift = points.bit_length() - 1
-    state = end
-    for sup in range(supers - 1, -1, -1):
-        side = choice[sup][column, state].long()                 # [cols]
-        label = subset_of[side, state]                           # super-label
-        # ``side`` says which *predecessor* won, which is not the input bit.
-        # For this code ``next = (bit << m-1) | (state >> 1)``, so both
-        # predecessors of a state share one input bit and it is read off the
-        # state itself.  Emitting ``side`` instead would produce a stream that
-        # replays to different anchors -- the round-trip test catches it.
-        select = (state >> (code.memory - 1)) & 1
-        labels = [None] * span
-        for offset in range(span - 1, 0, -1):
-            v = fold[sup, offset - 1][column, label].long()
-            labels[offset] = v
-            label = (label - v) % SUBSET_COUNT
-        labels[0] = label
-        for offset in range(span):
-            step = sup * span + offset
-            pt = picked[step][column, labels[offset]].long()
-            anchors[step] = subsets[labels[offset], pt]
-            head = select if offset == 0 else labels[offset]
-            bits[step] = (head << shift) | pt
-        state = prev[side, state]
-    return anchors, bits, sse
+    plan = _tcq_plan(key, device=device, rows=rows, cols=cols,
+                     dtype=targets.dtype, weight_dtype=weight_dtype,
+                     forest=forest, code=code, completion=completion, span=span)
+    plan.bind(targets, weights)
+    if plan.graph is None:
+        try:
+            plan.capture()
+        except Exception:                                   # pragma: no cover
+            # A capture that will not take is a performance loss, never a
+            # wrong answer: the eager loop below is the same ops on the same
+            # tensors.  The plan is dropped so the next call does not retry.
+            _tcq_maps()[0].pop(key, None)
+            plan.run()
+            return plan.anchors.clone(), plan.bits.clone(), plan.sse()
+    plan.replay()
+    return plan.anchors.clone(), plan.bits.clone(), plan.sse()
 
 
 @functools.lru_cache(maxsize=64)
@@ -1082,9 +1365,17 @@ _LUT_LANDING_SINK: "dict | None" = None
 #:              block, which the LUT plane's index does not have.
 #: ``"none"``   the continuous per-block optimum itself.  Not a plane at all.
 #:
-#: Only the first is a wire.  The other two are ceiling reads for issue #50 and
-#: are refused everywhere they could be mistaken for an encoder setting.
+#: Only ``LUT_LANDING_WIRE`` is a wire.  The other two are ceiling reads for
+#: issue #50 and are refused everywhere they could be mistaken for an encoder
+#: setting -- including in a promotion's evidence (issue #85).
 LUT_LANDING_MODES = ("table", "grid", "none")
+
+#: The one mode of :data:`LUT_LANDING_MODES` that is a wire.  Named rather than
+#: taken as "the first entry": a downstream gate has to say *which* landing a
+#: number was taken under (``tessera.control.assert_plane_promotion``, issue
+#: #85), and a rule spelled as a position in a tuple is a rule that moves when
+#: the tuple is reordered.  One rule, one home -- this is the home.
+LUT_LANDING_WIRE = "table"
 
 
 @contextmanager
@@ -1764,7 +2055,7 @@ def encode_unit(
             sub_w = None if weights is None else weights[:, which].contiguous()
             a, b, s_ = viterbi_columns(sub, picked, code, level, span=span, weights=sub_w)
             total += s_
-            blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
+            blocks = _anchor_block_table(picked, device)
             reachable = blocks[:, :: 1 << (depth - level)]
             per_pos = vectors[reachable][a]              # [steps, n, D, arity]
             want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)

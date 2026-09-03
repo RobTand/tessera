@@ -14,12 +14,9 @@ metric. A reader that re-derives from the arms cannot inherit that class of
 bug; a reader that re-implements the *completeness rule* can, and does, which
 is why the rule is imported rather than restated (#97).
 
-Dependency, stated because it is not on this branch: ``pair_grid_audit`` is
-``experiments/pair_grid_audit.py`` from ``muse/ts-93-griddrop``, last touched
-there by ``8b5424a`` ("Read the rungs from args too, and say when a cell is
-missing both ways"); it was added by ``b76a836``. This module owes that
-branch's file and does not carry a copy of it -- one completeness rule, one
-label grammar, one place.
+``pair_grid_audit`` is ``experiments/pair_grid_audit.py``, which the sweep
+stage also calls: one completeness rule and one label grammar, in one place,
+so a writer and a reader cannot come to disagree about which cells exist.
 
 Scope this printer does not know and the caller must state: which grid, which
 axis (tracking vs ratio), how many units, and whether the metric is weight

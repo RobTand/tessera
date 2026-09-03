@@ -274,8 +274,32 @@ depends on dict order.
 
 **Both:**
 
-1. The A side they wire to is `bf16_unquantized`. Neither may dispatch the
-   GEMV inside `TESSERA_FP8`'s `apply()`.
+1. **The published contract must be the executed one** -- that is the rule,
+   and it has three shapes, not the two this section used to list.
+
+   This item read "the A side they wire to is `bf16_unquantized`; neither may
+   dispatch the GEMV inside `TESSERA_FP8`'s `apply()`", and **master does
+   exactly that**: `serving/fp8_route.py:352-356` calls
+   `fp8_gemv.streamed_apply(...)` from `TesseraFp8LinearMethod.apply()`, landed
+   for #10. The code is right and the rule was written too narrowly (#88).
+
+   The rule's *reason* was that dispatching the GEMV inside the FP8 route would
+   silently change the executed activation contract A8 -> A16. `fp8_gemv`
+   sidesteps that reason instead of violating it: the route's own per-token FP8
+   quantiser runs on every path and the GEMV is handed the **dequantised**
+   values (`fp8_gemv.py` docstring, `fp8_route.py:340-344`), so the executed
+   contract stays `fp8_per_token_dynamic` and the census reads the contract
+   that ran. Every E4M3 code is exact in bf16, so that dequant is exact.
+
+   So, as it actually binds:
+
+   - A16 as its own family (`TESSERA_BF16`): fine.
+   - A8 quantise, dequantise, hand the GEMV values, inside `TESSERA_FP8`: fine,
+     and is what ships -- the published contract is still the executed one.
+   - Handing the GEMV **raw** bf16 activations while calling the route
+     `TESSERA_FP8`: **this** is the thing that must not happen, because then
+     the declared contract and the executed one disagree, which is what
+     principle 14 refuses.
 2. **#52 first.** `window_gemv` decides on the token dim in Python
    (`kernel_window_gemv.py:516` `_m_tile(M)`, `:522` the pad, `:536` `out[:M]`)
    and its 51 tests contain no `torch.compile` arm. Every route here is served

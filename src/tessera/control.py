@@ -27,8 +27,10 @@ This module is that control, promoted out of the receipt's drivers:
   validated-surrogate selection (``docs/ARCHITECTURE.md`` §4.10, tessera#2).
 * :func:`assert_plane_promotion` refuses a per-plane promotion its evidence
   does not carry -- a geomean without per-unit wins, a served number for an
-  arm other than the one promoted -- under the receipt's GLM gate, which it
-  restates without moving (tessera#65).
+  arm other than the one promoted, a screen taken off the wire -- under the
+  receipt's GLM gate, which it restates without moving (tessera#65, #85).
+* :func:`landing_ordering` puts the on-wire arm ordering beside the
+  landing-disabled one and says, as a value, whether they agree (tessera#85).
 
 **What is held fixed.**  The control varies *only the rung*.  A unit the
 candidate plans as BF16 stays BF16 in the control, and the control uses the
@@ -69,6 +71,7 @@ from typing import Iterable, Mapping, Sequence
 
 from .alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, PayloadGrid, tuple_grid
 from .calculator import terminal_rate
+from .encode import LUT_LANDING_MODES, LUT_LANDING_WIRE
 from .errors import (
     ControlNotByteMatchedError,
     GrammarError,
@@ -87,7 +90,9 @@ __all__ = [
     "SELECTION_SCHEMA",
     "PROMOTION_SCHEMA",
     "GLM_GATE",
+    "LANDING_SCHEMA",
     "ByteMatch",
+    "LandingOrdering",
     "PlannedUnit",
     "PlanePromotion",
     "RateMenu",
@@ -98,6 +103,7 @@ __all__ = [
     "bits_from_manifest",
     "control_block",
     "grid_for_name",
+    "landing_ordering",
     "plan_wire_bits",
     "promotion_block",
     "rate_menu",
@@ -908,6 +914,198 @@ def selection_requirement(units: Iterable[PlannedUnit]) -> dict:
     }
 
 
+LANDING_SCHEMA = "tessera.landing_ordering.v1"
+
+_LANDING_REASON = (
+    "a LUT-plane arm score is a joint measurement of the refit and the "
+    "sixteen-entry landing, and the landing reorders the arms: on the wire "
+    "Gauss-Seidel wins and Jacobi is third, with the landing removed Jacobi is "
+    "first (tessera#85, six dense Qwen3-0.6B units, E2M1x2 q256=896, LDLQ "
+    "1.0/32, held-out `out` geomeans).  So an ordering quoted from one landing "
+    "is not an ordering of the refit objectives, and this block carries both "
+    "or says which one is missing."
+)
+
+
+@dataclass(frozen=True)
+class LandingOrdering:
+    """Two arm orderings of one screen, and whether they agree -- as a value.
+
+    The LUT plane's per-block scales land on sixteen E4M3 entries, so every
+    arm score this repo has taken on that plane measures the refit **and**
+    the landing.  Issue #85 measured what that costs the comparison: the two
+    orderings differ, so "which refit objective is best" has two answers and
+    the receipts quoted one of them as if it were the other.
+
+    This is the pair, rendered so a reader and a test see the same object:
+    :attr:`arms` in on-wire order, both score columns, and the agreement
+    read off them.  Lower is better in both columns -- these are errors or
+    error ratios -- and the two columns are never compared to each other,
+    only ranked within themselves, because one of them is not a wire and its
+    absolute level means nothing a decision may read.
+
+    **Disagreement is recorded here and refused nowhere.**  What ships is the
+    landed wire, so the on-wire ordering is the correct measurement of the
+    shipped object rather than a confound in it; the landing-disabled column
+    is the ceiling a *different* landing would compete for (issue #50), and
+    no such landing exists.  The argument is in
+    :func:`assert_plane_promotion`, whose fifth leg is the one that does
+    refuse: it demands the screen be taken on the wire at all.
+    """
+
+    arms: "tuple[str, ...]"
+    on_wire: "tuple[float, ...]"
+    landing_disabled: "tuple[float, ...]"
+    wire_landing: str
+    disabled_landing: str
+    where: str
+
+    @staticmethod
+    def _rank(arms, scores) -> "tuple[str, ...]":
+        return tuple(name for _, name in sorted(zip(scores, arms)))
+
+    @property
+    def wire_order(self) -> "tuple[str, ...]":
+        """Arms best-first under the wire's landing, ties broken by name."""
+        return self._rank(self.arms, self.on_wire)
+
+    @property
+    def disabled_order(self) -> "tuple[str, ...]":
+        """Arms best-first with the landing removed, ties broken by name."""
+        return self._rank(self.arms, self.landing_disabled)
+
+    @staticmethod
+    def _best(arms, scores) -> "tuple[str, ...]":
+        floor = min(scores)
+        return tuple(sorted(a for a, v in zip(arms, scores) if v == floor))
+
+    @property
+    def wire_best(self) -> "tuple[str, ...]":
+        return self._best(self.arms, self.on_wire)
+
+    @property
+    def disabled_best(self) -> "tuple[str, ...]":
+        return self._best(self.arms, self.landing_disabled)
+
+    @property
+    def same_best(self) -> bool:
+        """Do the two columns choose the same winner (or the same tied set)?"""
+        return self.wire_best == self.disabled_best
+
+    @property
+    def inversions(self) -> "tuple[tuple[str, str], ...]":
+        """Every arm pair the two columns order differently, ``(a, b)`` sorted.
+
+        A pair is an inversion when ``sign(wire_a - wire_b)`` differs from
+        ``sign(disabled_a - disabled_b)``, with an exact tie its own sign.  No
+        tolerance: "disagree by more than x%" would be a threshold from
+        intuition (AGENTS.md rule 2), and a tie that is not a tie in both
+        columns is a genuine difference of order, not noise to be absorbed.
+        """
+        wire = dict(zip(self.arms, self.on_wire))
+        free = dict(zip(self.arms, self.landing_disabled))
+        out = []
+        for i, a in enumerate(self.arms):
+            for b in self.arms[i + 1:]:
+                lo, hi = (a, b) if a <= b else (b, a)
+                sw = (wire[lo] > wire[hi]) - (wire[lo] < wire[hi])
+                sf = (free[lo] > free[hi]) - (free[lo] < free[hi])
+                if sw != sf:
+                    out.append((lo, hi))
+        return tuple(sorted(out))
+
+    @property
+    def same_order(self) -> bool:
+        return not self.inversions
+
+    def to_json(self) -> dict:
+        return {
+            "schema": LANDING_SCHEMA,
+            "wire_landing": self.wire_landing,
+            "disabled_landing": self.disabled_landing,
+            "arms": list(self.arms),
+            "on_wire": [float(v) for v in self.on_wire],
+            "landing_disabled": [float(v) for v in self.landing_disabled],
+            "wire_order": list(self.wire_order),
+            "disabled_order": list(self.disabled_order),
+            "wire_best": list(self.wire_best),
+            "disabled_best": list(self.disabled_best),
+            "same_best": self.same_best,
+            "same_order": self.same_order,
+            "inversions": [list(pair) for pair in self.inversions],
+            "where": self.where,
+            "reason": _LANDING_REASON,
+        }
+
+
+def landing_ordering(
+    on_wire: "Mapping[str, float]",
+    landing_disabled: "Mapping[str, float]",
+    *,
+    wire_landing: str = LUT_LANDING_WIRE,
+    disabled_landing: str = "none",
+    where: str = "the LUT-plane arm screen",
+) -> LandingOrdering:
+    """Rank the same arms under both landings and say whether the orders agree.
+
+    Both mappings are ``arm -> score``, lower better, over the **same** arm
+    set: a column missing an arm is a pair that was never taken, and it
+    refuses rather than ranking the arms it happens to have.  Two arms is the
+    minimum -- one arm has no ordering to invert.
+
+    The landing-disabled column costs one extra encode per arm
+    (``lut_landing("none")``, ``experiments/lut_landing_ceiling.py``).  It is
+    **not** readable off ``refit_diagnostics``: that instrument's
+    ``continuous`` leg is a within-call quantity by its own contract -- for a
+    1-D metric it records the separable parabola, equal to the weighted error
+    only up to a constant -- and the arms being ranked here are 1-D
+    (``h^1.0``) against full-H (Jacobi, Gauss-Seidel).  So the diagnostics
+    give the *size* of the landing leg within one arm and cannot give the
+    ordering across arms; issue #85's "reporting change, not a new
+    measurement" holds for the former and not for the latter.
+    """
+    wire = {str(k): float(v) for k, v in dict(on_wire).items()}
+    free = {str(k): float(v) for k, v in dict(landing_disabled).items()}
+    if set(wire) != set(free):
+        missing = sorted(set(wire) ^ set(free))
+        raise TesseraError(
+            f"{where}: the two landings must rank the same arms; "
+            f"{missing!r} appears in one column only, and a column ranked "
+            "over a different arm set is not the same ordering"
+        )
+    if len(wire) < 2:
+        raise TesseraError(
+            f"{where}: an ordering needs at least two arms, got {sorted(wire)!r}"
+        )
+    for label, column in (("on_wire", wire), ("landing_disabled", free)):
+        bad = {k: v for k, v in column.items()
+               if not math.isfinite(v) or v <= 0}
+        if bad:
+            raise TesseraError(
+                f"{where}: {label} scores are positive finite errors, got {bad!r}"
+            )
+    if wire_landing != LUT_LANDING_WIRE:
+        raise GrammarError(
+            f"{where}: the on-wire column must be the wire "
+            f"({LUT_LANDING_WIRE!r}), got {wire_landing!r}"
+        )
+    if disabled_landing not in LUT_LANDING_MODES or disabled_landing == LUT_LANDING_WIRE:
+        raise GrammarError(
+            f"{where}: the landing-disabled column must be a non-wire landing, "
+            f"one of {[m for m in LUT_LANDING_MODES if m != LUT_LANDING_WIRE]}, "
+            f"got {disabled_landing!r}"
+        )
+    arms = tuple(sorted(wire, key=lambda a: (wire[a], a)))
+    return LandingOrdering(
+        arms=arms,
+        on_wire=tuple(wire[a] for a in arms),
+        landing_disabled=tuple(free[a] for a in arms),
+        wire_landing=wire_landing,
+        disabled_landing=disabled_landing,
+        where=where,
+    )
+
+
 PROMOTION_SCHEMA = "tessera.plane_promotion.v1"
 
 #: The coordinator's cross-check on a LUT-plane promotion, restated here and
@@ -936,7 +1134,11 @@ class PlanePromotion:
     below one is a unit the candidate wins.  The geomean is derived from
     these, never presented beside them, so a geomean cannot arrive without
     the units that compose it.  ``served_arm`` names the arm the served KL
-    was measured on -- ``None`` when nothing was served.
+    was measured on -- ``None`` when nothing was served.  ``landing`` names
+    the landing the per-unit ratios were taken under; only the wire promotes
+    (tessera#85), so on an accepted promotion it is always
+    :data:`tessera.encode.LUT_LANDING_WIRE` -- stamped rather than implied,
+    because the number it certifies outlives the run that produced it.
     """
 
     candidate: str
@@ -948,6 +1150,7 @@ class PlanePromotion:
     glm_bar: float
     served_kl: "float | None"
     served_bar: float
+    landing: str
     where: str
 
     def to_json(self) -> dict:
@@ -955,6 +1158,7 @@ class PlanePromotion:
             "schema": PROMOTION_SCHEMA,
             "candidate": self.candidate,
             "served_arm": self.served_arm,
+            "landing": self.landing,
             "units": len(self.unit_ratios),
             "unit_wins": int(self.wins),
             "unit_ratios": [float(r) for r in self.unit_ratios],
@@ -976,11 +1180,12 @@ def assert_plane_promotion(
     served_kl: "float | None",
     served_bar: float,
     glm_bar: float = GLM_GATE,
+    landing: str = LUT_LANDING_WIRE,
     where: str = "the per-plane promotion",
 ) -> PlanePromotion:
     """Refuse a per-plane promotion its evidence does not carry.
 
-    Four legs, in the order the receipt learned them.  The GLM cross-check
+    Five legs, in the order the receipt learned them.  The GLM cross-check
     is first and exactly as written: above ``glm_bar`` refuses, whatever the
     screen says.  Then the screen itself: the geomean must beat the
     incumbent, and -- never on the geomean alone -- the candidate must win a
@@ -988,7 +1193,40 @@ def assert_plane_promotion(
     promotion stands on: the served KL must measure the promoted arm, and it
     must beat its bar.  A served number for a different arm is not evidence
     for the promoted one, and no served number at all is a screen, not a
-    result.
+    result.  Then, last learned and first checked, the ``landing``: the
+    per-unit ratios must have been taken on the wire.
+
+    **The fifth leg (tessera#85), and the leg it is deliberately not.**  On
+    the LUT plane a per-block scale lands on one of sixteen E4M3 entries, and
+    ``tessera.encode.lut_landing`` can remove that landing to read issue
+    #50's ceiling.  The arms reorder when it does: on the wire Gauss-Seidel
+    wins and Jacobi is third; with the landing removed Jacobi is first.  Two
+    consequences, and only one of them is a refusal.
+
+    * *A screen taken off the wire is refused.*  The landing-disabled column
+      holds the most attractive numbers anyone has measured on this plane
+      (0.7057 against the wire's 1.0000), and until now the gate had no way
+      to tell them from wire numbers -- it read a ratio and could not ask
+      what it was a ratio of.  ``landing`` is that value.  It is
+      caller-asserted, exactly as ``served_arm`` is, and for the same reason
+      it is knowable: non-wire ratios can only be produced inside a
+      ``lut_landing`` context, whose sink already reports
+      ``serialisable=False``.  The default is the wire because that is the
+      state every encode runs in.
+    * *A disagreement between the two orderings is recorded and not refused*
+      (:func:`landing_ordering`).  What ships is the landed wire, so the
+      on-wire ordering is the correct measurement of the shipped object
+      rather than a confound in it: "Gauss-Seidel plus this landing beats
+      Jacobi plus this landing" is true, and it is the sentence a default
+      selection needs.  What #85 corrects is the *attribution* -- that
+      sentence was written as "Gauss-Seidel is the better refit" -- and an
+      attribution error is fixed by reporting the pair, not by blocking a
+      promotion.  Refusing on the disagreement would also pin one
+      measurement (one wire, one ``(sigma, block)``, six weight-space Qwen
+      units, no serve) as a standing rule about the plane, which is the
+      roster-not-rule failure AGENTS.md rule 3 names.  The disagreement is a
+      **re-run trigger** for the day a better landing lands, and #50 is where
+      that is owed.
 
     ``served_bar`` has no default on purpose.  It is *the incumbent's own
     served KL at matched bytes* -- the same quantity ``unit_ratios`` is a
@@ -1014,6 +1252,19 @@ def assert_plane_promotion(
         raise TesseraError(
             f"{where}: a per-unit ratio is a positive finite error ratio, "
             f"got {[float(r) for r in unit_ratios]!r}"
+        )
+    if landing not in LUT_LANDING_MODES:
+        raise GrammarError(
+            f"{where}: unknown landing {landing!r}; one of "
+            f"{list(LUT_LANDING_MODES)} (tessera.encode.lut_landing)"
+        )
+    if landing != LUT_LANDING_WIRE:
+        raise PromotionRefusedError(
+            f"{where}: the per-unit ratios were taken at landing "
+            f"{landing!r}, which is not a wire -- a ceiling read is the most "
+            "any landing could return, not a number this one reaches, and it "
+            f"reorders the arms (tessera#85).  Only {LUT_LANDING_WIRE!r} "
+            "promotes"
         )
     glm_ratio, served_bar, glm_bar = float(glm_ratio), float(served_bar), float(glm_bar)
     if served_kl is not None:
@@ -1062,6 +1313,7 @@ def assert_plane_promotion(
         glm_bar=glm_bar,
         served_kl=served_kl,
         served_bar=served_bar,
+        landing=landing,
         where=where,
     )
 
@@ -1082,7 +1334,8 @@ def promotion_block(promotion: PlanePromotion) -> dict:
             f"{promotion.geomean:.4g}x, GLM {promotion.glm_ratio:.4g}x "
             f"against the {promotion.glm_bar:.4g}x gate, served "
             f"{promotion.served_kl:.4g} against {promotion.served_bar:.4g} "
-            f"on the promoted arm"
+            f"on the promoted arm, screened at landing "
+            f"{promotion.landing!r} (the wire)"
         ),
     }
     return block

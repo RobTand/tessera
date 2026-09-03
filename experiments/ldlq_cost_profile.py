@@ -1,4 +1,10 @@
-"""Where the H-aware encode's 9.2x goes -- profiler evidence for the cost.
+"""Where the H-aware encode's cost goes -- profiler evidence for the factor.
+
+The 9.2x this file was written for is retracted; issue #13's controlled
+matched pair reads 18.6-19.2x on the pre-change encoder and 5.27x after it.
+Superseded as a driver by ``ldlq_hcost_matched_pair.py``, which runs both arms
+in one process and sweeps the graph lever; kept because its per-arm profile
+shape is the same and the numbers it produced are cited in the issue.
 
 The receipt claims LDLQ's cost on the TCQ body is per-call overhead rather than
 work: the pass splits a row into ``cols/block`` sequential segments and calls
