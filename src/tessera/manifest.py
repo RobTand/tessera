@@ -243,6 +243,32 @@ class BodyKind(IntEnum):
 WINDOW_BITS_MAX = 20
 
 
+#: The wire writes a global scale as an exact ``Fraction`` through
+#: ``canonical.Writer.ratio`` -- a varint numerator and a varint denominator --
+#: so both terms must fit the codec's unsigned domain.  This is NOT the same
+#: constraint as "exactly representable as a float": ``Fraction(3.7e-5)`` is
+#: float-exact and has a 68-bit denominator, so it passes that check and then
+#: fails inside the codec with a 21-digit integer and no mention of a scale
+#: (#33).  Refuse it here, where the field has a name.
+_WIRE_RATIO_MAX = (1 << 64) - 1
+
+
+def _require_wire_ratio(field: str, value: Fraction) -> None:
+    if value.numerator <= _WIRE_RATIO_MAX and value.denominator <= _WIRE_RATIO_MAX:
+        return
+    raise ManifestError(
+        f"the {field} {float(value)!r} is not writable to the wire: it encodes "
+        f"as the exact ratio {value.numerator}/{value.denominator}, whose "
+        f"{'numerator' if value.numerator > _WIRE_RATIO_MAX else 'denominator'} "
+        f"needs {max(value.numerator, value.denominator).bit_length()} bits and "
+        "the canonical codec's varints hold 64.  A scale reaches this state by "
+        "being a float that is not a dyadic rational of modest denominator -- "
+        "the shipped planes snap the global to a power of two, which encodes in "
+        "a handful of bytes.  Snap it, or carry the residue in the per-row or "
+        "per-entry scale instead of the global."
+    )
+
+
 @dataclass(frozen=True)
 class ScalePlane:
     """The scale plane's kind and, for a LUT plane, its table and global.
@@ -270,6 +296,7 @@ class ScalePlane:
                 raise ManifestError("the CHANNEL global scale must be positive")
             if Fraction(float(self.global_scale)) != self.global_scale:
                 raise ManifestError("the CHANNEL global scale must be exactly representable as a float")
+            _require_wire_ratio("CHANNEL global scale", self.global_scale)
             return
         if not 2 <= len(self.table) <= 16:
             raise ManifestError(
@@ -293,6 +320,7 @@ class ScalePlane:
             raise ManifestError(
                 "the LUT global scale must be exactly representable as a float"
             )
+        _require_wire_ratio("LUT global scale", self.global_scale)
 
     @classmethod
     def s6b(cls) -> "ScalePlane":

@@ -300,3 +300,37 @@ def test_fused_replay_equals_the_eager_path_bit_for_bit(memory):
         fused = replay_body(bits, forest, code)
         assert torch.equal(eager, fused)
     _fused_replay.cache_clear()
+
+
+def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
+    """A scale the codec cannot write is refused by the plane, not by the codec.
+
+    ``ScalePlane`` already refuses a global scale that is not exactly
+    representable as a float.  That is a weaker condition than the wire's:
+    ``Fraction(3.7e-5)`` IS float-exact and has a 68-bit denominator, so it
+    passed construction and then failed deep inside ``canonical.Writer.ratio``
+    with ``value exceeds 64-bit domain: 147573952589676412928`` -- a codec error
+    naming a 21-digit integer, with no mention of a scale, a plane, or a unit.
+    The first person to hit it reads that and looks in the codec (#33).
+
+    Dyadic rationals of modest denominator -- what every shipped plane snaps to
+    -- stay legal, including ones that are not powers of two.
+    """
+    from fractions import Fraction
+
+    from tessera.errors import ManifestError
+    from tessera.manifest import ScalePlane
+
+    for good in (2.0**-10, 2.0**-12, 0.75, 1.0, 2.0**20):
+        assert ScalePlane.channel(good).global_scale == Fraction(good)
+        assert ScalePlane.lut(bytes([0x30, 0x38]), good).global_scale == Fraction(good)
+
+    for maker, field in ((lambda g: ScalePlane.channel(g), "CHANNEL"),
+                         (lambda g: ScalePlane.lut(bytes([0x30, 0x38]), g), "LUT")):
+        with pytest.raises(ManifestError) as excinfo:
+            maker(3.7e-5)
+        message = str(excinfo.value)
+        # The three things the codec's message could not say.
+        assert f"{field} global scale" in message
+        assert "3.7e-05" in message
+        assert "denominator" in message
