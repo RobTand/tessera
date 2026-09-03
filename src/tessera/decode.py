@@ -24,7 +24,7 @@ import torch
 from .alphabet import AnchorForest, PayloadGrid
 from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
-from .grammar import superblock_count
+from .grammar import require_column_groups, superblock_count
 from .manifest import BodyKind, ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
@@ -567,6 +567,14 @@ def materialize_nvfp4(
     rows, cols = codes.shape
     if cols % 2:
         raise GrammarError(f"{cols} columns cannot pack 2 nibbles to a byte")
+    # One E4M3 per ``half`` columns: without a whole number of groups the
+    # scale plane has ``rows * ceil(cols/half)`` elements while the NVFP4
+    # layout wants ``rows * (cols // half)``, and the reshape below dies as a
+    # bare RuntimeError.  Refuse by name instead, through the one place the
+    # rule is written (``grammar.require_column_groups``) rather than a copy
+    # of its words -- the kernel lane refuses the same widths from the same
+    # function.
+    require_column_groups(cols, half)
     low = codes[:, 0::2].to(torch.uint8)
     high = codes[:, 1::2].to(torch.uint8)
     packed = (low & 0xF) | ((high & 0xF) << 4)

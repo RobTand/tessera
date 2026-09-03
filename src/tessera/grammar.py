@@ -40,6 +40,7 @@ __all__ = [
     "bresenham_rate_schedule",
     "validate_rate_schedule",
     "superblock_quota_ok",
+    "require_column_groups",
     "superblock_count",
     "superblock_widths",
     "release_quota",
@@ -307,6 +308,34 @@ def validate_rate_schedule(
         raise GrammarError(
             f"inexact quota: schedule sums to {total} bits, "
             f"root {root} over {len(rates)} columns requires {exact}"
+        )
+
+
+def require_column_groups(cols: int, half: int) -> None:
+    """``cols`` must be a whole number of ``half``-sized scale groups.
+
+    The block scale plane is ``[cols // half, rows]``, so the remainder has no
+    group of its own: a GEMV walking ``cols // half`` groups never reaches
+    those columns, and the GEMM, which indexes by ``k // half``, reaches one
+    group past the plane.  Neither raises on its own.
+
+    This lives here, not beside the kernel that first needed it, because it is
+    a fact about the **wire** and every stage that touches the wire owes it:
+    the writer (``unit_artifact.build_unit_artifact``), the materialiser
+    (``decode.materialize_nvfp4``) and the kernel lane all refuse the same
+    widths with the same words, because there is one rule and one place it is
+    written (RobTand/tessera#56).
+
+    A ``CHANNEL`` plane is exempt by construction, not by tolerance: its scale
+    is one word per output row and there is no column group to be whole, so
+    the caller checks the plane kind before calling this.
+    """
+    if half <= 0 or cols % half:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {half}-groups; the scale "
+            "plane has no group for the remainder, so the last "
+            f"{cols % half if half > 0 else cols} columns would leave the dot "
+            "product (GEMV) or index one group past the plane (GEMM)"
         )
 
 

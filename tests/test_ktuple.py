@@ -353,7 +353,12 @@ def test_lloyd_max_beats_e2m1_as_a_scalar_quantiser():
 # --------------------------------------------------------------------------
 
 
-def _arity2_unit(rows=16, cols=8, rate=7):
+def _arity2_unit(rows=16, cols=16, rate=7):
+    # cols=16 is the smallest writable width: one 16-column scale group.
+    # The writer (issue #56) refuses a width that is not a whole number of
+    # groups, so these wire tests run at the boundary rather than below it;
+    # every property they pin -- round-trip identity, weight-row geometry,
+    # fail-closed reads -- is width-independent.
     device = _device()
     grid = tuple_grid(E2M1_GRID, 2)
     forests = {rate: build_forest(rate, grid=grid)}
@@ -397,11 +402,11 @@ def test_arity2_geometry_declares_weight_rows_not_trellis_steps():
     from tessera.footprint import terminal_payload_bpp
     from tessera.unit_artifact import build_unit_artifact
 
-    _weights, unit, forests, _grid = _arity2_unit(rows=16, cols=8)
-    assert unit.body_bits.shape == (8, 8)          # 16 rows / arity 2
+    _weights, unit, forests, _grid = _arity2_unit(rows=16, cols=16)
+    assert unit.body_bits.shape == (8, 16)          # 16 rows / arity 2
     manifest, _region, _blob = build_unit_artifact(unit, "u0", forests, q256=7 * 256)
     assert manifest.geometry.rows == 16
-    assert manifest.geometry.quantizable_params == 16 * 8
+    assert manifest.geometry.quantizable_params == 16 * 16
 
     # bpp needs a unit big enough for the body to dominate: the ALPHABET and
     # DESCENDANT planes are 256 bytes each *per unit* regardless of size, which
