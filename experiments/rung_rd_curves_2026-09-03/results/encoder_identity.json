@@ -1,0 +1,260 @@
+{
+  "rows": [
+    {
+      "role": "mlp.down_proj",
+      "rung": 493,
+      "payload_bytes": 775680,
+      "blob_mine": 776413,
+      "blob_pq": 776398,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.down_proj",
+      "rung": 749,
+      "payload_bytes": 1168896,
+      "blob_mine": 1169631,
+      "blob_pq": 1169616,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.down_proj",
+      "rung": 909,
+      "payload_bytes": 1414656,
+      "blob_mine": 1415391,
+      "blob_pq": 1415376,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.gate_proj",
+      "rung": 1107,
+      "payload_bytes": 1722880,
+      "blob_mine": 1723549,
+      "blob_pq": 1723535,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.gate_proj",
+      "rung": 1384,
+      "payload_bytes": 2148352,
+      "blob_mine": 2149022,
+      "blob_pq": 2149008,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.up_proj",
+      "rung": 1107,
+      "payload_bytes": 1722880,
+      "blob_mine": 1723547,
+      "blob_pq": 1723535,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "mlp.up_proj",
+      "rung": 1384,
+      "payload_bytes": 2148352,
+      "blob_mine": 2149020,
+      "blob_pq": 2149008,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.k_proj",
+      "rung": 1083,
+      "payload_bytes": 572928,
+      "blob_mine": 573594,
+      "blob_pq": 573577,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.k_proj",
+      "rung": 1366,
+      "payload_bytes": 717824,
+      "blob_mine": 718490,
+      "blob_pq": 718473,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.o_proj",
+      "rung": 1217,
+      "payload_bytes": 1264640,
+      "blob_mine": 1265343,
+      "blob_pq": 1265326,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.o_proj",
+      "rung": 785,
+      "payload_bytes": 822272,
+      "blob_mine": 822974,
+      "blob_pq": 822956,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.o_proj",
+      "rung": 934,
+      "payload_bytes": 974848,
+      "blob_mine": 975549,
+      "blob_pq": 975531,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.q_proj",
+      "rung": 1083,
+      "payload_bytes": 1129472,
+      "blob_mine": 1130144,
+      "blob_pq": 1130127,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.q_proj",
+      "rung": 1366,
+      "payload_bytes": 1419264,
+      "blob_mine": 1419936,
+      "blob_pq": 1419919,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.q_proj",
+      "rung": 814,
+      "payload_bytes": 854016,
+      "blob_mine": 854683,
+      "blob_pq": 854665,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.v_proj",
+      "rung": 1083,
+      "payload_bytes": 572928,
+      "blob_mine": 573594,
+      "blob_pq": 573577,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    },
+    {
+      "role": "self_attn.v_proj",
+      "rung": 1366,
+      "payload_bytes": 717824,
+      "blob_mine": 718490,
+      "blob_pq": 718473,
+      "blob_bytes_equal": false,
+      "planes_equal": true,
+      "decoded_tile_equal": true,
+      "fields": [
+        "body_bits",
+        "scale_global",
+        "scale_rows"
+      ]
+    }
+  ],
+  "identical": true
+}
