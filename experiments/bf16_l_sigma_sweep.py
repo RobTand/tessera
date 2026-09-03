@@ -494,6 +494,19 @@ def stage_glm_l(a) -> None:
             with safe_open(f"{GLM_SRC}/{index[name]}", framework="pt") as f:
                 w = f.get_tensor(name).contiguous().cuda().float()
             tname = f"L{layer}.{proj}"
+            # The captured blob is the experts' INPUT, so it feeds the
+            # projections that read the hidden dim and no others.  Naming
+            # ``down_proj`` used to run a whole layer's worth of arms and then
+            # die inside the matmul; refuse it here, where the message can say
+            # which activations exist rather than which shapes disagreed.
+            if w.shape[1] != x.shape[1]:
+                raise SystemExit(
+                    f"{tname}: this stage feeds the experts' input activations "
+                    f"({x.shape[1]} wide), and {proj} reads {w.shape[1]}. Only "
+                    "projections on the hidden dim (gate_proj, up_proj) are "
+                    "expressible from this capture; down_proj would need the "
+                    "intermediate activations, which are not captured."
+                )
             y = x @ w.T
             ny = y.norm()
             res: dict = {"rows": w.shape[0], "cols": w.shape[1]}
