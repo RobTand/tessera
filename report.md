@@ -100,11 +100,17 @@ flag,** which is why the label mattered:
 - Under the default compiled backend, `custom_ops` resolves to `["none"]`
   (`config/vllm.py:1392-1399`), so `is_custom_op_enabled("silu_and_mul")` is
   False.
-- `+quant_fp8` is appended only when `has_blocked_weights()`
-  (`config/vllm.py:1368-1375`), which tests for `QuantizationStrategy.BLOCK`
+- `+quant_fp8` is appended only when `has_blocked_weights()`. There are **two**
+  append sites, `config/vllm.py:1368-1375` and `:1803-1810`, and I checked both
+  — I had read only the first, and one unguarded site would have made
+  `enable_act_fusion` True on both arms and this whole paragraph false. They are
+  guarded by the same call, which tests for `QuantizationStrategy.BLOCK`
   (`compressed_tensors.py:969-977`). The groups these exporters write declare
   `"strategy": "tensor_group"` (NVFP4, `export_stock_compressed.py:69,75`) and
   `"strategy": "channel"` (FP8, `:82`). Neither is BLOCK.
+- There is no default append of `+silu_and_mul` either: over `config/*.py` and
+  `platforms/*.py` the name occurs only at the `is_custom_op_enabled` read
+  itself (`config/vllm.py:141`).
 
 So both other disjuncts are False and the format string decides the flag.
 
@@ -272,8 +278,10 @@ Both say why they were filed rather than fixed.
 - **#98** — the stray `63`. Filed under the old brief, then **fixed** on this
   branch and the issue updated to say so.
 
-Also commented on **#92** with the two corrections above (the `fuse_attn_quant`
-overstatement, and `:891` being the stock twin rather than a plugin config).
+Also commented on **#92** (`#issuecomment-5533653241`) with the settled runtime
+attestation — the `hasattr` control, the GPU-visible reading, the op call on
+sm121 — and the two corrections above (the `fuse_attn_quant` overstatement, and
+`:891` being the stock twin rather than a plugin config).
 
 ## Artifacts on disk
 
