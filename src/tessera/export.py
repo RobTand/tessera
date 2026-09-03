@@ -21,9 +21,13 @@ it is written.  The surrogate that priced the Linear, the KL that validated it,
 and the bytes that ship are then the same tensor by construction rather than by
 three code paths agreeing.
 
-**The artifact declares itself unbacked** (principle 9).  No serving runtime
-decodes this container today.  ``route_status`` says so in a field a gate can
-read, so nothing downstream can mistake "exportable" for "servable".
+**The artifact declares itself unbacked** (principle 9).  This library path
+writes ``route_status: "unbacked"``: it runs no serving-gate check, so nothing
+downstream can mistake "exportable" for "servable".  Servable wires are
+decided at the serving boundary by ``tessera.serving.scheme``
+(``refuse_unserveable_wire`` over the packaged ``runtime_contract.json``),
+which the serving exporter applies before encoding; the runtime that decodes
+these bytes ships in this package as ``tessera.serving`` (contract v7).
 """
 from __future__ import annotations
 

@@ -456,7 +456,7 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 
 | Plane | Element | Bits |
 |---|---|---|
-| ALPHABET / DESCENDANT | grid code | 8, or 16 on a grid wider than a byte (§1e) |
+| ALPHABET / DESCENDANT | grid code | 8 (byte count; a two-byte grid code is two elements -- §1e) |
 | BODY | bit | 1 (count = Σ_col R·rows) |
 | SCALE_BASE | 32-weight group | 8 (E8M0) |
 | COMPLETION | bit | 1 (count = Σ_col c·rows) |
@@ -597,9 +597,16 @@ Census: 2,826 legal-canonical · 966 legal-non-canonical · 61,744 illegal.
 A change to either means the legality predicate moved, which is a reviewed
 schema change.
 
-## 7. Deliberately absent
+## 7. Deliberately absent at the 1a/1b scope (historical)
 
-No encoder (arm 2's minimal measurement encoder is the first gated ask), no
-trellis decoder (Gridbook's, gated behind arm 4b), no rate-1/rate-2 alphabet
-convention (build item 2, explicitly owed), no menu, DP, export, or serving
-wiring.
+At the 1a/1b gate the package held the schema, the bytes-only parser, the
+footprint accountant, and the item-11 calculator only. Absent at that time,
+gated by the document rather than omitted by oversight: the encoder (arm 2's
+minimal measurement encoder was the first gated ask), the trellis decoder
+(which lived outside this package then, gated behind arm 4b), the rate-1/rate-2
+alphabet convention (build item 2, explicitly owed), and menu, DP, export, and
+serving wiring (§16: nothing preceded 1b passing). The tree has since grown
+past that scope: the encoder (`src/tessera/encode.py`), the decoder
+(`src/tessera/decode.py`), checkpoint export (`src/tessera/export.py`), and
+the self-housed serving plugin (`src/tessera/serving/`, contract v7) are all
+in this package.
