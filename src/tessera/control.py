@@ -13,6 +13,9 @@ This module is that control, promoted out of the receipt's drivers:
 
 * :func:`unit_wire_bits` prices one planned unit through
   :func:`tessera.calculator.terminal_rate`, the wire's own accountant;
+* :func:`rate_menu` prices *every* rung at one shape and says which of them a
+  higher rung already matches or beats on bytes -- the rungs an allocator must
+  not be offered, and the reason (issue #43);
 * :func:`uniform_control` searches the family's rungs for the one whose whole
   plan weighs what the candidate weighs;
 * :func:`assert_byte_matched` refuses a pair that does not, on integer bit
@@ -34,10 +37,17 @@ so the search prices every unit at its own shape and compares integer bit
 totals.  The rung quantum is 1/256 body bits per code -- 0.0039 bpp -- so a
 nearest-rung control usually lands within half of that, 0.05% at 4 bpp against
 the 0.1% :func:`assert_byte_matched` allows.  The receipt's control sits at
-65 ppm.  The axis is not uniformly dense, though: E2M1x2 jumps **0.239 bpp**
+65 ppm.  The axis is not uniformly dense, though: E2M1x2 jumps **0.241 bpp**
 between R895 and R896 where the recipe changes from the window body to the
 coset trellis, and near that hole no control this tight exists.  The assertion
 fires there rather than quietly comparing two different byte budgets.
+
+The axis is not *monotone* either, and on a small unit not by a little: the
+window table below the cap is a fixed 4096 bytes, so R896 can weigh less than
+R895 while decoding better.  :func:`rate_menu` is where that is measured and
+screened; ``uniform_control`` is immune by construction, since it ranks by
+bits and never by rung, and issue #43 is why that is now stated rather than
+incidental.
 """
 
 from __future__ import annotations
@@ -62,12 +72,15 @@ __all__ = [
     "DEFAULT_MAX_RELATIVE_SLACK",
     "ByteMatch",
     "PlannedUnit",
+    "RateMenu",
+    "RungPrice",
     "UniformControl",
     "assert_byte_matched",
     "bits_from_manifest",
     "control_block",
     "grid_for_name",
     "plan_wire_bits",
+    "rate_menu",
     "uniform_control",
     "unit_wire_bits",
     "units_from_plan",
@@ -171,10 +184,166 @@ def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int
         span=recipe.span,
         window_bits=recipe.window_bits,
         code_bytes=payload.code_bytes,
+        # A TCQ body's forest is on the wire, so it is in this figure.  It was
+        # not until 2026-09-02: the accountant priced the position planes only
+        # and every TCQ unit came out 512 B (E2M1x2 at the coset cap) or
+        # 20-44 B (arity-1 E2M1) light, while every window unit was exact.  A
+        # control that matches a window arm against a TCQ arm on those numbers
+        # is matching two different quantities, which is the one thing it
+        # exists not to do.  Measured against ``encode_linear`` in
+        # ``tests/test_wire_bits_match_exported_bytes``.
+        with_forest=body is BodyKind.TCQ,
     )
     bits = rate * rows * columns
     _BITS_CACHE[key] = bits
     return bits
+
+
+@dataclass(frozen=True)
+class RungPrice:
+    """One rung of one unit: its exact wire bits, and what already beats it.
+
+    ``dominated_by`` names the *higher* rung that costs no more bytes -- the
+    cheapest such rung, and the highest of those when several tie, which is
+    the best alternative on both axes.  ``None`` means nothing above this rung
+    matches it, so it is on the frontier and may be offered.
+    """
+
+    q256: int
+    bits: Fraction
+    dominated_by: "int | None" = None
+
+    @property
+    def is_offered(self) -> bool:
+        return self.dominated_by is None
+
+
+@dataclass(frozen=True)
+class RateMenu:
+    """Every rung one Tessera unit admits at its own shape, priced and screened.
+
+    A rung is **dominated** when a higher rung of the same unit costs no more
+    bytes.  Both legs of that are measured, not assumed:
+
+    * *no more bytes* is exact integer arithmetic through
+      :func:`unit_wire_bits`, which agrees with ``encode_linear`` byte for byte
+      (``tests/test_rate_menu.py``);
+    * *no worse* would be an inference across a recipe change, so it was
+      measured.  At (64, 512) on E2M1x2 the cap rung R896 weighs exactly what
+      R736 weighs and 2544 B less than R895, and its relative SSE on a
+      Gaussian unit is 0.00877 against R736's 0.02353 and R895's 0.01152 --
+      better on both axes than everything it dominates
+      (``experiments/tessera_dominated_rungs.py --quality``, weight space, one
+      unit).  Error fell monotonically with the rung on the five sub-cap rungs
+      measured (736, 800, 860, 894, 895), which is evidence for -- not proof of
+      -- the ordering holding between them.
+
+    So :attr:`offered` is what a menu builder should expose and
+    :attr:`dominated` is what it should not -- and the pruning is *recorded*
+    rather than silent, because a rung disappearing from a menu with no reason
+    attached is how the next reader files issue #43 again.
+
+    Measured shape dependence, since the whole effect is a fixed per-unit table
+    amortised over the unit: on E2M1x2 the dominated count is 87 of 385 legal
+    rungs at 96x320, 160/769 at 64x512, 35/769 at 96x768, and **0** at
+    512x2048 and 1024x3072.  Production-shaped units have nothing to prune;
+    small ones have a third of the axis to prune.
+    """
+
+    grid: str
+    rows: int
+    columns: int
+    prices: "tuple[RungPrice, ...]"
+
+    @property
+    def params(self) -> int:
+        return int(self.rows) * int(self.columns)
+
+    @property
+    def offered(self) -> "tuple[RungPrice, ...]":
+        """The frontier: strictly increasing in bits as the rung rises."""
+        return tuple(price for price in self.prices if price.is_offered)
+
+    @property
+    def dominated(self) -> "tuple[RungPrice, ...]":
+        return tuple(price for price in self.prices if not price.is_offered)
+
+    def price(self, q256: int) -> RungPrice:
+        """This rung's row.  A rung the grammar refuses here is not in the menu."""
+        for price in self.prices:
+            if price.q256 == int(q256):
+                return price
+        raise GrammarError(
+            f"R{q256} is not a legal rung of {self.grid} at "
+            f"{self.rows}x{self.columns}"
+        )
+
+    def bpp(self, q256: int) -> Fraction:
+        return Fraction(self.price(q256).bits, self.params)
+
+    def to_json(self) -> dict:
+        return {
+            "grid": self.grid,
+            "shape": [int(self.rows), int(self.columns)],
+            "legal_rungs": len(self.prices),
+            "offered": [price.q256 for price in self.offered],
+            "dominated": {
+                str(price.q256): price.dominated_by for price in self.dominated
+            },
+            "reason": (
+                "a rung a higher rung matches or beats on bytes is worse on "
+                "both axes and is not offered (tessera#43, measured in "
+                "experiments/tessera_dominated_rungs.py)"
+            ),
+        }
+
+
+def rate_menu(
+    grid: "str | PayloadGrid",
+    rows: int,
+    columns: int,
+    *,
+    rungs: "Iterable[int] | None" = None,
+) -> RateMenu:
+    """The rungs of ``grid`` an allocator may be offered for a ``rows x columns`` unit.
+
+    Prices every rung the grammar admits -- a rung it refuses at this width is
+    skipped, never approximated -- and then sweeps from the top down, keeping a
+    rung only when it is strictly cheaper than everything above it.
+
+    The shape is an argument and not a convenience: the axis is non-monotone
+    only because a *per-unit* term (a 4096-byte window table below the E2M1x2
+    coset cap, one forest per distinct rate on arity-1 E2M1) is a large share
+    of a small unit and rounding error on a large one.  A menu pruned at one
+    shape and reused at another is wrong in both directions.
+    """
+    payload = grid if isinstance(grid, PayloadGrid) else grid_for_name(grid)
+    rows, columns = int(rows), int(columns)
+    ceiling = int(rung_ceiling(payload))
+    candidates = [int(q) for q in rungs] if rungs is not None else range(1, ceiling + 1)
+
+    priced: "list[tuple[int, Fraction]]" = []
+    for q in candidates:
+        try:
+            priced.append((q, unit_wire_bits(payload, q, rows, columns)))
+        except (GrammarError, ValueError, ZeroDivisionError):
+            continue
+    if not priced:
+        raise GrammarError(
+            f"no rung of {payload.name} prices at {rows}x{columns}; the "
+            "grammar admits none of the rungs searched"
+        )
+    priced.sort()
+
+    out: "list[RungPrice]" = []
+    best_q: "int | None" = None
+    best_bits: "Fraction | None" = None
+    for q, bits in reversed(priced):
+        out.append(RungPrice(q, bits, None if best_bits is None or bits < best_bits
+                             else best_q))
+        if best_bits is None or bits < best_bits:
+            best_q, best_bits = q, bits
+    return RateMenu(payload.name, rows, columns, tuple(reversed(out)))
 
 
 @dataclass(frozen=True)
@@ -376,6 +545,15 @@ class UniformControl:
 
     ``units`` is the whole control plan -- BF16 passthroughs carried through
     from the candidate, every Tessera unit at ``(grid, q256)``.
+
+    ``dominated_by`` names a higher rung that weighs no more than the one the
+    byte match chose, over this plan's *own* shape multiset -- ``None`` when
+    there is none, which is every production-shaped plan.  It is reported and
+    not corrected: matching bytes is what this class promises, and the nearest
+    rung is the nearest rung.  But a control sitting on a rung that a better
+    one already matches on bytes is a handicapped uniform arm, and an
+    allocation that beats it has beaten something it should not have been
+    offered either (issue #43).
     """
 
     grid: str
@@ -386,6 +564,7 @@ class UniformControl:
     searched: "tuple[int, int]"
     legal_rungs: int
     bracket: dict
+    dominated_by: "int | None" = None
 
     @property
     def plan(self) -> dict:
@@ -406,6 +585,7 @@ class UniformControl:
             "bracket": self.bracket,
             "units": len(self.tessera_units),
             "bf16_carried": len(self.units) - len(self.tessera_units),
+            "dominated_by": self.dominated_by,
             "match": self.match.to_json(),
         }
 
@@ -422,12 +602,15 @@ def uniform_control(
     """The one-rung plan that weighs what this candidate weighs.
 
     The search is a brute-force scan of every rung the grid admits, priced at
-    each unit's own shape, and it ranks by **bits** rather than by rung.  Today
-    the two orders agree -- ``test_wire_bits_rise_with_the_rung_on_every_grid``
-    pins that as a measured property of the current recipe table, not as an
-    axiom -- but ``wire_recipe`` chooses body and plane per rung, so the day a
-    boundary moves the bit order is what a byte match means and the rung order
-    is not.  Rungs the grammar refuses are skipped rather than approximated.
+    each unit's own shape, and it ranks by **bits** rather than by rung.  The two
+    orders agree at the production shape
+    ``test_wire_bits_rise_with_the_rung_on_every_grid`` sweeps (1024x3072) and
+    **disagree on small units** -- ``wire_recipe`` chooses body and plane per
+    rung, and below the E2M1x2 coset cap a 4096-byte window table buys a rung
+    that a 512-byte forest undercuts, so on a 64x512 unit R736..R895 all cost
+    more bits than R896 (measured in ``tests/test_rate_menu.py``, issue
+    tessera#43).  Bits, not rung, is what a byte match means.  Rungs the
+    grammar refuses are skipped rather than approximated.
 
     Raises when the candidate's Tessera units span more than one grid and no
     ``grid`` is named: "one uniform rung" has no meaning across two families,
@@ -524,6 +707,14 @@ def uniform_control(
                    f"the heaviest {grid} rung that does not outweigh this "
                    f"candidate is R{q256}"),
         )
+    # The cheapest rung above the chosen one that does not outweigh it, and the
+    # highest of those when several tie -- the rung that dominates this control,
+    # or None.  Computed over this plan's shape multiset, since domination is a
+    # property of the shapes and not of the family.
+    dominating = [row for row in priced if row[0] > q256 and row[1] <= control_bits]
+    dominated_by = (
+        min(dominating, key=lambda row: (row[1], -row[0]))[0] if dominating else None
+    )
     control_units = tuple(unit.at_rung(grid, q256) for unit in units)
     return UniformControl(
         grid=str(grid),
@@ -534,6 +725,7 @@ def uniform_control(
         searched=(min(row[0] for row in priced), max(row[0] for row in priced)),
         legal_rungs=len(priced),
         bracket=bracket,
+        dominated_by=dominated_by,
     )
 
 

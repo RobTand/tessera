@@ -21,7 +21,12 @@ from fractions import Fraction
 
 from .container import HEADER_BYTES
 from .errors import GrammarError
-from .grammar import C_FULL_BITS, bresenham_rate_schedule, root_from_q256
+from .grammar import (
+    C_FULL_BITS,
+    bresenham_rate_schedule,
+    forest_plane_bytes,
+    root_from_q256,
+)
 from .layout import TerminalSpec, build_planes, build_terminal
 from .manifest import Geometry
 
@@ -86,12 +91,21 @@ CITED_FIGURES: tuple[Figure, ...] = (
         # configuration and gets 5/2 exactly (``body_e4m3_16_q256_512``).  The
         # cited figure is a *wire* rate: payload plus the artifact's side
         # bytes.  Of those, the header is derivable and fixed at
-        # ``container.HEADER_BYTES``; the ALPHABET/DESCENDANT forest and the
-        # canonical manifest are per-artifact -- the forest depends on the
-        # grid and the rate schedule, the manifest on every field the unit
-        # declares -- and neither is derivable from ``(q256, rows, columns)``
-        # alone, which is all this function takes.  So the remainder is not
-        # derivable here, and this figure is carried, never computed.
+        # ``container.HEADER_BYTES``; the canonical manifest is per-artifact --
+        # it depends on every field the unit declares -- and is not derivable
+        # from ``(q256, rows, columns)`` alone, which is all this function
+        # takes.  So the remainder is not derivable here, and this figure is
+        # carried, never computed.
+        #
+        # This comment used to name the ALPHABET/DESCENDANT forest as the
+        # second underivable term.  That was wrong, and it cost real bytes:
+        # the forest's *contents* are an exhaustive search, but its *size* is
+        # ``forest_plane_bytes(rates, cap)`` -- arithmetic in the schedule --
+        # and while the belief stood, ``terminal_rate`` charged nothing for it
+        # and the byte-matched control ran 512 B light on every E2M1x2 unit at
+        # the coset cap.  ``with_forest=True`` charges it; the default stays
+        # off so this figure and the identity tests still mean the
+        # position-domain rate they were derived as.
         #
         # One tell, worth stating rather than glossing: the gap is 1/1250 bpp
         # at 4096^2, i.e. 1048576/625 = 1677.7216 bytes.  A byte count with a
@@ -173,6 +187,7 @@ def terminal_rate(
     window_bits: int = 0,
     with_row_scale: bool = False,
     code_bytes: int = 1,
+    with_forest: bool = False,
 ) -> Fraction:
     """Exact payload bpp for a terminal, from integer byte counts only.
 
@@ -208,6 +223,18 @@ def terminal_rate(
     TESSERA-8 rung above 3.0 body bits -- which is most of the ones an 8-bit
     family exists to reach.
 
+    ``with_forest`` charges a **TCQ** body's ALPHABET and DESCENDANT planes,
+    sized from the schedule by :func:`tessera.grammar.forest_plane_bytes`.  It
+    defaults to ``False`` because every figure this module publishes, and the
+    two accountant-identity tests that pin them, are *position-domain* rates --
+    the calculator is handed empty forest blobs by construction and states
+    what the position planes cost.  A caller pricing a whole unit on the wire
+    wants ``True``: :func:`tessera.control.unit_wire_bits` passes it, because
+    without it the wire's byte-matched control was 512 B light on every
+    E2M1x2 unit at the coset cap and 20-44 B light on every arity-1 E2M1 unit,
+    which is a byte match that does not match bytes.  A window body has no
+    forest and the flag is a no-op there.
+
     ``arity`` is load-bearing for the same reason on the other axis: BODY and
     COMPLETION hold one entry per *code*, and a code covers ``arity`` rows, so
     at arity 2 they are half the size this function would otherwise predict.
@@ -230,7 +257,17 @@ def terminal_rate(
         completion = 0
     if code_bytes not in (1, 2):
         raise GrammarError(f"a code plane element is one or two bytes, not {code_bytes}")
-    alphabet = bytes(code_bytes << window_bits) if window_bits else b""
+    if window_bits:
+        alphabet, descendant = bytes(code_bytes << window_bits), b""
+    elif with_forest:
+        # Zero-filled blobs of the wire's own lengths: the layout charges a
+        # plane by its extent, and the forest's contents never reach the byte
+        # count.  Routed through ``build_planes`` rather than added afterwards
+        # so any alignment the descriptors impose is charged too.
+        a_bytes, d_bytes = forest_plane_bytes(rates, cap)
+        alphabet, descendant = bytes(a_bytes), bytes(d_bytes)
+    else:
+        alphabet, descendant = b"", b""
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
@@ -254,10 +291,11 @@ def terminal_rate(
     # plane extent never reaches the returned value.  Kept because a latent
     # divergence between the two accountants is exactly the bug class this
     # function keeps having, not because a rung was ever mispriced here.
-    planes = build_planes(geometry, rates, alphabet, b"", cap=cap, arity=arity,
+    planes = build_planes(geometry, rates, alphabet, descendant, cap=cap, arity=arity,
                           spec=spec, span=span, with_row_scale=with_row_scale)
     return build_terminal(
-        geometry, rates, spec, planes, len(alphabet), 0, cap=cap, arity=arity, span=span
+        geometry, rates, spec, planes, len(alphabet), len(descendant),
+        cap=cap, arity=arity, span=span
     ).exact_bpp
 
 

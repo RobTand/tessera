@@ -35,6 +35,7 @@ __all__ = [
     "C_FULL_BITS",
     "alphabet_size",
     "completion_capacity",
+    "forest_plane_bytes",
     "descendant_set_size",
     "bresenham_rate_schedule",
     "validate_rate_schedule",
@@ -82,6 +83,34 @@ def completion_capacity(rate: int, cap: int = C_FULL_BITS) -> int:
     """
     _check_rate(rate, cap)
     return cap - rate
+
+
+def forest_plane_bytes(
+    rates: "tuple[int, ...]", cap: int = C_FULL_BITS
+) -> "tuple[int, int]":
+    """``(ALPHABET, DESCENDANT)`` bytes a TCQ body's forest costs on the wire.
+
+    ``unit_artifact._forest_planes`` concatenates one alphabet and one
+    descendant block per *distinct* rate in the schedule, so the two plane
+    lengths are ``sum 2^(R+1)`` and ``sum 2^(R+1) * 2^(cap-R)`` -- the second
+    being ``2^(cap+1)`` per distinct rate, whatever the rate is.  Both are a
+    function of ``(rates, cap)`` alone, which is the point: the forest's
+    *contents* are an exhaustive search, but its *size* is arithmetic, and an
+    accountant that skipped it because the contents are not derivable was
+    charging a TCQ unit less than the wire does.  Measured: exactly the gap
+    between :func:`tessera.control.unit_wire_bits` and
+    ``encode_linear(...).exact_bytes`` on every TCQ rung tested -- 512 B at the
+    E2M1x2 coset cap, 20-44 B on arity-1 E2M1.
+
+    A window body has no forest and is not priced here: its table is the
+    ALPHABET plane and ``terminal_rate`` already charges it.
+    """
+    present = sorted(set(int(rate) for rate in rates))
+    alphabet = sum(alphabet_size(rate, cap) for rate in present)
+    descendant = sum(
+        alphabet_size(rate, cap) << completion_capacity(rate, cap) for rate in present
+    )
+    return alphabet, descendant
 
 
 def completion_widths(
