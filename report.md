@@ -143,12 +143,33 @@ cutlass_scaled_fp4_mm(Tensor! out, Tensor a, Tensor b, ... ) -> ()
 read out of the binary, with the op that serves NVFP4 on this image as the
 positive control and a nonsense name (0 hits) as the negative.
 
-A correction on how that was established: an earlier reading of mine reported the
-op **absent**, taken by `hasattr(torch.ops._C, ...)` in a CPU container. It was an
-artifact — `torch.ops._C` is populated by `vllm/_C_stable_libtorch.abi3.so`, which
-raises `ImportError: libcuda.so.1` without a GPU, so every name came back False
-including `cutlass_scaled_fp4_mm`, which demonstrably serves. That reading is
-retracted; the control is what caught it.
+### The `hasattr` reading is a trap, and it caught two of us
+
+An earlier reading of **mine** reported the op absent, by
+`hasattr(torch.ops._C, ...)` in a CPU container. Retracted. The coordinator then
+independently attested the same "absent" on both boxes, by
+
+    docker run --rm --entrypoint python3 vllm/vllm-openai:latest \
+      -c "import torch; print(hasattr(torch.ops._C,'silu_and_mul_nvfp4_quant'))"
+
+Run that command with a positive control and it answers itself:
+
+```
+silu_and_mul_nvfp4_quant False
+cutlass_scaled_fp4_mm    False     <- the kernel that serves NVFP4 on this image
+silu_and_mul             False
+names registered under torch.ops._C: 7
+```
+
+`import torch` alone registers nothing of vLLM's; the ops come from
+`vllm/_C_stable_libtorch.abi3.so`, and importing it without a GPU raises
+`ImportError: libcuda.so.1`. So the method returns False for **every** name,
+including ops we have served with. A probe that cannot distinguish a missing op
+from a missing GPU is not evidence about the build.
+
+This is why the binary reading above carries a positive and a negative control,
+and it is the concrete reason principle 14 says attested, not asserted: the
+runtime was never ambiguous, our instrument was.
 
 **What is still not attested** is the per-SM guard. The same binary carries the
 message `No compiled silu_and_mul nvfp4 quantization kernel for SM ` and an
@@ -177,6 +198,45 @@ at load 60 and 14 GB of 121 available.
   `test_serving_export_gate.py` loads its exporter;
 - a sweep over `experiments/**.py` fails on any reintroduced
   `"format": "mixed-precision"` literal — the rule, not today's call sites.
+
+## Suite result
+
+Run once, on **sparklina** (the quiet box), from a copy of this branch at
+`/home/rob/tmp/ts92-suite`:
+
+    PYTHONPATH=. python -m pytest -q -p no:randomly
+
+RESULT_PLACEHOLDER
+
+No full master baseline was computed: fifteen agents were running one
+concurrently and that is what put sparky into swap. The question a baseline
+answers — "was this already broken?" — is answered per failing file against a
+pristine `82cdf51` checkout staged at `/home/rob/tmp/ts92-master`, which is
+seconds rather than a second full suite.
+
+## Off-task fixes on this branch
+
+One, as its own commit so it reads and drops independently of the #92 work:
+
+- `911f52f` — `git rm 63`, a zero-byte tracked file at the repo root swept into
+  `705c040` by a whole-tree `git add`. Nothing references it.
+
+## Issues filed
+
+Both say why they were filed rather than fixed.
+
+- **#100** — `vllm/vllm-openai:latest` is a floating tag and the two boxes hold
+  **different images** under it (`61fc8a89…` on sparky, `89154ef0…` on
+  sparklina), while the harnesses and docs call it the pinned runtime. Not
+  fixed: which digest becomes the pin moves a default and could move served
+  numbers, so it is Rob's call. Found while attesting this task's runtime claim,
+  and it is the same shape as #92 one level down — an unrecorded difference
+  between the arms of a comparison.
+- **#98** — the stray `63`. Filed under the old brief, then **fixed** on this
+  branch and the issue updated to say so.
+
+Also commented on **#92** with the two corrections above (the `fuse_attn_quant`
+overstatement, and `:891` being the stock twin rather than a plugin config).
 
 ## Artifacts on disk
 
