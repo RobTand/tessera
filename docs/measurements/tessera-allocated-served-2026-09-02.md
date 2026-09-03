@@ -517,7 +517,7 @@ logs, `regret_uniform.json`), `/home/rob/tessera-runs/allocated/` on sparklina
 §4's matched arm was a driver with the run's paths in it
 (`allocated_serve_2026-09-02/find_uniform.py`), which is the wrong home for the
 only check that saw this failure. It is now `tessera.control` plus
-`experiments/uniform_control.py` (tessera#3), and the library re-derives every
+`experiments/uniform_control.py` (#3), and the library re-derives every
 byte figure this receipt published from the wire's own accountant
 (`calculator.terminal_rate`) rather than from PrismaQuant's closed form: the
 allocation at 1761722368 bits, the control at R1006 / 1761837056 (65.1 ppm

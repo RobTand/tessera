@@ -18,7 +18,7 @@ They expect `PYTHONPATH=src` and a writable `TRITON_CACHE_DIR`. They read
 Qwen3.8-27B from the local HF cache and are not hermetic.
 
 **`uniform_control.py` is not scratch.** It is the standing gate of
-tessera#3, and the one check that saw the 2026-09-02 failure: `plan` writes the
+RobTand/tessera#3, and the one check that saw the 2026-09-02 failure: `plan` writes the
 byte-matched uniform control for a candidate `--plan-json` with the match
 asserted, `verify` re-asserts it on the two exported manifests and records the
 verdict. Its library half is `tessera.control`, which `plan_from_layer_config.py`
