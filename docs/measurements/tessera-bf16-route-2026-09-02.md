@@ -202,12 +202,24 @@ the six GLM units. A twin written in fp16 would be a tighter ceiling (W1's
 
 ## 5. Export
 
+> **Command note, 2026-09-02 (#41, #9).** The serving exporter now refuses a
+> wire this plugin build publishes no decode for. `BF16` was one for about a
+> day: `--grid BF16` needed `--allow-unserveable`, which writes the arm as a
+> research artifact and stamps the refusal into the manifest's `serving_gate`
+> block. It no longer does. `serving.scheme.ROUTES[TESSERA_BF16]` holds the
+> grid, the window body and the CHANNEL plane, and `runtime_contract.json` v5
+> publishes the reader range [256, 4096], so the arm below exports with no
+> flag. Nothing about the bytes or the twin ever changed; only the flag, and
+> now not even that. See `docs/tessera-serving-and-moe-contract.md` §11.
+
 `experiments/export_tessera_serving.py --grid BF16` writes modules declaring
 family `TESSERA_BF16`, and `--stock-twin DIR` writes, alongside it, a plain
 BF16 safetensors of the decoded tiles under the *source's own tensor names*,
 with `quantization_config` removed and every passthrough tensor copied
 verbatim. That twin is an ordinary checkpoint: vanilla vLLM (or HF) serves it
-with no plugin, which is how a served KL gate will run before the lane exists.
+with no plugin, which is how the served KL gate ran: the route and its twin
+are the two servings of one encode, measured against each other in
+`docs/measurements/tessera-bf16-route-served-2026-09-02.md`.
 
 **Qwen3-0.6B, 196 units in 112 fused modules, 440 401 920 quantizable
 parameters.** Both rungs stamped `git: fc2c1c1`.

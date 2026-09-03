@@ -565,3 +565,97 @@ resolves at all. So the two halves of this change land on it differently:
   `tests/test_tessera_formats.py`); without it, one test fails with a
   `KeyError`. The alias is dropped when the `schema` string moves to v2, which
   is a coordinated change across both repositories and not this one.
+
+---
+
+## 11. The exporter may not write a rung the reader does not publish (2026-09-02, #41)
+
+Section 10 gave the *consumer* the published set. The producer never read it.
+`export.wire_recipe` writes the WINDOW body over LUT16 for every `E2M1x2` unit
+below the coset trellis's cap — the shipping default under q256 896, not an
+exotic setting — and §10's table says that body has no served decode. So a
+legal low-rate unit encoded fine, went into a checkpoint, and was refused at
+**load**, after the encode, on the operator rather than on the exporter.
+
+Reproduced before it was fixed, on a `[64, 64]` unit at `E2M1x2` q256 512:
+5890 wire bytes written by `encode_linear_planes`, then
+
+> `tessera target 'probe.E2M1x2.q512': q256=512 is outside the rungs this
+> build's decoder reads for TESSERA_E2M1_K2 — [896, 896] (every integer).`
+
+**What the wire can emit, and what of it can be served.** Enumerating
+`export.recipe_table` per grid against the published ranges gives two gaps, not
+the five a `wire_recipe`-only enumeration reads (three until #9 gave the `BF16`
+grid its route):
+
+| grid | emitted | encodable | published | verdict |
+|---|---|---|---|---|
+| `E2M1` | 1…1024 | 256…768 (TCQ, cap 3) | none | **gap** — the whole grid |
+| `E2M1x2` | 1…895 WINDOW | 128…895 | — | **gap** — the sub-cap default |
+| `E2M1x2` | 896 TCQ | 896 | [896, 896] | served |
+| `E2M1x2` | 897…1024 TCQ | **none** | [896, 896] | not a gap: `bresenham_rate_schedule` refuses rate 8 (`max_trellis_rate = native − 1`) |
+| `E4M3` | 1…255 WINDOW | **none** | [256, 2048] | not a gap: rate 0 is below the shaped domain |
+| `E4M3` | 256…2048 WINDOW | 256…2048 | [256, 2048] | served, and the bounds coincide by construction |
+| `BF16` | 1…4096 WINDOW | 256…4096 | [256, 4096] | served since #9 — `bf16_route` decodes the same window body, and q256 1792 is attested |
+
+`wire_recipe` returning a recipe is not the same as the encoder building one:
+`E2M1x2` above the cap and `E4M3` below 256 are refused by the grammar, so no
+such wire can be written and neither is a producer/consumer mismatch.
+
+**The gate.** `serving.scheme.refuse_unserveable_wire` — beside
+`validate_tessera_scheme`, off the same `ROUTES` table and the same packaged
+`runtime_contract.json`, importable without torch — is the export-time half of
+the load-time rule. It resolves the route from `ROUTES`, the rate range from
+`contract.reader_rate_grid` / `reader_accepts`, and the plane and body from the
+route's own entry. **It hardcodes no cap**: the day a measured range widens,
+the JSON changes and the gate follows it (principle 14). Its refusal names the
+unit, the `(route, grid, q256)`, the published range, and that the rung is
+still legal to *encode*.
+
+**It is a serving-boundary refusal, not an encoder one.** This is principle 9's
+one carve-out — a measured platform fact, the pinned runtime has no native
+route for these bytes — so it sits where a checkpoint declaring
+`quant_method: "tessera"` is written (`experiments/export_tessera_serving.py`
+`check_recipe`, on the default `(grid, q256)` and every `--plan-json` override,
+before the first encode). `wire_recipe` and `encode_linear` keep their full
+range: the rate-frontier work encodes sub-cap `E2M1x2` constantly and is
+untouched.
+
+**Fail closed with an explicit, stamped override.** `--allow-unserveable`
+writes the wire anyway as a research artifact and stamps every refusal verbatim
+into the manifest's new `serving_gate` block (`contract_version`,
+`allow_unserveable`, `unserveable_overrides`). Two real workflows need it
+today: `--grid E2M1`, whose route holds the grid while the contract publishes
+no measured range for it (item 2 below), and sub-cap `E2M1x2`, which the rate
+frontier encodes constantly. In both the `--stock-twin` is what gets served.
+`--grid BF16` was the third until #9 landed its route; it now passes the gate.
+
+**Item 2 of #41 — `ROUTES` lists `E2M1`, the contract publishes no range for
+it — is kept as a deliberate disagreement**, pinned by a test rather than
+resolved. They are not two statements of one fact: `ROUTES["grids"]` says what
+the decoder *holds* (the NVFP4 decoder is arity-parametric — `arity` is a
+runtime scalar into `tessera_nvfp4_decode_span2_out`, and
+`lane_planes.build_anchor_values` reads it off the forest's grid), while
+`formats[]` says what has been *measured through* it. That is the same pair of
+claims `tensor_parallel` already separates as `max_world_size` beside
+`loader_axes`. Deleting `E2M1` would delete a true statement about the decoder;
+publishing a range for it would invent an attestation nobody measured. So an
+arity-1 wire is refused for serving until someone measures one.
+
+`tests/test_serving_export_gate.py` enumerates the rungs from
+`export.recipe_table` / `rung_ceiling` and the grids from `control.GRID_NAMES`,
+so a new grid or a moved recipe boundary is a failing test rather than a
+checkpoint that refuses at load. On the pre-fix tree the exporter accepted 41
+`(grid, q256)` probes and the loader refused **32** of them, across all four
+grids; after, it accepts 9 and the loader accepts every one.
+
+**The other two writers of a `quant_method: "tessera"` artifact were checked
+and need no second gate.** `retarget_checkpoint_to_plugin.py` already runs
+`validate_tessera_scheme` on every group it rewrites (`:60`). The native
+container written by `export.py::_write_config` — `tessera_config.json`, used
+by `export_glm53_tessera.py` and merged by `merge_tessera_parts.py` — carries
+`quant_method: "tessera"` but no `config.json`/`quantization_config`, so vLLM
+never selects the plugin on it; it is a research container that reaches the
+plugin only through one of the two gated scripts. The gate therefore sits on
+every path into a checkpoint the plugin loads, and on no path that only
+measures.
