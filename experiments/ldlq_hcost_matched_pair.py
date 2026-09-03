@@ -104,6 +104,30 @@ def profile_arm(label, fn, weights_encoded):
     }
 
 
+def apply_lever(name, value):
+    """Set (or clear) one capture knob, in whichever spelling the tree reads.
+
+    ``encode`` reads ``TESSERA_TCQ_GRAPH`` per call, so the environment is
+    enough there.  ``window_viterbi`` before issue #94 bound
+    ``TESSERA_WINDOW_GRAPH`` to a module constant at IMPORT, so an environment
+    change alone would sweep nothing and every lever would silently report the
+    default.  Rebinding the constant is what lets the pre-change tree be swept
+    in one process, which is the whole point of a matched pair; the post-change
+    tree resolves the variable per call and the rebinding is a no-op there.
+    """
+    import os
+
+    if value is None:
+        os.environ.pop(name, None)
+    else:
+        os.environ[name] = value
+    if name == "TESSERA_WINDOW_GRAPH":
+        import tessera.window_viterbi as wv
+
+        if hasattr(wv, "_GRAPH"):
+            wv._GRAPH = {"0": False, "1": True}.get(value) if value else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
@@ -115,8 +139,15 @@ def main():
     ap.add_argument("--sigma", type=float, default=1.0)
     ap.add_argument("--reps", type=int, default=2)
     ap.add_argument("--label", default="tree")
+    ap.add_argument("--lever-env", default="TESSERA_TCQ_GRAPH",
+                    help="which capture knob --levers sweeps.  The coset "
+                         "trellis is TESSERA_TCQ_GRAPH (issue #13); the window "
+                         "body is TESSERA_WINDOW_GRAPH (issue #94).  Which "
+                         "body a unit takes is the grid's, not this flag's: "
+                         "--grid E4M3 is the WINDOW default, --grid E2M1x2 "
+                         "below the cap is TCQ.")
     ap.add_argument("--levers", default="0",
-                    help="comma-separated TESSERA_TCQ_GRAPH values to sweep, "
+                    help="comma-separated values for --lever-env to sweep, "
                          "or 'auto' for the shipping default (env unset); the "
                          "pre-change tree only understands the default")
     ap.add_argument("--crop", default=None,
@@ -152,26 +183,37 @@ def main():
     ldl_kw = dict(ldl=L, ldl_block=a.block, refit_metric=hn)
 
     def clear():
+        """Drop every persistent encoder plan, so an arm starts cold.
+
+        Both caches, whichever body this run exercises: a tree that predates
+        either one simply has neither symbol and the import fails, which is
+        the pre-change tree this script is also run against.
+        """
         try:
             from tessera.encode import tcq_plan_cache_clear
         except ImportError:
-            return
-        tcq_plan_cache_clear()
+            pass
+        else:
+            tcq_plan_cache_clear()
+        try:
+            from tessera.window_viterbi import window_plan_cache_clear
+        except ImportError:
+            pass
+        else:
+            window_plan_cache_clear()
 
     levers = [x for x in a.levers.split(",") if x != ""]
     out = {
         "label": a.label,
         "unit": a.unit, "shape": [rows, cols], "grid": a.grid, "q256": a.q256,
         "block": a.block, "segments": cols // a.block, "sigma": a.sigma,
+        "lever_env": a.lever_env,
         "envelope_w": 140, "torch": torch.__version__,
         "load_at_start": open("/proc/loadavg").read().split()[:3],
         "pairs": {}, "arms": [],
     }
     for lever in levers:
-        if lever == "auto":
-            os.environ.pop("TESSERA_TCQ_GRAPH", None)   # the shipping default
-        else:
-            os.environ["TESSERA_TCQ_GRAPH"] = lever
+        apply_lever(a.lever_env, None if lever == "auto" else lever)
         tag = {"0": "eager", "1": "graph", "auto": "auto"}.get(lever, lever)
         clear(); enc(); enc(**ldl_kw)          # warm this lever's path
         if not a.no_pair:
