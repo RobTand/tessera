@@ -6,9 +6,12 @@
 #
 # usage: serve_smoke_graph.sh <model-dir> [image]
 set -euo pipefail
-MODEL="$1"; IMAGE="${2:-${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}}"
+source "$(dirname "$0")/runtime_image.sh"
+MODEL="$1"; IMAGE="${2:-${TESSERA_KL_IMAGE:-$(runtime_image_pin)}}"
 PORT="${TESSERA_KL_PORT:-8000}"; NAME=tessera-smoke-serve
 LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/smoke_$(basename "$MODEL").log"
+# Refuse a floating image before anything else runs (issue #100).
+runtime_image_require "$IMAGE" || exit 2
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
@@ -28,5 +31,6 @@ curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'Content-Type: application/
   | python3 -c 'import json,sys; r=json.load(sys.stdin); print("completion:", repr(r["choices"][0]["text"]))'
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
+echo "image: $IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved}"
 echo "graph-mode serve: $(grep -c "Capturing\|cudagraph\|CUDA graph" "$LOG" || true) graph lines; kernels:"
 grep -i "Using .* for .*GEMM\|Selected .*Kernel for\|Using .*Kernel\|NVFP4 GEMM\|FP8 GEMM" "$LOG" | sed 's/.*INFO[^ ]* //' | sort | uniq -c | head -8

@@ -9,10 +9,16 @@
 # usage: experiments/nvfp4_moe_oracle_probe.sh [image] [out.json]
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# Mia's GLM image is a different runtime and carries no pin, so this resolves
+# and REPORTS its digest rather than refusing it; an image on the pinned
+# repository is refused unless it is the pin.  See runtime_image.sh.
 IMAGE=${1:-prismaquant/glm53-mia-sm121:487ecf187}
 OUT=${2:-$HERE/results/nvfp4_moe_oracle_probe.json}
 export TMPDIR=${TMPDIR:-/home/rob/tmp}
 
+source "$HERE/runtime_image.sh"
+# Before the lock, for the same reason gridbook_lane_served.sh gates there.
+runtime_image_require "$IMAGE" || exit 2
 source "$HERE/serve_lock.sh"
 SERVE_LOCK_OWNER="nvfp4_moe_oracle_probe"
 waited=0
@@ -42,5 +48,5 @@ rc=${PIPESTATUS[0]}
 # either the whole record or empty -- never the first line of one.
 sed -n 's/^TESSERA_ORACLE_JSON //p' "$LOG" | tail -1 | python3 -m json.tool > "$OUT" || true
 [ -s "$OUT" ] || { echo "probe produced no JSON (rc=$rc); see $LOG" >&2; exit 1; }
-echo "-> $OUT"
+echo "-> $OUT   (image $IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved})"
 exit "$rc"
