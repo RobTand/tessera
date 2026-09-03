@@ -1,0 +1,340 @@
+{
+ "schema": "tessera.compile_build_forensics/1",
+ "a": "/home/rob/tessera-runs/tsplugin/vllm-cache/torch_compile_cache/36d07e6697/rank_0_0/backbone",
+ "b": "/home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/36d07e6697/rank_0_0/backbone",
+ "cache_key_factors": {
+  "a_sha256_16": "24dc2c26b670b17e",
+  "b_sha256_16": "24dc2c26b670b17e",
+  "identical": true
+ },
+ "computation_graph": {
+  "a_sha256_16": "fecc8be059b2e83f",
+  "b_sha256_16": "40aa82a574a97fec",
+  "a_vllm_ir_ops": {
+   "fused_add_rms_norm.default": 14,
+   "fused_add_rms_norm.maybe_inplace": 42,
+   "rms_norm.default": 57
+  },
+  "b_vllm_ir_ops": {
+   "fused_add_rms_norm.default": 56,
+   "rms_norm.default": 57
+  },
+  "identical": false
+ },
+ "autotune": {
+  "a": "/home/rob/tessera-runs/tsplugin/vllm-cache/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec",
+  "b": "/home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec",
+  "records_in_both": 196,
+  "only_in_a": 0,
+  "only_in_b": 0,
+  "byte_identical": 2,
+  "same_choice_different_measured_time": 74,
+  "different_tuning_choice": 120,
+  "examples": [
+   {
+    "record": "inductor_cache/24/ad9b72d0067d549361c167c33bacbb69bd296af6502dc1c1c8c7226d5ded5e4d.best_config",
+    "changed": {
+     "XBLOCK": [
+      8,
+      2
+     ],
+     "num_warps": [
+      8,
+      2
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/2e/13daf901c2a0de988a3ffcf4c91eab0a0f0963fb3d9380de744c67be275ac74b.best_config",
+    "changed": {
+     "XBLOCK": [
+      512,
+      1024
+     ],
+     "num_warps": [
+      8,
+      4
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/2e/851dd70e8a011d1b291171dc3ad230ef772a0f3e7b76d48325506d87c8ce915d.best_config",
+    "changed": {
+     "XBLOCK": [
+      4,
+      8
+     ],
+     "num_warps": [
+      4,
+      8
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/2q/b987ef9217e84e652cd25aaa7e95f046d86c91ee34d08eddbdcf2d870cea4aeb.best_config",
+    "changed": {
+     "XBLOCK": [
+      2,
+      4
+     ],
+     "num_warps": [
+      2,
+      4
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/2t/3419f81d7f2aa63e942dc5a00c77ee1e88710cc4d00e6fac6e8341ec3bf5f857.best_config",
+    "changed": {
+     "XBLOCK": [
+      8,
+      4
+     ],
+     "num_warps": [
+      8,
+      4
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/2u/a81ebffcb710860beb1251ad709ccfb9a56fd78c1efa2c9f8b2154064b9cd28a.best_config",
+    "changed": {
+     "XBLOCK": [
+      2,
+      4
+     ],
+     "num_warps": [
+      2,
+      4
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/3i/6cc6ed8b086b6d8b709c80d5de5b2a17405bfb774cf96946459f96da40ee4c84.best_config",
+    "changed": {
+     "XBLOCK": [
+      4,
+      2
+     ],
+     "num_warps": [
+      4,
+      2
+     ]
+    }
+   },
+   {
+    "record": "inductor_cache/3w/0d7fa8f8d965533ab84775ce428baad18265446f3a7d197de64bdad9252b07a1.best_config",
+    "changed": {
+     "XBLOCK": [
+      2,
+      4
+     ],
+     "num_warps": [
+      2,
+      4
+     ]
+    }
+   }
+  ]
+ },
+ "campaign_census": [
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "0b1915efb2",
+   "mtime": 1788374187.9990366,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "1846732709",
+   "mtime": 1788363215.380241,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 4,
+    "fused_add_rms_norm.maybe_inplace": 52,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "2758723733",
+   "mtime": 1788370231.6433063,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 4,
+    "fused_add_rms_norm.maybe_inplace": 52,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "28272ad369",
+   "mtime": 1788364074.319426,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "36d07e6697",
+   "mtime": 1788373670.7166908,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 14,
+    "fused_add_rms_norm.maybe_inplace": 42,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "42de9f8186",
+   "mtime": 1788363933.8011167,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "52b618f0e9",
+   "mtime": 1788373338.320228,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "55a0d72330",
+   "mtime": 1788368078.9988556,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "573bb6beb1",
+   "mtime": 1788372817.0051231,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "577c483359",
+   "mtime": 1788366424.1057124,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 54,
+    "fused_add_rms_norm.maybe_inplace": 2,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "629d4b782f",
+   "mtime": 1788374389.4767683,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 54,
+    "fused_add_rms_norm.maybe_inplace": 2,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "65d6e3f46e",
+   "mtime": 1788364944.5674548,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "6f6d76fd47",
+   "mtime": 1788365462.9431057,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "82e2dba731",
+   "mtime": 1788372309.1183252,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "883e2c6747",
+   "mtime": 1788371750.584569,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "b608098026",
+   "mtime": 1788363083.4993916,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 4,
+    "fused_add_rms_norm.maybe_inplace": 52,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "c8034ea41d",
+   "mtime": 1788369095.3026524,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.maybe_inplace": 56,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "ca0fc206ce",
+   "mtime": 1788374724.708064,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 54,
+    "fused_add_rms_norm.maybe_inplace": 2,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "ea41e6f9f0",
+   "mtime": 1788369569.0245535,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 4,
+    "fused_add_rms_norm.maybe_inplace": 52,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache",
+   "key": "ef92abb60a",
+   "mtime": 1788365955.0964782,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 54,
+    "fused_add_rms_norm.maybe_inplace": 2,
+    "rms_norm.default": 57
+   }
+  },
+  {
+   "root": "/home/rob/tessera-runs/tsplugin/vllm-cache-fresh",
+   "key": "36d07e6697",
+   "mtime": 1788378450.1875293,
+   "vllm_ir_ops": {
+    "fused_add_rms_norm.default": 56,
+    "rms_norm.default": 57
+   }
+  }
+ ]
+}
