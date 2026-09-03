@@ -1,0 +1,97 @@
+============================================================================================================
+wire 'recipe': E2M1 grid, TCQ at cap (q256=768), span 2, LUT scale plane, releases 12.5%, rows=32
+============================================================================================================
+  cols     k*256+p    build   roundtrip  nvfp4 pack   kernel  note
+------------------------------------------------------------------------------------------------------------
+   256     1*256+0       ok       exact          ok       ok  complete, 1 superblock
+   272    1*256+16       ok       exact          ok       ok  partial, 16 of 256 -- thinnest reachable
+   496   1*256+240       ok       exact          ok       ok  partial, 240 of 256 -- fattest reachable
+   512     2*256+0       ok       exact          ok       ok  complete, 2 superblocks
+   640   2*256+128       ok       exact          ok       ok  partial, 128 of 256 -- the width #22 was found on
+   257     1*256+1       ok       exact     refused  refused  partial, 1 of 256 -- the width #44 names
+         pack: REFUSED GrammarError: 257 columns cannot pack 2 nibbles to a byte
+         kernel: REFUSED GrammarError: 257 columns is not a whole number of 16-groups
+   511   1*256+255       ok       exact     refused  refused  partial, 255 of 256 -- the width #44 names
+         pack: REFUSED GrammarError: 511 columns cannot pack 2 nibbles to a byte
+         kernel: REFUSED GrammarError: 511 columns is not a whole number of 16-groups
+  4864    19*256+0       ok       exact          ok       ok  complete, 19 superblocks -- timing control
+  4880   19*256+16       ok       exact          ok       ok  partial, 16 of 256 -- thinnest reachable, NOT a 32-group
+  4896   19*256+32       ok       exact          ok       ok  partial, 32 of 256 -- timing arm, thinnest clean partial
+  5088  19*256+224       ok       exact          ok       ok  partial, 224 of 256 -- timing arm, fattest clean partial
+  5104  19*256+240       ok       exact          ok       ok  partial, 240 of 256 -- fattest reachable, NOT a 32-group
+  5120    20*256+0       ok       exact          ok       ok  complete, 20 superblocks -- the shape every published figure covers
+
+release density per superblock -- a release is a per-POSITION
+object, so equal DENSITY (not equal count) is what #27's width-proportional quota promises:
+    256     1*256+0  blocks=  1  density 0.12500..0.12500  spread 0.00e+00
+    272    1*256+16  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    496   1*256+240  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    512     2*256+0  blocks=  2  density 0.12500..0.12500  spread 0.00e+00
+    640   2*256+128  blocks=  3  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 2 of 3)
+    257     1*256+1  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    511   1*256+255  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+   4864    19*256+0  blocks= 19  density 0.12500..0.12500  spread 0.00e+00
+   4880   19*256+16  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   4896   19*256+32  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5088  19*256+224  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5104  19*256+240  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5120    20*256+0  blocks= 20  density 0.12500..0.12500  spread 0.00e+00
+
+============================================================================================================
+wire 'loadcost': E2M1 grid, TCQ at cap (q256=768), span 1, S6B scale plane, releases 12.5%, rows=32
+============================================================================================================
+  cols     k*256+p    build   roundtrip  nvfp4 pack   kernel  note
+------------------------------------------------------------------------------------------------------------
+   256     1*256+0       ok       exact          ok       ok  complete, 1 superblock
+   272    1*256+16       ok       exact          ok       ok  partial, 16 of 256 -- thinnest reachable
+   496   1*256+240       ok       exact          ok       ok  partial, 240 of 256 -- fattest reachable
+   512     2*256+0       ok       exact          ok       ok  complete, 2 superblocks
+   640   2*256+128       ok       exact          ok       ok  partial, 128 of 256 -- the width #22 was found on
+   257     1*256+1       ok       exact     refused  refused  partial, 1 of 256 -- the width #44 names
+         pack: REFUSED GrammarError: 257 columns cannot pack 2 nibbles to a byte
+         kernel: REFUSED GrammarError: 257 columns is not a whole number of 16-groups
+   511   1*256+255       ok       exact     refused  refused  partial, 255 of 256 -- the width #44 names
+         pack: REFUSED GrammarError: 511 columns cannot pack 2 nibbles to a byte
+         kernel: REFUSED GrammarError: 511 columns is not a whole number of 16-groups
+  4864    19*256+0       ok       exact          ok       ok  complete, 19 superblocks -- timing control
+  4880   19*256+16       ok       exact          ok       ok  partial, 16 of 256 -- thinnest reachable, NOT a 32-group
+  4896   19*256+32       ok       exact          ok       ok  partial, 32 of 256 -- timing arm, thinnest clean partial
+  5088  19*256+224       ok       exact          ok       ok  partial, 224 of 256 -- timing arm, fattest clean partial
+  5104  19*256+240       ok       exact          ok       ok  partial, 240 of 256 -- fattest reachable, NOT a 32-group
+  5120    20*256+0       ok       exact          ok       ok  complete, 20 superblocks -- the shape every published figure covers
+
+release density per superblock -- a release is a per-POSITION
+object, so equal DENSITY (not equal count) is what #27's width-proportional quota promises:
+    256     1*256+0  blocks=  1  density 0.12500..0.12500  spread 0.00e+00
+    272    1*256+16  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    496   1*256+240  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    512     2*256+0  blocks=  2  density 0.12500..0.12500  spread 0.00e+00
+    640   2*256+128  blocks=  3  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 2 of 3)
+    257     1*256+1  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+    511   1*256+255  blocks=  2  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 1 of 2)
+   4864    19*256+0  blocks= 19  density 0.12500..0.12500  spread 0.00e+00
+   4880   19*256+16  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   4896   19*256+32  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5088  19*256+224  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5104  19*256+240  blocks= 20  density 0.12500..0.12500  spread 0.00e+00   trailing partial reached: True  (the floor #22 fixed saw 19 of 20)
+   5120    20*256+0  blocks= 20  density 0.12500..0.12500  spread 0.00e+00
+
+============================================================================================================
+cross-width: ONE tensor narrowed.  Do the first 4864 columns decode the same
+when a trailing partial superblock is appended?  And if not, is the superblock
+what did it -- or the 32-weight S6b scale group, which varies over the same set?
+============================================================================================================
+    recipe  4864 -> 4880 ( partial)  cols%256= 16  cols%32= 16  columns 0..4863 identical on 100.00%
+    recipe  4864 -> 4896 ( partial)  cols%256= 32  cols%32=  0  columns 0..4863 identical on 100.00%
+    recipe  4864 -> 5088 ( partial)  cols%256=224  cols%32=  0  columns 0..4863 identical on 100.00%
+    recipe  4864 -> 5104 ( partial)  cols%256=240  cols%32= 16  columns 0..4863 identical on 100.00%
+    recipe  4864 -> 5120 (complete)  cols%256=  0  cols%32=  0  columns 0..4863 identical on 100.00%
+  loadcost  4864 -> 4880 ( partial)  cols%256= 16  cols%32= 16  columns 0..4863 identical on  47.71%
+  loadcost  4864 -> 4896 ( partial)  cols%256= 32  cols%32=  0  columns 0..4863 identical on 100.00%
+  loadcost  4864 -> 5088 ( partial)  cols%256=224  cols%32=  0  columns 0..4863 identical on 100.00%
+  loadcost  4864 -> 5104 ( partial)  cols%256=240  cols%32= 16  columns 0..4863 identical on  47.71%
+  loadcost  4864 -> 5120 (complete)  cols%256=  0  cols%32=  0  columns 0..4863 identical on 100.00%
+
+wrote /home/rob/tmp/ts44-partial-superblock/partial_roundtrip.json
+
+round-trip: ALL EXACT
