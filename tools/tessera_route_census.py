@@ -113,7 +113,7 @@ def main() -> int:
     # scale is an epilogue), and a hardcoded symbol read that as a refusal on
     # every module of a route it had simply never been told about.
     symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
-    missing = sorted(set(TESSERA_FAMILIES) - set(contract_for))
+    missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
     if missing:
         raise SystemExit(
             f"this census has no expectation for {missing}; a family the plugin serves and "

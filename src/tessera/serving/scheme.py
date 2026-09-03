@@ -317,7 +317,7 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
             "runtime_contract.json.")
 
 
-def route_for_grid(grid: str) -> "str | None":
+def route_for_grid(grid: str, family: "str | None" = None) -> "str | None":
     """The route in THIS build that holds ``grid``, or ``None``.
 
     Derived from ``ROUTES`` rather than written a second time: a grid reaches a
@@ -328,15 +328,38 @@ def route_for_grid(grid: str) -> "str | None":
     through this mapping.  ``None`` is the honest answer for a grid Tessera
     can ENCODE and this plugin has no decoder for -- a grid no ``ROUTES``
     entry lists.
+
+    A grid held by more than one route is REFUSED, naming every holder: with
+    two answers the grid-only question is ambiguous, and returning the first
+    holder in dict order would let table order silently own whichever gate
+    resolved through it (#51).  A caller that knows which route it is writing
+    passes ``family`` alongside the grid -- the route is then checked to hold
+    the grid and returned -- so the ambiguity is answered by the question, not
+    by the table's order.
     """
-    for family, route in ROUTES.items():
-        if grid in route["grids"]:
-            return family
-    return None
+    if family is not None:
+        route = ROUTES.get(family)
+        if route is None:
+            raise ValueError(
+                f"unknown family {family!r}; this build serves {TESSERA_FAMILIES}")
+        if grid not in route["grids"]:
+            raise ValueError(
+                f"{family} holds {route['grid_kind']} grid {route['grids']}, got {grid!r}; "
+                "a wire is gated against the route that will decode it, not another "
+                "route that happens to read the same alphabet")
+        return family
+    holders = [fam for fam, route in ROUTES.items() if grid in route["grids"]]
+    if len(holders) > 1:
+        raise ValueError(
+            f"grid {grid!r} is held by more than one route {holders}; the grid alone "
+            "does not say which route's range gates this wire. Pass family=... naming "
+            "the route being written.")
+    return holders[0] if holders else None
 
 
 def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
-                            *, span: "int | None" = None, target: str) -> str:
+                            *, family: "str | None" = None,
+                            span: "int | None" = None, target: str) -> str:
     """Refuse, AT EXPORT, a wire this plugin build publishes no decode for.
 
     The producer's output range was wider than the consumer's input range, in
@@ -364,6 +387,15 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     Returns the route the wire would take.  Raises ``ValueError`` naming the
     unit, the ``(route, grid, q256)`` it asked for, the range this build
     publishes, and the fact that the rung is still encodable for research.
+
+    ``family`` names the route being written.  The exporter knows it -- it is
+    the family the checkpoint will declare for this wire -- so it passes it,
+    and the gate reads the published range for THAT ``(route, grid)`` pair
+    rather than resolving the route from the grid alone.  Resolving from the
+    grid alone is ambiguous the moment two routes hold one grid, and the
+    winner would be whichever entry the dict order puts first (#51); omitting
+    ``family`` keeps the old behaviour for grids one route holds, and refuses
+    an ambiguous grid instead of guessing.
     """
     from .contract import reader_accepts, reader_rate_grid
 
@@ -372,7 +404,7 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
         "The rung is still legal to ENCODE -- this refusal is about what THIS plugin build can "
         "decode, not about the wire -- so a research or measurement artifact at this rung is "
         "unaffected; it just cannot be served by this build.")
-    route = route_for_grid(grid)
+    route = route_for_grid(grid, family)
     if route is None:
         held = ", ".join(f"{f} holds {r['grids']}" for f, r in ROUTES.items())
         raise ValueError(

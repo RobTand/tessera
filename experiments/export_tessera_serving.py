@@ -267,8 +267,12 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     recipe = wire_recipe(grid, q256)
     target = where or f"--grid {grid.name} --q256 {q256}"
     try:
+        # The family this checkpoint will declare for the wire, so the gate
+        # reads THAT route's published range rather than resolving the route
+        # from the grid alone -- ambiguous the moment two routes hold one
+        # grid, with the winner decided by dict order (#51).
         refuse_unserveable_wire(grid.name, q256, recipe.body.name, recipe.scale_plane.name,
-                                span=recipe.span, target=target)
+                                family=family_for(grid), span=recipe.span, target=target)
     except ValueError as exc:
         if not allow_unserveable:
             raise SystemExit(
