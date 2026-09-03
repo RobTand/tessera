@@ -120,9 +120,93 @@ def test_a_fused_group_that_does_not_share_one_rung_is_refused_before_the_encode
     with pytest.raises(SystemExit, match="do not share one"):
         build(config, one_layer_shapes())
     plan, provenance = build(config, one_layer_shapes(), allow_disagreement=True)
-    assert plan["model.layers.0.self_attn.k_proj.weight"] == {"grid": "E4M3", "q256": 920}
+    # The override writes the plan that will SERVE.  The exporter discards every
+    # member of a disagreeing group and passes the module through, so naming
+    # k_proj's rung here would describe an encode that does not happen -- and
+    # the sidecar, whose job is that the bytes served are the bytes priced,
+    # would charge for it.
+    assert plan["model.layers.0.self_attn.k_proj.weight"] == "BF16"
+    assert plan["model.layers.0.self_attn.q_proj.weight"] == "BF16"
+    assert plan["model.layers.0.self_attn.v_proj.weight"] == "BF16"
+    assert plan["model.layers.0.mlp.gate_proj.weight"] == {"grid": "E4M3", "q256": 1083}
     assert [d["module"] for d in provenance["fused_disagreements"]] == \
            ["model.layers.0.self_attn.qkv_proj"]
+    entry = provenance["fused_disagreements"][0]
+    assert entry["planned_as"] == "BF16"
+    assert entry["demoted_params"] == {
+        "model.layers.0.self_attn.q_proj": 2048 * 1024,
+        "model.layers.0.self_attn.k_proj": 1024 * 1024,
+        "model.layers.0.self_attn.v_proj": 1024 * 1024,
+    }
+    totals = provenance["totals"]
+    assert totals["tessera_units"] == 4
+    assert totals["demoted_to_bf16_params"] == 4 * 1024 * 1024
+    assert totals["quantized_params"] == 3 * 3072 * 1024 + 1024 * 2048
+    assert provenance["fused_disagreement_policy"] == \
+        "demoted_to_bf16_by_--allow-fused-disagreement"
+
+
+def test_a_mink_allocation_refuses_by_default_and_never_prices_what_it_will_not_serve():
+    """A per-member (mink) allocation, end to end: Tessera issue #15.
+
+    PrismaQuant's group knapsack gives one family per fused group and a RATE
+    PER MEMBER, which is the whole reason the option exists -- the members'
+    sensitivities differ.  This serving path cannot express it, and the
+    deliberate answer is to refuse: no single rate for the group is derivable
+    from the objective (min / bytes-weighted / max are taste, not arithmetic)
+    and any of them moves the point off the frontier the DP chose it on.
+
+    What must not happen -- and did, under the override -- is a plan that names
+    rungs the exporter will discard while the sidecar charges for them.  Here
+    five of seven units are demoted, two thirds of the allocated body, and the
+    plan and the totals both say so.
+    """
+    config = {
+        "model.layers.0.self_attn.q_proj": tessera("TESSERA_E4M3_K1_R1083"),
+        "model.layers.0.self_attn.k_proj": tessera("TESSERA_E4M3_K1_R920"),
+        "model.layers.0.self_attn.v_proj": tessera("TESSERA_E4M3_K1_R1200"),
+        "model.layers.0.self_attn.o_proj": tessera("TESSERA_E4M3_K1_R934"),
+        "model.layers.0.mlp.gate_proj": tessera("TESSERA_E4M3_K1_R1107"),
+        "model.layers.0.mlp.up_proj": tessera("TESSERA_E4M3_K1_R1000"),
+        "model.layers.0.mlp.down_proj": tessera("TESSERA_E4M3_K1_R749"),
+    }
+    with pytest.raises(SystemExit) as excinfo:
+        build(config, one_layer_shapes())
+    message = str(excinfo.value)
+    assert "2 fused module(s) do not share one" in message
+    assert "R1083" in message and "R920" in message      # the members and their rates
+
+    plan, provenance = build(config, one_layer_shapes(), allow_disagreement=True)
+    demoted = {"self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj",
+               "mlp.gate_proj", "mlp.up_proj"}
+    for role in demoted:
+        assert plan[f"model.layers.0.{role}.weight"] == "BF16", role
+    assert plan["model.layers.0.self_attn.o_proj.weight"] == {"grid": "E4M3", "q256": 934}
+    assert plan["model.layers.0.mlp.down_proj.weight"] == {"grid": "E4M3", "q256": 749}
+    totals = provenance["totals"]
+    assert totals["tessera_units"] == 2
+    assert totals["demoted_to_bf16_params"] == 2048 * 1024 + 2 * 1024 * 1024 + 2 * 3072 * 1024
+    # the charged-bits total covers only what will actually be encoded
+    assert totals["quantized_params"] == 1024 * 2048 + 1024 * 3072
+    assert {u["qname"] for u in provenance["units"]} == {
+        "model.layers.0.self_attn.o_proj", "model.layers.0.mlp.down_proj"}
+
+
+def test_a_whole_group_option_name_is_refused_as_the_thing_it_is():
+    """``TESSERA_E4M3_K1_G3`` is a group option, not a rung, and no rate stands for it.
+
+    PrismaQuant's ``expand_fused_sibling_assignment`` replaces it with the
+    members' own rungs before an assignment is written; one that reaches a plan
+    means that expansion did not run, and the useful error says so rather than
+    complaining about a spelling.
+    """
+    config = uniform_config()
+    config["model.layers.0.self_attn.k_proj"] = {
+        "data_type": "tessera", "tessera_format": "TESSERA_E4M3_K1_G3",
+        "tessera_family": "TESSERA_E4M3_K1",
+    }
+    with pytest.raises(SystemExit, match="whole-GROUP option"):
+        build(config, one_layer_shapes())
 
 
 def test_a_fused_group_whose_members_take_two_families_is_the_same_refusal():
