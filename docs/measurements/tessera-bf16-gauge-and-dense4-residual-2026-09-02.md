@@ -32,16 +32,23 @@ beats **EXL3 K=8** on the weight leg 6/6 (geomean `wt` **0.867x**) and is level
 in out-space (**1.004x**), at 8.0352 bpp against 8.0117 -- nearly matched, not
 matched. Against the E4M3 wire it is **4.23x** better for +0.0156 bpp.
 
+**Claim (#18, transfer).** The dense L conflict **does not transfer to GLM
+experts.** On two expert `gate_proj` tensors every L is on the `wt`, `h` *and*
+`out` frontier at both rungs -- deeper is monotonically better on all three --
+because on experts `h` tracks `wt` to four or five digits. The L question is a
+dense-model question. At `L=16` the BF16 route also beats EXL3 K=8 in out-space
+(0.902x / 0.922x at +1.5% bytes), so the "level in out-space" above is a
+property of the `L=14` constant, not of the route.
+
 **Claim (#12).** The 1.254x premise **does not reproduce**. It is **1.039x**
 served on master, moved by the LDLQ-on-LUT work at byte-identical bytes -- and
 *not* by the reach-aware per-row start, which is provably not on that path. The
 residual is a **weight-leg** residual: on held-out rows the weight leg alone is
-**1.035x**, against 1.039x served. And it **concentrates**: over 94 of the 196
+**1.035x**, against 1.039x served. And it **concentrates**: over all 196
 Linears, Tessera at 4.0 bpp beats NVFP4 at 4.5 on `hq` on five of seven roles
-and loses only `q_proj` (1.090) and `k_proj` (1.128). The census geomean is not
-converged -- 0.954 at n=51, 0.975 at n=94 -- and once each role carries its own
-measured in-sample discount the overall reads ~1.011 out-of-sample, which is the
-served 1.039x arriving by a second route.
+and loses only `q_proj` (1.065) and `k_proj` (1.098) -- 1.080 and 1.114 once
+each role carries the discount measured on its own role. LDLQ + the H-solved
+refit is worth **1.30x** on the weight leg on every one of the seven.
 
 **Retracted within this document:** an intermediate reading of the 4-bit census
 said the residual had left the weight leg entirely. It had not; the census
@@ -264,6 +271,54 @@ so six tensors took ~28 minutes instead of ~4 hours. Geomean:
 The alphabet-floor claim now rests on six experts rather than one. Still a
 weight-space screen; there is no BF16 lane and nothing here is promotable.
 
+## #18, part 1: the L conflict does not transfer to GLM experts
+
+`--stage glm-l` ran the same L sweep on two GLM-5.3 expert `gate_proj`
+tensors (2048x4096, layers 5 and 42), scored on 1024 **held-out** activation
+rows, with EXL3 K=4/6/8 reconstructions in the same table as the reference.
+Nothing here is fit to `H` -- no LDLQ, no refit -- so `wt`, `h` and `out` are
+all out-of-sample and the arms are directly comparable.
+
+| unit | arm | bpp | wt | h | out |
+|---|---|---|---|---|---|
+| L5 | EXL3 K=4 | 4.0117 | 0.08816 | 0.08814 | 0.07237 |
+| L5 | R=4 L=8 | 4.0044 | 0.08663 | 0.08663 | 0.08364 |
+| L5 | R=4 **L=14 (default)** | 4.0352 | 0.06942 | 0.06941 | 0.06693 |
+| L5 | R=4 L=16 | 4.1289 | **0.06754** | **0.06754** | **0.06500** |
+| L5 | EXL3 K=8 | 8.0117 | 0.00623 | 0.00623 | 0.00511 |
+| L5 | R=8 **L=14 (default)** | 8.0352 | 0.00531 | 0.00531 | 0.00512 |
+| L5 | R=8 L=16 | 8.1289 | **0.00478** | **0.00478** | **0.00461** |
+| L42 | EXL3 K=8 | 8.0117 | 0.00600 | 0.00600 | 0.00359 |
+| L42 | R=8 **L=14 (default)** | 8.0352 | 0.00527 | 0.00527 | 0.00370 |
+| L42 | R=8 L=16 | 8.1289 | **0.00473** | **0.00473** | **0.00331** |
+
+**Every L is on the `wt`, `h` *and* `out` frontier, on both units, at both
+rungs.** Error falls monotonically with L on all three metrics. The dense-Qwen
+conflict -- `wt` monotone, `h` non-monotone, the two axes disagreeing in sign at
+R=8 -- **does not appear here at all**.
+
+The mechanism is visible in the table: on GLM experts `h` and `wt` agree to four
+or five significant digits (0.07786 vs 0.07786, 0.00531 vs 0.00531). The expert
+Hessian diagonal is near-isotropic over these rows, so there is no axis for the
+two metrics to disagree on. On dense Qwen they diverge, and that divergence is
+where the whole L conflict lives. **So the L question is a dense-model question**
+-- which also means the dense result cannot be transferred to experts, and the
+expert result cannot be transferred to dense.
+
+Two things fall out that are worth recording even though nothing is promoted:
+
+* **L=14 is not the frontier point on GLM experts either**, but in the opposite
+  direction from dense: `L=16` is better on all three metrics at both rungs, for
+  +0.094 bpp. On dense Qwen at R=8 the geomean wanted *shallower*.
+* **At L=16 the BF16 route beats EXL3 K=8 in out-space**, 0.902x on L5 and
+  0.922x on L42, at 8.129 bpp against 8.012 (+1.5% bytes). The six-expert result
+  reported earlier in this document -- level in out-space, 1.004x -- was measured
+  at the default L=14, and this says that "level" is a property of the constant
+  rather than of the route.
+
+Controls: 4 of 4 repeat arms byte-identical *and* tensor-identical, wall drift
+0.91x to 1.15x between the first and repeated baseline.
+
 ## #12: the premise, and the mechanism it was attributed to
 
 Two findings, and only the second one moves the number.
@@ -345,33 +400,34 @@ loses `2.mlp.down_proj` by 27%.
 
 ## And it does concentrate: the residual is q_proj and k_proj
 
-`dense4_residual_census.py` across the first **94 of 196** Qwen3-0.6B Linears
-(it runs the model in sorted-name order, every role represented 13-14 times).
-All three arms per unit, one process, the weights-only arm re-run at the end
-bit-exact:
+`dense4_residual_census.py` across **all 196** Qwen3-0.6B Linears, three arms
+per unit, one process, 5821 s. The weights-only arm was re-run on the first four
+units at the end as the drift control and came back **bit-exact 4 of 4** across
+that whole span:
 
 | role | n | A `hq` (NVFP4 4.5) | C `hq` (Tessera 4.0) | B/A | **C/A** |
 |---|---|---|---|---|---|
-| `o_proj` | 13 | 0.06995 | 0.06027 | 1.4181 | **0.8616** |
-| `down_proj` | 14 | 0.07543 | 0.06650 | 1.1632 | **0.8816** |
-| `up_proj` | 14 | 0.06875 | 0.06550 | 1.2685 | **0.9527** |
-| `v_proj` | 13 | 0.06956 | 0.06716 | 1.2570 | **0.9655** |
-| `gate_proj` | 14 | 0.04578 | 0.04517 | 1.4244 | **0.9866** |
-| `q_proj` | 13 | 0.04620 | 0.05036 | 1.4333 | **1.0899** |
-| `k_proj` | 13 | 0.04426 | 0.04992 | 1.4620 | **1.1280** |
-| **all** | 94 | | | **1.3403** | **0.9754** |
+| `o_proj` | 28 | 0.07269 | 0.06121 | 1.3217 | **0.8421** |
+| `down_proj` | 28 | 0.07604 | 0.06699 | 1.1755 | **0.8810** |
+| `up_proj` | 28 | 0.07158 | 0.06736 | 1.2323 | **0.9411** |
+| `v_proj` | 28 | 0.07626 | 0.07286 | 1.2178 | **0.9554** |
+| `gate_proj` | 28 | 0.04640 | 0.04534 | 1.3862 | **0.9772** |
+| `q_proj` | 28 | 0.04931 | 0.05250 | 1.3680 | **1.0648** |
+| `k_proj` | 28 | 0.04945 | 0.05427 | 1.4045 | **1.0976** |
+| **all** | 196 | | | **1.2981** | **0.9619** |
 
-**The geomean is not converged and is drifting the wrong way.** At n=51 it was
-`C/A` 0.9544; at n=94 it is 0.9754. The *ordering* of the roles is stable and
-`q_proj`/`k_proj` are the only losers in both cuts, but the overall figure has
-moved 2.2% in 43 units and should not be quoted as a converged number until the
-run finishes. What the additional 43 units did not do is change the shape.
+The partial cuts taken along the way are worth recording because they are the
+reason not to quote a partial census: `C/A` read 0.9544 at n=51, 0.9754 at n=94
+and 0.9619 at n=196 -- a 2% band, not converging monotonically. **The role
+ordering was stable in all three cuts and `q_proj`/`k_proj` were the only losers
+in all three**, which is the part that was worth reporting early; the geomean was
+not.
 
 Two readings.
 
 **The residual is not spread; it is `q_proj` and `k_proj`.** On `hq` Tessera at
-4.0 bpp beats production NVFP4 at 4.5 on five of seven roles by 1-14% and loses
-the two attention projections by 9-13%. The in-sample discount that turns those
+4.0 bpp beats production NVFP4 at 4.5 on five of seven roles by 2-16% and loses
+the two attention projections by 6-10%. The in-sample discount that turns those
 into held-out statements is a **range, 0.99x to 1.12x**, and multiplying the
 geomean through would be the same borrowing error the census itself fell into,
 so each role below carries its *own* measured discount where the out-check had a
@@ -379,37 +435,51 @@ unit of that role, and the geomean only where it did not:
 
 | role | `hq` C/A | discount | out-space C/A | discount source |
 |---|---|---|---|---|
-| `o_proj` | 0.8616 | 1.1159 | **0.962** | own (n=1) |
-| `down_proj` | 0.8816 | 1.0253 | **0.904** | own (n=2) |
-| `up_proj` | 0.9527 | 1.0361 | **0.987** | geomean |
-| `v_proj` | 0.9655 | 1.0361 | **1.000** | geomean |
-| `gate_proj` | 0.9866 | 1.0251 | **1.011** | own (n=1) |
-| `q_proj` | 1.0899 | 1.0140 | **1.105** | own (n=1) |
-| `k_proj` | 1.1280 | 1.0145 | **1.144** | own (n=1) |
-| **all** | 0.9754 | 1.0361 | **~1.011** | geomean |
+| `o_proj` | 0.8421 | 1.1159 | **0.940** | own (n=1) |
+| `down_proj` | 0.8810 | 1.0253 | **0.903** | own (n=2) |
+| `up_proj` | 0.9411 | 1.0361 | **0.975** | geomean |
+| `v_proj` | 0.9554 | 1.0361 | **0.990** | geomean |
+| `gate_proj` | 0.9772 | 1.0251 | **1.002** | own (n=1) |
+| `q_proj` | 1.0648 | 1.0140 | **1.080** | own (n=1) |
+| `k_proj` | 1.0976 | 1.0145 | **1.114** | own (n=1) |
+| **all** | 0.9619 | 1.0361 | **~0.997** | geomean |
 
-**Two roles carry the loss, and the discount does not rescue the rest.** What it
-does do is a coherence check worth more than the table: the discounted overall,
-**~1.011**, sits between the n=51 reading (0.954 raw) and the served whole-model
-**1.039x**, and it has moved *toward* the served number as the census has grown.
-A weight-leg census on half the model that lands within 3% of the served gap is
-the same claim arriving twice by different routes.
+**Two roles carry the loss.** Every other role wins, and `q`/`k` lose by 8% and
+11% out-of-sample -- which is a smaller loss than the `hq` cut at n=51 suggested
+(1.116 / 1.145 there, after a discount I had borrowed rather than measured).
 
-That is the shape a per-role decision exploits. `q_proj` and `k_proj` are fused
+The three routes to the same number do **not** agree as tightly as the n=94 cut
+suggested, and that is worth stating rather than smoothing:
+
+| route | scope | Tessera / NVFP4 |
+|---|---|---|
+| served KL, whole model | 196 Linears | **1.039x** |
+| weight leg, direct held-out out-space | 6 Linears | **1.035x** |
+| weight-leg census, `hq` x measured discount | 196 Linears | **~0.997x** |
+
+The first two are direct measurements and they agree to half a percent. The
+third is a 196-unit `hq` census multiplied by a discount estimated on six units,
+five of which are not a random sample -- they are the units that happened to
+have held-out activation rows cached -- so its 4% disagreement with the other
+two is an artefact of the discount's own sampling error, not a third opinion.
+**Read the residual as 1.03x-1.04x, weight-leg, concentrated in `q_proj` and
+`k_proj`**, and treat the census as the *shape* of it rather than the size.
+
+That shape is what a per-role decision exploits. `q_proj` and `k_proj` are fused
 siblings on the serving side and must share a format, which makes them one
 decision rather than two -- and PrismaQuant's allocator exists to make exactly
 that decision. A uniform-format comparison is the wrong frame for a route whose
 error is this role-dependent.
 
-**LDLQ + the H-solved refit is worth 1.37x on the weight leg**, uniformly:
-`B/A` 1.3403 against `C/A` 0.9754. The lever is not a tail effect -- it is
-1.16x to 1.46x on every role, and it is largest exactly where the weights-only
-wire was furthest behind. It is also the steadiest number in the census: 1.3155
-at n=51, 1.3403 at n=94.
+**LDLQ + the H-solved refit is worth 1.30x on the weight leg**, uniformly:
+`B/A` 1.2981 against `C/A` 0.9619. The lever is not a tail effect -- it is 1.18x
+to 1.40x on every one of the seven roles, and it is largest exactly where the
+weights-only wire was furthest behind. It is also the steadiest number the
+census produced: 1.3155 at n=51, 1.3403 at n=94, 1.2981 at n=196.
 
-Caveats: 94 of 196 units and drifting, `hq` (so read every number with the 0.99x-1.12x
-discount above, and only `q_proj`/`k_proj` with a discount measured on their own
-role), and weight leg only. The remaining 102 are running; the partial JSON is at
+Caveats: `hq` (so read every number with the 0.99x-1.12x discount above, and
+only `q_proj`/`k_proj` with a discount measured on their own role), and weight
+leg only. Full JSON at
 `/mnt/shared/tessera-runs/ldlq-lut/dense4_residual_census.json`.
 
 ## Method
@@ -434,14 +504,17 @@ compared against are the gate.
 * Any change to `BF16_WINDOW_BITS`, or a per-rung `L`, or a per-rung reach
   ratio, needs a served A/B at matched bytes in **one** vLLM session against the
   current default -- KL drifts 4-8x across sessions.
-* Whether the R=8 `h`-frontier result transfers from dense Qwen to GLM experts
-  (`--stage glm-l`; running at the time of writing, output
-  `/mnt/shared/tessera-runs/bf16/qsweep/glm_l.json`).
+* `--stage glm-l` answered the transfer question in weight space -- it does not
+  transfer, `h` tracks `wt` to four digits on GLM experts -- but the *dense*
+  result it fails to transfer is still unserved. Both need the same A/B.
 * Whether the rung-dependent reach result survives more than four units, and
   whether the unit-dependent `h` direction tracks role the way #12's census
   does. Both of the reach findings that are uniform (the `wt` optimum at each
   rung) are uniform over n=4.
-* The full 196-Linear per-role decomposition of the 4-bit residual, and whether
-  the in-sample discount measured on six units holds across all of them -- and
-  in particular that the 1.4% measured on the two `q_proj`/`k_proj` units in
-  that set is not an artefact of n=2.
+* Whether the in-sample discount measured on six units holds across all 196 --
+  and in particular that the 1.4% measured on the two `q_proj`/`k_proj` units in
+  that set is not an artefact of n=2. This is the one loose end the finished
+  census did not close: it is why the discounted census (~0.997x) and the direct
+  out-space measurement (1.035x) disagree by 4%.
+* A `q_proj`/`k_proj`-only served A/B, since a per-role decision is what the
+  concentration argues for and no served number yet separates the roles.
