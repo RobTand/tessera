@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The #91 reproduction, four censuses under ONE GPU lock.
+# The #91 reproduction, four censuses under ONE GPU slot.
 #
 #   A -> cacheX   the window-GEMV lane, into a fresh cache
 #   B -> cacheY   the torch-window lane, into a fresh cache  (control: B alone works)
@@ -13,7 +13,11 @@
 set -uo pipefail
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 SUF=${1:-before}
-GPULOCK=${GPULOCK:-/home/rob/tmp/arb/gpulock.sh}
+# The slot runner, not the exclusive lock: this is a CORRECTNESS
+# measurement (which key does each arm compute), not a timing one, so it
+# needs the arms honestly separated -- separate cache roots and separate
+# extension dirs -- and not a quiet box.
+GPULOCK=${GPULOCK:-/home/rob/tmp/arb/gpuslot.sh}
 export TS91_NO_LOCK=1
 run() { "$WT/experiments/ts91_cache_key_repro.sh" "$1" "$2" compiled "$SUF-$1-into-$2"; }
 exec "$GPULOCK" bash -c "

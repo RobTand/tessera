@@ -35,7 +35,10 @@ export TS=$WT
 export TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache
 COMMIT=${TESSERA_COMMIT:-$(cd "$WT" && git rev-parse HEAD 2>/dev/null || echo unknown)}
 
-EXT_A=$RUNS/ext-A; EXT_B_RO=$RUNS/ext-B-readonly
+# Per-chain, because two chains may run CONCURRENTLY on the slot runner and
+# arm A's JIT builds into EXT_A: one build dir shared by two live builds is
+# a race, and the point of the experiment is that the arms are separated.
+EXT_A=${TS91_EXT_A:-$RUNS/ext-A}; EXT_B_RO=${TS91_EXT_B_RO:-$RUNS/ext-B-readonly}
 CACHE=$RUNS/cache-$CACHE_NAME
 mkdir -p "$RUNS" "$EXT_A" "$EXT_B_RO" "$CACHE"
 chmod a-w "$EXT_B_RO"
