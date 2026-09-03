@@ -36,16 +36,19 @@ from fractions import Fraction
 import json
 from functools import lru_cache
 from pathlib import Path
+import threading
 from types import MappingProxyType
-from typing import Mapping
+from typing import Mapping, NamedTuple
 
 import torch
 
-from .alphabet import GAUSSIAN_SOURCE, PayloadGrid, build_forest, grid_digest
+from .alphabet import (
+    GAUSSIAN_SOURCE, SERIALISABLE_GRIDS, PayloadGrid, build_forest, grid_digest,
+)
 from .decode import reconstruct_unit
 from .encode import EncodedUnit, encode_unit
 from .errors import GrammarError
-from .grammar import bresenham_rate_schedule
+from .grammar import Q256_UNIT, bresenham_rate_schedule
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import ConvCode
 from .unit_artifact import build_unit_artifact, read_unit_artifact
@@ -788,7 +791,117 @@ class ExportReport:
         return self.passthrough_bytes + self.quantized_bytes
 
 
-@lru_cache(maxsize=256)
+def plan_cache_bound() -> int:
+    """Distinct ``(grid, rung, body)`` keys the plan memo can be asked for.
+
+    Counted, never stated: every serialisable grid contributes its whole rung
+    interval under each body, and the interval's ends are the grammar's own.
+    The floor is ``Q256_UNIT // arity`` on every grid, because
+    ``bresenham_rate_schedule`` refuses a root below rate 1
+    (``grammar._check_rate``); the ceiling is the body's cap --
+    :func:`tcq_cap_q256` for TCQ (the trellis spends one payload bit on its
+    code) and :func:`rung_ceiling` for the window body (which spends none).
+    A grid whose arity does not divide the q256 grid has no integer rung
+    interval at all and contributes no keys, which is why it is skipped rather
+    than rounded.
+
+    ``SERIALISABLE_GRIDS`` is the admissible set because it is what
+    ``build_unit_artifact`` will write (``unit_artifact.py:265`` refuses a grid
+    outside it), so it is the set an export can present.  A research free grid
+    asked of :func:`_plan_for` directly is outside this count -- it is also
+    outside anything a checkpoint can carry.
+
+    This bounds three of the memo's five axes.  ``columns`` and
+    ``source_sigma`` have no bound at import time -- a width is whatever a
+    checkpoint presents and a sigma is a float -- so they are NOT folded in
+    here with a guessed factor: they key the outer table in
+    :func:`_plan_memo`, one memo per shape a run actually presents, and the
+    bound above is what each of those memos holds.  A single memo sized by
+    this number alone would evict across widths, which is exactly the
+    per-rung/per-unit category error tessera#46 fixed one level down.
+    """
+    total = 0
+    for grid in SERIALISABLE_GRIDS.values():
+        lo, remainder = divmod(Q256_UNIT, grid.arity)
+        if remainder:
+            continue                # no integer rung interval; not a key space
+        total += (tcq_cap_q256(grid) - lo + 1) + (rung_ceiling(grid) - lo + 1)
+    return total
+
+
+_PLAN_BOUND: "list[int]" = []
+_PLAN_MEMOS: "dict[tuple[int, float | None], object]" = {}
+_PLAN_MEMO_LOCK = threading.Lock()
+
+
+def _plan_memo(columns: int, source_sigma: "float | None"):
+    """The ``(grid, rung, body)`` memo for one shape, built on first use.
+
+    Two levels because the key space has two kinds of axis.  The rung axis is
+    countable (:func:`plan_cache_bound`) and is sized exactly, so a pass over
+    the whole rung space at one shape recomputes nothing on its second lap.
+    The shape axes -- ``columns`` and ``source_sigma`` -- are not countable
+    before a checkpoint is opened, so they key this table instead: one entry
+    per shape a run actually presents, which is the run's own finite set,
+    created on demand and never evicted.  Sizing the whole thing off the rung
+    count alone was the bug (a literal 256 against a space nobody counted);
+    folding the widths in with a guessed factor would be the same bug with a
+    bigger number.
+
+    Built lazily and behind a lock: counting the space walks every grid, which
+    an import must not do, and ``encode_checkpoint`` encodes on worker threads.
+    """
+    key = (int(columns), source_sigma)
+    memo = _PLAN_MEMOS.get(key)
+    if memo is not None:
+        return memo
+    with _PLAN_MEMO_LOCK:
+        memo = _PLAN_MEMOS.get(key)
+        if memo is None:
+            if not _PLAN_BOUND:
+                bound = plan_cache_bound()
+                if bound < 1:
+                    raise GrammarError(
+                        f"the plan memo's bound counted {bound} keys; a memo sized zero is "
+                        "not a memo, and an empty rung space means the space, not the bound, "
+                        "is wrong")
+                _PLAN_BOUND.append(bound)
+
+            def build(grid, q256, body, _columns=key[0], _sigma=key[1]):
+                return _build_plan(grid, q256, _columns, body, _sigma)
+
+            memo = lru_cache(maxsize=_PLAN_BOUND[0])(build)
+            _PLAN_MEMOS[key] = memo
+    return memo
+
+
+class PlanCacheInfo(NamedTuple):
+    """``lru_cache``'s counters, summed over the per-shape memos."""
+
+    hits: int
+    misses: int
+    maxsize: int
+    currsize: int
+    shapes: int
+
+
+def _plan_cache_info() -> PlanCacheInfo:
+    infos = [memo.cache_info() for memo in list(_PLAN_MEMOS.values())]
+    return PlanCacheInfo(
+        hits=sum(i.hits for i in infos),
+        misses=sum(i.misses for i in infos),
+        maxsize=_PLAN_BOUND[0] if _PLAN_BOUND else 0,
+        currsize=sum(i.currsize for i in infos),
+        shapes=len(infos),
+    )
+
+
+def _plan_cache_clear() -> None:
+    with _PLAN_MEMO_LOCK:
+        _PLAN_MEMOS.clear()
+        _PLAN_BOUND.clear()
+
+
 def _plan_for(
     grid: PayloadGrid, q256: int, columns: int, body: BodyKind = BodyKind.TCQ,
     source_sigma: "float | None" = None,
@@ -811,7 +924,24 @@ def _plan_for(
     ``source_sigma`` is the spread, in grid units, of the Gaussian a TCQ
     forest is optimised against -- the CHANNEL plane's rows are scaled to it
     -- and ``None`` is the amax-bounded source a block plane delivers.
+
+    The memo is two-level and sized, not guessed: :func:`_plan_memo` holds one
+    ``lru_cache`` per ``(columns, source_sigma)`` shape, each sized to the
+    whole ``(grid, rung, body)`` space :func:`plan_cache_bound` counts.  So a
+    second pass over any set of rungs, at any set of shapes, recomputes
+    nothing -- which the 256-entry literal this replaced did not give: 25
+    distinct Linear shapes x the rungs a menu asks per shape run past it, and
+    a shape revisited after 256 intervening keys rebuilt its forests.
+    ``_plan_for.cache_info()`` reports the counters summed over the shapes.
     """
+    return _plan_memo(columns, source_sigma)(grid, q256, BodyKind(body))
+
+
+def _build_plan(
+    grid: PayloadGrid, q256: int, columns: int, body: BodyKind,
+    source_sigma: "float | None",
+):
+    """One plan, built.  Memoised through :func:`_plan_for`; never called raw."""
     root = Fraction(q256 * grid.arity, 256)
     body = BodyKind(body)
     cap = grid.payload_bits if body is BodyKind.WINDOW else grid.rate_cap
@@ -823,6 +953,10 @@ def _plan_for(
         rate: build_forest(rate, samples=samples, grid=grid) for rate in sorted(set(rates))
     }
     return rates, forests
+
+
+_plan_for.cache_info = _plan_cache_info
+_plan_for.cache_clear = _plan_cache_clear
 
 
 def encode_linear_planes(
