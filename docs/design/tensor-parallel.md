@@ -193,8 +193,35 @@ zero.**
   decode to plausible wrong weights in silence, which is the one outcome this
   codebase exists to prevent.
 
+* The **Triton parsed path**, `kernel_window.prepare_from_parsed`, threads the
+  state as a separate kernel argument (`prepare_window_unit(..., initial=)`)
+  over a *zero* pad. It read `getattr(unit, "initial_window", None)` until the
+  2026-09-02 math audit — an attribute nothing defines, so it was always `None`
+  and every parsed shard was prepared against the pinned zero. Fixed to
+  `initial_state`, the name `layout.SlicedUnit` uses and the field the
+  INITIAL_STATE plane parses into.
+* The **BF16 route** (`bf16_route.prepare_bf16_unit`) now passes the state into
+  `pack_window_planes`, and the streamed decoder reads it back out of the pad
+  through `window_pad_state`. Costs no resident byte: the pad bits were being
+  written as zeros anyway.
+* The **window GEMV** (`kernel_window_gemv`) **refuses** a shard.
+  `csrc/window_gemv.cu:17,23` states that the pad is not stored and that lane 0
+  of tile 0 reads its history from a zero it supplies itself, so taking a start
+  state is a kernel change rather than a packing change. `prepare_from_parsed`
+  and `prepare_value_unit` raise, naming the two lanes that do serve a shard.
+
+**One body format, two incompatible state mechanisms — do not cross them.**
+`pack_unit_for_kernel` / `tessera_gemv_window` carry `state_{−1}` **in the plane
+pad**; `kernel_window.prepare_window_unit` packs a **zero pad** and passes
+`initial` as a **separate argument**. Both are correct today because no caller
+mixes them, but a plane built by the first and fed to the second with a nonzero
+`initial` double-counts the state. A third mechanism would be one too many.
+
 Any future kernel that reads the BODY plane directly inherits the same
-obligation: take the state, or refuse a unit that carries one.
+obligation: take the state, or refuse a unit that carries one. Three of the four
+consumers above did neither until they were audited, and every one of them
+passed its tests, because a whole unit's start state is zero and that is what
+the tests exercised.
 
 ## Cost
 

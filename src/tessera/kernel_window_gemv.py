@@ -35,7 +35,9 @@ directory ``$TORCH_EXTENSIONS_DIR`` or ``~/tmp/torch-ext-gemv`` -- never
 ``tests/test_kernel_window_gemv.py``.
 
 Scope, stated: window body at L=14, CHANNEL plane, scalar 256-code grid with a
-``native`` map, no RELEASE plane, no diagonals, no rotation, rates in
+``native`` map, no RELEASE plane, no diagonals, no rotation, **no shard start
+state** (the kernel supplies ``state_{-1} = 0``, so a tensor-parallel row
+shard is refused with the two lanes that do serve it named), rates in
 {1, 2, 4} (R=3 needs 6-byte lanes and is refused with the fallback named),
 M <= 8.  The activation contract is W4A16: ``x`` is bf16, accumulation fp32.
 """
@@ -363,6 +365,32 @@ class WindowGemvUnit:
         return dataclasses.replace(self, plan=plan, table=table.contiguous(), items_by_mt=shared)
 
 
+#: What ``prepare_*`` says when handed a unit whose columns do not start from
+#: the pinned zero register.  One spelling, so the two entry points cannot
+#: drift.
+_NO_START_STATE = (
+    "this unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
+    "and the window GEMV does not take a start state: csrc/window_gemv.cu "
+    "supplies state_{-1} = 0 itself -- the L-bit pad that opens a wire column "
+    "is not stored, and lane 0 of tile 0 reads its history from that zero pad. "
+    "Taking one is a kernel change, not a packing change. Serve this shard "
+    "through tessera.kernel_window (the Triton lane, which threads the state) "
+    "or through the materialised FP8 path"
+)
+
+
+def _refuse_start_state(initial_state) -> None:
+    """Fail closed on a TP shard rather than decode it from zero.
+
+    The same answer ``lane_planes.pack_unit_for_kernel`` already gives a
+    span-2 TCQ shard, and for the same reason: a shard packed against the
+    pinned start decodes its first ``ceil(L/R)`` rows to plausible wrong
+    weights, and a wrong weight raises nothing.
+    """
+    if initial_state is not None:
+        raise GrammarError(_NO_START_STATE)
+
+
 def _check_window_bits(window_bits: int) -> None:
     if int(window_bits) not in WINDOW_BITS_SUPPORTED:
         raise GrammarError(
@@ -391,6 +419,7 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
         raise GrammarError("the unit carries diagonals; not read here")
     if RotationState(getattr(unit, "rotation", RotationState.NONE)) is not RotationState.NONE:
         raise GrammarError("the unit is rotated; not read here")
+    _refuse_start_state(getattr(unit, "initial_state", None))
     if grid.arity != 1 or grid.native is None or grid.size != 256:
         raise GrammarError(f"the window GEMV needs a scalar 256-code hardware grid, got {grid.name}")
     if unit.window_codes is None:
@@ -425,11 +454,19 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
 def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window_bits: int,
                        values: torch.Tensor, *, scale: "torch.Tensor | None" = None,
                        plan: "Plan | None" = None, M: int = 1,
+                       initial_state: "torch.Tensor | None" = None,
                        table_dtype: torch.dtype = torch.bfloat16) -> WindowGemvUnit:
     """The value family: a window body whose table holds values (bf16) rather
     than grid codes.  Same kernel; the optional per-row fp32 ``scale`` is
     applied once on the accumulated output (never folded into the table or a
-    bf16 tile -- see :func:`decode_values`); ``None`` means ones."""
+    bf16 tile -- see :func:`decode_values`); ``None`` means ones.
+
+    ``initial_state`` exists only to be refused.  This entry point takes raw
+    bits rather than a unit, so a caller holding a ``layout.SlicedUnit`` would
+    otherwise pass ``unit.body_bits`` and drop the shard's start state with
+    nowhere for the lane to say so; the keyword is the place it says so.
+    """
+    _refuse_start_state(initial_state)
     _check_window_bits(window_bits)
     if values.numel() != 1 << window_bits:
         raise GrammarError(f"{values.numel()} table values for window_bits {window_bits}")

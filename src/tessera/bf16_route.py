@@ -63,6 +63,7 @@ __all__ = [
     "window_table_values",
     "prepare_bf16_unit",
     "unpack_window_body",
+    "window_pad_state",
     "stream_bf16",
     "stream_bf16_folded",
 ]
@@ -98,9 +99,11 @@ class StreamedBF16Unit:
 
     Everything here is the artifact's own bytes, at the artifact's own rate:
     the packed window plane (``lane_planes.pack_window_planes``, the wire BODY
-    permuted column-major and padded by ``L`` zero bits so position 0 needs no
-    boundary test), the per-column bit offsets and rates, the ``2^L`` bf16
-    table, and one fp16 word per output row times an fp32 global.  Nothing is
+    permuted column-major and led by ``L`` pad bits so position 0 needs no
+    boundary test -- the pad IS ``state_{-1}``, zero for a whole unit and the
+    stored start state for a TP row shard), the per-column bit offsets and
+    rates, the ``2^L`` bf16 table, and one fp16 word per output row times an
+    fp32 global.  Nothing is
     expanded until :func:`stream_bf16_folded` is asked for a tile.
     """
 
@@ -175,8 +178,16 @@ def prepare_bf16_unit(
     if unit.scale_rows is None:
         raise GrammarError("a CHANNEL scale plane needs the unit's row words")
     steps, cols = unit.body_bits.shape
+    # A ROW shard (``layout.slice_unit``) does not enter its columns from the
+    # pinned zero register, and the window plane's ``L``-bit pad IS that start
+    # state -- so threading it costs no resident byte, only the pad bits that
+    # were being written as zeros anyway.  A whole unit carries ``None`` and
+    # takes exactly the path it always did.  Dropped until the 2026-09-02 math
+    # audit: a shard's first ``ceil(L/R)`` rows decoded to plausible wrong
+    # values, silently.
     plane, offsets, rates = pack_window_planes(
-        unit.body_bits, unit.rates, unit.window_bits
+        unit.body_bits, unit.rates, unit.window_bits,
+        getattr(unit, "initial_state", None),
     )
     streamed = StreamedBF16Unit(
         plane=plane,
@@ -230,6 +241,36 @@ def unpack_window_body(
     return body
 
 
+def window_pad_state(
+    plane: torch.Tensor, offsets: torch.Tensor, window_bits: int
+) -> torch.Tensor:
+    """The ``window_bits`` pad bits opening each column, as ``state_{-1}``.
+
+    ``pack_window_planes`` writes a shard's start state there MSB-first (and
+    zeros for a whole unit), so the state need not be carried beside the
+    plane: it is *in* the plane, which is what keeps this module's "everything
+    here is the artifact's own bytes" true and what makes the resident bytes
+    of a shard and a whole unit identical.  Zeros come back for a whole unit,
+    and ``replay_window`` with an all-zero start is the same function as
+    ``replay_window`` with ``None``.
+    """
+    device = plane.device
+    # ``pack_window_planes`` starts every column on a byte, so the pad is the
+    # top ``window_bits`` bits of the column's first ``ceil(L/8)`` bytes.
+    # Read those bytes and shift -- not the whole plane expanded to a bit
+    # array, which ``unpack_window_body`` already pays for once.
+    nbytes = (window_bits + 7) // 8
+    index = (
+        offsets.long()[:, None] // 8
+        + torch.arange(nbytes, device=device, dtype=torch.int64)[None, :]
+    )
+    head = plane[index.reshape(-1)].reshape(-1, nbytes).to(torch.int64)
+    shifts = torch.arange(
+        8 * (nbytes - 1), -1, -8, device=device, dtype=torch.int64
+    )
+    return (head << shifts).sum(1) >> (8 * nbytes - window_bits)
+
+
 def stream_bf16(
     streamed: StreamedBF16Unit,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
@@ -249,13 +290,18 @@ def stream_bf16(
         streamed.window_bits, streamed.rows,
     )
     device = body.device
+    # ``unpack_window_body`` steps over the pad to reach position 0, so the
+    # start state has to be read from it separately and handed to the replay.
+    start = window_pad_state(streamed.plane, streamed.offsets, streamed.window_bits)
     values = torch.zeros(
         streamed.rows, streamed.cols, dtype=torch.float32, device=device
     )
     table = streamed.table.float()
     for present in sorted({int(r) for r in streamed.rates.tolist()}):
         which = torch.nonzero(streamed.rates == present).reshape(-1)
-        states = replay_window(body[:, which], streamed.window_bits, present)
+        states = replay_window(
+            body[:, which], streamed.window_bits, present, start[which]
+        )
         values[:, which] = table[states]
     return (
         values.to(torch.bfloat16),

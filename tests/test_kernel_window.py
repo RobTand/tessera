@@ -729,3 +729,69 @@ def test_the_value_family_has_no_row_scale_to_hand_out():
                                     device="cuda")
     with pytest.raises(GrammarError, match="already applied"):
         kw.window_module_row_scale([unit])
+
+
+# ------------------------- the TP shard's start state -----------------------
+#
+# §6 P0-shardstate of the 2026-09-02 math audit.  ``prepare_from_parsed`` read
+# ``getattr(unit, "initial_window", None)``, but the attribute a shard carries
+# is ``initial_state`` (``layout.SlicedUnit``), so the getattr was always
+# ``None`` and every shard was packed against the pinned zero start -- decoding
+# its first ``ceil(L/R)`` rows to plausible wrong weights, silently.  The
+# machinery was already there (``_initial_windows`` and the kernel's own
+# ``initial`` argument); only the name was wrong.
+#
+# CPU by construction: the packing and the start-state plumbing are torch, and
+# the encoder is fast enough at L=8 to build the shard here.  What this pins is
+# that the prepared unit CARRIES the shard's state; the device decode it then
+# feeds is exercised by ``test_a_nonzero_initial_window_decodes_from_the_
+# definition`` and by ``tests/test_slice_unit.py`` on a GPU.
+
+
+def _cpu_shard(rows=32, cols=256, window_bits=8, cut=(16, 32)):
+    """A row shard of a small E4M3 window unit, re-parsed from its own bytes.
+
+    The round trip through ``build_unit_artifact`` is what a serving rank does
+    (``serving/sharding._reparse_shard``), and it is what makes the parsed
+    unit a ``SlicedUnit`` carrying an INITIAL_STATE plane.
+    """
+    from tessera.layout import slice_unit
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact
+
+    torch.manual_seed(0)
+    weight = (torch.randn(rows, cols) * torch.linspace(0.2, 3.0, rows)[:, None]).float()
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024, name="unit", window_bits=window_bits)
+    parsed = parse_unit_artifact(exported.blob, device="cpu")
+    shard = slice_unit(parsed, rows=cut)
+    manifest = parsed.manifest
+    _m, _region, blob = build_unit_artifact(
+        shard, "rank", parsed.forests, int(manifest.branch.root_q256),
+        parsed.code or ConvCode(),
+        superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container)
+    return parse_unit_artifact(blob, device="cpu")
+
+
+def test_prepare_from_parsed_carries_a_shard_start_state():
+    """A shard's INITIAL_STATE reaches the prepared unit, not a zero pad."""
+    kw = _kw()
+    shard = _cpu_shard()
+    want = shard.unit.initial_state
+    assert want is not None and int(want.max()) > 0, "the fixture is not a shard"
+    prepared = kw.prepare_from_parsed(shard, device="cpu")
+    assert torch.equal(prepared.initial.cpu(), want.cpu().to(prepared.initial.dtype))
+
+
+def test_prepare_from_parsed_still_pins_a_whole_unit_to_zero():
+    """A whole unit has no start state and must keep the pinned zero."""
+    kw = _kw()
+    torch.manual_seed(0)
+    weight = (torch.randn(32, 256) * torch.linspace(0.2, 3.0, 32)[:, None]).float()
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024, name="unit", window_bits=8)
+    parsed = parse_unit_artifact(exported.blob, device="cpu")
+    assert getattr(parsed.unit, "initial_state", None) is None
+    prepared = kw.prepare_from_parsed(parsed, device="cpu")
+    assert not prepared.initial.any()
