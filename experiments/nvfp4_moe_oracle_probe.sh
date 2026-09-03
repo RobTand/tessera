@@ -31,6 +31,8 @@ trap 'if [ "$(awk "NR==1{print \$1}" "$SERVE_LOCK/owner" 2>/dev/null)" = "$$" ];
 
 mkdir -p "$(dirname "$OUT")"
 LOG=$(mktemp "$TMPDIR/nvfp4_moe_oracle_probe.XXXXXX.log")
+# experiments/ is mounted read-only and the probe opens only its own file; the
+# result is written out here from the container's stdout, never from inside it.
 docker run --rm --gpus all --ipc=host \
   -v "$HERE":/probe:ro -e TMPDIR=/tmp \
   --entrypoint python3 "$IMAGE" /probe/nvfp4_moe_oracle_probe.py 2>&1 | tee "$LOG"

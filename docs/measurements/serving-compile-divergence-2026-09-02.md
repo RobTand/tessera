@@ -206,15 +206,20 @@ says the split is not stable in either direction: 21 backbone graphs from one
 campaign take **five** distinct splits, from all-56-unfunctionalized to
 all-functionalized.
 
-What this is **not** claimed to be: the cause of the 0.017117. The two overloads
-share one implementation and differ in whether the output may alias a donated
-input, and the 196 autotuned kernels are at identical content-addressed paths in
-both builds, so the overload difference did not change what inductor generated.
+What this is **not** claimed to be: the cause of the 0.017117. It changed no
+autotuned kernel — all 196 sit at identical content-addressed paths in both
+builds — and by the functionalization pass's own docstring the two overloads
+dispatch to one implementation, differing only in whether the output may alias a
+donated input. Both of those are readings, and neither is a measurement of the
+op's numerics: a custom op is an opaque extern call that emits no Triton kernel,
+so identical kernel paths cannot tell you whether the extern call read a
+different downstream buffer.
 It is recorded because a cache directory that reports two different graphs under
 one key is a reproducibility fact in its own right, and because the dump is what
 a future reader will reach for. Establishing whether the dump is a genuine
 compile difference or an artefact of *when* `print_readable` runs relative to
-the passes needs a vLLM-internals answer this receipt does not have; filed as
+the passes — and, if it is genuine, whether the aliasing changes any downstream
+read — needs a vLLM-internals answer this receipt does not have; filed as
 **#29**.
 
 ## 4. The rule this buys, and the knob it names
