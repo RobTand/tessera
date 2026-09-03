@@ -61,6 +61,34 @@ one. `experiments/ldlq_block_serve_ab.sh` is that chain.
   present here. The matched-pair timing measurement, where quiet conditions
   are the measurement, is a different case and is treated as one.
 
+## Projected wall clock, recorded before the run lands
+
+The LUT-plane receipt measured the LDLQ pass at a **fixed cost per segment**,
+invariant to the work inside it: `time = 0.694 s x segments + 1.0 s`, flat to
+0.6% across a 4x width range. Segments are `cols / block`, so the projection
+follows from the model's geometry alone.
+
+Qwen3-0.6B has 28 layers x (q,k,v @ 1024 cols + o @ 2048 + gate,up @ 1024 +
+down @ 3072) = **286,720 input columns**, so
+
+| block | segments | projected, quiet |
+|---:|---:|---:|
+| 32 | 8,960 | ~6,200 s (1.7 h) |
+| 4 | 71,680 | ~49,700 s (13.8 h) |
+
+The b32 projection is corroborated: the 2026-09-02 `ldlqH1` export of this
+exact recipe took 7,949 s contended and the receipt's own quiet estimate was
+~4,900 s. The issue's per-unit datapoint corroborates the b4 one:
+`L0.q_proj` at block 4 is 256 segments and was measured at ~175 s, i.e.
+0.68 s/segment.
+
+**So the candidate arm is a ~14 h encode on a quiet box, and this box is not
+quiet.** At launch sparklina was load 3; fifteen concurrent test suites took it
+to load 86 within twenty minutes. Both exports hold a full core each (98% CPU,
+4.7 GB RSS, 34 W of a ~140 W envelope -- launch-bound, exactly as the receipt
+says), so they are not stalled, but the wall clock will exceed the projection
+and is reported as measured rather than as projected.
+
 ## What is pending
 
 - [ ] b32 export wall-clock and bytes
