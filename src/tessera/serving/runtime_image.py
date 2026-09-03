@@ -149,8 +149,9 @@ def docker_inspector(reference: str) -> dict[str, Any]:
          "--format", "{{.Id}}\t{{json .RepoDigests}}"],
         capture_output=True, text=True)
     if proc.returncode != 0:
+        lines = (proc.stderr or proc.stdout).strip().splitlines()
         return {"present": False, "local_id": None, "repo_digests": [],
-                "error": (proc.stderr or proc.stdout).strip().splitlines()[-1:] or None}
+                "error": lines[-1] if lines else None}
     local_id, _, digests = proc.stdout.strip().partition("\t")
     try:
         parsed = json.loads(digests)
@@ -182,7 +183,13 @@ def resolve(requested: str, *,
     # was actually asked for; an image can be a legitimate match on one of its
     # names and irrelevant under another.
     own = [ref for ref in repo_digests if parse_reference(ref)[0] == repository]
-    resolved_digest = parse_reference(own[0])[2] if own else None
+    if pinned in own:
+        # When the pin is among them it IS the answer: an image re-tagged under
+        # a second digest of the same repository must not report the other one
+        # as what ran while passing the gate on the pin.
+        resolved_digest = pinned_digest
+    else:
+        resolved_digest = parse_reference(own[0])[2] if own else None
 
     gated = repository == pinned_repo
     record: dict[str, Any] = {
