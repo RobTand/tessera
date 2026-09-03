@@ -19,7 +19,16 @@ whichever rate the module declared.  Nothing here touches the sidecar scheme
 half of #37 and is measured by ``tests/test_fused_member_rungs.py``.  This
 script is about the DECODER.
 
+The rungs are an argument, not a constant, because the default three are all
+inside ONE window band (E4M3 resolves L=14 across its whole range, and BF16
+does up to 3584).  A module key of ``(family, grid, body, plane)`` also admits
+members whose window TABLES differ in size, and "the decode is per member"
+measured only at equal L would not have covered that.  ``--rungs
+1024,3600,3900`` on the BF16 grid is the cross-band arm: window_bits 14, 15
+and 16 in one fused module.
+
     python experiments/fused_member_rung_identity.py [--src DIR] [--grid E4M3|BF16]
+                                                     [--rungs A,B,C]
 """
 from __future__ import annotations
 
@@ -47,7 +56,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=Path("/home/rob/models/Qwen3-0.6B"))
     ap.add_argument("--grid", choices=("E4M3", "BF16"), default="E4M3")
+    ap.add_argument("--rungs", default=None,
+                    help="comma-separated q256 per role, in GROUP order; "
+                         "1024,3600,3900 on --grid BF16 spans L=14/15/16")
     args = ap.parse_args()
+
+    group = GROUP
+    if args.rungs:
+        wanted = [int(r) for r in args.rungs.split(",")]
+        if len(wanted) != len(GROUP):
+            ap.error(f"--rungs needs {len(GROUP)} values, one per role")
+        group = tuple((role, tensor, q) for (role, tensor, _), q
+                      in zip(GROUP, wanted))
 
     from tessera.export import encode_linear_planes
 
@@ -66,7 +86,7 @@ def main() -> int:
     shard = sorted(args.src.glob("*.safetensors"))[0]
     blobs = []
     with safe_open(str(shard), framework="pt") as handle:
-        for role, tensor, q256 in GROUP:
+        for role, tensor, q256 in group:
             weight = handle.get_tensor(tensor).to(device, torch.float32).contiguous()
             exported, unit, _forests = encode_linear_planes(
                 weight, grid=grid, q256=q256, name=role, verify=False)
@@ -81,7 +101,7 @@ def main() -> int:
     # manifest's root rate is per CODE; arity is 1 on both scalar grids.
     rungs = [int(p.manifest.branch.root_q256) // p.grid.arity for _, p in parsed]
     print(f"  per-member q256 from each member's own manifest: {rungs}")
-    assert rungs == [q for _, _, q in GROUP], rungs
+    assert rungs == [q for _, _, q in group], rungs
     assert len(set(rungs)) == len(rungs), "the point of the run is that they differ"
 
     singles = [prepare([(name, p)], device=device) for name, p in parsed]
@@ -103,8 +123,11 @@ def main() -> int:
         offset += rows
     assert offset == tile.shape[0]
 
+    widths = sorted({int(p.unit.window_bits) for _, p in parsed})
     print(f"PASS  {tile.numel()} tile elements and {scale.numel()} row scales identical "
-          f"across the fused and the per-role decode, at rungs {rungs}")
+          f"across the fused and the per-role decode, at rungs {rungs}, "
+          f"window_bits {widths}"
+          f"{' (CROSS-BAND)' if len(widths) > 1 else ''}")
     return 0
 
 
