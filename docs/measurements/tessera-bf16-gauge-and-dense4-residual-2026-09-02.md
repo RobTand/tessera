@@ -24,7 +24,9 @@ matched. Against the E4M3 wire it is **4.23x** better for +0.0156 bpp.
 served on master, moved by the LDLQ-on-LUT work at byte-identical bytes -- and
 *not* by the reach-aware per-row start, which is provably not on that path. The
 residual is a **weight-leg** residual: on held-out rows the weight leg alone is
-**1.035x**, against 1.039x served.
+**1.035x**, against 1.039x served. And it **concentrates**: over 51 Linears
+Tessera at 4.0 bpp beats NVFP4 at 4.5 on five of seven roles and loses only
+`q_proj` (1.077) and `k_proj` (1.105).
 
 **Retracted within this document:** an intermediate reading of the 4-bit census
 said the residual had left the weight leg entirely. It had not; the census
@@ -245,9 +247,49 @@ next lever rather than a footnote.
 
 Per-unit variance is the other half of the story: `C/A out` ranges **0.851 to
 1.274** across six units. The 4-bit route wins `27.self_attn.o_proj` by 15% and
-loses `2.mlp.down_proj` by 27%. If that concentrates by role, a per-role format
-choice is worth more than any further encoder work -- which is the argument
-PrismaQuant's allocator makes, and it is measurable here.
+loses `2.mlp.down_proj` by 27%.
+
+## And it does concentrate: the residual is q_proj and k_proj
+
+`dense4_residual_census.py` across the first **51 of 196** Qwen3-0.6B Linears
+(it runs the model in sorted-name order, so this is layers 0-15 plus the
+alphabetical wrap, every role represented 7-8 times). All three arms per unit,
+one process, the weights-only arm re-run at the end bit-exact:
+
+| role | n | A `hq` (NVFP4 4.5) | C `hq` (Tessera 4.0) | B/A | **C/A** |
+|---|---|---|---|---|---|
+| `down_proj` | 8 | 0.08365 | 0.07154 | 1.1360 | **0.8552** |
+| `o_proj` | 7 | 0.07284 | 0.06285 | 1.3921 | **0.8628** |
+| `up_proj` | 7 | 0.07591 | 0.07009 | 1.2239 | **0.9233** |
+| `gate_proj` | 8 | 0.04737 | 0.04492 | 1.3850 | **0.9483** |
+| `v_proj` | 7 | 0.06303 | 0.06014 | 1.2419 | **0.9541** |
+| `q_proj` | 7 | 0.04580 | 0.04931 | 1.4387 | **1.0767** |
+| `k_proj` | 7 | 0.04077 | 0.04504 | 1.4428 | **1.1049** |
+| **all** | 51 | | | **1.3155** | **0.9544** |
+
+Two readings.
+
+**The residual is not spread; it is `q_proj` and `k_proj`.** Tessera at 4.0 bpp
+beats production NVFP4 at 4.5 on five of seven roles by 5-15%, and loses the
+two attention projections by 8-10%. Apply the 3.6% in-sample discount measured
+above and the picture is roughly: `down_proj` 0.886, `o_proj` 0.894, `up_proj`
+0.957, `gate_proj` 0.982, `v_proj` 0.988, `q_proj` 1.116, `k_proj` 1.145,
+overall 0.989. **Two roles carry the whole gap.**
+
+That is the shape a per-role decision exploits. `q_proj` and `k_proj` are fused
+siblings on the serving side and must share a format, which makes them one
+decision rather than two -- and PrismaQuant's allocator exists to make exactly
+that decision. A uniform-format comparison is the wrong frame for a route whose
+error is this role-dependent.
+
+**LDLQ + the H-solved refit is worth 1.38x on the weight leg**, uniformly:
+`B/A` 1.3155 against `C/A` 0.9544. The lever is not a tail effect -- it is
+1.14x to 1.44x on every role, and it is largest exactly where the weights-only
+wire was furthest behind.
+
+Caveats: 51 of 196 units, `hq` (so read every number with the 3.6% discount),
+and weight leg only. The remaining 145 are running; the partial JSON is at
+`/mnt/shared/tessera-runs/ldlq-lut/dense4_residual_census.json`.
 
 ## Method
 
