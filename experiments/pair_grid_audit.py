@@ -183,8 +183,9 @@ def report(path: str) -> bool:
                 print(head + f"{audit['present']} of {audit['expected']} cells "
                              "present, all byte-matched")
                 continue
-            print(head + "\n".join([""] + [f"    {line}"
-                                           for line in audit_lines(audit)]).strip("\n"))
+            print(head.rstrip())
+            for line in audit_lines(audit):
+                print(f"    {line}")
     print("\nVERDICT: " + ("every rung carries the grid its own args record"
                            if result["complete"] else
                            "GRID INCOMPLETE -- this file's summary is derived "
