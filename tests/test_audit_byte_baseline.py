@@ -22,6 +22,13 @@ Two holes are pinned here, because the matrix had both:
   moves it.  ``test_the_value_matrix_catches_the_channel_refit_mutation`` runs
   that mutation rather than describing it, so the corpus cannot shrink back to
   a blind one while still printing a total.
+* A **row** the baseline never carries (the second half of issue #39).  The
+  reach-aware per-row start fires only on a row whose largest weight exceeds
+  the body's reach, and no seeded ``randn`` row of the E4M3 shape cases does.
+  The value slice's rows do, but nothing said so, and a re-cut slice could
+  stop doing so with every test green.
+  ``test_the_value_matrix_catches_the_reach_start_mutation`` pins it the same
+  way: turn the start off, and an E4M3 value digest must move.
 """
 from __future__ import annotations
 
@@ -44,6 +51,16 @@ HARNESS = Path(__file__).resolve().parents[1] / "experiments" / "audit_byte_base
 #: module text, so a rewrite of this line fails the test loudly instead of
 #: leaving a stale copy of it silently passing.
 CHANNEL_HOLD = "valid = (A > 0) & (B > 0)"
+
+#: The per-row start (commit 795137c): a row whose largest weight would land
+#: past the body's reach starts at a lower sigma.  Quoted for the same reason.
+#: This is the *start* in ``initial_channel_scale``, not the reach *floor*
+#: (``refit_reach_floor`` -> ``land_at_least``): the floor is opt-in and
+#: keeps a refit from undoing the start; the start is on for every CHANNEL
+#: encode and fires on any row over the reach.  Its mutant keeps every row on
+#: the plain RMS start, which is exactly the encoder before 795137c.
+REACH_START = "over = amax * float(sigma) > float(reach) * rms"
+REACH_START_OFF = "over = torch.zeros_like(rms, dtype=torch.bool)"
 
 
 def _load():
@@ -91,36 +108,46 @@ def test_every_case_names_a_grid_a_reader_would_accept():
         )
 
 
-def _scale_channel_at(hold: str) -> types.ModuleType:
-    """A second ``tessera.scale_channel`` with the CHANNEL refit's hold rewritten.
+def _scale_channel_with(line: str, rewritten: str) -> types.ModuleType:
+    """A second ``tessera.scale_channel`` with one quoted line rewritten.
 
     Compiled from the installed module's own text, not hand-copied: a copy of a
     fifty-line numerical function is a copy that drifts, and a drifted copy
     would keep passing while testing something else.  Replacing the exact
-    ``CHANNEL_HOLD`` line also means a rewrite of that line breaks this test
-    rather than silently turning the mutation into a no-op.
+    quoted line also means a rewrite of that line breaks this test rather than
+    silently turning the mutation into a no-op.
     """
     source = Path(tessera.scale_channel.__file__).read_text()
-    assert source.count(CHANNEL_HOLD) == 1, (
-        f"{CHANNEL_HOLD!r} appears {source.count(CHANNEL_HOLD)} times in "
-        f"scale_channel.py; this test mutates that one line and needs to know "
-        f"which one it is"
+    assert source.count(line) == 1, (
+        f"{line!r} appears {source.count(line)} times in scale_channel.py; "
+        f"this test mutates that one line and needs to know which one it is"
     )
     module = types.ModuleType("tessera._scale_channel_under_test")
     module.__file__ = tessera.scale_channel.__file__
     module.__package__ = "tessera"          # the file's relative imports need it
-    exec(compile(source.replace(CHANNEL_HOLD, hold), module.__file__, "exec"),
+    exec(compile(source.replace(line, rewritten), module.__file__, "exec"),
          module.__dict__)
     return module
 
 
-def _channel_value_case(module):
-    """The cheapest value case on the CHANNEL plane -- what the mutation moves."""
+def _scale_channel_at(hold: str) -> types.ModuleType:
+    """The CHANNEL refit's hold rewritten to ``hold``."""
+    return _scale_channel_with(CHANNEL_HOLD, hold)
+
+
+def _channel_value_case(module, grid_name: "str | None" = None):
+    """The cheapest value case on the CHANNEL plane -- what the mutation moves.
+
+    ``grid_name`` narrows it to one grid: the reach-start test wants E4M3,
+    because that is the grid the shape matrix never reaches (below).
+    """
     for case in module._value_cases():
         if wire_recipe(case.grid, case.q256).scale_plane is ScalePlaneKind.CHANNEL:
+            if grid_name is not None and case.grid.name != grid_name:
+                continue
             if "ldlq" not in case.label:    # LDLQ's block loop costs ~3x
                 return case
-    raise AssertionError("no CHANNEL-plane value case to mutate")
+    raise AssertionError(f"no CHANNEL-plane value case on {grid_name or 'any grid'} to mutate")
 
 
 def test_the_value_matrix_catches_the_channel_refit_mutation(monkeypatch):
@@ -182,6 +209,79 @@ def test_the_shape_matrix_alone_is_blind_to_that_mutation(monkeypatch):
         "a randn shape case now moves under the CHANNEL hold mutation. That is "
         "better coverage, not a regression -- but the harness docstring and "
         "issue #39 both say it cannot, so fix the prose"
+    )
+
+
+def test_the_value_matrix_catches_the_reach_start_mutation(monkeypatch):
+    """Turn the per-row start off; an E4M3 value digest must move.
+
+    The condition is a row whose largest weight exceeds the body's reach
+    (4.08 row-RMS on E4M3, 4.00 on BF16), which is the dense-outlier row the
+    reach fix (795137c) exists for.  Nothing else pins that the committed
+    slice still carries such rows: re-cut it to the ten under-reach rows of
+    the same unit and every other test here stays green while E4M3 goes back
+    to reporting "0 changed" for the fix that took its served KL from 0.470
+    to 0.151.  Measured on the slice as committed: 6 of the 16 rows the value
+    cases encode exceed the reach (largest 6.95 row-RMS at 128 columns).
+
+    Same three arms as the hold test, and E4M3 on purpose: the shape matrix
+    reaches this condition on BF16 at width 320 by a ``randn`` tail (below),
+    but never on E4M3, so the value matrix is that grid's only guard.
+    """
+    module = _load()
+    payload = module.load_value_slice()
+    case = _channel_value_case(module, "E4M3")
+
+    kept = module.encode_value_case(case, payload)
+
+    copy = _scale_channel_with(REACH_START, REACH_START)
+    # ``encode_unit`` imports ``initial_channel_scale`` inside its CHANNEL
+    # branch, so the module attribute is what a call resolves.
+    monkeypatch.setattr(tessera.scale_channel, "initial_channel_scale",
+                        copy.initial_channel_scale)
+    assert module.encode_value_case(case, payload) == kept, (
+        "the recompiled copy of scale_channel does not reproduce the real "
+        "function's bytes, so the mutation arm below proves nothing"
+    )
+
+    mutant = _scale_channel_with(REACH_START, REACH_START_OFF)
+    monkeypatch.setattr(tessera.scale_channel, "initial_channel_scale",
+                        mutant.initial_channel_scale)
+    assert module.encode_value_case(case, payload) != kept, (
+        f"value case {case.label!r} encodes the same bytes with and without the "
+        f"reach-aware per-row start, so the byte proof would report '0 changed' "
+        f"for the change that took dense Qwen from KL 0.470 to 0.151. No row of "
+        f"the slice this case encodes exceeds the body's reach any more -- check "
+        f"the slice's rows and the recipe's window table, not this test"
+    )
+
+
+def test_the_e4m3_shape_cases_are_blind_to_the_reach_start_mutation(monkeypatch):
+    """The measurement behind the test above, kept in the tree.
+
+    Scoped to E4M3 deliberately.  The shape matrix is *not* uniformly blind to
+    the per-row start: ``bf16-1024-320c`` moves on both weighting arms because
+    its seeded ``randn`` rows happen to carry one and two rows over BF16's
+    4.00 reach.  That is a tail the seed drew, not a case anyone wrote, and it
+    is why the value matrix -- real rows that exceed the reach by design -- is
+    the guard and not a lucky seed.  On the four E4M3 shape rows the largest
+    row max is 3.87 row-RMS against a reach of 4.08, so none moves: the harness
+    that was in the tree when 795137c landed (``6c82ed4``, E4M3 CHANNEL rows
+    only) printed ``0 changed of 14`` for that fix.  If a later change makes
+    these rows move, this fails and the prose above must be rewritten.
+    """
+    module = _load()
+    label, grid, q256, rows, cols = next(
+        c for c in module._cases() if c[0] == "e4m3-1024-256c")
+    kept = module.encode_shape_case(label, grid, q256, rows, cols, "scale")
+
+    mutant = _scale_channel_with(REACH_START, REACH_START_OFF)
+    monkeypatch.setattr(tessera.scale_channel, "initial_channel_scale",
+                        mutant.initial_channel_scale)
+    assert module.encode_shape_case(label, grid, q256, rows, cols, "scale") == kept, (
+        "an E4M3 randn shape case now moves under the reach-start mutation. "
+        "That is better coverage, not a regression -- but this docstring and "
+        "the harness's say it cannot, so fix the prose"
     )
 
 

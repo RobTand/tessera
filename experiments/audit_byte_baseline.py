@@ -36,6 +36,20 @@ shape matrix's 117s, same process, box at load 108).  A proof harness that is
 too slow to run before *and* after every fix stops being run, which is a worse
 failure than a narrow one.
 
+The value matrix also carries the **dense-outlier row** -- a row whose
+largest weight exceeds the body's reach (4.08 row-RMS on E4M3, 4.00 on BF16),
+which is the only row the reach-aware per-row start (``initial_channel_scale``,
+commit 795137c) touches.  Six of the sixteen rows every CHANNEL value case
+encodes are such rows (largest 6.95 row-RMS at 128 columns), so turning the
+start off moves all three CHANNEL value digests.  The shape matrix reaches
+that condition only where a seeded ``randn`` draw happened to: ``bf16-1024-320c``
+carries one and two rows over BF16's reach, and no E4M3 shape row is over
+E4M3's (largest 3.87), which is why the harness in the tree when 795137c
+landed (``6c82ed4``, E4M3 CHANNEL rows only) printed ``0 changed of 14`` for
+it.  ``tests/test_audit_byte_baseline.py`` pins the value matrix's reach of
+this condition the same way it pins the ``B > 0`` hold: by running the
+mutation.  Receipt: ``docs/measurements/tessera-byte-baseline-reach-coverage-2026-09-03.md``.
+
 Two conditions the audit fixes also touched stay out of reach here, and this
 harness does not claim them: ``land_at_least``'s ``inf`` branch needs a reach
 floor above fp16's range over the unit's global scale, which no real slice
@@ -170,6 +184,10 @@ def _value_cases():
         ValueCase("bf16-1024-128c/hessian", BF16_GRID, 1024,
                   dict(ldlq_sigma=None)),
         # The reach floor, which is the only caller of ``land_at_least``.
+        # The floor is the opt-in half of the reach mechanism: it keeps the
+        # refit from undoing the per-row *start*, which is on for every
+        # CHANNEL encode and fires here (and in the two cases above) on the
+        # slice's six over-reach rows without being named.
         ValueCase("e4m3-1024-128c/hessian+reach", E4M3_GRID, 1024,
                   dict(ldlq_sigma=None, refit_reach_floor=True)),
         # The LUT plane's own metric refit: a 1-D diagonal weight
