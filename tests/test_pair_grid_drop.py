@@ -243,3 +243,16 @@ def test_summarise_pair_counts_controls_over_the_units_it_has(
     assert f"CONTROL MISSING at R{RUNG}" in log
     assert "contamination controls: 0 of 1 unit(s)" in log
     assert b.doc["summary_grid_audit"][f"R{RUNG}"]["controls_passed"] == 0
+
+
+def test_a_cell_missing_both_ways_says_both(sweep, tmp_path, monkeypatch):
+    """Which to re-run depends on knowing both, so both are named."""
+    _stub(sweep, monkeypatch,
+          fail={sweep.pair_arm_key(RUNG, 16, 1.25),
+                sweep.pair_arm_key(1216, 14, 1.0) + " [bytematch L=16]"})
+    _, res = _run(sweep, tmp_path)
+    why = res[f"R{RUNG}_grid_audit"]["missing"]["L=16 r=1.25"]
+    assert sweep.CANDIDATE_MISSING in why and sweep.REFERENCE_MISSING in why
+    # ... while its siblings, whose own encodes survived, name only the ref.
+    assert res[f"R{RUNG}_grid_audit"]["missing"]["L=16 r=1"] == \
+        sweep.REFERENCE_MISSING

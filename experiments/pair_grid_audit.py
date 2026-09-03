@@ -44,6 +44,10 @@ from pathlib import Path
 NO_BYTE_MATCH = "no integral byte-matched rung on this shape"
 REFERENCE_MISSING = "the byte-matched reference arm was not encoded"
 CANDIDATE_MISSING = "the candidate arm was not encoded"
+#: Not a reason a cell is absent -- the cell is present and wrong -- so it
+#: rides in ``unmatched`` rather than ``missing``.  Named here anyway because
+#: the two failures are read together and a reader should not have to invent
+#: the wording for one of them.
 BYTES_UNMATCHED = "encoded, but not at its reference's exact bpp"
 
 #: Why a rung has no cross-arm contamination check (#96).  The repeat of the
@@ -134,7 +138,6 @@ def audit_rung(q256: int, pair_bits, pair_ratios, comparison: dict,
         present.append(label)
         if not entry.get("bytes_matched", False):
             unmatched.append(label)
-            reasons.setdefault(label, BYTES_UNMATCHED)
     # A key in the comparison that the grid never asked for is its own bug --
     # a label-grammar drift between writer and reader looks exactly like this.
     extra = sorted(set(comparison) - {pair_arm_key(q256, L, r) for L, r in want})

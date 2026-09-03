@@ -813,10 +813,13 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
             for ratio in a.pair_ratios:
                 key = pair_arm_key(q, L, ratio)
                 if key not in res or ref is None:
-                    dropped[cell_label(L, ratio)] = (
-                        NO_BYTE_MATCH if refs[L] is None
-                        else CANDIDATE_MISSING if key not in res
-                        else REFERENCE_MISSING)
+                    # Both can be gone at once, and which to re-run depends
+                    # on knowing that, so say both rather than the first.
+                    why = ([] if refs[L] is not None else [NO_BYTE_MATCH]) \
+                        + ([] if key in res else [CANDIDATE_MISSING]) \
+                        + ([] if ref is not None or refs[L] is None
+                           else [REFERENCE_MISSING])
+                    dropped[cell_label(L, ratio)] = "; and ".join(why)
                     continue
                 gap = abs(res[key]["bpp"] - ref["bpp"])
                 cmp[key] = {
@@ -937,8 +940,13 @@ def summarise_pair(b: "Bench") -> None:
     gate = b.doc["gate"]
     units = b.doc["units"]
     n = len(units)
-    rungs = sorted({int(k[1:].split("_")[0]) for res in units.values()
-                    for k in res if k.endswith("_vs_shipped")})
+    # The rungs come from the run's own ``args``, the same source the reader
+    # uses, not from the units that happen to carry a ``_vs_shipped`` key: a
+    # rung derived from what survived is the #93 mistake one line up from
+    # where #93 fixed it.  It cannot bite today (``run_pair_unit`` writes the
+    # key for every rung, empty or not) and it is spelled correctly here so it
+    # cannot start to.
+    rungs = sorted(int(q) for q in b.doc["args"]["rungs"])
     b.doc["summary"] = {}
     b.doc["summary_grid_audit"] = grid = {}
     axes = ("wt", "h", "out")
