@@ -222,6 +222,20 @@ the passes — and, if it is genuine, whether the aliasing changes any downstrea
 read — needs a vLLM-internals answer this receipt does not have; filed as
 **#29**.
 
+*Addendum 2026-09-03 (#29 closed as dump artefact, no vLLM serve needed).*
+`experiments/results/compile_build_forensics.json` (committed beside this
+receipt) already contains the deciding count: all 22 graphs in the census name
+exactly 56 `fused_add_rms_norm` + 57 `rms_norm` call sites, with only the
+overload suffix varying across the five splits. A pure rewrite pass is
+deterministic given identical inputs (byte-identical `cache_key_factors.json`),
+so two different suffix mixes under one key cannot both be the pass's output --
+the dump records pass progress at write time (piecewise submodule compilation
+/ partially-mutated `split_gm`), not the artifact that ran. The AOT slot that
+did run holds the same 196 records at identical paths in both builds, so there
+is no second source of build-to-build variation to add to the A/B rule of §4.
+`experiments/compile_build_forensics.py` now reports the overload-normalized
+comparison alongside the raw one, so the next such pair reads as what it is.
+
 ## 4. The rule this buys, and the knob it names
 
 **For A/Bs.** Both arms in one regime, or the comparison is measuring the
