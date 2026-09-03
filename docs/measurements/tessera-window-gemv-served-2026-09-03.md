@@ -116,8 +116,14 @@ Three consequences, all load-bearing for how the counts below are read:
 3. **Under a compiled forward the census is weaker still**: `decode` and `batch`
    admit an identical set, and the combined pair is stamped whatever runs
    underneath. **The compiled census proves dispatch, not launch.** Kernel names
-   in the torch profile are the launch evidence, which is why §4 carries a profile
-   and not only a number.
+   in a torch profile are the launch evidence, and **this campaign captured no
+   profile at all** — the harness enabled it with an environment variable vLLM
+   0.28 does not have (§4, fixed in `dd42ff4`). So the compiled verdicts below are
+   real but bounded: they establish that the lane was selected and that the serve
+   was structurally healthy, **not that the GEMV kernel executed** under a
+   compiled forward. The eager arm does not depend on this: its decode phase
+   reports `(tessera_window_gemv::gemv, window_gemv)`, a symbol only the kernel
+   provides.
 
 ### Counts
 
