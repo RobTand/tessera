@@ -157,16 +157,27 @@ for arm in ("armA", "armB"):
             print(f"MISSING {p}"); continue
         d = json.loads(p.read_text())
         rows.append((arm, regime, d["all"]["kl_lower_mean"],
-                     d["confident"]["kl_lower_mean"], d["all"]["top1_agree_pct"]))
-for arm, regime, a, c, t in rows:
-    print(f"{arm:6s} {regime:9s} all={a:.6f} confident={c:.6f} top1={t:.3f}%")
-by = {(a, r): (k, c) for a, r, k, c, _ in rows}
+                     d["confident"]["kl_lower_mean"], d["all"]["top1_agree_pct"],
+                     d["all"]["kl_lower_p99"], d["all"]["kl_lower_max"]))
+for arm, regime, a, c, t, p99, mx in rows:
+    print(f"{arm:6s} {regime:9s} all={a:.6f} confident={c:.6f} top1={t:.3f}% "
+          f"p99={p99:.6f} max={mx:.6f}")
+by = {(a, r): (k, p99, mx) for a, r, k, _, _, p99, mx in rows}
 for regime in ("eager", "compiled"):
     if ("armA", regime) in by and ("armB", regime) in by:
-        ka, _ = by[("armA", regime)]
-        kb, _ = by[("armB", regime)]
+        ka, pa, ma = by[("armA", regime)]
+        kb, pb, mb = by[("armB", regime)]
         print(f"{regime}: GEMV {ka:.6f} vs fallback {kb:.6f}  delta {ka-kb:+.6f} "
               f"({ka/kb:.4f}x)")
+        # The TAIL, beside the mean and never instead of it: a lower mean KL can
+        # hide a heavier tail, and this repo has shipped an artifact that won on
+        # the mean while its worst prompts got worse.  For a lane that is meant
+        # to be arithmetically equivalent, any tail movement at all is the
+        # interesting number.
+        print(f"{regime}: tail p99 {pa:.6f} vs {pb:.6f} ({pa-pb:+.6f})   "
+              f"max {ma:.6f} vs {mb:.6f} ({ma-mb:+.6f})")
+        if ka == kb and pa == pb and ma == mb:
+            print(f"{regime}: the two arms are IDENTICAL to every reported digit.")
 PYEOF
 fi
 echo "=== done $(date -Is)"
