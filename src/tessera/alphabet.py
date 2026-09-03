@@ -911,7 +911,12 @@ def _mass_balanced_blocks(
     first so a block stays a neighbourhood and completion bits still refine.
     """
     values = grid.values
-    targets = _lloyd_levels(samples[::4] or samples, anchors)
+    # The Lloyd targets are fit on the full source the forest is optimised
+    # against.  A strided fit spends anchors on sampling geometry: nothing
+    # ever refits these targets, so unlike _partition_cost -- whose final
+    # routing is recomputed over all of the source -- there is no later step
+    # that recovers the mass the stride skipped.
+    targets = _lloyd_levels(samples, anchors)
 
     # Snap each target to a DISTINCT code, globally greedy on distance, so the
     # result does not depend on the order the targets are visited.
