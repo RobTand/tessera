@@ -22,10 +22,11 @@ import torch
 
 from tessera.alphabet import E2M1_GRID, tuple_grid
 from tessera.compensate import block_ldl, regularize_hessian
-from tessera.encode import _refit_scales_lut
+from tessera.encode import _lut_values, _refit_scales_lut
 from tessera.errors import GrammarError
 from tessera.export import (
-    encode_linear, encode_linear_planes, tcq_cap_q256, wire_recipe)
+    DEFAULT_CODE, encode_linear, encode_linear_planes, tcq_cap_q256,
+    wire_recipe)
 from tessera.manifest import BodyKind, ScalePlaneKind
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the Viterbi is CUDA")
@@ -509,3 +510,125 @@ def test_the_diagnostic_sink_is_off_unless_asked_for():
     with refit_diagnostics() as diag:
         assert enc._REFIT_DIAG is diag
     assert enc._REFIT_DIAG is None
+
+
+# --------------------------------------------------------------------------
+# The landing ceiling (issue #50): what the sixteen-entry table costs.
+# --------------------------------------------------------------------------
+
+
+def test_the_landing_context_is_off_unless_asked_for():
+    """It is a measurement instrument, not a side effect of encoding."""
+    from tessera import encode as enc
+    from tessera.encode import lut_landing
+
+    assert enc._LUT_LANDING == "table" and enc._LUT_LANDING_SINK is None
+    with lut_landing("none") as sink:
+        assert enc._LUT_LANDING == "none" and enc._LUT_LANDING_SINK is sink
+    assert enc._LUT_LANDING == "table" and enc._LUT_LANDING_SINK is None
+    with pytest.raises(GrammarError, match="unknown LUT landing mode"):
+        with lut_landing("continuous"):
+            pass
+
+
+def test_the_default_landing_is_the_refit_that_was_there():
+    """The byte claim, at the function it is made about.
+
+    A ceiling read is only believable if the arm it is read against is the
+    encode that was already there, so ``"table"`` inside the context has to be
+    identical to no context at all -- table bytes, index and effective scales.
+    """
+    from tessera.encode import lut_landing
+
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=50, cols=128)
+    H = _hessian(cols=128, seed=50, device="cpu", coupling=4.0)
+    a = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H)
+    with lut_landing("table"):
+        b = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H)
+    assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
+    assert torch.equal(a[2], b[2])
+
+
+@pytest.mark.parametrize("mode", ["grid", "none"])
+def test_a_free_landing_is_monotone_and_is_not_the_table(mode):
+    """The two properties a ceiling arm has to have.
+
+    **Monotone**: the plane the unit holds is still a candidate and the
+    candidate is still scored on the full quadratic, so a free landing can
+    never raise the metric's own error -- the same guarantee the wire arm has,
+    which is what makes the pair a matched comparison rather than two encoders.
+
+    **Not the table**: a mode that silently landed on the sixteen entries
+    anyway would report a ceiling of exactly zero and look like a closed issue.
+    """
+    from tessera.encode import lut_landing
+
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=51, cols=128)
+    H = _hessian(cols=128, seed=51, device="cpu", coupling=4.0)
+    with lut_landing(mode):
+        _, _, free = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                       metric=H)
+    assert _cost(work, units, free, half, H) <= _cost(work, units, eff, half, H) + 1e-9
+    _, _, landed = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                     metric=H)
+    assert not torch.equal(free, landed)
+    on_table = torch.isin(free, _lut_values(table, glob))
+    if mode == "none":
+        assert not bool(on_table.all()), "a continuous landing that lands on the table"
+    else:
+        # ``grid`` is E4M3 by construction, so what it must NOT be is confined
+        # to the sixteen entries the unit's table holds.
+        assert not bool(on_table.all())
+
+
+@cuda
+def test_a_free_landing_is_refused_where_it_would_mean_something_else():
+    """Every context where the ceiling would be read off the wrong quantity,
+    refused by its own message rather than accepted as a silent no-op."""
+    from tessera.encode import lut_landing
+
+    w = _weights(seed=52).bfloat16()
+    H = _hessian(seed=52)
+    h = H.diagonal() / H.diagonal().mean()
+    with lut_landing("none"):
+        with pytest.raises(GrammarError, match="LUT plane"):
+            encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=H,
+                          scale_plane=ScalePlaneKind.CHANNEL)
+        with pytest.raises(GrammarError, match="without refit_metric"):
+            encode_linear(w, grid=K2, q256=CAP, name="x")
+        with pytest.raises(GrammarError, match="scale_refit=0"):
+            encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=h,
+                          scale_refit=0)
+
+
+@cuda
+def test_the_sink_is_the_wire_on_a_table_arm_and_is_not_on_a_free_one():
+    """The identity that licenses reading a ceiling arm off the sink at all.
+
+    A ``table`` arm is the wire, so the reconstruction the encoder hands back
+    must be the one ``stock_dequant`` recovers from the bytes.  A free landing
+    builds a unit whose scale plane is NOT what it held, so the same comparison
+    has to disagree -- if it agreed, the sink would be recording the landed
+    plane and the ceiling would read zero for the wrong reason.
+    """
+    from tessera.encode import lut_landing
+    from tessera.export import encode_linear_planes as _elp
+    from tessera.stock import materialize_stock, stock_dequant
+
+    w = _weights(seed=53).bfloat16()
+    H = _hessian(seed=53)
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    kw = dict(grid=K2, q256=CAP, name="x", verify=False, ldl=L, ldl_block=32,
+              refit_metric=H)
+    got = {}
+    for mode in ("table", "none"):
+        with lut_landing(mode) as sink:
+            _, unit, forests = _elp(w, **kw)
+        wire = stock_dequant(materialize_stock(unit, forests, DEFAULT_CODE))
+        got[mode] = (sink, wire.to(sink["work_reconstruction"].device).float())
+    sink, wire = got["table"]
+    assert sink["serialisable"] is True
+    assert torch.allclose(wire, sink["work_reconstruction"], rtol=0, atol=1e-6)
+    sink, wire = got["none"]
+    assert sink["serialisable"] is False
+    assert not torch.allclose(wire, sink["work_reconstruction"], rtol=0, atol=1e-6)
