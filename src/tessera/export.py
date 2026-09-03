@@ -984,6 +984,7 @@ def encode_linear_planes(
     ldl: "torch.Tensor | None" = None,
     ldl_block: int = DEFAULT_LDLQ_BLOCK,
     refit_metric: "torch.Tensor | None" = None,
+    refit_metric_trailing: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
@@ -1027,6 +1028,11 @@ def encode_linear_planes(
     not reproducible from the weights alone, so an exporter that sets them
     records where its Hessian came from.
 
+    ``refit_metric_trailing`` swaps the trailing refit's objective at the same
+    pass count (issue #75's fair pair); ``None`` is the uniform schedule.
+    Measurement-only like ``refit_gauss_seidel``: no ``ActivationSource``
+    field, no config entry.
+
     ``verify`` reads the bytes back and compares to the encoder's own
     reconstruction.  It is on by default and costs one decode: the guarantee
     that the shipped bytes mean what the surrogate priced is worth more than
@@ -1060,6 +1066,7 @@ def encode_linear_planes(
         body=body, window_bits=window_bits, window_seed=window_seed,
         window_sigma=window_sigma, channel_sigma=channel_sigma,
         ldl=ldl, ldl_block=ldl_block, refit_metric=refit_metric,
+        refit_metric_trailing=refit_metric_trailing,
         refit_reach_floor=refit_reach_floor,
         refit_gauss_seidel=refit_gauss_seidel,
     )

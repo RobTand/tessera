@@ -632,3 +632,43 @@ def test_the_sink_is_the_wire_on_a_table_arm_and_is_not_on_a_free_one():
     sink, wire = got["none"]
     assert sink["serialisable"] is False
     assert not torch.allclose(wire, sink["work_reconstruction"], rtol=0, atol=1e-6)
+
+
+# --------------------------------------------------------------------------
+# Issue #76: the per-pass table fit stays -- it wins where the plane is far.
+#
+# The oracle run had ``new-table`` winning 16 of 72 passes, concentrated where
+# the plane starts furthest from its optimum (12 on L2.down_proj, 4 more first
+# passes elsewhere).  The drop condition -- "never wins outside L2-like units"
+# -- already fails on that data, and the mechanism reproduces on CPU: on a
+# fresh amax plane under a coupled metric the guard picks the freshly fitted
+# table on every pass, under either optimiser.  Removing the candidate would
+# regress exactly the passes where the plane has the most to gain, so this
+# test pins the leg live: a majority of fresh-plane passes must land on the
+# new table, read out of the refit's own diagnostic sink rather than
+# reimplemented.
+# --------------------------------------------------------------------------
+
+
+def test_the_fresh_table_fit_wins_where_the_plane_starts_furthest():
+    """Issue #76's keep-decision, as a regression test.
+
+    Dropping the ``new-table`` candidate (the removal #76 contemplates) leaves
+    the guard choosing between ``kept`` and ``old-table`` only, so this
+    majority fails on that code and passes on this one.
+    """
+    from collections import Counter
+
+    from tessera.encode import refit_diagnostics
+
+    won = Counter()
+    for seed in range(100, 108):
+        work, units, half, table, index, eff, glob = _lut_fixture(seed=seed, cols=128)
+        H = _hessian(cols=128, seed=seed + 500, device="cpu", coupling=4.0)
+        for gs in (False, True):
+            with refit_diagnostics() as diag:
+                _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                  metric=H, gauss_seidel=gs)
+            assert len(diag) == 1
+            won[diag[0]["candidate"]] += 1
+    assert won["new-table"] > won["old-table"] + won["kept"], won

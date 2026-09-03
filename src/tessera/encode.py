@@ -1412,6 +1412,7 @@ def encode_unit(
     ldl: "torch.Tensor | None" = None,
     ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
     refit_metric: "torch.Tensor | None" = None,
+    refit_metric_trailing: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
 ) -> EncodedUnit:
@@ -1456,11 +1457,23 @@ def encode_unit(
     (``scale_channel.refit_channel_scale``) and by the LUT plane's per-16
     block-scale refit (``_refit_scales_lut_metric``), which is the same closed
     form restricted to a block's columns; S6b has no metric-aware refit and
-    refuses one rather than ignoring it.  ``refit_reach_floor`` keeps every
+    refuses one rather than ignoring it.      ``refit_reach_floor`` keeps every
     row's refit scale high enough that the pass's own target stays inside the
     body's reach, and is CHANNEL-only for the same reason -- a block scale
     already tracks its own sixteen weights.  Both are encoder settings; neither
     is wire.
+
+    ``refit_metric_trailing`` swaps the objective of the trailing refit only
+    (issue #75): inner passes minimise ``refit_metric``, the last refit
+    minimises ``refit_metric_trailing`` instead, at the same pass count -- the
+    fair pair ``T R_h T R_h T R_h T R_H`` against ``T R_h T R_h T R_h T R_h``,
+    which one ``refit_metric`` on every pass cannot express.  ``None`` -- the
+    state every encode runs in -- is the uniform schedule, byte for byte.
+    Either leg may be ``None`` (that pass's refit is then plain); at
+    ``scale_refit=1`` the single refit IS the trailing one and runs under the
+    trailing leg.  Encoder-side and opt-in like ``refit_gauss_seidel``: no
+    ``ActivationSource`` field reads it, so no checkpoint config can record a
+    schedule the merge guard has no field to compare.
 
     ``refit_gauss_seidel`` sweeps the LUT plane's block scales sequentially
     instead of stepping every block from one residual (issue #35).  It is
@@ -1726,7 +1739,8 @@ def encode_unit(
     # export would then ship weights-only bytes and raise nothing, which is
     # the whole failure this plumbing exists to prevent.  Refuse instead of
     # ignoring, one message per reason.
-    if refit_metric is not None and scale_plane is ScalePlaneKind.S6B:
+    if (refit_metric is not None or refit_metric_trailing is not None) \
+            and scale_plane is ScalePlaneKind.S6B:
         raise GrammarError(
             "refit_metric is implemented for the CHANNEL plane's row scale and "
             "the LUT plane's per-half block scale; S6b's grouped (base, refine) "
@@ -1749,16 +1763,32 @@ def encode_unit(
         # flag there would name an arm that did nothing -- the failure mode
         # the sweep is being measured against.  On CHANNEL there is one scale
         # per row and no block to sweep.  Refuse, one message per reason.
-        if refit_metric is None:
+        # Under a trailing schedule (issue #75) the legs that run are the
+        # base on the inner passes and the trailing leg on the last one, so
+        # the flag is meaningful when EITHER leg couples -- a coupled
+        # trailing refit after separable inner passes is the arm the
+        # schedule exists to express -- and refused only when no leg that
+        # runs couples.
+        from .scale_channel import check_refit_metric as _check_gs_metric
+
+        if refit_metric_trailing is not None:
+            _check_gs_metric(refit_metric_trailing, cols)
+        if refit_metric is None and refit_metric_trailing is None:
             raise GrammarError(
                 "refit_gauss_seidel is a sweep order for the metric-aware block-scale "
                 "refit, and without refit_metric no such refit runs: the plain "
                 "least squares is already per-block exact"
             )
-        if refit_metric.ndim == 1:
+        if scale_refit > 1 and refit_metric_trailing is not None:
+            in_use = [m for m in (refit_metric, refit_metric_trailing) if m is not None]
+        elif scale_refit == 1 and refit_metric_trailing is not None:
+            in_use = [refit_metric_trailing]
+        else:
+            in_use = [refit_metric] if refit_metric is not None else []
+        if in_use and all(m.ndim == 1 for m in in_use):
             raise GrammarError(
                 "refit_gauss_seidel needs a metric that couples the blocks. A 1-D "
-                f"refit_metric ({tuple(refit_metric.shape)}) is separable: each "
+                f"refit_metric ({tuple(in_use[0].shape)}) is separable: each "
                 "16-column block's step is already its joint minimiser, so a "
                 "sequential sweep computes exactly the parallel one's numbers and "
                 "the flag would name an arm that changed nothing"
@@ -1783,7 +1813,7 @@ def encode_unit(
                 f"lut_landing removes the LUT plane's sixteen-entry table; the "
                 f"{scale_plane.name} plane has none, so this would be silently ignored"
             )
-        if refit_metric is None:
+        if refit_metric is None and refit_metric_trailing is None:
             raise GrammarError(
                 "lut_landing is implemented for the metric-aware LUT refit; the "
                 "plain least squares path is deliberately unchanged, so without "
@@ -1801,8 +1831,11 @@ def encode_unit(
                 "runs none: the amax plane is written byte for byte and the "
                 "context would be silently ignored"
             )
-    if scale_refit == 0 and (refit_metric is not None or refit_reach_floor):
-        named = "refit_metric" if refit_metric is not None else "refit_reach_floor"
+    if scale_refit == 0 and (refit_metric is not None
+                              or refit_metric_trailing is not None
+                              or refit_reach_floor):
+        named = ("refit_metric_trailing" if refit_metric is None and refit_metric_trailing is not None
+                 else "refit_metric" if refit_metric is not None else "refit_reach_floor")
         raise GrammarError(
             f"{named} shapes the scale refit, and scale_refit=0 runs none: "
             f"the amax plane is written byte for byte and the argument "
@@ -1859,7 +1892,14 @@ def encode_unit(
             (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
         ]
     ldlq_target = None
-    for _ in range(max(scale_refit, 1)):
+    passes = max(scale_refit, 1)
+    for p in range(passes):
+        # The schedule (issue #75): inner refits minimise ``refit_metric``,
+        # the trailing one ``refit_metric_trailing`` when set.  At
+        # ``scale_refit=1`` the single refit IS the trailing one.
+        last = scale_refit > 0 and p == passes - 1
+        metric_now = (refit_metric_trailing if last and refit_metric_trailing is not None
+                      else refit_metric)
         scale = current_scale()
         weights = None
         if trellis_weighting == "scale":
@@ -1915,12 +1955,12 @@ def encode_unit(
                 floor = seen.abs().amax(dim=1) / float(body_reach)
             channel_rows, effective_rows = refit_channel_scale(
                 work, units, channel_rows, global_scale,
-                metric=refit_metric, floor=floor,
+                metric=metric_now, floor=floor,
             )
         elif scale_plane is ScalePlaneKind.LUT:
             table_bytes, refine, effective = _refit_scales_lut(
                 work, units, half, table_bytes, refine, effective, global_scale,
-                metric=refit_metric, gauss_seidel=refit_gauss_seidel,
+                metric=metric_now, gauss_seidel=refit_gauss_seidel,
             )
         else:
             base_byte, refine, effective = _refit_scales(
