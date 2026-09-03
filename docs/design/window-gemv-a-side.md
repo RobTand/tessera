@@ -153,8 +153,10 @@ exporter applies whenever it is handed a Hessian
 (`export.DEFAULT_LDLQ_SIGMA/_BLOCK/_REFIT_OBJECTIVE`). It changes no conclusion
 here and it moves the argument the same way §3a does: the weight leg improved
 to 0.692x while the A8 leg is a constant, so the gap to FP8 RTN at 8 bpp closed
-from 7.4x to **5.1x** and the lead over production NVFP4 at 4.5 bpp widened
-from 3.4x to **4.9x**. Every statement below about "the served arm" means this
+from 7.4x to **5.1x** and the margin over production NVFP4 at 4.5 bpp widened
+from 3.4x to **4.9x** -- the second of those crossing a residency, 4.071 wire /
+8.025 resident against 4.5 / 4.5, which is why the comparator that decides this
+arm is the 8.0-resident FP8 one it still loses to. Every statement below about "the served arm" means this
 row.
 
 **There is no served A16 arm of the E4M3 window wire.** The A16 row above is a
@@ -295,12 +297,20 @@ depends on dict order.
    decoder at prefill has two decoders per family, so the census expectation
    becomes per-`(family, regime)`. Design it once for both issues, and land
    **#53** and **#61** with it: `decoder_for` is unguarded and would `KeyError`
-   mid-run, and the two sides do not agree on the regime's *name* -- the
+   mid-run, and the two sides did not agree on the regime's *name* -- the
    contract declares `["decode", "batch"]`
    (`runtime_contract.json:127-129`) while the census's phases are `prefill`
-   and `decode` (`tools/tessera_route_census.py:145,148`), with no mapping
-   anywhere, because nothing reads the regime axis yet. A per-`(family, regime)`
-   map is the first thing that does.
+   and `decode`, and nothing mapped between them, because nothing read the
+   regime axis. A per-`(family, regime)` map is the first thing that does.
+   **The naming half landed (#61):** `contract.CENSUS_PHASE_REGIMES` is the one
+   table both sides read -- the census resolves its phase names through it and
+   stamps the contract's regime into every `histogram` entry, and
+   `validate_serving_contract` refuses a contract whose declared regimes are
+   not exactly that table's values, so a rename or a third regime fails at
+   contract load rather than at the per-module `decoder_for` lookup on a loaded
+box. What is still open here
+   is the per-`(family, regime)` *expectation* itself (`decoder_for` is still
+   keyed by family alone) and **#53**'s sibling guard.
 5. **The A/B protocol.** Two arms, two KLs, two latencies -- never an identity
    check (§2). The matched pair is a hardlinked directory pair whose
    `config.json` differs only in the declared family, the

@@ -28,9 +28,27 @@ same instrument as every row of `tessera-stock-lane-served-2026-09-02.md`.
 | production NVFP4 GPTQ+JSO (W4A4), stock-lane receipt | 4.5 / 4.5 | 0.511 | | 62.6% |
 | FP8 RTN per-channel (W8A8), stock-lane receipt | 8.0 / 8.0 | 0.0205 | | 91.2% |
 
-3.1x lower KL at the same bytes; against production NVFP4 at 4.5 bpp the
-4.07-bpp wire is now 3.4x better instead of 8%; against FP8 RTN at 8.0 bpp it
-is 7.4x behind instead of 23x. Serve log `/home/rob/tessera-runs/gbfam/serve_e8-reach-twin.log`,
+3.1x lower KL at the same bytes -- both Tessera arms are 4.07 wire / **8.0
+resident**, so that ratio is the fix and nothing else.
+
+**Every other ratio here crosses a residency, and reads as a 4-bit win only if
+the resident half is dropped.** This arm serves at **8.0 bpp resident** on the
+stock FP8 route: 4.07 is what it costs on disk, not what it costs in memory or
+on the tensor core. Against production NVFP4 GPTQ+JSO at 4.5 wire / 4.5
+resident the 4.07-wire / 8.0-resident arm reads 3.4x better instead of 8%
+(0.1512 vs 0.511) -- at 8.0 resident against 4.5, and on a W8A8 A-side
+against a W4A4 one. Against FP8 RTN at 8.0 / 8.0 -- the arm at *its own* residency -- it
+is 7.4x behind instead of 23x (0.1512 vs 0.0205). At equal residency Tessera
+loses on this model on both legs: 7.4x on the 8-bit leg here, and 1.254x on the
+4-bit leg where the E2M1x2 wire serves at 4.5 resident (0.640 vs 0.511, W4A4,
+`tessera-stock-lane-served-2026-09-02.md`). The wire's 4.07 *does* exist in
+memory on the plugin's `streamed` route -- 0.55 GiB against the resident
+route's 0.73 at the same KL
+(`tessera-gridbook-fp8-lane-served-2026-09-02.md:17-20`) -- but that route
+decodes to FP8 inside the forward and still computes W8A8, so the comparison
+to NVFP4 is a W8A8 contract against a W4A4 one at either residency; the kernel
+lane that would compute over the wire itself
+(`tessera-window-kernel-2026-09-02.md`) has no served KL yet. Serve log `/home/rob/tessera-runs/gbfam/serve_e8-reach-twin.log`,
 compares `kl_e8-reach-twin_vs_teacher.json` and `kl_e8-old_vs_teacher.json`
 (the old dump re-compared against the same teacher in the same minute: 0.4699).
 

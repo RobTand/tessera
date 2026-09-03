@@ -52,9 +52,11 @@ on a machine with no GPU.
 from __future__ import annotations
 
 import json
+from types import MappingProxyType
 from typing import Any, Mapping
 
 __all__ = [
+    "CENSUS_PHASE_REGIMES",
     "CONTRACT_FILENAME",
     "CONTRACT_SCHEMA",
     "LANE_ELIGIBILITY_SCHEMA",
@@ -73,6 +75,24 @@ LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v3"
 FORMAT_KIND = "tessera_wire"
 #: The value every Tessera cell publishes in ``requires_plugin``.
 REQUIRES_PLUGIN = "tessera"
+
+#: The serve-side observation's phase names, and the ``lane_eligibility``
+#: regime each phase exercises.  ONE table, read by both sides.
+#:
+#: ``tools/tessera_route_census.py`` stands up two forwards and calls them by
+#: the shape it drove -- a many-row ``prefill`` and a one-row ``decode`` -- and
+#: it keys its receipt (``histogram``, ``records``) by those names, which
+#: several served receipts already quote.  This contract calls the same two
+#: things ``decode`` and ``batch``, because a regime is a *problem shape* and
+#: the batch cell covers every M > 1 forward, not only a first prefill.  Both
+#: vocabularies are load-bearing, so the pair is mapped here rather than
+#: written twice: the census reads this to stamp the contract's word beside its
+#: own phase, and :func:`validate_serving_contract` refuses a contract whose
+#: declared regimes are not exactly this table's values -- so a third regime,
+#: or a rename on either side, fails at contract load instead of at a
+#: per-module ``KeyError`` after two full model loads.
+CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
+    {"prefill": "batch", "decode": "decode"})
 
 _ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked", "fallback"})
 _QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
@@ -427,6 +447,16 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         raise ValueError(
             f"runtime_contract.lane_eligibility.schema must be {LANE_ELIGIBILITY_SCHEMA!r}, "
             f"got {block['schema']!r}")
+    if set(block["regimes"]) != set(CENSUS_PHASE_REGIMES.values()):
+        raise ValueError(
+            f"runtime_contract.lane_eligibility.regimes declares {sorted(block['regimes'])}, "
+            f"but the serve-side observation exercises "
+            f"{sorted(set(CENSUS_PHASE_REGIMES.values()))} "
+            f"(contract.CENSUS_PHASE_REGIMES, read by tools/tessera_route_census.py). A regime "
+            "this document declares and the census never drives is a cell nothing observes, and "
+            "a phase the census drives under a name this document does not declare cannot be "
+            "joined to a cell at all -- which is how a per-(family, regime) expectation goes "
+            "vacuously true on half the matrix. Add the regime to BOTH sides, in this table.")
     unknown_structures = sorted(set(block["structures"]) - set(STRUCTURES))
     if unknown_structures:
         raise ValueError(
