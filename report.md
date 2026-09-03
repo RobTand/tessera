@@ -172,7 +172,9 @@ run. The live cross-box check was done by hand and is recorded above.
 now reads `pinned_reference()` and additionally asserts `identity.image_digest`
 and `provenance.image_local_id`.
 
-## For the coordinator: a fingerprint discontinuity
+## For the coordinator: two merge hazards
+
+### A fingerprint discontinuity
 
 `identity` gained a key, so `build_fingerprint` changes shape at this commit.
 `compare()` between a pre-pin receipt and a post-pin one reports
@@ -180,6 +182,15 @@ and `provenance.image_local_id`.
 correct -- the old receipt recorded nothing about what ran -- but **a campaign
 that straddles this merge will have arms that refuse to compare**. Re-stamp or
 re-serve the older arm, or complete the campaign before merging.
+
+### Merging rewrites scripts that are executing right now
+
+Fourteen agents are serving off `/home/rob/tessera`, and bash reads a script
+incrementally rather than slurping it: a wrapper part-way through a serve can
+execute a spliced file if `serve_and_dump_kl.sh` and its siblings are rewritten
+under it. Every wrapper in this change is one of those. That is a merge-timing
+call to price, not a defect in the change; it argues for merging into a quiet
+window rather than beside a live campaign.
 
 ## Off-task fixes
 
