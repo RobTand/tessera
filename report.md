@@ -77,7 +77,7 @@ FILLED IN BELOW.
 
 ## Review corrections (this branch's own code — not separable)
 
-`8a164a6` and `bbd8f0f` are defects in the mechanism this task adds, caught in
+`8a164a6` and the residency-pricing commit are defects in the mechanism this task adds, caught in
 review before any number was taken. They are listed separately so the diff can
 be read in stages, but none of them can be dropped without breaking the change
 they correct.
