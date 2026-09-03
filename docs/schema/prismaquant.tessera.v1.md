@@ -361,6 +361,10 @@ enumeration, not asserted.
 
 **D4 — bit order.** Planes pack MSB-first within each byte; the final byte is
 zero-padded and the pad bits must be zero. Padding is charged as physical bytes.
+The rule has exactly two enforcement points and no third: `wire.refuse_dirty_slack`
+on the read path (every `unpack_*`, `parse(verify=False)` included), and
+`container.verify_plane_region` over a plane's declared extent under
+`parse(verify=True)`.
 
 **D5 — canonical plane order**, which is also the truncation order:
 
@@ -461,7 +465,12 @@ must not be the unverified one.
    not the encoder's to choose. Unconstrained, the same logical content admits
    many byte strings, and identity here is a function of content; the slack is
    also a covert channel. MSB-first packing puts sub-byte pad bits in the low
-   bits of the final content byte (finding F4).
+   bits of the final content byte (finding F4). Enforced by
+   `wire.refuse_dirty_slack` at the bytes-to-values seam and by
+   `container.verify_plane_region` over the declared extent — those two and
+   nothing else. A third statement of one rule can only disagree with the
+   other two, which is what `bitio.check_padding_zero` was doing with no
+   callers at all until it was deleted.
 
 ## 4. Parse algorithm
 
@@ -488,7 +497,9 @@ must not be the unverified one.
 7. For each plane fully present in that terminal, verify its `content_digest`
    over the plane's exact byte range.
 8. Verify that all padding is zero: alignment bytes, and the sub-byte slack in
-   each plane's final content byte.
+   each plane's final content byte (`container.verify_plane_region`). The
+   unpackers repeat the sub-byte half themselves (`wire.refuse_dirty_slack`),
+   so a `verify=False` reader and a direct `unpack_*` caller are covered too.
 9. On a complete artifact only, additionally verify the manifest's whole-region
    payload digest.
 

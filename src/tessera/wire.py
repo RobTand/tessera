@@ -28,6 +28,7 @@ from .errors import GrammarError
 from .trellis import body_bits as _body_bits
 
 __all__ = [
+    "refuse_dirty_slack",
     "pack_uniform",
     "unpack_uniform",
     "pack_body",
@@ -56,7 +57,19 @@ def field_widths(rate: int, span: int) -> "tuple[int, ...]":
 
 def _to_bits(values: np.ndarray, width: int) -> np.ndarray:
     """MSB-first bit expansion of an integer array."""
+    if width < 0:
+        raise GrammarError(f"negative field width: {width}")
     if width == 0:
+        # A zero-width field holds exactly one value, and it is zero.  The
+        # empty return dropped anything else in silence -- the hole the audit's
+        # D5 found in ``BitWriter.write`` and fixed there, while the packer the
+        # wire actually uses had it too.  ``BitWriter`` is gone (#23); the
+        # property outlives it here, where a plane is really packed.
+        if values.size and values.any():
+            raise GrammarError(
+                "value out of range for a zero-width field: a zero-width field "
+                "holds exactly one value and it is 0"
+            )
         return np.zeros(0, dtype=np.uint8)
     if values.size and (values.max() >= (1 << width) or values.min() < 0):
         raise GrammarError(
@@ -67,8 +80,15 @@ def _to_bits(values: np.ndarray, width: int) -> np.ndarray:
     return ((values.astype(np.int64)[:, None] >> shifts) & 1).astype(np.uint8).ravel()
 
 
-def _refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
+def refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
     """Refuse a plane whose sub-byte slack is not zero.
+
+    **This is the padding-canonicality authority on the read path**, and the
+    schema names it (D4, S3c rule 3, S4 step 8).  ``bitio.check_padding_zero``
+    used to declare the same rule for nobody: it had no callers, and the two
+    could only ever disagree, so it is gone.  The other enforcement is
+    ``container.verify_plane_region``, which checks a plane's declared extent
+    inside ``parse(verify=True)``; there is no third.
 
     The slice ``raw[:used]`` threw the slack away, so ``ac80`` and ``acff``
     decoded to the same three values and the second was accepted in silence.
@@ -108,7 +128,7 @@ def unpack_uniform(data: bytes, count: int, width: int, device=None) -> torch.Te
             f"need {count * width} bits for {count} elements of {width} bits, "
             f"the plane holds {bits.size}"
         )
-    _refuse_dirty_slack(raw, count * width, "plane")
+    refuse_dirty_slack(raw, count * width, "plane")
     return torch.from_numpy(_from_bits(bits, width)).to(device or "cpu")
 
 
@@ -174,7 +194,7 @@ def unpack_body(
     bits = raw[:total]
     if bits.size != total:
         raise GrammarError(f"BODY needs {total} bits, the plane holds {bits.size}")
-    _refuse_dirty_slack(raw, total, "BODY")
+    refuse_dirty_slack(raw, total, "BODY")
     # uint8, not int64: a plane position carries at most 3 bits, and the replay
     # is a bandwidth-bound elementwise chain over the BODY plane.  Eight bytes
     # per three bits made every pass in the decoder read 8x what it needed.
