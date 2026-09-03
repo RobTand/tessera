@@ -208,6 +208,38 @@ class PlaneDescriptor:
     content_digest: bytes
 
     def __post_init__(self) -> None:
+        # Two enum members are refused outright rather than half-supported.
+        # Both are constructed nowhere -- by ``layout.py``, by the decoder's
+        # callers, by any test -- and both are worse than absent while that
+        # holds, because each has a consumer that would quietly agree with it.
+        #
+        # REFERENCE: ``byte_length`` returned 0 for it and
+        # ``footprint.reference_bundle_bytes`` summed those zeros, so a
+        # referenced plane's content was charged nowhere at all.  An artifact
+        # that declared one would have understated its own size and no gate
+        # would have noticed.  Fail closed here, at construction, so a hostile
+        # or merely mistaken manifest is refused on decode instead of being
+        # believed: when bundle-level accounting exists, this refusal is the
+        # one line that has to move, and it is the line that says why.
+        #
+        # LSB_FIRST: ``wire.py`` packs MSB-first unconditionally and
+        # ``container.verify_plane_region`` masks pad bits in the low bits, so
+        # an LSB_FIRST descriptor names a layout no writer in this package can
+        # produce and no verifier here would check correctly.  Honouring it in
+        # the verifier alone would be half a feature -- a plane that passes
+        # canonicality and decodes to noise.
+        if self.storage is not Storage.INLINE:
+            raise PlaneLayoutError(
+                f"{self.kind.name}: {self.storage.name} storage is not charged "
+                "by any accountant in this package; only INLINE planes may be "
+                "declared until referenced bytes are counted at bundle level"
+            )
+        if self.bit_order is not BitOrder.MSB_FIRST:
+            raise PlaneLayoutError(
+                f"{self.kind.name}: {self.bit_order.name} is not produced by "
+                "this package's packer and is not verified by its canonicality "
+                "check; the wire is MSB-first"
+            )
         if self.element_bits <= 0:
             raise PlaneLayoutError(f"{self.kind.name}: element_bits must be positive")
         normative = NORMATIVE_ELEMENT_BITS.get(self.kind)
@@ -277,8 +309,15 @@ class PlaneDescriptor:
         count = self.element_count if element_count is None else element_count
         if count < 0:
             raise PlaneLayoutError(f"{self.kind.name}: negative element count")
-        if self.storage is Storage.REFERENCE:
-            return 0
+        if self.storage is not Storage.INLINE:
+            # Unreachable: __post_init__ refuses a non-INLINE descriptor.  The
+            # branch stays because returning 0 here was the lie itself, and a
+            # future bundle-level accountant must replace it with a charge,
+            # not inherit a zero.
+            raise PlaneLayoutError(
+                f"{self.kind.name}: {self.storage.name} storage has no local "
+                "byte length; its bytes are charged by the bundle"
+            )
         raw = bits_to_bytes(count * self.element_bits)
         remainder = raw % self.alignment_bytes
         return raw if remainder == 0 else raw + (self.alignment_bytes - remainder)

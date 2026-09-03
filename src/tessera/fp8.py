@@ -17,6 +17,7 @@ E8M0 (OCP MX scale): 8 exponent bits, value = 2**(E-127); 0xFF is NaN.
 from fractions import Fraction
 
 from .errors import ScaleCodecError
+from .exact import require_exact_rational
 
 __all__ = [
     "E4M3FN_NAN_BYTES",
@@ -61,6 +62,13 @@ _E4M3FN_BYTE_TO_VALUE: dict[int, Fraction] = _build_e4m3fn_table()
 # Reverse map. Zero has two encodings (0x00 / 0x80); the codec only ever
 # encodes strictly positive values, so the negative-zero collision is inert,
 # but we build the table positives-first to keep it deterministic.
+#
+# The consequence is worth stating rather than leaving to be rediscovered: the
+# forward table has **254 entries for 253 distinct values**, so decode is a
+# function and encode is its left inverse *only on the 253*.  0x80 decodes to
+# zero and never comes back -- ``e4m3fn_encode_exact(0)`` answers 0x00.  Every
+# other byte round-trips, which is what ``test_fp8`` asserts and what the S6b
+# legality predicate is entitled to lean on.
 _E4M3FN_VALUE_TO_BYTE: dict[Fraction, int] = {}
 for _byte in range(256):
     if _byte in E4M3FN_NAN_BYTES:
@@ -93,12 +101,29 @@ def e4m3fn_encode_exact(value: Fraction) -> int | None:
 
     No rounding, no nearest-value fallback: inexactness is a rejection, which
     is what makes this usable as a legality predicate.
+
+    The lookup is a dict, so before the fix the numeric tower walked in
+    through ``__hash__``: ``1``, ``1.0`` and ``Fraction(1)`` all hash alike
+    and all answered 0x38.  A float answering a predicate defined as "exactly
+    representable" is the one thing this function must not do, because the
+    rounding already happened wherever the float was made.  The contract is
+    now stated once, in ``require_exact_rational``, and shared with
+    ``e8m0_encode_exact`` and ``as_ratio``: exact rationals in, and ``int``
+    counts as one.
     """
-    return _E4M3FN_VALUE_TO_BYTE.get(value)
+    return _E4M3FN_VALUE_TO_BYTE.get(require_exact_rational(value))
 
 
 def e4m3fn_is_subnormal(byte: int) -> bool:
-    """True iff the byte's exponent field is zero and it is not a zero."""
+    """True iff the byte's exponent field is zero and it is not a zero.
+
+    Range-guarded like the decoders beside it.  Without the guard 0x101
+    answered ``True``: the mask arithmetic happily reads a ninth bit that no
+    byte has, so a caller who arrived here with a wrong-width integer got a
+    confident answer instead of a refusal.
+    """
+    if not 0 <= byte <= 255:
+        raise ScaleCodecError(f"not a byte: {byte}")
     return (byte & 0x78) == 0 and (byte & 0x07) != 0
 
 
@@ -118,7 +143,16 @@ def e8m0_decode(byte: int) -> Fraction:
 
 
 def e8m0_encode_exact(value: Fraction) -> int | None:
-    """Byte for an exact power of two in E8M0 range, else None."""
+    """Byte for an exact power of two in E8M0 range, else None.
+
+    Same contract as ``e4m3fn_encode_exact``, and for the same reason: before
+    the gate, ``e8m0_encode_exact(1)`` returned 127 while ``(1.0)`` raised a
+    bare ``AttributeError`` -- one value, two behaviours, neither of them
+    written down, and the only thing separating them was that ``int`` happens
+    to carry a ``.numerator`` attribute and ``float`` does not.  A contract
+    that is really the numeric tower's attribute table is not a contract.
+    """
+    require_exact_rational(value)
     if value <= 0:
         return None
     numerator, denominator = value.numerator, value.denominator

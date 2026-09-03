@@ -37,7 +37,7 @@ from .errors import PlaneLayoutError, SchemaError, TruncationError
 from .footprint import account_terminal, plane_region_bytes
 from .exact import bits_to_bytes
 from .manifest import Manifest, TerminalRecord
-from .planes import PlaneDescriptor, Storage
+from .planes import BitOrder, PlaneDescriptor, Storage
 
 __all__ = [
     "MAGIC",
@@ -89,8 +89,19 @@ def serialize(manifest: Manifest, plane_region: bytes) -> bytes:
             "payload_digest does not match the supplied plane region"
         )
     full = max(manifest.terminals, key=lambda terminal: terminal.exact_bytes)
+    # ``side_bytes`` is the artifact's non-plane-region bytes -- header plus
+    # manifest -- and it is the same quantity here as in ``parse``, which
+    # passes exactly this.  It used to pass 0, so the one ``wire_bpp`` formula
+    # in ``footprint`` reported two different numbers for one artifact
+    # depending on which side computed it (23/4 at write, 543/64 at read, on
+    # an 8x256 toy).  Both reports are discarded and no byte moved -- but a
+    # bpp figure that means one thing to the writer and another to the reader
+    # is exactly the kind of number that gets quoted.
     account_terminal(
-        manifest, full, side_bytes=0, physical_bytes=len(plane_region)
+        manifest,
+        full,
+        side_bytes=HEADER_BYTES + len(manifest_bytes),
+        physical_bytes=len(plane_region),
     )
     verify_plane_region(manifest, full, plane_region)
     header = _HEADER.pack(
@@ -160,7 +171,19 @@ def verify_plane_region(
         # leaves pad bits inside the final content byte.  MSB-first packing puts
         # them in the low bits.  Unconstrained, they are the same canonicality
         # hole as the alignment bytes above, one byte earlier.
-        bits = count_bits = terminal.plane_elements[
+        #
+        # The low-bit mask is only correct for MSB-first packing, and it is
+        # unconditional.  ``PlaneDescriptor`` now refuses to hold any other bit
+        # order (see ``planes.py``), so this cannot be reached -- it is kept as
+        # the local statement of what the mask below assumes, because a future
+        # bit order would have to change this line and would otherwise pass a
+        # verifier that was silently checking the wrong end of the byte.
+        if descriptor.bit_order is not BitOrder.MSB_FIRST:
+            raise PlaneLayoutError(
+                f"{descriptor.kind.name}: pad-bit canonicality is defined for "
+                f"MSB-first packing only, not {descriptor.bit_order.name}"
+            )
+        bits = terminal.plane_elements[
             order[descriptor.kind]
         ] * descriptor.element_bits
         slack = (-bits) % 8
