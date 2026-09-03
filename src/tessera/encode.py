@@ -46,6 +46,7 @@ from .diagonals import (
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
+from .grammar import superblock_count
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -1732,12 +1733,20 @@ def _canonical_release_order(
     rate schedule uses, so the total is met exactly with no superblock more
     than one release away from any other.  A quality-driven allocation is S9's
     lambda-greedy pass; this is the uniform baseline it has to beat.
+
+    The block count is ``grammar.superblock_count`` -- a **ceiling**, the same
+    one the layout gives a granule to.  It used to be a floor here and in
+    ``decode.release_order``, which meant the quota ran over one block fewer
+    than ``block_of`` produces and **no release could ever land in a trailing
+    partial superblock**: on a 640-column unit positions 512..639 were
+    unreachable, while the layout allocated the granule for them anyway.  The
+    round trip did not notice, because encoder and decoder floored alike.
     """
+    from .decode import bresenham_release_counts
+
     device = decoded.device
-    rows = decoded.shape[0]
-    blocks = max(1, cols // superblock)
-    per, remainder = divmod(total, blocks)
-    counts = [per + (1 if index < remainder else 0) for index in range(blocks)]
+    blocks = superblock_count(cols, superblock)
+    counts = bresenham_release_counts(total, blocks)
 
     flat = decoded.abs().reshape(-1)
     position = torch.arange(flat.numel(), device=device)
@@ -1748,6 +1757,21 @@ def _canonical_release_order(
         if not count:
             continue
         members = position[block_of == index]
+        if count > members.numel():
+            # A trailing partial superblock holds fewer positions than a
+            # complete one, so a uniform quota can overrun it.  Truncating
+            # silently would place fewer releases than ``total``, and the
+            # reader -- which regenerates this order from the *placed* count --
+            # would then respread a different total and recover a different
+            # set.  Refuse instead of corrupting exactly the positions release
+            # exists to protect.  This is a real behaviour change and not only
+            # a guard: an equal-count quota over unequal blocks caps releases
+            # on a narrow trailing superblock, and whether the quota should be
+            # width-proportional instead is open as #27.
+            raise GrammarError(
+                f"superblock {index} releases {count} of {members.numel()} "
+                "positions"
+            )
         magnitude = flat[members]
         # Stable descending sort: ties fall back to ascending position, which
         # makes the order total and so reproducible by the decoder.

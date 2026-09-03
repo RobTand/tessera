@@ -232,7 +232,13 @@ consumer that indexes `plane_elements` positionally takes its order from
 `Manifest.plane_order`.
 
 **RELEASE under a shard.** A whole unit's per-superblock release counts are the
-Bresenham spread of the total, which the reader regenerates. A shard's are the
+Bresenham spread of the total over `ceil(columns / superblock_columns)`
+superblocks — the same ceiling §3b gives a granule to, so the quota reaches a
+trailing partial superblock like any other — which the reader regenerates. A
+uniform quota can overrun a partial superblock, which holds fewer positions
+than a complete one; a writer that would place fewer releases than it declares
+refuses instead, because the reader respreads the *placed* count and would
+otherwise recover a different set. A shard's are the
 *restriction* of its parent's, which no spread reproduces, so a shard writes
 the RELEASE descriptor with `PER_SUPERBLOCK` granularity and its counts on the
 wire. The restriction is well defined because S9's placement is a **threshold**

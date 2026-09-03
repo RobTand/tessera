@@ -182,6 +182,44 @@ def test_release_placement_is_recovered_not_stored():
     assert torch.equal(recovered, reconstruct_unit(unit, FORESTS, CODE))
 
 
+def test_release_reaches_a_trailing_partial_superblock():
+    """A 640-column unit has three superblocks -- 256, 256, 128 -- and the
+    layout gives the last one a granule.  The release quota used to run over
+    ``cols // superblock`` blocks, a floor, so positions 512..639 were
+    unreachable: the unit paid for a granule release could never populate.
+    Encoder and decoder floored alike, so the round trip never noticed; the
+    only way to see it is to look at *which* superblocks were placed in.
+    """
+    cols, superblock = 640, 256
+    _, unit = _unit(cols=cols, q256=640, released=8)
+    blocks = sorted(set(((unit.release_index % cols) // superblock).tolist()))
+    assert blocks == [0, 1, 2]
+    _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+    assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, CODE))
+
+
+@pytest.mark.parametrize("cols", [320, 384, 512, 640, 768])
+def test_release_placement_survives_the_bytes_at_every_width(cols):
+    """A regression pin, not a fail-before test: it passed under the floor too,
+    because encoder and decoder floored alike.  It exists because the reader
+    regenerates a whole unit's placement from the total alone, so any future
+    change to the partition has to move both sides at once -- at *every* column
+    count, including the ones where the ceiling and the floor differ."""
+    _, unit = _unit(cols=cols, q256=640, released=64)
+    assert unit.released_positions == 64
+    _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+    assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, CODE))
+
+
+def test_release_refuses_a_superblock_quota_it_cannot_fill():
+    """A trailing partial superblock holds fewer positions than a complete one,
+    so a uniform quota can overrun it.  Truncating silently would place fewer
+    releases than asked, and the reader -- which respreads the *placed* count --
+    would then recover a different set.  Refuse instead."""
+    with pytest.raises(GrammarError, match="releases .* of .* positions"):
+        _unit(rows=8, cols=640, q256=640, released=8 * 640 - 1)
+
+
 def test_decoder_derives_its_own_scale():
     """reconstruct_unit with no scale argument must equal the encoder's."""
     weights, unit = _unit(diagonals=False)

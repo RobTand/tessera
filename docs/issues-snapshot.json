@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T02:01:35Z",
+ "generated": "2026-09-03T02:07:39Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -38,6 +38,10 @@
    "123": {
     "state": "OPEN",
     "title": "D34 residue: 111 undated Gridbook mentions in 41 module docstrings, and the one that misstates a capability"
+   },
+   "124": {
+    "state": "OPEN",
+    "title": "The Tessera dev pin is a contract version behind, and nothing notices"
    },
    "19": {
     "state": "CLOSED",
@@ -248,6 +252,10 @@
    "41": {
     "state": "OPEN",
     "title": "The encoder can write two wires the serving plugin publishes no decodable range for"
+   },
+   "42": {
+    "state": "OPEN",
+    "title": "The window GEMV needs an A-side decision before it can be wired into a route"
    },
    "5": {
     "state": "OPEN",

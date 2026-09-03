@@ -39,6 +39,7 @@ __all__ = [
     "bresenham_rate_schedule",
     "validate_rate_schedule",
     "superblock_quota_ok",
+    "superblock_count",
     "bits_per_position",
     "prefix_cardinality",
     "validate_descendant_map",
@@ -276,6 +277,28 @@ def validate_rate_schedule(
             f"inexact quota: schedule sums to {total} bits, "
             f"root {root} over {len(rates)} columns requires {exact}"
         )
+
+
+def superblock_count(n_columns: int, superblock_columns: int) -> int:
+    """How many superblocks a unit of ``n_columns`` columns has.
+
+    A **ceiling**, and it is the only answer: ``block_of = column //
+    superblock_columns`` maps the trailing partial columns to a block index of
+    their own, so a floor names fewer blocks than the position map produces.
+    ``superblock_quota_ok`` already declares that trailing partial superblock
+    legal (it constrains only *complete* ones), and ``layout.build_planes``
+    already gives it a granule.  Everything that partitions a unit by
+    superblock -- the plane granules, the release quota, the restart table --
+    counts them here, so no two of them can ever disagree about how many
+    there are.
+
+    ``max(1, ...)`` covers the shard case ``n_columns < superblock_columns``,
+    where the ceiling is 1 anyway; it survives only so a zero-column argument
+    cannot silently produce an empty partition.
+    """
+    if superblock_columns <= 0:
+        raise GrammarError(f"superblock_columns must be positive: {superblock_columns}")
+    return max(1, -(-n_columns // superblock_columns))
 
 
 def superblock_quota_ok(
