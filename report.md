@@ -50,7 +50,8 @@ Receipt: `shape_census.json`.
 * a call at or above `_GRAPH_MIN_BATCHES` keeps today's behaviour — per-call
   buffers, captured and dropped inside the call — because persisting one would
   pin the whole tensor's traceback (545 MiB at the E4M3 default over 3072
-  columns) to save a capture worth ~3% of that call;
+  columns) to buy nothing but the one capture that call already amortises
+  over its own 96 batches;
 * `TESSERA_WINDOW_GRAPH` is resolved **per call** instead of being bound to a
   module constant at import, which is what makes it usable as an A/B control
   in one process — and is why the pre-change tree had to be swept by rebinding

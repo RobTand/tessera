@@ -118,8 +118,8 @@ _WINDOW_GRAPH_MIN_CALLS = 2
 #: and traceback cover fewer than six batches of columns.  A full-width call
 #: keeps today's behaviour -- per-call buffers, captured and dropped inside the
 #: call -- because persisting one would pin the whole tensor's traceback (at
-#: L=14, R=4 over 3072 columns, 545 MiB) to save the ~17 ms its own capture
-#: costs, which is 3% of that call for half a gigabyte.
+#: L=14, R=4 over 3072 columns, 545 MiB) to buy nothing but the one capture
+#: that call already amortises over its own 96 batches.
 #:
 #: The shipping schedule asks for few shapes.  Bresenham spreads a fractional
 #: rate over the columns, so at the served rung (E4M3, q256=1042) every one of
@@ -127,7 +127,10 @@ _WINDOW_GRAPH_MIN_CALLS = 2
 #: rates ({4: 2856, 5: 216} columns) and therefore the same two widths -- four
 #: keys for the whole unit, each recurring in every block, so each earns the
 #: capture it is given.  Eight leaves margin for a mixed unit without letting
-#: residency run: each of these plans is ~33 MiB at the LDLQ shape.
+#: residency run.  A plan's traceback is ``nmax * steps * low`` bytes and
+#: dominates it, so at that wire the two rate-4 plans are ~36 MiB each and the
+#: two rate-5 plans ~1 MiB -- ~74 MiB for the unit, and a bound of eight of
+#: the larger kind rather than an unbounded map.
 _WINDOW_PLAN_CACHE = 8
 #: Plans are **per thread**, and that is a correctness requirement rather than
 #: a tuning choice: a plan owns the fronts and the traceback its Viterbi
