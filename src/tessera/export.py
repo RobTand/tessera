@@ -848,6 +848,7 @@ def encode_linear_planes(
     refit_metric: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
+    refit_coupled_landing: bool | str = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -880,6 +881,8 @@ def encode_linear_planes(
     no ``ActivationSource`` field, so no ``export_checkpoint`` run can set it
     and no ``tessera_config.json`` can be written that a merge guard has no
     field to compare.  Promoting it means adding both, in one change.
+    ``refit_coupled_landing`` (issue #50) is held to exactly the same rule:
+    a measurement option, reachable only from here.
 
     ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
     activation-aware encoder settings (``encode_unit``): the input Hessian's
@@ -924,6 +927,7 @@ def encode_linear_planes(
         ldl=ldl, ldl_block=ldl_block, refit_metric=refit_metric,
         refit_reach_floor=refit_reach_floor,
         refit_gauss_seidel=refit_gauss_seidel,
+        refit_coupled_landing=refit_coupled_landing,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
