@@ -11,3 +11,7 @@ dist/
 
 # python -m build output
 build/
+
+# Coordinator scaffolding handed to worker agents; the venv path and the
+# fleet lock directory are outside the repo, so it is not the repo test runner.
+/run-tests.sh

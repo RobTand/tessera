@@ -48,6 +48,7 @@ from .manifest import (
     ContainerClass,
     Geometry,
     Manifest,
+    ReachParams,
     RotationState,
     ScalePlane,
     ScalePlaneKind,
@@ -59,6 +60,32 @@ from .wire import pack_body, pack_fp16, pack_uniform, unpack_body, unpack_fp16, 
 __all__ = ["build_unit_artifact", "read_unit_artifact", "encoder_profile_id"]
 
 
+def _normalize_reach(
+    body: BodyKind,
+    scale_plane: ScalePlaneKind,
+    window_seed: int,
+    window_sigma: "float | None",
+    channel_sigma: "float | None",
+) -> "tuple[int, float | None, float | None]":
+    """The reach spellings that move bytes, and nothing else -- the one place
+    the binding rule lives.
+
+    ``window_seed``/``window_sigma`` parameterise the window table, so they
+    are meaningful under a WINDOW body and only there; ``channel_sigma``
+    sets the CHANNEL plane's initial row scales, so it is meaningful under a
+    CHANNEL plane and only there.  Everywhere else the encoder never reads
+    the slot, so it normalises to the default (seed 0, spread ``None``) and
+    binds nothing.  ``encoder_profile_id`` and ``build_unit_artifact`` both
+    call this, so the digest and the manifest record cannot disagree about
+    what is bound.
+    """
+    if BodyKind(body) is not BodyKind.WINDOW:
+        window_seed, window_sigma = 0, None
+    if ScalePlaneKind(scale_plane) is not ScalePlaneKind.CHANNEL:
+        channel_sigma = None
+    return window_seed, window_sigma, channel_sigma
+
+
 def encoder_profile_id(
     code: "ConvCode | None",
     rates: "tuple[int, ...]",
@@ -67,6 +94,9 @@ def encoder_profile_id(
     scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
     body: BodyKind = BodyKind.TCQ,
     window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
 ) -> bytes:
     """Digest the decisions a reader must reproduce exactly.
 
@@ -109,8 +139,35 @@ def encoder_profile_id(
     nothing, and the width is what the reader must agree on.  The table
     itself is on the ALPHABET plane, covered by the payload digest.  A TCQ
     profile is unchanged.
+
+    The **reach spellings** (schema minor 5) are bound the same conditional
+    way, for a different reason: they are not decisions the reader must
+    reproduce -- the reader takes the table off the ALPHABET plane and the
+    row scales off DIAG_SV, never rebuilding either -- but they move the
+    bytes the reader verifies, a lot (the reach-aware per-row start took the
+    4.07-bpp E4M3 wire from served KL 0.470 to 0.151 at an unchanged wire).
+    Equal profile ids must mean equal bytes for every consumer that treats
+    id equality as byte equality -- a cache resume key, a merge guard, an
+    A/B that assumes one arm is a re-cut of the other -- so the id binds
+    ``window_seed``/``window_sigma`` under a WINDOW body and
+    ``channel_sigma`` under a CHANNEL plane, each spelled as told -- a float
+    as its shortest round-trip, ``None`` (the grid-derived default: the
+    amax-bounded source under a block plane,
+    ``scale_channel.default_channel_sigma`` under a CHANNEL plane) adding no
+    tag.  A default spelling adds no tag, exactly like a
+    span-1 S6b pair, so every default build digests to what it always did;
+    a slot the body/plane never reads normalises away
+    (``_normalize_reach``), so it binds nothing anywhere.  The reader takes
+    the spellings off the manifest's reach record and recomputes this digest
+    with them, so a manifest whose reach disagrees with the profile fails
+    closed at the digest search -- and every artifact written before minor 5
+    still verifies, because its manifest carries no record and recomputes
+    the untagged digest.
     """
     body = BodyKind(body)
+    window_seed, window_sigma, channel_sigma = _normalize_reach(
+        body, scale_plane, window_seed, window_sigma, channel_sigma
+    )
     if body is BodyKind.WINDOW:
         if span != 1:
             raise GrammarError("a window body is span 1")
@@ -120,6 +177,10 @@ def encoder_profile_id(
             f"rates:{','.join(str(r) for r in sorted(set(rates)))}",
             f"grid:{grid_digest(grid)},arity={grid.arity},size={grid.size}",
         ]
+        if window_seed:
+            parts.append(f"reach:seed={int(window_seed)}")
+        if window_sigma is not None:
+            parts.append(f"reach:window_sigma={float(window_sigma)!r}")
     else:
         if code is None:
             raise GrammarError("a TCQ profile needs its convolutional code")
@@ -134,6 +195,8 @@ def encoder_profile_id(
         parts.append(f"trellis:span={span}")
     if ScalePlaneKind(scale_plane) is not ScalePlaneKind.S6B:
         parts.append(f"scale:{ScalePlaneKind(scale_plane).name.lower()}")
+    if channel_sigma is not None:
+        parts.append(f"reach:channel_sigma={float(channel_sigma)!r}")
     payload = "|".join(parts)
     return hashlib.sha256(payload.encode()).digest()
 
@@ -226,6 +289,27 @@ def build_unit_artifact(
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
     window_bits = int(getattr(unit, "window_bits", 0))
     plane_kind = ScalePlaneKind(unit.scale_plane)
+    # The reach spellings ride the unit the way span, body and window_bits
+    # already do: ``encode_unit`` records what it was told, the reader's
+    # ``_as_unit`` restores what the manifest carries, and ``slice_unit``
+    # propagates what it cuts -- so a shard rebuilds under its parent's
+    # profile.  A unit that predates the fields (or one whose body/plane
+    # never reads them) normalises to the defaults and binds nothing, which
+    # is what keeps its bytes and its minor exactly where they were.
+    seed, wsigma, csigma = _normalize_reach(
+        body,
+        plane_kind,
+        getattr(unit, "window_seed", 0),
+        getattr(unit, "window_sigma", None),
+        getattr(unit, "channel_sigma", None),
+    )
+    reach = None
+    if (body is BodyKind.WINDOW and (seed or wsigma is not None)) or (
+        plane_kind is ScalePlaneKind.CHANNEL and csigma is not None
+    ):
+        reach = ReachParams(
+            window_seed=seed, window_sigma=wsigma, channel_sigma=csigma
+        )
     # A block scale plane (S6b, LUT) holds one E4M3 per ``half`` columns, so
     # a width that is not a whole number of groups has no group for the
     # remainder: a GEMV would never reach those columns and a GEMM would
@@ -417,7 +501,8 @@ def build_unit_artifact(
         )
     manifest = Manifest(
         encoder_profile_id=encoder_profile_id(
-            code, rates, grid, span, plane_kind, body, window_bits
+            code, rates, grid, span, plane_kind, body, window_bits,
+            seed, wsigma, csigma,
         ),
         branch=BranchIdentity(
             unit_id=unit_id,
@@ -436,6 +521,7 @@ def build_unit_artifact(
         body=body,
         window_bits=window_bits,
         shard=shard,
+        reach=reach,
     )
     return manifest, region, serialize(manifest, region)
 
@@ -463,6 +549,20 @@ class ParsedUnit:
     @property
     def body(self) -> BodyKind:
         return BodyKind(getattr(self.unit, "body", BodyKind.TCQ))
+
+
+def _reach_attrs(manifest: Manifest) -> "tuple[int, float | None, float | None]":
+    """The manifest's reach spellings as the digest takes them.
+
+    A manifest with no reach record (every artifact before minor 5) yields
+    the defaults, which bind nothing -- so the recompute below is the
+    untagged digest those bytes were written under.  ``encoder_profile_id``
+    normalises again, so what comes back here needs no body/plane check.
+    """
+    reach = manifest.reach
+    if reach is None:
+        return 0, None, None
+    return reach.window_seed, reach.window_sigma, reach.channel_sigma
 
 
 def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
@@ -502,13 +602,15 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     span = manifest.span
     plane = manifest.scale_plane
     body, window_bits = manifest.body, manifest.window_bits
+    seed, wsigma, csigma = _reach_attrs(manifest)
     code = grid = None
     if body is BodyKind.WINDOW:
         # No convolutional code to recover: the profile binds the body kind,
         # the window width, the rates and the grid.
         for known in SERIALISABLE_GRIDS.values():
             if encoder_profile_id(
-                None, rates, known, span, plane.kind, body, window_bits
+                None, rates, known, span, plane.kind, body, window_bits,
+                seed, wsigma, csigma,
             ) == manifest.encoder_profile_id:
                 grid = known
                 break
@@ -518,16 +620,18 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
                 f"implements for a window body of {window_bits} bits over a "
                 f"{plane.kind.name} scale plane; it searched grids "
                 f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
-                "manifest's body, window width or scale-plane kind disagrees "
-                "with the profile the encoder bound, or the grid is outside "
-                "SERIALISABLE_GRIDS. Refusing to decode against an assumed grid."
+                "manifest's body, window width, scale-plane kind or reach "
+                "record disagrees with the profile the encoder bound, or the "
+                "grid is outside SERIALISABLE_GRIDS. Refusing to decode "
+                "against an assumed grid."
             )
         return _read_window_unit(art, grid, device)
     for memory in sorted(_ODS_GENERATORS):
         candidate = ConvCode(memory=memory)
         for known in SERIALISABLE_GRIDS.values():
             if encoder_profile_id(
-                candidate, rates, known, span, plane.kind
+                candidate, rates, known, span, plane.kind, body, window_bits,
+                seed, wsigma, csigma,
             ) == manifest.encoder_profile_id:
                 code, grid = candidate, known
                 break
@@ -540,9 +644,9 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
             f"{plane.kind.name} scale plane: it searched memory orders "
             f"{sorted(_ODS_GENERATORS)} against grids "
             f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
-            "trellis is not one we can replay, the manifest's span or "
-            "scale-plane kind disagrees with the profile the encoder bound, "
-            "or the artifact was written over a grid outside "
+            "trellis is not one we can replay, the manifest's span, "
+            "scale-plane kind or reach record disagrees with the profile the "
+            "encoder bound, or the artifact was written over a grid outside "
             "SERIALISABLE_GRIDS -- including one written before the grid was "
             "bound into the profile id. Refusing to decode against an assumed "
             "grid: that is exactly the silent misdecode this digest exists to "
@@ -583,6 +687,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
 
     n_released = terminal.plane_elements[wire.index(PlaneKind.RELEASE)]
     scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+    seed, wsigma, csigma = _reach_attrs(manifest)
     unit = _as_unit(manifest, dict(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -605,6 +710,13 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         group=geometry.group_weights,
         half=geometry.half_weights,
         span=span,
+        # The reach spellings the manifest carries, so a shard cut from this
+        # parse rebuilds under the parent's profile id (``build_unit_artifact``
+        # reads them off the unit).  A manifest with no reach record yields
+        # the defaults, which bind nothing.
+        window_seed=seed,
+        window_sigma=wsigma,
+        channel_sigma=csigma,
         **scales,
     ), chunks, device, code)
     if n_released and grid.arity > 1:
@@ -852,6 +964,7 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         )
     n_released = elements(PlaneKind.RELEASE)
     scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+    seed, wsigma, csigma = _reach_attrs(manifest)
     unit = _as_unit(manifest, dict(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -871,6 +984,9 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         body=BodyKind.WINDOW,
         window_bits=window_bits,
         window_codes=table.to(device),
+        window_seed=seed,
+        window_sigma=wsigma,
+        channel_sigma=csigma,
         **scales,
     ), chunks, device, None)
     if n_released and grid.arity > 1:

@@ -199,6 +199,18 @@ class EncodedUnit:
     # times ``scale_global``; ``scale_base`` and ``scale_refine`` are empty.
     # Travels on the DIAG_SV plane (``scale_channel.py``).
     scale_rows: "torch.Tensor | None" = None     # [rows] fp16
+    # The reach spellings the encoder was told (schema minor 5): the window
+    # table's seed and spread, and the CHANNEL plane's modelled row spread.
+    # Recorded so the artifact states what cut it -- ``unit_artifact``
+    # binds them into the encoder profile id and onto the manifest, which is
+    # what makes equal ids mean equal reach terms.  The spellings, not the
+    # resolved values: ``None`` is the grid-derived default (the amax-bounded
+    # source under a block plane, ``scale_channel.default_channel_sigma``
+    # under a CHANNEL plane), the same convention the checkpoint config's
+    # ``wire.recipes`` already uses.
+    window_seed: int = 0
+    window_sigma: "float | None" = None
+    channel_sigma: "float | None" = None
 
     @property
     def released_positions(self) -> int:
@@ -1607,6 +1619,14 @@ def encode_unit(
 
     peak = max(abs(v) for v in grid.values)
     scale_plane = ScalePlaneKind(scale_plane)
+    # The reach spellings as told, before the CHANNEL branch resolves
+    # ``channel_sigma=None`` to the grid default for its own arithmetic: the
+    # unit records the spelling (so the profile id binds what was asked, and
+    # a default build keeps the digest it always had), the math below uses
+    # the resolved value.
+    reach_seed = int(window_seed)
+    reach_window_sigma = None if window_sigma is None else float(window_sigma)
+    reach_channel_sigma = None if channel_sigma is None else float(channel_sigma)
     table_bytes, global_scale = None, 1.0
     channel_rows = effective_rows = None
     body_reach = None
@@ -2100,6 +2120,9 @@ def encode_unit(
         window_bits=window_bits,
         window_codes=window_codes,
         scale_rows=channel_rows,
+        window_seed=reach_seed,
+        window_sigma=reach_window_sigma,
+        channel_sigma=reach_channel_sigma,
     )
 
 

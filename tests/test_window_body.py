@@ -17,8 +17,9 @@ relied on:
     COMPLETION are empty, the header says minor 2, the accountant agrees
     with the bytes to the bit, and the reader needs nothing but bytes;
   * every TCQ artifact is untouched: same bytes, same minor, same profile id;
-  * the profile id binds the body kind and the width, the reader fails
-    closed on a manifest that disagrees with it or a table outside the grid,
+  * the profile id binds the body kind, the width and the reach terms that
+    move bytes (issue #77), the reader fails closed on a manifest that
+    disagrees with it or a table outside the grid,
     and the kernel lane decodes the body at the wire's own bytes
     (``tests/test_kernel_window.py``);
   * the exporter records the body and replays a config at its own meaning.
@@ -278,7 +279,7 @@ def test_tcq_artifacts_are_byte_identical_and_keep_their_minor():
         mw.__class__(**{**mw.__dict__, "window_bits": 6})
 
 
-def test_profile_id_binds_the_body_and_its_width_and_nothing_else():
+def test_profile_id_binds_the_body_its_width_and_the_reach_terms():
     rates = (7,) * 8
     base = encoder_profile_id(CODE, rates, K2)
     assert encoder_profile_id(CODE, rates, K2, 1, ScalePlaneKind.S6B, BodyKind.TCQ, 0) == base
@@ -289,6 +290,21 @@ def test_profile_id_binds_the_body_and_its_width_and_nothing_else():
     assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9) == w9
     assert encoder_profile_id(ConvCode(3), rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9) == w9
     assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.LUT, WINDOW, 9) != w9
+    # the reach spellings bind where they move bytes (issue #77): a window
+    # table's seed and spread under a WINDOW body, the row spread under a
+    # CHANNEL plane -- and default spellings reproduce the old digest, which
+    # is what keeps every default artifact byte-identical across minor 5.
+    assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9,
+                              0, None, None) == w9
+    assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9,
+                              1, None, None) != w9
+    assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9,
+                              0, 1.0, None) != w9
+    assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.S6B, WINDOW, 9,
+                              0, None, 1.0) == w9
+    assert encoder_profile_id(None, rates, K2, 1, ScalePlaneKind.CHANNEL, WINDOW, 9,
+                              0, None, 1.0) != encoder_profile_id(
+                                  None, rates, K2, 1, ScalePlaneKind.CHANNEL, WINDOW, 9)
     with pytest.raises(GrammarError, match="span 1"):
         encoder_profile_id(None, rates, K2, 2, ScalePlaneKind.S6B, WINDOW, 9)
     with pytest.raises(GrammarError, match="convolutional"):
@@ -364,9 +380,14 @@ def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
     w = _weights().bfloat16()
     exported = encode_linear(w, grid=K2, q256=6 * 128, name="w", body=WINDOW, window_bits=10,
                              window_seed=7, window_sigma=2.5)
-    assert exported.blob[10] == 2
+    # a non-default reach spelling binds into the profile and declares minor
+    # 5 (issue #77); a default spelling would keep minor 2, byte for byte.
+    assert exported.blob[10] == 5
     art = parse(exported.blob)
     assert art.manifest.body is WINDOW and art.manifest.window_bits == 10
+    assert art.manifest.reach is not None
+    assert (art.manifest.reach.window_seed, art.manifest.reach.window_sigma,
+            art.manifest.reach.channel_sigma) == (7, 2.5, None)
     export_checkpoint({"w": w}, {"w": 6 * 128}, tmp_path, grid=K2, body=WINDOW,
                       window_bits=10, window_seed=7, window_sigma=2.5)
     config = read_checkpoint_config(tmp_path)
