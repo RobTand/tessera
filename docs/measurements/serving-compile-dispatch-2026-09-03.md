@@ -10,12 +10,17 @@ the compiler.
 
 **In one line.** vLLM 0.28 runs *different implementations of the same math*
 depending on whether it is going to compile: eager gets the CUDA kernels, the
-compiled forward gets the torch decompositions for inductor to fuse. The
-*prediction* under test is that the two implementations differ by a few ULPs of
-bf16 and that a W4A4 route amplifies that -- an FP4 quantizer re-draws it across
-codes ~40% apart -- into a fifth of a nat. Section 2 measures the first half and
-section 3 the second; until they are filled this line is a hypothesis, not a
-result.
+compiled forward gets the torch decompositions for inductor to fuse. Section 2
+measures what that is worth: the two RMSNorm implementations disagree on a
+third of their output elements by exactly one bf16 ULP, and the NVFP4 quantizer
+downstream turns that into a disagreement **18% the size of the whole
+quantization error** at the GEMM. Section 3 asks the served ladder whether
+pinning the dispatch back closes the KL gap.
+
+One thing the op-level measurement *corrected*: SiluAndMul, which the
+`custom_ops` half of the switch moves, is **bit-identical** between its CUDA
+kernel and its torch expression on these activations. The gap on this model is
+carried by `ir_op_priority` alone.
 
 ---
 
@@ -94,7 +99,94 @@ activation path alone. Tessera's own route calls its quantizers directly and
 does not inherit that one; that is a difference in what the two routes are
 exposed to, not evidence about either one's size.
 
-## 2. PENDING -- op-level measurement
+**Where Tessera is in this.** Nowhere, on the producing side. Tessera's serving
+ops are `torch.library.custom_op` registrations (`src/tessera/serving/ops.py:61,92`,
+`fp8_gemv.py:300`) -- a PyTorch mechanism, unrelated to vLLM's `CustomOp` class
+and untouched by the `custom_ops` base mode. The switched implementations are
+vLLM's own layers, which sit in the forward pass whatever route the Linears
+take. That is consistent with the gap appearing on the stock twin (0.247301)
+and on both Tessera routes alike, and it means #16 is not a Tessera defect --
+though it is still Tessera's problem, because it is our receipts that compared
+across the two regimes.
+
+## 2. The op level: what the switch is worth, measured
+
+`experiments/compile_dispatch_divergence.py`, GB10, torch 2.13.0+cu130, vLLM
+0.28.0 inside `vllm/vllm-openai:latest`. Real activations: Qwen3-0.6B BF16 at
+layer 5, on the first 512-token chunk of `corpus_qwen_n8_s512.json` (the corpus
+the served KL is scored on, Qwen tokenizer). Each producer op is run *both*
+ways -- `impls["vllm_c"]` against `impls["native"]` for the norms, the
+`torch.ops._C` kernel against the `forward_native` expression for SiluAndMul --
+and both outputs are then pushed through the quantizers the two routes execute.
+Full record: `experiments/results/compile_dispatch_divergence.json`.
+
+**The producers.** bf16 out, 512x1024 (norms) and 512x3072 (activation):
+
+| op | elements differing | max abs diff | rel L2 |
+|---|---|---|---|
+| `rms_norm` | 26.47% | 0.0625 | 0.002820 |
+| `fused_add_rms_norm` | 33.80% | 0.125 | 0.003314 |
+| `silu_and_mul` | **0.00%** | **0** | **0** |
+
+Two findings, and the second is the one that corrects the story.
+
+*The norms differ, at exactly one ULP.* bf16 carries 8 mantissa bits, so its
+relative step is 2^-8 = 0.0039; the measured rel L2 is 0.0028 and 0.0033 and
+`max_abs_diff` is one binade step at the magnitudes involved. This is the fp32
+decomposition's double rounding (`x.to(weight.dtype) * weight` then
+`.to(orig_dtype)`, `vllm/ir/ops/layernorm.py`) against the kernel's, on a third
+of all elements. Not a bug in either -- a different program.
+
+*SiluAndMul does not differ at all.* Zero elements, zero rel L2. So the
+`custom_ops` half of the switch, which is what moves SiluAndMul, contributes
+nothing numerically here, and the earlier draft of this receipt was wrong to
+put it beside the norms. The gap that `--enforce-eager` opens on this model is
+carried by `ir_op_priority`, not by `custom_ops`.
+
+**The amplification.** The same two arms, quantized the way each route
+quantizes its A side (`scaled_fp4_quant` with the checkpoint's own
+`input_global_scale`; `dynamic_per_token_scaled_fp8_quant`):
+
+| op | route | codes/bytes flipped | block scales flipped | rel L2 between arms | rel L2 of the quantizer's own error | arms / quant error |
+|---|---|---|---|---|---|---|
+| `rms_norm` | NVFP4 | 0.605% | 1.62% | 0.02429 | 0.09350 | 0.26 |
+| `rms_norm` | FP8 | 2.85% | (135 token scales) | 0.01280 | 0.02290 | 0.56 |
+| `fused_add_rms_norm` | NVFP4 | 0.800% | 2.27% | 0.02754 | 0.09337 | 0.29 |
+| `fused_add_rms_norm` | FP8 | 3.73% | (192 token scales) | 0.01504 | 0.02331 | 0.65 |
+| `silu_and_mul` | either | 0 | 0 | 0 | -- | 0 |
+
+A one-ULP disagreement upstream comes out **8.6x and 8.3x larger** after the
+NVFP4 quantizer (0.00282 -> 0.02429, 0.00331 -> 0.02754) and 4.5x larger after
+FP8 -- so NVFP4 amplifies it about **1.9x more than FP8 does**. That ordering is
+the same way round as the measured KLs (NVFP4 0.244481, FP8 0.026861) and is
+the reason the prediction was worth testing; it is not by itself a derivation of
+the ratio, and this receipt does not claim one.
+
+**And at the GEMM.** Both arms' A sides against the checkpoint's own NVFP4
+`q_proj` tile, in float32, versus the BF16 product:
+
+    rel L2 arms vs each other   0.017711
+    rel L2 eager    vs bf16     0.096628
+    rel L2 compiled vs bf16     0.096581
+    arms gap / quantization err 0.1833
+
+Neither arm is better -- they are equally far from BF16, to the fourth decimal
+-- but they are **18% of a whole quantization error apart from each other**.
+That is what an eager-vs-compiled comparison of a W4A4 artifact is measuring
+when it thinks it is measuring the artifact.
+
+*Value checks* (this harness computes its own dequantization, and a wrong
+nibble order would look like a result): `dequant_sanity_max_rel` is 0.049-0.084,
+the quantizer's own `rel_l2` error is 0.091-0.094 on NVFP4 and 0.023-0.025 on
+FP8, and the BF16 reference product lands at 0.0966. All four are the sizes FP4
+and FP8 rounding should produce; none is O(1).
+
+**Pre-registered prediction for section 3, written before the ladder reported.**
+If the norms carry the gap and SiluAndMul carries none, then in the served
+ladder `compiled-ir` (which pins only `ir_op_priority`) should recover most of
+the eager-vs-compiled gap, and `compiled-ops` (which pins only `custom_ops`)
+should recover little of it. If `compiled-ops` recovers a lot, the op-level
+picture is incomplete and section 3 says so.
 
 ## 3. PENDING -- the served ladder
 

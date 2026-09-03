@@ -1,0 +1,139 @@
+{
+  "schema": "tessera.compile_dispatch_divergence/1",
+  "params": {
+    "bf16_model": "/home/rob/models/Qwen3-0.6B",
+    "nvfp4_checkpoint": "/home/rob/tessera-runs/stock/qwen3-0.6b-tessera-k2-q896-nvfp4",
+    "corpus": "/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json",
+    "layer": 5,
+    "eps": 1e-06,
+    "torch": "2.13.0+cu130",
+    "device": "NVIDIA GB10",
+    "vllm": "0.28.0"
+  },
+  "ops": {
+    "rms_norm": {
+      "what": "input_layernorm output -- the A side of q/k/v",
+      "shape": [
+        512,
+        1024
+      ],
+      "dtype": "torch.bfloat16",
+      "eager_impl": "vllm_c / forward_cuda",
+      "compiled_impl": "native / forward_native",
+      "elements": 524288,
+      "elements_differing": 138790,
+      "elementwise_disagreement_rate": 0.2647209167480469,
+      "max_abs_diff": 0.0625,
+      "rel_l2": 0.0028200998507546724,
+      "consumer": "self_attn.q_proj",
+      "quant": {
+        "nvfp4": {
+          "codes": 524288,
+          "codes_differing": 3172,
+          "code_flip_rate": 0.00605010986328125,
+          "block_scales": 32768,
+          "block_scales_differing": 531,
+          "block_scale_flip_rate": 0.016204833984375,
+          "rel_l2_between_arms": 0.024293876637068963,
+          "rel_l2_quant_error_eager": 0.0935023248736177,
+          "rel_l2_quant_error_compiled": 0.0935010065322267,
+          "dequant_sanity_max_rel": 0.06483209133148193
+        },
+        "fp8": {
+          "bytes": 524288,
+          "bytes_differing": 14964,
+          "byte_flip_rate": 0.02854156494140625,
+          "per_token_scales_differing": 135,
+          "rel_l2_between_arms": 0.012795433526983382,
+          "rel_l2_quant_error_eager": 0.022895084264576718,
+          "rel_l2_quant_error_compiled": 0.02294020978413822
+        }
+      }
+    },
+    "fused_add_rms_norm": {
+      "what": "post_attention_layernorm output -- the A side of gate/up",
+      "shape": [
+        512,
+        1024
+      ],
+      "dtype": "torch.bfloat16",
+      "eager_impl": "vllm_c / forward_cuda",
+      "compiled_impl": "native / forward_native",
+      "elements": 524288,
+      "elements_differing": 177192,
+      "elementwise_disagreement_rate": 0.3379669189453125,
+      "max_abs_diff": 0.125,
+      "rel_l2": 0.003313698635797106,
+      "consumer": "mlp.gate_proj",
+      "quant": {
+        "nvfp4": {
+          "codes": 524288,
+          "codes_differing": 4194,
+          "code_flip_rate": 0.007999420166015625,
+          "block_scales": 32768,
+          "block_scales_differing": 745,
+          "block_scale_flip_rate": 0.022735595703125,
+          "rel_l2_between_arms": 0.027539092900689958,
+          "rel_l2_quant_error_eager": 0.09337008092803528,
+          "rel_l2_quant_error_compiled": 0.09340681327125494,
+          "dequant_sanity_max_rel": 0.08361486345529556
+        },
+        "fp8": {
+          "bytes": 524288,
+          "bytes_differing": 19573,
+          "byte_flip_rate": 0.03733253479003906,
+          "per_token_scales_differing": 192,
+          "rel_l2_between_arms": 0.015042838765463728,
+          "rel_l2_quant_error_eager": 0.023312950092887166,
+          "rel_l2_quant_error_compiled": 0.02337570181000032
+        }
+      }
+    },
+    "silu_and_mul": {
+      "what": "SiluAndMul output -- the A side of down_proj",
+      "shape": [
+        512,
+        3072
+      ],
+      "dtype": "torch.bfloat16",
+      "eager_impl": "vllm_c / forward_cuda",
+      "compiled_impl": "native / forward_native",
+      "elements": 1572864,
+      "elements_differing": 0,
+      "elementwise_disagreement_rate": 0.0,
+      "max_abs_diff": 0.0,
+      "rel_l2": 0.0,
+      "consumer": "mlp.down_proj",
+      "quant": {
+        "nvfp4": {
+          "codes": 1572864,
+          "codes_differing": 0,
+          "code_flip_rate": 0.0,
+          "block_scales": 98304,
+          "block_scales_differing": 0,
+          "block_scale_flip_rate": 0.0,
+          "rel_l2_between_arms": 0.0,
+          "rel_l2_quant_error_eager": 0.0912365089903799,
+          "rel_l2_quant_error_compiled": 0.0912365089903799,
+          "dequant_sanity_max_rel": 0.04866413772106171
+        },
+        "fp8": {
+          "bytes": 1572864,
+          "bytes_differing": 0,
+          "byte_flip_rate": 0.0,
+          "per_token_scales_differing": 0,
+          "rel_l2_between_arms": 0.0,
+          "rel_l2_quant_error_eager": 0.024874731196187345,
+          "rel_l2_quant_error_compiled": 0.024874731196187345
+        }
+      }
+    }
+  },
+  "gemm": {
+    "weight": "model.layers.5.self_attn.q_proj",
+    "rel_l2_arms_vs_each_other": 0.01771131239877559,
+    "rel_l2_eager_vs_bf16": 0.09662842521977046,
+    "rel_l2_compiled_vs_bf16": 0.09658111277528036,
+    "arm_gap_over_quant_error": 0.18329298401058702
+  }
+}
