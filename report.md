@@ -2,12 +2,16 @@
 
 ## What the pinned runtime actually does (attested, not asserted)
 
-Read out of the pinned image `prismaquant/glm53-mia-sm121:487ecf187` (file
-reads inside the container; no load, no serve — the image was never started
-with a GPU):
+Two ways, both inside the pinned image `prismaquant/glm53-mia-sm121:487ecf187`:
+file reads, and a **real construction** of the GLM vision tower on meta device
+with a *recording* quant config (run on sparklina, CPU only, no GPU and no
+serve — the tower is 99 Linears and needs no weights to answer this):
 
-* **The vision tower is built as `LinearBase`, and the plugin is never asked
-  about it.** `Glm5NextForConditionalGeneration` constructs
+* **The vision tower is built as `LinearBase` — 99 of them — and the plugin is
+  never asked about it.** Constructed with a recording config, all 99 offers
+  arrive and every one is a `LinearBase`; constructed the way the model class
+  actually builds it (`quant_config=None`), **zero** offers arrive and all 99
+  take `UnquantizedLinearMethod`. The call site: `Glm5NextForConditionalGeneration` constructs
   `Glm5NextVisionTransformer(..., quant_config=None, ...)`
   (`models/glm5next/nvidia/model.py:1082`, with the comment that the tower is
   BF16 in the checkpoint), and `LinearBase.__init__` takes
@@ -34,19 +38,22 @@ with a GPU):
 every checkpoint this box can attest. The fix is completeness of the rule the
 plugin's contract states, not a repair of a refusal seen in the wild.
 
-A latent runtime quirk found on the way, recorded because it will bite whoever
-first serves a vision tower with a quant config: `Glm5NextVisionAttention`
-builds its merged projection at `f"{prefix}.qkv_proj" if quant_config else
-f"{prefix}.qkv"` (`multimodal.py:167`). The checkpoint name is `attn.qkv`, so
-the ignore entry derived from the bytes is right only while the tower is built
-unquantized. No rule derives `qkv_proj` from `qkv`; naming both would be
-guessing at a runtime fact, which principle 14 forbids.
+**The same construction found a hole in the first version of this fix.** The
+recording run offers `visual.blocks.N.attn.qkv_proj`, not `.attn.qkv`:
+`Glm5NextVisionAttention` picks the name at build time —
+`f"{prefix}.qkv_proj" if quant_config else f"{prefix}.qkv"`
+(`multimodal.py:167`) — while the tensor on disk is `attn.qkv.weight`. So the
+name derived from the bytes is correct only in the world where nobody asks, and
+is the #86 refusal again in the world where somebody does. `MERGED_ALIASES`
+now carries both spellings, with that construction as its attestation: an
+ignore entry is only ever looked up, so a second name costs nothing and a
+missing one is a load-time refusal.
 
 ## What changed
 
 `experiments/export_tessera_serving.py`
 
-* **`ignored_module(tensor_name, shape)`** — one rule, applied in the shard
+* **`ignored_modules(tensor_name, shape)`** — one rule, applied in the shard
   loop to *every* tensor written at source precision, body or not. A fused role
   names its fused parent (vLLM builds one method per fused module, in the
   vision tower exactly as in the body); a routed leaf and a packed stack name
@@ -70,9 +77,10 @@ guessing at a runtime fact, which principle 14 forbids.
   > `['model.visual.blocks.0.attn.qkv', 'model.visual.blocks.0.attn.proj',
   > 'model.visual.blocks.0.mlp.gate_up_proj', ...]`
 
-  Four tests: the rule itself, an end-to-end export with a vision tower
+  Six tests: the rule itself, an end-to-end export with a vision tower
   (`--layers 0`, host-safe — no encode), a CUDA arm that names the tower beside
-  a real body encode, and the empty-plan refusal below.
+  a real body encode, both spellings of a packed stack, and the empty-plan
+  refusal below.
 * **On the real checkpoint.** The rule run over every tensor of
   `/mnt/shared/models/GLM-5.3-Flash-4layer` (shapes read from the safetensors
   headers; nothing written) names **101 distinct non-body modules** — 24×
@@ -81,8 +89,11 @@ guessing at a runtime fact, which principle 14 forbids.
   rank≥2 tensors it declines to name are the six `*_conv1d` and the two vision
   convs (`patch_embed.proj` rank 5, `downsample` rank 4). A 45 GB passthrough
   copy was not written: it would prove nothing the header read does not.
-* **Suite.** master `82cdf51` vs this branch — see the table at the end of this
-  file (both runs serialised through `gpulock.sh`).
+* **Suite.** The branch suite was run once through `gpulock.sh`; any failure is
+  re-run per file against pristine master (`/home/rob/tmp/musefix/ts-86-base`,
+  `82cdf51`). Counts are in the summary handed back to the coordinator. A full
+  master baseline was started and then **killed** on instruction — fifteen were
+  running concurrently and had put sparky into swap.
 
 ## Off-task fixes (separate commits, per the new rule)
 
