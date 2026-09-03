@@ -832,9 +832,15 @@ first-party modules today) and refuses any native-load site reachable from it
 that the table does not declare, reading each site's module name out of the AST
 and failing rather than skipping when it cannot.
 
-**`tessera_window_gemv` stays out, and that is checked rather than asserted.**
+**`tessera_window_gemv` is declared, and that is checked rather than asserted.**
 The criterion for an entry is that the library can be resident in a *serving*
-process. `tessera.kernel_window_gemv` JIT-loads one, but nothing reachable from
-`tessera.serving` imports it, so it is producer-side. That is the scope note on
-#28, and it is now a test: if #10/#42 wires the window GEMV into a route, the
-walk reaches it and the table goes red instead of staying quietly short.
+process. `tessera.kernel_window_gemv` JIT-loads one, and since issue #10 the
+streamed FP8 route reaches it from `tessera.serving.fp8_gemv`, so it is
+serving-side and the table carries it (module `tessera_window_gemv`, exact
+name, loaded by `tessera.serving.fp8_gemv` for `TESSERA_FP8`, both residencies
+substituting the torch window decode without it).
+`tests/test_serving_native_extensions.py` answers that separately: it walks the
+import graph from `tessera.serving` (function-local imports included — 40
+first-party modules today) and refuses any native-load site reachable from it
+that the table does not declare, reading each site's module name out of the AST
+and failing rather than skipping when it cannot.

@@ -31,6 +31,7 @@ __all__ = [
     "DECODER_NATIVE_SPAN2",
     "DECODER_TORCH_STOCK",
     "DECODER_TORCH_WINDOW",
+    "DECODER_WINDOW_GEMV",
     "ATTR_PREFIX",
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
@@ -54,14 +55,24 @@ ROUTE_STATES = frozenset(("served", "fallback", "error"))
 #: pure-torch fallback, even though the two produce identical bytes: the
 #: fallback is a different residency contract (resident only) and a different
 #: load-time cost, and a census that cannot see the difference cannot attest
-#: the route.  ``torch_window`` is the FP8 and BF16 routes' decoder, which is
-#: pure torch by construction and needs no extension -- one value for one
-#: decoder, since it is the same ``serving.window`` object in both, carrying a
-#: table of E4M3 bytes in one and of bf16 values in the other.
+#: the route.  ``torch_window`` is pure torch by construction and needs no
+#: extension -- one value for one decoder, since it is the same
+#: ``serving.window`` object in the BF16 route and in the FP8 route's fallback,
+#: carrying a table of E4M3 bytes in one and of bf16 values in the other.  The
+#: FP8 route's GEMV lane stamps ``window_gemv`` instead (below).
 DECODER_NATIVE_SPAN2 = "native_span2"
 DECODER_TORCH_STOCK = "torch_materialize_stock"
 DECODER_TORCH_WINDOW = "torch_window"
-DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW))
+#: The streamed FP8 route's window-GEMV lane (``fp8_gemv``): the wire read
+#: directly by ``tessera_window_gemv``, with no decoded tile anywhere -- and,
+#: on the same lane's prefill path, the tile the lane's kernel decode produced
+#: for ``_scaled_mm``.  A distinct value because neither launch runs the torch
+#: window decoder, and stamping ``torch_window`` for one would claim a decoder
+#: that did not run, the same defect the ``torch_materialize_stock`` value
+#: exists to prevent on the NVFP4 route.
+DECODER_WINDOW_GEMV = "window_gemv"
+DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
+                      DECODER_WINDOW_GEMV))
 
 ATTR_PREFIX = "_tessera_route_"
 

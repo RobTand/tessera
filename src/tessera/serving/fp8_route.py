@@ -18,8 +18,10 @@ WHAT IT REUSES.  Blob parsing is Tessera's reader (``tessera.unit_artifact``,
 the packed-bit window decoder that runs inside a forward at static shape.  At
 preparation every role is decoded through it AND through the reference decoder
 and the two are compared byte for byte; a disagreement refuses the module.
-Both residency modes then hold bytes the reference decoder produced.  This
-route needs no CUDA extension at all.
+Both residency modes then hold bytes the reference decoder produced.  The
+resident mode needs no CUDA extension at all; the streamed mode builds the
+window GEMV where it can (``fp8_gemv``) and serves without it where it cannot,
+stamping which decoder ran so a census can tell the two serves apart.
 
 RESIDENCY.  ``resident`` decodes once at load and holds the FP8 pair (8.0 bpw
 plus one fp32 per row: the stock lane's footprint, the wire's bytes on disk
@@ -28,11 +30,19 @@ small per-unit tables) and decodes each forward into a transient tile the op
 owns -- no per-device pool, no buffer aliased across layers, which is what lets
 vLLM's compiled forward functionalise it (``ops`` says why).  The per-row scale
 is one fp32 per row in both modes: it is a factor of the row, not of the tile.
+Where the window GEMV builds, ``streamed`` additionally repacks the wire for
+it at load (``fp8_gemv``) and serves M <= 8 straight off the repack -- one
+pass, no tile -- keeping the decode-per-forward path for prefill; the torch
+planes are then dropped, so the resident is the repack alone.  Without the
+extension the streamed route serves exactly as before, by name.
 
 THE ACTIVATION SIDE IS PRICED.  The stock arm of the same encoder measured KL
 0.470 against an image-matched BF16 teacher on Qwen3-0.6B
 (``docs/measurements/tessera-stock-lane-served-2026-09-02.md``) under the same
-``fp8_per_token_dynamic`` contract this route executes.
+``fp8_per_token_dynamic`` contract this route executes -- including on the GEMV
+path, which runs the same quantiser and hands the kernel the dequantised
+values (``fp8_gemv``), so the contract the census reads is the contract that
+ran.
 """
 from __future__ import annotations
 
@@ -40,10 +50,12 @@ from typing import Optional, Sequence
 
 import torch
 
+from . import fp8_gemv
+from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate_tessera_scheme
 from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
-from .telemetry import DECODER_TORCH_WINDOW, emit_route, route_shape
+from .telemetry import DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route, route_shape
 from .window import PreparedWindow, prepare_window
 
 __all__ = [
@@ -279,7 +291,38 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 layer.register_buffer("weight_fp8", prepared.decode().view(torch.float8_e4m3fn),
                                       persistent=False)
                 layer.tessera_prepared = None
-            # streamed: the prepared planes stay; the tile is decoded per forward
+                layer.tessera_gemv = None
+            else:
+                # Streamed: the decode-regime lane reads the repacked wire
+                # directly (``fp8_gemv``), verified against the torch decoder's
+                # bytes above.  Where it cannot be prepared -- a rate the lane
+                # refuses, a shard start state, no toolchain -- the module
+                # serves through the torch planes exactly as before; the
+                # published fallback (``ext.NATIVE_EXTENSIONS``) says both
+                # modes substitute the torch decode, so the gate below is what
+                # the serve does rather than a mode comparison of its own.
+                holder = None
+                try:
+                    holder = fp8_gemv.prepare_fp8_gemv(
+                        roles, device=device,
+                        expected=(prepared.decode(), prepared.row_scale()))
+                except Exception as exc:  # noqa: BLE001 -- the probe itself is soft
+                    if not substitutes_when_unavailable(self._mode, fp8_gemv.GEMV_MODULE_NAME):
+                        raise
+                    import sys as _sys
+                    print(f"[tessera-serving] WARNING: {prefix}: the window GEMV lane "
+                          f"did not prepare ({type(exc).__name__}: {exc}); serving streamed "
+                          "through the torch window decode instead",
+                          file=_sys.stderr, flush=True)
+                layer.tessera_gemv = holder
+                if holder is not None:
+                    # The torch planes' job is done: the dispatch decodes
+                    # prefill through the lane's kernel decode, so keeping
+                    # them would hold the wire twice.
+                    layer.tessera_prepared = None
+                    layer.tessera_decoder = DECODER_WINDOW_GEMV
+            # streamed without a GEMV lane: the prepared planes stay; the tile
+            # is decoded per forward
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -289,20 +332,44 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 x2 = x2.to(torch.bfloat16)
             # A side: per-token dynamic E4M3.  bf16 x fp8 is refused by
             # _scaled_mm on this hardware, so W8A8 is the only native shape.
+            # The quantiser runs on EVERY path, including the GEMV one: the
+            # lane is handed the dequantised values (``fp8_gemv``), so the
+            # activation contract the census reads is the one that ran.
             a_q, a_scale = native_ops.native_fp8_quant(x2.contiguous())
             if layer.tessera_mode == MODE_RESIDENT:
                 b = layer.weight_fp8
-            else:
+                y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=layer.scale_b,
+                                     out_dtype=torch.bfloat16)
+                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
+            elif getattr(layer, "tessera_gemv", None) is None:
                 b = layer.tessera_prepared.decode().view(torch.float8_e4m3fn)
-            y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=layer.scale_b,
-                                 out_dtype=torch.bfloat16)
+                y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=layer.scale_b,
+                                     out_dtype=torch.bfloat16)
+                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
+            else:
+                holder = layer.tessera_gemv
+                tensors, meta, rows, cols = holder.op_args()
+                y = fp8_gemv.streamed_apply(a_q, a_scale, layer.scale_b,
+                                            tensors, meta, rows, cols)
+                if torch.compiler.is_compiling():
+                    # One graph serves every M: no single path's symbol is
+                    # true of every launch, so the record stamps the pair the
+                    # route owns (``fp8_gemv``), never a value read off the
+                    # token dim.
+                    symbol, decoder, tile_m = (fp8_gemv.COMPILED_SYMBOL,
+                                               fp8_gemv.COMPILED_DECODER, 0)
+                elif fp8_gemv.decode_is_gemv(holder, int(x2.shape[0])):
+                    symbol, decoder, tile_m = (fp8_gemv.GEMV_SYMBOL, DECODER_WINDOW_GEMV,
+                                               fp8_gemv.m_tile(int(x2.shape[0])))
+                else:
+                    symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_WINDOW_GEMV, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",
-                    symbol=GEMM_SYMBOL, tile_m=0,
+                    symbol=symbol, tile_m=tile_m,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=layer.tessera_decoder,
+                    decoder=decoder,
                 )
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass

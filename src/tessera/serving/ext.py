@@ -66,6 +66,7 @@ __all__ = [
     "TESSERA_NVFP4_ABI_SCHEMA",
     "NATIVE_EXTENSIONS",
     "NVFP4_MODULE_PREFIX",
+    "WINDOW_GEMV_MODULE_NAME",
     "FALLBACK_REFUSED",
     "FALLBACK_STATUSES",
     "FALLBACK_SUBSTITUTED",
@@ -92,6 +93,14 @@ _SYMBOLS = ("tessera_nvfp4_decode_span2_out", "tessera_nvfp4_abi_schema")
 #: runtime contract publishes it: the table a fingerprint reads and the name
 #: the load path asks for are one string, so they cannot drift.
 NVFP4_MODULE_PREFIX = "tessera_nvfp4_"
+
+#: The window-body GEMV's JIT module name, asked for by
+#: ``tessera.kernel_window_gemv`` (``load(name="tessera_window_gemv", ...)``).
+#: A full NAME, not a prefix: that load path carries no build-identity hash,
+#: so the library on disk is ``tessera_window_gemv.so`` exactly.  One constant
+#: for the contract table and for ``fp8_gemv``'s reachability test, so a rename
+#: on either side is a test failure rather than a quietly short table.
+WINDOW_GEMV_MODULE_NAME = "tessera_window_gemv"
 
 #: The source, relative to this package -- the form the contract publishes, so
 #: a consumer resolves it the same way ``csrc_dir`` does.
@@ -134,11 +143,24 @@ FALLBACK_STATUSES = (FALLBACK_SUBSTITUTED, FALLBACK_REFUSED)
 #:
 #: WHAT BELONGS HERE.  An entry iff the ``.so`` can be resident in a SERVING
 #: process, i.e. some module reachable from ``tessera.serving`` loads it.
-#: ``tessera.kernel_window_gemv`` builds ``tessera_window_gemv`` and is NOT
-#: here: nothing under ``tessera/serving/`` reaches it, so it is producer-side.
-#: ``tests/test_serving_native_extensions.py`` decides that by walking the
-#: import graph, so the day a route loads it the table goes red rather than
-#: staying quietly short.
+#: ``tessera.kernel_window_gemv`` builds ``tessera_window_gemv``; nothing under
+#: ``tessera/serving/`` reached it until the streamed FP8 route wired it in
+#: (issue #10), so it was producer-side and the second entry below did not
+#: exist.  ``tests/test_serving_native_extensions.py`` decides that by walking
+#: the import graph, so the day a route loads it the table goes red rather
+#: than staying quietly short.
+#:
+#: THE GEMV ENTRY'S FALLBACK READS DIFFERENTLY FROM THE NVFP4 ONE.  Both modes
+#: substitute the torch window decode (``torch_window``) without the library:
+#: streamed serves the same bytes through decode + ``_scaled_mm`` (slower, the
+#: bytes the load-time cross-check verified), and resident never needed the
+#: library at all (it decodes once at load through the same torch decoder).
+#: "Substituted" is therefore the honest status in both modes even though the
+#: resident serve is numerically untouched by the absence -- "refused" would
+#: claim no serve exists, which is false.  The fallback is VISIBLE anyway: a
+#: GEMV serve stamps ``window_gemv`` on its route record (``fp8_gemv``), so a
+#: census histogram tells a substituted serve from a native one without the
+#: decoder field having to.
 NATIVE_EXTENSIONS = [
     {
         # The load path's own constant; the built library is
@@ -156,6 +178,23 @@ NATIVE_EXTENSIONS = [
             "resident": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "torch_materialize_stock"},
             "streamed": {"status": FALLBACK_REFUSED, "decoder": None},
+        },
+    },
+    {
+        # The window GEMV's module name is EXACT (no identity hash), so the
+        # glob is the name with a ``*`` the validator's meaning-check
+        # requires, matching the one file the load path writes.
+        "module_name_prefix": WINDOW_GEMV_MODULE_NAME,
+        "filename_glob": WINDOW_GEMV_MODULE_NAME + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": "csrc/window_gemv.cu",
+        "loaded_by": "tessera.serving.fp8_gemv",
+        "routes": ["TESSERA_FP8"],
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "torch_window"},
+            "streamed": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "torch_window"},
         },
     },
 ]
