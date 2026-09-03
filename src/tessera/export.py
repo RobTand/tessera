@@ -578,7 +578,9 @@ BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #: needs a **wire change**, not a new value for this constant: ``BF16_RECIPE``
 #: leaves ``window_sigma`` at ``DEFAULT_WINDOW_SIGMA`` (``None``), which pins
 #: the ratio to 1 by construction and is what makes this constant a gauge in
-#: the first place.  Weight space, four units, no BF16 lane to serve on, so
+#: the first place.  Filed as issue #48.  Weight space, four units, measured
+#: before the 16-bit route had a receipt -- it has one now (contract v5,
+#: ``q256 1792``, dense sm_121) but not at these units or this gauge, so
 #: nothing here is promoted; see
 #: ``docs/measurements/tessera-bf16-gauge-and-dense4-residual-2026-09-02.md``.
 BF16_CHANNEL_SIGMA = 1.0
