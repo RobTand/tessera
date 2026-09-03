@@ -1010,6 +1010,64 @@ def _pack_scales_lut(
 #: nothing and costs nothing extra.
 _REFIT_DIAG: "list | None" = None
 
+#: Opt-in landing mode for the LUT plane's metric refit (``lut_landing``).
+#: ``"table"`` -- the state every encode runs in -- is the wire.
+_LUT_LANDING: str = "table"
+_LUT_LANDING_SINK: "dict | None" = None
+
+#: What a LUT refit is allowed to land its per-block optimum on.
+#:
+#: ``"table"``  the wire: sixteen E4M3 entries chosen by ``_fit_lut``, each
+#:              block assigned nearest-in-linear.  Four bits per block.
+#: ``"grid"``   every in-range E4M3 value, nearest-in-linear.  Eight bits per
+#:              block, which the LUT plane's index does not have.
+#: ``"none"``   the continuous per-block optimum itself.  Not a plane at all.
+#:
+#: Only the first is a wire.  The other two are ceiling reads for issue #50 and
+#: are refused everywhere they could be mistaken for an encoder setting.
+LUT_LANDING_MODES = ("table", "grid", "none")
+
+
+@contextmanager
+def lut_landing(mode: str = "table"):
+    """Measurement-only: what the LUT refit's block scales are allowed to land on.
+
+    Issue #50 asks how much of the metric refit's step the sixteen-entry table
+    gives back, and the only honest way to bound that is to run the encode with
+    the landing removed and read the same geomean.  ``"none"`` does exactly
+    that -- every block keeps the continuous optimum the refit computed -- so
+    the number it produces is **the most any table fit could return**, not a
+    number a table fit reaches.  ``"grid"`` sits between: it removes the
+    sixteen-entry budget but keeps the E4M3 values the wire can name, so the
+    pair separates "the table is too small" from "the grid is too coarse".
+
+    **The unit that comes back is not serialisable in either non-default mode.**
+    Its ``scale_lut`` and ``scale_refine`` are the plane it started the last
+    refit with, and its effective scales are not on that table -- so
+    ``materialize_stock``/``stock_dequant`` decode *a different weight* from
+    the one measured.  That is why this yields a sink: the encode writes the
+    reconstruction it actually built into ``sink["work_reconstruction"]``, and
+    a caller that scores anything else is scoring bytes the run never held.
+    The sink is filled in ``"table"`` mode too, so a control arm can prove the
+    two agree before any ceiling arm is believed.
+
+    Debug-only: floats out, no byte in.  With the context inactive the encode
+    is byte for byte what it was and pays nothing --
+    ``experiments/gs_refit_byte_baseline.py`` is the proof.
+    """
+    if mode not in LUT_LANDING_MODES:
+        raise GrammarError(
+            f"unknown LUT landing mode {mode!r}; one of {list(LUT_LANDING_MODES)}"
+        )
+    global _LUT_LANDING, _LUT_LANDING_SINK
+    outer, outer_sink = _LUT_LANDING, _LUT_LANDING_SINK
+    sink: dict = {}
+    _LUT_LANDING, _LUT_LANDING_SINK = mode, sink
+    try:
+        yield sink
+    finally:
+        _LUT_LANDING, _LUT_LANDING_SINK = outer, outer_sink
+
 
 @contextmanager
 def refit_diagnostics():
@@ -1220,32 +1278,60 @@ def _refit_scales_lut_metric(
     weights = torch.where(valid, A, torch.zeros_like(A))
 
     flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
-    old_table = _lut_values(table_bytes, global_scale)
-    new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel())
 
-    # Three candidates, scored on the full quadratic: the plane the unit
-    # already has, the same table re-assigned to the new targets, and the
-    # freshly fit table.  Keeping the current plane in the running is what
-    # makes this monotone once the cross-block terms are charged -- under a
-    # separable metric it never wins, because re-assignment lands every block
-    # on its own minimiser.
     best_bytes, best_index, best_eff = table_bytes, index.long(), S
     before = best = cost(S)
     won = "kept"
-    for label, cand_bytes, cand_table in (("old-table", table_bytes, old_table),
-                                          ("new-table", new_bytes, new_table)):
-        idx = _nearest(flat_t, cand_table)
-        eff = cand_table[idx].reshape(rows, nb)
-        here = cost(eff)
+    if _LUT_LANDING == "table":
+        old_table = _lut_values(table_bytes, global_scale)
+        new_bytes, new_table = _fit_lut(flat_t, flat_w, global_scale, table_bytes.numel())
+
+        # Three candidates, scored on the full quadratic: the plane the unit
+        # already has, the same table re-assigned to the new targets, and the
+        # freshly fit table.  Keeping the current plane in the running is what
+        # makes this monotone once the cross-block terms are charged -- under a
+        # separable metric it never wins, because re-assignment lands every block
+        # on its own minimiser.
+        for label, cand_bytes, cand_table in (("old-table", table_bytes, old_table),
+                                              ("new-table", new_bytes, new_table)):
+            idx = _nearest(flat_t, cand_table)
+            eff = cand_table[idx].reshape(rows, nb)
+            here = cost(eff)
+            if here < best:
+                best, best_bytes, best_index, best_eff, won = here, cand_bytes, idx, eff, label
+    else:
+        # The ceiling read (issue #50, ``lut_landing``).  One candidate against
+        # the plane the unit has, scored on the same full quadratic and kept
+        # under the same accept test, so the arm is monotone in exactly the
+        # sense the wire arm is and the only difference between them is what
+        # the block scales are allowed to be.  ``best_bytes``/``best_index``
+        # are deliberately left as the plane the pass STARTED with: they no
+        # longer describe ``best_eff``, and a unit built this way decodes to
+        # something the run never held.  ``lut_landing``'s sink is the only
+        # reconstruction a caller may score.
+        if _LUT_LANDING == "grid":
+            free = e4m3_positive_values(target.device) * global_scale
+            cand = free[_nearest(flat_t, free)].reshape(rows, nb)
+        else:
+            cand = target
+        here = cost(cand)
         if here < best:
-            best, best_bytes, best_index, best_eff, won = here, cand_bytes, idx, eff, label
+            best, best_eff, won = here, cand, _LUT_LANDING
     landed = best
     coupled = None
     if coupled_landing and metric.ndim == 2:
         # The fourth candidate: the chosen plane with its assignment made
         # cross-block aware.  Monotone from ``best`` by construction, so it
         # is taken without another comparison; the sink records both so the
-        # separable landing stays measurable next to it.
+        # separable landing stays measurable next to it.  It re-assigns INTO
+        # the table, so a ``lut_landing`` ceiling mode -- which removed the
+        # table -- has nothing for it to assign into.
+        if _LUT_LANDING != "table":
+            raise GrammarError(
+                f"coupled_landing re-assigns blocks into the sixteen-entry table; "
+                f"lut_landing({_LUT_LANDING!r}) removed it, so the two cannot be "
+                "read in one refit"
+            )
         best_eff, best_index, best, coupled = _coupled_landing(
             W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
             _lut_values(best_bytes, global_scale), half, best)
@@ -1277,6 +1363,7 @@ def _refit_scales_lut_metric(
             "stepped": cost(stepped),
             "continuous": cost(target),
             "landed": landed,
+            "landing": _LUT_LANDING,
             "reverted": int((~valid).sum()),
             "candidate": won,
             **({} if coupled is None else {
@@ -1859,6 +1946,37 @@ def encode_unit(
                 f"scales; the {scale_plane.name} plane has no table to assign into, "
                 "so this would be silently ignored"
             )
+    if _LUT_LANDING != "table":
+        # A ceiling read (``lut_landing``, issue #50) is only a ceiling on the
+        # thing it removes.  Off the LUT plane there is no table to remove; with
+        # no metric the plain path is left literally untouched so that a
+        # weights-only encode stays byte for byte what it was; and under a
+        # rotation or fitted diagonals the sink's reconstruction is of ``work``
+        # and not of the weight, so the number would be read in the wrong space.
+        # Refuse each rather than return a number that means something else.
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"lut_landing removes the LUT plane's sixteen-entry table; the "
+                f"{scale_plane.name} plane has none, so this would be silently ignored"
+            )
+        if refit_metric is None:
+            raise GrammarError(
+                "lut_landing is implemented for the metric-aware LUT refit; the "
+                "plain least squares path is deliberately unchanged, so without "
+                "refit_metric this would be silently ignored"
+            )
+        if rotation is not RotationState.NONE or with_diagonals or diagonals is not None:
+            raise GrammarError(
+                "lut_landing's sink records the reconstruction of the WORKING "
+                "matrix; under a rotation or fitted diagonals that is not the "
+                "weight, and the ceiling would be read in the wrong space"
+            )
+        if scale_refit == 0:
+            raise GrammarError(
+                "lut_landing changes where a scale REFIT lands, and scale_refit=0 "
+                "runs none: the amax plane is written byte for byte and the "
+                "context would be silently ignored"
+            )
     if scale_refit == 0 and (refit_metric is not None or refit_reach_floor):
         named = "refit_metric" if refit_metric is not None else "refit_reach_floor"
         raise GrammarError(
@@ -2038,6 +2156,17 @@ def encode_unit(
     # back as 0.0, and no artifact byte depends on it.
     units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
     sse = float(((work - units * scale) ** 2).sum())
+
+    if _LUT_LANDING_SINK is not None:
+        # Debug-only, floats out, no byte in.  In a non-default landing mode
+        # the returned unit's scale plane is NOT what this encode built, so the
+        # reconstruction has to travel out of band or the caller scores bytes
+        # the run never held.  It is recorded in ``"table"`` mode too, so a
+        # control arm can prove it equals ``stock_dequant`` of the same unit
+        # before any ceiling arm is believed.
+        _LUT_LANDING_SINK["mode"] = _LUT_LANDING
+        _LUT_LANDING_SINK["serialisable"] = _LUT_LANDING == "table"
+        _LUT_LANDING_SINK["work_reconstruction"] = (units * scale).detach().clone()
 
     return EncodedUnit(
         rates=rates,

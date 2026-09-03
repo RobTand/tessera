@@ -61,7 +61,7 @@ Commit: see `git log` for this file. Code: `src/tessera/encode.py`
 (`experiments/lut_landing_oracle.py`) and
 `/mnt/shared/tessera-runs/ldlq-lut/qwen_lut_coupled.json`
 (`experiments/ldlq_window_sweep.py --coupled-landing`), read together by
-`experiments/lut_landing_report.py`. Box: sparklina, out of `/mnt/shared`.
+`experiments/lut_landing_oracle_report.py`. Box: sparklina, out of `/mnt/shared`.
 
 ## What "separable by construction" is true of, and why it does not matter
 
