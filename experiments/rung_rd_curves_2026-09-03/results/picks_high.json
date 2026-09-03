@@ -1,0 +1,38 @@
+{
+ "uniform_R1262": {
+  "self_attn.q_proj": 1262,
+  "self_attn.k_proj": 1262,
+  "self_attn.v_proj": 1262,
+  "self_attn.o_proj": 1262,
+  "mlp.gate_proj": 1262,
+  "mlp.up_proj": 1262,
+  "mlp.down_proj": 1262
+ },
+ "AURA_kl_adjoint_pick_R1262": {
+  "mlp.down_proj": 1200,
+  "mlp.gate_proj": 1340,
+  "mlp.up_proj": 1340,
+  "self_attn.o_proj": 1340,
+  "self_attn.q_proj": 1150,
+  "self_attn.k_proj": 1150,
+  "self_attn.v_proj": 1150
+ },
+ "EMPIRICAL_interp_5anchor_pick_R1262": {
+  "mlp.down_proj": 1340,
+  "mlp.gate_proj": 1262,
+  "mlp.up_proj": 1262,
+  "self_attn.o_proj": 1262,
+  "self_attn.q_proj": 1200,
+  "self_attn.k_proj": 1200,
+  "self_attn.v_proj": 1200
+ },
+ "EMPIRICAL_interp_7anchor_pick_R1262": {
+  "mlp.down_proj": 1340,
+  "mlp.gate_proj": 1340,
+  "mlp.up_proj": 1340,
+  "self_attn.o_proj": 1262,
+  "self_attn.q_proj": 1083,
+  "self_attn.k_proj": 1083,
+  "self_attn.v_proj": 1083
+ }
+}
