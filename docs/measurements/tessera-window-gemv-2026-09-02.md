@@ -644,6 +644,19 @@ grow with M. Two things in the numbers:
   MT=4 kernel by padding is a free ~8% that is not done here because the
   8-row build refuses rate-1 columns and the routing would need that guard;
   recorded as a follow-up.
+
+  **Correction, 2026-09-03 (#59): the ~8% does not survive this document's own
+  quiet-box addendum, and should not be built as a blanket rule.** Padding M=2
+  to MT=4 runs the M=4 launch, and the addendum's per-token totals put that at
+  **+11.6% / +4.7% / +21.4%** against MT=2 on the Qwen3-4B, 4B-fused and 0.6B
+  lists (`bench_gemv_quietbox_20260902-185032.json`, `procs 1-1`, same kernel).
+  Per shape the effect is real but shape-dependent: MT=4 still wins the
+  wide-output shapes by 6-11% and reproduces contended almost exactly
+  (4096x2560 0.936 contended / 0.940 quiet), and *inverts* by 4-48% on the
+  narrow-output shapes (rows <= 2560) that dominate a model's Linear list --
+  which is why the aggregate flips. The 14.8 ms override two sentences up also
+  points the other way and was never reconciled. A per-shape variant is open;
+  the M-only rule is a regression.
 - **M=8 is 1.09x** (4B) / 1.02x (27B): the 128-register build (no spills)
   fixed the v1 collapse (0.15x), but at M=8 the kernel is issue-bound on the
   gather+FMA per weight (8 FMAs and 8 x loads per code) and only one block
@@ -670,7 +683,9 @@ grow with M. Two things in the numbers:
   contexts; the 4B/0.6B rows survive that (min-of-rounds inside a time
   slice), the 27B rows and the sustained power do not (sections 9, 9b). A
   quiet-box re-run of `gemv` and `power` is one command each (section 13).
-- **M=2 routing** to the 8-row kernel (section 11): ~8% at M=2, needs the
+- **M=2 routing** to the 8-row kernel (section 11): **refuted as a blanket rule
+  by this document's own quiet-box addendum -- see the correction in section 11
+  and #59.** A per-shape (wide-output) variant is still open and would need the
   rate-1 guard.
 
 ## 13. Commands
