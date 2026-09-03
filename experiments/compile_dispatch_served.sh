@@ -24,7 +24,7 @@
 #   compiled-ops       compiled, custom_ops pinned to "all"
 #   compiled-both      compiled, both pinned
 #   compiled-both-noauto  both pinned, and FlashInfer autotune held off
-#   compiled-eagerbackend compiled machinery, backend="eager": no codegen at all
+#   compiled-eagerbackend compiled machinery, backend="eager", autotune off
 #
 # The last two exist because --enforce-eager flips a THIRD switch that the first
 # five leave moving.  O0 sets ``enable_flashinfer_autotune: False``
@@ -35,8 +35,13 @@
 # ladder: ``using_inductor`` is ``backend == "inductor" and mode != NONE``
 # (config/vllm.py:1392-1399, platforms/cuda.py:690-700), so backend="eager"
 # resolves BOTH dispatch defaults to their eager values on its own, with dynamo
-# and the cudagraphs still in the loop.  eager-vs-that isolates the compile
-# machinery; that-vs-compiled-both isolates inductor's arithmetic on the glue.
+# and the cudagraphs still in the loop.  It also holds autotune off, so that it
+# differs from ``eager`` in the machinery ALONE; without that it would differ in
+# two things and answer neither.  The ladder then decomposes:
+#   eager -> eagerbackend         dynamo and the cudagraphs
+#   eagerbackend -> both-noauto   inductor's codegen on the glue
+#   both-noauto -> both           the FlashInfer autotune
+#   both -> compiled              the dispatch switch itself
 #
 # Every compiled arm holds the fusion passes off, because enabling either
 # dispatch pin flips ``enable_norm_fusion``/``enable_act_fusion`` on
@@ -46,7 +51,10 @@
 # PREDICTIONS, WRITTEN BEFORE THE RUN (a prediction recorded after is a
 # postdiction):
 #   eager_2026-09-02 vs eager   =  0.000000  (this box reproduces that one)
-#   eager vs compiled          ~= 0.2473, reproducing the receipt's stock-twin row
+#   eager vs compiled          ~= 0.2473 +- the day's rebuild floor.  This arm
+#                                 builds into a fresh cache root, so it does not
+#                                 REPRODUCE 0.244481/0.2473, it lands near it;
+#                                 the floor is measured below, not assumed.
 #   eager vs compiled-eagerbackend ~ 0.00x   dynamo and cudagraphs alone change
 #                                            nothing; if not, there is a
 #                                            mechanism I have not named
@@ -103,15 +111,16 @@ arm() {  # arm <name> <eager 0|1> <require-ere> [extra vllm args...]
 
 arm eager 1 "'custom_ops': \['all'\]"
 arm compiled 0 "enforce_eager=False.*'custom_ops': \['none'\]"
-arm compiled-ir 0 "enforce_eager=False.*rms_norm=\['vllm_c', 'native'\]" \
+arm compiled-ir 0 "enforce_eager=False.*rms_norm=\['vllm_c'" \
   "$IRPIN" "--compilation-config" "{$NOFUSE}"
 arm compiled-ops 0 "enforce_eager=False.*'custom_ops': \['all'\]" \
   "--compilation-config" "{\"custom_ops\":[\"all\"],$NOFUSE}"
-arm compiled-both 0 "enforce_eager=False.*'custom_ops': \['all'\].*rms_norm=\['vllm_c', 'native'\]" \
+arm compiled-both 0 "enforce_eager=False.*'custom_ops': \['all'\].*rms_norm=\['vllm_c'" \
   "$IRPIN" "--compilation-config" "{\"custom_ops\":[\"all\"],$NOFUSE}"
-arm compiled-both-noauto 0 "enforce_eager=False.*'custom_ops': \['all'\].*rms_norm=\['vllm_c', 'native'\]" \
+arm compiled-both-noauto 0 "enforce_eager=False.*'custom_ops': \['all'\].*rms_norm=\['vllm_c'" \
   "$IRPIN_NOAUTO" "--compilation-config" "{\"custom_ops\":[\"all\"],$NOFUSE}"
 arm compiled-eagerbackend 0 "enforce_eager=False.*'backend': 'eager'" \
+  "--kernel-config" "{\"enable_flashinfer_autotune\":false}" \
   "--compilation-config" "{\"backend\":\"eager\",$NOFUSE}"
 
 echo "=================== compare ==================="
@@ -139,6 +148,16 @@ $PY /home/rob/dq-runs/kl_tool.py compare \
   "$KLDIR/qwen_stock_tessera-k2.json.npz" "$KLDIR/qwen_dispatch_eager.json.npz" \
   --teacher-label-override "stock_eager_2026-09-02" \
   --out "$R/kl_historical-eager__vs__eager.json" | tail -20
+# Same configuration, different build, six days apart: this is TODAY's
+# rebuild-to-rebuild floor, and it is the yardstick the "~0.02" predictions
+# above are read against.  Without it "eager vs compiled-both = 0.02" has no
+# scale.
+if [ -f "$KLDIR/qwen_dispatch_compiled.json.npz" ]; then
+  $PY /home/rob/dq-runs/kl_tool.py compare \
+    "$KLDIR/qwen_stock_tessera-k2-graph.json.npz" "$KLDIR/qwen_dispatch_compiled.json.npz" \
+    --teacher-label-override "stock_compiled_2026-09-02" \
+    --out "$R/kl_historical-compiled__vs__compiled.json" | tail -20
+fi
 
 echo "--- resolved dispatch, read off each arm's own log ---"
 for a in eager compiled compiled-ir compiled-ops compiled-both compiled-both-noauto compiled-eagerbackend; do
@@ -152,6 +171,21 @@ done
 # Which GEMM each arm actually rode.  The checkpoint is compressed-tensors
 # NVFP4, and vLLM picks that kernel at load; if the arms disagree here, the KL
 # gap has a second author and the dispatch table above is not the whole story.
+# Pinning the dispatch turns the fusion defaults back on -- enable_norm_fusion
+# is true as soon as ir_op_priority.rms_norm[0] != "native", and
+# enable_act_fusion as soon as silu_and_mul is an enabled custom op
+# (config/vllm.py:123-146) -- so every pinned arm sets pass_config explicitly to
+# hold them off.  Explicit values survive: only an unset (None) field is
+# defaulted (config/compilation.py:228-247).  Read back what actually resolved.
+echo "--- resolved fusion passes, read off each arm's own log ---"
+for a in eager compiled compiled-ir compiled-ops compiled-both compiled-both-noauto compiled-eagerbackend; do
+  [ -f "$R/serve_qwen_dispatch_$a.log" ] || continue
+  printf '%-22s ' "$a"
+  grep -o "'fuse_norm_quant': [A-Za-z]*\|'fuse_act_quant': [A-Za-z]*\|'fuse_attn_quant': [A-Za-z]*" \
+    "$R/serve_qwen_dispatch_$a.log" | head -3 | tr '\n' ' '
+  echo
+done
+
 echo "--- selected kernels, read off each arm's own log ---"
 for a in eager compiled compiled-ir compiled-ops compiled-both compiled-both-noauto compiled-eagerbackend; do
   [ -f "$R/serve_qwen_dispatch_$a.log" ] || continue
