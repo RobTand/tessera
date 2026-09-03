@@ -149,7 +149,7 @@ def declare_compile_identity_in(config: Any, **facts: str) -> dict | None:
 
 
 def _render_dispatch(dispatch: dict) -> str:
-    """``{module: op}`` -> the fact, ``<op>=<n>[+<op>=<n>...]:<digest>``.
+    """``{module: op}`` -> the fact, ``<op>=<n>[+<op>=<n>...]#<digest>``.
 
     The histogram is for the reader (``additional_config`` is echoed in vLLM's
     engine-init line); the digest is what makes the fact exact.  It is a
