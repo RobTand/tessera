@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import IntEnum
 from fractions import Fraction
 
-from .canonical import DIGEST_BYTES, Reader, Writer, digest
+from .canonical import DIGEST_BYTES, Reader, Writer, digest, fits_uint
 from .errors import ManifestError
 from .exact import Fraction as _Fraction  # re-export guard
 from .grammar import (
@@ -249,17 +249,16 @@ WINDOW_BITS_MAX = 20
 #: constraint as "exactly representable as a float": ``Fraction(3.7e-5)`` is
 #: float-exact and has a 68-bit denominator, so it passes that check and then
 #: fails inside the codec with a 21-digit integer and no mention of a scale
-#: (#33).  Refuse it here, where the field has a name.
-_WIRE_RATIO_MAX = (1 << 64) - 1
-
-
+#: (#33).  Refuse it here, where the field has a name.  The bound itself is
+#: the codec's to state -- ``canonical.fits_uint`` -- because a second copy of
+#: it here would be a second thing to forget to change.
 def _require_wire_ratio(field: str, value: Fraction) -> None:
-    if value.numerator <= _WIRE_RATIO_MAX and value.denominator <= _WIRE_RATIO_MAX:
+    if fits_uint(value.numerator) and fits_uint(value.denominator):
         return
     raise ManifestError(
         f"the {field} {float(value)!r} is not writable to the wire: it encodes "
         f"as the exact ratio {value.numerator}/{value.denominator}, whose "
-        f"{'numerator' if value.numerator > _WIRE_RATIO_MAX else 'denominator'} "
+        f"{'numerator' if not fits_uint(value.numerator) else 'denominator'} "
         f"needs {max(value.numerator, value.denominator).bit_length()} bits and "
         "the canonical codec's varints hold 64.  A scale reaches this state by "
         "being a float that is not a dyadic rational of modest denominator -- "

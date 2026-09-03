@@ -34,11 +34,24 @@ __all__ = [
     "DIGEST_BYTES",
     "encode_uint",
     "decode_uint",
+    "fits_uint",
 ]
 
 DIGEST_BYTES = 32
 _MAX_UINT = (1 << 64) - 1
 _MAX_BLOB = 1 << 32
+
+
+def fits_uint(value: int) -> bool:
+    """Whether ``value`` is writable as a varint on this wire.
+
+    Exported so that a caller which wants to refuse an unwritable value *where
+    the field still has a name* -- a scale, a count, a length -- can ask this
+    module rather than re-declaring the bound.  The codec's domain has exactly
+    one authority and this is it; a second copy is a second thing to forget to
+    change.
+    """
+    return 0 <= value <= _MAX_UINT
 
 
 def encode_uint(value: int) -> bytes:
