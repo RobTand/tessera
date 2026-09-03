@@ -12,6 +12,7 @@ separate commits so they read separately.
 | `fdd3e33` | `tests/test_pair_grid_drop.py` and `tests/test_pair_grid_audit.py`. |
 | `26fa1b1` | Comment placement nit. |
 | `d770df1` | **#96**: a rung with no contamination check no longer reads like one that passed, plus its tests. |
+| `8b5424a` | Three hygiene fixes found re-reading the above (listed under *Off-task fixes*). |
 
 **Why the transplant.** The pair stage does not exist on master — it is
 `+365` lines that live only on `muse/ts-18-lsigma`, so a fix written against
@@ -181,9 +182,27 @@ FAILED test_pair_grid_audit.py::test_reader_refuses_a_file_whose_rung_has_no_con
 ```
 
 The load-bearing one fails on `KeyError: 'R1024_control'` — pre-fix the key is
-not merely wrong, it is not there. Restored: `26 passed`. The nineteen that
-pass throughout are the #93 tests, which is the check that the two fixes are
-independent.
+not merely wrong, it is not there. Restored: `26 passed`.
+
+19 of the 20 #93 tests pass throughout, which is the check that the two fixes
+are independent. The 20th, `test_reader_passes_a_complete_file`, was extended
+to assert `controls_ok` and so fails pre-#96 by design; it is not a #93 test
+regressing.
+
+## Off-task fixes (one line each)
+
+Per the filing rule change — fix it where you find it, as a separate commit.
+
+* **#96, commit `d770df1`** — a rung whose repeat arm died carried no
+  `_control` key at all and read exactly like a rung whose control passed.
+* **`8b5424a`** — `summarise_pair` derived its rung list from the units that
+  had a `_vs_shipped` key (the survivors, one line above where #93 stopped
+  counting survivors); it now reads `args["rungs"]`, the reader's source.
+* **`8b5424a`** — a cell whose candidate *and* reference both failed reported
+  only the candidate; which one to re-encode depends on knowing both.
+* **`8b5424a`** — `BYTES_UNMATCHED` was written into a local copy of
+  `reasons` that nothing read; dead write removed, constant kept and
+  annotated.
 
 ## Issues filed
 
@@ -194,8 +213,11 @@ independent.
 * **#96** — **now fixed on this branch** (`d770df1`), at the coordinator's ask.
 * **#97** — land #18's offline `pair_report.py` against `pair_grid_audit` or
   not at all. It carries its own inline copy of the completeness rule; two
-  copies of a completeness rule is the shape of the bug #93 was. **Routed to
-  the #18 agent, which owns that tree; not touched here.**
+  copies of a completeness rule is the shape of the bug #93 was. **Stays
+  filed under the new rule's third exception: it lives in another agent's
+  live tree.** The half that is mine *is* fixed — nothing on this branch
+  carries a second copy of the rule — and the issue is the handoff. Said so
+  in a comment on the issue.
 
 ## Scope
 
