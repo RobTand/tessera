@@ -219,7 +219,12 @@ where it resolves to the value the wire was pinned to. So the same silence
 returned in a narrower form: `_window_sigma_for` moves bytes at every BF16
 rung *except* the two the matrix covered, and the harness read `0 changed` --
 verified, not supposed. One row at q256 2048 fixes it, and the change then
-reads `2 changed of 20`, both of them that row.
+reads `2 changed of 55` on the rebased tree (the first count, "of 20", was the
+shape rows alone), both of them that row. Second pass: the term also rounds
+the rung to the nearest whole rate half-up, and no row sat at a half rate, so
+banker's rounding would have moved nothing the matrix could see; a
+`bf16-1152-256c` row (R=4.5) and a guard test in
+`tests/test_audit_byte_baseline.py` close that.
 
 A fix may legitimately change future bytes. It may never change what today's
 bytes mean, and the decode half of the baseline is what says so.

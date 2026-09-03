@@ -59,6 +59,7 @@ from tessera.export import (  # noqa: E402
     BF16_WINDOW_BITS,
     BF16_WINDOW_SIGMA,
     E4M3_RECIPE,
+    _reach_rate_for,
     encode_linear_planes,
     recipe_at,
     recipe_table,
@@ -229,7 +230,9 @@ def test_a_rung_above_the_table_widens_the_table():
     assert wire_recipe(BF16_GRID, 14 * 256 + 1).window_bits == 15
     assert wire_recipe(BF16_GRID, 16 * 256).window_bits == 16
     table = recipe_table(BF16_GRID)
-    assert recipe_at(table, 1024) == BF16_RECIPE
+    # ``BF16_RECIPE`` is the reference rung's recipe, so it is that rung the
+    # table must return it at -- not the number 1024 spelled a second time.
+    assert recipe_at(table, BF16_REACH_REFERENCE_RATE * 256) == BF16_RECIPE
     assert recipe_at(table, 16 * 256).window_bits == 16
     # A no-op on the grids that ship today: their cap is below the table.
     assert {r.recipe for r in recipe_table(E4M3_GRID)} == {E4M3_RECIPE}
@@ -246,7 +249,8 @@ def test_the_reach_term_moves_with_the_rung():
     in ``A^2 2^(-2R)`` against the tail past ``A``.
     """
     assert BF16_RECIPE.window_sigma == BF16_WINDOW_SIGMA is not None
-    for rate in (4, 5, 6, 7, 8, 12, 16):
+    R0 = BF16_REACH_REFERENCE_RATE
+    for rate in (R0, R0 + 1, R0 + 2, R0 + 3, R0 + 4, 3 * R0, 4 * R0):
         recipe = wire_recipe(BF16_GRID, rate * 256)
         assert recipe.window_sigma == pytest.approx(
             BF16_WINDOW_SIGMA * math.sqrt(rate / BF16_REACH_REFERENCE_RATE))
@@ -265,15 +269,16 @@ def test_the_reference_rung_is_the_pinned_wire_byte_for_byte():
     file the unset spread did.  Asserted three ways: the resolved fields, the
     table those fields build, and the bytes.
     """
-    recipe = wire_recipe(BF16_GRID, BF16_REACH_REFERENCE_RATE * 256)
+    reference_q256 = BF16_REACH_REFERENCE_RATE * 256
+    recipe = wire_recipe(BF16_GRID, reference_q256)
     assert recipe.window_sigma == recipe.channel_sigma == BF16_CHANNEL_SIGMA
     assert torch.equal(window_table(BF16_GRID, TEST_L, sigma=recipe.window_sigma, seed=0),
                        window_table(BF16_GRID, TEST_L, sigma=recipe.channel_sigma, seed=0))
     w = _weight()
     through_recipe, *_ = encode_linear_planes(
-        w, grid=BF16_GRID, q256=1024, name="u", window_bits=TEST_L)
+        w, grid=BF16_GRID, q256=reference_q256, name="u", window_bits=TEST_L)
     spelled_out, *_ = encode_linear_planes(
-        w, grid=BF16_GRID, q256=1024, name="u", window_bits=TEST_L,
+        w, grid=BF16_GRID, q256=reference_q256, name="u", window_bits=TEST_L,
         window_sigma=BF16_CHANNEL_SIGMA)
     assert through_recipe.blob == spelled_out.blob
 
@@ -289,13 +294,40 @@ def test_the_reach_term_is_floored_at_the_reference_rung():
     and once every row is clamped the reach is a gauge (the row scale is set
     from its amax either way) with nothing left to buy -- both brackets read
     1.0000.  At R=3 the clamp holds only 0.66-0.96 of the rows and the law
-    still loses by the most; no mechanism was established there.  Either way
-    the recipe floors at the rung it is calibrated on rather than shipping a
-    measured regression:
+    still loses by the most; decomposed per row the loss sits mostly in rows
+    clamped under neither reach (they lose 4.6-5.5% each on 3 of 4 units),
+    so it is the narrower table costing every row, not the clamp.  Either
+    way the recipe floors at the rung it is calibrated on rather than
+    shipping a measured regression:
     ``docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md``.
     """
-    for rate in (1, 2, 3, 4):
+    # Every rate up to and including the reference, read from the constant so
+    # the floor and the reference cannot drift apart: there is one R0 here,
+    # not a second copy of it spelled 4.
+    for rate in range(1, BF16_REACH_REFERENCE_RATE + 1):
         assert wire_recipe(BF16_GRID, rate * 256).window_sigma == BF16_WINDOW_SIGMA
+
+
+def test_the_reach_rate_rounds_half_up_and_is_bounded():
+    """The term is keyed on the *nearest* whole-bit rate, half rounding up.
+
+    ``round`` is banker's -- it would send 4.5 down and 5.5 up -- and a rung
+    at exactly R=4.5 (q256 1152) is the one the byte audit carries to tell
+    the two rules apart: half-up lands it at R=5, a different spread from
+    the reference; banker's would land it on the pinned wire's bytes.
+    """
+    R0 = BF16_REACH_REFERENCE_RATE
+    assert _reach_rate_for(BF16_GRID, None) == R0
+    assert _reach_rate_for(BF16_GRID, 1151) == 4
+    assert _reach_rate_for(BF16_GRID, 1152) == 5      # exactly 4.5: up, not to even
+    assert _reach_rate_for(BF16_GRID, 1407) == 5
+    assert _reach_rate_for(BF16_GRID, 1408) == 6      # exactly 5.5: up
+    assert _reach_rate_for(BF16_GRID, 1) == 1
+    assert _reach_rate_for(BF16_GRID, 10 ** 6) == BF16_GRID.payload_bits
+    # And the spread follows: the half-rate rung is off the reference.
+    assert wire_recipe(BF16_GRID, 1152).window_sigma == pytest.approx(
+        BF16_WINDOW_SIGMA * math.sqrt(5 / R0))
+    assert wire_recipe(BF16_GRID, 1151).window_sigma == BF16_WINDOW_SIGMA
 
 
 def test_the_reach_term_is_bf16_only_and_the_table_stays_readable():

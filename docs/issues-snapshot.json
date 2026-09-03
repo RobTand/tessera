@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T03:26:01Z",
+ "generated": "2026-09-03T13:17:07Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -32,7 +32,7 @@
     "title": "Shipcard: carry the byte-matched uniform control's verdict beside the bpp"
    },
    "122": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Stale Tessera DEV pin: 7 of test_tessera_menu.py red on master because the contract moved to v2"
    },
    "123": {
@@ -40,11 +40,11 @@
     "title": "D34 residue: 111 undated Gridbook mentions in 41 module docstrings, and the one that misstates a capability"
    },
    "124": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The Tessera dev pin is a contract version behind, and nothing notices"
    },
    "125": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "build_candidates(cost_mode=) is a dead kwarg after the trellis surface was archived"
    },
    "126": {
@@ -60,8 +60,32 @@
     "title": "Rescue the super-item menu byte-identity golden from the closed trellis PR"
    },
    "129": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "promote_serving_units raises a bare KeyError on an unranked format"
+   },
+   "130": {
+    "state": "OPEN",
+    "title": "Striped production-cache renders do not keep the same calibration rows as an unstriped one"
+   },
+   "131": {
+    "state": "CLOSED",
+    "title": "Striped production-cache renders are not byte-identical to an unsharded one, and no test says either way"
+   },
+   "132": {
+    "state": "OPEN",
+    "title": "The group knapsack's per-member rung licence is a docstring, not the contract's fused_module block"
+   },
+   "133": {
+    "state": "OPEN",
+    "title": "The serve fingerprint's Tessera extension basenames are a hand-copy of a hand-written pin; contract v7 publishes them"
+   },
+   "134": {
+    "state": "OPEN",
+    "title": "Two more Tessera memos are sized by a round number, and one of them measured 0 hits / 13832 misses"
+   },
+   "135": {
+    "state": "OPEN",
+    "title": "`--render-scope assignment` narrows the activation hook set, so the cost cache and the export cache are different renderings"
    },
    "19": {
     "state": "CLOSED",
@@ -138,12 +162,12 @@
     "title": "Wire the window GEMV into the streamed route's forward"
    },
    "11": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The fused window-Viterbi kernel collapses at R=8 (dispatch is a workaround)"
    },
    "12": {
     "state": "OPEN",
-    "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.254x)"
+    "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.039x, in q_proj and k_proj)"
    },
    "13": {
     "state": "OPEN",
@@ -154,7 +178,7 @@
     "title": "PrismaQuant: ANCHOR_BUDGET_BITS must become body-aware or BF16 is unallocatable"
    },
    "15": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "mink (per-member) rates have no converter path: refuse or round"
    },
    "16": {
@@ -186,19 +210,19 @@
     "title": "Gridbook retirement: four capability losses and the CB plumbing debt (D34)"
    },
    "22": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Release can never reach a trailing partial superblock"
    },
    "23": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Padding canonicality has two authorities and the normative one has no callers"
    },
    "24": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Branches the audit fixes made provably unreachable"
    },
    "25": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Documentation drift found by the math audit (Tier C)"
    },
    "26": {
@@ -206,11 +230,11 @@
     "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
    },
    "27": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Release quota over a partial superblock is equal-count, not width-proportional"
    },
    "28": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "runtime_contract.json does not publish the plugin CUDA extension basenames a serve fingerprint must match"
    },
    "29": {
@@ -230,7 +254,7 @@
     "title": "serving/config.py's MoE refusal recommends a flag the pinned build refuses"
    },
    "32": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "plan_shard refuses replicated-KV QKV under GQA when tp_size > num_kv_heads"
    },
    "33": {
@@ -242,7 +266,7 @@
     "title": "Audit leftovers the Tier C pass documented rather than fixed"
    },
    "35": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "LUT-plane block-scale refit: try a Gauss-Seidel sweep, the one untried optimiser on the 4-bit weight leg"
    },
    "36": {
@@ -250,11 +274,11 @@
     "title": "E4M3 channel_sigma sits on a one-sided reach cliff, and the dyadic ladder cannot see the axis that matters"
    },
    "37": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The default group knapsack allocates per-member rungs the Tessera exporter refuses"
    },
    "38": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "PrismaQuant's Tessera dev pin re-stales on every contract edit: attested path dead, 7 tests red"
    },
    "39": {
@@ -262,7 +286,7 @@
     "title": "The byte baseline is blind to every condition the CHANNEL fixes touch"
    },
    "4": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Design a cost that ranks rungs of one format at matched bytes"
    },
    "40": {
@@ -270,7 +294,7 @@
     "title": "loadcost.py truncates to a multiple of 256 before measuring, so no published load figure covers the partial-superblock shape"
    },
    "41": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The encoder can write two wires the serving plugin publishes no decodable range for"
    },
    "42": {
@@ -301,16 +325,44 @@
     "state": "OPEN",
     "title": "BF16 wire cannot express reach: window_sigma is pinned to the channel scale, and the pinned ratio is 19% off at 8 bpp"
    },
+   "49": {
+    "state": "CLOSED",
+    "title": "check_wire_against_plan reports an unpriced unit as a mispriced one, and the totals are asymmetric about it"
+   },
    "5": {
     "state": "OPEN",
     "title": "MoE: the plugin has no expert route, and the exporter mis-plans this model silently"
+   },
+   "50": {
+    "state": "OPEN",
+    "title": "The LUT table fit gives back 24-91% of the refit's step, and it is separable by construction"
+   },
+   "51": {
+    "state": "OPEN",
+    "title": "route_for_grid resolves by dict order; a second route over one grid would silently own the export gate"
+   },
+   "52": {
+    "state": "OPEN",
+    "title": "kernel_window_gemv branches on the token dim in Python and has no compiled arm in its tests"
+   },
+   "53": {
+    "state": "OPEN",
+    "title": "The route census guards contract_for but not decoder_for, so a new family KeyErrors mid-run"
+   },
+   "54": {
+    "state": "OPEN",
+    "title": "BF16 reach optimum is per-unit (0.5x-1.5x of the rate law) and the production encode moves it; the default rule regresses down_proj 2-23% on out"
+   },
+   "55": {
+    "state": "OPEN",
+    "title": "runtime_contract attests TESSERA_BF16_K1 at q256 1792 on pinned-wire bytes the reach term now moves; attested rungs carry no encoder identity"
    },
    "6": {
     "state": "OPEN",
     "title": "NVFP4 MoE is refused on the pinned build by swiglu_limit clamp filtering"
    },
    "7": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tensor parallelism: NVFP4 row shards refused, and the contract still says max_world_size 1"
    },
    "8": {
@@ -318,7 +370,7 @@
     "title": "runtime_contract declares a rung set that nothing enforces"
    },
    "9": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "BF16 has a wire and no serving route"
    }
   }

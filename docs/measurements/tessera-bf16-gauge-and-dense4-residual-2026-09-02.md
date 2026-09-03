@@ -32,8 +32,13 @@ on `wt` on 4 of 4 (geomean **0.813x at identical bytes**) and on `h` on 3 of 4
 > The `0.813x` above reproduces through the built path to within the
 > non-dyadic gauge tolerance (0.02%), the rule is the interior optimum on four
 > rungs it was never fitted to, and below the reference it is floored because
-> the law loses there. Not a wire, schema or contract change — the table is on
-> the ALPHABET plane and a reader never rebuilds it. Still weight space:
+> the law loses there. Not a wire or schema change — the table is on the
+> ALPHABET plane and a reader never rebuilds it — and `runtime_contract.json`
+> (v7) is untouched, but the rung it attests for `TESSERA_BF16_K1` (q256 1792)
+> is one the term moves, so its served receipt describes bytes a rebuild no
+> longer writes. Re-measured under the production encode the pinned wire loses
+> on 3 of 4 (not 4 of 4) and `down_proj` regresses 2–23% on `out`; the
+> "interior optimum" is a weights-only finding. Still not served:
 > `docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md`.
 
 **Claim (#18, GLM).** The one-tensor result holds on six experts. BF16 at R=8

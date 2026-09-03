@@ -126,6 +126,11 @@ def _cases():
         # rung and this harness still reported "0 changed".  The same shape
         # at R=8 is what makes the reach term auditable.
         ("bf16-2048-256c",    BF16_GRID, 2048, 32, 256),
+        # A BF16 rung at exactly R=4.5.  ``_reach_rate_for`` rounds half up,
+        # so this row resolves to R=5's spread; banker's rounding would send
+        # it to R=4 -- the pinned wire's bytes -- and the R=8 row above
+        # cannot tell those two rules apart.
+        ("bf16-1152-256c",    BF16_GRID, 1152, 32, 256),
     ]
 
 

@@ -718,7 +718,22 @@ def _window_sigma_for(default: float, grid: PayloadGrid, q256: "int | None") -> 
     ``0.975x / 0.943x / 0.910x / 0.813x`` of the pinned wire's ``wt`` at
     R=5/6/7/8 on 4 of 4, ``0.979x / 0.930x / 0.864x / 0.741x`` on ``h`` on 3
     of 4.  The R=8 number is the sweep's 0.813x, reproduced through the built
-    path.
+    path.  **Those are weights-only encodes.**  Re-measured under the encode
+    an export runs (LDLQ + the Hessian refit, ``ActivationSource`` defaults)
+    and scored in output space on held-out activations -- the deciding axis
+    -- the pinned wire is 1.015x / 1.054x / 1.093x / 1.231x the built recipe
+    at R=5/6/7/8 on **3 of 4**: ``2.mlp.down_proj`` wants *less* reach than
+    the pinned wire at every rung and regresses 2-23% under the law, while
+    ``q_proj`` / ``k_proj`` want more than the law gives (up to 1.48x at
+    R=8).  The unit optima span 0.5x-1.5x of the rule, and the geomean rule
+    is inside its own ``sqrt(4.5/4)`` tolerance of the production optimum
+    at R=5-8 but 1.08x below it at R=4, the rung the amplitude is calibrated
+    on.  A matched control (weights-only encode, same scorer, same grid)
+    puts the optimum 1.09-1.13x above the law at every rung, so the encode,
+    not the metric, is what moves it.  ``wt`` is not a quality axis under
+    LDLQ (it reads 0.35 at R=4 on ``down_proj`` against 0.074 weights-only,
+    while ``out`` improves 3x); the ``MATERIAL`` flags it raises under the
+    production encode are on that axis.  Receipt: the same file.
 
     **And the floor is measured too, in the direction the law fails.**  *Below*
     the reference the law asks for a smaller reach and loses: the pinned value
@@ -734,12 +749,15 @@ def _window_sigma_for(default: float, grid: PayloadGrid, q256: "int | None") -> 
     brackets read 1.0000 at R=1) and give back only 0.04-0.6%.  At R=3 the
     clamp does **not** saturate -- it holds 0.66-0.96 of the rows, and the
     pinned wire's own clamp fraction is 0.23-0.55 -- and the law still loses
-    by the most of the three, 1.7% on 4 of 4.  There the honest statement is
-    that the optimum simply does not fall below the reference reach on these
-    rows; no mechanism was established for it.  So the term is floored at the
-    rung it is calibrated on: ``sqrt(max(R, R0) / R0)``.  The floor is a
-    measured boundary on these units -- at R=3 measured with no mechanism at
-    all -- and not a derived one.
+    by the most of the three, 1.7% on 4 of 4.  Decomposed per row it is not
+    a clamp effect at all: on 3 of 4 units the rows that are clamped under
+    *neither* reach lose the most per row (4.6-5.5%), the rows that change
+    clamp status 3.6-4.7%, the rows clamped under both 2.3-2.5%.  A narrower
+    table costs every row on these units, so the optimum does not fall below
+    the reference reach here -- a spread effect, not the overload the
+    derivation prices.  So the term is floored at the rung it is calibrated
+    on: ``sqrt(max(R, R0) / R0)``.  The floor is a measured boundary on these
+    units, not a derived one.
 
     **Scope: BF16 only.**  The reach ratio is a property of the grid as much
     as the body.  On E4M3 the same table already runs to the format's own

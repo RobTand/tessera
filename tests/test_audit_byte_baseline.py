@@ -33,8 +33,8 @@ from pathlib import Path
 import pytest
 
 import tessera.scale_channel
-from tessera.alphabet import SERIALISABLE_GRIDS
-from tessera.export import DEFAULT_LDLQ_SIGMA, wire_recipe
+from tessera.alphabet import BF16_GRID, SERIALISABLE_GRIDS
+from tessera.export import BF16_RECIPE, DEFAULT_LDLQ_SIGMA, wire_recipe
 from tessera.manifest import ScalePlaneKind
 
 HARNESS = Path(__file__).resolve().parents[1] / "experiments" / "audit_byte_baseline.py"
@@ -78,6 +78,27 @@ def test_the_encode_matrix_covers_every_serialisable_grid():
         f"the byte-proof matrix, so a change to its recipe constants moves real "
         f"bytes while the harness reports '0 changed'. Add a case to _cases()."
     )
+
+
+def test_the_bf16_rows_reach_off_the_reference_rung():
+    """Issue #48: the reach term resolves to the pinned wire's value at the
+    reference rung, so a BF16 matrix that only encodes there is blind to it.
+    Two rows are required: one whose spread differs from the reference (a
+    change to ``_window_sigma_for`` moves it) and one at an exact half rate
+    (a change to ``_reach_rate_for``'s rounding moves it)."""
+    bf16 = [(label, q) for label, grid, q, _r, _c in _load()._cases()
+            if grid.name == BF16_GRID.name]
+    off_reference = [label for label, q in bf16
+                     if wire_recipe(BF16_GRID, q).window_sigma != BF16_RECIPE.window_sigma]
+    assert off_reference, (
+        "every BF16 case sits on the reach term's reference rung, where the "
+        "recipe resolves to the pinned wire's spread -- a change to "
+        "_window_sigma_for moves every other rung and this matrix reports "
+        "'0 changed'. Add a BF16 case away from BF16_REACH_REFERENCE_RATE.")
+    half_rate = [label for label, q in bf16 if (q * BF16_GRID.arity) % 256 == 128]
+    assert half_rate, (
+        "no BF16 case sits at an exact half rate, so the rounding rule of "
+        "_reach_rate_for (half-up, not banker's) moves no digest here.")
 
 
 def test_every_case_names_a_grid_a_reader_would_accept():
