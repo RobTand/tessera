@@ -8,11 +8,15 @@ epilogue, both residency modes, the compiled decode and the refusals.
 That is what the family is for: a CHANNEL scale is an output-row factor and
 commutes with the matmul, so a lane holding the wire runs the GEMM on the raw
 table values -- exact, since every entry is already a bf16 word -- and applies
-the scale to the fp32 output.  Folding instead costs 0.0011-0.0022 in absolute
-relative output error at any rate, 16% of the total at R=7.  Two tests hold the
-line directly: the decoded tile equals ``materialize_bf16``'s VALUES (not the
-folded twin's tensor), and the route's output is closer to the exact fp32
-product than the folded rendering is.
+the scale to the fp32 output.  Folding instead adds one bf16 rounding
+(~0.0011-0.0022 absolute on GLM expert rows at any rate).  Its 15.4% *share*
+at R = 7 composes in quadrature -- a 1.2% error gap, 2.4% squared -- and served
+at R = 7 the twin's KL is 1.0011x the route's on ``all`` and 0.9961x on
+``confident``, i.e. below what the corpus resolves, so no fold win is claimed
+here (#45).  Two tests hold the line directly: the decoded tile equals
+``materialize_bf16``'s VALUES (not the folded twin's tensor), and the route's
+output is closer to the exact fp32 product than the folded rendering is --
+both in weight space, which is where the fold is visible.
 
 STUBBED: vLLM's ``LinearMethodBase`` and parameters.  There is no A-side
 quantiser to stub -- the A side is bf16 as it arrives, which is the whole of
@@ -229,11 +233,13 @@ def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch
 
 @requires_cuda
 def test_the_route_beats_the_fold_it_refuses_to_do(monkeypatch):
-    """Not folding is measurably better, which is why the rule exists.
+    """Not folding is measurably better in weight space, which is why the rule exists.
 
     The exact answer is the fp32 product of the unfolded pair.  The route's
     output and the folded twin's are both approximations of it; the route's
-    must be the closer one, or the pair is costing bytes for nothing.
+    must be the closer one, or the pair is costing bytes for nothing.  (Served
+    KL at R = 7 does not resolve the difference -- #45 -- so this weight-space
+    ordering is the claim, not a served win.)
     """
     got, _layer, _m, x, (values, scale, folded) = _drive(monkeypatch, MODE_RESIDENT, m=8)
     exact = (x.float() @ (values.float() * scale[:, None]).t())

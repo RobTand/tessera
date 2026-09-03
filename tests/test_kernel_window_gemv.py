@@ -299,6 +299,33 @@ def test_gemv_plans_agree(rpl, warps, cpi, balanced, table_dtype):
     assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
 
 
+def test_m2_is_not_routed_to_the_mt4_build():
+    """M=2 runs the MT=2 (16-rows-per-lane) build: no blanket M-only routing (#59).
+
+    ``docs/measurements/tessera-window-gemv-2026-09-02.md`` §11 once recorded
+    routing M=2 to the MT=4 kernel as "a free ~8%" from the contended per-token
+    table. The same document's quiet-box addendum re-took M=1,2,4,8 on an idle
+    box, and the M=4 column -- which is what a padded M=2 launch would cost
+    (same ``mt``, same ``items_for(mt)``, same ``rpl = 8``) -- is +11.6% /
+    +4.7% / +21.4% per token against MT=2 on the three lists measured. A
+    per-shape variant stays open, but its threshold must be derived from
+    occupancy and re-measured, so the M-only rule must not come back through
+    ``_m_tile``: ``_gemv_concrete`` follows ``mt`` into the ``items_1`` /
+    ``rpl=16`` build for ``mt <= 2`` and the ``items_4`` / ``rpl=8`` build
+    above, so this mapping IS the routing. CPU-only by construction: the rule
+    is pure Python and must hold where no toolchain exists to hide behind.
+    """
+    from tessera.kernel_window_gemv import _m_tile
+
+    assert _m_tile(1) == 1
+    assert _m_tile(2) == 2
+    assert _m_tile(3) == 4 and _m_tile(4) == 4
+    for M in (5, 6, 7, 8):
+        assert _m_tile(M) == 8, M
+    with pytest.raises(GrammarError, match="exceeds the GEMV"):
+        _m_tile(9)
+
+
 @cuda
 def test_value_family_bf16_table():
     """The bf16 value family: the same kernel over a bf16 table, no scale."""

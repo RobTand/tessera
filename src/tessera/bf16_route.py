@@ -33,9 +33,14 @@ runtime that must not import Triton (Gridbook) imports this module.
 
 **Do not fold the row scale if you do not have to.**  A one-tensor BF16
 checkpoint must: it ships a weight and no scale, so ``bf16(code * s)`` is all
-it can carry, and that rounding costs ~0.0015 in relative output error on GLM
-expert rows *whatever* the coder -- 2% of the error at R=4 and **16% at R=7**
-(``docs/measurements/tessera16-alphabet-floor-2026-09-02.md`` §B).  A lane
+it can carry, and that rounding is ~0.0015 in relative output error on GLM
+expert rows *whatever* the coder (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``
+§B).  Its *share* of the error grows as the coding error shrinks underneath
+it -- 15.4% at R=7 -- but a share composes in quadrature, so that is a 1.2%
+error gap and a 2.4% squared-error gap, and served at R=7 the twin's KL is
+1.0011x the route's on ``all`` and 0.9961x on ``confident``: below what the
+corpus resolves, so no fold win is claimed (``tessera-bf16-route`` §7b as
+corrected, ``tessera-bf16-route-served`` §3, #45).  A lane
 holding the wire is not stuck with it: a CHANNEL scale is one factor per
 **output row**, so it commutes with the matmul, and the lane runs the stock
 BF16 GEMM on the *code tile* -- exactly bf16 already, since every table entry

@@ -658,10 +658,16 @@ def decode_values(unit: WindowGemvUnit) -> torch.Tensor:
     """The value family's prefill tile: the **raw** table value at every
     position, ``bf16 [rows, cols]``, the row scale NOT folded in.
 
-    Folding ``s_i`` into a bf16 tile adds a rate-independent absolute error
-    floor (0.0011-0.0022 measured on GLM experts, 16-28% of the total at
-    R=7-8), so the contract is: the tile is the table's values, and the
-    per-row fp32 ``unit.scale`` goes to the GEMM epilogue
+    Folding ``s_i`` into a bf16 tile adds one rate-independent bf16 rounding
+    (0.0011-0.0022 absolute measured on GLM experts).  Its share of the error
+    grows as the coding error shrinks underneath it, but a share composes in
+    quadrature -- the 15.4% share at R = 7 is a 1.2% error gap and a 2.4%
+    squared-error gap -- and served at R = 7 the twin's KL is 1.0011x the
+    route's on ``all`` and 0.9961x on ``confident``, i.e. below what the
+    corpus resolves, so no fold win is claimed
+    (``tessera-bf16-route-served-2026-09-02.md`` §3, #45).  The contract is
+    unchanged: the tile is the table's values, and the per-row fp32
+    ``unit.scale`` goes to the GEMM epilogue
     (``y_i = s_i * sum_k t_ik x_k``), exactly as the fused GEMV applies it
     once on the accumulated fp32 output.
     """
