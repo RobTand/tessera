@@ -1,0 +1,72 @@
+# tessera#60, served leg: `ldlq_block=4` against a re-run of `ldlq_block=32`
+
+Status: **in progress.** This file is written as the run goes, not at the end.
+
+## The question
+
+Does `ldlq_block=4` beat the `DEFAULT_LDLQ_BLOCK = 32` on **served** KL for
+dense Qwen3-0.6B, at byte-identical bytes? The six-unit weight-space sweep in
+issue #60 says the geomean crosses parity between the default and everything
+below it (1.0421 -> 0.9629 against NVFP4 GPTQ+JSO at 4.5 bpp). That is a
+screen, and this repo does not promote on screens.
+
+## The arms
+
+Both exports come out of **one checkout at one commit**,
+`82cdf513aff3d013e05a804d3e0085422445c704`, through one script
+(`experiments/ldlq_block_serve_export.sh`) whose only parameter is the block:
+
+```
+export_tessera_serving.py /home/rob/models/Qwen3-0.6B <out> \
+  --grid E2M1x2 --q256 896 --input-scales .../rotation/scales_pqcal.safetensors \
+  --stock-twin <twin> --hessian .../ldlq/h_full_qwen06b.pt \
+  --ldlq-sigma 1.0 --ldlq-block {32|4} --refit-metric h^1.0
+```
+
+The default arm is **re-run, not quoted**. The 2026-09-02 `ldlqH1` artifact is
+the same recipe at block 32 and serves 0.531028, but the tree has moved since
+(trellis weighting, the reach-aware per-row start), so reusing it would put a
+commit's worth of change inside a delta that is supposed to hold only the
+block.
+
+## "One session" is not a shape this stack has, and I am not going to pretend
+
+vLLM serves one model per engine, and every serving wrapper in this repo
+(`serve_and_dump_kl.sh`, `tessera_plugin_served.sh`) is start-serve-dump-reap.
+Two checkpoints are two containers. There is no way to put both arms in one
+vLLM session, so **I am not reporting one.**
+
+What replaces it is a matched-pair drift control, which is evidence rather
+than an assertion: the default is served **first and last**, with the
+candidate between them, on one box, one image, one corpus, one teacher, eager
+(the one known source of cross-container disagreement on this stack is
+inductor build nondeterminism in the compiled forward, and an eager serve has
+none). If the two default dumps agree, nothing between them drifted. If they
+disagree, that disagreement is the error bar on the delta and is reported as
+one. `experiments/ldlq_block_serve_ab.sh` is that chain.
+
+## Box and lock decisions, stated rather than assumed
+
+- Both exports run on **sparklina** (at launch: load 3.1, 91 GB available).
+  sparky was at load 63 with 6 GB free and a resident vLLM engine, and is not
+  a box to encode or serve on.
+- **The long exports do not hold `gpulock.sh`, deliberately.** At launch the
+  lock was held by a sibling's `bf16_l_sigma_sweep` with another job already
+  queued behind it, and the b4 export is a ~15x encode. Taking the lock would
+  have meant queueing the critical path behind an unknown wait and then
+  blockading the box for a further ten-plus hours against every sibling GPU
+  job, including the GLM arm of this same issue. The lock exists for memory
+  pressure; each export measures 4.5-4.7 GB RSS at 40 W of a ~140 W envelope
+  on a box with 78 GB available, so the risk it guards against is not the risk
+  present here. The matched-pair timing measurement, where quiet conditions
+  are the measurement, is a different case and is treated as one.
+
+## What is pending
+
+- [ ] b32 export wall-clock and bytes
+- [ ] b4 export wall-clock and bytes
+- [ ] byte equality between the arms, and `activation_aware.ldlq_block` on each
+- [ ] served KLs: b32, b4, b32-again
+- [ ] matched-pair encode cost, back-to-back-plus-repeat
+- [ ] `assert_plane_promotion` output, verbatim
+- [ ] branch suite, and master only for whatever fails
