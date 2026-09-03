@@ -179,10 +179,19 @@ improves monotonically at every quantile reported.
 (`jq '.all | {kl_lower_mean, kl_lower_p99, kl_lower_max}'` over
 `kl_base_vs_lina.json`, `kl_ldlq.json`, `kl_ldlqH.json`.)
 
-**0.692x of the baseline's KL at identical bytes** (LDLQ alone 0.747x), and
-+3.5 points of top-1 agreement. Against production NVFP4 GPTQ+JSO at 4.5 bpp the
-4.07-bpp wire is now 4.9x better (was 3.4x); against FP8 RTN at 8.0 bpp it is 5.1x
-behind (was 7.4x). The margin is 31%, not 2%, so the "one corpus draw, 4088
+**0.692x of the baseline's KL at identical bytes** (LDLQ alone 0.747x) -- both
+arms 4.071 wire / **8.025 resident**, so that ratio is the two levers and
+nothing else. **The comparisons to the other two encoders cross a residency and
+are not 4-bit wins:** this arm serves W8A8 at 8.025 resident. Against
+production NVFP4 GPTQ+JSO at 4.5 wire / 4.5 resident it is 4.9x better (was
+3.4x) *at 8.025 resident against 4.5, and on a W8A8 A-side against a W4A4
+one*;
+against FP8 RTN at 8.0 / 8.0 -- the comparator at this arm's own residency --
+it is still 5.1x behind (was 7.4x). At equal residency Tessera loses on both
+legs on this model: 5.1x on the 8-bit leg, and 1.254x on the 4-bit leg where
+the E2M1x2 wire serves at 4.5 resident (0.640 vs 0.511, W4A4,
+`tessera-stock-lane-served-2026-09-02.md`). What these two levers move is the
+wire at a fixed residency, which is the claim this receipt makes. The margin is 31%, not 2%, so the "one corpus draw, 4088
 positions" caveat does not decide this one.
 
 Three controls, because the arms were dumped on a second box (sparklina) after

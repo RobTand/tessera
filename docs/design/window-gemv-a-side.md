@@ -153,8 +153,10 @@ exporter applies whenever it is handed a Hessian
 (`export.DEFAULT_LDLQ_SIGMA/_BLOCK/_REFIT_OBJECTIVE`). It changes no conclusion
 here and it moves the argument the same way §3a does: the weight leg improved
 to 0.692x while the A8 leg is a constant, so the gap to FP8 RTN at 8 bpp closed
-from 7.4x to **5.1x** and the lead over production NVFP4 at 4.5 bpp widened
-from 3.4x to **4.9x**. Every statement below about "the served arm" means this
+from 7.4x to **5.1x** and the margin over production NVFP4 at 4.5 bpp widened
+from 3.4x to **4.9x** -- the second of those crossing a residency, 4.071 wire /
+8.025 resident against 4.5 / 4.5, which is why the comparator that decides this
+arm is the 8.0-resident FP8 one it still loses to. Every statement below about "the served arm" means this
 row.
 
 **There is no served A16 arm of the E4M3 window wire.** The A16 row above is a

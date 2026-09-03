@@ -34,8 +34,17 @@ Tessera-8 wire reads 0.47 on this dense model against 0.0205 for per-channel
 FP8 round-to-nearest at 8.0 bpp on the same route
 (`tessera-stock-lane-served-2026-09-02.md`), a 23x gap that is 4 bits of
 code against 8; production GPTQ+JSO NVFP4 at 4.5 bpp W4A4 reads 0.511 on
-the same table, so at its wire Tessera-8 is the best ~4-bit point there,
-not a bad 8-bit one. What is bad is narrower: the CHANNEL plane's blindness to
+the same table -- but Tessera-8 reaches that row at **8.0 bpp resident**
+against NVFP4's 4.5, so it is not a 4-bit point on this route at all: the
+wire's 4.07 is a disk number on the `resident` route. The `streamed` route
+does hold it in memory -- 0.55 GiB against 0.73, same KL (:17-20), which is
+what this lane buys (:219) -- but it decodes inside the forward and still
+computes W8A8, so what survives at either residency is the A-side: a W8A8
+contract against NVFP4's W4A4. The kernel lane that would compute over the
+wire itself (`tessera-window-kernel-2026-09-02.md`) has no served KL yet.
+Priced as it deploys on this route
+this is an 8-bit arm, and its comparator at that residency is FP8 RTN, which
+it loses to. What is bad is narrower: the CHANNEL plane's blindness to
 outlier input columns, and the greedy continuation of "The capital of France
 is" is " 111111111111111" on the lane exactly as it is on the stock arm. The
 route is the product's 8-bit half; the wire it carries is the encoder's

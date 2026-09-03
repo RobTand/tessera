@@ -547,8 +547,9 @@ eager and under the default compiled forward
 
 What this attests is faithfulness, not quality: on this dense model the
 4.07-bpp E4M3/CHANNEL wire is 23x behind 8.0-bpp FP8 RTN (4 bits of code
-against 8; production NVFP4 at 4.5 bpp is 25x behind the same arm, and at
-its own wire Tessera-8's 0.470 is the best ~4-bit point on that table) and
+against 8; production NVFP4 at 4.5 bpp is 25x behind the same arm -- and
+Tessera-8's 0.470 is quoted at the wire's 4.07 while it *serves* at 8.0
+resident on this route, so it is not a 4-bit point on that table) and
 the 4.0-bpp E2M1x2 wire is 1.25x behind production NVFP4 at 4.5 under W4A4
 (`tessera-stock-lane-served-2026-09-02.md`). The
 lane makes whatever the encoder produces and the allocator chooses
@@ -569,9 +570,12 @@ allocation over `TESSERA_*` rungs ships from there; the routed-MoE cell.
 ## 2026-09-02 (later): the dense failure was the encoder's source model, fixed at the same wire
 
 The 4.07-bpp E4M3/CHANNEL wire on Qwen3-0.6B serves at **KL 0.151** (top-1
-78.1%) against 0.470 before, same teacher, image and corpus: 3.4x better than
-production NVFP4 GPTQ+JSO at 4.5 bpp W4A4 (0.511) and 7.4x behind FP8 RTN at
-8.0 (0.0205), where it was 23x. The mechanism: the window table reaches 4.08
+78.1%) against 0.470 before, same teacher, image and corpus. That arm is 4.07
+wire / **8.0 resident** W8A8: 3.4x better than production NVFP4 GPTQ+JSO at 4.5
+wire / 4.5 resident W4A4 (0.511) *across a residency and an A-side*, and 7.4x
+behind FP8 RTN at 8.0 / 8.0 (0.0205), where it was 23x -- the second being the
+comparison at equal bytes, which Tessera loses on both legs (7.4x at 8-bit here,
+1.254x at 4-bit under W4A4). The mechanism: the window table reaches 4.08
 sigma0 and a quarter of Qwen's rows (59% of `down_proj`) carry a larger weight,
 which clipped in the Hessian-dominant columns; `initial_channel_scale` now
 starts such rows at the sigma that puts their max on the reach (the fp16 row
