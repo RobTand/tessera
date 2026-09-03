@@ -40,6 +40,24 @@ state** (the kernel supplies ``state_{-1} = 0``, so a tensor-parallel row
 shard is refused with the two lanes that do serve it named), rates in
 {1, 2, 4} (R=3 needs 6-byte lanes and is refused with the fallback named),
 M <= 8.  The activation contract is W4A16: ``x`` is bf16, accumulation fp32.
+
+**Under a compiled forward.**  Every route in ``tessera.serving`` is served
+eager and compiled, and this lane has been broken by exactly the shape the
+first version of :func:`window_gemv` had: a Python branch on the token
+dimension (``_m_tile``), a pad and a slice arithmetic on it, an
+``lru_cache``d JIT build on the call path and a direct pybind call
+(``vllm-compiled-forward-breaks-lane-hot-paths``; RobTand/tessera#52).  So
+the GEMV is a functional ``torch.library.custom_op``
+(``tessera_window_gemv::gemv``): the M tile, the refusals, the pad and the
+slice all happen INSIDE the op, where ``x.shape[0]`` is a concrete integer,
+the fake impl reports ``[M, rows]`` without reading it, and the op owns the
+output it returns.  The extension is resolved by ``prepare_*`` at load, so
+the first call -- which under vLLM's compiled forward is the trace -- never
+builds.  The item tables for every M tile a unit can serve are planned at
+preparation, not on first use, because planning reads the run table back to
+Python and a compiled forward cannot.  ``tests/test_kernel_window_gemv.py``
+carries the compiled arm: one graph, the token dim marked dynamic, M = 1..8
+without a recompile.
 """
 from __future__ import annotations
 
@@ -328,7 +346,19 @@ class WindowGemvUnit:
     codes_of_state: "torch.Tensor | None" = None   # [2^L] u8 grid codes (E4M3 family)
     native: "torch.Tensor | None" = None           # [256] u8 (E4M3 family)
     family: str = "e4m3"
-    items_by_mt: dict = dataclasses.field(default_factory=dict)   # M tile -> (items, max_cols)
+    items_by_mt: dict = dataclasses.field(default_factory=dict)   # items key -> (items, max_cols)
+
+    def __post_init__(self):
+        # Plan every M tile this unit can serve NOW.  ``plan_items`` reads the
+        # run table back to Python (``rep.runs.tolist()``) and ``max_cols`` is
+        # a device ``max``; neither can run inside a compiled forward, and a
+        # first-call plan is exactly that (the first call is the trace).  A
+        # dict handed in by ``with_plan(share_from=...)`` is already full and
+        # is left alone.
+        for key in self.serveable_keys():
+            if key not in self.items_by_mt:
+                items = items_for(self.rep, self.plan, key)
+                self.items_by_mt[key] = (items, int(items[:, 3].max()) if items.numel() else 0)
 
     @property
     def rows(self) -> int:
@@ -346,14 +376,21 @@ class WindowGemvUnit:
     def uniform(self) -> bool:
         return len(set(self.rep.rates)) == 1
 
+    @staticmethod
+    def items_key(mt: int) -> int:
+        """The item table an M tile runs on.  ``items_for`` depends on ``mt``
+        only through :func:`max_item_cols` (1024 at M <= 2, 256 above), so
+        there are two tables, keyed 1 and 4; M = 8 runs the 4-key table."""
+        return 1 if mt <= 2 else 4
+
+    def serveable_keys(self) -> "tuple[int, ...]":
+        """The item keys this unit can run: the 4-key table needs 8 rows per
+        lane, which a rate-1 column does not have (``window_gemv`` refuses it)."""
+        return (1,) if 1 in self.rep.rates else (1, 4)
+
     def items_for(self, mt: int) -> "tuple[torch.Tensor, int]":
-        """``(items, max_cols)`` for an M tile, planned once and kept (a
-        per-call plan or a device-side ``max`` would cost more than the GEMV)."""
-        key = 1 if mt <= 2 else mt
-        if key not in self.items_by_mt:
-            items = items_for(self.rep, self.plan, key)
-            self.items_by_mt[key] = (items, int(items[:, 3].max()) if items.numel() else 0)
-        return self.items_by_mt[key]
+        """``(items, max_cols)`` for an M tile, planned at preparation and kept."""
+        return self.items_by_mt[self.items_key(mt)]
 
     def with_plan(self, plan: Plan, *, share_from: "WindowGemvUnit | None" = None) -> "WindowGemvUnit":
         """The same unit under another launch shape.  ``share_from``: a unit of
@@ -445,6 +482,7 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
         raise GrammarError(f"{scale.numel()} row scales for {rep.rows} rows")
     if plan is None:
         plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
+    _ext()   # built (or found) at load, never on the first call -- see the module docstring
     return WindowGemvUnit(
         rep=rep, table=table, scale=scale, window_bits=int(unit.window_bits), plan=plan,
         codes_of_state=codes_of_state, native=native, family="e4m3",
@@ -478,6 +516,7 @@ def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window
     scale = scale.to(device=device, dtype=torch.float32).reshape(-1).contiguous()
     if plan is None:
         plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
+    _ext()   # at load, as prepare_from_parsed
     return WindowGemvUnit(
         rep=rep, table=table, scale=scale, window_bits=int(window_bits), plan=plan, family="value",
     )
@@ -499,22 +538,21 @@ def _m_tile(M: int) -> int:
     raise GrammarError(f"M={M} exceeds the GEMV's {GEMV_MAX_M}; the materialised path serves prefill")
 
 
-def window_gemv(unit: WindowGemvUnit, x: torch.Tensor, *, out: "torch.Tensor | None" = None,
-                ablation: int = 0) -> torch.Tensor:
-    """``x [M, K] bf16 -> [M, rows] fp32``: the wire read directly.
+def _gemv_concrete(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, items_4: torch.Tensor,
+                   perm: torch.Tensor, table: torch.Tensor, scale: torch.Tensor,
+                   tile_words: int, rows: int, window_bits: int, rpl: int, warps: int, blocks: int,
+                   max_cols_1: int, max_cols_4: int, rate_one: bool, uniform: bool, ablation: int,
+                   out: "torch.Tensor | None" = None) -> torch.Tensor:
+    """The GEMV from a CONCRETE ``[M, K]``: the one launch site.
 
-    ``out`` may be a caller-owned zeroed fp32 ``[M_tile, rows]`` buffer (the
-    op accumulates into it with atomics); otherwise one is zeroed here.
-    ``ablation``: 0 the kernel; 1 no table gather; 2 no wire read; 3 no FMA;
-    4 neither read -- the instruments behind the receipt, never a result.
+    Everything that reads ``M`` lives here -- the tile, the rate-1 refusal, the
+    pad, the ``[:M]`` slice -- and here it is a Python integer: the custom op
+    below runs this at call time, outside the trace, and the ``out=``
+    instrument path calls it eagerly.
     """
-    if x.dim() != 2 or x.dtype != torch.bfloat16 or not x.is_cuda:
-        raise GrammarError("x must be a CUDA bf16 [M, K] tensor")
     M, K = x.shape
-    if K != unit.cols:
-        raise GrammarError(f"x has {K} features, the unit {unit.cols} columns")
     mt = _m_tile(M)
-    if mt >= 4 and 1 in unit.rep.rates:
+    if mt >= 4 and rate_one:
         raise GrammarError(
             f"M={M} runs 8 rows per lane, and a rate-1 column has no 8-row lane "
             "(a byte of history is too short for L=14); the materialised path serves this batch"
@@ -522,18 +560,78 @@ def window_gemv(unit: WindowGemvUnit, x: torch.Tensor, *, out: "torch.Tensor | N
     if mt != M:
         x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
     x = x.contiguous()
-    plan = unit.plan
-    rpl = plan.rpl if mt <= 2 else 8
-    items, max_cols = unit.items_for(mt)
-    perm = unit.rep.perm if not unit.uniform else unit.rep.perm[:0]     # identity: no gather
+    if mt <= 2:
+        items, max_cols = items_1, max_cols_1
+    else:
+        items, max_cols, rpl = items_4, max_cols_4, 8
     if out is None:
-        out = torch.zeros(mt, unit.rows, dtype=torch.float32, device=x.device)
+        out = torch.zeros(mt, rows, dtype=torch.float32, device=x.device)
     _ext().window_gemv(
-        unit.rep.words, items, int(unit.rep.tile_words), perm,
-        unit.table, unit.scale, x, out, int(unit.window_bits), int(rpl), int(plan.warps),
-        int(plan.blocks), max_cols, int(ablation),
+        words, items, int(tile_words), perm if not uniform else perm[:0],   # identity: no gather
+        table, scale, x, out, int(window_bits), int(rpl), int(warps),
+        int(blocks), int(max_cols), int(ablation),
     )
     return out if mt == M else out[:M]
+
+
+# The serving shape (``serving/ops.py`` and ``kernel_window.py`` say why at
+# length): a functional custom op, ``mutates_args=()``, that owns the tensor
+# it returns.  Dynamo traces it as one opaque node -- no branch on the token
+# dim, no pybind symbol, no ``lru_cache`` wrapper, no build lock -- and the
+# fake impl below shapes the output from ``x.shape[0]`` symbolically.
+@torch.library.custom_op("tessera_window_gemv::gemv", mutates_args=())
+def _gemv_op(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, items_4: torch.Tensor,
+             perm: torch.Tensor, table: torch.Tensor, scale: torch.Tensor,
+             tile_words: int, rows: int, window_bits: int, rpl: int, warps: int, blocks: int,
+             max_cols_1: int, max_cols_4: int, rate_one: bool, uniform: bool, ablation: int,
+             ) -> torch.Tensor:
+    return _gemv_concrete(x, words, items_1, items_4, perm, table, scale, tile_words, rows,
+                          window_bits, rpl, warps, blocks, max_cols_1, max_cols_4, rate_one,
+                          uniform, ablation)
+
+
+@_gemv_op.register_fake
+def _gemv_op_fake(x, words, items_1, items_4, perm, table, scale, tile_words, rows, window_bits,
+                  rpl, warps, blocks, max_cols_1, max_cols_4, rate_one, uniform, ablation):
+    return x.new_empty((x.shape[0], rows), dtype=torch.float32)
+
+
+def _op_args(unit: WindowGemvUnit) -> tuple:
+    """The unit as the op's arguments: tensors and Python scalars, nothing
+    the trace has to look inside."""
+    items_1, max_cols_1 = unit.items_for(1)
+    if 4 in unit.items_by_mt:
+        items_4, max_cols_4 = unit.items_for(4)
+    else:
+        items_4, max_cols_4 = items_1[:0], 0     # refused before it is read
+    plan = unit.plan
+    return (
+        unit.rep.words, items_1, items_4, unit.rep.perm, unit.table, unit.scale,
+        int(unit.rep.tile_words), int(unit.rows), int(unit.window_bits), int(plan.rpl),
+        int(plan.warps), int(plan.blocks), int(max_cols_1), int(max_cols_4),
+        1 in unit.rep.rates, unit.uniform,
+    )
+
+
+def window_gemv(unit: WindowGemvUnit, x: torch.Tensor, *, out: "torch.Tensor | None" = None,
+                ablation: int = 0) -> torch.Tensor:
+    """``x [M, K] bf16 -> [M, rows] fp32``: the wire read directly.
+
+    Without ``out`` this is the functional custom op ``tessera_window_gemv::gemv``
+    -- the shape a compiled forward traces (module docstring).  ``out`` is the
+    bench's instrument: a caller-owned zeroed fp32 ``[M_tile, rows]`` buffer
+    the launch accumulates into with atomics, run eagerly through the same
+    concrete launch; never a serving path, and not traceable.
+    ``ablation``: 0 the kernel; 1 no table gather; 2 no wire read; 3 no FMA;
+    4 neither read -- the instruments behind the receipt, never a result.
+    """
+    if x.dim() != 2 or x.dtype != torch.bfloat16 or not x.is_cuda:
+        raise GrammarError("x must be a CUDA bf16 [M, K] tensor")
+    if x.shape[1] != unit.cols:
+        raise GrammarError(f"x has {x.shape[1]} features, the unit {unit.cols} columns")
+    if out is None:
+        return _gemv_op(x, *_op_args(unit), int(ablation))
+    return _gemv_concrete(x, *_op_args(unit), int(ablation), out=out)
 
 
 def window_linear(unit: WindowGemvUnit, x: torch.Tensor) -> torch.Tensor:

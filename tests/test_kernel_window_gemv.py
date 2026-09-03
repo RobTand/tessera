@@ -460,3 +460,203 @@ def test_the_value_family_refuses_a_shard_start_state():
     with pytest.raises(GrammarError, match="start state"):
         kg.prepare_value_unit(body, (4,) * cols, L, values,
                               initial_state=torch.zeros(cols, dtype=torch.int64))
+
+
+# ---------------------- the compiled arm (RobTand/tessera#52) -------------------
+#
+# Every route in ``tessera.serving`` is served eager AND compiled, and this
+# lane has been broken by exactly what the first ``window_gemv`` did in the
+# traced region: a Python branch on the token dim, a pad and a slice on it, an
+# ``lru_cache``d JIT build and a direct pybind call
+# (``vllm-compiled-forward-breaks-lane-hot-paths``).  On the pre-#52 tree
+# ``torch.compile(fullgraph=True)`` of the seam raised ``Unsupported:
+# Attempted to call function marked as skipped`` (``posix.stat`` inside the
+# build Dynamo traced into).  These tests are the arm that would have said so.
+
+
+def _mixed_unit(kg, rows=1000, cols=640, seed=31, M=1):
+    """A mixed-rate E4M3 unit (so the column permutation is a real gather and
+    both item tables exist) with its fp32 tile and scale."""
+    rates = tuple(2 if c % 7 == 0 else 4 for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=seed)
+    scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+    unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.75), M=M)
+    tile, scale = kg.decode_fp8(unit)
+    return unit, tile.view(torch.float8_e4m3fn).float(), scale
+
+
+def _compiled_dynamic_m(fn):
+    """``fn`` compiled whole-graph, and an ``x`` factory that marks the token
+    dim UNBACKED -- the strict spelling of what vLLM's compiled forward hands
+    a route.
+
+    ``mark_dynamic`` is not enough to pin the property: Dynamo's own 0/1
+    specialisation adds a ``2 <= x.size()[0]`` guard the user code never
+    wrote (the recompile message says so itself and names ``mark_unbacked``
+    as the way out), so M=1 would recompile on any kernel.  vLLM's serve runs
+    the code traced at its warmup shape with guards disabled
+    (``vllm-compiled-forward-breaks-lane-hot-paths``, item 6), so the graph
+    has to be valid at M=1 with no branch on M at all -- which is exactly what
+    an unbacked size enforces: a Python branch on it fails the trace instead
+    of guarding.
+    """
+    torch._dynamo.reset()
+    compiled = torch.compile(fn, fullgraph=True)
+
+    def x_for(M, cols, seed):
+        g = torch.Generator(device="cuda").manual_seed(seed)
+        x = torch.randn(M, cols, device="cuda", generator=g).bfloat16()
+        torch._dynamo.decorators.mark_unbacked(x, 0)
+        return x
+
+    return compiled, x_for
+
+
+@cuda
+def test_the_gemv_survives_a_compiled_forward_with_a_dynamic_token_dim():
+    """One graph serves every M in 1..8.
+
+    ``fullgraph=True`` (nothing breaks the graph), the token dim unbacked (a
+    Python branch on it fails the trace, the way a marked-dynamic one raised
+    ``ConstraintViolationError`` at vLLM engine start on 2026-09-02), and
+    after the trace ``error_on_recompile`` (a guard that specialised M would
+    recompile at the next batch).  Values are held to the fp32 accumulation bound, not to
+    ``equal``: the GEMV retires partials by ``atomicAdd`` in whatever order
+    the blocks finish, so two launches of the same kernel can already differ
+    in the last fp32 bit.
+    """
+    kg = _kg()
+    unit, w, scale = _mixed_unit(kg)
+    compiled, x_for = _compiled_dynamic_m(lambda x: kg.window_gemv(unit, x))
+    # trace at M=2 (a warmup-shaped batch, as vLLM traces), then every other M
+    # through the same graph
+    for i, M in enumerate((2, 1, 3, 4, 5, 8)):
+        x = x_for(M, unit.cols, seed=100 + M)
+        with torch._dynamo.config.patch(error_on_recompile=(i > 0)):
+            y = compiled(x)
+        assert y.shape == (M, unit.rows) and y.dtype == torch.float32
+        ref = ((w * scale[:, None]).double() @ x.double().t()).t()
+        assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all()), f"M={M}"
+
+
+@cuda
+def test_the_module_seam_survives_a_compiled_forward_with_a_dynamic_token_dim():
+    """``window_linear`` -- what a route's ``apply()`` calls -- under the same
+    contract, its bf16 output held to the fp32 bound plus one bf16 ulp of the
+    reference (the bf16 rounding of a differently-ordered fp32 sum can land
+    one step apart)."""
+    kg = _kg()
+    unit, w, scale = _mixed_unit(kg, seed=32)
+    compiled, x_for = _compiled_dynamic_m(lambda x: kg.window_linear(unit, x) * 2)
+    for i, M in enumerate((2, 1, 4, 8)):
+        x = x_for(M, unit.cols, seed=200 + M)
+        with torch._dynamo.config.patch(error_on_recompile=(i > 0)):
+            y = compiled(x)
+        assert y.shape == (M, unit.rows) and y.dtype == torch.bfloat16
+        ref = 2 * ((w * scale[:, None]).double() @ x.double().t()).t()
+        tol = 2 * _bound(w, scale, x) + 2.0 ** -7 * ref.abs()
+        assert bool(((y.double() - ref).abs() <= tol).all()), f"M={M}"
+
+
+@cuda
+def test_the_refusals_survive_a_compiled_forward():
+    """The two things the GEMV refuses -- 8 rows per lane over a rate-1
+    column, and M past ``GEMV_MAX_M`` -- are refused BY NAME from inside the
+    compiled graph too, at the batch that needs them: the op runs its concrete
+    checks at call time, so a compiled route cannot serve them silently."""
+    kg = _kg()
+    rows, cols = 512, 96
+    rates = tuple((1, 2, 4)[c % 3] for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=33)
+    unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, torch.ones(rows, dtype=torch.float16)))
+    assert unit.serveable_keys() == (1,)
+    compiled, x_for = _compiled_dynamic_m(lambda x: kg.window_gemv(unit, x))
+    tile, scale = kg.decode_fp8(unit)
+    w = tile.view(torch.float8_e4m3fn).float()
+    for M in (2, 1):
+        x = x_for(M, cols, seed=300 + M)
+        y = compiled(x)
+        ref = ((w * scale[:, None]).double() @ x.double().t()).t()
+        assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all())
+    with torch._dynamo.config.patch(error_on_recompile=True):
+        with pytest.raises(GrammarError, match="rate-1 column"):
+            compiled(x_for(4, cols, seed=304))
+        with pytest.raises(GrammarError, match="M=9"):
+            compiled(x_for(9, cols, seed=309))
+
+
+@cuda
+def test_the_extension_is_resolved_at_preparation_not_on_the_first_call(monkeypatch):
+    """``prepare_*`` resolves (builds or finds) the extension, so a route's
+    first GEMV -- under a compiled forward, the trace itself -- never takes the
+    build.  The op body still goes through ``_ext`` (a cache hit); what is
+    pinned is that preparation already did."""
+    kg = _kg()
+    real = kg._ext
+    calls = []
+
+    def recording():
+        calls.append("ext")
+        return real()
+
+    monkeypatch.setattr(kg, "_ext", recording)
+    rows, cols = 512, 64
+    body, _ = _synthetic(rows, cols, (4,) * cols, seed=34)
+    values = (torch.randn(1 << L) * 0.02).bfloat16().cuda()
+    kg.prepare_value_unit(body, (4,) * cols, L, values)
+    assert calls == ["ext"], "prepare_value_unit must resolve the extension itself"
+    calls.clear()
+    body, codes = _synthetic(rows, cols, (4,) * cols, seed=35)
+    kg.prepare_from_parsed(_Parsed(body, (4,) * cols, codes, torch.ones(rows, dtype=torch.float16)))
+    assert calls == ["ext"], "prepare_from_parsed must resolve the extension itself"
+
+
+@cuda
+def test_item_tables_are_planned_at_preparation_not_on_the_call_path(monkeypatch):
+    """After preparation the call path plans nothing: ``plan_items`` reads the
+    run table back to Python, which a compiled forward cannot do.  Every M
+    tile the unit can serve runs with the planner disabled; a rate-1 unit
+    plans only the table it can run; ``with_plan`` replans for the new plan
+    and shares a replica's tables."""
+    kg = _kg()
+    unit, w, scale = _mixed_unit(kg, rows=600, cols=320, seed=36)
+    assert set(unit.items_by_mt) == {1, 4}
+    assert unit.items_for(8) is unit.items_for(4) and unit.items_for(2) is unit.items_for(1)
+    replan = unit.with_plan(kg.Plan(rpl=8, warps=8, blocks=7, cols_per_item=32, balanced=False))
+    replica = replan.with_plan(replan.plan, share_from=replan)
+    assert replica.items_by_mt is replan.items_by_mt and set(replan.items_by_mt) == {1, 4}
+    rows, cols = 512, 48
+    rates = tuple((1, 4)[c % 2] for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=37)
+    rate_one = kg.prepare_from_parsed(_Parsed(body, rates, codes, torch.ones(rows, dtype=torch.float16)))
+    assert set(rate_one.items_by_mt) == {1}
+
+    def no_planning(*_a, **_k):
+        raise AssertionError("plan_items ran on the call path")
+
+    monkeypatch.setattr(kg, "plan_items", no_planning)
+    monkeypatch.setattr(kg, "items_for", no_planning)
+    for u in (unit, replan, replica):
+        for M in (1, 2, 4, 8):
+            x = torch.randn(M, u.cols, device="cuda").bfloat16()
+            y = kg.window_gemv(u, x)
+            ref = ((w * scale[:, None]).double() @ x.double().t()).t()
+            assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all())
+    for M in (1, 2):
+        kg.window_gemv(rate_one, torch.randn(M, cols, device="cuda").bfloat16())
+
+
+@cuda
+def test_the_out_instrument_accumulates_into_the_callers_buffer():
+    """``out=`` is the bench's eager instrument: the same concrete launch into a
+    caller-owned zeroed ``[M_tile, rows]`` buffer, the functional op's answer
+    within the bound.  It stays so the receipt's timing arms keep running."""
+    kg = _kg()
+    unit, w, scale = _mixed_unit(kg, rows=600, cols=320, seed=38)
+    x = torch.randn(3, unit.cols, device="cuda").bfloat16()
+    scratch = torch.zeros(4, unit.rows, dtype=torch.float32, device="cuda")
+    y = kg.window_gemv(unit, x, out=scratch)
+    assert y.shape == (3, unit.rows) and y.data_ptr() == scratch.data_ptr()
+    ref = ((w * scale[:, None]).double() @ x.double().t()).t()
+    assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all())
+    assert torch.equal(scratch[3], torch.zeros(unit.rows, device="cuda"))   # the pad row stays zero
