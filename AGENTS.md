@@ -59,40 +59,70 @@ person or agent — changing the code.
     Dated files under `docs/measurements/` are append-only history and never a
     substitute.
 
-11. **File the finding before you move on — and err aggressive.** A defect you
-    noticed and did not file is a defect that dies with your context. The cost of
-    a duplicate issue is thirty seconds and a close; the cost of a lost one is
-    that it is rediscovered months later by an artifact. The bar for filing is
-    **"I believe this is wrong"**, not "I have proved it and scoped the fix" —
-    over-filing is explicitly sanctioned (Rob, 2026-09-03: *"I don't care if
-    we're too aggressive"*).
+11. **Fix the finding where you found it -- file only what you cannot.** A
+    defect you noticed and neither fixed nor filed dies with your context. But a
+    ticket is not the only record and it is usually the worse one: whoever
+    tripped over the defect understands it better than any fresh agent will, and
+    that understanding evaporates the moment the task returns. A filed one-liner
+    costs a brief, a worktree, a fresh-context ramp-up, a report and a merge, to
+    re-derive what somebody already knew. (Rob, 2026-09-03, on a dozen tickets in
+    an hour: *"we're just proliferating issues right now that may make sense to
+    fix in the context of the way in which they were discovered."*)
 
-    Timely as well as accurate: file it in the same working session, **before
-    starting the next task** — not at the end of the day, not in a handover, not
-    in a summary. A finding held in context for "later" has already failed.
+    **Default: fix it, on your branch, in a separate commit** (rule 12). That
+    buys a readable diff without paying the ticket tax.
 
-    What an issue owes is little: the **evidence at `file:line`** (read the line;
-    do not repeat a claim), what breaks and under what inputs, a **severity**,
-    and what would fix it — or, when the fix is a judgment call, the options and
-    who decides. State the uncertainty rather than withholding until certain.
+    **File instead when the fix is not yours to make:**
+    - it needs a decision only Rob prices -- a default moves, bytes move, an
+      `encoder_profile_id` moves, a wire changes, a promotion gate is involved;
+    - it needs a measurement you are not set up to take -- a serve, a second
+      population, the other box;
+    - it lives in another agent's live branch (read theirs, never edit theirs);
+    - it is large enough to swamp the diff of the task you came for.
 
-    **Severity.** `P0` — can ship or serve a wrong artifact. `P1` — a gate that
+    Two bounds, so this is not a licence to widen scope: it covers what you
+    **trip over** doing the task you came for, never a hunt for adjacent work;
+    and every off-task fix is listed in the report, one line each, so nothing
+    lands unannounced.
+
+    **When you do file, timeliness still binds.** Same working session, **before
+    starting the next task** -- not at the end of the day, not in a handover, not
+    in a summary. A finding held in context for "later" has already failed. The
+    bar is **"I believe this is wrong"**, not "I have proved it and scoped the
+    fix"; over-filing beats losing a finding, and fixing beats both. State the
+    uncertainty rather than withholding until certain.
+
+    **Say which it was.** An issue filed under this rule records whether the
+    filer could have fixed it and chose not to, and why. That is how a real
+    ticket is told from a deferred one-liner, and without it the backlog stops
+    describing the work.
+
+    What an issue owes is otherwise little: the **evidence at `file:line`** (read
+    the line; do not repeat a claim), what breaks and under what inputs, a
+    **severity**, and what would fix it -- or, when the fix is a judgment call,
+    the options and who decides.
+
+    **Severity.** `P0` -- can ship or serve a wrong artifact. `P1` -- a gate that
     cannot catch its own defect, or a wrong or underived number a decision reads.
-    `P2` — provenance, observability, or a claim beyond its evidence. `P3` —
+    `P2` -- provenance, observability, or a claim beyond its evidence. `P3` --
     cleanup with no decision riding on it. Two orthogonal labels:
     `measurement-needed` when a GPU or served A/B decides it, and
     `needs-decision` when the answer is a trade only Rob prices.
 
-    **Two narrow exceptions.** (a) A finding in prose — a doc, comment or
-    docstring — is *fixed on sight*, not filed: reading the cited line IS the
-    verification, so a stale sentence is a one-line commit. (b) A worker inside a
-    delegated task does not widen scope and does not file; it records the finding
-    in its report with `file:line` and a proposed severity, in a form the
-    coordinator can file verbatim — and the **coordinator files it before
-    starting the next task**.
+    **One exception, narrower than it was.** A finding in prose -- a doc, comment
+    or docstring -- is *fixed on sight* and never filed: reading the cited line
+    IS the verification, so a stale sentence is a one-line commit. (The former
+    second exception, that a delegated worker neither fixes nor files, is
+    withdrawn. Workers have `gh`, workers fix, and a worker that files says why
+    it did not fix.)
 
-12. **Never widen scope inside a change.** Fix what you came for. Everything else
-    is a filed issue (rule 11), not a second diff.
+12. **Never widen a commit; widen the branch.** One commit does one thing, so a
+    reviewer can take it or drop it on its own -- that is the whole content of
+    this rule, and it was never a reason to leave a defect unfixed. A second fix
+    on the same branch, in its own commit with its own test and its own pre-fix
+    failure line, is exactly right (rule 11). A second fix folded into the first
+    commit is what makes a diff unreadable, and that is the only thing forbidden
+    here.
 
 ## Before finishing
 
@@ -100,4 +130,5 @@ person or agent — changing the code.
   anything about rendering, planes or layout moved.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
-- Every side-finding filed, or fixed on sight if it is prose.
+- Every side-finding fixed in its own commit, or filed with the reason it
+  was not fixed. Prose is always fixed on sight, never filed.
