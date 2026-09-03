@@ -65,14 +65,23 @@ drives the real streamed route twice — once with the extension, once with
 `kernel_window_gemv._ext` patched to raise — and the declared identities differ,
 and repeat within a state. 3 passed in 135 s on GPU.
 
-**Not established.** The end-to-end serve reproduction (two streamed arms over
-one `VLLM_CACHE` root landing in the same key directory and replaying the wrong
-graph). `experiments/ts91_chain.sh` runs it as four censuses under one GPU-lock
-acquisition — A→cacheX, B→cacheY, B→cacheX, A→cacheY — and both the before and
-after chains are **queued behind an 8-deep GPU lock on sparklina** (load 82) at
-the time of writing. What it would add over the table above is the consequence
-(a wrong replay), not the cause; the cause is measured. See §6 for how to read
-it when it lands, including the one trap.
+**Not established at the time of writing.** The end-to-end serve reproduction —
+two streamed arms over one `VLLM_CACHE` root landing in the same key directory
+and replaying the wrong graph. `experiments/ts91_chain.sh` runs it as four
+censuses (A→cacheX, B→cacheY, B→cacheX, A→cacheY) and both the before and after
+chains are queued on sparklina's **slot runner** (`gpuslot.sh`, three concurrent
+slots), with per-chain cache roots *and* per-chain JIT extension dirs so the two
+concurrent chains cannot contaminate each other. §6 says how to read the result.
+
+Two things the serve chain adds that the CPU tier cannot give:
+
+* the **consequence** — what a wrong replay costs — which is the part the CPU
+  measurement is silent about by construction;
+* one fact about the **fix**, not the bug: the CPU measurement mutates a record
+  and hashes the same `VllmConfig` in one process, so it cannot show that in a
+  real worker the dict `note_traced_dispatch` writes into at
+  `process_weights_after_loading` is the same object `compute_hash` reads at
+  `gpu_worker.py:487`/`:694`. `after-A→X != after-B→Y` is that check.
 
 ## 3. The fix, and why it is per module
 
@@ -134,14 +143,21 @@ Suite: see §7.
   measurement hygiene rather than the fix, so nobody deletes it as "fixed by
   #91" (`ce8e786`).
 
-**Filed, not fixed:** `fp8_gemv.census_expected(compiled=True)` returns
-`combined | batch` for both regimes, so a *compiled* census admits the torch
-pair on every module and cannot tell the two lanes apart — it would pass even if
-every module silently fell back. I could not fix it inside this diff: making the
-census discriminating needs per-module holder state carried through
-`telemetry.read_route` and the census tool, which is a route-record change and
-would swamp this one. It is the reason §6's chain cannot be read off the census
-verdict.
+**Recorded here, not filed and not fixed** (one defect, and I could have fixed
+it — the reason I did not is scope, so it is stated rather than deferred
+silently): `fp8_gemv.census_expected(compiled=True)` returns `combined | batch`
+for **both** regimes (`fp8_gemv.py:387-389`), so a compiled census admits the
+torch pair on every module and passes even if every module silently fell back to
+it. That is the same blindness as the cache key, one stage later, and it is why
+§6's chain must be read off the log rather than off the census verdict.
+
+The fix is now short, and shorter than it was before this change:
+`compile_identity.traced_dispatch()` returns exactly the per-module
+`{prefix: op}` map the census would need, in the same process the census runs in
+(`VLLM_ENABLE_V1_MULTIPROCESSING=0`) — so a discriminating compiled expectation
+reads that instead of a static set, with no telemetry redesign. It is a change
+to the census contract and its tool, which is a second diff and would swamp this
+one; it belongs to whoever owns the census expectation.
 
 ## 6. How to read the chain when it lands, and one trap
 
@@ -149,11 +165,17 @@ The fact to read is the **directory name** under
 `cache-X/torch_compile_cache/torch_aot_compile/` after arm A, against the one
 under `cache-Y` after arm B. Equal = the collision, on a real serve.
 
-If they differ on the master tree, that is **not** evidence the bug is absent:
-arm B forces the no-GEMV state by pointing `TORCH_EXTENSIONS_DIR` at a
-read-only root, and if that variable is one of vLLM's env key factors it is an
-accidental key input rather than the lane. Check `envs.compile_factors()` before
-concluding anything from a difference.
+One alternative explanation had to be ruled out first, and it was, by
+measurement rather than by reading: arm B forces the no-GEMV state by pointing
+`TORCH_EXTENSIONS_DIR` at a read-only root, so if that variable were one of
+vLLM's env key factors, a difference in the two keys would be the *forcing
+method* and not the lane. It is not a factor. In the pinned image,
+`envs.compile_factors()` starts from vLLM's own env vars minus an ignore list
+(its docstring), `TORCH_EXTENSIONS_DIR` is not among its keys, and
+`hash_factors(compile_factors())` is byte-identical with it set to `/ext-ro`,
+set elsewhere, and unset (`5720a79df14f37f5` in all three). So on the master
+tree, equal directory names mean the collision and unequal ones would need a
+different explanation than arm B's method.
 
 For the crossed arm (B over A's cache) expect a **loud** failure at the first
 forward, not a silent wrong answer: `aot_compiled_fn(...)` is not inside a
@@ -169,7 +191,15 @@ failing files re-run against pristine master.
 
 RESULTS_PLACEHOLDER
 
-## 8. Consultations
+## 8. Rebase
+
+The branch is based on `82cdf51`; master moved to `0ef73ed` while this ran.
+`git merge-tree --write-tree 0ef73ed HEAD` is clean — the intervening commits
+touch `experiments/`, `tests/test_pair_grid_*`, `AGENTS.md` and the issues
+snapshot, and no serving file. Not rebased, because the before-arm of the
+reproduction is pinned to `82cdf51`.
+
+## 9. Consultations
 
 One advisor call (planning and again before writing this). No Fable agent was
 needed: the hard part was the pinned runtime's key path, which is a read, not a
