@@ -112,6 +112,15 @@ from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 
 # The same sources, the same held-out rows and the same metric definitions the
 # route's own weight-space receipt used, so these numbers sit beside those.
+from pair_grid_audit import (  # noqa: E402
+    CANDIDATE_MISSING,
+    NO_BYTE_MATCH,
+    REFERENCE_MISSING,
+    audit_lines,
+    audit_rung,
+    cell_label,
+    pair_arm_key,
+)
 from bf16_route_weight_space import (  # noqa: E402
     DENSE_H,
     DENSE_SRC,
@@ -699,8 +708,11 @@ def bytematched_rung(q256: int, window_bits: int, default_bits: int,
     return q256 + int(step)
 
 
-def pair_arm_key(q256: int, window_bits: int, ratio: float) -> str:
-    return f"R{q256} L={window_bits} r={ratio:g}"
+# ``pair_arm_key`` and the grid rule live in ``pair_grid_audit`` (#93), so the
+# stage that writes a file and the reader that checks one share one spelling
+# of a label and one definition of "the grid this run asked for".  A second
+# copy here is how a writer and a reader come to disagree about which cells
+# exist, which is the failure the audit is supposed to catch.
 
 
 def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
@@ -761,6 +773,11 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
         # The byte match is an assertion, not a hope: each candidate is
         # compared only against a reference it is provably the same size as.
         cmp: dict = {}
+        # Why a cell is not in ``cmp``.  The stage is the only place that
+        # knows this -- a reader of the finished file sees an absence and can
+        # say no more than "absent" -- so it is recorded here rather than
+        # reconstructed later (#93).
+        dropped: dict = {}
         for L in Ls:
             # The reference is stored under its own tagged key, so build the
             # same string here: looking up the untagged one silently drops
@@ -773,6 +790,10 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
             for ratio in a.pair_ratios:
                 key = pair_arm_key(q, L, ratio)
                 if key not in res or ref is None:
+                    dropped[cell_label(L, ratio)] = (
+                        NO_BYTE_MATCH if refs[L] is None
+                        else CANDIDATE_MISSING if key not in res
+                        else REFERENCE_MISSING)
                     continue
                 gap = abs(res[key]["bpp"] - ref["bpp"])
                 cmp[key] = {
@@ -782,13 +803,28 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
                        if ax in ref and ref[ax] > 0},
                 }
         res[f"R{q}_vs_shipped"] = cmp
-        bad = [k for k, v in cmp.items() if not v["bytes_matched"]]
-        b.log(f"    byte match: {len(cmp) - len(bad)} of {len(cmp)} arms sit at "
-              f"their reference's exact bpp" + (f"; UNMATCHED {bad}" if bad else ""))
+        # The denominator is the grid the run ASKED for, never the rows that
+        # survived into ``cmp``: a count taken from the survivors reports
+        # "N of N" over any number of dropped arms, which is how a table
+        # missing half its rows once printed a clean bill of health (#93).
+        audit = audit_rung(q, a.pair_bits, a.pair_ratios, cmp, reasons=dropped)
+        res[f"R{q}_grid_audit"] = audit
+        for line in audit_lines(audit):
+            b.log("    " + line)
         gate = a.gate
+        if not cmp:
+            b.log(f"    no arm at R{q} has a byte-matched reference; "
+                  "nothing to read here")
+            continue
         best = min((v[f"{gate}_ratio"], k) for k, v in cmp.items()
                    if f"{gate}_ratio" in v)
-        b.log(f"    best on {gate} at matched bytes: {best[1]} at {best[0]:.4f}x")
+        # An argmin over a subset of the grid is not the grid's argmin, and
+        # saying so is the whole of #93: the one artifact the broken revision
+        # wrote named an arm that was not the best by 28% on the gate.
+        b.log(f"    best on {gate} at matched bytes: {best[1]} at {best[0]:.4f}x"
+              + ("" if audit["complete"] else
+                 f"  -- OVER {audit['present']} OF {audit['expected']} CELLS, "
+                 "not the grid"))
         for L in Ls:
             row = [(v[f"{gate}_ratio"], res[k]["ratio"]) for k, v in cmp.items()
                    if res[k]["L"] == L and f"{gate}_ratio" in v]
@@ -881,9 +917,34 @@ def summarise_pair(b: "Bench") -> None:
     rungs = sorted({int(k[1:].split("_")[0]) for res in units.values()
                     for k in res if k.endswith("_vs_shipped")})
     b.doc["summary"] = {}
+    b.doc["summary_grid_audit"] = grid = {}
     axes = ("wt", "h", "out")
     for q in rungs:
         cmps = {u: res.get(f"R{q}_vs_shipped", {}) for u, res in units.items()}
+        # A summary derived from part of a grid is not a summary of the grid.
+        # Every (unit, rung) is re-audited against the run's own recorded
+        # ``args`` before anything below is printed, so the check is on the
+        # grid that was ASKED for and not on whatever reached this function
+        # (#93).  This flags rather than raises: the per-arm rows underneath
+        # are still the measurements, and destroying a long sweep's output at
+        # the summary step would lose them.
+        per_unit = {u: audit_rung(q, b.doc["args"]["pair_bits"],
+                                  b.doc["args"]["pair_ratios"], c,
+                                  reasons=(units[u].get(f"R{q}_grid_audit")
+                                           or {}).get("missing"))
+                    for u, c in cmps.items()}
+        grid[f"R{q}"] = {"complete": all(v["complete"] for v in per_unit.values()),
+                         "units": per_unit}
+        for u, audit in sorted(per_unit.items()):
+            if audit["complete"] and not audit["unmatched"]:
+                continue
+            for line in audit_lines(audit):
+                b.log(f"    {u}: {line}")
+        if not grid[f"R{q}"]["complete"]:
+            b.log(f"    REFUSING TO READ R{q} AS A GRID: the rows below cover "
+                  "a subset of the (L, ratio) cells this run asked for, so "
+                  "any argmin or separability verdict over them is an argmin "
+                  "over the subset (#93)")
         arms = sorted({k for c in cmps.values() for k in c},
                       key=lambda k: (int(k.split("L=")[1].split()[0]),
                                      float(k.split("r=")[1])))
@@ -897,6 +958,16 @@ def summarise_pair(b: "Bench") -> None:
                          if arm in c and f"{ax}_ratio" in c[arm]] for ax in axes}
             g = [v for v in vals.get(gate, []) if v == v]
             if len(g) != n:
+                # Not a hole in the grid but a hole across the population, and
+                # equally invisible before #93: an arm measured on some units
+                # and not others cannot be geomeaned over the set, and used to
+                # leave the table without a word.
+                b.log(f"    incomplete across units: {arm} has {len(g)} of "
+                      f"{n} unit(s) on {gate}; not summarised")
+                grid.setdefault(f"R{q}", {}).setdefault("partial_arms", {})[arm] = {
+                    "units_with_gate": len(g), "units": n,
+                    "missing_units": sorted(u for u in units
+                                            if arm not in cmps[u])}
                 continue
             bpps = [units[u][arm]["bpp"] for u in units if arm in units[u]]
             row = {
