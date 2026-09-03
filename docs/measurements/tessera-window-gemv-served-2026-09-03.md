@@ -17,8 +17,12 @@
 > sparky ran at load 33-68 on 20 CPUs and went into swap, the two arms taken
 > differ by 8x where the kernel difference is at most ~2x, and no latency claim is
 > made from them. One deliverable is **missing rather than deferred** and §4 says
-> so plainly: no profile trace was captured for any arm, because the harness
-> enabled the profiler with an environment variable vLLM 0.28 does not have.
+> so plainly: the original campaign captured no profile at all, because the
+> harness enabled the profiler with an environment variable vLLM 0.28 does not
+> have. **That is now fixed and the key arm re-taken**: armA/streamed/compiled
+> shows `window_gemv_kernel<14, ...>` launching 9,016 times, which closes the
+> compiled census's dispatch-not-launch limit. The other three arms still have no
+> trace.
 > Nothing in this document is a placeholder standing in for a measurement that was
 > taken and disliked.
 
@@ -125,14 +129,14 @@ Three consequences, all load-bearing for how the counts below are read:
 3. **Under a compiled forward the census is weaker still**: `decode` and `batch`
    admit an identical set, and the combined pair is stamped whatever runs
    underneath. **The compiled census proves dispatch, not launch.** Kernel names
-   in a torch profile are the launch evidence, and **this campaign captured no
-   profile at all** — the harness enabled it with an environment variable vLLM
-   0.28 does not have (§4, fixed in `dd42ff4`). So the compiled verdicts below are
-   real but bounded: they establish that the lane was selected and that the serve
-   was structurally healthy, **not that the GEMV kernel executed** under a
-   compiled forward. The eager arm does not depend on this: its decode phase
-   reports `(tessera_window_gemv::gemv, window_gemv)`, a symbol only the kernel
-   provides.
+   in a torch profile are the launch evidence, and the original campaign captured
+   no profile at all — the harness enabled it with an environment variable vLLM
+   0.28 does not have (§4, fixed in `dd42ff4`). **That gap is now closed for the
+   compiled arm**: a re-run of `armA/streamed/compiled` under the fix shows
+   `window_gemv_kernel<14, ...>` launching **9,016 times** (§4). So the compiled
+   verdict is backed by launch evidence after all. The eager arm never depended on
+   it: its decode phase reports `(tessera_window_gemv::gemv, window_gemv)` at
+   `M1:...` shapes, a symbol only the kernel provides.
 
 ### Counts
 
@@ -216,7 +220,9 @@ one commit so a reader does not have to check that two commits describe the same
 > **So the served numerical output of the GEMV kernel is not measured by this
 > campaign.** That is a gap in the deliverable, stated rather than papered over,
 > and section 4's missing trace compounds it: the strongest evidence here that
-> the kernel ran at all is the eager census decode record, and it is good
+> the kernel ran at all is the eager census decode record (and, under compile,
+> the recovered trace in §4 showing 9,016 `window_gemv_kernel` launches), and it
+> is good
 > evidence as far as it goes: `symbol: tessera_window_gemv::gemv`,
 > `decoder: window_gemv`, `state: served`, **112 modules**, at shapes
 > `M1:N1024:K2048` and friends -- M = 1, which is the regime the kernel exists
@@ -369,9 +375,38 @@ time went to host contention.
 Work per joule is deliberately **not** ranked here. Ranking it would require the
 work to be the thing consuming the joules, and it demonstrably was not.
 
-### The profile is missing, and that is a defect in this harness
+### The profile: missing for the campaign, then recovered for the compiled arm
 
-**No trace was captured for any arm.** The serve was asked for profiling with
+**RECOVERED.** After the fix below landed, `armA/streamed/compiled` was re-run and
+**did** produce a trace. Under the compiled forward, on the engine-core rank0
+trace:
+
+| kernel | launches | device time |
+|---|---|---|
+| `window_gemv_kernel<14, 16, 1, unsigned short, false, false, false>` | **9,016** | 149.86 ms |
+| `window_decode_kernel<14, 4, unsigned char>` | 784 | 237.74 ms |
+| `scaled_mm`/CUTLASS | 3,136 | 46.74 ms |
+| per-token FP8 quant | 9,800 | 44.42 ms |
+
+**This closes the gap §2 point 4 names.** The compiled census proves dispatch;
+these are kernel names in a chrome trace, which is launch. The window GEMV
+*executes* under a compiled forward, 9,016 times, at the wire's window width
+(the `14` template parameter is `WINDOW_BITS`, and `WINDOW_BITS_SUPPORTED = (14,)`).
+The eager arm never needed this -- its census record carries the
+`tessera_window_gemv::gemv` symbol at M1 shapes directly -- so with this trace the
+launch question is answered in **both** regimes.
+
+Summary regenerated with `experiments/window_gemv_trace_summary.py`; the JSON is
+`trace-armA-streamed-compiled.json`.
+
+**Still missing: the other three arms**, whose serves predate the fix. That is a
+smaller gap than it was -- the arm that carried the only unanswerable question is
+the one recovered -- but it is a gap, and no trace-based statement is made about
+armB or about the eager arms beyond what their censuses carry.
+
+### Why it was missing, and the fix
+
+**No trace was captured for any arm of the original campaign.** The serve was asked for profiling with
 `-e VLLM_TORCH_PROFILER_DIR=/prof`, and **vLLM 0.28 has no such variable** --
 profiling moved onto a config object reached from the command line as one json
 argument, `--profiler-config`. The engine did not fail; it warned
