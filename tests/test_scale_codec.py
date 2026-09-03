@@ -86,7 +86,10 @@ def test_inexact_underflow_fails_closed():
 def test_nan_pattern_480_is_banned_distinctly_from_overflow():
     """2**8 * (1 + 7/8) == 480 is exactly the banned 0x7F pattern."""
     found = False
-    for base in range(256):
+    # range(255): 0xFF is E8M0's NaN and has no composition at all now, so it
+    # is not a base to sweep.  Nothing is lost -- the 480 pattern lives at
+    # bases 134 and 135, which the sweep still reaches.
+    for base in range(255):
         half = HalfWord(0, 7)
         if compose_half(base, half) == Fraction(480):
             assert classify_half(base, half) is HalfClass.ILLEGAL_NAN_PATTERN
@@ -96,7 +99,10 @@ def test_nan_pattern_480_is_banned_distinctly_from_overflow():
 
 
 def test_overflow_above_max_finite_is_illegal():
-    for base in range(256):
+    # range(255) for the same reason as above: 0xFF has no composed value to
+    # compare against E4M3FN_MAX_FINITE.  It is illegal by base, not by
+    # magnitude, and `test_base_nan_is_illegal_everywhere` is what says so.
+    for base in range(255):
         for nibble in range(16):
             half = HalfWord((nibble >> 3) & 1, nibble & 0x07)
             if compose_half(base, half) > E4M3FN_MAX_FINITE:

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 
+from .container import HEADER_BYTES
 from .errors import GrammarError
 from .grammar import C_FULL_BITS, bresenham_rate_schedule, root_from_q256
 from .layout import TerminalSpec, build_planes, build_terminal
@@ -29,7 +30,6 @@ __all__ = [
     "Figure",
     "EvidenceTier",
     "CITED_FIGURES",
-    "plane_rate",
     "terminal_rate",
     "figure_table",
     "assert_derivation_matches",
@@ -81,7 +81,27 @@ CITED_FIGURES: tuple[Figure, ...] = (
         Fraction(25008, 10000),
         Provenance.CITED,
         EvidenceTier.DERIVED,
-        "doc S13: 'b = 2.5008 current exact wire' at 4096^2, q256=512",
+        # The breakdown, because the bare number invites exactly the quotation
+        # it cannot support.  This module derives the *payload* rate for that
+        # configuration and gets 5/2 exactly (``body_e4m3_16_q256_512``).  The
+        # cited figure is a *wire* rate: payload plus the artifact's side
+        # bytes.  Of those, the header is derivable and fixed at
+        # ``container.HEADER_BYTES``; the ALPHABET/DESCENDANT forest and the
+        # canonical manifest are per-artifact -- the forest depends on the
+        # grid and the rate schedule, the manifest on every field the unit
+        # declares -- and neither is derivable from ``(q256, rows, columns)``
+        # alone, which is all this function takes.  So the remainder is not
+        # derivable here, and this figure is carried, never computed.
+        #
+        # One tell, worth stating rather than glossing: the gap is 1/1250 bpp
+        # at 4096^2, i.e. 1048576/625 = 1677.7216 bytes.  A byte count with a
+        # fraction in it is not a byte count, so the cited "exact wire" is a
+        # four-decimal rounding of a real artifact's rate, not an exact
+        # quantity of the kind everything else in this table is.
+        f"doc S13: 'b = 2.5008 current exact wire' at 4096^2, q256=512. "
+        f"Derived payload for the same configuration is 5/2; the difference "
+        f"is forest + header ({HEADER_BYTES} B) + manifest side bytes, which "
+        f"are per-artifact and not derivable from (q256, rows, columns)",
     ),
     Figure(
         "projected_body_po2_q256_512",
@@ -123,9 +143,17 @@ CITED_FIGURES: tuple[Figure, ...] = (
 )
 
 
-def plane_rate(element_count: int, element_bits: int, quantizable_params: int) -> Fraction:
-    """Exact bits per quantizable parameter for one plane."""
-    return Fraction(element_count * element_bits, quantizable_params)
+# ``plane_rate(count, bits, qp) -> Fraction(count * bits, qp)`` used to live
+# here.  It is deleted rather than repaired.  It charged neither the pad byte
+# nor the plane's alignment, so on a one-element one-bit plane it reported
+# ``1/qp`` against a stored ``8/qp`` -- eight times light -- and it had zero
+# callers in ``src/``, in ``tests/`` and in ``tools/``.  Repairing it would
+# have meant reimplementing ``PlaneDescriptor.byte_length``, which is the
+# exact-byte authority the serializer and the accountant already share
+# precisely so they cannot drift.  A second, weaker accountant inside the one
+# module whose thesis is "derived means derived" is the drift, not the cure:
+# every rate this module publishes goes through ``terminal_rate``, which walks
+# the real descriptors and charges what the wire charges.
 
 
 def terminal_rate(

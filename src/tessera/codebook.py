@@ -83,6 +83,15 @@ def _hoist(
     points rather than the child's is the whole point -- the representative is
     what a reader gets when it truncates to this level, so it is answering for
     its sibling's mass too.
+
+    **The tie-break is left**, deliberately and not incidentally: ``<=`` keeps
+    the left child's representative and emits its subtree first when the two
+    costs are equal, which happens on any symmetric cell -- exactly the cells a
+    principal-axis split produces most often.  A tie resolved by whichever
+    float comparison happens to win, rather than by a stated rule, would make
+    the leaf order and therefore the emitted grid depend on summation order.
+    An empty cell takes the same branch for the same reason: no points, no
+    preference, left.
     """
     def walk(level: int, node: int) -> "tuple[list[int], int]":
         if level == depth:

@@ -67,6 +67,25 @@ def _to_bits(values: np.ndarray, width: int) -> np.ndarray:
     return ((values.astype(np.int64)[:, None] >> shifts) & 1).astype(np.uint8).ravel()
 
 
+def _refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
+    """Refuse a plane whose sub-byte slack is not zero.
+
+    The slice ``raw[:used]`` threw the slack away, so ``ac80`` and ``acff``
+    decoded to the same three values and the second was accepted in silence.
+    Canonicality is a wire rule, not a courtesy: ``verify_plane_region``
+    already refuses non-zero pad bits, but it runs only under
+    ``parse(verify=True)``, so every ``verify=False`` reader and every direct
+    caller of these two functions was unprotected.  The check belongs here
+    too, at the one seam that turns bytes into values, and it costs at most
+    seven bit comparisons.
+    """
+    if raw.size > used and raw[used:].any():
+        raise GrammarError(
+            f"{what}: non-zero pad bits after {used} content bits; the encoding "
+            "must be canonical and slack is not a covert channel"
+        )
+
+
 def _from_bits(bits: np.ndarray, width: int) -> np.ndarray:
     if width == 0:
         return np.zeros(0, dtype=np.int64)
@@ -78,16 +97,18 @@ def _from_bits(bits: np.ndarray, width: int) -> np.ndarray:
 def pack_uniform(values: torch.Tensor, width: int) -> bytes:
     """Pack a flat integer tensor at a fixed bit width, MSB-first."""
     flat = values.detach().cpu().numpy().ravel()
-    return np.packbits(_to_bits(flat, width)).tobytes()
+    return np.packbits(_to_bits(flat, width), bitorder="big").tobytes()
 
 
 def unpack_uniform(data: bytes, count: int, width: int, device=None) -> torch.Tensor:
-    bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))[: count * width]
+    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
+    bits = raw[: count * width]
     if bits.size != count * width:
         raise GrammarError(
             f"need {count * width} bits for {count} elements of {width} bits, "
             f"the plane holds {bits.size}"
         )
+    _refuse_dirty_slack(raw, count * width, "plane")
     return torch.from_numpy(_from_bits(bits, width)).to(device or "cpu")
 
 
@@ -136,7 +157,9 @@ def pack_body(
         )
     array = body_bits.detach().cpu().numpy()
     chunks = [_column_to_bits(array[:, j], rates[j], span) for j in range(cols)]
-    return np.packbits(np.concatenate(chunks) if chunks else np.zeros(0, np.uint8)).tobytes()
+    return np.packbits(
+        np.concatenate(chunks) if chunks else np.zeros(0, np.uint8), bitorder="big"
+    ).tobytes()
 
 
 def unpack_body(
@@ -147,9 +170,11 @@ def unpack_body(
             f"{rows} positions is not a whole number of span-{span} super-symbols"
         )
     total = sum(_body_bits(rate, rows, span) for rate in rates)
-    bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8))[:total]
+    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
+    bits = raw[:total]
     if bits.size != total:
         raise GrammarError(f"BODY needs {total} bits, the plane holds {bits.size}")
+    _refuse_dirty_slack(raw, total, "BODY")
     # uint8, not int64: a plane position carries at most 3 bits, and the replay
     # is a bandwidth-bound elementwise chain over the BODY plane.  Eight bytes
     # per three bits made every pass in the decoder read 8x what it needed.

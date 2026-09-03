@@ -17,7 +17,21 @@ E4M3FN byte** under the declared clip composition.  Exact positive subnormals
 are legal.  Zero, NaN, overflow, and inexact underflow are illegal and fail
 closed; the 0x7F / 0xFF NaN patterns are banned outright.
 
-Nothing here rounds. The composition is exact rational arithmetic.
+Nothing here rounds. The composition is exact rational arithmetic, and it is
+exact by construction rather than by convention: ``compose_half`` refuses a
+non-integer clip exponent, because ``Fraction(2) ** 0.5`` is a *float* and a
+float scale would then be measured against an exact-round-trip predicate.
+
+**Clip-shift equivalence, stated precisely** (verified exhaustively over all
+256 x 256 words at clips -2..+2).  Group *legality* is exactly clip-shift
+equivalent for every in-range base -- ``classify_group(base, ref, clip)``
+equals ``classify_group(base + clip, ref, 0)`` with zero mismatches, and
+:func:`classification_census` is identical at every clip.  Half-level *reason
+codes* are not, and differ in exactly 16 cases per unit clip, all of them at
+base 0xFF: the shifted call reports ``ILLEGAL_OVERFLOW`` where the direct one
+reports ``ILLEGAL_BASE_NAN``.  Both are illegal, so nothing a gate reads
+changes; only the name of the refusal does.  :func:`is_canonical_group` does
+not take a clip at all, so its clip-independence is structural.
 """
 
 from __future__ import annotations
@@ -28,8 +42,10 @@ from enum import Enum
 from fractions import Fraction
 
 from .errors import ScaleCodecError
+from .exact import require_index
 from .fp8 import (
     E4M3FN_MAX_FINITE,
+    E8M0_NAN_BYTE,
     e4m3fn_encode_exact,
     e4m3fn_is_subnormal,
 )
@@ -137,10 +153,30 @@ def compose_half(base: int, half: HalfWord, clip_exponent: int = 0) -> Fraction:
 
     The terminal clip exponent composes multiplicatively and is a power of two,
     so it shifts the binade and nothing else (doc S6b, S9).
+
+    Two refusals, neither of which changes a byte and both of which close a
+    hole a direct caller could walk into:
+
+    * **The clip exponent must be an integer.**  ``Fraction(2) ** 0.5`` does
+      not raise -- it returns ``1.4142135623730951``, a binary float, and the
+      multiplication then degrades the whole return value.  A function
+      annotated ``-> Fraction`` silently returning a rounded float, into a
+      legality predicate defined as an exact bit-for-bit round trip, is the
+      worst failure mode this module has, because the answer still looks like
+      an answer.
+    * **0xFF has no composition.**  It is E8M0's NaN: no exponent, therefore
+      no scale.  Composing it produced ``2**128``, a number with no meaning
+      anywhere on this wire.  :func:`classify_half` short-circuits at 0xFF, so
+      the live path never reached it -- but the repo's own ``test_nan_pattern_480``
+      did, which is exactly the kind of caller a shielded hole eventually gets.
     """
     if not 0 <= base <= 255:
         raise ScaleCodecError(f"not a byte: {base}")
-    exponent = base - 127 + half.delta + clip_exponent
+    if base == E8M0_NAN_BYTE:
+        raise ScaleCodecError(
+            "E8M0 NaN base 0xFF has no exponent and therefore no composed scale"
+        )
+    exponent = base - 127 + half.delta + require_index(clip_exponent, "clip exponent")
     return Fraction(2) ** exponent * (1 + Fraction(half.mantissa, 8))
 
 
@@ -150,6 +186,18 @@ def classify_half(base: int, half: HalfWord, clip_exponent: int = 0) -> HalfClas
         return HalfClass.ILLEGAL_BASE_NAN
 
     value = compose_half(base, half, clip_exponent)
+    if value <= 0:
+        # Unreachable by construction: the composition is 2**k * (1 + m/8),
+        # which is strictly positive for every one of the 4096 words.  It is
+        # checked rather than assumed because the branch below would classify
+        # a zero as NORMAL -- ``e4m3fn_encode_exact(0)`` answers 0x00 and 0x00
+        # is not subnormal -- flatly contradicting the module contract above,
+        # which declares zero illegal.  If this ever fires, the composition
+        # changed and the legality set moved with it.
+        raise ScaleCodecError(
+            f"composed scale {value} is not positive; zero and negative scales "
+            "are illegal (doc S6b) and the composition cannot produce one"
+        )
     byte = e4m3fn_encode_exact(value)
     if byte is not None:
         if byte == 0x7E:
