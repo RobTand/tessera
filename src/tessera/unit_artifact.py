@@ -54,6 +54,7 @@ from .manifest import (
     ScalePlaneKind,
 )
 from .planes import PlaneKind
+from .scale_channel import default_channel_sigma
 from .trellis import ConvCode, _ODS_GENERATORS
 from .wire import pack_body, pack_fp16, pack_uniform, unpack_body, unpack_fp16, unpack_uniform
 
@@ -66,6 +67,7 @@ def _normalize_reach(
     window_seed: int,
     window_sigma: "float | None",
     channel_sigma: "float | None",
+    grid: "PayloadGrid | None" = None,
 ) -> "tuple[int, float | None, float | None]":
     """The reach spellings that move bytes, and nothing else -- the one place
     the binding rule lives.
@@ -83,6 +85,16 @@ def _normalize_reach(
         window_seed, window_sigma = 0, None
     if ScalePlaneKind(scale_plane) is not ScalePlaneKind.CHANNEL:
         channel_sigma = None
+    # ``None`` and the number ``None`` resolves to are the same encoder, so
+    # they are the same profile (#81).  Without this a caller that resolves
+    # the default itself -- every sweep harness does, and a per-unit spread
+    # rule would -- gets a different id for byte-identical output, which is
+    # a refusal that fires on nothing.  Normalising toward ``None`` rather
+    # than toward the value keeps every existing digest where it is: the
+    # shipped recipes all store ``None``.
+    if channel_sigma is not None and grid is not None:
+        if float(channel_sigma) == float(default_channel_sigma(grid)):
+            channel_sigma = None
     return window_seed, window_sigma, channel_sigma
 
 
@@ -166,7 +178,7 @@ def encoder_profile_id(
     """
     body = BodyKind(body)
     window_seed, window_sigma, channel_sigma = _normalize_reach(
-        body, scale_plane, window_seed, window_sigma, channel_sigma
+        body, scale_plane, window_seed, window_sigma, channel_sigma, grid
     )
     if body is BodyKind.WINDOW:
         if span != 1:
@@ -302,6 +314,7 @@ def build_unit_artifact(
         getattr(unit, "window_seed", 0),
         getattr(unit, "window_sigma", None),
         getattr(unit, "channel_sigma", None),
+        grid,
     )
     reach = None
     if (body is BodyKind.WINDOW and (seed or wsigma is not None)) or (

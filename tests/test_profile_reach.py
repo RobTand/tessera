@@ -216,3 +216,26 @@ def test_a_shard_keeps_its_parents_reach_profile():
     assert torch.equal(
         read_unit_artifact(shard_blob),
         read_unit_artifact(blob)[:16, :])
+
+
+def test_an_explicitly_resolved_default_spread_is_the_default_profile():
+    """#81.  ``None`` means "resolve the grid's default"; a caller that
+    resolves it itself has not changed encoder, and the bytes agree.  Every
+    sweep harness resolves it -- and a per-unit spread rule would -- so an id
+    that distinguished the two would refuse on nothing, over and over."""
+    from tessera.scale_channel import default_channel_sigma
+
+    kw = dict(
+        grid=E4M3_GRID, span=1, scale_plane=ScalePlaneKind.CHANNEL,
+        body=BodyKind.WINDOW, window_bits=14,
+    )
+    implicit = encoder_profile_id(None, (4,), channel_sigma=None, **kw)
+    explicit = encoder_profile_id(
+        None, (4,), channel_sigma=default_channel_sigma(E4M3_GRID), **kw)
+    assert implicit == explicit
+
+    # ...and the normalisation is to the default only, not to everything:
+    moved = encoder_profile_id(
+        None, (4,),
+        channel_sigma=1.25 * default_channel_sigma(E4M3_GRID), **kw)
+    assert moved != implicit
