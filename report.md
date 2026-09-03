@@ -149,3 +149,48 @@ loops as set comprehensions off the patterns; mine removes them in favour of
 the one rule, having absorbed their `.weight`-suffix finding. The merge is a
 deliberate resolution, not a textual one: **keep `ignored_module`, drop both
 loops.** Their `quantizable()` and refusal changes do not overlap.
+
+## Overlap with `muse/ts-5-moe-route` (#86 is already closed)
+
+**#86 was fixed and closed on the other branch while this was in flight**, by
+`b0da95e` ("Name the vision tower too: passed through is not the same as
+ignored"). It is a good commit and its instinct was right under the amended
+filing rule. Read, not edited. Note for the coordinator: **do not double-close**
+— #86 already shows closed against `b0da95e`.
+
+**Which should land: this one, on the axis the issue asked about.** Both close
+the same hole and agree on every naming rule they share; the difference is what
+each *establishes* and where the answer comes from.
+
+* **Attestation.** Their commit says plainly what it did not do — "does NOT
+  attest that each generated name is the prefix the runtime builds that module
+  at; for a vision tower that takes a load, and none was run." That construction
+  *was* run here, and it did not merely confirm the guess: the pinned build
+  offers `visual.blocks.N.attn.qkv_proj`, not `.attn.qkv`, because
+  `Glm5NextVisionAttention` picks the spelling at build time from whether a
+  quant config was passed. `b0da95e` emits `...attn.qkv` alone, so on a runtime
+  that threads its quant config into the tower — the only world where the
+  refusal fires at all — 24 of its GLM entries are the wrong string and the
+  checkpoint is refused exactly as before the fix. That is the one substantive
+  behavioural difference between the two, and it is not derivable by reading the
+  naming rules; it took the run.
+* **One source or two.** `b0da95e` adds `outside_body_ignore_name` as a *second*
+  path beside the body one, so the body branch and the non-body branch each
+  build `ignore` their own way. Here the three sources were collapsed into one
+  rule over the tensors actually **written**, with a post-loop guard that
+  refuses if any planned passthrough is unnamed — so the next tensor class
+  nobody anticipated is named by construction rather than by someone remembering
+  to extend a second function.
+* **Where theirs is equal or better.** Its `ndim >= 3` test runs before the
+  `.weight` test because transformers-5 writes a packed stack bare — the same
+  correction reached here independently in `3421d30`, and their ordering
+  argument is the clearer statement of it. Its `lm_head` / `embed_tokens` early
+  return is cosmetic here only because the list is deduplicated at assembly
+  (`ignore = sorted(set(ignore))`). Its off-disk count (99 GLM / 131 Qwen) is
+  the same measurement taken here (125 GLM after the alias). No case is handled
+  there that is missed here.
+
+Merge mechanics: this branch **deletes** the two post-loop expert-ignore loops
+that `muse/ts-5-moe-route` also rewrites, and both branches touch the same shard
+loop, so the two diffs conflict textually. Taking this one whole and dropping
+`b0da95e`'s hunk resolves it without losing anything theirs establishes.
