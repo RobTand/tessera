@@ -339,32 +339,41 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     # remember, and the one that fails at LOAD, hours after the ROUTES-derived
     # export gate already accepted the wire.
     route = ROUTES[TESSERA_NVFP4]
-    grids = {p.grid.name for _, p in parsed_roles}
-    if not grids <= set(route["grids"]):
-        raise ValueError(
-            f"the native decoder serves {route['grid_kind']} grid {route['grids']} "
-            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
-            f"{sorted(grids)}")
-    bodies = {p.body.name for _, p in parsed_roles}
-    if bodies != {route["body"]}:
-        raise ValueError(
-            f"the native decoder serves the span-{route['span']} {route['body']} body "
-            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
-            f"{sorted(bodies)}")
     from tessera.manifest import ScalePlaneKind
 
+    # Every mismatch, not the first one.  These four are not independent in
+    # practice -- only E4M3 and BF16 produce a CHANNEL plane, and neither is
+    # an E2M1 grid, so a CHANNEL unit ALWAYS trips the grid check too.  Under
+    # first-wins that made the plane clause unreachable on this route: a
+    # CHANNEL+TCQ unit was refused for its grid and the message never said
+    # the plane was wrong as well, which is how
+    # ``test_prepare_tessera_module_refuses_a_channel_plane_unit`` came to
+    # assert something that could not happen.  Collecting them also spares
+    # whoever is holding the wrong wire a round of fix-one-run-again.
+    grids = {p.grid.name for _, p in parsed_roles}
+    bodies = {p.body.name for _, p in parsed_roles}
     planes = {ScalePlaneKind(u.scale_plane).name for u in units}
-    if planes != {route["plane"]}:
-        raise ValueError(
-            f"the native decoder serves the {route['plane']} scale plane "
-            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry "
-            f"{sorted(planes)}")
     spans = {int(getattr(u, "span", 1)) for u in units}
+    where = f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}])"
+    mismatches = []
+    if not grids <= set(route["grids"]):
+        mismatches.append(
+            f"the native decoder serves {route['grid_kind']} grid "
+            f"{route['grids']} {where}; roles carry {sorted(grids)}")
+    if bodies != {route["body"]}:
+        mismatches.append(
+            f"the native decoder serves the span-{route['span']} "
+            f"{route['body']} body {where}; roles carry {sorted(bodies)}")
+    if planes != {route["plane"]}:
+        mismatches.append(
+            f"the native decoder serves the {route['plane']} scale plane "
+            f"{where}; roles carry {sorted(planes)}")
     if spans != {route["span"]}:
-        raise ValueError(
-            f"the native decoder reads span-{route['span']} "
-            f"(tessera.serving.scheme.ROUTES[{TESSERA_NVFP4!r}]); roles carry spans "
-            f"{sorted(spans)}")
+        mismatches.append(
+            f"the native decoder reads span-{route['span']} {where}; roles "
+            f"carry spans {sorted(spans)}")
+    if mismatches:
+        raise ValueError("; ".join(mismatches))
     tables = [u.scale_lut for u in units]
     globals_ = [float(u.scale_global) for u in units]
     shared, moved = shared_lut_global(tables, globals_, names)
