@@ -1,0 +1,74 @@
+{
+ "ORACLE_bytematched": {
+  "mlp.down_proj": 1044,
+  "mlp.gate_proj": 900,
+  "mlp.up_proj": 900,
+  "self_attn.o_proj": 1107,
+  "self_attn.q_proj": 1083,
+  "self_attn.k_proj": 1083,
+  "self_attn.v_proj": 1083
+ },
+ "L1_shipped_menu_pick": {
+  "mlp.down_proj": 749,
+  "mlp.gate_proj": 1107,
+  "mlp.up_proj": 1107,
+  "self_attn.o_proj": 934,
+  "self_attn.q_proj": 1083,
+  "self_attn.k_proj": 1083,
+  "self_attn.v_proj": 1083
+ },
+ "L1_remeasured_4x256_pick": {
+  "mlp.down_proj": 749,
+  "mlp.gate_proj": 1083,
+  "mlp.up_proj": 1083,
+  "self_attn.o_proj": 1006,
+  "self_attn.q_proj": 1083,
+  "self_attn.k_proj": 1083,
+  "self_attn.v_proj": 1083
+ },
+ "AURA_kl_adjoint_pick": {
+  "mlp.down_proj": 1006,
+  "mlp.gate_proj": 934,
+  "mlp.up_proj": 934,
+  "self_attn.o_proj": 934,
+  "self_attn.q_proj": 1150,
+  "self_attn.k_proj": 1150,
+  "self_attn.v_proj": 1150
+ },
+ "EMPIRICAL_interp_5anchor_pick": {
+  "mlp.down_proj": 1006,
+  "mlp.gate_proj": 826,
+  "mlp.up_proj": 826,
+  "self_attn.o_proj": 1340,
+  "self_attn.q_proj": 1107,
+  "self_attn.k_proj": 1107,
+  "self_attn.v_proj": 1107
+ },
+ "EMPIRICAL_interp_9anchor_pick": {
+  "mlp.down_proj": 1044,
+  "mlp.gate_proj": 934,
+  "mlp.up_proj": 934,
+  "self_attn.o_proj": 1006,
+  "self_attn.q_proj": 1083,
+  "self_attn.k_proj": 1083,
+  "self_attn.v_proj": 1083
+ },
+ "3a_L1_remeasured_4x256": {
+  "mlp.down_proj": 1044,
+  "mlp.gate_proj": 900,
+  "mlp.up_proj": 900,
+  "self_attn.o_proj": 1262,
+  "self_attn.q_proj": 1006,
+  "self_attn.k_proj": 1006,
+  "self_attn.v_proj": 1006
+ },
+ "3a_EMPIRICAL_interp_9anchor": {
+  "mlp.down_proj": 1006,
+  "mlp.gate_proj": 1006,
+  "mlp.up_proj": 1006,
+  "self_attn.o_proj": 1006,
+  "self_attn.q_proj": 1006,
+  "self_attn.k_proj": 1006,
+  "self_attn.v_proj": 1006
+ }
+}
