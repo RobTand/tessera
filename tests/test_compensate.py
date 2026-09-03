@@ -19,6 +19,15 @@ from tessera.trellis import ConvCode
 
 CC = ConvCode(memory=6)
 
+#: Two tests below encode through ``encode_unit``, which is a GPU job.  They
+#: had no guard, so a host-safe run (``CUDA_VISIBLE_DEVICES=""``, which is how
+#: this suite runs while a serve holds the box) reported four RED tests that
+#: were only ever absent hardware -- a failure that says nothing about the code
+#: and hides one that would.  Same spelling as test_merge_guard.py and
+#: test_ldlq_lut_plane.py.
+cuda = pytest.mark.skipif(not torch.cuda.is_available(),
+                          reason="the encoder is a GPU job")
+
 
 def _hessian(n, tokens=512, seed=0):
     generator = torch.Generator().manual_seed(seed)
@@ -73,6 +82,7 @@ def test_an_exact_encoder_compensates_to_nothing():
     assert torch.equal(recon, weight.float())
 
 
+@cuda
 @pytest.mark.parametrize("arity,rotation", [(1, RotationState.NONE),
                                             (2, RotationState.NONE),
                                             (2, RotationState.R_IN_ONLY)])
@@ -100,6 +110,7 @@ def test_encoding_a_slice_equals_the_span_of_a_whole_encode(arity, rotation):
         assert torch.equal(piece, whole[:, start:stop])
 
 
+@cuda
 def test_compensation_lowers_the_hessian_weighted_error():
     """The mechanism does what it claims on real trellis output.
 
