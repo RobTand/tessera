@@ -11,7 +11,7 @@ materialised path serves the other:
   many-row forward the GEMV refuses by name and the materialised path serves.
 
 The numbers reported are ``vllm:time_to_first_token_seconds`` and
-``vllm:time_per_output_token_seconds`` -- vLLM's own histograms, differenced
+``vllm:request_time_per_output_token_seconds`` -- vLLM's own histograms, differenced
 across each load, so they describe the requests this script drove and nothing
 else.  Client-side wall clock is recorded beside them as a cross-check, never
 as the headline: a client number folds in HTTP and this box's scheduler.
@@ -46,6 +46,15 @@ def load_now() -> dict:
     return {"load1": one, "load5": five, "load15": fifteen,
             "ncpu": os.cpu_count(),
             "load1_per_cpu": round(one / (os.cpu_count() or 1), 3)}
+
+#: vLLM 0.28 publishes per-output-token latency as
+#: ``vllm:request_time_per_output_token_seconds``; the name this script first
+#: read, ``vllm:time_per_output_token_seconds``, does not exist in this release
+#: and returned None for every window.  Recorded here as a named constant so the
+#: stem is stated once.  ``vllm:inter_token_latency_seconds`` is read beside it:
+#: same mean, but counted per token rather than per request, so the two together
+#: say whether a difference is in the per-request or the per-token accounting.
+TPOT_STEM = "vllm:request_time_per_output_token_seconds"
 
 _HIST = re.compile(r'^(?P<name>[a-zA-Z_:][a-zA-Z0-9_:]*)(?P<labels>\{[^}]*\})? (?P<value>\S+)$')
 
@@ -171,7 +180,8 @@ def main() -> int:
     windows["decode"] = drive(args.url, args.decode_requests, 32, args.decode_out_tokens)
     a = scrape(args.url)
     windows["decode"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
-    windows["decode"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    windows["decode"]["tpot"] = delta(b, a, TPOT_STEM)
+    windows["decode"]["itl"] = delta(b, a, "vllm:inter_token_latency_seconds")
     windows["decode"]["series_moved"] = moved(b, a)
     marks["decode_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     loads["decode_end"] = load_now()
@@ -183,7 +193,8 @@ def main() -> int:
                                args.prefill_prompt_tokens, 1)
     a = scrape(args.url)
     windows["prefill"]["ttft"] = delta(b, a, "vllm:time_to_first_token_seconds")
-    windows["prefill"]["tpot"] = delta(b, a, "vllm:time_per_output_token_seconds")
+    windows["prefill"]["tpot"] = delta(b, a, TPOT_STEM)
+    windows["prefill"]["itl"] = delta(b, a, "vllm:inter_token_latency_seconds")
     windows["prefill"]["series_moved"] = moved(b, a)
     marks["prefill_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     loads["prefill_end"] = load_now()
@@ -224,10 +235,13 @@ def main() -> int:
     for name, w in windows.items():
         ttft = w.get("ttft") or {}
         tpot = w.get("tpot") or {}
+        itl = w.get("itl") or {}
         print(f"{name}: wall {w['wall_s_per_request']*1000:.2f} ms/req  "
               f"TTFT {1000*ttft.get('mean_s', float('nan')):.2f} ms  "
               f"TPOT {1000*tpot.get('mean_s', float('nan')):.3f} ms "
-              f"(n={tpot.get('count')})")
+              f"(n={tpot.get('count')})  "
+              f"ITL {1000*itl.get('mean_s', float('nan')):.3f} ms "
+              f"(n={itl.get('count')})")
     lo = max(v["load1_per_cpu"] for v in loads.values())
     print(f"host load1/cpu peaked at {lo:.2f} over the timed windows "
           f"({'CONTENDED -- report these as contended' if lo > 1.0 else 'box was quiet'})")
