@@ -363,13 +363,18 @@ clamp-capable backends — `FLASHINFER_TRTLLM`, `FLASHINFER_CUTEDSL`,
 > constructed config, not a served MoE. A `requires_serve_flags` cell needs a
 > route someone has served.
 
-**Scope: build `487ecf187`.** It has one consequence that is not scoped: the
-sentence in `serving/config.py`'s MoE refusal that says NVFP4 W4A4 "needs
-`--moe-backend flashinfer_b12x` on GB10" is an *asserted* runtime claim of the
-kind principle 14 forbids, and on this family it is false twice over — the flag
-is refused, and no flag is needed. It is corrected when the MoE route lands, not
-before, so that the correction and its evidence travel together; tracked as
-**#31** so the deferral cannot become a loss.
+**Scope: build `487ecf187`.** It had one consequence that is not scoped: the
+sentence in `serving/config.py`'s MoE refusal that said NVFP4 W4A4 "needs
+`--moe-backend flashinfer_b12x` on GB10" was an *asserted* runtime claim of the
+kind principle 14 forbids, and on this family it was false twice over — the flag
+is refused, and no flag is needed. **Corrected 2026-09-02 (#31), and the
+deferral was wrong to take.** The argument for waiting was that the correction
+should travel with the route's evidence; but the evidence that the sentence is
+false is the measurement above, which exists now, and the sentence was
+misdirecting an operator in the meantime. The refusal names no flag at all and
+points at this receipt instead: which backend a build resolves is that build's
+answer to give. When the route is served, the flags belong in the cell's
+`requires_serve_flags` — a field a gate reads — and not in prose.
 
 The FP8 oracle carries no analogous clamp filter, so **the TESSERA_FP8 family
 (E4M3 wire, WINDOW body, CHANNEL plane -> per-channel FP8 W8A8) is the first
