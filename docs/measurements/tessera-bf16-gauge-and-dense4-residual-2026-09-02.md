@@ -35,8 +35,10 @@ matched. Against the E4M3 wire it is **4.23x** better for +0.0156 bpp.
 **Claim (#18, transfer).** The dense L conflict **does not transfer to GLM
 experts.** On two expert `gate_proj` tensors every L is on the `wt`, `h` *and*
 `out` frontier at both rungs -- deeper is monotonically better on all three --
-because on experts `h` tracks `wt` to four or five digits. The L question is a
-dense-model question. At `L=16` the BF16 route also beats EXL3 K=8 in out-space
+because on experts `h` tracks `wt` to four or five digits. Not because `H` is
+isotropic there (its diagonal spans 3.9x and 21.7x); because the encoder's
+per-column relative error is, which is what makes the two metrics the same
+number. The L question is a dense-model question. At `L=16` the BF16 route also beats EXL3 K=8 in out-space
 (0.902x / 0.922x at +1.5% bytes), so the "level in out-space" above is a
 property of the `L=14` constant, not of the route.
 
@@ -240,8 +242,10 @@ This stage could move the ratio only because it pinned `window_sigma = 1.0`
 explicitly. So the finding is a **wire proposal, not a constant to retune**: to
 spend it the BF16 recipe needs an explicit reach term -- a `window_sigma` per
 rung, or equivalently a reach constant -- and `wire_recipe` would have to carry
-it the way it already carries `window_bits`. Nothing changes here: weight space,
-four dense units, no BF16 lane to serve on, principle 3.
+it the way it already carries `window_bits`. Filed as
+[#48](https://github.com/RobTand/tessera/issues/48), with the per-rung `L`
+question folded into it. Nothing changes here: weight space, four dense units,
+no BF16 lane to serve on, principle 3.
 
 ## #18, part 2: six GLM experts, R=8
 
@@ -298,12 +302,24 @@ conflict -- `wt` monotone, `h` non-monotone, the two axes disagreeing in sign at
 R=8 -- **does not appear here at all**.
 
 The mechanism is visible in the table: on GLM experts `h` and `wt` agree to four
-or five significant digits (0.07786 vs 0.07786, 0.00531 vs 0.00531). The expert
-Hessian diagonal is near-isotropic over these rows, so there is no axis for the
-two metrics to disagree on. On dense Qwen they diverge, and that divergence is
-where the whole L conflict lives. **So the L question is a dense-model question**
--- which also means the dense result cannot be transferred to experts, and the
-expert result cannot be transferred to dense.
+or five significant digits (0.07786 vs 0.07786, 0.00531 vs 0.00531). **It is not
+that the Hessian is isotropic** -- measured on the same 1024 eval rows the
+diagonal `H_ii` spans **3.86x** max/min on L5 and **21.70x** on L42
+(std/mean 0.181 and 0.377), which is not isotropic by any reading. With a
+diagonal `H`,
+
+```
+h^2 / wt^2 = [ sum_i H_ii e_i / sum_i H_ii w_i ] / [ sum_i e_i / sum_i w_i ]
+```
+
+is exactly 1 whenever the per-column relative error `e_i / w_i` is uniform,
+*however much `H` varies*. So the term that has to be near-constant is the
+encoder's per-column relative error -- which is what a column-blind CHANNEL
+plane produces on weights with no outlier columns, and precisely what dense Qwen
+breaks (the reach-aware start exists because a quarter of Qwen's rows exceed the
+window table's reach). **So the L question is a dense-model question** -- the
+dense result cannot be transferred to experts, and the expert result cannot be
+transferred to dense.
 
 Two things fall out that are worth recording even though nothing is promoted:
 
@@ -459,7 +475,7 @@ suggested, and that is worth stating rather than smoothing:
 
 The first two are direct measurements and they agree to half a percent. The
 third is a 196-unit `hq` census multiplied by a discount estimated on six units,
-five of which are not a random sample -- they are the units that happened to
+which are not a random sample -- they are the units that happened to
 have held-out activation rows cached -- so its 4% disagreement with the other
 two is an artefact of the discount's own sampling error, not a third opinion.
 **Read the residual as 1.03x-1.04x, weight-leg, concentrated in `q_proj` and

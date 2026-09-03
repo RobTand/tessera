@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T02:01:13Z",
+ "generated": "2026-09-03T03:19:20Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -38,6 +38,30 @@
    "123": {
     "state": "OPEN",
     "title": "D34 residue: 111 undated Gridbook mentions in 41 module docstrings, and the one that misstates a capability"
+   },
+   "124": {
+    "state": "OPEN",
+    "title": "The Tessera dev pin is a contract version behind, and nothing notices"
+   },
+   "125": {
+    "state": "OPEN",
+    "title": "build_candidates(cost_mode=) is a dead kwarg after the trellis surface was archived"
+   },
+   "126": {
+    "state": "OPEN",
+    "title": "artifact_bpp under-prices the TCQ-at-cap rung by 512 bytes a unit: the ALPHABET and DESCENDANT planes are not charged"
+   },
+   "127": {
+    "state": "OPEN",
+    "title": "Nothing reads the currency a Tessera cost table declares"
+   },
+   "128": {
+    "state": "OPEN",
+    "title": "Rescue the super-item menu byte-identity golden from the closed trellis PR"
+   },
+   "129": {
+    "state": "OPEN",
+    "title": "promote_serving_units raises a bare KeyError on an unranked format"
    },
    "19": {
     "state": "CLOSED",
@@ -194,7 +218,7 @@
     "title": "computation_graph.py records different vllm_ir overloads across builds of one cache key"
    },
    "3": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Standing gate: a byte-matched uniform arm beside every rate-axis candidate"
    },
    "30": {
@@ -210,7 +234,7 @@
     "title": "plan_shard refuses replicated-KV QKV under GQA when tp_size > num_kv_heads"
    },
    "33": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "CanonicalEncodingError on a non-dyadic global_scale names the varint domain, not the scale"
    },
    "34": {
@@ -242,12 +266,40 @@
     "title": "Design a cost that ranks rungs of one format at matched bytes"
    },
    "40": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "loadcost.py truncates to a multiple of 256 before measuring, so no published load figure covers the partial-superblock shape"
    },
    "41": {
     "state": "OPEN",
     "title": "The encoder can write two wires the serving plugin publishes no decodable range for"
+   },
+   "42": {
+    "state": "OPEN",
+    "title": "The window GEMV needs an A-side decision before it can be wired into a route"
+   },
+   "43": {
+    "state": "OPEN",
+    "title": "The q256 rate axis is not monotone in bits at the E2M1x2 cap, and small units carry up to 209 dominated rungs"
+   },
+   "44": {
+    "state": "OPEN",
+    "title": "Load cost over a trailing partial superblock has never been measured"
+   },
+   "45": {
+    "state": "OPEN",
+    "title": "The fold the BF16 route exists to avoid is below served resolution at R=7"
+   },
+   "46": {
+    "state": "OPEN",
+    "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
+   },
+   "47": {
+    "state": "OPEN",
+    "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
+   },
+   "48": {
+    "state": "OPEN",
+    "title": "BF16 wire cannot express reach: window_sigma is pinned to the channel scale, and the pinned ratio is 19% off at 8 bpp"
    },
    "5": {
     "state": "OPEN",

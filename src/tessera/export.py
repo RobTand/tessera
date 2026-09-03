@@ -578,8 +578,8 @@ BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #: needs a **wire change**, not a new value for this constant: ``BF16_RECIPE``
 #: leaves ``window_sigma`` at ``DEFAULT_WINDOW_SIGMA`` (``None``), which pins
 #: the ratio to 1 by construction and is what makes this constant a gauge in
-#: the first place.  Weight space, four units, no BF16 lane to serve on, so
-#: nothing here is promoted; see
+#: the first place.  Filed as issue #48.  Weight space, four units, no BF16 lane
+#: to serve on, so nothing here is promoted; see
 #: ``docs/measurements/tessera-bf16-gauge-and-dense4-residual-2026-09-02.md``.
 BF16_CHANNEL_SIGMA = 1.0
 BF16_RECIPE = WireRecipe(
