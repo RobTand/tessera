@@ -38,6 +38,15 @@ measurement covers it, so no ``lane_eligibility`` cell names it and the
 dispatch refuses by name (``config.get_quant_method``).  The field exists so
 that adding the expert route is a value, not a schema change.
 
+FUSED MODULES.  vLLM builds one method per module, so a fused module's roles
+share a family -- and with it the grid, body, scale plane and input width the
+route decodes to one tile.  They do NOT share a rate: every decoder here reads
+each role from that role's own manifest, so ``q256`` is per member and the
+sidecar spells it as a list when the members differ.  ``FUSED_MODULE_FIELDS``
+is that rule as a value, and ``runtime_contract.json``'s ``fused_module`` block
+is checked against it, so a producer's group allocator reads the constraint off
+the runtime instead of guessing at it (#37).
+
 WHAT IS ATTESTED.  Only what a ``lane_eligibility`` cell in this package's
 ``runtime_contract.json`` names.  A cell appears only when a container receipt
 covers it (principle 14); absence resolves ``unattested``.
@@ -59,6 +68,10 @@ __all__ = [
     "STRUCTURES",
     "ROUTES",
     "GROUP_SIZE",
+    "FUSED_MODULE_FIELDS",
+    "FUSED_MODULE_SCHEMA",
+    "FUSED_Q256_SPELLING",
+    "FUSED_CONTAINER",
     "is_tessera_scheme",
     "route_for_grid",
     "refuse_unserveable_wire",
@@ -175,18 +188,92 @@ _BODIES = ("TCQ", "WINDOW")
 _REQUIRED = ("family", "grid", "body", "plane", "q256", "rows", "columns", "wire_bytes", "roles")
 GROUP_SIZE = 16
 
+#: WHAT A FUSED MODULE'S MEMBERS MUST SHARE, AND WHAT IS FREE PER MEMBER (#37).
+#:
+#: vLLM merges q/k/v and gate/up into one Linear and builds ONE quant method per
+#: module, so everything that selects a method or a tile -- the family, and with
+#: it the grid, body and scale plane the route decodes, plus the input width the
+#: mainloop reads -- is a module fact.  The RATE is not one of them.  Every
+#: decoder here is fed from each member's OWN parsed manifest: the FP8 and BF16
+#: routes call ``prepare_window(unit.body_bits, unit.rates, unit.window_bits,
+#: unit.window_codes, ...)`` per role and concatenate, and the NVFP4 route packs
+#: each role's own ``rate``/``arity``/``memory``/``half`` scalars and decodes
+#: into that role's row slice.  A module of three roles at three rungs decodes
+#: element-for-element to what the three roles decode alone
+#: (``experiments/fused_member_rung_identity.py`` on a real Qwen3-0.6B q/k/v,
+#: ``tests/test_fused_member_rungs.py``).
+#:
+#: This dict is the value ``runtime_contract.json``'s ``fused_module.fields``
+#: block is checked against, exactly as ``sharding.ROUTE_TP_AXES`` is what
+#: ``tensor_parallel.units[].loader_axes`` is checked against: a producer's
+#: group allocator learns the constraint from the table this runtime publishes
+#: instead of carrying a local ban, and the table cannot drift from the code.
+#:
+#: ``grid`` is listed shared and not per-member on purpose.  A route may hold
+#: more than one grid (``TESSERA_NVFP4`` holds ``E2M1`` and ``E2M1x2``), and
+#: nothing has ever decoded a module that mixed them; the sidecar carries one
+#: grid per module and ``parse_tessera_blob_for_scheme`` refuses a member that
+#: disagrees with it.  Unattested is not "probably fine".
+FUSED_MODULE_FIELDS: dict[str, str] = {
+    "family": "shared",
+    "structure": "shared",
+    "grid": "shared",
+    "body": "shared",
+    "plane": "shared",
+    "columns": "shared",
+    "q256": "per_member",
+    "rows": "per_member",
+}
+FUSED_MODULE_SCHEMA = "tessera.fused-module.v1"
+#: How a mixed-rung module is SPELLED in the sidecar.  ``q256`` is the module's
+#: rung when every role carries it -- the spelling of every checkpoint written
+#: before #37, unchanged -- or a list of one rung per role in ``roles`` order
+#: when they differ.  One field, one fact: a second field beside it could
+#: disagree with it, and a reader would then have two answers about one module.
+#: A plugin build older than this one refuses the list form on sight
+#: (``q256 must be an integer``), which is the fail-closed direction.
+FUSED_Q256_SPELLING = "int_or_per_role_list"
+#: The container framing the module's blob is (``tessera.fused``).
+FUSED_CONTAINER = "TSRFUSE1"
+
 
 def is_tessera_scheme(scheme: Any) -> bool:
     return isinstance(scheme, Mapping) and scheme.get(TESSERA_SCHEME_KEY) in TESSERA_FAMILIES
 
 
 def _as_int(scheme: Mapping, field: str, target: str) -> int:
-    value = scheme.get(field)
+    return _positive_int(scheme.get(field), field, target)
+
+
+def _positive_int(value, field: str, target: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError(f"tessera target {target!r}: {field} must be an integer, got {value!r}")
     if value <= 0:
         raise ValueError(f"tessera target {target!r}: {field} must be positive, got {value}")
     return value
+
+
+def _rungs_for_roles(scheme: Mapping, roles, target: str) -> "list[int]":
+    """The rung of every role, read from the scheme's one ``q256`` field.
+
+    An int is the module's rung, carried by every role -- the spelling of every
+    checkpoint written before #37 and the one the exporter still writes for a
+    uniform group.  A list is one rung per role in ``roles`` order, which is
+    what a fused group whose members took different rates looks like: the rate
+    is a per-member fact here because the DECODE is (see
+    ``FUSED_MODULE_FIELDS``).  Length must equal the role count exactly -- a
+    list that does not line up with the roles it indexes is a wrong tensor
+    waiting to happen, not something to pad or truncate.
+    """
+    if isinstance(scheme.get("q256"), (list, tuple)):
+        declared = list(scheme["q256"])
+        if len(declared) != len(roles):
+            raise ValueError(
+                f"tessera target {target!r}: q256 is a per-role list of {len(declared)} rungs but "
+                f"the scheme declares {len(roles)} role(s) {[r[0] for r in roles]}; a per-role "
+                "rate list is read positionally against roles and must be the same length")
+        return [_positive_int(v, f"q256[{i}]", target) for i, v in enumerate(declared)]
+    return [_as_int(scheme, "q256", target)] * len(roles)
 
 
 def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) -> None:
@@ -362,8 +449,6 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     body = scheme["body"]
     if body not in _BODIES:
         raise ValueError(f"tessera target {target!r}: body must be one of {_BODIES}, got {body!r}")
-    q256 = _as_int(scheme, "q256", target)
-    _refuse_an_unreadable_rung(family, grid, q256, target)
     rows = _as_int(scheme, "rows", target)
     columns = _as_int(scheme, "columns", target)
     if columns % route["columns_multiple"]:
@@ -383,9 +468,23 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
         raise ValueError(
             f"tessera target {target!r}: roles stack to {sum(r[1] for r in roles)} rows, the "
             f"scheme declares {rows}")
+    # AFTER the roles, because the rate is a per-ROLE fact and the roles are
+    # what indexes it.  Every rung is put through the same gate the module-level
+    # one used to be: a group is legal only when EVERY member's rate is one this
+    # build's decoder publishes a read for.
+    rungs = _rungs_for_roles(scheme, roles, target)
+    for (name, _role_rows), rung in zip(roles, rungs):
+        _refuse_an_unreadable_rung(family, grid, rung, f"{target} role {name!r}")
+    uniform = len(set(rungs)) == 1
     return {
         "family": family, "structure": structure, "grid": grid, "body": body,
-        "plane": route["plane"], "q256": q256, "rows": rows, "columns": columns,
+        "plane": route["plane"],
+        # The declared shape, normalised: an int when the module is uniform (as
+        # every checkpoint before #37 is), the per-role list when it is not.
+        # ``role_q256`` is the monomorphic one a consumer should read.
+        "q256": rungs[0] if uniform else list(rungs),
+        "role_q256": [int(r) for r in rungs],
+        "rows": rows, "columns": columns,
         "wire_bytes": wire_bytes, "roles": [(str(n), int(r)) for n, r in roles],
     }
 
@@ -406,7 +505,7 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
             f"tessera target {target!r}: the container holds roles "
             f"{[(m.name, m.rows) for m in members]} but the scheme declares {declared['roles']}")
     parsed = []
-    for member in members:
+    for member, member_q256 in zip(members, declared["role_q256"]):
         unit = unit_artifact.parse_unit_artifact(member.blob, device=device)
         geometry = unit.manifest.geometry
         # The manifest's root rate is per CODE; a code covers ``arity`` weights
@@ -422,8 +521,12 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
             "plane": unit.manifest.scale_plane.kind.name, "q256": root // unit.grid.arity,
             "rows": geometry.rows, "columns": geometry.columns,
         }
+        # THIS ROLE's rung, not the module's: the sidecar carries one per role
+        # (``FUSED_MODULE_FIELDS``), so the member the reader parsed is compared
+        # against the rate the sidecar promised for THAT member.
         expected = {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
-                    "q256": declared["q256"], "rows": member.rows, "columns": declared["columns"]}
+                    "q256": int(member_q256), "rows": member.rows,
+                    "columns": declared["columns"]}
         if actual != expected:
             raise ValueError(
                 f"tessera target {target!r} role {member.name!r}: the wire is {actual} but the "
