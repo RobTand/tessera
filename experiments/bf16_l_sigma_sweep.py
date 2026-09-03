@@ -288,9 +288,16 @@ def stage_gauge(a) -> None:
                 cs = base * mult
                 arm = (f"{label} x{mult:g} ({kind})"
                        + (" [repeat]" if i == len(arms) - 1 else ""))
+                # ``window_sigma=cs``, not ``None``: this stage's premise is
+                # that the table's spread tracks the row's, which is what an
+                # unset spread used to mean on every rung.  Since #48 the BF16
+                # recipe names a per-rung spread, so leaving it unset here
+                # would freeze the table while the rows moved -- a different
+                # experiment under the same name.  Naming it reproduces the
+                # published gauge table exactly, on both grids.
                 got = try_arm(b, arm, lambda cs=cs: encode_arm(
                     w, grid, a.rung, name, window_bits=a.window_bits,
-                    window_sigma=None, channel_sigma=cs))
+                    window_sigma=cs, channel_sigma=cs))
                 if got is None:
                     continue
                 hat, bpp, s, secs = got
@@ -405,9 +412,13 @@ def stage_dense_l(a) -> None:
             arms = [L for L in a.window_bits_list if L * 256 >= q] + [a.window_bits]
             for i, L in enumerate(arms):
                 arm = f"R{q} L={L}" + (" [repeat]" if i == len(arms) - 1 else "")
+                # Pinned at the pre-#48 spread so the published L frontier
+                # keeps its meaning: this stage varies L, and letting the
+                # recipe's per-rung reach term move with the rung as well
+                # would confound the two.
                 got = try_arm(b, arm, lambda L=L: encode_arm(
                     w, BF16_GRID, q, name, window_bits=L,
-                    window_sigma=None, channel_sigma=None))
+                    window_sigma=BF16_CHANNEL_SIGMA, channel_sigma=None))
                 if got is None:
                     continue
                 hat, bpp, s, secs = got
@@ -476,9 +487,10 @@ def stage_glm_l(a) -> None:
                 arms = [L for L in a.window_bits_list if L * 256 >= q] + [a.window_bits]
                 for i, L in enumerate(arms):
                     arm = f"R{q} L={L}" + (" [repeat]" if i == len(arms) - 1 else "")
+                    # Pinned at the pre-#48 spread, as in ``stage_dense_l``.
                     got = try_arm(b, arm, lambda L=L: encode_arm(
                         w, BF16_GRID, q, name, window_bits=L,
-                        window_sigma=None, channel_sigma=None))
+                        window_sigma=BF16_CHANNEL_SIGMA, channel_sigma=None))
                     if got is None:
                         continue
                     hat, bpp, s, secs = got

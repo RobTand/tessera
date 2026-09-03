@@ -213,6 +213,14 @@ which no real slice produces, and `shared_lut_global`'s subnormal check is in
 the fused lane, which `encode_linear` never calls. Both are pinned by
 `tests/test_math_audit_scale_and_trellis.py` instead.
 
+**Amended again 2026-09-03 (issue #48): 19 encodes.** Both BF16 rows sat at
+q256 1024, and that is the rung the new per-rung reach term is calibrated at,
+where it resolves to the value the wire was pinned to. So the same silence
+returned in a narrower form: `_window_sigma_for` moves bytes at every BF16
+rung *except* the two the matrix covered, and the harness read `0 changed` --
+verified, not supposed. One row at q256 2048 fixes it, and the change then
+reads `2 changed of 20`, both of them that row.
+
 A fix may legitimately change future bytes. It may never change what today's
 bytes mean, and the decode half of the baseline is what says so.
 

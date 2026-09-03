@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fractions import Fraction
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
@@ -65,6 +66,8 @@ __all__ = [
     "E4M3_WINDOW_BITS",
     "BF16_WINDOW_BITS",
     "BF16_CHANNEL_SIGMA",
+    "BF16_WINDOW_SIGMA",
+    "BF16_REACH_REFERENCE_RATE",
     "E2M1X2_SUBCAP_WINDOW_BITS",
     "tcq_cap_q256",
     "RecipeRange",
@@ -575,19 +578,35 @@ BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #: default ratio 1.0 minimises ``wt`` on 4 of 4 at R=4, and at R=8 a ratio of
 #: 0.707 -- reach 5.66 row-RMS instead of 4.00 -- wins on ``wt`` on 4 of 4
 #: (geomean 0.813x) and on ``h`` on 3 of 4 (geomean 0.742x).  Spending that
-#: needs a **wire change**, not a new value for this constant: ``BF16_RECIPE``
-#: leaves ``window_sigma`` at ``DEFAULT_WINDOW_SIGMA`` (``None``), which pins
-#: the ratio to 1 by construction and is what makes this constant a gauge in
-#: the first place.  Filed as issue #48.  Weight space, four units, measured
-#: before the 16-bit route had a receipt -- it has one now (contract v5,
-#: ``q256 1792``, dense sm_121) but not at these units or this gauge, so
-#: nothing here is promoted; see
-#: ``docs/measurements/tessera-bf16-gauge-and-dense4-residual-2026-09-02.md``.
+#: needed a **wire change**, not a new value for this constant, because it is
+#: ``BF16_RECIPE``'s ``window_sigma`` that sets the ratio and leaving it at
+#: ``None`` pins the ratio to 1 by construction -- which is what makes *this*
+#: constant a gauge in the first place.  Filed as issue #48 and spent below
+#: (``BF16_WINDOW_SIGMA``, ``_window_sigma_for``), so this constant keeps its
+#: gauge value and the reach lives on the term that can express it.
 BF16_CHANNEL_SIGMA = 1.0
+
+#: The reach term (issue #48).  ``window_sigma`` is the spread the window
+#: table models; ``channel_sigma`` the spread the rows are scaled to; their
+#: **ratio** is the body's reach in row-RMS units, and the ratio is what the
+#: sweep found rung-dependent.  Because ``BF16_CHANNEL_SIGMA`` is 1.0 this
+#: value *is* the ratio, and ``BF16_WINDOW_SIGMA = 1.0`` reproduces the pinned
+#: wire exactly: with a CHANNEL plane ``encode_unit`` resolves both the table's
+#: spread and the reach start to ``channel_sigma`` when ``window_sigma`` is
+#: ``None``, so naming 1.0 explicitly is byte-identical to leaving it unset and
+#: only the rungs away from the reference move.
+#:
+#: The reference rung is R=4, where the measurement says the pinned ratio is
+#: already the optimum on 4 of 4 units -- so the recipe is calibrated where it
+#: was measured right and predicts elsewhere, rather than tabulating two
+#: points.
+BF16_WINDOW_SIGMA = 1.0
+BF16_REACH_REFERENCE_RATE = 4
+
 BF16_RECIPE = WireRecipe(
     body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.CHANNEL,
     window_bits=BF16_WINDOW_BITS, window_seed=DEFAULT_WINDOW_SEED,
-    window_sigma=DEFAULT_WINDOW_SIGMA, channel_sigma=BF16_CHANNEL_SIGMA,
+    window_sigma=BF16_WINDOW_SIGMA, channel_sigma=BF16_CHANNEL_SIGMA,
 )
 
 #: E2M1x2 below the coset trellis's cap: the window body over the same LUT
@@ -626,6 +645,113 @@ def _window_bits_for(default: int, grid: PayloadGrid, q256: "int | None") -> int
     return max(default, rate)
 
 
+def _reach_rate_for(grid: PayloadGrid, q256: "int | None") -> int:
+    """The rung's rate in whole bits per position, for the reach term.
+
+    Nearest, not ceiling.  ``_window_bits_for`` takes the ceiling because a
+    table narrower than the rate cannot hold the rate's bits -- a hard
+    constraint.  The reach term has no such constraint: it is a continuous
+    optimum, and rounding to the nearest whole rate keeps the recipe within
+    ``sqrt(4.5 / 4) = 1.06`` of the continuous law at the reference rung and
+    closer above it, while ``recipe_table`` stays one range per rate instead
+    of one range per q256.  A checkpoint's ``wire.recipes`` is a table a human
+    reads and a merge guard compares; four thousand rows of it would be
+    neither.
+    """
+    if q256 is None:
+        return BF16_REACH_REFERENCE_RATE
+    exact = int(q256) * grid.arity / 256.0
+    # Half-up, not ``round`` -- ``round`` is banker's and would send 4.5 down
+    # and 5.5 up, which is a rule nobody reading the table would guess.
+    return max(1, min(grid.payload_bits, int(math.floor(exact + 0.5))))
+
+
+def _window_sigma_for(default: float, grid: PayloadGrid, q256: "int | None") -> float:
+    """The spread the window table models at rung ``q256``: ``default *
+    sqrt(max(R, R0) / R0)``.
+
+    **What this term is.**  The table's extreme entry is the body's *reach*;
+    the rows are scaled to ``channel_sigma`` grid units of RMS (past the reach,
+    further down still, ``scale_channel.initial_channel_scale``).  So
+    ``window_sigma / channel_sigma`` is the reach in row-RMS units -- how far
+    out of a row's own distribution the body can still emit a value.  Leaving
+    ``window_sigma`` unset ties it to ``channel_sigma`` and pins that ratio to
+    1 for every rung alike, which is the defect issue #48 names.
+
+    **Why it moves with the rate, and why as a square root.**  This is the
+    loading factor of a quantizer over a Gaussian source, and its optimum is
+    the balance of two terms: granular error, which grows like the square of
+    the reach at a fixed number of reconstruction levels, and overload, which
+    falls like the Gaussian tail ``exp(-A^2 / 2)`` past the reach.  Setting
+    the derivative of ``A^2 2^(-2R) + tail(A)`` to zero gives the classical
+    ``A* ~ sqrt(2 ln N)`` for ``N`` levels, and with ``N = 2^R`` that is
+    ``A* ~ sqrt(2 ln 2) sqrt(R)``: **the exponent is derived, the rate enters
+    only through its square root.**  That is the *leading* term -- the
+    classical loading factor carries slowly varying corrections in
+    ``ln ln N / ln N`` -- and the measurement's bracket resolves a factor of
+    ``sqrt(2)`` in reach, so what it establishes is the square root and not
+    the correction inside it.
+
+    **The amplitude is calibrated, not derived.**  The classical constant is
+    ``sqrt(2 ln 2) = 1.177``; the measured optimum at R=4 is a reach of 4.05
+    row-RMS, i.e. an amplitude of 2.03, 1.7x larger.  The mechanism differs
+    from the textbook one in exactly the way that direction predicts: overload
+    here is not a per-sample clip but a **whole-row rescale** -- a single row
+    whose amax passes the reach drags that row's every weight to a coarser
+    scale -- so overload is dearer than the tail integral says and the optimum
+    sits further out.  That constant is not derivable from this sweep, so it
+    is taken from the rung where the measurement says the pinned value is
+    already optimal (R=4, ``wt``-minimal on 4 of 4 dense Qwen Linears) and the
+    law predicts the rest.
+
+    **What is measured and what is predicted.**  R=4 and R=8 are measured
+    (issue #48, ``experiments/bf16_l_sigma_sweep.py --stage reach``): the
+    optimum moves from 4.00 to 5.66 row-RMS, a factor of exactly ``sqrt(2)``
+    for a doubling of the rate, which is what ``sqrt(R)`` says.  Two points on
+    a grid spaced by ``sqrt(2)`` cannot separate ``sqrt(R)`` from ``sqrt(R+c)``
+    for small ``c``, so the law was re-measured at every rung from R=1 to R=8
+    on the same four dense Qwen Linears at identical bytes
+    (``experiments/bf16_reach_recipe.py``, receipt
+    ``docs/measurements/tessera-bf16-reach-recipe-2026-09-03.md``).  Above the
+    reference the law is the **interior** optimum at every rung it had never
+    seen -- R=5, 6 and 7, where both brackets lose on 4 of 4 units -- and is
+    ``0.975x / 0.943x / 0.910x / 0.813x`` of the pinned wire's ``wt`` at
+    R=5/6/7/8 on 4 of 4, ``0.979x / 0.930x / 0.864x / 0.741x`` on ``h`` on 3
+    of 4.  The R=8 number is the sweep's 0.813x, reproduced through the built
+    path.
+
+    **And the floor is measured too, in the direction the law fails.**  *Below*
+    the reference the law asks for a smaller reach and loses: the pinned value
+    is better by 0.04% at R=1, 0.6% at R=2 and 1.7% at R=3, on ``wt``, on 4 of
+    4 units, and at R=3 it beats the law's bracket on both sides too.  Two
+    different things are happening, and only the first has a mechanism.  At
+    R=1 and R=2 the per-row clamp saturates: ``initial_channel_scale`` scales
+    any row whose largest weight would fall outside the reach until it fits,
+    and at the law's smaller spread that holds 99.8-100.0% of the rows.  Once
+    every row is clamped the row scale is set from its amax however wide the
+    table is, the reach is a gauge again and there is nothing left to buy --
+    which is why the arms below the reference tie each other exactly (both
+    brackets read 1.0000 at R=1) and give back only 0.04-0.6%.  At R=3 the
+    clamp does **not** saturate -- it holds 0.66-0.96 of the rows, and the
+    pinned wire's own clamp fraction is 0.23-0.55 -- and the law still loses
+    by the most of the three, 1.7% on 4 of 4.  There the honest statement is
+    that the optimum simply does not fall below the reference reach on these
+    rows; no mechanism was established for it.  So the term is floored at the
+    rung it is calibrated on: ``sqrt(max(R, R0) / R0)``.  The floor is a
+    measured boundary on these units -- at R=3 measured with no mechanism at
+    all -- and not a derived one.
+
+    **Scope: BF16 only.**  The reach ratio is a property of the grid as much
+    as the body.  On E4M3 the same table already runs to the format's own
+    ceiling and the spread is not free to move (issue #36), so ``E4M3_RECIPE``
+    keeps its unset spread and nothing here is applied to it.
+    """
+    rate = max(BF16_REACH_REFERENCE_RATE, _reach_rate_for(grid, q256))
+    if rate == BF16_REACH_REFERENCE_RATE:
+        return float(default)
+    return float(default) * math.sqrt(rate / BF16_REACH_REFERENCE_RATE)
+
+
 def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     """The wire the exporter writes for a unit on ``grid`` at rung ``q256``.
 
@@ -638,10 +764,14 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
 
     * **BF16**, every rung: ``BF16_RECIPE`` -- the identical window body
       over the identical CHANNEL plane at the identical L, with the table
-      snapped to bf16 instead of E4M3 and the source spread stated at 1.0.
-      Its decoded tile is a plain BF16 tensor (W16A16).  The TCQ body is
-      not reachable on this grid at all: a 65536-anchor forest is what the
-      encoder already refuses, and the window body never scores it.
+      snapped to bf16 instead of E4M3.  Its decoded tile is a plain BF16
+      tensor (W16A16).  The TCQ body is not reachable on this grid at all:
+      a 65536-anchor forest is what the encoder already refuses, and the
+      window body never scores it.  Two fields move with the rung here and
+      nowhere else: the table's width above L=14 (``_window_bits_for``,
+      ``L >= R``) and its **spread** (``_window_sigma_for``), which is the
+      body's reach in row-RMS and was pinned to the R=4 value at every rung
+      until issue #48 measured it wrong at R=8.
     * **E4M3**, every rung: ``E4M3_RECIPE`` -- the window body over the
       CHANNEL plane, L=14.  0.93x EXL3 K4 at 4.0 bpp and 0.92-0.95x at 5.0
       on the wire (0.985x / 1.016x at L=12), before LDLQ; the coset trellis
@@ -665,12 +795,13 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
         return E4M3_RECIPE
     if grid.arity == 1 and grid.name == "BF16":
         bits = _window_bits_for(BF16_WINDOW_BITS, grid, q256)
-        if bits == BF16_RECIPE.window_bits:
+        sigma = _window_sigma_for(BF16_WINDOW_SIGMA, grid, q256)
+        if bits == BF16_RECIPE.window_bits and sigma == BF16_RECIPE.window_sigma:
             return BF16_RECIPE
         return WireRecipe(
             body=BF16_RECIPE.body, span=1, scale_plane=BF16_RECIPE.scale_plane,
             window_bits=bits, window_seed=BF16_RECIPE.window_seed,
-            window_sigma=BF16_RECIPE.window_sigma,
+            window_sigma=sigma,
             channel_sigma=BF16_RECIPE.channel_sigma,
         )
     if grid.arity == 2 and grid.name.startswith("E2M1") and q256 is not None \
@@ -1196,6 +1327,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # ``scale.plane`` are projections of ``wire.recipes`` over the rungs
         # this checkpoint used: when those rungs' recipes differ they read
         # ``per-rung`` (``null`` for the numbers) and the table is the truth.
+        # ``sigma`` is the one number that is also legally ``null`` as a
+        # *value* -- the amax-bounded source a block plane models.  On BF16 it
+        # never is (``BF16_RECIPE`` names it, issue #48), so a null there is
+        # a mixed-rung projection and not an unset spread; on the block-plane
+        # grids it is unset at every rung, so it cannot be mixed.  Either way
+        # the flat key is a summary and ``wire.recipes`` is what a merge
+        # guard and a replay read.
         "body": {"kind": body, "window_bits": window_bits, "seed": window_seed,
                  "sigma": window_sigma},
         # ``refit`` counts trellis passes (= refits); ``schedule`` says how they

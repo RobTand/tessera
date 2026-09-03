@@ -119,6 +119,13 @@ def _cases():
         # digest that moves on one and not the other localises the change.
         ("bf16-1024-256c",    BF16_GRID, 1024, 32, 256),
         ("bf16-1024-320c",    BF16_GRID, 1024, 32, 320),
+        # A BF16 rung away from R=4.  Both rows above sit exactly on the
+        # reach term's reference rung (issue #48), where the recipe resolves
+        # to the value the wire was pinned at -- so with only those two rows
+        # a change to `_window_sigma_for` moved real bytes at every other
+        # rung and this harness still reported "0 changed".  The same shape
+        # at R=8 is what makes the reach term auditable.
+        ("bf16-2048-256c",    BF16_GRID, 2048, 32, 256),
     ]
 
 
