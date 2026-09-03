@@ -73,8 +73,25 @@ and writes the exporter's `--plan-json` plus a provenance sidecar
   hold an NVFP4-via-compressed-tensors module and a Tessera wire at once, and a
   silent BF16 substitution there would be a different artifact than the one
   priced;
-* enforces the fused-family invariant (q/k/v, gate/up) unless
-  `--allow-fused-disagreement`, which records each disagreement instead;
+* enforces the fused-family invariant (q/k/v, gate/up). A **per-member (mink)**
+  allocation — PrismaQuant's group knapsack gives one family per fused group and
+  a rate per member — lands here, and the deliberate answer is to **refuse**:
+  vLLM builds one method per fused module, and no single rate for the group is
+  derivable from the objective (the members' rates differ precisely because
+  their sensitivities do, so min / bytes-weighted / max are taste, not
+  arithmetic, and any of them moves both the bytes and the loss off the point
+  the DP chose). `--allow-fused-disagreement` writes the plan anyway, and what
+  it writes is the plan that will **serve**: every member of a disagreeing group
+  is named `"BF16"` — which is what the exporter does with it — dropped from the
+  unit table and the charged-bits total, and the demotion recorded
+  (`fused_disagreements[].planned_as`, `totals.demoted_to_bf16_params`).
+  Corrected 2026-09-02 (Tessera issue #15): the flag used to write the members'
+  Tessera rungs and price them as Tessera while the exporter passed the module
+  through, so the sidecar whose stated job is that the bytes served are the
+  bytes priced under-reported a seven-unit mink plan at 3.90 bpp against ~12 bpp
+  served. A whole-GROUP option name (`TESSERA_E4M3_K1_G3`) is refused by name
+  for the same reason: it is not a rung and PrismaQuant is meant to have
+  expanded it to its members before the assignment was written;
 * prices every unit through PrismaQuant's **own** accountant
   (`prismaquant.tessera_formats.artifact_bpp`) and writes the charge as an exact
   rational, so the byte check downstream is equality, not a float comparison;
@@ -85,8 +102,9 @@ and writes the exporter's `--plan-json` plus a provenance sidecar
   described a 4-bit checkpoint nobody priced. Both coverage modes now write
   `"BF16"` explicitly and `unplanned_body_linears` is an invariant zero.
 
-`tests/test_plan_from_layer_config.py` — 17 tests, all passing on the host venv
-— covers the mapping, the refusals, the fused invariant, both coverage modes,
+`tests/test_plan_from_layer_config.py` — 19 tests, all passing on the host venv
+— covers the mapping, the refusals, the fused invariant and the mink demotion,
+both coverage modes,
 the broadcast's two shape refusals, the BF16-naming invariant, and
 (skipif-guarded on the PrismaQuant tree) that the sidecar reproduces
 PrismaQuant's own `body_assignment_payload_bits_total`.
