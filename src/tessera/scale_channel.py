@@ -40,6 +40,7 @@ from .errors import GrammarError
 __all__ = [
     "default_channel_sigma",
     "channel_global",
+    "check_refit_metric",
     "land_channel_scale",
     "initial_channel_scale",
     "refit_channel_scale",
@@ -85,6 +86,37 @@ def default_channel_sigma(grid: PayloadGrid) -> float:
     starting point the refit moves from, not a constraint on the fit.
     """
     return _default_sigma(grid.name, tuple(grid.values), grid.arity)
+
+
+def check_refit_metric(metric: torch.Tensor, cols: int) -> torch.Tensor:
+    """Refuse a refit metric that is not this unit's, and say which it is.
+
+    Every refit that takes a metric reads it as ``[cols]`` (the diagonal
+    objective) or ``[cols, cols]`` (the full Hessian).  Only the *rank* was
+    checked, so a metric of the wrong width reached the arithmetic and came
+    back as a raw ``RuntimeError`` about broadcasting or matmul shapes -- and a
+    length-1 metric broadcast silently, weighting every column equally under a
+    name that says it does not.  A metric belongs to a unit's columns; one that
+    does not fit them is a caller error, and it is refused by name.
+    """
+    if metric.ndim == 1:
+        if metric.numel() != cols:
+            raise GrammarError(
+                f"a per-column refit metric holds one weight per input column: "
+                f"{metric.numel()} for {cols} columns"
+            )
+    elif metric.ndim == 2:
+        if tuple(metric.shape) != (cols, cols):
+            raise GrammarError(
+                f"a full-Hessian refit metric is [cols, cols]: "
+                f"{tuple(metric.shape)} for {cols} columns"
+            )
+    else:
+        raise GrammarError(
+            f"a refit metric is per-column [cols] or a full [cols, cols] Hessian, "
+            f"got shape {tuple(metric.shape)}"
+        )
+    return metric
 
 
 def channel_global(scale: torch.Tensor) -> float:
@@ -177,15 +209,39 @@ def land_at_least(
     ``land_channel_scale`` rounds to nearest, which may land a hair *below* a
     scale that was computed as a lower bound.  A reach floor that is missed by
     one ulp clips the very weight it was raised for, so this rounds up: cast,
-    then nudge by one ulp (fp16 keeps ten mantissa bits) where the cast fell
-    short.
+    then step to the next fp16 word up where the cast fell short.
+
+    The step is taken on the **bit pattern**, not by multiplying by
+    ``1 + 2^-10``.  Every word here is positive and finite, so incrementing the
+    stored bits is exactly ``nextafter(w, +inf)`` and the result is the
+    smallest word that clears the floor -- multiply-then-round is not: it
+    overshoots by two ulps on 263 of 1500 sampled floors, and at the top of the
+    range ``65504 * (1 + 2^-10)`` rounds to **infinity**, whose ``0 * inf`` in
+    the refit's ``A s^2 - 2 B s`` is a NaN that then decides the accept test by
+    comparing false.  A floor no fp16 word over this global can carry is
+    refused here instead: saturating would silently reinstate the very clip the
+    floor exists to prevent.
     """
     stored, effective = land_channel_scale(floor, global_scale)
     short = effective < floor
     if bool(short.any()):
-        bumped = (stored.float() * (1.0 + 2.0 ** -10)).to(torch.float16)
+        bits = stored.contiguous().view(torch.int16)
+        bumped = (bits + 1).view(torch.float16)
         stored = torch.where(short, bumped, stored)
         effective = stored.float() * global_scale
+        over = ~torch.isfinite(effective)
+        if bool(over.any()):
+            raise GrammarError(
+                f"{int(over.sum())} of {effective.numel()} row scale floors are above "
+                f"fp16's range over a global of {global_scale}; the largest is "
+                f"{float(floor.float().max())} and the largest word is "
+                f"{_FP16_MAX * global_scale}"
+            )
+        if bool((effective < floor).any()):
+            raise GrammarError(
+                "landing a row scale upward left it below its floor; one ulp above "
+                "a round-to-nearest cast should always clear it"
+            )
     return stored, effective
 
 
@@ -204,6 +260,17 @@ def refit_channel_scale(
     ``u``; the optimum ``B / A`` is landed on a word and kept only where the
     landed word lowers the row's error, so no row ends worse than it began
     and the alternation with the trellis is monotone in squared error.
+
+    **A row with ``B <= 0`` keeps the scale it has**, which is the hold the LUT
+    plane's refit (``encode._refit_scales_lut``) and S6b's both carry.  Such a
+    row's codes anti-correlate with its weights, so the parabola has no
+    positive minimiser: it falls all the way to ``s -> 0``, the word floors on
+    fp16's smallest positive value, and the accept test *prefers* it because
+    ``A s^2 - 2 B s`` really is smaller there.  The row then decodes to about
+    nothing, and the next trellis pass sees ``work / scale`` at four orders of
+    magnitude, which is the residual it has to spend the column's shared path
+    on.  A scale that is optimal for frozen codes and ruinous for the codes
+    that follow is not a step this alternation may take.
 
     ``metric`` changes which error that is, and nothing else.  ``None`` is the
     plain squared error above.  A 1-D ``[cols]`` tensor is a per-input-column
@@ -227,26 +294,24 @@ def refit_channel_scale(
     if metric is None:
         A = (U * U).sum(dim=1)
         B = (W * U).sum(dim=1)
-    elif metric.ndim == 1:
-        m = metric.to(W.dtype).to(W.device).reshape(1, -1)
-        A = (U * U * m).sum(dim=1)
-        B = (W * U * m).sum(dim=1)
-    elif metric.ndim == 2:
-        H = metric.to(W.dtype).to(W.device)
-        UH = U @ H
-        A = (UH * U).sum(dim=1)
-        B = (UH * W).sum(dim=1)
     else:
-        raise GrammarError(
-            f"a refit metric is per-column [cols] or a full [cols, cols] Hessian, "
-            f"got shape {tuple(metric.shape)}"
-        )
+        check_refit_metric(metric, W.shape[1])
+        if metric.ndim == 1:
+            m = metric.to(W.dtype).to(W.device).reshape(1, -1)
+            A = (U * U * m).sum(dim=1)
+            B = (W * U * m).sum(dim=1)
+        else:
+            H = metric.to(W.dtype).to(W.device)
+            UH = U @ H
+            A = (UH * U).sum(dim=1)
+            B = (UH * W).sum(dim=1)
     old_eff = stored.float() * global_scale
-    candidate = torch.where(A > 0, B / A.clamp_min(1e-30), old_eff)
+    valid = (A > 0) & (B > 0)
+    candidate = torch.where(valid, B / A.clamp_min(1e-30), old_eff)
     new_stored, new_eff = land_channel_scale(candidate, global_scale)
     err_old = A * old_eff * old_eff - 2 * B * old_eff
     err_new = A * new_eff * new_eff - 2 * B * new_eff
-    keep_new = err_new < err_old
+    keep_new = valid & (err_new < err_old)
     stored_out = torch.where(keep_new, new_stored, stored)
     if floor is not None:
         floor_stored, floor_eff = land_at_least(floor.float(), global_scale)
