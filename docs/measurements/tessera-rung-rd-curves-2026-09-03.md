@@ -28,8 +28,8 @@ quantization entirely — changes end KL by `+4.2e-4 ± 4.1`, `+2.4e-4 ± 5.1`,
 `output_mse` keeps falling ~2.6x per bit and the cost keeps offering to buy it.
 
 **Below the knee the axis is real and the costs work.** At a 3.0-bpp budget the
-oracle is **0.748x** and AURA at its production settings reaches **0.780x**,
-both at P = 0.000. The rung axis is worth allocating over where the curves are
+oracle is **0.748x**, the empirical surface **0.771x** and AURA **0.780–0.784x**,
+all at P = 0.000. The rung axis is worth allocating over where the curves are
 steep; at 4.0 bpp on these units it is flat, and a cost that does not know that
 is strictly a liability.
 
@@ -171,11 +171,11 @@ R1006 (the 4.0-bpp point) and R1262.
 | arm | `kl_full` | vs uniform | ΔKL ±SE (1e-4) | P(worse) |
 |---|---|---|---|---|
 | **oracle on the measured table** | 0.012922 | **0.941x** | −8.1 ± 5.3, CI95 [−18.0, +2.8] | 0.075 |
-| **c1 AURA**, production dtype (fp32), 16 or 64 probes | 0.012999 | **0.947x** | −7.3 ± 6.3, CI95 [−19.8, +4.9] | 0.117 |
+| **c1 AURA**, fp32 (the `aura_cost.py` default), 16 **or** 64 probes — identical pick | 0.012999 | **0.947x** | −7.3 ± 6.3, CI95 [−19.8, +4.9] | 0.117 |
 | c2 empirical, 9 anchors + log-interp | 0.013593 | 0.990x | — | 0.408 |
 | §3a best per-unit rescale of L1 | 0.013599 | 0.991x | — | 0.439 |
 | c2 empirical, 5 anchors + log-interp | 0.013703 | 0.998x | — | 0.506 |
-| c1 AURA at bf16/16 probes (**my deviation**, see §5.4) | 0.019031 | 1.386x | — | 1.000 |
+| c1 AURA at **bf16**/16 probes (my deviation, see §5.4) | 0.019031 | 1.386x | — | 1.000 |
 | **c4 L1 re-measured at 1×/10×/80× activation rows — identical pick** | 0.021466 | 1.564x | — | 1.000 |
 | **L1 as shipped = the served allocation** | 0.027044 | **1.970x** | +133.2 ± 16.8 | 1.000 |
 
@@ -184,9 +184,9 @@ R1006 (the 4.0-bpp point) and R1262.
 | arm | `kl_full` | vs uniform | P(worse) |
 |---|---|---|---|
 | oracle | 0.038225 | **0.748x** | 0.000 |
-| c2 empirical, 5 anchors | 0.039387 | 0.771x | 0.000 |
-| c1 AURA (fp32, 64 probes) | 0.039835 | **0.780x** | 0.000 |
-| c1 AURA (bf16, 16 probes) | 0.040076 | 0.784x | 0.000 |
+| c2 empirical, 5 anchors | 0.039387 | **0.771x** | 0.000 |
+| c1 AURA (fp32, 64 probes) | 0.039835 | 0.780x | 0.000 |
+| c1 AURA, 16 probes (fp32 and bf16 pick identically here) | 0.040076 | 0.784x | 0.000 |
 | L1 as shipped | 0.099684 | 1.951x | 1.000 |
 
 ### 5.3 The 5.0-bpp budget (uniform R1262 = 0.006367) — nothing to win, and they lose
@@ -197,7 +197,11 @@ R1006 (the 4.0-bpp point) and R1262.
 | c1 AURA (fp32, 64 probes) | = uniform | 1.000 | — |
 | c2 empirical, 5 anchors | 0.007235 | 1.136x | 0.999 |
 | c2 empirical, 7 anchors | 0.008358 | 1.313x | 1.000 |
-| c1 AURA (bf16, 16 probes) | 0.008771 | 1.378x | 0.999 |
+| **c1 AURA at 16 probes — fp32 and bf16 pick identically** | 0.008771 | **1.378x** | 0.999 |
+
+The last row is `aura_cost.py`'s **shipped default probe count**, so at
+production defaults AURA reads **0.784x / 0.947x / 1.378x** across the three
+budgets. Only at 64 probes does it correctly refuse to move at 5.0 bpp.
 
 ### 5.4 Candidate by candidate
 
@@ -209,21 +213,33 @@ at the shipped 4 samples / 256 rows is max/min **1.02–1.16**, an order below t
 knapsack pick is **byte-identical to the 4/256 pick** and measures **1.564x
 worse than uniform**. Resolution is excluded as the explanation.
 
-**c1 — AURA / KL-adjoint. The only candidate that reaches the oracle, and only
-where the oracle has something to give.** At its production settings
-(`aura_cost.py --dtype` default `float32`, `n_probes` 16 or 64, `token_scope=all`,
-`seed_base=7000`, calib n=4 × 256 train) it measures **0.947x at 4.0 bpp
-(P = 0.117, indistinguishable from uniform, and from the oracle's 0.941x)** and
-**0.780x at 3.0 bpp (P = 0.000)**. It also signs the shipped allocation
-correctly where L1 does not (§5.5).
+**c1 — AURA / KL-adjoint. The candidate that gets there without measuring KL,
+and the only one that signs the shipped allocation correctly.** At
+`aura_cost.py`'s own settings (`--dtype` default `float32`, `token_scope=all`,
+`temperature=1.0`, `seed_base=7000`, calib n=4 × 256 train) it measures **0.947x
+at 4.0 bpp (P = 0.117 — indistinguishable from uniform, and from the oracle's
+0.941x)** and **0.780–0.784x at 3.0 bpp (P = 0.000)**. What distinguishes it from
+c2 is not accuracy — the empirical 5-anchor surface is *closer* to the oracle at
+3.0 bpp (0.771x vs 0.780x) — but **price**: AURA is model-side, a handful of
+gradient probes, where c2 needs a render and a KL measurement at every anchor of
+every unit.
 
-*The deviation, recorded.* My first AURA run resolved the model in **bf16**;
-`aura_cost.py` defaults to fp32. The advisor flagged it. Correcting the dtype
-moved the 4.0-bpp result from **1.386x (a significant loss)** to **0.947x
-(parity)**; probe count 16→64 changed nothing at that budget but fixed the
-5.0-bpp budget (1.511x additive → picks uniform). **AURA on seven units is
-dtype- and probe-sensitive**; anyone re-running it should use fp32 and ≥64
-probes, and should not read a 16-probe bf16 result as AURA's.
+*Two knobs, and they move different budgets. Both were measured.*
+
+| knob | 3.0 bpp | 4.0 bpp | 5.0 bpp |
+|---|---|---|---|
+| bf16, 16 probes (**my deviation**) | 0.784x | **1.386x** | 1.378x |
+| fp32, 16 probes (**shipped defaults**) | 0.784x | **0.947x** | **1.378x** |
+| fp32, 64 probes | 0.780x | 0.947x | **= uniform** |
+
+**Dtype** is what flips 4.0 bpp: my first run resolved the model in bf16,
+`aura_cost.py` defaults to fp32, and correcting it moved a significant 1.386x
+loss to 0.947x parity (probe count changes nothing there — the fp32/16 and
+fp32/64 picks are byte-identical). **Probe count** is what flips 5.0 bpp: at 16
+probes, fp32 and bf16 pick *identically* and both lose **1.378x**; only at 64
+probes does AURA correctly decline to move. So AURA at its shipped defaults is
+**not** safe at every budget, and a 16-probe bf16 result is not AURA's at all.
+Anyone re-running it should use fp32 and ≥64 probes and say which.
 
 **c2 — empirical unit-KL per rung. Scored honestly, it is parity, not a fix.**
 Scored against itself the empirical table is exact and measures nothing, so the
@@ -287,13 +303,33 @@ worse. Every one is above R1006:
 * **empirical 5-anchor** (16): `v_proj` R1107→R1150 and R1262→R1340,
   `o_proj` R1044→R1083, `gate_proj`/`q_proj` R1006→R1044.
 
-**On rank correlation.** Within-unit Spearman is vacuous here — every candidate
-is monotone in rate and so is the truth below the knee, so all seven units score
-0.9+. Pooled *marginal-KL-per-byte* Spearman is the honest version, and it is a
-weak discriminator: L1 0.529–0.553, AURA 0.487–0.511, empirical-interp
-0.688–0.790. AURA scores *below* L1 on it and re-allocates far better, because
-what matters is not the ranking of all steps but the sign of the few big ones.
-Read the re-allocation tables, not the correlation.
+**On rank correlation.** Per-unit Spearman of each candidate's rung ordering
+against the measured one, over all 16 rungs:
+
+| candidate | q | k | v | o | gate | up | down | mean |
+|---|---|---|---|---|---|---|---|---|
+| L1 as shipped | 0.885 | 0.859 | 0.985 | 0.985 | 0.841 | 0.988 | 0.985 | 0.933 |
+| L1 re-measured, 256 rows | 0.885 | 0.862 | 0.985 | 0.985 | 0.832 | 0.994 | 0.985 | 0.933 |
+| L1 re-measured, 20480 rows | 0.885 | 0.862 | 0.985 | 0.985 | 0.832 | 0.994 | 0.985 | 0.933 |
+| AURA (bf16, 16 probes) | 0.874 | 0.953 | 0.918 | 0.897 | 0.903 | 0.926 | 0.906 | 0.911 |
+| AURA (fp32, 16 probes) | 0.894 | 0.944 | 0.918 | 0.894 | 0.900 | 0.950 | 0.915 | 0.916 |
+| AURA (fp32, 64 probes) | 0.926 | 0.856 | 0.974 | 0.938 | 0.803 | 0.982 | 0.988 | 0.924 |
+| empirical, 5 anchors | 0.856 | 0.850 | 0.985 | 0.985 | 0.838 | 0.988 | 0.985 | 0.927 |
+| empirical, 9 anchors | 0.953 | 0.929 | 0.988 | 0.991 | 0.891 | 0.994 | 0.988 | 0.962 |
+
+**This table is why per-unit rank correlation must not be used to choose a
+cost.** Every candidate scores 0.80–0.99 on every unit, and the spread between
+the cost that loses 1.970x and the one that reaches parity is 0.933 vs 0.924 —
+*the wrong way round*. The reason is that all 16 rungs are dominated by the
+steep region below R1006, where everything is monotone and every candidate is
+right; the decision is made in the flat region, which contributes a handful of
+tied ranks.
+
+Pooled *marginal-KL-per-byte* Spearman is the less vacuous version, and it is
+still a weak discriminator: L1 0.529–0.553, AURA 0.487–0.511, empirical-interp
+0.688–0.790 — AURA again scores *below* L1 and re-allocates far better. What
+matters is not the ranking of all steps but the sign of the few large ones. Read
+the re-allocation tables, not the correlations.
 
 **§3a — weights or curves?** Re-fitting one log-scalar per unit to the L1 curves
 (i.e. allowing `h_trace` to be arbitrarily wrong while keeping the curve shape)
@@ -328,7 +364,9 @@ not be achievable on these units at all, because the measured ceiling for
 byte-matched rung re-allocation there is 0.941x with P(worse) = 0.075. The
 defensible closure at that budget is the *gate* — refuse to ship an allocation
 that cannot beat its byte-matched uniform control — not a better cost. Where
-the axis has slope (3.0 bpp), AURA is the candidate worth a served test.
+the axis has slope (3.0 bpp), AURA is the candidate worth a served test — at
+fp32 and ≥64 probes, since at its shipped 16 probes it still loses 1.378x at
+5.0 bpp.
 
 ## 8. Scope and provenance
 
@@ -357,14 +395,34 @@ Artifacts: `experiments/rung_rd_curves_2026-09-03/{encoder_identity,rd_table,
 output_mse_resolution,aura_rungs,score_candidates,refit_tracking,verify_picks}.py`
 and `experiments/rung_rd_curves_2026-09-03/results/*.json`.
 
+**Reading the results directory.** `aura_rungs.json` and `scoring.json` are the
+**bf16 deviation** of §5.4-c1, kept because the verified 1.386x arm came off
+them; the production-dtype runs are `aura_rungs_fp32_p{16,64}.json` and
+`scoring_fp32_p{16,64}.json`. `aura_rungs.py`'s default is now `--dtype float32`,
+so reproducing `aura_rungs.json` requires `--dtype bfloat16` explicitly. The
+per-position KL arrays the bootstrap runs on (`rd_positions*.npz`, ~130 MB) and
+the encode caches (`tiles/`, `tiles_norefit/`) were left in
+`/home/rob/tmp/ts-rung-rd-out/` and are **not** committed; every script
+regenerates them.
+
 ## 9. Consultations
 
-Two `advisor` calls, both acted on and both verified against code or data before
-use. The first, before any substantive work: gave the encoder-identity gate, the
-A-side emulation constants, the correction that per-unit Spearman is vacuous
-(score pooled marginal-per-byte and knapsack re-allocation instead), the §3a
-ordering, the candidate-4 pre-screen, the candidate-3 premise caveat, and the
-instruction to read `aura_cost.py` rather than reconstruct AURA from memory. The
-second, before writing this receipt: the per-unit headroom arms of §4 (which
-turned the plateau from an observation into a measurement), the AURA dtype check
-that reversed §5.4-c1, and the framing of §6. No Fable consultation was needed.
+Three `advisor` calls, all acted on and all verified against code or data before
+use. No Fable consultation was needed.
+
+1. *Before any substantive work.* Gave the encoder-identity gate, the A-side
+   emulation constants, the correction that per-unit Spearman is vacuous (score
+   pooled marginal-per-byte and knapsack re-allocation instead), the §3a
+   ordering, the candidate-4 pre-screen, the candidate-3 premise caveat, and the
+   instruction to read `aura_cost.py` rather than reconstruct AURA from memory.
+2. *Before writing this receipt.* Gave the per-unit headroom arms of §4 (which
+   turned the plateau from an observation into a measurement), the AURA dtype
+   and probe-count checks that reversed §5.4-c1, and the framing of §6.
+3. *On the first draft of this receipt.* Caught three errors, all corrected
+   above: §5.3 attributed the 1.378x 5.0-bpp loss to the bf16 deviation when the
+   verified pick is *also* fp32/16-probe — i.e. AURA's shipped defaults — which
+   changed the c1 verdict from "safe" to "safe at 4.0 and 3.0, not at 5.0";
+   §5.5's per-unit rank correlation was asserted ("0.9+") rather than shown, and
+   the real table (now printed) shows the discriminator pointing the wrong way;
+   and "the only candidate that reaches the oracle" contradicted §5.2, where the
+   empirical surface is *closer* to the oracle at 3.0 bpp than AURA is.
