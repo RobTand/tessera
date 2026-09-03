@@ -110,8 +110,9 @@ from tessera.export import (  # noqa: E402
 from tessera.scale_channel import default_channel_sigma  # noqa: E402
 from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 
-# The same sources, the same held-out rows and the same metric definitions the
-# route's own weight-space receipt used, so these numbers sit beside those.
+# The grid the pair stage owes, the label a cell is spelled with, and the
+# reader that checks a finished file against both -- one implementation, so a
+# writer and a reader cannot drift on which cells exist (#93).
 from pair_grid_audit import (  # noqa: E402
     CANDIDATE_MISSING,
     NO_BYTE_MATCH,
@@ -121,6 +122,9 @@ from pair_grid_audit import (  # noqa: E402
     cell_label,
     pair_arm_key,
 )
+
+# The same sources, the same held-out rows and the same metric definitions the
+# route's own weight-space receipt used, so these numbers sit beside those.
 from bf16_route_weight_space import (  # noqa: E402
     DENSE_H,
     DENSE_SRC,
