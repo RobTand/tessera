@@ -762,7 +762,13 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
         # compared only against a reference it is provably the same size as.
         cmp: dict = {}
         for L in Ls:
-            ref_key = pair_arm_key(refs[L], default_L, 1.0) if refs[L] else None
+            # The reference is stored under its own tagged key, so build the
+            # same string here: looking up the untagged one silently drops
+            # every arm at a width the shipped recipe does not carry, which
+            # is exactly the set this stage exists to price.
+            ref_key = None if refs[L] is None else (
+                pair_arm_key(refs[L], default_L, 1.0)
+                + ("" if L == default_L else f" [bytematch L={L}]"))
             ref = res.get(ref_key) if ref_key else None
             for ratio in a.pair_ratios:
                 key = pair_arm_key(q, L, ratio)
