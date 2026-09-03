@@ -25,6 +25,10 @@ This module is that control, promoted out of the receipt's drivers:
 * :func:`selection_requirement` says whether a plan embodies a rung
   selection at all, and stamps the menu's requirement when it does:
   validated-surrogate selection (``docs/ARCHITECTURE.md`` §4.10, tessera#2).
+* :func:`assert_plane_promotion` refuses a per-plane promotion its evidence
+  does not carry -- a geomean without per-unit wins, a served number for an
+  arm other than the one promoted -- under the receipt's GLM gate, which it
+  restates without moving (tessera#65).
 
 **What is held fixed.**  The control varies *only the rung*.  A unit the
 candidate plans as BF16 stays BF16 in the control, and the control uses the
@@ -56,6 +60,7 @@ incidental.
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from dataclasses import dataclass
 from fractions import Fraction
@@ -64,7 +69,12 @@ from typing import Iterable, Mapping, Sequence
 
 from .alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, PayloadGrid, tuple_grid
 from .calculator import terminal_rate
-from .errors import ControlNotByteMatchedError, GrammarError, TesseraError
+from .errors import (
+    ControlNotByteMatchedError,
+    GrammarError,
+    PromotionRefusedError,
+    TesseraError,
+)
 from .export import rung_ceiling, wire_recipe
 from .manifest import BodyKind, ScalePlaneKind
 
@@ -75,16 +85,22 @@ __all__ = [
     "DEFAULT_MAX_RELATIVE_SLACK",
     "REQUIRED_SELECTION_MODE",
     "SELECTION_SCHEMA",
+    "PROMOTION_SCHEMA",
+    "GLM_GATE",
+    "SERVED_KL_BAR",
     "ByteMatch",
     "PlannedUnit",
+    "PlanePromotion",
     "RateMenu",
     "RungPrice",
     "UniformControl",
     "assert_byte_matched",
+    "assert_plane_promotion",
     "bits_from_manifest",
     "control_block",
     "grid_for_name",
     "plan_wire_bits",
+    "promotion_block",
     "rate_menu",
     "selection_requirement",
     "uniform_control",
@@ -891,3 +907,176 @@ def selection_requirement(units: Iterable[PlannedUnit]) -> dict:
         ),
         "reason": _SELECTION_REASON,
     }
+
+
+PROMOTION_SCHEMA = "tessera.plane_promotion.v1"
+
+#: The coordinator's cross-check on a LUT-plane promotion, restated here and
+#: not moved: the candidate's GLM six-expert geomean against the same wire
+#: without levers is no worse than 1.00x.  The 2026-09-02 receipt wrote it;
+#: issue #65 pins it.  A caller that holds a tighter bar passes it in.
+GLM_GATE = 1.00
+
+#: The served leg's bar on the LUT plane: served KL better than 0.640 -- the
+#: same recipe, weights-only, same A4 scales, same teacher -- at matched
+#: bytes.  The 2026-09-02 receipt wrote it; issue #65 pins it.
+SERVED_KL_BAR = 0.640
+
+_PROMOTION_REASON = (
+    "a per-plane default is set by a screen and a cross-check, and the screen "
+    "that sets it must be won by the arm that ships: the 2026-09-02 receipt "
+    "promoted `hessian` on a 1.38% six-unit geomean it won on 2 of 6 units, "
+    "while the served KL quoted for the pick measured `h^1.0`, the arm not "
+    "selected (tessera#65, measured in "
+    "docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md and "
+    "docs/measurements/tessera-lut-refit-gauss-seidel-2026-09-03.md)."
+)
+
+
+@dataclass(frozen=True)
+class PlanePromotion:
+    """A per-plane promotion its evidence carries, refused otherwise.
+
+    ``unit_ratios`` is the unit set: the candidate's per-unit error over the
+    incumbent's, in the receipt's own unit order, one entry per unit.  A ratio
+    below one is a unit the candidate wins.  The geomean is derived from
+    these, never presented beside them, so a geomean cannot arrive without
+    the units that compose it.  ``served_arm`` names the arm the served KL
+    was measured on -- ``None`` when nothing was served.
+    """
+
+    candidate: str
+    served_arm: "str | None"
+    unit_ratios: "tuple[float, ...]"
+    geomean: float
+    wins: int
+    glm_ratio: float
+    glm_bar: float
+    served_kl: "float | None"
+    served_bar: float
+    where: str
+
+    def to_json(self) -> dict:
+        return {
+            "schema": PROMOTION_SCHEMA,
+            "candidate": self.candidate,
+            "served_arm": self.served_arm,
+            "units": len(self.unit_ratios),
+            "unit_wins": int(self.wins),
+            "unit_ratios": [float(r) for r in self.unit_ratios],
+            "geomean": float(self.geomean),
+            "glm_ratio": float(self.glm_ratio),
+            "glm_bar": float(self.glm_bar),
+            "served_kl": None if self.served_kl is None else float(self.served_kl),
+            "served_bar": float(self.served_bar),
+            "reason": _PROMOTION_REASON,
+        }
+
+
+def assert_plane_promotion(
+    *,
+    candidate: str,
+    served_arm: "str | None",
+    unit_ratios: Sequence[float],
+    glm_ratio: float,
+    served_kl: "float | None",
+    served_bar: float = SERVED_KL_BAR,
+    glm_bar: float = GLM_GATE,
+    where: str = "the per-plane promotion",
+) -> PlanePromotion:
+    """Refuse a per-plane promotion its evidence does not carry.
+
+    Four legs, in the order the receipt learned them.  The GLM cross-check
+    is first and exactly as written: above ``glm_bar`` refuses, whatever the
+    screen says.  Then the screen itself: the geomean must beat the
+    incumbent, and -- never on the geomean alone -- the candidate must win a
+    strict majority of the receipt's own units.  Then the identity the
+    promotion stands on: the served KL must measure the promoted arm, and it
+    must beat its bar.  A served number for a different arm is not evidence
+    for the promoted one, and no served number at all is a screen, not a
+    result.
+    """
+    if not isinstance(candidate, str) or not candidate:
+        raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
+    ratios = tuple(float(r) for r in unit_ratios)
+    if not ratios:
+        raise TesseraError(
+            f"{where}: no per-unit ratios -- a geomean presented without its "
+            "units is exactly what this gate exists to refuse"
+        )
+    if any(not math.isfinite(r) or r <= 0 for r in ratios):
+        raise TesseraError(
+            f"{where}: a per-unit ratio is a positive finite error ratio, "
+            f"got {[float(r) for r in unit_ratios]!r}"
+        )
+    glm_ratio, served_bar, glm_bar = float(glm_ratio), float(served_bar), float(glm_bar)
+    if served_kl is not None:
+        served_kl = float(served_kl)
+    geomean = math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
+    wins = sum(1 for r in ratios if r < 1)
+
+    if not glm_ratio <= glm_bar:
+        raise PromotionRefusedError(
+            f"{where}: GLM six-expert {glm_ratio:.4g}x is above the "
+            f"{glm_bar:.4g}x gate -- the cross-check the coordinator's gate "
+            "requires, and no screen overrules it"
+        )
+    if not geomean < 1:
+        raise PromotionRefusedError(
+            f"{where}: {candidate} geomean {geomean:.4g}x does not beat the "
+            "incumbent -- there is nothing to promote"
+        )
+    if not 2 * wins > len(ratios):
+        raise PromotionRefusedError(
+            f"{where}: never promote on geomean alone -- require per-unit "
+            f"wins.  {candidate} takes {wins} of {len(ratios)} units at "
+            f"geomean {geomean:.4g}x: the aggregate is carried by a minority "
+            "of the unit set"
+        )
+    if served_arm != candidate:
+        raise PromotionRefusedError(
+            f"{where}: the served KL measures arm {served_arm!r}, not the "
+            f"promoted arm {candidate!r} -- a served number for a different "
+            "arm is not evidence for it"
+        )
+    if served_kl is None or not served_kl < served_bar:
+        detail = (
+            "no served KL: a screen is not a result"
+            if served_kl is None
+            else f"served KL {served_kl:.4g} does not beat {served_bar:.4g}"
+        )
+        raise PromotionRefusedError(f"{where}: {detail}")
+    return PlanePromotion(
+        candidate=candidate,
+        served_arm=served_arm,
+        unit_ratios=ratios,
+        geomean=geomean,
+        wins=wins,
+        glm_ratio=glm_ratio,
+        glm_bar=glm_bar,
+        served_kl=served_kl,
+        served_bar=served_bar,
+        where=where,
+    )
+
+
+def promotion_block(promotion: PlanePromotion) -> dict:
+    """The JSON a promoted plane carries beside its default (principle 12).
+
+    Only a promotion :func:`assert_plane_promotion` accepted reaches here,
+    so the verdict is the record of which bars it cleared, not a second
+    reading of them.
+    """
+    block = promotion.to_json()
+    block["verdict"] = {
+        "promoted": True,
+        "detail": (
+            f"{promotion.candidate} wins {promotion.wins} of "
+            f"{len(promotion.unit_ratios)} units at geomean "
+            f"{promotion.geomean:.4g}x, GLM {promotion.glm_ratio:.4g}x "
+            f"against the {promotion.glm_bar:.4g}x gate, served "
+            f"{promotion.served_kl:.4g} against {promotion.served_bar:.4g} "
+            f"on the promoted arm"
+        ),
+    }
+    return block

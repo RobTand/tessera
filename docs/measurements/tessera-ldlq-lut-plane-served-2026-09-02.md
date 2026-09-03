@@ -811,3 +811,17 @@ hypotheses, kept so the disproof is re-runnable).
 Tests: `tests/test_ldlq_lut_plane.py` (21), `tests/test_ldlq_window.py` (the
 defaults are the measured ones), `tests/test_merge_guard.py` (a per-plane map
 that disagrees only off its own plane still refuses).
+
+## 2026-09-03: the decision rule is now a gate (tessera#65)
+
+The rule above lived in this receipt's prose, which is why the deviation it
+records could happen with nothing refusing. It now lives in
+`tessera.control.assert_plane_promotion`, beside the byte-match and
+selection gates: a candidate promotes only on a strict majority of the
+receipt's own units -- never on the geomean alone, which is derived from the
+per-unit ratios and cannot arrive without them -- and only when the served KL
+measures the promoted arm, still under this receipt's GLM six-expert gate
+and served-KL bar, which the gate restates without moving. Run against this
+receipt's own record the gate refuses the rule's literal pick (`hessian` at
+2 of 6) and accepts the shipped arm. No default moves: the gate makes the
+next such decision checkable, it does not remake this one.

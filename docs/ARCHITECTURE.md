@@ -129,3 +129,18 @@ In this tree the requirement is enforced where the allocation enters it:
 the plan's own distinct rungs, never from a roster) and warns on
 stdout when a mixed-rung plan has no served verdict. A uniform plan
 embodies no rung selection and has nothing for the gate to check.
+
+### 4.11 REQUIRED: a per-plane promotion is won by units, not by the geomean
+
+The LUT refit objective was promoted on a 1.38% six-unit geomean that won
+on 2 of 6 units, while the served KL quoted for the pick measured the
+other arm (tessera#65,
+`docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md`). So a
+per-plane promotion now clears four legs in
+`tessera.control.assert_plane_promotion`: the GLM six-expert gate exactly
+as the 2026-09-02 receipt wrote it, a geomean that beats the incumbent, a
+strict majority of the receipt's own units, and a served KL on the promoted
+arm that beats its bar. The geomean is derived from the per-unit ratios, so
+it cannot arrive without them, and a served number for a different arm is
+not evidence. No default moves by this: the gate makes the decision
+checkable, and the served arm is still the only thing that sets one.
