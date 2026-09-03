@@ -511,3 +511,36 @@ Artifacts and logs: `/mnt/shared/tessera-runs/allocated/` (checkpoints, export
 logs, `regret_uniform.json`), `/home/rob/tessera-runs/allocated/` on sparklina
 (censuses, arm logs, KL compares), KL dumps
 `/mnt/shared/tessera-kl/qwen_tessera_<arm>.json.npz`.
+
+## 11. The control, since promoted (added after the run)
+
+§4's matched arm was a driver with the run's paths in it
+(`allocated_serve_2026-09-02/find_uniform.py`), which is the wrong home for the
+only check that saw this failure. It is now `tessera.control` plus
+`experiments/uniform_control.py` (tessera#3), and the library re-derives every
+byte figure this receipt published from the wire's own accountant
+(`calculator.terminal_rate`) rather than from PrismaQuant's closed form: the
+allocation at 1761722368 bits, the control at R1006 / 1761837056 (65.1 ppm
+fatter, the direction that makes the 2.00x conservative), R750 and R1262 at the
+other two budgets, and the layer-0 separator pair at 7864832 against 7865344
+bytes. `tests/test_uniform_control.py` pins them, and pins the library against
+`prismaquant.tessera_formats.artifact_bpp` so the allocator's budget and the
+control stay one currency.
+
+Three things the promotion changed rather than copied:
+
+* **The match is asserted, not eyeballed.** A control further from the
+  candidate than a control may be (default 0.1% of its bytes; this one is 65
+  ppm) is refused where it is built, not discovered after two serves.
+* **The axis has a hole.** E2M1x2 jumps 0.239 bpp between R895 and R896, where
+  the recipe leaves the window body for the coset trellis, so a candidate
+  inside that gap has **no** byte-matched uniform arm on its own family. The
+  E4M3 arms of this receipt are nowhere near it; a future E2M1x2 allocation
+  could be, and it now refuses instead of comparing two byte budgets.
+* **The record travels with the plan.** `plan_from_layer_config.py` prices the
+  control into `<plan>.provenance.json` as `uniform_control`, unserved and
+  saying so — a built-but-unserved control must not read like a passed gate.
+
+What the promotion does **not** do is serve anything. The verdict field stays
+`measured: false` until someone runs the second arm, which is the price §7's
+lesson says is worth paying.

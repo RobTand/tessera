@@ -60,6 +60,15 @@ from pathlib import Path
 
 from safetensors import safe_open
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from tessera.control import (  # noqa: E402
+    control_block,
+    uniform_control,
+    units_from_plan,
+)
+from tessera.errors import TesseraError  # noqa: E402
+
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
 FAMILY = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)$")
@@ -174,8 +183,36 @@ def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "
     return Fraction(artifact_bpp(family, rung, shape=(rows, cols))) * rows * cols
 
 
+def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
+    """The byte-matched uniform arm this plan has to beat, as a record.
+
+    An allocation over a rate axis is a *claim* -- that choosing rungs beats
+    spending the same bytes at one rung -- and on 2026-09-02 that claim was
+    false by 2.00x while every other check in the pipeline passed.  So the
+    sidecar carries the arm that tests it, priced but not served, next to the
+    bpp (tessera#3, principle 12).
+
+    It records rather than refuses: the converter's job is to write the plan it
+    was given, and a plan whose control cannot be byte-matched (two families,
+    or the 0.239-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
+    must never do is stay silent about it, so the reason lands in the block.
+    ``experiments/uniform_control.py`` is where the match is *asserted*, because
+    that is where the arm you would actually build gets written.
+    """
+    try:
+        units = units_from_plan(plan, shapes)
+        control = uniform_control(units, rule=rule, assert_match=False)
+    except TesseraError as exc:
+        return {"schema": "tessera.uniform_control.v1", "built": False,
+                "refusal": str(exc)}
+    block = control_block(control)
+    block["built"] = True
+    return block
+
+
 def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
-          prismaquant: "Path | None"):
+          prismaquant: "Path | None", control_rule: str = "nearest",
+          with_control: bool = True):
     meta = config.get("__prismaquant__")
     assignment = {k: v for k, v in config.items() if not k.startswith("__")}
     if not assignment:
@@ -329,6 +366,9 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
         },
         "units": units,
     }
+    if with_control:
+        provenance["uniform_control"] = uniform_control_block(
+            plan, shapes, rule=control_rule)
     return plan, provenance
 
 
@@ -345,6 +385,16 @@ def main(argv=None):
     ap.add_argument("--allow-fused-disagreement", action="store_true",
                     help="write the plan even when a fused module's members disagree, letting the "
                          "exporter pass the group through as BF16")
+    ap.add_argument("--write-uniform-plan", type=Path, default=None,
+                    help="also write the byte-matched UNIFORM control plan here -- the arm "
+                         "the candidate has to beat at the same bytes (tessera#3).  The byte "
+                         "match is ASSERTED before it is written; a plan whose control cannot "
+                         "be matched refuses rather than exporting a second byte budget")
+    ap.add_argument("--control-rule", choices=("nearest", "no_larger"), default="nearest",
+                    help="nearest: minimise |candidate - control| bytes (default).  no_larger: "
+                         "the heaviest rung that does not outweigh the candidate")
+    ap.add_argument("--no-uniform-control", action="store_true",
+                    help="do not price the uniform control into the sidecar")
     ap.add_argument("--prismaquant", type=Path, default=None,
                     help="a PrismaQuant tree, imported read-only for its own wire accounting "
                          "(prismaquant.tessera_formats.artifact_bpp) so the sidecar carries the "
@@ -355,7 +405,9 @@ def main(argv=None):
     shapes = body_weights(args.model)
     plan, provenance = build(config, shapes, cover=args.cover,
                              allow_disagreement=args.allow_fused_disagreement,
-                             prismaquant=args.prismaquant)
+                             prismaquant=args.prismaquant,
+                             control_rule=args.control_rule,
+                             with_control=not args.no_uniform_control)
     provenance["source_layer_config"] = str(args.layer_config.resolve())
     provenance["model"] = str(args.model.resolve())
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -381,6 +433,26 @@ def main(argv=None):
         print(f"  PrismaQuant charges {totals['prismaquant_charged_bits']:.0f} bits over "
               f"{totals['quantized_params']} params = "
               f"{totals['prismaquant_charged_bpp']:.6f} bpp")
+    block = provenance.get("uniform_control")
+    if block and block.get("built"):
+        control = block["control"]
+        match = control["match"]
+        print(f"  uniform control: {control['grid']} R{control['q256']} at "
+              f"{match['control_bpp']:.6f} bpp against the candidate's "
+              f"{match['candidate_bpp']:.6f} "
+              f"({match['relative_slack_ppm']:.1f} ppm, the {match['fatter_arm']} arm is "
+              f"fatter){'' if match['byte_matched'] else '  NOT BYTE-MATCHED'}")
+        print("    unserved: this is the arm the candidate has to beat at the same bytes")
+    elif block:
+        print(f"  uniform control: NOT BUILT -- {block['refusal']}")
+    if args.write_uniform_plan is not None:
+        units = units_from_plan(plan, shapes)
+        control = uniform_control(units, rule=args.control_rule)
+        args.write_uniform_plan.parent.mkdir(parents=True, exist_ok=True)
+        args.write_uniform_plan.write_text(
+            json.dumps(control.plan, indent=2, sort_keys=True))
+        print(f"  -> {args.write_uniform_plan}  (uniform {control.grid} "
+              f"R{control.q256}, the control arm)")
     print(f"  -> {args.out}\n  -> {sidecar}")
     return 0
 

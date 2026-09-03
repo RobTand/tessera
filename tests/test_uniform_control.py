@@ -425,3 +425,126 @@ def test_an_unserved_control_says_so_instead_of_reading_like_a_pass():
     assert block["verdict"]["measured"] is False
     assert "beat_control" not in block["verdict"]
     assert "was served" in block["verdict"]["detail"]
+
+
+# ------------------------------------------------------- the callable gate
+
+
+def _cli():
+    spec = importlib.util.spec_from_file_location(
+        "uniform_control_cli", ROOT / "experiments" / "uniform_control.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _candidate_files(tmp_path):
+    plan, shapes = {}, {}
+    for unit in body(ALLOCATED_4_0):
+        plan[unit.tensor] = {"grid": unit.grid, "q256": unit.q256}
+        shapes[unit.tensor] = [unit.rows, unit.columns]
+    (tmp_path / "plan.json").write_text(json.dumps(plan))
+    (tmp_path / "shapes.json").write_text(json.dumps(shapes))
+    return tmp_path / "plan.json", tmp_path / "shapes.json"
+
+
+def _manifest(tmp_path, units, name):
+    directory = tmp_path / name
+    directory.mkdir()
+    roles = [{"tensor": u.tensor, "wire_bytes": int(u.wire_bits) // 8} for u in units]
+    assert all(int(u.wire_bits) % 8 == 0 for u in units)
+    (directory / "tessera_serving_manifest.json").write_text(json.dumps(
+        {"modules": {"all": {"roles": roles}}, "totals": {"wire_bpp": 0.0}}))
+    return directory
+
+
+def test_the_cli_writes_the_control_plan_the_exporter_can_build(tmp_path):
+    cli = _cli()
+    plan_path, shapes_path = _candidate_files(tmp_path)
+    out = tmp_path / "control_plan.json"
+    report = tmp_path / "control_block.json"
+    assert cli.main(["plan", str(plan_path), "--shapes-json", str(shapes_path),
+                     "--out", str(out), "--report", str(report)]) == 0
+    control_plan = json.loads(out.read_text())
+    assert len(control_plan) == 196
+    assert {entry["q256"] for entry in control_plan.values()} == {1006}
+    block = json.loads(report.read_text())
+    assert block["control"]["q256"] == 1006
+    assert block["verdict"]["measured"] is False
+
+
+def test_the_cli_refuses_a_control_it_cannot_byte_match(tmp_path, capsys):
+    cli = _cli()
+    plan_path, shapes_path = _candidate_files(tmp_path)
+    out = tmp_path / "control_plan.json"
+    assert cli.main(["plan", str(plan_path), "--shapes-json", str(shapes_path),
+                     "--out", str(out), "--max-relative-slack", "0.00001"]) == 2
+    assert not out.exists()
+    assert "REFUSED" in capsys.readouterr().out
+
+
+def test_the_cli_verifies_the_bytes_that_shipped_and_states_the_verdict(tmp_path, capsys):
+    """The gate's second half, on manifests rather than on plans.
+
+    The receipt's two arms, their two KLs, and the answer the gate has to give:
+    the allocation did not beat the thing it replaced.
+    """
+    cli = _cli()
+    candidate = body(ALLOCATED_4_0)
+    control = uniform_control(candidate)
+    candidate_dir = _manifest(tmp_path, candidate, "allocated")
+    control_dir = _manifest(tmp_path, control.units, "uniform")
+    report = tmp_path / "verdict.json"
+    assert cli.main(["verify", str(candidate_dir), str(control_dir),
+                     "--params", str(QWEN_PARAMS),
+                     "--candidate-kl", "0.3485", "--control-kl", "0.1746",
+                     "--report", str(report)]) == 0
+    out = capsys.readouterr().out
+    assert "BYTE MATCHED" in out and "DID NOT BEAT" in out
+    verdict = json.loads(report.read_text())
+    assert verdict["verdict"]["beat_control"] is False
+    assert verdict["match"]["candidate_bits"] == BUDGET_BITS["4.0"]
+    assert verdict["match"]["control_bits"] == 1761837056
+
+
+def test_the_cli_verify_refuses_two_arms_that_do_not_weigh_the_same(tmp_path, capsys):
+    cli = _cli()
+    candidate = body(ALLOCATED_4_0)
+    other = body({role: 1100 for role in ROLE_SHAPES})
+    candidate_dir = _manifest(tmp_path, candidate, "allocated")
+    other_dir = _manifest(tmp_path, other, "not-a-control")
+    assert cli.main(["verify", str(candidate_dir), str(other_dir),
+                     "--params", str(QWEN_PARAMS)]) == 2
+    assert "REFUSED" in capsys.readouterr().out
+
+
+def test_the_converter_carries_the_control_in_its_sidecar():
+    """``plan_from_layer_config`` records the arm beside the plan it writes.
+
+    It records rather than refuses -- writing the plan it was given is its job
+    -- so what is pinned here is that the record exists, is byte-matched, and
+    says plainly that neither arm was served.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "plan_from_layer_config", ROOT / "experiments" / "plan_from_layer_config.py")
+    converter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(converter)
+
+    config, shapes = {}, {}
+    for unit in body(ALLOCATED_4_0):
+        qname = unit.tensor[: -len(".weight")]
+        config[qname] = {"data_type": "tessera",
+                         "tessera_format": f"TESSERA_E4M3_K1_R{unit.q256}"}
+        shapes[unit.tensor] = (unit.rows, unit.columns)
+    plan, provenance = converter.build(
+        config, shapes, cover="as-allocated", allow_disagreement=False, prismaquant=None)
+    block = provenance["uniform_control"]
+    assert block["built"] is True
+    assert block["control"]["q256"] == 1006
+    assert block["control"]["match"]["byte_matched"] is True
+    assert block["verdict"]["measured"] is False
+
+    plan2, provenance2 = converter.build(
+        config, shapes, cover="as-allocated", allow_disagreement=False,
+        prismaquant=None, with_control=False)
+    assert plan2 == plan and "uniform_control" not in provenance2
