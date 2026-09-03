@@ -66,7 +66,7 @@ BF16 and named in ``ignore``.  Naming it there is not bookkeeping: the plugin
 REFUSES a Linear that is neither declared nor ignored, so one mistyped target
 is a refusal rather than a silently BF16 artifact.  The naming follows the
 tensors WRITTEN, not the tensors the body pattern matched
-(``ignored_module``), so a Linear outside the decoder body -- a vision tower,
+(``ignored_modules``), so a Linear outside the decoder body -- a vision tower,
 an MTP sidecar -- is named too.
 
 THE ARTIFACT IS TENSOR-PARALLELISM-AGNOSTIC, and this exporter never encodes
@@ -142,7 +142,7 @@ FUSED = (
 #: the prefix test silently found NOTHING there -- an "export" that quantized
 #: zero Linears and reported success.  The vision tower is ``model.visual.
 #: blocks.N.``, which this does not match, so it stays BF16 -- and is named in
-#: ``ignore`` by ``ignored_module``, which runs over the tensors WRITTEN rather
+#: ``ignore`` by ``ignored_modules``, which runs over the tensors WRITTEN rather
 #: than over the ones this pattern matched.  Staying BF16 and being named are
 #: different facts and the plugin reads the second one (#86).
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
@@ -184,6 +184,21 @@ MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
 #: where it sits, not because it has three axes.
 PACKED_EXPERT_ND = re.compile(
     r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
+
+#: A module vLLM builds under a SECOND name, beside the checkpoint's spelling.
+#: Not a taste and not a guess: CONSTRUCTED on the pinned build
+#: ``prismaquant/glm53-mia-sm121:487ecf187`` with a recording quant config, the
+#: GLM vision tower offers ``visual.blocks.N.attn.qkv_proj`` -- because
+#: ``Glm5NextVisionAttention`` builds its projection at
+#: ``f"{prefix}.qkv_proj" if quant_config else f"{prefix}.qkv"``
+#: (``models/glm5next/nvidia/multimodal.py:167``) -- while the tensor on disk is
+#: ``...attn.qkv.weight``.  Which name exists depends on whether that runtime
+#: passes a quant config, which the producer cannot know; an ignore entry is
+#: only ever LOOKED UP, so carrying both spellings costs nothing and carrying
+#: one is a load-time refusal in whichever world the runtime turns out to be
+#: in.  Body attention never reaches here: its q/k/v arrive unmerged and the
+#: FUSED table already names ``qkv_proj``.
+MERGED_ALIASES = ((re.compile(r"^(.*\.)qkv\.weight$"), "qkv_proj"),)
 
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
@@ -309,10 +324,10 @@ def fused_module(tensor_name: str):
     return None
 
 
-def ignored_module(tensor_name: str, shape) -> str | None:
-    """The vLLM module ``ignore`` must name for a tensor written at source precision.
+def ignored_modules(tensor_name: str, shape) -> tuple[str, ...]:
+    """The vLLM module names ``ignore`` must carry for a tensor written at source precision.
 
-    ``None`` when the tensor is not a Linear weight the plugin can be asked
+    Empty when the tensor is not a Linear weight the plugin can be asked
     about.  This is a RULE over the tensors the export actually writes, not a
     roster beside them: a roster is a second place to remember, and it goes
     stale in silence -- which is how the vision tower came to be passed
@@ -357,14 +372,19 @@ def ignored_module(tensor_name: str, shape) -> str | None:
     probe = tensor_name if tensor_name.endswith(".weight") else tensor_name + ".weight"
     if len(shape) >= 3:
         packed = PACKED_EXPERT_ND.match(probe)
-        return packed.group("moe") + ".experts" if packed else None
+        return (packed.group("moe") + ".experts",) if packed else ()
     if not tensor_name.endswith(".weight") or len(shape) != 2:
-        return None
+        return ()
     routed = ROUTED_EXPERT_2D.match(probe)
     if routed:
-        return routed.group("moe") + ".experts"
+        return (routed.group("moe") + ".experts",)
     fused = fused_module(probe)
-    return fused[0] if fused else module_of(tensor_name)
+    if fused:
+        return (fused[0],)
+    names = [module_of(probe)]
+    names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
+                 if (match := pattern.match(probe)))
+    return tuple(names)
 
 
 def git_hash() -> str:
@@ -733,9 +753,7 @@ def main():
                     # through and never named, and the plugin refuses exactly
                     # that (#86).  Deriving the name from the tensor just
                     # written is what keeps the two facts one fact.
-                    ignored = ignored_module(name, tensor.shape)
-                    if ignored is not None:
-                        ignore.append(ignored)
+                    ignore.extend(ignored_modules(name, tensor.shape))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
@@ -860,12 +878,13 @@ def main():
         raise SystemExit(f"modules never completed: {sorted(pending_modules)}")
 
     # The expert stacks and the routed leaves were named by the same rule as
-    # they were written (``ignored_module``), which is the point: one mechanism
+    # they were written (``ignored_modules``), which is the point: one mechanism
     # decides what is passed through and what is declared BF16.  What is worth
     # asserting is that the two agree -- a plan-time passthrough the write loop
     # somehow did not name would be a load-time refusal, so it is a refusal
     # here instead.
-    unnamed = sorted(n for n in passthrough if ignored_module(n, shapes[n]) not in ignore)
+    unnamed = sorted(n for n in passthrough
+                     if not set(ignored_modules(n, shapes[n])) <= set(ignore))
     if unnamed:
         raise SystemExit(
             f"{len(unnamed)} tensor(s) were planned as passthrough but never named in ignore, "

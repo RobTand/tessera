@@ -400,7 +400,7 @@ Three faults, all at plan time, all silent (fixed; see
   though, and the plugin reads the second one: `ignore` was assembled from
   three `BODY_LAYER`-gated sources, so every vision Linear was passed through
   and never named, and a `LinearBase` that is neither declared nor ignored is
-  refused (#86). `ignored_module` now derives the name from each tensor the
+  refused (#86). `ignored_modules` now derives the name from each tensor the
   export **writes**, body or not — one rule, no roster to keep beside it.
 * Routed experts here are **unpacked per-expert 2-D**
   (`...mlp.experts.{e}.{gate,up,down}_proj.weight`, 2592 of them across layers

@@ -113,6 +113,7 @@ def _export(tmp_path, monkeypatch, *extra):
 #: merged on disk.
 VISION_MODULES = (
     "model.visual.blocks.0.attn.qkv",
+    "model.visual.blocks.0.attn.qkv_proj",
     "model.visual.blocks.0.attn.proj",
     "model.visual.blocks.0.mlp.gate_up_proj",
     "model.visual.blocks.0.mlp.down_proj",
@@ -124,19 +125,25 @@ VISION_MODULES = (
 
 def test_the_ignore_rule_names_a_non_body_linear():
     """The rule itself, before any export: a passed-through Linear has a name."""
-    assert export.ignored_module("model.visual.blocks.0.attn.qkv.weight", (192, 64)) == \
-        "model.visual.blocks.0.attn.qkv"
-    assert export.ignored_module("model.visual.blocks.0.mlp.gate_proj.weight", (128, 64)) == \
-        "model.visual.blocks.0.mlp.gate_up_proj"
-    assert export.ignored_module("mtp.layers.0.self_attn.q_proj.weight", (128, 128)) == \
-        "mtp.layers.0.self_attn.qkv_proj"
+    # Both spellings: the pinned build names the merged module ``qkv_proj``
+    # when it is given a quant config and ``qkv`` when it is not
+    # (multimodal.py:167), and which one exists is not the producer's to know.
+    assert export.ignored_modules("model.visual.blocks.0.attn.qkv.weight", (192, 64)) == (
+        "model.visual.blocks.0.attn.qkv", "model.visual.blocks.0.attn.qkv_proj")
+    assert export.ignored_modules("model.visual.blocks.0.mlp.gate_proj.weight", (128, 64)) == (
+        "model.visual.blocks.0.mlp.gate_up_proj",)
+    # The FUSED table's output, not an attested fact about Qwen4Exp: that
+    # architecture is in no runtime on this box.  What it fixes is that the
+    # rule reaches a name BODY_LAYER never matched.
+    assert export.ignored_modules("mtp.layers.0.self_attn.q_proj.weight", (128, 128)) == (
+        "mtp.layers.0.self_attn.qkv_proj",)
     # A conv is not a Linear the plugin is ever asked about.
-    assert export.ignored_module("model.visual.patch_embed.proj.weight", (64, 3, 2, 2, 2)) is None
-    assert export.ignored_module("model.visual.blocks.0.norm1.weight", (64,)) is None
+    assert export.ignored_modules("model.visual.patch_embed.proj.weight", (64, 3, 2, 2, 2)) == ()
+    assert export.ignored_modules("model.visual.blocks.0.norm1.weight", (64,)) == ()
     # A routed expert is ignored at the FusedMoE prefix, never at its leaves.
-    assert export.ignored_module(
-        "model.language_model.layers.1.mlp.experts.7.gate_proj.weight", (64, 128)) == \
-        "model.language_model.layers.1.mlp.experts"
+    assert export.ignored_modules(
+        "model.language_model.layers.1.mlp.experts.7.gate_proj.weight", (64, 128)) == (
+        "model.language_model.layers.1.mlp.experts",)
 
 
 def test_the_exported_ignore_names_every_passed_through_linear(tmp_path, monkeypatch):
@@ -208,10 +215,10 @@ def test_a_packed_expert_stack_is_named_in_either_spelling():
     chops seven characters off a real prefix.
     """
     packed = "model.language_model.layers.1.mlp.experts.gate_up_proj"
-    assert export.ignored_module(packed + ".weight", (4, 128, 128)) == \
-        "model.language_model.layers.1.mlp.experts"
-    assert export.ignored_module(packed, (4, 128, 128)) == \
-        "model.language_model.layers.1.mlp.experts"
+    assert export.ignored_modules(packed + ".weight", (4, 128, 128)) == (
+        "model.language_model.layers.1.mlp.experts",)
+    assert export.ignored_modules(packed, (4, 128, 128)) == (
+        "model.language_model.layers.1.mlp.experts",)
     # A conv is rank 3 too, and sits nowhere near an experts path.
-    assert export.ignored_module(
-        "model.language_model.layers.0.self_attn.k_conv1d.weight", (8192, 1, 4)) is None
+    assert export.ignored_modules(
+        "model.language_model.layers.0.self_attn.k_conv1d.weight", (8192, 1, 4)) == ()
