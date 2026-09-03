@@ -74,3 +74,13 @@ class ControlNotByteMatchedError(TesseraError):
     control; the comparison silently prices the difference as quality.  Raised
     by :func:`tessera.control.assert_byte_matched`.
     """
+
+
+class PromotionRefusedError(TesseraError):
+    """A per-plane promotion cleared no bar this gate measures.
+
+    A winning geomean with a losing per-unit record, a served number for an
+    arm other than the one promoted, a GLM cross-check above its gate, or a
+    served KL that misses its bar each refuse here, by name, with the reason.
+    Raised by :func:`tessera.control.assert_plane_promotion` (tessera#65).
+    """

@@ -129,3 +129,29 @@ In this tree the requirement is enforced where the allocation enters it:
 the plan's own distinct rungs, never from a roster) and warns on
 stdout when a mixed-rung plan has no served verdict. A uniform plan
 embodies no rung selection and has nothing for the gate to check.
+
+### 4.11 REQUIRED: a per-plane promotion is won by units, not by the geomean
+
+The LUT refit objective was promoted on a 1.38% six-unit geomean that won
+on 2 of 6 units, while the served KL quoted for the pick measured the
+other arm (tessera#65,
+`docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md`). So a
+per-plane promotion now clears four legs in
+`tessera.control.assert_plane_promotion`: the GLM six-expert gate exactly
+as the 2026-09-02 receipt wrote it, a geomean that beats the incumbent, a
+strict majority of the receipt's own units, and a served KL on the promoted
+arm that beats **the incumbent's own served KL at matched bytes**. The
+geomean is derived from the per-unit ratios, so it cannot arrive without
+them, and a served number for a different arm is not evidence. `served_bar`
+takes no default for the same reason the other three legs are ratios: it is
+the arm being replaced, so it moves whenever a promotion lands. (The
+receipt's 0.640 is the *stock* wire and was the incumbent only for "levers
+vs no levers"; as a default it would have passed a candidate serving 0.60
+over an `h^1.0` incumbent at 0.5310.)
+
+No default moves by this, and `tests/test_plane_promotion.py` is what makes
+that checkable rather than asserted: it runs the receipt's own six-unit
+record through the gate, watches `hessian` refuse at 2 of 6, and pins
+`DEFAULT_REFIT_OBJECTIVE["lut16"]` to the `h^1.0` that refusal leaves
+standing. Flipping that default without a promotion this gate accepts turns
+the suite red.

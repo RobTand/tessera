@@ -811,3 +811,30 @@ hypotheses, kept so the disproof is re-runnable).
 Tests: `tests/test_ldlq_lut_plane.py` (21), `tests/test_ldlq_window.py` (the
 defaults are the measured ones), `tests/test_merge_guard.py` (a per-plane map
 that disagrees only off its own plane still refuses).
+
+## 2026-09-03: the decision rule is now a gate (tessera#65)
+
+The rule above lived in this receipt's prose, which is why the deviation it
+records could happen with nothing refusing. It now lives in
+`tessera.control.assert_plane_promotion`, beside the byte-match and
+selection gates: a candidate promotes only on a strict majority of the
+receipt's own units -- never on the geomean alone, which is derived from the
+per-unit ratios and cannot arrive without them -- and only when the served KL
+measures the promoted arm, still under this receipt's GLM six-expert gate
+gate, which the gate restates without moving.
+
+Run against this receipt's own record -- the six-unit `out` table in
+`tessera-lut-refit-gauss-seidel-2026-09-03.md:122-128`, divided rather than
+retyped -- the gate refuses the rule's literal pick at 2 of 6. It does not
+"accept the shipped arm", and the distinction matters: head to head the two
+arms refuse *each other*, `hessian` on the per-unit leg and `h^1.0` on the
+geomean (1/0.9864 = 1.0138x). `h^1.0` stands because it is the incumbent and
+the only candidate against it was refused -- an incumbent is what a
+promotion is measured against, not something that promotes itself.
+
+The served bar moved with that reading. This receipt's 0.640 is the *stock*
+wire's served KL: the incumbent for "levers vs no levers", and for nothing
+after `h^1.0` served 0.5310. The gate therefore takes the incumbent's served
+KL as an argument with no default, so the leg reads the arm being replaced.
+No default moves: the gate makes the next such decision checkable, it does
+not remake this one.
