@@ -130,6 +130,12 @@ ROUTES: dict[str, dict] = {
     },
     TESSERA_BF16: {
         "grids": ("BF16",), "plane": "CHANNEL",
+        # The same window body the FP8 route reads, over a scalar grid.  What
+        # differs between those two routes is the alphabet the window table
+        # snaps to and the tile the decode lands in, and neither is a body
+        # fact -- which is why this row is FP8's row here and in
+        # ``sharding.ROUTE_TP_AXES``, for the same reason in both places.
+        "body": "WINDOW", "span": 1,
         "short": "BF16",
         "grid_kind": "the scalar BF16",
         "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),

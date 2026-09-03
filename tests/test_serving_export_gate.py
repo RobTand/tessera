@@ -199,17 +199,27 @@ def test_the_encoder_keeps_its_full_range_under_the_gate():
 def test_the_override_is_explicit_and_lands_in_the_manifest_record():
     """Principle 9's shape: fail closed, unless an explicit per-run override.
 
-    ``--grid BF16`` is the workflow that needs it -- a wire with no plugin
-    route (#9), exported so its ``--stock-twin`` can be served.
+    The workflow that needs it is a rung the encoder writes well and no
+    decoder reads: the E2M1x2 sub-cap WINDOW body, which the exporter builds
+    from q256 128 and which the plugin publishes only at the single point 896.
+    You export it to weigh it, or to serve its ``--stock-twin``, and the
+    override is how you say so out loud.
+
+    ``--grid BF16`` stood here until BF16 got a route of its own, which is the
+    point of using a rung rather than a grid: a whole grid missing from the
+    plugin is a gap someone eventually closes, and the test that pinned it then
+    passes for the wrong reason.  A rung outside a published range is the
+    permanent shape of this case.
     """
-    grid = grid_for_name("BF16")
+    grid = grid_for_name("E2M1x2")
     with pytest.raises(SystemExit):
-        EXPORT.check_recipe(grid, 1536, where="bf16.probe")
+        EXPORT.check_recipe(grid, 512, where="subcap.probe")
     stamped: list = []
-    assert EXPORT.check_recipe(grid, 1536, where="bf16.probe",
+    assert EXPORT.check_recipe(grid, 512, where="subcap.probe",
                                allow_unserveable=True, overrides=stamped) is not None
-    assert [(r["grid"], r["q256"], r["target"]) for r in stamped] == [("BF16", 1536, "bf16.probe")]
-    assert "no route in this plugin build holds grid 'BF16'" in stamped[0]["refusal"]
+    assert [(r["grid"], r["q256"], r["target"])
+            for r in stamped] == [("E2M1x2", 512, "subcap.probe")]
+    assert "outside the rungs this build's decoder reads" in stamped[0]["refusal"]
 
 
 # ------------------------------------- what the wire can emit, and what of it
