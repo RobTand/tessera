@@ -25,6 +25,7 @@ window Viterbi's reference implementation is the definition.
 import sys
 from fractions import Fraction
 from pathlib import Path
+import math
 
 import pytest
 import torch
@@ -375,6 +376,32 @@ def test_the_route_rounds_the_weight_nowhere_and_the_twin_rounds_once():
     epilogue = (x @ values.float().T) * scale[None, :]
     folded = x @ tile.float().T
     assert float((epilogue - exact).norm()) < float((folded - exact).norm())
+
+
+@pytest.mark.parametrize("share,err_gap,sq_gap", [
+    (0.154, 0.0118, 0.0237),  # GLM experts, BF16 R=7: the receipt's worked example
+    (0.110, 0.0060, 0.0121),  # dense Qwen transfer (out 0.01214, same fold constant)
+    (0.020, 0.0002, 0.0004),  # BF16 R=4: the rung where the share is small
+])
+def test_a_fold_share_composes_in_quadrature_not_as_a_percent_win(share, err_gap, sq_gap):
+    """A fold share is not a route win: it composes in quadrature (#45).
+
+    The weight-space table (``tessera-bf16-route-2026-09-02.md`` §7b) defines
+    ``fold = sqrt(out_bf16^2 - out^2)``, so a share ``s`` raises the twin's
+    error by ``sqrt(1+s^2)-1`` and its squared error -- the quantity an
+    output-space KL tracks -- by ``s^2``. The shares are the receipt's (15.4%
+    GLM at R=7, ~11% transferred to dense Qwen, 2.0% at R=4); the gaps are
+    derived here from that definition. The pre-#45 reading turned the first
+    row into "the route is ~15% better than its twin"; the definition gives
+    1.2% and 2.4%, and served at R=7 the twin's KL is 1.0011x the route's on
+    ``all`` and 0.9961x on ``confident`` -- signs disagree, i.e. below what
+    the corpus resolves (``tessera-bf16-route-served-2026-09-02.md`` §3). The
+    never-fold rule itself is untouched and is held by
+    ``test_the_route_rounds_the_weight_nowhere_and_the_twin_rounds_once``.
+    """
+    assert math.sqrt(1 + share ** 2) - 1 == pytest.approx(err_gap, abs=5e-5)
+    assert share ** 2 == pytest.approx(sq_gap, abs=5e-5)
+    assert err_gap < share / 10, "the win is an order of magnitude below the share"
 
 
 def test_the_streamed_pair_is_the_materialised_one():

@@ -21,10 +21,18 @@ CHANNEL scale is one factor per **output row**, and an output-row factor
 commutes with the matmul: ``x (s * W)^T = (x W^T) * s``.  So the route runs the
 GEMM on the raw table values -- exact, since every table entry is already a
 bf16 word -- and applies ``s`` in fp32 to the GEMM's fp32 output, one rounding
-at the end.  Folding instead costs 0.0011-0.0022 in absolute relative output
-error at *any* rate, because it is a property of bf16's 7-bit mantissa rather
-than of the coder: 2% of the error at R = 4 and **16% at R = 7**
-(``tessera16-alphabet-floor`` B).  ``tessera.decode.materialize_bf16`` returns
+at the end.  Folding instead adds one bf16 rounding of ``s_i * t_ik``
+(relative error ``<= 2^-9``): ~0.0011-0.0022 absolute on GLM expert rows at
+*any* rate, because it is a property of bf16's 7-bit mantissa rather than of
+the coder (``tessera16-alphabet-floor`` B).  Its *share* of the error grows as
+the coding error shrinks underneath it -- 15.4% at R = 7 -- but a share
+composes in quadrature, so that is a 1.2% error gap and a 2.4% squared-error
+gap, and served at R = 7 the twin's KL is 1.0011x the route's on ``all`` and
+0.9961x on ``confident``: the signs disagree, i.e. below what the corpus
+resolves, so no fold win is claimed here (``tessera-bf16-route`` §7b as
+corrected, ``tessera-bf16-route-served`` §3, #45).  The rule is unchanged all
+the same: the scale is applied on the output, never folded into the tile.
+``tessera.decode.materialize_bf16`` returns
 the pair for exactly this reason and the encoder refuses to fold; this route
 matches.  ``materialize_bf16_folded`` is the *twin's* rendering -- what a
 one-tensor BF16 checkpoint has no choice but to ship -- and it is not reachable

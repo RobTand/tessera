@@ -663,13 +663,20 @@ def materialize_bf16(
 
     **Why the scale is not folded in.**  It could be: an A16 tile carries its
     own exponent per weight, so ``bf16(code x row_scale)`` is a legal single
-    tensor.  It is also measurably worse, at every rate, by a fixed amount:
-    the fold costs 0.0011-0.0022 in absolute relative output error on GLM
-    expert rows whatever the coder -- 2% of the error at R=4, **16% at R=7**,
-    28% at EXL3-K8 quality -- because it is a property of bf16's 7-bit
-    mantissa and the activations, not of the weights
-    (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md`` B).  An
-    fp16 fold costs 0-0.0005; not folding costs nothing.
+    tensor.  It is also one rounding worse, at every rate, by a fixed amount:
+    the fold adds one bf16 rounding of ``s_i * t_ik`` -- 0.0011-0.0022 in
+    absolute relative output error on GLM expert rows whatever the coder --
+    because it is a property of bf16's 7-bit mantissa and the activations, not
+    of the weights (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``
+    B).  Its *share* of the error grows as the coding error shrinks underneath
+    it (15.4% at R = 7), but a share composes in quadrature -- ``fold =
+    sqrt(out_bf16^2 - out^2)`` -- so that is a 1.2% error gap and a 2.4%
+    squared-error gap, the quantity an output-space KL tracks; and served at
+    R = 7 the twin's KL is 1.0011x the route's on ``all`` and 0.9961x on
+    ``confident``, i.e. below what the corpus resolves, so no fold win is
+    claimed (``tessera-bf16-route`` §7b as corrected,
+    ``tessera-bf16-route-served`` §3, #45).  An fp16 fold costs 0-0.0005; not
+    folding costs nothing.
 
     And nothing has to fold, because of the plane's shape rather than a
     trick: a CHANNEL scale is one factor per **output row**, and an
