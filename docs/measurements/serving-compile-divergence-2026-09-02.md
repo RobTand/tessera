@@ -249,6 +249,13 @@ already shared one cache root by design; what it did not do is stamp the key
 into each dump's provenance, which is why the odd arm took a forensic session to
 pin down. Filed as **#30**.
 
+*Follow-up (same day, `docs/measurements/serve-build-identity-2026-09-02.md`):*
+the stamp exists, and it is **not** the AOT key this paragraph asks for — the
+key is the same on both sides of §3, so a key-matched stamp would have
+certified the rebuild as a replay. What is stamped is a digest of the cache
+slot's contents, which separates the two caches above (`04525ea7…` vs
+`dbeb2b8b…`).
+
 *Named, not tested:* the pinned torch has a knob for exactly the mechanism §3(b)
 measures. `torch/_inductor/config.py:1007-1009` in torch 2.13.0+cu130:
 

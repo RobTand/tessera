@@ -48,6 +48,11 @@ PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # 9's second leg.  The repeated store_true flag is a no-op stand-in so the argv
 # shape does not change between the two.
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
+# Which compiled build served this dump, recorded beside it (issue #30).  This
+# wrapper already pins ONE $VLLM_CACHE across every arm, so the stamp can read
+# the cache slot's contents and the sidecar is complete: the AOT key alone
+# would not be, since both of the two builds 0.017117 apart sit under one key.
+source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
@@ -68,6 +73,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
   -e TESSERA_SERVE_MODE="$MODE" \
   -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.85}" \
+  $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
@@ -98,6 +104,10 @@ if ! $PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url
 fi
 docker logs "$NAME" > "$LOG" 2>&1 || true
 docker rm -f "$NAME" >/dev/null
+# After the reap, never before: a stamp that failed first would leave a
+# headless serve holding the GPU.
+build_identity_stamp "$LOG" "${DUMP%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \
+  "$MODE" "${TESSERA_LANE_EAGER:-1}" "$MODEL"
 echo "--- route ---"
 grep -i "TESSERA_NVFP4\|TESSERA_FP8\|tessera\|Using .* for .*GEMM\|Selected .*Kernel for" "$LOG" | grep -iv "warning.*deprecat" | sed 's/.*INFO[^ ]* //' | sort | uniq -c | sort -rn | head -12 || true
 echo "--- KL vs teacher ---"
