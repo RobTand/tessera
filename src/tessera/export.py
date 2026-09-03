@@ -563,8 +563,9 @@ BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #: per odd part of the multiplier -- differing in ``wt`` by 0.007-0.02%.  The
 #: invariant is the tensor, not the file, and there is no dyadic value of this
 #: constant left to find.  The contrast is the proof that this is the grid's
-#: property and not the mechanism's: the identical shift on E4M3 costs +5.9%
-#: ``wt`` at x2 and +71% at x4, because that table runs past 448.
+#: property and not the mechanism's: over those same four units the identical
+#: shift on E4M3 costs +5 to +19% ``wt`` at x2 and +70 to +98% at x4, because
+#: that table runs past 448.
 #:
 #: What remains searchable is ``L`` and the ``window_sigma``/``channel_sigma``
 #: *ratio* -- the table's spread against the row's, which is what sets reach.
