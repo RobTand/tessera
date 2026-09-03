@@ -73,8 +73,10 @@ def _stub(sweep, monkeypatch, *, fail=(), no_match=()):
     # so a subset argmin and the grid's argmin can differ.
     monkeypatch.setattr(sweep, "score",
                         lambda w, hat, **k: {"wt": 0.5, "h": 0.5})
-    monkeypatch.setattr(sweep, "check_repeat_tensor",
-                        lambda b, first, last, label: {"tensor_identical": True})
+    monkeypatch.setattr(
+        sweep, "check_repeat_tensor",
+        lambda b, first, last, label: {"arm": label, "bytes_identical": True,
+                                       "tensor_identical": True})
     real_rung = sweep.bytematched_rung
     monkeypatch.setattr(
         sweep, "bytematched_rung",
@@ -180,3 +182,64 @@ def test_summarise_pair_flags_an_incomplete_rung(sweep, tmp_path, monkeypatch):
     log = "\n".join(b.lines)
     assert "REFUSING TO READ" in log and "GRID INCOMPLETE" in log
     assert b.doc["summary_grid_audit"][f"R{RUNG}"]["complete"] is False
+
+
+# ------------------------------------------------------- the repeat control
+#
+# #96.  The shipped arm is run first and repeated last, and the repeat is the
+# stage's only evidence that no arm leaked state into a later one.  It was
+# recorded ``if last in res``, so when the repeat died -- the arm most likely
+# to, since it runs last, after every wide table has churned the allocator --
+# no ``R{q}_control`` key was written, nothing was logged, and the summary
+# never looked.  A rung with no contamination check read exactly like a rung
+# whose contamination check passed.
+
+def test_a_control_that_ran_is_recorded_as_having_run(sweep, tmp_path,
+                                                      monkeypatch):
+    """The control: the happy path still records a passing control."""
+    _stub(sweep, monkeypatch)
+    b, res = _run(sweep, tmp_path)
+    control = res[f"R{RUNG}_control"]
+    assert control["ran"] is True and control["tensor_identical"] is True
+    assert not any("CONTROL MISSING" in line for line in b.lines)
+
+
+def test_a_failed_repeat_leaves_a_control_that_says_it_did_not_run(
+        sweep, tmp_path, monkeypatch):
+    """The absence is written down, and said out loud."""
+    _stub(sweep, monkeypatch,
+          fail={sweep.pair_arm_key(RUNG, 14, 1.0) + " [repeat]"})
+    b, res = _run(sweep, tmp_path)
+    # Pre-fix this key does not exist at all.
+    control = res[f"R{RUNG}_control"]
+    assert control["ran"] is False
+    assert control["reason"] == sweep.CONTROL_REPEAT_MISSING
+    log = "\n".join(b.lines)
+    assert f"CONTROL MISSING at R{RUNG}" in log and "#96" in log
+    # ... and the grid is untouched by it: the repeat is not a grid cell.
+    assert res[f"R{RUNG}_grid_audit"]["complete"]
+
+
+def test_a_failed_first_arm_names_the_baseline_not_the_repeat(
+        sweep, tmp_path, monkeypatch):
+    """Two ways to have no control, told apart."""
+    _stub(sweep, monkeypatch, fail={sweep.pair_arm_key(RUNG, 14, 1.0)})
+    _, res = _run(sweep, tmp_path)
+    assert res[f"R{RUNG}_control"]["reason"] == sweep.CONTROL_BASELINE_MISSING
+
+
+def test_summarise_pair_counts_controls_over_the_units_it_has(
+        sweep, tmp_path, monkeypatch):
+    """A count over the reporters is the #93 mistake; count over the units."""
+    _stub(sweep, monkeypatch,
+          fail={sweep.pair_arm_key(RUNG, 14, 1.0) + " [repeat]"})
+    b, res = _run(sweep, tmp_path)
+    b.doc = {"args": {"pair_bits": list(BITS), "pair_ratios": list(RATIOS),
+                      "rungs": [RUNG]},
+             "gate": "h", "units": {"unit": res}}
+    b.lines.clear()
+    sweep.summarise_pair(b)
+    log = "\n".join(b.lines)
+    assert f"CONTROL MISSING at R{RUNG}" in log
+    assert "contamination controls: 0 of 1 unit(s)" in log
+    assert b.doc["summary_grid_audit"][f"R{RUNG}"]["controls_passed"] == 0

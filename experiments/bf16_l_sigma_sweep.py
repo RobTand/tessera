@@ -115,11 +115,15 @@ from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 # writer and a reader cannot drift on which cells exist (#93).
 from pair_grid_audit import (  # noqa: E402
     CANDIDATE_MISSING,
+    CONTROL_BASELINE_MISSING,
+    CONTROL_REPEAT_MISSING,
     NO_BYTE_MATCH,
     REFERENCE_MISSING,
     audit_lines,
     audit_rung,
     cell_label,
+    control_line,
+    control_status,
     pair_arm_key,
 )
 
@@ -771,9 +775,24 @@ def run_pair_unit(b: "Bench", a, tname: str, w: torch.Tensor, name: str,
             torch.cuda.empty_cache()
         first, last = pair_arm_key(q, default_L, 1.0), \
             pair_arm_key(q, default_L, 1.0) + " [repeat]"
-        if last in res:
+        # The control is recorded either way (#96).  It used to be written
+        # only ``if last in res``, so a rung whose repeat died -- the arm most
+        # likely to, since it runs last, after every wide table has churned
+        # the allocator -- carried no ``_control`` key at all and read exactly
+        # like a rung whose contamination check passed.  An absent check is a
+        # fact about the run, not the absence of one.
+        if last in res and first in res:
             res[f"R{q}_control"] = check_repeat_tensor(b, res[first], res[last],
                                                        f"R{q} shipped pair")
+            res[f"R{q}_control"]["ran"] = True
+        else:
+            res[f"R{q}_control"] = {
+                "arm": f"R{q} shipped pair", "ran": False,
+                "reason": (CONTROL_BASELINE_MISSING if first not in res
+                           else CONTROL_REPEAT_MISSING)}
+        ctl = control_line(q, control_status(res[f"R{q}_control"]))
+        if ctl:
+            b.log("    " + ctl)
         # The byte match is an assertion, not a hope: each candidate is
         # compared only against a reference it is provably the same size as.
         cmp: dict = {}
@@ -944,6 +963,19 @@ def summarise_pair(b: "Bench") -> None:
                 continue
             for line in audit_lines(audit):
                 b.log(f"    {u}: {line}")
+        # The summary looks at the controls too, and counts them over the
+        # units the run has rather than over the ones that reported (#96).
+        ctls = {u: control_status(units[u].get(f"R{q}_control")) for u in units}
+        grid[f"R{q}"]["controls"] = ctls
+        grid[f"R{q}"]["controls_passed"] = sum(1 for v in ctls.values()
+                                               if v["passed"])
+        for u, st in sorted(ctls.items()):
+            line = control_line(q, st)
+            if line:
+                b.log(f"    {u}: {line}")
+        b.log(f"    contamination controls: "
+              f"{grid[f'R{q}']['controls_passed']} of {n} unit(s) at R{q} "
+              "carry a repeat that is byte- and tensor-identical")
         if not grid[f"R{q}"]["complete"]:
             b.log(f"    REFUSING TO READ R{q} AS A GRID: the rows below cover "
                   "a subset of the (L, ratio) cells this run asked for, so "

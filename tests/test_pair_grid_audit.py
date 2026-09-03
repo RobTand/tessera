@@ -45,6 +45,11 @@ def _cmp(q256, bits=BITS, ratios=RATIOS, *, drop=()):
             if PGA.cell_label(L, r) not in drop and L * 256 >= q256}
 
 
+def _control(passed=True):
+    return {"arm": "shipped pair", "ran": True, "bytes_identical": passed,
+            "tensor_identical": passed}
+
+
 def _doc(units, *, rungs=(1024,), bits=BITS, ratios=RATIOS):
     return {"args": {"pair_bits": list(bits), "pair_ratios": list(ratios),
                      "rungs": list(rungs)},
@@ -119,8 +124,10 @@ def test_the_log_names_every_absent_cell():
 # ----------------------------------------------------------- the reader side
 
 def test_reader_passes_a_complete_file(capsys):
-    doc = _doc({"unit": {"R1024_vs_shipped": _cmp(1024)}})
-    assert PGA.audit_doc(doc)["complete"]
+    doc = _doc({"unit": {"R1024_vs_shipped": _cmp(1024),
+                         "R1024_control": _control()}})
+    result = PGA.audit_doc(doc)
+    assert result["complete"] and result["controls_ok"]
 
 
 def test_reader_fails_the_shape_of_the_broken_artifact(tmp_path, capsys):
@@ -143,7 +150,8 @@ def test_reader_fails_the_shape_of_the_broken_artifact(tmp_path, capsys):
     assert all(label in out for label in drop)
     # A complete file exits 0, so the CLI is usable as a gate in a chain.
     good = tmp_path / "good.json"
-    good.write_text(json.dumps(_doc({"unit": {"R1024_vs_shipped": _cmp(1024)}})))
+    good.write_text(json.dumps(_doc({"unit": {
+        "R1024_vs_shipped": _cmp(1024), "R1024_control": _control()}})))
     assert PGA.main([str(good)]) == 0
 
 
@@ -159,3 +167,37 @@ def test_reader_refuses_a_file_that_does_not_record_its_grid():
     del doc["args"]["pair_ratios"]
     with pytest.raises(SystemExit, match="pair_ratios"):
         PGA.audit_doc(doc)
+
+
+# ------------------------------------------------------- the repeat control
+#
+# #96, the same silence one key over: the stage's contamination check was
+# recorded only when its repeat arm survived, so a rung with no check read
+# exactly like a rung whose check passed.
+
+def test_a_control_that_never_ran_is_not_a_control_that_passed():
+    """Three outcomes, not two: ran-and-agreed, ran-and-disagreed, absent."""
+    passed = PGA.control_status(_control())
+    failed = PGA.control_status(_control(passed=False))
+    absent = PGA.control_status(None)
+    unrun = PGA.control_status({"ran": False,
+                                "reason": PGA.CONTROL_REPEAT_MISSING})
+    assert (passed["ran"], passed["passed"]) == (True, True)
+    assert (failed["ran"], failed["passed"]) == (True, False)
+    assert (absent["ran"], absent["passed"]) == (False, None)
+    assert unrun["reason"] == PGA.CONTROL_REPEAT_MISSING
+    # A gap in the evidence and evidence of a bug read differently.
+    assert "CONTROL MISSING" in PGA.control_line(1024, absent)
+    assert "CONTROL FAILED" in PGA.control_line(1024, failed)
+    assert PGA.control_line(1024, passed) is None
+
+
+def test_reader_refuses_a_file_whose_rung_has_no_control(tmp_path, capsys):
+    doc = _doc({"unit": {"R1024_vs_shipped": _cmp(1024)}})   # no control key
+    result = PGA.audit_doc(doc)
+    assert result["complete"] and not result["controls_ok"]
+    path = tmp_path / "nocontrol.json"
+    path.write_text(json.dumps(doc))
+    assert PGA.main([str(path)]) == 1
+    out = capsys.readouterr().out
+    assert "CONTROL MISSING at R1024" in out and "(#96)" in out
