@@ -247,70 +247,53 @@ def _subset_table(tcq: TCQ, device):
     return torch.tensor(tcq.subsets, device=device, dtype=torch.long)
 
 
-def viterbi_columns(
+class TcqTables:
+    """The device tables one ``(forest, code, completion)`` Viterbi reads.
+
+    Built once and reused: every one of these is a host list turned into a
+    device tensor, which is a pageable copy and a sync the trellis paid on
+    every call -- once per LDLQ segment and pass -- and which a CUDA graph
+    cannot capture.  ``blocks`` is the forest's anchor table, read by the
+    completion pick after the Viterbi.
+    """
+
+    def __init__(self, forest: AnchorForest, code: ConvCode, completion: int, device):
+        require_memory(code)
+        self.forest, self.code, self.completion = forest, code, completion
+        self.device = torch.device(device)
+        tcq = TCQ(forest, code)
+        self.prev, self.subset_of = _transition_tables(code, self.device)
+        self.dvals = _descendant_values(forest, completion, self.device)   # [A, 2^c, arity]
+        self.subsets = _subset_table(tcq, self.device)                     # [4, P]
+        self.points = int(self.subsets.shape[1])
+        self.blocks = torch.tensor(forest.blocks, device=self.device, dtype=torch.long)
+        self.roll = torch.arange(SUBSET_COUNT, device=self.device)
+
+
+def _viterbi_core(
     targets: torch.Tensor,
-    forest: AnchorForest,
-    code: ConvCode,
-    completion: int,
-    span: int = 1,
-    weights: "torch.Tensor | None" = None,
-) -> "tuple[torch.Tensor, torch.Tensor, float]":
-    """Exact Viterbi down every column at once.
+    tables: TcqTables,
+    span: int,
+    weights: "torch.Tensor | None",
+) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
+    """``viterbi_columns`` with every host round-trip taken out.
 
-    ``targets`` is ``[rows, cols]`` already divided by its group scale.
-    Returns ``(anchor_index[steps, cols], body_field[steps, cols], sse)`` where
-    ``steps = rows // grid.arity`` -- one trellis position per *code*, which is
-    one row only when the grid is scalar.
-
-    ``weights`` is an optional ``[rows, cols]`` positive weight per POSITION
-    on the branch metric.  The targets are normalised per half, so an
-    unweighted trellis minimises ``sum (w/c - q)^2`` -- every position's error
-    divided by its own scale squared, which over-serves the quiet groups a
-    column passes through.  With ``weights = c^2`` the path minimises the
-    true ``sum (w - c q)^2``.  The weight is applied per row inside a code's
-    Euclidean sum: a half is sixteen consecutive columns of one row, so the
-    ``arity`` rows of a code sit in different halves and carry different
-    scales.  ``None`` is bit-identical to the unweighted encoder.
-
-    ``span`` is the super-symbol length L (``trellis.py``).  One trellis step
-    then covers L consecutive positions: each position's best point per subset
-    is found independently, the L per-subset cost vectors are folded with a
-    min-plus convolution over Z/4 -- ``acc[l] = min_v acc[(l - v) mod 4] +
-    best[v]`` -- so the trellis branch sees one four-entry cost vector per
-    super-symbol exactly as it sees one per position at L = 1, and the
-    traceback descends the fold to recover every position's label.  The fold
-    is exact: it is the same minimisation the scalar oracle does by exhausting
-    ``4^(L-1)`` label assignments, in ``L`` steps of a 4x4 minimum.
-
-    The body field per position is ``[select | point]`` at position 0 of a
-    super-symbol and ``[label | point]`` at the others (``R + 1`` bits); at
-    ``L = 1`` every position is ``[select | point]`` and this function is
-    bit-identical to the per-position encoder it replaces.
+    Reads ``targets``/``weights`` and the tables, writes fresh device tensors,
+    and returns ``(anchors, bits, sse)`` with ``sse`` a 0-d device tensor: no
+    ``.item()``, no host list, no pageable copy, so the whole call is a fixed
+    sequence of kernels on fixed shapes -- which is what lets ``TcqGraph``
+    capture it once and replay it per segment.  The arithmetic is the one
+    ``viterbi_columns`` documents; only the plumbing moved.
     """
     device = targets.device
     rows, cols = targets.shape
-    grid = forest.grid
-    arity = grid.arity
-    require_memory(code)
-    if rows % arity:
-        raise GrammarError(
-            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
-            "k-tuple code spans k consecutive rows and cannot straddle the edge"
-        )
+    forest, code = tables.forest, tables.code
+    arity = forest.grid.arity
     steps = rows // arity
-    if span < 1 or steps % span:
-        raise GrammarError(
-            f"{steps} trellis positions is not a whole number of span-{span} "
-            "super-symbols; the multidimensional trellis needs the column "
-            "length to be a multiple of its span"
-        )
     supers = steps // span
-    tcq = TCQ(forest, code)
     states = code.states
-    prev, subset_of = _transition_tables(code, device)
-    dvals = _descendant_values(forest, completion, device)      # [A, 2^c, arity]
-    subsets = _subset_table(tcq, device)                        # [4, P]
-    points = subsets.shape[1]
+    prev, subset_of = tables.prev, tables.subset_of
+    dvals, subsets, points = tables.dvals, tables.subsets, tables.points
     # The traceback stores the winning point index per (step, column, subset).
     # A byte holds it up to rate 9; above that the index must widen or it wraps
     # silently -- the same "a code is a nibble" assumption that corrupted the
@@ -332,7 +315,7 @@ def viterbi_columns(
     fold = torch.zeros(
         supers, max(span - 1, 0), cols, SUBSET_COUNT, dtype=torch.uint8, device=device
     )
-    roll = torch.arange(SUBSET_COUNT, device=device)
+    roll = tables.roll
 
     for sup in range(supers):
         acc = None
@@ -382,7 +365,7 @@ def viterbi_columns(
         choice[sup] = taken.bool()
 
     end = cost.argmin(dim=1)                                     # [cols]
-    sse = float(cost.gather(1, end.unsqueeze(1)).sum())
+    sse = cost.gather(1, end.unsqueeze(1)).sum()
 
     anchors = torch.zeros(steps, cols, dtype=torch.long, device=device)
     bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
@@ -412,6 +395,147 @@ def viterbi_columns(
             bits[step] = (head << shift) | pt
         state = prev[side, state]
     return anchors, bits, sse
+
+
+def _check_viterbi_shape(targets: torch.Tensor, arity: int, span: int) -> None:
+    rows, cols = targets.shape
+    if rows % arity:
+        raise GrammarError(
+            f"{rows} rows is not a whole number of arity-{arity} tuples; a "
+            "k-tuple code spans k consecutive rows and cannot straddle the edge"
+        )
+    steps = rows // arity
+    if span < 1 or steps % span:
+        raise GrammarError(
+            f"{steps} trellis positions is not a whole number of span-{span} "
+            "super-symbols; the multidimensional trellis needs the column "
+            "length to be a multiple of its span"
+        )
+
+
+def viterbi_columns(
+    targets: torch.Tensor,
+    forest: AnchorForest,
+    code: ConvCode,
+    completion: int,
+    span: int = 1,
+    weights: "torch.Tensor | None" = None,
+    tables: "TcqTables | None" = None,
+) -> "tuple[torch.Tensor, torch.Tensor, float]":
+    """Exact Viterbi down every column at once.
+
+    ``targets`` is ``[rows, cols]`` already divided by its group scale.
+    Returns ``(anchor_index[steps, cols], body_field[steps, cols], sse)`` where
+    ``steps = rows // grid.arity`` -- one trellis position per *code*, which is
+    one row only when the grid is scalar.
+
+    ``weights`` is an optional ``[rows, cols]`` positive weight per POSITION
+    on the branch metric.  The targets are normalised per half, so an
+    unweighted trellis minimises ``sum (w/c - q)^2`` -- every position's error
+    divided by its own scale squared, which over-serves the quiet groups a
+    column passes through.  With ``weights = c^2`` the path minimises the
+    true ``sum (w - c q)^2``.  The weight is applied per row inside a code's
+    Euclidean sum: a half is sixteen consecutive columns of one row, so the
+    ``arity`` rows of a code sit in different halves and carry different
+    scales.  ``None`` is bit-identical to the unweighted encoder.
+
+    ``span`` is the super-symbol length L (``trellis.py``).  One trellis step
+    then covers L consecutive positions: each position's best point per subset
+    is found independently, the L per-subset cost vectors are folded with a
+    min-plus convolution over Z/4 -- ``acc[l] = min_v acc[(l - v) mod 4] +
+    best[v]`` -- so the trellis branch sees one four-entry cost vector per
+    super-symbol exactly as it sees one per position at L = 1, and the
+    traceback descends the fold to recover every position's label.  The fold
+    is exact: it is the same minimisation the scalar oracle does by exhausting
+    ``4^(L-1)`` label assignments, in ``L`` steps of a 4x4 minimum.
+
+    The body field per position is ``[select | point]`` at position 0 of a
+    super-symbol and ``[label | point]`` at the others (``R + 1`` bits); at
+    ``L = 1`` every position is ``[select | point]`` and this function is
+    bit-identical to the per-position encoder it replaces.
+    """
+    _check_viterbi_shape(targets, forest.grid.arity, span)
+    if tables is None:
+        tables = TcqTables(forest, code, completion, targets.device)
+    anchors, bits, sse = _viterbi_core(targets, tables, span, weights)
+    return anchors, bits, float(sse)
+
+
+# ``TESSERA_TCQ_GRAPH``: ``1`` captures every call, ``0`` never captures, unset
+# captures when the schedule will replay the shape at least
+# ``TCQ_GRAPH_BREAKEVEN_CALLS`` times.  Bit-exactness with capture off always
+# holds: a replay launches the kernels the capture recorded, on the same
+# shapes, so it is the eager loop's arithmetic by construction.
+_TCQ_GRAPH = ({"0": False, "1": True}.get(os.environ.get("TESSERA_TCQ_GRAPH", ""))
+              if os.environ.get("TESSERA_TCQ_GRAPH") else None)
+
+#: The call count at which capturing pays for itself, measured on sparklina
+#: (GB10) on the receipt's unit -- Qwen3-0.6B ``layers.1.self_attn.k_proj``,
+#: 1024 rows, 32-column LDLQ segments, span 2, rate 3: one eager call
+#: 0.164 s; warm-up + capture 0.376 s; one replay 0.048 s.  Capturing costs
+#: 0.376 s once and saves 0.116 s per call, so it pays after
+#: ``ceil(0.376 / 0.116) = 4`` calls (``experiments/tcq_graph_breakeven.py``).
+#: An LDLQ schedule replays a segment shape ``segments x passes`` times
+#: (128 at block 32, four passes); a weights-only pass replays its full-width
+#: shape ``passes`` times.
+TCQ_GRAPH_BREAKEVEN_CALLS = 4
+
+
+class TcqGraph:
+    """One ``_viterbi_core`` shape, captured once and replayed.
+
+    Every LDLQ segment of a unit is the same ``[rows, ldl_block]`` call on the
+    same tables, and the eager loop pays ~20k kernel launches per call from
+    Python (``docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md``:
+    35x the launches for 19.2x the wall, GPU idle 90%).  The capture records
+    that launch sequence once; a replay re-issues it from one host call, so
+    what is left is the kernels' own time.  Principle 10: capture fixed-shape
+    loops by default, gate the fallback, and stay bit-exact with capture off.
+
+    Threading follows ``window_viterbi``: one capture at a time per process,
+    thread-local error mode, and no device-wide ``torch.cuda.synchronize()``
+    from any thread while a capture is open (see that file).  Replays are
+    per-instance and an instance is owned by one ``encode_unit`` call, so
+    they need no lock.
+    """
+
+    def __init__(self, rows: int, cols: int, tables: TcqTables, span: int,
+                 weighted: bool, dtype=torch.float32):
+        device = tables.device
+        self.tables, self.span = tables, span
+        self.targets = torch.empty(rows, cols, dtype=dtype, device=device)
+        self.weights = torch.empty(rows, cols, dtype=dtype, device=device) if weighted else None
+        self.graph = None
+        self.out = None
+
+    def _capture(self) -> None:
+        from .window_viterbi import _CAPTURE_LOCK
+
+        with _CAPTURE_LOCK:
+            warm = torch.cuda.Stream()
+            warm.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(warm):
+                # Warms every kernel the capture will record; its result is
+                # dropped and the capture below runs nothing on the device.
+                _viterbi_core(self.targets, self.tables, self.span, self.weights)
+            torch.cuda.current_stream().wait_stream(warm)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
+                self.out = _viterbi_core(self.targets, self.tables, self.span, self.weights)
+            self.graph = graph
+
+    def __call__(self, targets: torch.Tensor, weights: "torch.Tensor | None"):
+        """``(anchors, bits, sse)`` for this shape; captures on first use."""
+        self.targets.copy_(targets)
+        if self.weights is not None:
+            self.weights.copy_(weights)
+        if self.graph is None:
+            self._capture()
+        self.graph.replay()
+        anchors, bits, sse = self.out
+        # Fresh tensors: the static outputs are overwritten by the next replay
+        # and the caller keeps these past it.
+        return anchors.clone(), bits.clone(), sse.clone()
 
 
 @functools.lru_cache(maxsize=64)
@@ -1556,6 +1680,23 @@ def encode_unit(
             return channel_scale_field(channel_rows, global_scale, rows, cols)
         return torch.repeat_interleave(effective, half).reshape(rows, cols)
 
+    column_index = torch.arange(cols, device=device)
+    # The TCQ trellis's device tables, once per rate rather than once per
+    # call: LDLQ calls the trellis once per segment and pass, and each of
+    # these is a host list turned into a device tensor.  ``tcq_graphs`` and
+    # ``tcq_calls`` are filled in below, once the schedule is known; they are
+    # this call's and die with it, so a forest's identity is never reused
+    # across units and a graph's pool never outlives the unit it served.
+    tcq_tables: dict = {}
+    tcq_graphs: dict = {}
+    tcq_calls: dict = {}
+    if body is BodyKind.TCQ:
+        for present in sorted(set(rates)):
+            picked = forests[present]
+            depth = picked.cap - present
+            level = depth if completion is None else min(completion, depth)
+            tcq_tables[present] = TcqTables(picked, code, level, device)
+
     def trellis_pass(
         targets: torch.Tensor,
         weights: "torch.Tensor | None" = None,
@@ -1571,8 +1712,7 @@ def encode_unit(
         in_range = None
         if span_cols is not None:
             lo, hi = span_cols
-            column = torch.arange(cols, device=device)
-            in_range = (column >= lo) & (column < hi)
+            in_range = (column_index >= lo) & (column_index < hi)
         if body is BodyKind.WINDOW:
             # One table for every rate: a state indexes the same entry
             # whatever width the column's new bits have.
@@ -1603,10 +1743,28 @@ def encode_unit(
                 continue
             sub = targets[:, which].contiguous()
             sub_w = None if weights is None else weights[:, which].contiguous()
-            a, b, s_ = viterbi_columns(sub, picked, code, level, span=span, weights=sub_w)
-            total += s_
-            blocks = torch.tensor(picked.blocks, device=device, dtype=torch.long)
-            reachable = blocks[:, :: 1 << (depth - level)]
+            tabs = tcq_tables[present]
+            # One graph per (rate, width): the shape this call has, which the
+            # schedule fixes up front (``tcq_calls``), so the capture decision
+            # is read off the schedule and not guessed from a counter.
+            key = (present, int(which.numel()))
+            runner = tcq_graphs.get(key)
+            if runner is None and sub.is_cuda and (
+                _TCQ_GRAPH if _TCQ_GRAPH is not None
+                else tcq_calls.get(key, 0) >= TCQ_GRAPH_BREAKEVEN_CALLS
+            ):
+                runner = tcq_graphs[key] = TcqGraph(
+                    rows, key[1], tabs, span, sub_w is not None, dtype=sub.dtype,
+                )
+            if runner is not None:
+                a, b, s_ = runner(sub, sub_w)
+                total += float(s_)
+            else:
+                a, b, s_ = viterbi_columns(
+                    sub, picked, code, level, span=span, weights=sub_w, tables=tabs,
+                )
+                total += s_
+            reachable = tabs.blocks[:, :: 1 << (depth - level)]
             per_pos = vectors[reachable][a]              # [steps, n, D, arity]
             want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
             # The completion bits choose among the descendants the anchor
@@ -1748,6 +1906,19 @@ def encode_unit(
         block_spans = [
             (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
         ]
+    if body is BodyKind.TCQ:
+        # How many times each (rate, width) shape will be Viterbi'd: once per
+        # pass over every column of that rate weights-only, once per pass per
+        # segment under LDLQ.  ``TcqGraph`` captures a shape when this count
+        # reaches the measured break-even; the count is the schedule's, so a
+        # two-rate Bresenham schedule whose segments hold floor/ceil columns
+        # of each rate gets one graph per width it actually replays.
+        spans_seen = [(0, cols)] if ldl is None else block_spans
+        passes = max(scale_refit, 1)
+        for start, stop in spans_seen:
+            for present in set(rates[start:stop]):
+                key = (present, sum(1 for r in rates[start:stop] if r == present))
+                tcq_calls[key] = tcq_calls.get(key, 0) + passes
     ldlq_target = None
     for _ in range(max(scale_refit, 1)):
         scale = current_scale()
