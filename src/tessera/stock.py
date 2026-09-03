@@ -339,8 +339,9 @@ VLLM_FP4_PREDICATE_ATTESTATION = {
     "scope": (
         "a COMPILED serve only.  --enforce-eager sets compilation mode NONE "
         "(config/vllm.py:1284-1290), so no fusion pass runs on either arm; the KL "
-        "harnesses in experiments/ serve eager by default and this predicate cannot "
-        "have moved any number they produced.  The default serve is where it bites: "
+        "harnesses serve eager by default (serve_and_dump_kl.sh, "
+        "tessera_plugin_served.sh) and this predicate cannot have moved a number "
+        "taken through them.  The default serve is where it bites: "
         "optimization_level defaults to O2 (config/vllm.py:401), whose pass config "
         "sets fuse_act_quant = enable_act_fusion, and under the default compiled "
         "backend custom_ops resolves to ['none'] (config/vllm.py:1392-1399) so "
@@ -348,8 +349,8 @@ VLLM_FP4_PREDICATE_ATTESTATION = {
         "only for blocked weights (config/vllm.py:1368-1375), which tests for "
         "QuantizationStrategy.BLOCK (compressed_tensors.py:969-977), and the groups "
         "these exporters write declare strategy 'tensor_group' (NVFP4) and 'channel' "
-        "(FP8), neither of which is BLOCK.  So on a "
-        "default compiled serve this predicate is the ONLY thing switching "
+        "(FP8), neither of which is BLOCK.  So on a default compiled serve this "
+        "predicate is the ONLY thing switching "
         "fuse_act_quant, and it switched it off for us and on for a uniform-NVFP4 "
         "checkpoint from anyone else."
     ),
