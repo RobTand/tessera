@@ -5,6 +5,7 @@ limits, not tolerances against a fitted curve.  The one measured anchor is the
 Qwen/GLM validation recorded in ``block_penalty``'s docstring; it is not
 re-run here (it needs the capture), and nothing below stands on it.
 """
+import inspect
 import math
 
 import pytest
@@ -51,44 +52,93 @@ def test_an_uncorrelated_hessian_costs_almost_nothing_and_a_correlated_one_costs
     assert (block_penalty(corr, 32) - 1) > 20 * (block_penalty(flat, 32) - 1)
 
 
-def test_the_block_the_chooser_returns_is_one_block_ldl_accepts():
+# --------------------------------------------------------------------------
+# The floor is the caller's path's, not the method's (tessera#95).  Every test
+# below states a floor as the thing under test rather than inheriting one, so
+# what is pinned is "the caller says" and not any particular plane's number.
+# --------------------------------------------------------------------------
+
+
+def test_the_floor_has_no_default_because_the_two_callers_disagree_about_it():
+    """``compensated_targets`` stitches independently-encoded slices, so it
+    floors at the encoder's scale group and rotation block;
+    ``encode.encode_unit(ldl=...)`` reads one plane per pass across every
+    block, so it floors at 1.  A default is one of those two answers handed
+    silently to the other caller: floored at the stitching path's 16, this
+    chooser could not return the b8 and b4 arms its own commit validated
+    ``block_penalty`` against, and nothing raised.  So there is no default,
+    and omitting it is a TypeError rather than a quiet number."""
+    assert (inspect.signature(choose_ldl_block).parameters["floor"].default
+            is inspect.Parameter.empty)
+    with pytest.raises(TypeError):
+        choose_ldl_block(regularize_hessian(_correlated(32, 0.5)), max_penalty=2.0)
+
+
+@pytest.mark.parametrize("floor", [1, 2, 8, 16, 32])
+def test_the_block_the_chooser_returns_honours_whatever_floor_it_was_given(floor):
     H = regularize_hessian(_correlated(128, 1.0))
-    b = choose_ldl_block(H, max_penalty=block_penalty(H, 32), floor=16)
-    assert 128 % b == 0 and b >= 16
+    b = choose_ldl_block(H, max_penalty=block_penalty(H, floor), floor=floor)
+    assert b >= floor and b % floor == 0 and 128 % b == 0
     block_ldl(H, b)                              # raises if the block is illegal
 
 
-def test_a_tighter_budget_never_returns_a_larger_block():
+@pytest.mark.parametrize("target", [2, 4, 8])
+def test_the_floor_alone_decides_whether_a_small_block_is_reachable(target):
+    """The rule the wrong default broke, stated without a plane-to-number table.
+
+    One Hessian, one budget, two callers.  A path whose floor is above the
+    block that budget wants cannot serve it and says so; a path with no
+    scale-group constraint reaches exactly that block.  Nothing about the
+    Hessian or the budget changes between the two -- only whose floor it is.
+    """
+    H = regularize_hessian(_correlated(128, 2.0))
+    budget = block_penalty(H, target)
+    assert budget < block_penalty(H, 2 * target)      # the premise of the test
+    with pytest.raises(GrammarError, match="no legal block meets a budget"):
+        choose_ldl_block(H, max_penalty=budget, floor=2 * target)
+    assert choose_ldl_block(H, max_penalty=budget, floor=1) == target
+
+
+@pytest.mark.parametrize("floor", [1, 16])
+def test_a_tighter_budget_never_returns_a_larger_block(floor):
     H = regularize_hessian(_correlated(256, 1.5))
-    loose = choose_ldl_block(H, max_penalty=block_penalty(H, 256), floor=16)
-    tight = choose_ldl_block(H, max_penalty=block_penalty(H, 16), floor=16)
+    loose = choose_ldl_block(H, max_penalty=block_penalty(H, 256), floor=floor)
+    tight = choose_ldl_block(H, max_penalty=block_penalty(H, floor), floor=floor)
     assert tight <= loose
-    assert loose == 256 and tight == 16           # the two ends, not a shrug
+    # the two ends, not a shrug: the whole axis, and the caller's own floor
+    assert loose == 256 and tight == floor
 
 
-def test_the_chosen_block_is_within_the_budget_and_the_next_one_up_is_not():
+@pytest.mark.parametrize("floor", [1, 16])
+def test_the_chosen_block_is_within_the_budget_and_the_next_one_up_is_not(floor):
     H = regularize_hessian(_correlated(256, 1.5))
     budget = block_penalty(H, 64)                 # a budget exactly one rung buys
-    b = choose_ldl_block(H, max_penalty=budget, floor=16)
+    b = choose_ldl_block(H, max_penalty=budget, floor=floor)
     assert b == 64
     assert block_penalty(H, b) <= budget < block_penalty(H, 2 * b)
 
 
-def test_a_budget_the_floor_cannot_meet_is_refused_rather_than_served():
+@pytest.mark.parametrize("floor", [2, 16])
+def test_a_budget_the_floor_cannot_meet_is_refused_rather_than_served(floor):
+    """Any floor above 1 can be asked for more than it can give; a floor of 1
+    cannot, since a block of one skips nothing and costs exactly 1.0."""
     H = regularize_hessian(_correlated(256, 3.0))
-    floor_cost = block_penalty(H, 16)
+    floor_cost = block_penalty(H, floor)
     assert floor_cost > 1.0001                      # the premise of the test
     with pytest.raises(GrammarError, match="no legal block meets a budget"):
-        choose_ldl_block(H, max_penalty=1.0, floor=16)
+        choose_ldl_block(H, max_penalty=1.0, floor=floor)
     # and the message names what the floor does cost, so a budget can be set
     with pytest.raises(GrammarError, match=f"{floor_cost:.6f}"):
-        choose_ldl_block(H, max_penalty=1.0, floor=16)
+        choose_ldl_block(H, max_penalty=1.0, floor=floor)
+    # a floor of 1 is never the refused one: it is exactly full feedback
+    assert block_penalty(H, 1) == pytest.approx(1.0, abs=1e-12)
+    assert choose_ldl_block(H, max_penalty=1.0, floor=1) == 1
 
 
 def test_a_budget_below_one_is_refused_because_the_ratio_cannot_be_below_one():
     H = regularize_hessian(_correlated(32, 0.5))
     with pytest.raises(GrammarError, match="at least 1.0"):
-        choose_ldl_block(H, max_penalty=0.9)
+        choose_ldl_block(H, max_penalty=0.9, floor=1)
 
 
 def test_a_block_that_does_not_divide_the_input_axis_is_refused():

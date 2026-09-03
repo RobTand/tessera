@@ -21,12 +21,13 @@ import pytest
 import torch
 
 from tessera.alphabet import E2M1_GRID, tuple_grid
-from tessera.compensate import block_ldl, regularize_hessian
+from tessera.compensate import (block_ldl, block_penalty, choose_ldl_block,
+                                regularize_hessian)
 from tessera.encode import _lut_values, _refit_scales_lut
 from tessera.errors import GrammarError
 from tessera.export import (
-    DEFAULT_CODE, encode_linear, encode_linear_planes, tcq_cap_q256,
-    wire_recipe)
+    DEFAULT_CODE, DEFAULT_HALF, encode_linear, encode_linear_planes,
+    tcq_cap_q256, wire_recipe)
 from tessera.manifest import BodyKind, ScalePlaneKind
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the Viterbi is CUDA")
@@ -76,11 +77,17 @@ def _encode(w, q256, **kw):
 
 @cuda
 @pytest.mark.parametrize("q256", [CAP, SUBCAP])
-@pytest.mark.parametrize("block", [32, 64, 128])
+@pytest.mark.parametrize("block", [4, 32, 64, 128])
 def test_identity_factor_is_the_plain_pass_on_the_lut_plane(q256, block):
     """A factor with no off-diagonal blocks compensates nothing, so it must
     encode bit for bit what the ordinary whole-matrix pass encodes -- codes,
-    scale table, indices and the reported sse."""
+    scale table, indices and the reported sse.
+
+    The 4 is below this plane's ``DEFAULT_HALF`` scale group and is here on
+    purpose (tessera#95): the plane is read once per pass before the block
+    loop and refit once after it, so a block narrower than a scale group
+    still quantises against exactly the plane the whole-matrix pass uses.
+    """
     w = _weights()
     plain = _encode(w, q256, scale_refit=4)
     eye = torch.eye(COLS, device=w.device)
@@ -106,6 +113,29 @@ def test_ldlq_moves_the_encode_and_keeps_the_wire(q256):
     assert plain.scale_lut.numel() == ldlq.scale_lut.numel()
     again = _encode(w, q256, scale_refit=4, ldl=L, ldl_block=32)
     assert torch.equal(ldlq.codes, again.codes)          # deterministic
+
+
+@cuda
+@pytest.mark.parametrize("q256", [CAP, SUBCAP])
+def test_a_block_below_the_planes_scale_group_is_one_this_path_can_choose(q256):
+    """The production path's floor is 1, and the chooser can be told so.
+
+    ``choose_ldl_block`` prices the block from the unit's own Hessian; on this
+    path the caller passes ``floor=1`` because ``encode_unit`` shares one
+    scale plane across every block.  The block that comes back is below the
+    plane's own scale group, and this plane encodes it -- which is the whole
+    of what tessera#95 restores.  ``compensate.compensated_targets`` is the
+    caller that does have a scale-group floor; see ``test_compensate.py``.
+    """
+    w = _weights(seed=7)
+    H = regularize_hessian(_hessian(seed=7), sigma_reg=1.0)
+    b = choose_ldl_block(H, max_penalty=block_penalty(H, 4), floor=1)
+    assert b < DEFAULT_HALF                      # below the plane's scale group
+    ldlq = _encode(w, q256, scale_refit=4, ldl=block_ldl(H, b), ldl_block=b)
+    plain = _encode(w, q256, scale_refit=4)
+    assert ldlq.codes.shape == plain.codes.shape
+    assert not torch.equal(ldlq.codes, plain.codes)   # it compensated something
+    assert ldlq.scale_lut.numel() == plain.scale_lut.numel()   # same wire
 
 
 @cuda
