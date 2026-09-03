@@ -49,6 +49,7 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
+GEMM_SYMBOL = ROUTES[TESSERA_NVFP4]["gemm_symbol"]
 
 #: cuBLAS block-scaling tile.  Not tunable -- it is the hardware's layout.
 _SF_ROW_TILE = 128
@@ -206,7 +207,7 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_NVFP4}:{layer.tessera_mode}",
-                    symbol="torch._scaled_mm", tile_m=0,
+                    symbol=GEMM_SYMBOL, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder,

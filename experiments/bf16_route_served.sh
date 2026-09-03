@@ -49,6 +49,15 @@ export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
 export TESSERA_KL_LOGDIR=$RUNS
 export TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache
+# THE BOX IS SHARED AND THE MODEL IS 0.6B.  Both serve scripts default to
+# --gpu-memory-utilization 0.85, which on a 121.6 GiB unified pool asks for
+# 103 GiB and REFUSES TO START ("Free memory on device cuda:0 (100.7/121.63
+# GiB) is less than desired") the moment another job on the box holds ~21 GiB
+# -- which is what killed the first resident serve of this arm at 22:22 on
+# 2026-09-02.  A 0.6B model with a 4096 context needs a small fraction of
+# that, so ask for a fraction: the KL is a number about the weights, not
+# about how much of the pool the serve reserved.
+export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.45}
 # THE TREE UNDER TEST IS THIS ONE.  ``tessera_plugin_{run,served}.sh`` default
 # TS to /home/rob/tessera, so a branch that is not the main checkout would
 # install MASTER into the container -- and the serve would then refuse this
@@ -122,7 +131,7 @@ for Q in "${@:-1792}"; do
       [ "$REGIME" = compiled ] && FLAG="--compiled"
       echo "=== census R=$R $MODE/$REGIME  $(date -Is)"
       TESSERA_SERVE_MODE=$MODE experiments/tessera_plugin_run.sh \
-        -e TESSERA_SERVE_MODE="$MODE" -v /mnt/shared:/mnt/shared -- \
+        -e TESSERA_SERVE_MODE="$MODE" -v /mnt/shared:/mnt/shared -v "$RUNS":"$RUNS" -- \
         "python3 tools/tessera_route_census.py '$PLUG' '$RUNS/census-$ARM-$MODE-$REGIME.json' --tessera-commit $HEAD_COMMIT $FLAG" \
         || { echo "census FAILED for $ARM/$MODE/$REGIME"; exit 3; }
     done
@@ -152,22 +161,44 @@ for Q in "${@:-1792}"; do
     tail -6 "$RUNS/kl_tessera_$ARM-$MODE.json" 2>/dev/null || true
   done
   # The two modes must be one number; the twin should be WORSE than both.
+  # THE KEY IS ``all.kl_lower_mean``, AND A MISSING ONE IS A FAILURE.  This
+  # block first read a top-level ``mean_kl``, which ``kl_tool.py compare`` has
+  # never written: every arm read None, both acceptance checks were skipped,
+  # and the run printed "resident=None streamed=None twin=None" as though that
+  # were a pass.  A check that cannot fail is worse than no check, so the
+  # reader below refuses a file it cannot find the number in.
+  #
+  # Only ONE of the two checks exits non-zero.  The modes decode the same wire
+  # and must agree exactly -- a difference there is a decode defect.  The fold
+  # is a quality claim whose size depends on the rung: at q256=1792 it moves
+  # ``all`` by +0.11% and moves ``confident`` the OTHER way by -0.39%, i.e. it
+  # sits below what this corpus resolves, so a sign flip there is reported and
+  # not treated as a failure.
   $PY - "$RUNS" "$ARM" <<'PYEOF'
 import json, sys, pathlib
 runs, arm = pathlib.Path(sys.argv[1]), sys.argv[2]
 def kl(p):
+    if not p.exists():
+        raise SystemExit(f"no KL json at {p} -- the arm did not run")
+    d = json.loads(p.read_text())
     try:
-        return json.loads(p.read_text()).get("mean_kl")
-    except Exception:
-        return None
-res = kl(runs / f"kl_tessera_{arm}-resident.json")
-strm = kl(runs / f"kl_tessera_{arm}-streamed.json")
-twin = kl(runs / f"kl_{arm}-twin.json")
-print(f"{arm}: resident={res} streamed={strm} twin(folded)={twin}")
-if res is not None and strm is not None and res != strm:
+        return d["all"]["kl_lower_mean"], d["confident"]["kl_lower_mean"], d["all"]["top1_agree_pct"]
+    except KeyError:
+        raise SystemExit(f"{p} has no all.kl_lower_mean; keys={sorted(d)}")
+res, res_c, res_t = kl(runs / f"kl_tessera_{arm}-resident.json")
+strm, strm_c, strm_t = kl(runs / f"kl_tessera_{arm}-streamed.json")
+twin, twin_c, twin_t = kl(runs / f"kl_{arm}-twin.json")
+print(f"{arm}: resident={res!r} streamed={strm!r} twin(folded)={twin!r}")
+print(f"  confident: resident={res_c!r} twin={twin_c!r}")
+print(f"  top1 agree: resident={res_t:.3f}% twin={twin_t:.3f}%")
+if (res, res_c, res_t) != (strm, strm_c, strm_t):
     print("  MODES DISAGREE -- the two residencies decode the same wire and must not")
-if None not in (res, twin) and res >= twin:
-    print("  THE FOLD IS NOT COSTING ANYTHING -- check the epilogue rounds once, not twice")
+    raise SystemExit(4)
+print(f"  fold cost: all {twin - res:+.6f} nats ({twin / res:.4f}x), "
+      f"confident {twin_c - res_c:+.6f} nats ({twin_c / res_c:.4f}x)")
+if res >= twin or res_c >= twin_c:
+    print("  THE FOLD IS BELOW WHAT THIS CORPUS RESOLVES on at least one subset --"
+          " that is a statement about the rung, not a pass; do not cite a fold win from it")
 PYEOF
 done
 echo "=== done $(date -Is)"

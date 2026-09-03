@@ -92,7 +92,7 @@ def main() -> int:
     from tessera.serving import bf16_route, fp8_route, nvfp4_route
     from tessera.serving.lane import TESSERA_MODE_ENV
     from tessera.serving.scheme import (
-        TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
+        ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
     from tessera.serving.telemetry import DECODER_NATIVE_SPAN2, DECODER_TORCH_WINDOW
 
     # The executed A-side contract each route stamps on its layers: the value a
@@ -107,6 +107,12 @@ def main() -> int:
     # fallback.
     decoder_for = {TESSERA_NVFP4: DECODER_NATIVE_SPAN2, TESSERA_FP8: DECODER_TORCH_WINDOW,
                    TESSERA_BF16: DECODER_TORCH_WINDOW}
+    # The GEMM each route invokes, off the route table rather than a literal
+    # here: the two 4/8-bit routes call ``torch._scaled_mm`` and the 16-bit one
+    # calls ``torch.mm`` (there is no scale to hand a scaled GEMM -- the row
+    # scale is an epilogue), and a hardcoded symbol read that as a refusal on
+    # every module of a route it had simply never been told about.
+    symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
     missing = sorted(set(TESSERA_FAMILIES) - set(contract_for))
     if missing:
         raise SystemExit(
@@ -174,8 +180,9 @@ def main() -> int:
                 problems.append(f"{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
             if r["contract"] != contract_for[family]:
                 problems.append(f"{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
-            if r["symbol"] != "torch._scaled_mm":
-                problems.append(f"{phase}: {name} symbol={r['symbol']!r}")
+            if r["symbol"] != symbol_for[family]:
+                problems.append(
+                    f"{phase}: {name} symbol={r['symbol']!r} != {symbol_for[family]!r}")
             if r["policy"] != f"{family}:{mode}":
                 problems.append(f"{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
             if r.get("decoder") != decoder_for[family] and not args.allow_fallback_decoder:

@@ -14,10 +14,13 @@ product an allocator targets.  The 16-bit route exists because the E4M3
 upward, so above ~6 bpp an 8-bit tile has nothing left to buy
 (``docs/measurements/tessera-bf16-route-2026-09-02.md``).
 
-TWO OF THE THREE HAVE A PLUGIN ROUTE.  ``TESSERA_BF16`` has a wire and no
-route (#9), so the plugin publishes no decode for it and ``--grid BF16``
-now needs ``--allow-unserveable``; what gets served from that arm is its
-``--stock-twin``, an ordinary BF16 checkpoint.
+ALL THREE HAVE A PLUGIN ROUTE.  ``TESSERA_BF16`` was the exception until #9:
+``serving/bf16_route.py`` decodes its window body to a plain bfloat16 tile in
+both residency modes, ``runtime_contract.json`` v5 attests q256 1792 on
+sm_121, and ``--grid BF16`` needs no override.  The ``--stock-twin`` of a BF16
+arm is still worth writing -- it is the control the route is measured against,
+and the served pair is in the receipt above -- but it is no longer the only
+thing that arm can serve.
 
 WHAT THIS SCRIPT MAY WRITE IS WHAT THE PLUGIN PUBLISHES A DECODE FOR.
 ``check_recipe`` gates the default ``(grid, q256)`` and every ``--plan-json``
@@ -218,10 +221,13 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     IT FAILS CLOSED WITH AN EXPLICIT, STAMPED OVERRIDE, which is the shape
     principle 9 gives this carve-out: refuse unless the run carries an explicit
     per-run override, and stamp it on the artifact.  ``--allow-unserveable``
-    is that override, and it exists because one real workflow needs it: the
-    16-bit route (``--grid BF16``) has a wire and no plugin route (#9), and the
-    reason to export it is the ``--stock-twin``, which vanilla vLLM serves with
-    no plugin at all.  Overridden refusals land verbatim in the manifest's
+    is that override, and it exists because real workflows need it: ``--grid
+    E2M1``, whose route holds the grid while the contract publishes no measured
+    range for it, and sub-cap ``E2M1x2``, which the rate frontier encodes
+    constantly.  The reason to export either is the ``--stock-twin``, which
+    vanilla vLLM serves with no plugin at all.  (``--grid BF16`` was the
+    original example and is no longer one: the 16-bit route (#9) decodes it,
+    so it passes the gate rather than needing the override.)  Overridden refusals land verbatim in the manifest's
     ``serving_gate`` block, so an artifact that cannot be served says so in its
     own bytes rather than in a shell history.
     """

@@ -98,15 +98,20 @@ STRUCTURES = (STRUCTURE_DENSE,)
 #: 1 or 2 over the E2M1 base) over the LUT plane the tile's ue4m3 block scales
 #: come from.  FP8: the scalar E4M3 grid over the CHANNEL plane the tile's
 #: per-row fp32 scale comes from.  ``tile`` is the stock tensor the route
-#: decodes to, ``columns_multiple`` the K quantum its mainloop needs, and
-#: ``activation_contract`` what it executes on the A side.
+#: decodes to, ``columns_multiple`` the K quantum its mainloop needs,
+#: ``activation_contract`` what it executes on the A side, and ``gemm_symbol``
+#: the callable it actually invokes -- the route module stamps that field on
+#: every route record and the census compares against the same field, so
+#: "which GEMM ran" has one spelling and adding a route that calls something
+#: else cannot silently read as a refusal.
 #:
 #: ``body``/``span`` name the trellis body the route's decoder reads, and they
 #: are the same fact its own module already refuses by name at load
-#: (``ops.prepare_tessera_module`` for NVFP4, ``fp8_route`` for FP8).  They are
-#: written here because the PRODUCER needs them too: ``refuse_unserveable_wire``
-#: is the export-time half of the same rule, and the exporter used to carry its
-#: own copy in an if/elif -- a third statement about one decoder.
+#: (``ops.prepare_tessera_module`` for NVFP4, ``fp8_route`` for FP8,
+#: ``bf16_route`` for BF16).  They are written here because the PRODUCER needs
+#: them too: ``refuse_unserveable_wire`` is the export-time half of the same
+#: rule, and the exporter used to carry its own copy in an if/elif -- a third
+#: statement about one decoder.
 ROUTES: dict[str, dict] = {
     TESSERA_NVFP4: {
         "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
@@ -117,6 +122,7 @@ ROUTES: dict[str, dict] = {
         "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
         "columns_multiple": 16,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
@@ -127,11 +133,14 @@ ROUTES: dict[str, dict] = {
         "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
         "columns_multiple": 16,
         "activation_contract": FP8_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
     },
     TESSERA_BF16: {
         "grids": ("BF16",), "plane": "CHANNEL",
-        # The same window body the FP8 route reads, over a scalar grid.  What
-        # differs between those two routes is the alphabet the window table
+        # The SAME body and span the E4M3 route reads -- the 16-bit family is
+        # the window recipe with a wider alphabet, not a different trellis --
+        # and ``bf16_route._parse_unit`` refuses anything else by name at load.
+        # What differs between the two routes is the alphabet the window table
         # snaps to and the tile the decode lands in, and neither is a body
         # fact -- which is why this row is FP8's row here and in
         # ``sharding.ROUTE_TP_AXES``, for the same reason in both places.
@@ -147,6 +156,10 @@ ROUTES: dict[str, dict] = {
         # this route serves.
         "columns_multiple": 1,
         "activation_contract": BF16_ACTIVATION_CONTRACT,
+        # NOT ``torch._scaled_mm``: there is no scale to hand a scaled GEMM.
+        # The row scale is an fp32 epilogue, so this route calls the stock
+        # matmul and says so.
+        "gemm_symbol": "torch.mm",
     },
 }
 

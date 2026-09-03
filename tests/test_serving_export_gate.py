@@ -12,8 +12,9 @@ THE INVARIANT.  For every ``(grid, q256)`` the serving exporter accepts, the
 resulting scheme must be one ``tessera.serving.scheme.validate_tessera_scheme``
 accepts -- the very function the plugin runs at load.  That is not a tautology:
 they are different code paths, and on the pre-#41 tree it fails for real on
-``E2M1`` at every rung and on ``BF16`` at every rung, both of which the old
-body/plane proxy waved through.
+``E2M1`` at every rung -- and on ``BF16`` at every rung until the 16-bit route
+(#9) gave that grid a decoder -- both of which the old body/plane proxy waved
+through.
 
 WHY IT ENUMERATES.  A hand-written list of rungs would have gone stale the day
 the window body became the sub-cap default -- which is exactly the day the
@@ -199,27 +200,42 @@ def test_the_encoder_keeps_its_full_range_under_the_gate():
 def test_the_override_is_explicit_and_lands_in_the_manifest_record():
     """Principle 9's shape: fail closed, unless an explicit per-run override.
 
-    The workflow that needs it is a rung the encoder writes well and no
-    decoder reads: the E2M1x2 sub-cap WINDOW body, which the exporter builds
-    from q256 128 and which the plugin publishes only at the single point 896.
-    You export it to weigh it, or to serve its ``--stock-twin``, and the
-    override is how you say so out loud.
+    Two shapes reach it, and both are here because each is permanent while
+    the example that used to stand for them was not.  ``--grid BF16`` was the
+    example for about a day: it stopped being one when the 16-bit route landed
+    (#9) and gave that grid a decoder, so a test written against it would have
+    gone on passing for the wrong reason.  The last assertion below is the
+    tooth that says so out loud.
 
-    ``--grid BF16`` stood here until BF16 got a route of its own, which is the
-    point of using a rung rather than a grid: a whole grid missing from the
-    plugin is a gap someone eventually closes, and the test that pinned it then
-    passes for the wrong reason.  A rung outside a published range is the
-    permanent shape of this case.
+    Shape one, a rung outside a published range: the E2M1x2 sub-cap WINDOW
+    body, which the exporter builds from q256 128 and which the plugin
+    publishes only at the single point 896.  Shape two, a grid the route holds
+    with no measured range at all: ``E2M1`` -- the kernel admits arity 1 and
+    the contract publishes nothing for it, which is item 2's deliberate
+    disagreement.  You export either to weigh it, or to serve its
+    ``--stock-twin``, which vanilla vLLM serves with no plugin at all, and the
+    override is how you say so out loud.
     """
-    grid = grid_for_name("E2M1x2")
+    subcap = grid_for_name("E2M1x2")
     with pytest.raises(SystemExit):
-        EXPORT.check_recipe(grid, 512, where="subcap.probe")
+        EXPORT.check_recipe(subcap, 512, where="subcap.probe")
     stamped: list = []
-    assert EXPORT.check_recipe(grid, 512, where="subcap.probe",
+    assert EXPORT.check_recipe(subcap, 512, where="subcap.probe",
                                allow_unserveable=True, overrides=stamped) is not None
     assert [(r["grid"], r["q256"], r["target"])
             for r in stamped] == [("E2M1x2", 512, "subcap.probe")]
     assert "outside the rungs this build's decoder reads" in stamped[0]["refusal"]
+
+    grid = grid_for_name("E2M1")
+    with pytest.raises(SystemExit):
+        EXPORT.check_recipe(grid, 768, where="e2m1.probe")
+    stamped = []
+    assert EXPORT.check_recipe(grid, 768, where="e2m1.probe",
+                               allow_unserveable=True, overrides=stamped) is not None
+    assert [(r["grid"], r["q256"], r["target"]) for r in stamped] == [("E2M1", 768, "e2m1.probe")]
+    assert "publishes no decodable rate range" in stamped[0]["refusal"]
+    # And the grid that used to be the example is now served, not overridden.
+    assert EXPORT.check_recipe(grid_for_name("BF16"), 1536, where="bf16.probe") is not None
 
 
 # ------------------------------------- what the wire can emit, and what of it

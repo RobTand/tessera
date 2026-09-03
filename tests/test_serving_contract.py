@@ -9,7 +9,7 @@ Tessera bytes, so the table travels inside it and a producer reads it through
   family does not publish, an activation contract that is not the route's, a
   cell with no serve flag, a cell that forgets it is plugin-gated, a structure
   the dispatch refuses;
-* a LAWS TABLE below pins the four cells field for field, because no generic
+* a LAWS TABLE below pins the six cells field for field, because no generic
   rule knows which rungs a receipt covered.  ``rungs_q256: [512]`` is a
   perfectly well-formed cell and a false claim.
 """
@@ -28,11 +28,12 @@ from tessera.serving.contract import (
     validate_serving_contract,
 )
 
-#: The four cells the 2026-09-02 GB10 Tessera receipts cover, field for field:
-#: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896) and on the E4M3 window wire
-#: (q256 = 1024), both residency modes, eager and compiled, every dense Linear
-#: on ``torch._scaled_mm``.  Widening ANY value here without a new receipt is
-#: the failure this pins.
+#: The six cells the 2026-09-02 GB10 Tessera receipts cover, field for field:
+#: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896), on the E4M3 window wire
+#: (q256 = 1024) and on the BF16 window wire (q256 = 1792), both residency
+#: modes, eager and compiled, every dense Linear on ``torch._scaled_mm`` for the
+#: two quantized-A routes and on ``torch.mm`` for the 16-bit one.  Widening ANY
+#: value here without a new receipt is the failure this pins.
 _CELL_LAWS: dict[str, dict[str, object]] = {
     "tessera_e2m1_k2_dense_sm121_decode_scaled_mm_w4a4": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
@@ -70,16 +71,36 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
     },
+    "tessera_bf16_k1_dense_sm121_decode_mm_w16a16": {
+        "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
+        "regime": "decode", "rungs_q256": [1792],
+        "activation_contract": "bf16_unquantized",
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera",
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
+        "predicates": [],
+    },
+    "tessera_bf16_k1_dense_sm121_batch_mm_w16a16": {
+        "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
+        "regime": "batch", "rungs_q256": [1792],
+        "activation_contract": "bf16_unquantized",
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera",
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
+        "predicates": [],
+    },
 }
 
-#: The rungs each family ATTESTS -- rungs a container receipt covers.
-#: ``TESSERA_BF16_K1`` attests none: the route exists and the reader takes a
-#: continuous range (below), but no served census and no served KL against the
-#: exporter's plain-BF16 twin exist yet, so every BF16 rung resolves
-#: ``unattested``.  An empty list here is the honest state and is deliberately
-#: not the same thing as an absent family.
+#: The rungs each family ATTESTS -- rungs a container receipt covers.  Each
+#: family's reader takes a far wider range (below); attestation is the narrower
+#: claim and the only one a cell may make.  ``TESSERA_BF16_K1`` attested none
+#: until 2026-09-02, when four route censuses and a served KL against the
+#: exporter's plain-BF16 twin covered q256 = 1792
+#: (``docs/measurements/tessera-bf16-route-served-2026-09-02.md``); an empty
+#: list here remains the honest state for a family without a receipt, and is
+#: deliberately not the same thing as an absent family.
 _FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896], "TESSERA_E4M3_K1": [1024],
-                 "TESSERA_BF16_K1": []}
+                 "TESSERA_BF16_K1": [1792]}
 
 
 @pytest.fixture(scope="module")
@@ -116,20 +137,61 @@ def test_three_families_and_what_each_one_attests(contract):
         assert formats[family]["residency_modes"] == ["resident", "streamed"]
 
 
-def test_a_family_with_no_receipt_publishes_no_cell(contract):
-    """Absence resolves ``unattested``; it is never invented into a cell.
+def test_a_cell_exists_exactly_where_a_receipt_does(contract):
+    """Both directions of principle 14, on the shipped file.
 
-    ``TESSERA_BF16_K1`` is a served ROUTE with no served MEASUREMENT, and the
-    two are different claims.  Publishing a cell for it would attest a route
-    status nobody has observed -- which is the failure principle 14 exists for,
-    and the one a route module is most tempting to commit the day it is
-    written.
+    Until 2026-09-02 this test asserted only one of them -- that
+    ``TESSERA_BF16_K1``, then receiptless, published no cell.  That was true
+    only while its receipt was missing and went vacuous the moment one
+    existed.  The pair below does not: a family that attests rungs MUST carry a
+    cell (or the receipt bought nothing), and a family that attests none MUST
+    NOT (or a route status nobody observed is published).  The second branch is
+    the old test, now reached exactly when a family is unattested -- which is
+    where it belongs, because it is the failure a route module is most tempting
+    to commit the day it is written.
     """
-    attested = {c["family"] for c in contract["lane_eligibility"]["cells"]}
-    unattested = {f for f, rungs in _FAMILY_RUNGS.items() if not rungs}
-    assert unattested, "this test is vacuous if every family is attested"
-    assert not (attested & unattested), (
-        f"{sorted(attested & unattested)} publish a lane_eligibility cell but attest no rung")
+    for family, rungs in _FAMILY_RUNGS.items():
+        cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == family]
+        if rungs:
+            assert cells, f"{family} attests {rungs} but publishes no lane_eligibility cell"
+        else:
+            assert not cells, (
+                f"{family} publishes a lane_eligibility cell but attests no rung; absence "
+                "resolves unattested and is never invented into a cell")
+
+
+def test_a_cell_cannot_attest_a_rung_the_family_does_not_publish(contract):
+    """The mechanism, not the state: ``attested_rungs_q256`` bounds every cell.
+
+    A rung must not be able to acquire a route status by being written into a
+    cell, so ``validate_serving_contract`` refuses a cell naming anything the
+    family does not publish.  This exercises that refusal on every family that
+    has a cell to mutate; it passes on any tree where the mechanism is intact
+    (``contract.py``'s ``unknown_rungs`` check), which is the point.
+    """
+    seen = 0
+    for family, rungs in _FAMILY_RUNGS.items():
+        if not any(c["family"] == family for c in contract["lane_eligibility"]["cells"]):
+            continue
+        seen += 1
+        broken = copy.deepcopy(contract)
+        target = next(c for c in broken["lane_eligibility"]["cells"] if c["family"] == family)
+        invented = max(rungs) + 1
+        assert invented not in set(rungs)
+        target["rungs_q256"] = [invented]
+        with pytest.raises(ValueError, match="the family does not publish"):
+            validate_serving_contract(broken)
+    assert seen, "no family publishes a cell; the mutation above never ran"
+
+
+def test_every_cell_names_a_rung_its_family_attests(contract):
+    """The same bound, read off the shipped file rather than a mutation."""
+    formats = {entry["family"]: entry for entry in contract["formats"]}
+    for cell in contract["lane_eligibility"]["cells"]:
+        attested = set(formats[cell["family"]]["attested_rungs_q256"])
+        assert set(cell["rungs_q256"]) <= attested, (
+            f"{cell['id']} attests {sorted(set(cell['rungs_q256']) - attested)}, "
+            f"which {cell['family']} does not publish")
 
 
 #: MEASURED, not chosen: each rate was encoded and taken through the route's own
@@ -444,6 +506,14 @@ def test_every_published_family_states_the_a_side_a_gate_can_read():
     principle 14 names: a producer could not tell "unquantised by design" from
     "nobody filled it in", and PrismaQuant's lane preflight hit it deriving an
     executes glob for a family whose A side it could not price.
+
+    The two claims stay INDEPENDENT once a receipt lands.  This test originally
+    demonstrated that with ``TESSERA_BF16_K1``'s empty ``attested_rungs_q256``,
+    which stopped being empty at v5; pinning that emptiness would have made the
+    test a hostage to the next receipt rather than a statement about the field.
+    What it pins instead is the invariant that does not move: every row's A side
+    is its route's, and every cell's A side is its row's -- the row says what the
+    decoder feeds the GEMM, the cell says a receipt covered it.
     """
     from tessera.serving.contract import _FAMILY_TO_ROUTE, load_serving_contract
     from tessera.serving.scheme import ROUTES
@@ -453,10 +523,12 @@ def test_every_published_family_states_the_a_side_a_gate_can_read():
     assert rows, "the packaged contract publishes no formats[] rows"
     for family, row in rows.items():
         assert row["activation_contract"] == ROUTES[_FAMILY_TO_ROUTE[family]]["activation_contract"]
-    # The one this test exists for: published, unattested, and both are legible.
-    bf16 = rows["TESSERA_BF16_K1"]
-    assert bf16["activation_contract"] == "bf16_unquantized"
-    assert bf16["attested_rungs_q256"] == []
+    # The one this test exists for: an A side published as a value, whatever the
+    # attestation state beside it happens to be.
+    assert rows["TESSERA_BF16_K1"]["activation_contract"] == "bf16_unquantized"
+    for cell in contract["lane_eligibility"]["cells"]:
+        assert cell["activation_contract"] == rows[cell["family"]]["activation_contract"], (
+            f"{cell['id']} executes a different A side from its own family row")
 
 
 def test_a_row_whose_a_side_disagrees_with_its_route_is_refused():

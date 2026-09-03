@@ -197,8 +197,9 @@ class TesseraConfig(QuantizationConfig):
         return QUANT_METHOD
 
     def get_supported_act_dtypes(self) -> list[torch.dtype]:
-        # Both routes quantize the activation themselves and ask
-        # ``torch._scaled_mm`` for a bf16 output.
+        # The two quantized routes quantize the activation themselves and ask
+        # ``torch._scaled_mm`` for a bf16 output; the BF16 route consumes this
+        # dtype directly.  Either way bf16 in, bf16 out.
         return [torch.bfloat16]
 
     @classmethod

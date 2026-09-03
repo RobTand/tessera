@@ -35,9 +35,12 @@ work, which removes the main argument for building the serving backend first.
 > route with its table snapped to bf16, decoded to an ordinary bfloat16 tile
 > for the runtime's own GEMM, with the row scale applied as an fp32 epilogue
 > and **never folded into the tile**.  It exists because the E4M3 alphabet, not
-> the trellis, is what floors the window body above ~6 bpp.  The BF16 family is
-> `unattested` in `runtime_contract.json` until a container receipt covers it;
-> a family with no receipt publishes no `lane_eligibility` cell.
+> the trellis, is what floors the window body above ~6 bpp.  The BF16 family is attested at
+> `q256 = 1792` on `sm_121` at contract v5 -- two dense cells, `decode` and
+> `batch` -- on the four-census-plus-served-KL receipt in
+> `docs/measurements/tessera-bf16-route-served-2026-09-02.md`; the rule it
+> waited on still holds, that a family with no receipt publishes no
+> `lane_eligibility` cell.
 > The streamed residency mode is the kernel lane's shape: the body stays
 > compressed on disk *and in memory*, decoded inside the forward.  The only
 > operator knob is `TESSERA_SERVE_MODE=resident|streamed`.  What survives from
@@ -586,8 +589,9 @@ Reproduced before it was fixed, on a `[64, 64]` unit at `E2M1x2` q256 512:
 > build's decoder reads for TESSERA_E2M1_K2 — [896, 896] (every integer).`
 
 **What the wire can emit, and what of it can be served.** Enumerating
-`export.recipe_table` per grid against the published ranges gives three gaps,
-not the five a `wire_recipe`-only enumeration reads:
+`export.recipe_table` per grid against the published ranges gives two gaps, not
+the five a `wire_recipe`-only enumeration reads (three until #9 gave the `BF16`
+grid its route):
 
 | grid | emitted | encodable | published | verdict |
 |---|---|---|---|---|
@@ -597,7 +601,7 @@ not the five a `wire_recipe`-only enumeration reads:
 | `E2M1x2` | 897…1024 TCQ | **none** | [896, 896] | not a gap: `bresenham_rate_schedule` refuses rate 8 (`max_trellis_rate = native − 1`) |
 | `E4M3` | 1…255 WINDOW | **none** | [256, 2048] | not a gap: rate 0 is below the shaped domain |
 | `E4M3` | 256…2048 WINDOW | 256…2048 | [256, 2048] | served, and the bounds coincide by construction |
-| `BF16` | 1…4096 WINDOW | 256…4096 | none | **gap** — the grid has a wire and no route (#9) |
+| `BF16` | 1…4096 WINDOW | 256…4096 | [256, 4096] | served since #9 — `bf16_route` decodes the same window body, and q256 1792 is attested |
 
 `wire_recipe` returning a recipe is not the same as the encoder building one:
 `E2M1x2` above the cap and `E4M3` below 256 are refused by the grammar, so no
@@ -625,9 +629,11 @@ untouched.
 **Fail closed with an explicit, stamped override.** `--allow-unserveable`
 writes the wire anyway as a research artifact and stamps every refusal verbatim
 into the manifest's new `serving_gate` block (`contract_version`,
-`allow_unserveable`, `unserveable_overrides`). One real workflow needs it
-today: `--grid BF16`, whose wire has no plugin route and whose `--stock-twin`
-is what actually gets served.
+`allow_unserveable`, `unserveable_overrides`). Two real workflows need it
+today: `--grid E2M1`, whose route holds the grid while the contract publishes
+no measured range for it (item 2 below), and sub-cap `E2M1x2`, which the rate
+frontier encodes constantly. In both the `--stock-twin` is what gets served.
+`--grid BF16` was the third until #9 landed its route; it now passes the gate.
 
 **Item 2 of #41 — `ROUTES` lists `E2M1`, the contract publishes no range for
 it — is kept as a deliberate disagreement**, pinned by a test rather than

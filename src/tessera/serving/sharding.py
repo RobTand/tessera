@@ -36,10 +36,10 @@ TP group in a build with no ``tessera.layout.slice_unit`` -- the whole-file
 answer, asked once per module at method construction.  ``require_axis_supported``
 refuses the ONE axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
 and asked at ``create_weights`` where ``plan_shard`` has just named the axis.  A
-ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and of the two families
-only the window body threads a start state through its pad
-(``lane_planes.pack_window_planes``); the span-2 TCQ packer refuses such a unit
-by name (``pack_unit_for_kernel``).  So the NVFP4 route serves column cuts
+ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and only the window body
+threads a start state through its pad (``lane_planes.pack_window_planes``) --
+which the E4M3 and BF16 families ship and the span-2 TCQ body does not, so the
+span-2 packer refuses such a unit by name (``pack_unit_for_kernel``).  So the NVFP4 route serves column cuts
 (RowParallel) at any TP and refuses row cuts -- on every rank, including rank 0,
 whose shard would in fact pack, because a group whose ranks disagree about
 whether a module exists hangs on its first collective rather than failing.
@@ -510,7 +510,7 @@ def shard_parsed_roles(parsed_roles, plan: ShardPlan):
     axis there is one role and the whole of it is cut.
 
     What comes back is a list of ``ParsedUnit``s again -- re-derived from the
-    shard's own bytes -- because that is what both routes' ``prepare_*_module``
+    shard's own bytes -- because that is what every route's ``prepare_*_module``
     consume, and because a shard's planes are its own.
     """
     if plan.is_whole or plan.axis is None:

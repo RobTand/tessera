@@ -202,20 +202,24 @@ the six GLM units. A twin written in fp16 would be a tighter ceiling (W1's
 
 ## 5. Export
 
-> **Command correction, 2026-09-02 (#41).** The serving exporter now refuses a
-> wire this plugin build publishes no decode for, and `BF16` is one: no route in
-> `serving.scheme.ROUTES` holds the grid (#9). The arm below reproduces with
-> **`--allow-unserveable`**, which writes it as a research artifact and stamps
-> the refusal into the manifest's `serving_gate` block. Nothing about the bytes
-> or the twin changes; only the flag. See
-> `docs/tessera-serving-and-moe-contract.md` §11.
+> **Command note, 2026-09-02 (#41, #9).** The serving exporter now refuses a
+> wire this plugin build publishes no decode for. `BF16` was one for about a
+> day: `--grid BF16` needed `--allow-unserveable`, which writes the arm as a
+> research artifact and stamps the refusal into the manifest's `serving_gate`
+> block. It no longer does. `serving.scheme.ROUTES[TESSERA_BF16]` holds the
+> grid, the window body and the CHANNEL plane, and `runtime_contract.json` v5
+> publishes the reader range [256, 4096], so the arm below exports with no
+> flag. Nothing about the bytes or the twin ever changed; only the flag, and
+> now not even that. See `docs/tessera-serving-and-moe-contract.md` §11.
 
 `experiments/export_tessera_serving.py --grid BF16` writes modules declaring
 family `TESSERA_BF16`, and `--stock-twin DIR` writes, alongside it, a plain
 BF16 safetensors of the decoded tiles under the *source's own tensor names*,
 with `quantization_config` removed and every passthrough tensor copied
 verbatim. That twin is an ordinary checkpoint: vanilla vLLM (or HF) serves it
-with no plugin, which is how a served KL gate will run before the lane exists.
+with no plugin, which is how the served KL gate ran: the route and its twin
+are the two servings of one encode, measured against each other in
+`docs/measurements/tessera-bf16-route-served-2026-09-02.md`.
 
 **Qwen3-0.6B, 196 units in 112 fused modules, 440 401 920 quantizable
 parameters.** Both rungs stamped `git: fc2c1c1`.
@@ -446,8 +450,22 @@ terms on every arm at every rate, including EXL3's and RTN's, because it is
 bf16's 7-bit mantissa meeting these activations. Its *share* grows only
 because the coding error shrinks underneath it. **This is the twin's cost, not
 the route's** — `materialize_bf16` returns the pair and pays none of it (§4),
-and a served number taken on the twin is therefore a ceiling: at R = 7 the
-route is ~15% better than its own twin, before anything else is measured.
+and a served number taken on the twin is therefore a ceiling.
+
+**How big a ceiling — corrected 2026-09-02.** An earlier reading of this table
+turned the 15.4% column into "at R = 7 the route is ~15% better than its own
+twin". It does not follow, and the definition three lines up is why: `fold` is
+defined *in quadrature*, `out_bf16 = sqrt(out² + fold²)`, so a 15.4% share
+raises the twin's error by `sqrt(1 + 0.154²) - 1 = 1.2%` and its **squared**
+error — the quantity an output-space KL tracks — by 2.4%. Fifteen percent was
+never in this table. Transferred to the dense Qwen units of §7c, where `out` at
+R = 7 is 0.01214 and the fold constant is the same 0.00134, the share is ~11%
+and the squared-error gap ~1.2%. **Served, it is smaller still**: on the R = 7
+dense Qwen wire the twin's KL is 1.0011x the route's on `all` and 0.9961x on
+`confident` — a signed disagreement, i.e. below what an n=8 x 512 corpus
+resolves (`tessera-bf16-route-served-2026-09-02.md` §3, issue #45). The fold is
+still the twin's cost and not the route's; what is not established is that it
+is *visible* at this rung.
 
 ### 7c. Six dense Qwen3-0.6B Linears, H-weighted
 
@@ -554,10 +572,16 @@ anyway.
 > element check against `materialize_bf16`.  Two things below are *not* what
 > shipped, and both are the contract's own vocabulary rather than a change of
 > mind: the rungs go in `attested_rungs_q256` (`candidate_rungs_q256` is a
-> deprecated alias that must carry the identical list), and both are **empty**
-> with **no `lane_eligibility` cell**, because "the route status is `backed`"
-> is a claim about a runtime and needs a receipt, not a hand-off's say-so
-> (principle 14, which this section already says).
+> deprecated alias that must carry the identical list), and both were **empty**
+> with **no `lane_eligibility` cell** on the day the route landed, because "the
+> route status is `backed`" is a claim about a runtime and needs a receipt, not
+> a hand-off's say-so (principle 14, which this section already says).  The
+> receipt arrived the same day: contract v5 attests `q256 = 1792` and publishes
+> two `sm_121` dense cells on four route censuses plus a served KL against the
+> twin — `docs/measurements/tessera-bf16-route-served-2026-09-02.md`.  One rung,
+> one platform, dense only; every other rung in the reader's `[256, 4096]`
+> range still resolves `unattested`, which is the same rule, not an exception
+> to it.
 
 The plugin adds a **third family** alongside `TESSERA_NVFP4` (W4A4) and
 `TESSERA_FP8` (W8A8): `TESSERA_BF16`, **W16A16**, materialising into an
