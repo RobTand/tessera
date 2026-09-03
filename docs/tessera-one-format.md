@@ -263,6 +263,11 @@ bytes is comparing W4A4 against W8A8, and at 4.0 bytes those differ 1.44×
 as served (`tessera8-targets`). The cost model prices what the route
 executes (PrismaQuant principles 8/9/14), never the weight leg alone.
 
+**Selection requirement.** This menu ships only validated-surrogate-selected:
+a plan at more than one (grid, rung) must pass the served byte-matched
+uniform-control gate before it ships. `docs/ARCHITECTURE.md` §4.10 states
+this as a requirement of the menu (tessera#2, reason: tessera#1).
+
 The recipe is per rung, and the checkpoint says so. `wire_recipe(grid,
 q256)` is the one function; the exporter resolves it per unit (the caller's
 explicit overrides apply on top, for every rung alike), and the config
