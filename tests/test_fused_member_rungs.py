@@ -157,6 +157,46 @@ def test_the_grouping_key_is_the_module_scheme_and_not_the_rate():
     assert export.module_scheme_key(k2, 512) != export.module_scheme_key(k2, 896)
 
 
+def test_the_grouping_key_compares_exactly_the_fields_the_contract_calls_shared():
+    """One rule, two hand-written statements of it -- crossed here.
+
+    ``module_scheme_key`` decides what the EXPORTER groups into one container;
+    ``FUSED_MODULE_FIELDS`` is what the RUNTIME publishes as shared.  They are
+    written in two files and could drift apart in the direction that matters
+    (a field the exporter stops comparing while the contract still calls it
+    shared).  ``structure`` and ``columns`` are shared and are deliberately not
+    in the key: they are not properties of the recipe, and
+    ``validate_tessera_scheme`` checks them per module against the roles.
+    """
+    export = _exporter()
+    key_fields = ("family", "grid", "body", "plane")
+    shared = {name for name, kind in FUSED_MODULE_FIELDS.items() if kind == "shared"}
+    assert set(key_fields) == shared - {"structure", "columns"}
+    assert len(export.module_scheme_key(grid_for_name("E4M3"), 900)) == len(key_fields)
+    # and the per-member half is the rate, which is why the key omits it
+    assert FUSED_MODULE_FIELDS["q256"] == "per_member"
+
+
+def test_the_plan_converter_asks_the_exporter_rather_than_restating_the_rule():
+    """``plan_from_layer_config`` refused the same group the exporter did (#37).
+
+    It carried its own ``{(grid, q256)}`` set, so relaxing the exporter alone
+    would have left PrismaQuant's default allocation with no plan to export.
+    It now imports the exporter's key, and this pins the import rather than the
+    behaviour so a copied-back constant fails here.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "plan_from_layer_config", ROOT / "experiments" / "plan_from_layer_config.py")
+    plan = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plan)
+    assert plan.module_scheme_key.__module__ == "export_tessera_serving"
+    e4m3 = grid_for_name("E4M3")
+    assert plan.module_scheme_key(e4m3, 900) == _exporter().module_scheme_key(e4m3, 900)
+    source = (ROOT / "experiments" / "plan_from_layer_config.py").read_text()
+    assert "from export_tessera_serving import module_scheme_key" in source
+    assert "chosen[m][0], chosen[m][1]) for m in present" not in source
+
+
 # --- the decode --------------------------------------------------------------
 
 def _encode(grid, device):

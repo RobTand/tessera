@@ -664,3 +664,112 @@ never selects the plugin on it; it is a research container that reaches the
 plugin only through one of the two gated scripts. The gate therefore sits on
 every path into a checkpoint the plugin loads, and on no path that only
 measures.
+
+## 12. A fused module's roles share a route, not a rate (2026-09-03, #37)
+
+Section 11 fixed a producer that wrote more than the consumer reads. This is
+the mirror image: a producer that wrote **less**, on a rule the consumer never
+had.
+
+`export_tessera_serving.py` grouped a vLLM-fused module by `(grid, q256)`
+equality — `len(recipes) == 1` — and passed any group whose members disagreed
+through at source precision. Its own header stated the weaker and correct rule,
+that the roles must share one *family*. One of the two was wrong, and the code
+was.
+
+**What the decoders actually do.** Every route reads a role from that role's
+OWN manifest. `serving/fp8_route.py::prepare_tessera_fp8_module` calls
+`prepare_window(unit.body_bits, unit.rates, unit.window_bits, unit.window_codes,
+..., initial_state=...)` and `materialize_fp8(unit, parsed.forests, parsed.code)`
+per role and concatenates; `serving/ops.py` keeps a `_PreparedRole` per role and
+passes that role's own `rate`/`arity`/`memory`/`half` into
+`_nvfp4_decode_span2_out`, writing `packed[row_offset : row_offset + n]`. The
+only module-level facts either route uses are `columns` and — on NVFP4 — the
+shared 16-entry global, which is carried by an **exact binade shift**
+(`fused.shared_lut_global`), not by the rate. The module-level flattening was
+never in the decoder: it was in the sidecar `scheme`, whose scalar `q256`
+`parse_tessera_blob_for_scheme` then held every member to.
+
+**The run.** `experiments/fused_member_rung_identity.py` encodes real
+Qwen3-0.6B layer-0 `q/k/v` at three different rungs — 1024 / 900 / 1200 — packs
+them into one `TSRFUSE1` container, and compares the fused decode against the
+same three roles decoded as three one-member modules (the shape the exporter
+writes for an unfused Linear, i.e. the path the unrelaxed code took). Both
+grids:
+
+> `PASS  4194304 tile elements and 4096 row scales identical across the fused
+> and the per-role decode, at rungs [1024, 900, 1200]`
+
+It passes on the **pre-change** tree as well, which is the point: the decoder
+was always per-member, and the relaxation removed a producer-side restriction
+rather than adding a consumer-side capability.
+
+**What moved.**
+
+* `serving/scheme.py` publishes `FUSED_MODULE_FIELDS` — which of a module's
+  scheme fields are shared and which are per member — and `validate_tessera_scheme`
+  now runs the reader-range gate (§11) **per role**, naming the role in its
+  refusal. `q256` is one polymorphic field, an int or a per-role list, rather
+  than two fields that could disagree; the normalised scheme always carries a
+  monomorphic `role_q256`. An old plugin reading a new checkpoint refuses on
+  `q256 must be an integer` — fail closed, not fail quiet.
+* `export_tessera_serving.module_scheme_key(grid, q256)` is the grouping key:
+  `(family, grid, body, scale plane)`. Body and plane are **derived** from the
+  rung by `wire_recipe`, not assumed constant, because `E2M1x2` writes the
+  window body below the coset cap and the TCQ body at it — two decoders, so the
+  key separates them and the relaxation cannot let a mixed-body group through
+  the back door.
+* `runtime_contract.json` goes to **contract v6** with a `fused_module` block
+  (`schema`, `container`, `fields`, `sidecar_q256`, `mixed_rung_receipt`), and
+  `serving/contract.py` validates that block against the `scheme` constants the
+  loader itself gates on, so the published rule and the enforced rule cannot
+  drift (principle 14, the same pattern as `loader_axes`). The change is
+  additive: no family, rung range, `lane_eligibility` cell, world size or
+  `quant_method` moved.
+* `experiments/plan_from_layer_config.py` — the PrismaQuant → plan converter —
+  carried the same `(grid, q256)` rule as a second statement, and would have
+  refused before the exporter ever ran. It now **imports** `module_scheme_key`
+  instead of restating it. A group whose members disagree on family, grid, body
+  or plane, or a group with a member the allocation never priced, is still
+  refused by default and still demoted to BF16 (with the demotion recorded)
+  under `--allow-fused-disagreement`.
+
+**The chain, measured.** A seven-rung mink allocation over Qwen3-0.6B layer 0
+(`q/k/v` at 1083/920/1200, `gate/up` at 1107/1000, `o` 934, `down` 749) run
+through converter -> plan -> exporter -> the plugin's own load path:
+
+* the pre-change converter refuses it -- `2 fused module(s) do not share one
+  (grid, q256)`, naming both modules; the current one plans 7 Tessera units and
+  demotes none;
+* the exporter writes 4 modules / 7 units, `q256=[1083, 920, 1200]` and
+  `q256=[1107, 1000]` in the two fused schemes;
+* `check_wire_against_plan.py` against the PrismaQuant-priced sidecar:
+  **charged 61415424 bits = 3.904687500 bpp, emitted 61415424 bits =
+  3.904687500 bpp, manifest 3.904687500** -- exact, per unit and in total, so
+  #15's rule ("the bytes served are the bytes priced") holds unchanged now that
+  the members are priced at their own rungs;
+* both mixed-rung modules decode element-for-element to their roles decoded
+  alone (`4194304` and `6291456` tile elements, and the row scales).
+
+**What this does NOT claim.**
+
+* Nothing was served. `fused_module.mixed_rung_receipt` is `false` **as a
+  published value**, and stays false until a mixed-rung checkpoint has a served
+  KL receipt.
+* No rung range widened. NVFP4 publishes `E2M1x2` as the single point 896 and
+  no range at all for `E2M1`, so a *within-family* rung disagreement is still
+  refused there by the reader-range gate — the relaxation bites on `E4M3`
+  [256, 2048] and `BF16` [256, 4096].
+* Tensor parallelism was not exercised on a mixed-rung module; `max_world_size`
+  is still `[1]`.
+* The routed-MoE cell is untouched.
+
+**The PrismaQuant half, not implemented here.** PrismaQuant's group knapsack
+(`PRISMAQUANT_TESSERA_GROUP_KNAPSACK`, on by default) asserts in a comment that
+one rung per group is not the serving constraint. Under principle 14 that
+assertion should be a read: the Minkowski fold should be gated on
+`fused_module.fields["q256"] == "per_member"` from the pinned contract, so a
+future runtime that makes the rate module-level turns the fold off by measured
+fact rather than by anyone remembering to. That is a PrismaQuant-side change and
+is deliberately left to PrismaQuant; what #37 owed was the value to read, and
+v6 publishes it.
