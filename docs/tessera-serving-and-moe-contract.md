@@ -396,7 +396,12 @@ Three faults, all at plan time, all silent (fixed; see
   matched **nothing**: an export would have quantized zero Linears and reported
   success. `BODY_LAYER` matches `model.<...>.layers.<N>.`; the vision tower is
   `model.visual.blocks.N.` and stays BF16 by the same rule rather than by a
-  second exclusion list.
+  second exclusion list. Staying BF16 is not the same fact as being *named*,
+  though, and the plugin reads the second one: `ignore` was assembled from
+  three `BODY_LAYER`-gated sources, so every vision Linear was passed through
+  and never named, and a `LinearBase` that is neither declared nor ignored is
+  refused (#86). `ignored_module` now derives the name from each tensor the
+  export **writes**, body or not — one rule, no roster to keep beside it.
 * Routed experts here are **unpacked per-expert 2-D**
   (`...mlp.experts.{e}.{gate,up,down}_proj.weight`, 2592 of them across layers
   1–3; layer 0 is dense). Being 2-D, nothing separated them from ordinary
