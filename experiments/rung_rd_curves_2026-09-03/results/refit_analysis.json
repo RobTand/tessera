@@ -1,0 +1,451 @@
+{
+  "schema": "tessera.rung_refit_tracking/1",
+  "shared_rungs": [
+    749,
+    934,
+    1006,
+    1083,
+    1107,
+    1262
+  ],
+  "baseline_kl": {
+    "refit_on": 0.013726962172588491,
+    "refit_off": 0.016417856319076628
+  },
+  "note": "The priced and served blobs of the audited allocation were both the refit render; the un-refit arm here is a counterfactual, not what shipped.",
+  "untested": "LDLQ and the exact full-H refit change the encode, so the rung curve under them was not swept.",
+  "per_unit": {
+    "self_attn.q_proj": {
+      "R749": {
+        "dkl_refit_on": 0.002638149284803236,
+        "dkl_refit_off": 0.0029182704694117115,
+        "mse_refit_on": 0.0009115591528825462,
+        "mse_refit_off": 0.0009248876012861729,
+        "refit_mse_gain": 1.014621594617836
+      },
+      "R934": {
+        "dkl_refit_on": 0.0016810077510467942,
+        "dkl_refit_off": 0.0016104738772965213,
+        "mse_refit_on": 0.0003990893892478198,
+        "mse_refit_off": 0.00040492613334208727,
+        "refit_mse_gain": 1.0146251547936873
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.00027564651099964976,
+        "mse_refit_off": 0.0002811849117279053,
+        "refit_mse_gain": 1.020092402795777
+      },
+      "R1083": {
+        "dkl_refit_on": -0.00018120418556049137,
+        "dkl_refit_off": -0.00015096573447061223,
+        "mse_refit_on": 0.00021807673329021782,
+        "mse_refit_off": 0.00022125450777821243,
+        "refit_mse_gain": 1.0145718180937973
+      },
+      "R1107": {
+        "dkl_refit_on": 1.4564879019898433e-05,
+        "dkl_refit_off": -0.0005228620919229474,
+        "mse_refit_on": 0.0001919977366924286,
+        "mse_refit_off": 0.00019417039584368467,
+        "refit_mse_gain": 1.0113160664739325
+      },
+      "R1262": {
+        "dkl_refit_on": -0.00022563250797368907,
+        "dkl_refit_off": -0.0009371960233102335,
+        "mse_refit_on": 0.00010937907063635066,
+        "mse_refit_off": 0.00011135100794490427,
+        "refit_mse_gain": 1.0180284701367563
+      }
+    },
+    "self_attn.k_proj": {
+      "R749": {
+        "dkl_refit_on": 0.002258359802679074,
+        "dkl_refit_off": 0.001105954968999276,
+        "mse_refit_on": 0.0016191307222470641,
+        "mse_refit_off": 0.0019169081933796406,
+        "refit_mse_gain": 1.1839119393147668
+      },
+      "R934": {
+        "dkl_refit_on": 0.0010764917282208991,
+        "dkl_refit_off": 0.0002949580754319295,
+        "mse_refit_on": 0.0007011868292465806,
+        "mse_refit_off": 0.0008498808601871133,
+        "refit_mse_gain": 1.2120605019068929
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.0005423097172752023,
+        "mse_refit_off": 0.0006664532702416182,
+        "refit_mse_gain": 1.228916335097528
+      },
+      "R1083": {
+        "dkl_refit_on": -0.00035670090561510347,
+        "dkl_refit_off": 0.00032845495265057534,
+        "mse_refit_on": 0.0004832754493691027,
+        "mse_refit_off": 0.0005988517659716308,
+        "refit_mse_gain": 1.2391520544927503
+      },
+      "R1107": {
+        "dkl_refit_on": 0.00018655402319771829,
+        "dkl_refit_off": 0.0007906832573698445,
+        "mse_refit_on": 0.0003774181823246181,
+        "mse_refit_off": 0.0004662713035941124,
+        "refit_mse_gain": 1.2354235313259803
+      },
+      "R1262": {
+        "dkl_refit_on": -0.00040422295404273813,
+        "dkl_refit_off": -7.158436187326006e-05,
+        "mse_refit_on": 0.0002457440714351833,
+        "mse_refit_off": 0.0002974231028929353,
+        "refit_mse_gain": 1.2102961473533764
+      }
+    },
+    "self_attn.v_proj": {
+      "R749": {
+        "dkl_refit_on": 0.009548405261888895,
+        "dkl_refit_off": 0.007379321669412454,
+        "mse_refit_on": 0.0006083549233153462,
+        "mse_refit_off": 0.0006074236007407308,
+        "refit_mse_gain": 0.9984691131132135
+      },
+      "R934": {
+        "dkl_refit_on": 0.0020131997166314454,
+        "dkl_refit_off": 0.0005042859719457463,
+        "mse_refit_on": 0.000263290450675413,
+        "mse_refit_off": 0.000263162306509912,
+        "refit_mse_gain": 0.9995132973293476
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.00016758966376073658,
+        "mse_refit_off": 0.00017055499483831227,
+        "refit_mse_gain": 1.017693997416268
+      },
+      "R1083": {
+        "dkl_refit_on": -0.0009841521192203544,
+        "dkl_refit_off": -0.0024984727400389675,
+        "mse_refit_on": 0.00012293137842789292,
+        "mse_refit_off": 0.00012506777420639992,
+        "refit_mse_gain": 1.0173787669659957
+      },
+      "R1107": {
+        "dkl_refit_on": -0.0012254516672481532,
+        "dkl_refit_off": -0.0034472172507567875,
+        "mse_refit_on": 0.0001156446523964405,
+        "mse_refit_off": 0.00011714715947164223,
+        "refit_mse_gain": 1.0129924475024663
+      },
+      "R1262": {
+        "dkl_refit_on": -0.0031368248383359665,
+        "dkl_refit_off": -0.004754549953102366,
+        "mse_refit_on": 5.868645530426875e-05,
+        "mse_refit_off": 5.951770435785875e-05,
+        "refit_mse_gain": 1.01416424027112
+      }
+    },
+    "self_attn.o_proj": {
+      "R749": {
+        "dkl_refit_on": 0.008782925554450944,
+        "dkl_refit_off": 0.009049582621356047,
+        "mse_refit_on": 0.0005464502610266209,
+        "mse_refit_off": 0.0005424548289738595,
+        "refit_mse_gain": 0.9926883884266885
+      },
+      "R934": {
+        "dkl_refit_on": 0.003676843969789269,
+        "dkl_refit_off": 0.0037223631388520542,
+        "mse_refit_on": 0.0002406219718977809,
+        "mse_refit_off": 0.0002456522488500923,
+        "refit_mse_gain": 1.0209053101536725
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.00015067913045641035,
+        "mse_refit_off": 0.00015925729530863464,
+        "refit_mse_gain": 1.0569300129768524
+      },
+      "R1083": {
+        "dkl_refit_on": 0.0005500458924504407,
+        "dkl_refit_off": 0.00036179704442182783,
+        "mse_refit_on": 0.00011190948862349615,
+        "mse_refit_off": 0.0001200740080093965,
+        "refit_mse_gain": 1.0729564533474791
+      },
+      "R1107": {
+        "dkl_refit_on": -0.0008279320778445502,
+        "dkl_refit_off": -0.0004890260164518399,
+        "mse_refit_on": 0.00010517441114643589,
+        "mse_refit_off": 0.00011066417209804058,
+        "refit_mse_gain": 1.0521967358006998
+      },
+      "R1262": {
+        "dkl_refit_on": -0.0013450065704241204,
+        "dkl_refit_off": -0.0020023655518160415,
+        "mse_refit_on": 5.596742266789079e-05,
+        "mse_refit_off": 6.272306200116873e-05,
+        "refit_mse_gain": 1.1207066363117295
+      }
+    },
+    "mlp.gate_proj": {
+      "R749": {
+        "dkl_refit_on": 0.0028484149921663565,
+        "dkl_refit_off": 0.0029049285937195433,
+        "mse_refit_on": 0.006263626118501027,
+        "mse_refit_off": 0.0063883451124032336,
+        "refit_mse_gain": 1.0199116281116813
+      },
+      "R934": {
+        "dkl_refit_on": 0.0012842723534765062,
+        "dkl_refit_off": 0.001564235603272797,
+        "mse_refit_on": 0.0025417390279471874,
+        "mse_refit_off": 0.002625968617697557,
+        "refit_mse_gain": 1.033138567266049
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.0017891718695561092,
+        "mse_refit_off": 0.0018516510414580505,
+        "refit_mse_gain": 1.034920721125267
+      },
+      "R1083": {
+        "dkl_refit_on": 1.2904113986019622e-05,
+        "dkl_refit_off": -0.0003192887847437535,
+        "mse_refit_on": 0.0011942671456684668,
+        "mse_refit_off": 0.0012475637098153431,
+        "refit_mse_gain": 1.044627003547891
+      },
+      "R1107": {
+        "dkl_refit_on": 0.0009394706811923555,
+        "dkl_refit_off": 6.109732704386375e-05,
+        "mse_refit_on": 0.0011174687339613836,
+        "mse_refit_off": 0.0011567322847743828,
+        "refit_mse_gain": 1.0351361515716073
+      },
+      "R1262": {
+        "dkl_refit_on": 0.0001670924651412803,
+        "dkl_refit_off": -7.402406979913415e-05,
+        "mse_refit_on": 0.0006526897195726633,
+        "mse_refit_off": 0.0006822009260455767,
+        "refit_mse_gain": 1.045214756089977
+      }
+    },
+    "mlp.up_proj": {
+      "R749": {
+        "dkl_refit_on": 0.0021230447782229073,
+        "dkl_refit_off": 0.0036615568364436364,
+        "mse_refit_on": 0.0024791713804006577,
+        "mse_refit_off": 0.002487704468270143,
+        "refit_mse_gain": 1.003441911251858
+      },
+      "R934": {
+        "dkl_refit_on": 0.00041666726076906163,
+        "dkl_refit_off": 0.00045840369278670606,
+        "mse_refit_on": 0.001073280970255534,
+        "mse_refit_off": 0.001103603591521581,
+        "refit_mse_gain": 1.0282522676786374
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.0007182185848553976,
+        "mse_refit_off": 0.0007478037538627783,
+        "refit_mse_gain": 1.0411924303147033
+      },
+      "R1083": {
+        "dkl_refit_on": -0.0009512691348499518,
+        "dkl_refit_off": 0.0003338376836534117,
+        "mse_refit_on": 0.0004867846534277002,
+        "mse_refit_off": 0.0005175657570362091,
+        "refit_mse_gain": 1.063233512790026
+      },
+      "R1107": {
+        "dkl_refit_on": -0.0009545538056853244,
+        "dkl_refit_off": 0.00047549377915443933,
+        "mse_refit_on": 0.00044637604150921106,
+        "mse_refit_off": 0.0004816898920883735,
+        "refit_mse_gain": 1.0791123342098854
+      },
+      "R1262": {
+        "dkl_refit_on": -0.001483519833148577,
+        "dkl_refit_off": -0.0006153810980735232,
+        "mse_refit_on": 0.00025183858815580606,
+        "mse_refit_off": 0.000285744434222579,
+        "refit_mse_gain": 1.134633243916521
+      }
+    },
+    "mlp.down_proj": {
+      "R749": {
+        "dkl_refit_on": 0.009148412604621244,
+        "dkl_refit_off": 0.007113027012744761,
+        "mse_refit_on": 0.0003975129220634699,
+        "mse_refit_off": 0.00040162840741686523,
+        "refit_mse_gain": 1.010353085711106
+      },
+      "R934": {
+        "dkl_refit_on": 0.0013445248342540163,
+        "dkl_refit_off": -0.0003989873100400214,
+        "mse_refit_on": 0.0001699301938060671,
+        "mse_refit_off": 0.00017046090215444565,
+        "refit_mse_gain": 1.0031230962343527
+      },
+      "R1006": {
+        "dkl_refit_on": 0.0,
+        "dkl_refit_off": 0.0,
+        "mse_refit_on": 0.00010766258492367342,
+        "mse_refit_off": 0.00010892179852817208,
+        "refit_mse_gain": 1.0116959257980975
+      },
+      "R1083": {
+        "dkl_refit_on": 0.0002658256345998977,
+        "dkl_refit_off": -0.0007239685133245376,
+        "mse_refit_on": 8.411421731580049e-05,
+        "mse_refit_off": 8.585762407165021e-05,
+        "refit_mse_gain": 1.0207266596716251
+      },
+      "R1107": {
+        "dkl_refit_on": -5.989100368522168e-05,
+        "dkl_refit_off": -0.00036750450992770883,
+        "mse_refit_on": 7.703232404310256e-05,
+        "mse_refit_off": 7.950159488245845e-05,
+        "refit_mse_gain": 1.0320549960036807
+      },
+      "R1262": {
+        "dkl_refit_on": -0.0005096489902578459,
+        "dkl_refit_off": -0.0003167411819129558,
+        "mse_refit_on": 4.29817009717226e-05,
+        "mse_refit_off": 4.5634871639776975e-05,
+        "refit_mse_gain": 1.0617279122992336
+      }
+    }
+  },
+  "curve_shape_spearman_on_vs_off": {
+    "self_attn.q_proj": 0.8285714285714286,
+    "self_attn.k_proj": 0.7142857142857143,
+    "self_attn.v_proj": 1.0,
+    "self_attn.o_proj": 1.0,
+    "mlp.gate_proj": 0.8285714285714286,
+    "mlp.up_proj": 0.6,
+    "mlp.down_proj": 0.08571428571428572
+  },
+  "residual_vs_refit_gain": {
+    "n": 21,
+    "keys": [
+      "self_attn.q_proj|R749",
+      "self_attn.q_proj|R934",
+      "self_attn.q_proj|R1107",
+      "self_attn.k_proj|R749",
+      "self_attn.k_proj|R934",
+      "self_attn.k_proj|R1107",
+      "self_attn.v_proj|R749",
+      "self_attn.v_proj|R934",
+      "self_attn.o_proj|R749",
+      "self_attn.o_proj|R934",
+      "self_attn.o_proj|R1083",
+      "mlp.gate_proj|R749",
+      "mlp.gate_proj|R934",
+      "mlp.gate_proj|R1083",
+      "mlp.gate_proj|R1107",
+      "mlp.gate_proj|R1262",
+      "mlp.up_proj|R749",
+      "mlp.up_proj|R934",
+      "mlp.down_proj|R749",
+      "mlp.down_proj|R934",
+      "mlp.down_proj|R1083"
+    ],
+    "log_residual": [
+      1.0887533491985182,
+      1.4640402349570363,
+      -2.5527935841555545,
+      0.313814483422185,
+      0.4097533617820204,
+      -0.7235678452042077,
+      0.3595740639977822,
+      -0.3595740639977826,
+      0.4117829540136298,
+      0.3612443316799642,
+      -0.7730272856935922,
+      0.7188941996125163,
+      0.8242345653456375,
+      -3.020851062143534,
+      1.3333860367113999,
+      0.14433626047398757,
+      0.3955572433230212,
+      -0.3955572433230198,
+      1.0177144109541993,
+      -0.049985586045859134,
+      -0.9677288249083403
+    ],
+    "log_refit_gain": [
+      0.014515729797240244,
+      0.014519238661652393,
+      0.011252518751173253,
+      0.16882415811706916,
+      0.19232180546630076,
+      0.21141385163426446,
+      -0.0015320598914276872,
+      -0.0004868211488412316,
+      -0.007338472415998603,
+      0.020689792622808477,
+      0.07041787880588307,
+      0.019715984436600796,
+      0.03260132176686265,
+      0.043659887296595846,
+      0.03453296547791128,
+      0.044222372522926365,
+      0.003436001432159336,
+      0.027860533502708965,
+      0.010299859573863443,
+      0.003118229499529542,
+      0.020514785094376597
+    ],
+    "spearman": -0.2,
+    "pearson": -0.08221793464964973,
+    "per_unit_scale": {
+      "self_attn.q_proj": 0.0012940766028544334,
+      "self_attn.k_proj": 0.0010618001354621284,
+      "self_attn.v_proj": 0.0005719282145672537,
+      "self_attn.o_proj": 0.0015597510274256412,
+      "mlp.gate_proj": 0.00016068153828643406,
+      "mlp.up_proj": 0.0001320858283417067,
+      "mlp.down_proj": 0.0019616696790760477
+    }
+  },
+  "reallocate_shared_rungs": {
+    "L1_on_refit_render": {
+      "pick": {
+        "mlp.down_proj": 749,
+        "mlp.gate_proj": 1083,
+        "mlp.up_proj": 1083,
+        "self_attn.o_proj": 1006,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "bytes": 7864832,
+      "budget": 7865344,
+      "predicted_kl_on_measured_table": 0.020414952545949855,
+      "vs_uniform": 1.4872156191059285
+    },
+    "L1_on_unrefit_render": {
+      "pick": {
+        "mlp.down_proj": 749,
+        "mlp.gate_proj": 1083,
+        "mlp.up_proj": 1083,
+        "self_attn.o_proj": 1006,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "bytes": 7864832,
+      "budget": 7865344,
+      "predicted_kl_on_measured_table": 0.020414952545949855,
+      "vs_uniform": 1.4872156191059285
+    }
+  }
+}
