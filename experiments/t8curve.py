@@ -1,5 +1,7 @@
 """One tensor, one scale scheme, both families, and both scalar baselines."""
-import sys, glob, torch; sys.path.insert(0,"/home/rob/tessera/src")
+import sys, glob, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, E4M3_GRID, E2M1_GRID
 from tessera.encode import encode_unit, _pack_scales

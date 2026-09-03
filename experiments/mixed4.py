@@ -10,7 +10,9 @@ numbers there are directly comparable.  Also runs the free-16 SCALAR arm that
 doc flags as unrun: it separates "Lloyd-Max beats E2M1" from "the trellis's
 redundancy bit".
 """
-import sys, glob, torch; sys.path.insert(0, "/home/rob/tessera/src")
+import sys, glob, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, PayloadGrid, GAUSSIAN_SOURCE
 from tessera.encode import encode_unit, _pack_scales, e2m1_value_table, grid_value_table

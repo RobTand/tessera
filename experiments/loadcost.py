@@ -11,7 +11,8 @@ odd width, and an odd width cannot pack nibble pairs -- ``decode.py`` refuses
 -- so the pack line reports n/a there and the replay line is the measurement.
 """
 import sys
-sys.path.insert(0, "/home/rob/tessera/src")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.errors import GrammarError
 from tessera.grammar import superblock_count
 

@@ -9,7 +9,9 @@ Every arm replays its own body and asserts the decoder recovers the encoder's
 codes.  Rate 9 taught the lesson: a widened rate produces PLAUSIBLE wrong
 numbers, and a monotone-looking column is not evidence of correctness.
 """
-import sys, glob, torch; sys.path.insert(0, "/home/rob/tessera/src")
+import sys, glob, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, tuple_grid, lloyd_max_grid, E2M1_GRID, E4M3_GRID
 from tessera.encode import encode_unit, _pack_scales, e2m1_value_table

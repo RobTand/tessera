@@ -9,7 +9,8 @@ import json
 import pickle
 import sys
 
-sys.path.insert(0, "/home/rob/tessera/src")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 sys.path.insert(0, "/home/rob/pq-wt/tessera-continuous")
 from prismaquant.allocator_solver import predicted_dloss
 from prismaquant import format_registry as fr

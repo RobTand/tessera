@@ -3,7 +3,7 @@ from fractions import Fraction
 from collections import Counter
 from pathlib import Path
 sys.path.insert(0, "/home/rob/pq-wt/tessera-continuous")
-sys.path.insert(0, "/home/rob/tessera/.claude/worktrees/agent-a6d34c0d5bba700a6/experiments")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from prismaquant.tessera_formats import artifact_bpp
 from plan_from_layer_config import body_weights
 

@@ -2,7 +2,8 @@
 outliers off: layers.0.linear_attn.out_proj is kurtosis 152 whole and 7.8 sliced.
 A screen that removes the phenomenon under test measures nothing."""
 import sys, glob, torch
-sys.path.insert(0, "/home/rob/tessera/src")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest
 from tessera.encode import encode_unit
