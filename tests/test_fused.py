@@ -25,19 +25,23 @@ def _dequant(table_bytes, global_):
 
 
 def test_shared_global_is_exact_or_refused():
-    t = torch.tensor([0x08, 0x38, 0x40, 0x7E], dtype=torch.uint8)   # subnormal-ish, 1.0, 2.0, 448
+    # every byte an E4M3 normal (0x08..0x7E): 2^-4, 1.0, 2.0, 448.  A moved table
+    # that lands outside that range is refused outright -- the fused decoder reads
+    # a scale byte by field arithmetic, so a zero exponent field decodes wrong.
+    t = torch.tensor([0x18, 0x38, 0x40, 0x7E], dtype=torch.uint8)
     # three roles two binades apart: the smallest multiplier wins and the others shift up
     tables, globals_ = [t[:3], t[:3], t[:3]], [2.0**-10, 2.0**-12, 2.0**-11]
     shared, moved = shared_lut_global(tables, globals_, ["q", "k", "v"])
     assert shared == 2.0**-12
     for tb, g, mv in zip(tables, globals_, moved):
         assert torch.equal(_dequant(mv, shared), _dequant(tb, g))
-    # q holds 448 (cannot move up), k holds the smallest subnormal (cannot move
-    # down): no candidate carries both exactly, so the group is refused with
-    # the failing roles named.  Moving DOWN is exact when the entries stay on
-    # the E4M3 lattice, which is why a 448 alone is not a refusal.
+    # q holds 448 (cannot move up), k holds the smallest normal 2^-6 (cannot move
+    # down -- 2^-8 is a subnormal byte): no candidate carries both, so the group
+    # is refused with the failing roles named.  Moving DOWN is exact when the
+    # entries stay on the E4M3 normal lattice, which is why a 448 alone is not
+    # a refusal.
     q = torch.tensor([0x7E], dtype=torch.uint8)
-    k = torch.tensor([0x01], dtype=torch.uint8)
+    k = torch.tensor([0x08], dtype=torch.uint8)
     with pytest.raises(GrammarError, match="fails on q"):
         shared_lut_global([q, k], [2.0**-10, 2.0**-12], ["q", "k"])
     s2, m2 = shared_lut_global([t, t], [2.0**-10, 2.0**-12], ["q", "k"])

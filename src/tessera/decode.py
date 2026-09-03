@@ -22,7 +22,7 @@ import os
 import torch
 
 from .alphabet import AnchorForest, PayloadGrid
-from .encode import EncodedUnit, e2m1_value_table, grid_value_table
+from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
 from .manifest import BodyKind, ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
@@ -263,6 +263,7 @@ def replay_body(
     INITIAL_STATE plane of a shard (``layout.slice_unit``).  ``None`` is the
     pinned zero start every whole unit has and every kernel assumes.
     """
+    require_memory(code)
     device = body_bits.device
     rows, cols = body_bits.shape
     subsets, table_next, table_sub = _replay_tables(forest, code, str(device))
