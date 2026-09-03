@@ -26,7 +26,6 @@ from fractions import Fraction
 
 from .errors import FootprintDisagreementError
 from .manifest import Manifest, TerminalRecord
-from .planes import Storage
 
 __all__ = [
     "ByteQuantity",
@@ -179,12 +178,4 @@ def account_terminal(
         side_bytes=side_bytes,
         payload_bpp=payload_bpp,
         wire_bpp=wire_bpp,
-    )
-
-
-def reference_bundle_bytes(manifests_and_terminals) -> int:
-    """Canonical-bundle bytes: every branch of a unit, charged once each."""
-    return sum(
-        plane_region_bytes(manifest, terminal)
-        for manifest, terminal in manifests_and_terminals
     )

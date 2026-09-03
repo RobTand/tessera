@@ -259,9 +259,11 @@ def build_plane_region(
     """
     payloads = payloads or {}
     region = bytearray()
+    # No ``Storage.REFERENCE`` skip: ``PlaneDescriptor.__post_init__`` refuses
+    # that storage at construction (``tests/test_audit_container_accounting.py::
+    # test_reference_storage_is_refused_not_charged_zero``), so a skip here
+    # could only ever advertise support for a plane no descriptor can hold.
     for descriptor in planes:
-        if descriptor.storage is Storage.REFERENCE:
-            continue
         need = content_byte_length(descriptor)
         payload = payloads.get(descriptor.kind, bytes(need))
         if len(payload) != need:
@@ -656,7 +658,14 @@ def _steps_of(manifest) -> int:
         terminal.plane_elements[wire.index(PlaneKind.BODY)]
         for terminal in manifest.terminals
     )
-    for arity in (1, 2, 4, 8):
+    # 1 and 2 are the arities a reader can meet: ``arity`` is the grid's tuple
+    # order, and the only serialisable grids are E2M1, E2M1x2, E4M3 and BF16
+    # (``alphabet.SERIALISABLE_GRIDS``).  A wider tuple is refused twice over --
+    # by that registry, and by the 256-code ceiling on the byte-wide
+    # ALPHABET/DESCENDANT planes, which E2M1^3's 4096 codes already break.  The
+    # 4 and 8 this loop used to try could only mis-attribute a body-bit count
+    # that 1 and 2 had already failed to explain; refusing is the honest answer.
+    for arity in (1, 2):
         if manifest.geometry.rows % arity:
             continue
         steps = manifest.geometry.rows // arity

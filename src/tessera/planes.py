@@ -213,9 +213,10 @@ class PlaneDescriptor:
         # callers, by any test -- and both are worse than absent while that
         # holds, because each has a consumer that would quietly agree with it.
         #
-        # REFERENCE: ``byte_length`` returned 0 for it and
-        # ``footprint.reference_bundle_bytes`` summed those zeros, so a
-        # referenced plane's content was charged nowhere at all.  An artifact
+        # REFERENCE: ``byte_length`` returned 0 for it and the accountant
+        # summed those zeros, so a referenced plane's content was charged
+        # nowhere at all (the callerless ``footprint.reference_bundle_bytes``
+        # that did the summing is gone with the skips, #24).  An artifact
         # that declared one would have understated its own size and no gate
         # would have noticed.  Fail closed here, at construction, so a hostile
         # or merely mistaken manifest is refused on decode instead of being

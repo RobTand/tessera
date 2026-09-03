@@ -12,13 +12,14 @@ arithmetic was wrong.
 """
 
 import hashlib
+import importlib
+import pathlib
 from fractions import Fraction
 
 import pytest
 import torch
 
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
-from tessera.bitio import BitReader, BitWriter
 from tessera.canonical import CanonicalEncodingError, Reader, Writer, encode_uint
 from tessera.errors import GrammarError, ManifestError, PlaneLayoutError
 from tessera.export import encode_linear
@@ -47,6 +48,7 @@ from tessera.manifest import (
 )
 from tessera.planes import PlaneKind
 from tessera.trellis import body_bits
+from tessera import wire
 from tessera.unit_artifact import parse_unit_artifact
 
 from conftest import ALPHABET_BLOB, DESCENDANT_BLOB, make_geometry
@@ -183,25 +185,34 @@ def test_b_descendant_map_still_partitions_the_16_grid_by_default():
 # ---------------------------------------------------------------------------
 
 
-def test_c_padding_check_passes_on_a_canonical_last_byte():
-    writer = BitWriter()
-    writer.write(0b101, 3)
-    reader = BitReader(writer.bytes, bit_length=3)
-    assert reader.read(3) == 0b101
-    reader.check_padding_zero()  # the five pad bits are zero
+def test_c_padding_canonicality_has_one_read_path_authority():
+    """#23: the repaired check still had no callers, so it was the wrong half.
 
-
-def test_c_padding_check_rejects_a_non_zero_pad_bit():
-    reader = BitReader(bytes([0b10100001]), bit_length=3)
-    assert reader.read(3) == 0b101
-    with pytest.raises(PlaneLayoutError, match="padding"):
-        reader.check_padding_zero()
-
-
-def test_c_padding_check_is_a_no_op_on_a_byte_boundary():
-    reader = BitReader(bytes([0xFF]), bit_length=8)
-    assert reader.read(8) == 0xFF
-    reader.check_padding_zero()
+    ``bitio.check_padding_zero`` declared the pad rule for nobody while
+    ``wire.refuse_dirty_slack`` enforced it on every read.  Two statements of
+    one rule can only disagree, so the declared one is gone with its module,
+    and the schema names the surviving pair.  The behaviour those three tests
+    covered is covered where it is reached, by
+    ``test_unpack_uniform_refuses_dirty_trailing_slack`` and
+    ``test_unpack_body_refuses_dirty_trailing_slack`` in
+    ``tests/test_audit_container_accounting.py``.
+    """
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("tessera.bitio")
+    package = pathlib.Path(wire.__file__).parent
+    orphans = [
+        path.name
+        for path in sorted(package.rglob("*.py"))
+        if "def check_padding_zero" in path.read_text()
+    ]
+    assert orphans == [], f"the deleted authority is defined again in {orphans}"
+    assert "refuse_dirty_slack" in wire.__all__, "the schema names it; keep it public"
+    schema = (
+        pathlib.Path(__file__).resolve().parent.parent
+        / "docs/schema/prismaquant.tessera.v1.md"
+    ).read_text()
+    assert "wire.refuse_dirty_slack" in schema
+    assert "container.verify_plane_region" in schema
 
 
 # ---------------------------------------------------------------------------
@@ -336,9 +347,14 @@ def test_d4_quantizable_params_may_not_exceed_the_positions():
 
 
 def test_d5_zero_width_write_may_not_carry_a_value():
-    with pytest.raises(PlaneLayoutError, match="width"):
-        BitWriter().write(1, 0)
-    BitWriter().write(0, 0)  # the only legal zero-width write
+    """The finding was filed against ``BitWriter``; the wire's packer had it too.
+
+    ``BitWriter`` is gone with ``bitio`` (#23), so the property is pinned on
+    ``wire``, which is the packer a plane is actually written with.
+    """
+    with pytest.raises(GrammarError, match="zero-width"):
+        wire.pack_uniform(torch.tensor([1]), 0)
+    assert wire.pack_uniform(torch.tensor([0]), 0) == b""  # the one legal value
 
 
 def test_d6_q256_round_trip_is_symmetric_at_zero():

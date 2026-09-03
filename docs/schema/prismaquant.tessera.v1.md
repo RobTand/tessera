@@ -105,9 +105,13 @@ read by a decoder.
 
 **Accounting.** The table is charged on the ALPHABET plane, inline, per
 unit: `2^L` bytes — `0.0156` bpp at `L = 14` and `0.0625` at `L = 16` on a
-2048×4096 unit. `Storage.REFERENCE` is not used: nothing resolves a
-by-reference plane today, and a second sharing mechanism is not the price
-of a quarter-percent.
+2048×4096 unit. `Storage.REFERENCE` is not used — and since the 2026-09-02
+audit it cannot be: `PlaneDescriptor.__post_init__` refuses that storage at
+construction, because `byte_length` charged it 0 bytes and no accountant
+charged it anywhere else. Nothing resolves a by-reference plane today, and a
+second sharing mechanism is not the price of a quarter-percent. The enum
+member stays as the named future; the refusal is the one line that moves when
+bundle-level accounting exists.
 
 **Why this body exists.** Measured on six GLM-5.3-Flash experts
 (`docs/measurements/tessera-window-body-2026-09-02.md`): below the E2M1x2
@@ -361,6 +365,10 @@ enumeration, not asserted.
 
 **D4 — bit order.** Planes pack MSB-first within each byte; the final byte is
 zero-padded and the pad bits must be zero. Padding is charged as physical bytes.
+The rule has exactly two enforcement points and no third: `wire.refuse_dirty_slack`
+on the read path (every `unpack_*`, `parse(verify=False)` included), and
+`container.verify_plane_region` over a plane's declared extent under
+`parse(verify=True)`.
 
 **D5 — canonical plane order**, which is also the truncation order:
 
@@ -461,7 +469,12 @@ must not be the unverified one.
    not the encoder's to choose. Unconstrained, the same logical content admits
    many byte strings, and identity here is a function of content; the slack is
    also a covert channel. MSB-first packing puts sub-byte pad bits in the low
-   bits of the final content byte (finding F4).
+   bits of the final content byte (finding F4). Enforced by
+   `wire.refuse_dirty_slack` at the bytes-to-values seam and by
+   `container.verify_plane_region` over the declared extent — those two and
+   nothing else. A third statement of one rule can only disagree with the
+   other two, which is what `bitio.check_padding_zero` was doing with no
+   callers at all until it was deleted.
 
 ## 4. Parse algorithm
 
@@ -488,7 +501,9 @@ must not be the unverified one.
 7. For each plane fully present in that terminal, verify its `content_digest`
    over the plane's exact byte range.
 8. Verify that all padding is zero: alignment bytes, and the sub-byte slack in
-   each plane's final content byte.
+   each plane's final content byte (`container.verify_plane_region`). The
+   unpackers repeat the sub-byte half themselves (`wire.refuse_dirty_slack`),
+   so a `verify=False` reader and a direct `unpack_*` caller are covered too.
 9. On a complete artifact only, additionally verify the manifest's whole-region
    payload digest.
 
