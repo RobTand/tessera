@@ -350,17 +350,20 @@ def ignored_module(tensor_name: str, shape) -> str | None:
     which is why a 2-D weight that is not a Linear at all (an embedding table)
     is named rather than second-guessed.
     """
-    if not tensor_name.endswith(".weight"):
-        return None
+    # A packed expert stack may carry NO ``.weight`` suffix -- transformers-5
+    # stores it as a parameter on the experts module -- so the patterns are
+    # matched against the name in its ``.weight`` spelling and the suffix is
+    # not what decides whether a rank-3 tensor is a stack.
+    probe = tensor_name if tensor_name.endswith(".weight") else tensor_name + ".weight"
     if len(shape) >= 3:
-        packed = PACKED_EXPERT_ND.match(tensor_name)
+        packed = PACKED_EXPERT_ND.match(probe)
         return packed.group("moe") + ".experts" if packed else None
-    if len(shape) != 2:
+    if not tensor_name.endswith(".weight") or len(shape) != 2:
         return None
-    routed = ROUTED_EXPERT_2D.match(tensor_name)
+    routed = ROUTED_EXPERT_2D.match(probe)
     if routed:
         return routed.group("moe") + ".experts"
-    fused = fused_module(tensor_name)
+    fused = fused_module(probe)
     return fused[0] if fused else module_of(tensor_name)
 
 

@@ -198,3 +198,20 @@ def test_an_export_that_plans_nothing_is_refused(tmp_path, monkeypatch):
     assert "nothing was planned" in str(caught.value), str(caught.value)
     assert not out.exists() or not list(out.glob("*.safetensors")), (
         "the refusal fired only after writing the checkpoint")
+
+
+def test_a_packed_expert_stack_is_named_in_either_spelling():
+    """transformers-5 may store the stack as a parameter with no ``.weight``.
+
+    The suffix is not what makes a rank-3 tensor at the experts path a stack,
+    and ``module_of``-style string surgery on a name that never had the suffix
+    chops seven characters off a real prefix.
+    """
+    packed = "model.language_model.layers.1.mlp.experts.gate_up_proj"
+    assert export.ignored_module(packed + ".weight", (4, 128, 128)) == \
+        "model.language_model.layers.1.mlp.experts"
+    assert export.ignored_module(packed, (4, 128, 128)) == \
+        "model.language_model.layers.1.mlp.experts"
+    # A conv is rank 3 too, and sits nowhere near an experts path.
+    assert export.ignored_module(
+        "model.language_model.layers.0.self_attn.k_conv1d.weight", (8192, 1, 4)) is None
