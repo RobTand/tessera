@@ -126,6 +126,21 @@ DENSE_UNITS = [
 ]
 
 
+#: The grids whose reach can be swept.  ``channel_sigma`` is a gauge on BF16
+#: and provably not one on E4M3 (#36), so the stage has to name which it is on.
+GRIDS = {"bf16": BF16_GRID, "e4m3": E4M3_GRID}
+
+
+def base_channel_sigma(grid) -> float:
+    """The spread the shipped recipe would pick for this grid.
+
+    BF16 carries its own constant because its alphabet is closed under x2 and
+    the recipe pins 1.0 rather than deriving it; every other grid asks
+    ``default_channel_sigma``, which is the dyadic ladder #36 is about.
+    """
+    return BF16_CHANNEL_SIGMA if grid is BF16_GRID else default_channel_sigma(grid)
+
+
 def sha(blob: bytes) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -338,47 +353,72 @@ def stage_gauge(a) -> None:
 
 
 def stage_reach(a) -> None:
-    """The real axis: the table's reach in row-RMS units, at a pinned table."""
+    """The real axis: the table's reach in row-RMS units.
+
+    Two knobs, and they are not the same axis.  ``--channel-sigmas`` moves the
+    spread the rows are scaled to; ``--table-ratios`` moves the table's sigma
+    *relative* to that spread.  Ratio 1.0 passes ``window_sigma=None``, which
+    is what the shipped recipe stores and what makes the table track the
+    channel scale (``encode.py``'s ``table_sigma = channel_sigma`` under a
+    CHANNEL plane), so the ``x1 r1`` arm is the default encode itself and not
+    a re-spelling of it.  Pinning the table at an absolute sigma while the
+    channel scale moves -- what this stage did while it was BF16-only, where
+    the base spread is 1.0 and the two coincide -- silently sweeps the ratio
+    on any grid whose base is not 1.0.
+    """
     b = Bench(a.out)
+    grid = GRIDS[a.grid]
+    base = base_channel_sigma(grid)
     src = open_all(DENSE_SRC)
     H = {k: v.cuda().float() for k, v in torch.load(DENSE_H).items()}
-    b.doc = {"args": vars(a), "units": {}}
+    b.doc = {"args": vars(a), "grid": a.grid, "base_channel_sigma": base,
+             "units": {}}
     for name in a.units:
         w = src[name + ".weight"].get_tensor(name + ".weight").cuda().float().contiguous()
         h = H[name]
         res: dict = {"rows": w.shape[0], "cols": w.shape[1]}
         for q in a.rungs:
-            b.log(f"\n== {name} {tuple(w.shape)}  R={q / 256:g}  "
-                  f"window_sigma={a.table_sigma} (table pinned)")
+            b.log(f"\n== {name} {tuple(w.shape)}  R={q / 256:g}  grid={a.grid}  "
+                  f"base_csigma={base:g}  ratios={a.table_ratios} "
+                  f"(r1 = window_sigma None, the table tracks the channel)")
             b.header(("bpp", "wt", "h", "reach_rms", "over"))
-            arms = list(a.channel_sigmas) + [BF16_CHANNEL_SIGMA]
-            for i, cs in enumerate(arms):
-                arm = f"R{q} csigma={cs:g}" + (" [repeat]" if i == len(arms) - 1 else "")
-                st = reach_stats(w, BF16_GRID, a.window_bits, a.table_sigma, cs)
-                got = try_arm(b, arm, lambda cs=cs: encode_arm(
-                    w, BF16_GRID, q, name, window_bits=a.window_bits,
-                    window_sigma=a.table_sigma, channel_sigma=cs))
+            # The default arm runs first and again last -- the issue's own gate.
+            pairs = [(m, r) for r in a.table_ratios
+                     for m in a.channel_sigmas if (m, r) != (1.0, 1.0)]
+            pairs = [(1.0, 1.0)] + pairs + [(1.0, 1.0)]
+            for i, (m, ratio) in enumerate(pairs):
+                cs = m * base
+                # None, not cs: the value the recipe stores, so the control
+                # arm exercises the default path rather than mirroring it.
+                ws = None if ratio == 1.0 else ratio * cs
+                arm = f"R{q} x{m:g} r{ratio:g}" + (
+                    " [repeat]" if i == len(pairs) - 1 else "")
+                st = reach_stats(w, grid, a.window_bits,
+                                 cs if ws is None else ws, cs)
+                got = try_arm(b, arm, lambda cs=cs, ws=ws: encode_arm(
+                    w, grid, q, name, window_bits=a.window_bits,
+                    window_sigma=ws, channel_sigma=cs))
                 if got is None:
                     continue
                 hat, bpp, s, secs = got
                 r = {"bpp": bpp, "sha": s, "tsha": tensor_sha(hat), "secs": secs,
-                     "channel_sigma": cs,
+                     "channel_sigma": cs, "channel_sigma_mult": m,
+                     "table_ratio": ratio, "window_sigma": ws,
                      "reach_rms": st["reach_row_rms"], "over": st["rows_over_reach"],
                      **st, **score(w, hat, h=h)}
                 res[arm] = r
                 b.row(arm, r, ("bpp", "wt", "h", "reach_rms", "over"))
                 del hat
                 torch.cuda.empty_cache()
-            if f"R{q} csigma={BF16_CHANNEL_SIGMA:g} [repeat]" in res:
+            if f"R{q} x1 r1 [repeat]" in res:
                 res[f"R{q}_control"] = check_repeat_tensor(
-                    b, res[f"R{q} csigma={BF16_CHANNEL_SIGMA:g}"],
-                    res[f"R{q} csigma={BF16_CHANNEL_SIGMA:g} [repeat]"],
-                    f"R{q} csigma={BF16_CHANNEL_SIGMA:g}")
+                    b, res[f"R{q} x1 r1"], res[f"R{q} x1 r1 [repeat]"],
+                    f"R{q} x1 r1")
         b.doc["units"][name] = res
         b.save()
         del w
         torch.cuda.empty_cache()
-    summarise_sweep(b, "channel_sigma")
+    summarise_sweep(b, "channel_sigma_mult")
     b.save()
     b.log(f"\nwrote {a.out}")
 
@@ -556,9 +596,15 @@ def main() -> None:
     ap.add_argument("--dyadic", type=float, nargs="+", default=[1.0, 0.25, 0.5, 2.0, 4.0])
     ap.add_argument("--non-dyadic", type=float, nargs="+", default=[0.75, 1.5, 3.0])
     ap.add_argument("--table-sigma", type=float, default=1.0)
+    ap.add_argument("--grid", choices=sorted(GRIDS), default="bf16",
+                    help="which grid the reach stage sweeps (#36 is E4M3)")
+    # Multipliers of the grid's own base spread, so one list means the same
+    # thing on both grids.  On BF16 the base is 1.0 and these are absolute.
     ap.add_argument("--channel-sigmas", type=float, nargs="+",
-                    default=[0.25, 0.5, 0.7071067811865476, 1.0,
+                    default=[0.25, 0.5, 0.7071067811865476,
                              1.4142135623730951, 2.0])
+    # window_sigma / channel_sigma.  1.0 is the shipped tracking recipe.
+    ap.add_argument("--table-ratios", type=float, nargs="+", default=[1.0])
     ap.add_argument("--eval-rows", type=int, default=1024)
     ap.add_argument("--exl3", type=int, nargs="+", default=[4, 6, 8])
     ap.add_argument("--out", required=True)
