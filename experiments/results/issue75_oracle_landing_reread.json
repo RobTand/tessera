@@ -1,0 +1,118 @@
+{
+ "source": "/mnt/shared/tessera-runs/ldlq-lut/qwen_lut_landing_oracle.json",
+ "what": "#75's headline table quotes the COUPLED-landing column of this receipt, not the wire.  Both are in the same JSON; this is the re-read that separates them (tessera#85: only the wire promotes).",
+ "arms": {
+  "control (h^1.0 x4)": {
+   "wire (table)": {
+    "out": 0.051131072607477124,
+    "hfit": 0.04855050863347164,
+    "out_vs_control": 1.0,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.04374765604734421,
+     "model.layers.1.self_attn.k_proj": 0.0456680953502655,
+     "model.layers.13.mlp.down_proj": 0.08347945660352707,
+     "model.layers.14.mlp.gate_proj": 0.053043097257614136,
+     "model.layers.2.mlp.down_proj": 0.02686460316181183,
+     "model.layers.27.self_attn.o_proj": 0.07518874108791351
+    }
+   },
+   "coupled-table [NOT A WIRE]": {
+    "out": 0.051131072607477124,
+    "hfit": 0.04855050863347164,
+    "out_vs_control": 1.0,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.04374765604734421,
+     "model.layers.1.self_attn.k_proj": 0.0456680953502655,
+     "model.layers.13.mlp.down_proj": 0.08347945660352707,
+     "model.layers.14.mlp.gate_proj": 0.053043097257614136,
+     "model.layers.2.mlp.down_proj": 0.02686460316181183,
+     "model.layers.27.self_attn.o_proj": 0.07518874108791351
+    }
+   }
+  },
+  "GS every pass": {
+   "wire (table)": {
+    "out": 0.04922359395570453,
+    "hfit": 0.0461972466341925,
+    "out_vs_control": 0.962694335274053,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.04295729473233223,
+     "model.layers.1.self_attn.k_proj": 0.042561378329992294,
+     "model.layers.13.mlp.down_proj": 0.08403736352920532,
+     "model.layers.14.mlp.gate_proj": 0.051225997507572174,
+     "model.layers.2.mlp.down_proj": 0.023826492950320244,
+     "model.layers.27.self_attn.o_proj": 0.07585152983665466
+    }
+   },
+   "coupled-table [NOT A WIRE]": {
+    "out": 0.04123671608321406,
+    "hfit": 0.038064073264809345,
+    "out_vs_control": 0.8064903390503847,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.03894384950399399,
+     "model.layers.1.self_attn.k_proj": 0.04082109034061432,
+     "model.layers.13.mlp.down_proj": 0.08373513072729111,
+     "model.layers.14.mlp.gate_proj": 0.04925599694252014,
+     "model.layers.2.mlp.down_proj": 0.009928351268172264,
+     "model.layers.27.self_attn.o_proj": 0.07553304731845856
+    }
+   }
+  },
+  "Jacobi every pass": {
+   "wire (table)": {
+    "out": 0.05043421474719706,
+    "hfit": 0.04758666522110242,
+    "out_vs_control": 0.9863711472350737,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.04822450131177902,
+     "model.layers.1.self_attn.k_proj": 0.045424122363328934,
+     "model.layers.13.mlp.down_proj": 0.08595645427703857,
+     "model.layers.14.mlp.gate_proj": 0.054728806018829346,
+     "model.layers.2.mlp.down_proj": 0.020716356113553047,
+     "model.layers.27.self_attn.o_proj": 0.07708847522735596
+    }
+   },
+   "coupled-table [NOT A WIRE]": {
+    "out": 0.04658887729834177,
+    "hfit": 0.04340258732187483,
+    "out_vs_control": 0.9111656556864186,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.039224956184625626,
+     "model.layers.1.self_attn.k_proj": 0.040997833013534546,
+     "model.layers.13.mlp.down_proj": 0.08485433459281921,
+     "model.layers.14.mlp.gate_proj": 0.04967576637864113,
+     "model.layers.2.mlp.down_proj": 0.01987205259501934,
+     "model.layers.27.self_attn.o_proj": 0.07591170817613602
+    }
+   }
+  },
+  "control codes + ONE extra full-H GS refit": {
+   "wire (table)": {
+    "out": 0.045365148265439664,
+    "hfit": 0.04279023396829508,
+    "out_vs_control": 0.8872324782563963,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.04172005131840706,
+     "model.layers.1.self_attn.k_proj": 0.04197978600859642,
+     "model.layers.13.mlp.down_proj": 0.08301940560340881,
+     "model.layers.14.mlp.gate_proj": 0.050468623638153076,
+     "model.layers.2.mlp.down_proj": 0.01595865748822689,
+     "model.layers.27.self_attn.o_proj": 0.07443059980869293
+    }
+   },
+   "coupled-table [NOT A WIRE]": {
+    "out": 0.04106063667296846,
+    "hfit": 0.037161738990944694,
+    "out_vs_control": 0.8030466520462546,
+    "per_unit_out": {
+     "model.layers.0.self_attn.q_proj": 0.03818283602595329,
+     "model.layers.1.self_attn.k_proj": 0.040011029690504074,
+     "model.layers.13.mlp.down_proj": 0.08270597457885742,
+     "model.layers.14.mlp.gate_proj": 0.0484347902238369,
+     "model.layers.2.mlp.down_proj": 0.010600339621305466,
+     "model.layers.27.self_attn.o_proj": 0.0738740786910057
+    }
+   }
+  }
+ }
+}
