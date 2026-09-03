@@ -920,7 +920,7 @@ def _fit_lut(
     weights: torch.Tensor,
     global_scale: float,
     entries: int = LUT_ENTRIES,
-    swaps: int = 2,
+    swaps: int = 32,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
     """Choose ``entries`` DISTINCT E4M3 scales minimising the weighted error.
 
@@ -941,6 +941,11 @@ def _fit_lut(
     one ``index_add`` over the current assignment rather than a full
     re-evaluation per candidate.  A few swap passes then try each table entry
     against each unused grid value at full cost.
+
+    ``swaps`` is only the safety backstop bounding those passes: the
+    relative-improvement test below ends the refinement the first pass that
+    finds nothing, so a budget past convergence costs at most one fruitless
+    sweep, and every production caller takes this default.
     """
     device = targets.device
     grid_values = e4m3_positive_values(device) * global_scale          # [119]
