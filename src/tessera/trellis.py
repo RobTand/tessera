@@ -80,6 +80,19 @@ class ConvCode:
     generators: "tuple[int, int] | None" = None
 
     def __post_init__(self) -> None:
+        # A memory order below 1 has no register to select on.  ``encode.py``
+        # reads the select bit as ``state >> (memory - 1)``, and torch answers
+        # a negative shift with **zero** rather than raising, so a zero-memory
+        # code would not fault -- it would encode every position from a
+        # silently-constant select bit.  The default-generator lookup below
+        # would have caught it; passing generators explicitly walked straight
+        # past.  Refuse it here, where both routes meet.
+        if self.memory < 1:
+            raise GrammarError(
+                f"memory order {self.memory} has no shift register: a "
+                "convolutional code needs at least one memory element, and "
+                "the select bit is read as state >> (memory - 1)"
+            )
         if self.generators is None:
             if self.memory not in _ODS_GENERATORS:
                 raise GrammarError(
