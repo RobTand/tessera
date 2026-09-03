@@ -1,0 +1,12 @@
+== i.i.d. Gaussian 2048x4096, one optimal global scale, rate 3.5 (Shannon 0.08839)
+   sum mod 4 (today)                    rms_rel 0.12390  loss 1.402x  clip 2.8 sigma
+   (i mod 2, j mod 2) = 2Z^2 cosets     rms_rel 0.12363  loss 1.399x  clip 2.8 sigma
+   (i + 2j) mod 4                       rms_rel 0.12334  loss 1.395x  clip 2.8 sigma
+   (2i + j) mod 4                       rms_rel 0.12333  loss 1.395x  clip 2.8 sigma
+== L5 gate_proj: sum=0.09794 (1.000x)  (i=0.09812 (0.998x)  (i=0.09755 (1.004x)  (2i=0.09756 (1.004x)
+== L5 up_proj: sum=0.09799 (1.000x)  (i=0.09818 (0.998x)  (i=0.09760 (1.004x)  (2i=0.09759 (1.004x)
+== L20 gate_proj: sum=0.09810 (1.000x)  (i=0.09827 (0.998x)  (i=0.09770 (1.004x)  (2i=0.09770 (1.004x)
+== L20 up_proj: sum=0.09798 (1.000x)  (i=0.09816 (0.998x)  (i=0.09757 (1.004x)  (2i=0.09757 (1.004x)
+== L42 gate_proj: sum=0.09888 (1.000x)  (i=0.09895 (0.999x)  (i=0.09846 (1.004x)  (2i=0.09844 (1.004x)
+== L42 up_proj: sum=0.09833 (1.000x)  (i=0.09852 (0.998x)  (i=0.09791 (1.004x)  (2i=0.09793 (1.004x)
+wrote experiments/results/tessera_partition_gaussian.json

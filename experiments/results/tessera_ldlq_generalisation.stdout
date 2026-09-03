@@ -1,0 +1,209 @@
+
+== L5 gate_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.09168
+    refit only (s6b)                             wt=0.09936 out=0.09578 W4A4=0.13235     2.0s
+    refit only (e4m3)                            wt=0.09794 out=0.09432 W4A4=0.13122     3.8s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.14151 out=0.11333 W4A4=0.14561    36.8s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12319 out=0.10005 W4A4=0.13550    69.9s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10357 out=0.08778 W4A4=0.12667   103.0s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10496 out=0.08885 W4A4=0.12731   136.3s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10107 out=0.08573 W4A4=0.12528   152.4s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09992 out=0.08694 W4A4=0.12604   185.3s
+
+== L5 gate_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.09216
+    refit only (s6b)                             wt=0.09936 out=0.09642 W4A4=0.13302     1.9s
+    refit only (e4m3)                            wt=0.09794 out=0.09488 W4A4=0.13193     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.14190 out=0.11197 W4A4=0.14492    37.0s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12351 out=0.09883 W4A4=0.13501    70.3s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10373 out=0.08687 W4A4=0.12632   103.6s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10513 out=0.08781 W4A4=0.12692   137.3s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10126 out=0.08484 W4A4=0.12502   153.5s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09996 out=0.08622 W4A4=0.12589   186.9s
+
+== L5 gate_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.09158
+    refit only (s6b)                             wt=0.09936 out=0.09601 W4A4=0.13227     1.9s
+    refit only (e4m3)                            wt=0.09794 out=0.09450 W4A4=0.13118     3.6s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11182 out=0.06904 W4A4=0.11426    36.6s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10782 out=0.06665 W4A4=0.11280    69.6s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10218 out=0.06507 W4A4=0.11191   102.6s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10351 out=0.06608 W4A4=0.11251   135.7s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.09955 out=0.06355 W4A4=0.11102   151.7s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10021 out=0.06663 W4A4=0.11277   184.7s
+
+== L5 up_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.09444
+    refit only (s6b)                             wt=0.09934 out=0.09860 W4A4=0.13626     1.9s
+    refit only (e4m3)                            wt=0.09799 out=0.09737 W4A4=0.13538     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.14145 out=0.11688 W4A4=0.15011    39.9s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12318 out=0.10327 W4A4=0.13963    74.9s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10356 out=0.09069 W4A4=0.13065   108.1s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10492 out=0.09179 W4A4=0.13136   141.4s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10109 out=0.08853 W4A4=0.12911   157.5s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09993 out=0.08984 W4A4=0.13008   190.6s
+
+== L5 up_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.09540
+    refit only (s6b)                             wt=0.09934 out=0.09972 W4A4=0.13771     1.9s
+    refit only (e4m3)                            wt=0.09799 out=0.09846 W4A4=0.13678     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.14180 out=0.11543 W4A4=0.14956    36.9s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12348 out=0.10208 W4A4=0.13945    70.2s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10369 out=0.08985 W4A4=0.13079   115.8s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10505 out=0.09100 W4A4=0.13138   167.1s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10126 out=0.08766 W4A4=0.12929   191.2s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09997 out=0.08947 W4A4=0.13052   231.3s
+
+== L5 up_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.09466
+    refit only (s6b)                             wt=0.09934 out=0.09901 W4A4=0.13667     1.9s
+    refit only (e4m3)                            wt=0.09799 out=0.09754 W4A4=0.13555     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11170 out=0.06776 W4A4=0.11628    36.7s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10782 out=0.06550 W4A4=0.11487    69.7s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10220 out=0.06460 W4A4=0.11437   102.8s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10348 out=0.06540 W4A4=0.11475   136.0s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.09956 out=0.06298 W4A4=0.11346   152.1s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10024 out=0.06661 W4A4=0.11537   185.1s
+
+== L20 gate_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.08647
+    refit only (s6b)                             wt=0.09965 out=0.09113 W4A4=0.12543     1.9s
+    refit only (e4m3)                            wt=0.09810 out=0.08938 W4A4=0.12417     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13699 out=0.10890 W4A4=0.13897    36.6s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12049 out=0.09616 W4A4=0.12916    69.6s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10316 out=0.08405 W4A4=0.12042   102.6s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10455 out=0.08543 W4A4=0.12124   135.8s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10075 out=0.08217 W4A4=0.11913   153.0s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09998 out=0.08303 W4A4=0.11971   186.4s
+
+== L20 gate_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.08638
+    refit only (s6b)                             wt=0.09965 out=0.09109 W4A4=0.12529     2.9s
+    refit only (e4m3)                            wt=0.09810 out=0.08950 W4A4=0.12414     5.8s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13720 out=0.10502 W4A4=0.13589    39.4s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12061 out=0.09309 W4A4=0.12686    73.0s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10325 out=0.08241 W4A4=0.11917   106.5s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10464 out=0.08334 W4A4=0.11972   140.1s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10082 out=0.08043 W4A4=0.11778   157.2s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10004 out=0.08164 W4A4=0.11867   190.7s
+
+== L20 gate_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.08652
+    refit only (s6b)                             wt=0.09965 out=0.09109 W4A4=0.12550     3.0s
+    refit only (e4m3)                            wt=0.09810 out=0.08908 W4A4=0.12381     5.8s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11316 out=0.06749 W4A4=0.10954    39.6s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10909 out=0.06518 W4A4=0.10822    73.3s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10270 out=0.06260 W4A4=0.10651   107.1s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10409 out=0.06349 W4A4=0.10697   141.2s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10016 out=0.06116 W4A4=0.10562   158.4s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10042 out=0.06334 W4A4=0.10701   192.2s
+
+== L20 up_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.09099
+    refit only (s6b)                             wt=0.09967 out=0.09511 W4A4=0.13130     2.9s
+    refit only (e4m3)                            wt=0.09798 out=0.09351 W4A4=0.13022     5.8s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13686 out=0.11480 W4A4=0.14632    39.6s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12029 out=0.10125 W4A4=0.13592    81.8s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10304 out=0.08871 W4A4=0.12677   132.4s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10458 out=0.09000 W4A4=0.12764   181.8s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10056 out=0.08663 W4A4=0.12533   211.3s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09987 out=0.08752 W4A4=0.12599   260.3s
+
+== L20 up_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.09173
+    refit only (s6b)                             wt=0.09967 out=0.09627 W4A4=0.13265     5.3s
+    refit only (e4m3)                            wt=0.09798 out=0.09458 W4A4=0.13147    10.5s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13701 out=0.11158 W4A4=0.14435    54.4s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12050 out=0.09893 W4A4=0.13470    87.9s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10315 out=0.08737 W4A4=0.12637   121.4s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10463 out=0.08883 W4A4=0.12741   158.4s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10066 out=0.08545 W4A4=0.12509   185.3s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.09989 out=0.08677 W4A4=0.12599   232.1s
+
+== L20 up_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.09392
+    refit only (s6b)                             wt=0.09967 out=0.09824 W4A4=0.13559     4.8s
+    refit only (e4m3)                            wt=0.09798 out=0.09654 W4A4=0.13429     8.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11295 out=0.07342 W4A4=0.11903    54.4s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10896 out=0.07090 W4A4=0.11745   101.3s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10253 out=0.06823 W4A4=0.11576   147.7s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10404 out=0.06917 W4A4=0.11625   193.4s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.09995 out=0.06653 W4A4=0.11482   220.5s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10025 out=0.06885 W4A4=0.11603   261.5s
+
+== L42 gate_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.06284
+    refit only (s6b)                             wt=0.09947 out=0.06611 W4A4=0.09135     3.0s
+    refit only (e4m3)                            wt=0.09888 out=0.06509 W4A4=0.09054     5.8s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13652 out=0.07613 W4A4=0.09862    39.3s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12011 out=0.06760 W4A4=0.09223    72.6s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10352 out=0.05941 W4A4=0.08639   105.9s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10414 out=0.05967 W4A4=0.08649   139.3s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10160 out=0.05821 W4A4=0.08557   155.4s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10065 out=0.05859 W4A4=0.08587   188.6s
+
+== L42 gate_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.06209
+    refit only (s6b)                             wt=0.09947 out=0.06556 W4A4=0.09028     1.9s
+    refit only (e4m3)                            wt=0.09888 out=0.06446 W4A4=0.08949     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13667 out=0.07350 W4A4=0.09608    37.0s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.12027 out=0.06517 W4A4=0.08988    70.3s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10357 out=0.05751 W4A4=0.08445   103.6s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10415 out=0.05799 W4A4=0.08471   137.1s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10164 out=0.05651 W4A4=0.08380   153.3s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10068 out=0.05704 W4A4=0.08415   186.6s
+
+== L42 gate_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.06569
+    refit only (s6b)                             wt=0.09947 out=0.06892 W4A4=0.09524     1.9s
+    refit only (e4m3)                            wt=0.09888 out=0.06841 W4A4=0.09479     3.6s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11314 out=0.04416 W4A4=0.07900    36.7s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10909 out=0.04279 W4A4=0.07828    69.7s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10291 out=0.04176 W4A4=0.07771   102.8s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10343 out=0.04197 W4A4=0.07766   136.0s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10101 out=0.04103 W4A4=0.07739   152.1s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10090 out=0.04318 W4A4=0.07848   185.1s
+
+== L42 up_proj [fit0-7/eval8-15] fit 4096 rows, eval 1024 rows, act leg 0.08530
+    refit only (s6b)                             wt=0.09940 out=0.08940 W4A4=0.12336     1.9s
+    refit only (e4m3)                            wt=0.09833 out=0.08859 W4A4=0.12272     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13613 out=0.10352 W4A4=0.13397    37.1s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.11964 out=0.09142 W4A4=0.12485    70.5s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10297 out=0.08047 W4A4=0.11696   103.9s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10407 out=0.08111 W4A4=0.11743   137.5s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10056 out=0.07840 W4A4=0.11564   153.7s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10000 out=0.07917 W4A4=0.11611   187.1s
+
+== L42 up_proj [fit8-15/eval0-7] fit 4096 rows, eval 1024 rows, act leg 0.08414
+    refit only (s6b)                             wt=0.09940 out=0.08850 W4A4=0.12178     1.9s
+    refit only (e4m3)                            wt=0.09833 out=0.08718 W4A4=0.12095     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.13625 out=0.09947 W4A4=0.13014    36.7s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.11977 out=0.08820 W4A4=0.12165    69.7s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10303 out=0.07770 W4A4=0.11429   102.7s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10413 out=0.07846 W4A4=0.11473   135.9s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.10056 out=0.07603 W4A4=0.11324   152.0s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10002 out=0.07723 W4A4=0.11395   185.0s
+
+== L42 up_proj [control:doc0 halves] fit 256 rows, eval 256 rows, act leg 0.08624
+    refit only (s6b)                             wt=0.09940 out=0.09011 W4A4=0.12455     1.9s
+    refit only (e4m3)                            wt=0.09833 out=0.08915 W4A4=0.12394     3.7s
+    LDLQ s=0.025 + in-block LS (e4m3)            wt=0.11264 out=0.05700 W4A4=0.10319    36.7s
+    LDLQ s=0.1 + in-block LS (e4m3)              wt=0.10857 out=0.05509 W4A4=0.10211    69.8s
+    LDLQ s=1.0 + in-block LS (e4m3)              wt=0.10236 out=0.05385 W4A4=0.10142   102.9s
+    LDLQ s=1.0 + in-block LS (s6b)               wt=0.10343 out=0.05449 W4A4=0.10162   136.1s
+    LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2)  wt=0.09993 out=0.05263 W4A4=0.10091   152.2s
+    LDLQ s=3.0 + in-block LS (e4m3)              wt=0.10029 out=0.05566 W4A4=0.10233   185.3s
+
+| fold | arm | out-space weight leg | vs refit-only (same plane) | W4A4 |
+|---|---|---:|---:|---:|
+| fit0-7/eval8-15 | refit only (s6b) | 0.08935 | 1.000x | 0.12334 |
+| fit0-7/eval8-15 | refit only (e4m3) | 0.08804 | 1.000x | 0.12237 |
+| fit0-7/eval8-15 | LDLQ s=0.025 + in-block LS (e4m3) | 0.10559 | 0.835x | 0.13560 |
+| fit0-7/eval8-15 | LDLQ s=0.1 + in-block LS (e4m3) | 0.09329 | 0.945x | 0.12621 |
+| fit0-7/eval8-15 | LDLQ s=1.0 + in-block LS (e4m3) | 0.08185 | 1.077x | 0.11798 |
+| fit0-7/eval8-15 | LDLQ s=1.0 + in-block LS (s6b) | 0.08281 | 1.081x | 0.11858 |
+| fit0-7/eval8-15 | LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2) | 0.07995 | 1.103x | 0.11668 |
+| fit0-7/eval8-15 | LDLQ s=3.0 + in-block LS (e4m3) | 0.08085 | 1.091x | 0.11730 |
+| fit8-15/eval0-7 | refit only (s6b) | 0.08959 | 1.000x | 0.12345 |
+| fit8-15/eval0-7 | refit only (e4m3) | 0.08818 | 1.000x | 0.12246 |
+| fit8-15/eval0-7 | LDLQ s=0.025 + in-block LS (e4m3) | 0.10283 | 0.859x | 0.13349 |
+| fit8-15/eval0-7 | LDLQ s=0.1 + in-block LS (e4m3) | 0.09105 | 0.970x | 0.12459 |
+| fit8-15/eval0-7 | LDLQ s=1.0 + in-block LS (e4m3) | 0.08028 | 1.100x | 0.11690 |
+| fit8-15/eval0-7 | LDLQ s=1.0 + in-block LS (s6b) | 0.08124 | 1.105x | 0.11748 |
+| fit8-15/eval0-7 | LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2) | 0.07849 | 1.125x | 0.11570 |
+| fit8-15/eval0-7 | LDLQ s=3.0 + in-block LS (e4m3) | 0.07973 | 1.108x | 0.11653 |
+| control:doc0 halves | refit only (s6b) | 0.09056 | 1.000x | 0.12497 |
+| control:doc0 halves | refit only (e4m3) | 0.08920 | 1.000x | 0.12393 |
+| control:doc0 halves | LDLQ s=0.025 + in-block LS (e4m3) | 0.06314 | 1.426x | 0.10688 |
+| control:doc0 halves | LDLQ s=0.1 + in-block LS (e4m3) | 0.06102 | 1.475x | 0.10562 |
+| control:doc0 halves | LDLQ s=1.0 + in-block LS (e4m3) | 0.05935 | 1.516x | 0.10461 |
+| control:doc0 halves | LDLQ s=1.0 + in-block LS (s6b) | 0.06010 | 1.520x | 0.10496 |
+| control:doc0 halves | LDLQ s=1.0 + in-block LS (per-32 e4m3, L=2) | 0.05798 | 1.551x | 0.10387 |
+| control:doc0 halves | LDLQ s=3.0 + in-block LS (e4m3) | 0.06071 | 1.480x | 0.10533 |
+
+wrote experiments/results/tessera_ldlq_generalisation.json

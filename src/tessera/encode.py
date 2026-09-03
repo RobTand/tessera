@@ -586,6 +586,17 @@ def viterbi_window(
     cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
     bytes per position per column.
 
+    ``chunk`` is exact in the states and approximate in the float.  Columns
+    are independent, so the returned states are bit-identical at every chunk
+    size; ``sse``, however, is accumulated one chunk at a time in fp32 and so
+    depends on how the columns were partitioned.  Measured on 32x96 CPU
+    targets at L=8, R=2: identical states at chunk 7/16/32/96/512, and
+    ``sse`` spread over 3.05e-05 on a total of 910.09 -- about one ulp per
+    partial sum.  A figure anyone quotes is recomputed from the codes, not
+    read off this return; the equality tests that do read it hold ``chunk``
+    fixed, which is also the sense in which the fused path below returns "the
+    identical sse float".
+
     ``impl`` picks the machine, never the answer.  ``"reference"`` is the
     torch chain below -- the definition, and the only path on CPU;
     ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
@@ -750,8 +761,19 @@ def _refit_scales(
     on ``A`` and ``B``: three base candidates are tried, each half rounds to its
     nearest ``(d, m)`` under that base, and a group keeps the word it had
     wherever no candidate lowers its error.  No group ends worse than it began,
-    and the trellis pass that follows is optimal for the new plane, so the
-    alternation in ``encode_unit`` is monotone in weight-space squared error.
+    so the *step* is monotone in weight-space squared error.
+
+    The *alternation* in ``encode_unit`` is monotone only where the trellis
+    pass that follows descends that same error, and two settings stop it from
+    doing so.  ``trellis_weighting="none"`` -- ``encode_unit``'s signature
+    default -- minimises the per-half normalised error instead; only
+    ``"scale"`` weights each position by its scale squared, which per column
+    is the same argmin as the true squared error, and that is what the
+    exporter ships (``export.DEFAULT_TRELLIS_WEIGHTING``).  And under ``ldl``
+    the trellis minimises the error against the LDLQ-compensated target while
+    this step refits against ``work``, whatever the weighting.  Outside those
+    two cases each half can undo the other's gain, and only the trailing refit
+    is guaranteed.
 
     Words are emitted canonical: a group whose halves both carry ``d = 1`` is
     written one base higher with ``d = 0``, the form ``scale_codec`` names.
@@ -1028,8 +1050,12 @@ def _refit_scales_lut_metric(
     (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
     given the others.  The accept test is where the cross terms come back: the
     candidate planes are scored on the **full quadratic**, and the plane the
-    unit already has is one of the candidates, so the step is monotone in the
-    metric's own error and the alternation with the trellis stays monotone.
+    unit already has is one of the candidates, so the *step* is monotone in
+    the metric's own error.  The *alternation* with the trellis is not: the
+    Viterbi's branch metric never sees ``metric``, so under an H-weighted
+    refit the two halves descend different errors by construction.  ``ldl``
+    and ``trellis_weighting="none"`` separate them further, exactly as in
+    ``_refit_scales``.
 
     Landing is unchanged and needs no rounding rule of its own: the table holds
     exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
@@ -1567,7 +1593,9 @@ def encode_unit(
         # plane never interleave, and the identity-factor tests pin that on the
         # LUT plane's two bodies as they already did on CHANNEL.
         ldl_factor = ldl.to(device=device, dtype=torch.float32)
-        # Descending block starts; only the lowest-index block may be short.
+        # Descending block starts.  No block is ever short: ``cols %
+        # ldl_block`` is refused above, so ``max(..., 0)`` is the floor on a
+        # case this function cannot reach, not a short trailing block.
         block_spans = [
             (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
         ]

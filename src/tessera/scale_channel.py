@@ -140,9 +140,12 @@ def land_channel_scale(
     Returns ``(stored fp16 [rows], effective fp32 [rows])`` where the
     effective scale is re-derived from the stored word -- the value the
     decoder will reconstruct and therefore the one the trellis quantises
-    against.  A zero or non-finite row lands on the smallest positive word so
-    that no target is ever divided by zero; its codes decode to nothing
-    either way.
+    against.  A zero or non-finite row lands on the floor the clamp applies to
+    every row, so that no target is ever divided by zero; its codes decode to
+    nothing either way.  That floor is ``2^-14``, the smallest positive
+    **normal** fp16 word -- not the smallest positive one, since fp16's
+    subnormals run down to ``2^-24``.  Staying above them is what keeps every
+    stored row word carrying its full mantissa.
     """
     if global_scale <= 0 or not math.isfinite(global_scale):
         raise GrammarError(f"the CHANNEL global scale must be positive and finite, got {global_scale}")
@@ -258,8 +261,16 @@ def refit_channel_scale(
     With the codes fixed a row's error is ``A s^2 - 2 B s + C`` in its scale,
     ``A = <u, u>`` and ``B = <w, u>`` over the row's unscaled grid values
     ``u``; the optimum ``B / A`` is landed on a word and kept only where the
-    landed word lowers the row's error, so no row ends worse than it began
-    and the alternation with the trellis is monotone in squared error.
+    landed word lowers the row's error, so no row ends worse than it began and
+    the *step* is monotone in squared error.
+
+    The *alternation* with the trellis is monotone only where the trellis
+    descends that same error: ``trellis_weighting="scale"`` (the exporter's
+    default -- ``encode_unit``'s signature default ``"none"`` minimises the
+    normalised error instead), no ``ldl`` (which points the trellis at the
+    compensated target while this step refits against ``work``), and
+    ``metric=None``, since the Viterbi's branch metric never sees ``metric``.
+    Elsewhere the step is monotone in its own error and the pair is not.
 
     **A row with ``B <= 0`` keeps the scale it has**, which is the hold the LUT
     plane's refit (``encode._refit_scales_lut``) and S6b's both carry.  Such a
@@ -279,8 +290,8 @@ def refit_channel_scale(
     row's true proxy loss ``(w_r - s u_r) H (w_r - s u_r)^T`` is the same
     scalar quadratic with ``A = u_r H u_r^T`` and ``B = w_r H u_r^T`` -- the
     exact form, with no exponent to choose.  The monotone guard is evaluated
-    under whichever metric was asked for, so the alternation stays monotone in
-    *that* error.
+    under whichever metric was asked for, so the *step* stays monotone in
+    *that* error -- the alternation does not, per the paragraph above.
 
     ``floor`` is a per-row lower bound on the effective scale, landed upward.
     It is how the body's reach survives a refit: a least-squares step is

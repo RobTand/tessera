@@ -1,0 +1,37 @@
+== synthetic i.i.d. Gaussian, 2048x4096, one optimal global scale (no plane)
+   L=1: rate 3.5 rms_rel 0.12390 vs Shannon 0.08839 -> intrinsic loss 1.402x (clip at 2.8 sigma)
+   L=2: rate 3.75 rms_rel 0.11483 vs Shannon 0.07433 -> intrinsic loss 1.545x (clip at 2.9 sigma)
+== L5 H [fit s=1.0]: output-space ceilings (RMS): transform 1.149x, ideal feedback block-1 1.146x, block-32 1.145x
+== L5 H [fit s=0.025]: output-space ceilings (RMS): transform 2.096x, ideal feedback block-1 1.862x, block-32 1.851x
+== L5 H [eval s=0.025]: output-space ceilings (RMS): transform 2.120x, ideal feedback block-1 1.872x, block-32 1.861x
+== L5 gate_proj  AM/GM blk16 1.07 blk32 1.03 row 1.00 col 1.00 | within-block dh -0.005 bits (kurt 2.69); tensor dh -4.022
+   plane: 29 E4M3 values over 3.49 octaves, entropy 3.42 bits/block = 0.214 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0605 Rs=.5 0.0855 (+shape 0.0852) Rs=H 0.0702 (+shape 0.0699) | blk32 Rs=.25 0.0731 (+shape 0.0729)
+   measured refit-only flat-E4M3 plane wt 0.09794 = 1.149x its bound, 1.145x the Gaussian-block bound   5.2s
+== L5 up_proj  AM/GM blk16 1.07 blk32 1.03 row 1.00 col 1.00 | within-block dh -0.005 bits (kurt 2.69); tensor dh -4.000
+   plane: 27 E4M3 values over 3.22 octaves, entropy 3.43 bits/block = 0.214 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0605 Rs=.5 0.0856 (+shape 0.0853) Rs=H 0.0702 (+shape 0.0699) | blk32 Rs=.25 0.0731 (+shape 0.0729)
+   measured refit-only flat-E4M3 plane wt 0.09799 = 1.149x its bound, 1.145x the Gaussian-block bound   5.1s
+== L20 H [fit s=1.0]: output-space ceilings (RMS): transform 1.161x, ideal feedback block-1 1.159x, block-32 1.158x
+== L20 H [fit s=0.025]: output-space ceilings (RMS): transform 2.042x, ideal feedback block-1 1.869x, block-32 1.857x
+== L20 H [eval s=0.025]: output-space ceilings (RMS): transform 2.044x, ideal feedback block-1 1.866x, block-32 1.855x
+== L20 gate_proj  AM/GM blk16 1.07 blk32 1.04 row 1.01 col 1.00 | within-block dh -0.005 bits (kurt 2.69); tensor dh -3.943
+   plane: 29 E4M3 values over 3.49 octaves, entropy 3.45 bits/block = 0.216 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0603 Rs=.5 0.0853 (+shape 0.0850) Rs=H 0.0701 (+shape 0.0698) | blk32 Rs=.25 0.0729 (+shape 0.0727)
+   measured refit-only flat-E4M3 plane wt 0.09810 = 1.154x its bound, 1.150x the Gaussian-block bound   5.1s
+== L20 up_proj  AM/GM blk16 1.07 blk32 1.04 row 1.00 col 1.00 | within-block dh -0.005 bits (kurt 2.69); tensor dh -3.978
+   plane: 29 E4M3 values over 3.49 octaves, entropy 3.43 bits/block = 0.215 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0604 Rs=.5 0.0854 (+shape 0.0851) Rs=H 0.0701 (+shape 0.0698) | blk32 Rs=.25 0.0730 (+shape 0.0728)
+   measured refit-only flat-E4M3 plane wt 0.09798 = 1.151x its bound, 1.147x the Gaussian-block bound   5.1s
+== L42 H [fit s=1.0]: output-space ceilings (RMS): transform 1.187x, ideal feedback block-1 1.185x, block-32 1.184x
+== L42 H [fit s=0.025]: output-space ceilings (RMS): transform 2.269x, ideal feedback block-1 2.061x, block-32 2.044x
+== L42 H [eval s=0.025]: output-space ceilings (RMS): transform 2.250x, ideal feedback block-1 2.043x, block-32 2.026x
+== L42 gate_proj  AM/GM blk16 1.08 blk32 1.05 row 1.02 col 1.00 | within-block dh -0.005 bits (kurt 2.69); tensor dh -3.509
+   plane: 30 E4M3 values over 3.64 octaves, entropy 3.47 bits/block = 0.217 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0600 Rs=.5 0.0849 (+shape 0.0846) Rs=H 0.0698 (+shape 0.0695) | blk32 Rs=.25 0.0726 (+shape 0.0723)
+   measured refit-only flat-E4M3 plane wt 0.09888 = 1.169x its bound, 1.165x the Gaussian-block bound   5.1s
+== L42 up_proj  AM/GM blk16 1.08 blk32 1.04 row 1.01 col 1.00 | within-block dh -0.005 bits (kurt 2.68); tensor dh -3.667
+   plane: 29 E4M3 values over 3.49 octaves, entropy 3.46 bits/block = 0.216 bpp (E4M3 spends 0.500)
+   bounds (RMS rel) @4.0 bpp: rot 0.0625 | blk16 free 0.0602 Rs=.5 0.0852 (+shape 0.0849) Rs=H 0.0700 (+shape 0.0697) | blk32 Rs=.25 0.0728 (+shape 0.0726)
+   measured refit-only flat-E4M3 plane wt 0.09833 = 1.158x its bound, 1.154x the Gaussian-block bound   5.1s
+wrote experiments/results/tessera_theoretical_limits.json

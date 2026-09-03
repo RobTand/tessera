@@ -168,7 +168,21 @@ row words are plane bytes under the payload digest.
 
 **Accounting.** 16 bits per output row on the DIAG_SV plane, inline:
 `0.0039` bpp on a 2048×4096 unit, plus the ratio's manifest bytes. No
-block-scale planes. `calculator.terminal_rate(with_row_scale=True, window_bits=L)` prices the rows and a window table exactly; it does **not** price a TCQ unit's ALPHABET/DESCENDANT forest planes (per-unit blob bytes: ~1.4 KB at 64×512, 0.0013 bpp at 2048×4096), so a byte quotation that must match `ExportedUnit.exact_bytes` at small shapes reads the container, not the accountant.
+block-scale planes. `calculator.terminal_rate(with_row_scale=True,
+window_bits=L)` prices the rows and a window table exactly; it does **not**
+price a TCQ unit's ALPHABET/DESCENDANT forest planes. Those bytes are
+`sum over the distinct rates R present of 2^(R+1) + 2^(cap+1)` — one byte
+per anchor, plus one flattened forest per rate holding the grid's whole code
+space — so they are a function of the schedule and the grid alone and **not
+of the shape**. On E2M1 a Bresenham schedule mixes only the two rates
+bracketing its root, so a shipped unit carries **20–56 B** (measured: 20 at
+rate 1 alone, 44 over {1,2}, 56 over {2,3}, 32 at rate 3 alone; 76 B is the
+bound an importance-placed schedule using all three would reach), and
+exactly **512 B** at the E2M1x2 cap — the only two places `wire_recipe`
+still writes a TCQ body at all. A schedule carrying every legal rate of an
+8-bit grid would reach 2300 B. That is 0.00002–0.0022 bpp on a 2048×4096
+unit, so a byte quotation that must match `ExportedUnit.exact_bytes` at
+small shapes reads the container, not the accountant.
 
 ### 1d. Schema minor 4 (2026-09-02): the shard record and the INITIAL_STATE plane
 

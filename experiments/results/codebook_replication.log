@@ -1,0 +1,43 @@
+ layer proj               shape    E2M1x2     Lloyd   ratio
+     3 gate_proj      2048x4096   0.10869   0.09737  1.116x
+     3 up_proj        2048x4096   0.10879   0.09795  1.111x
+     3 down_proj      4096x2048   0.10814   0.09783  1.105x
+     7 gate_proj      2048x4096   0.10796   0.09687  1.114x
+     7 up_proj        2048x4096   0.10793   0.09759  1.106x
+     7 down_proj      4096x2048   0.10782   0.09784  1.102x
+    11 gate_proj      2048x4096   0.10797   0.09826  1.099x
+    11 up_proj        2048x4096   0.10791   0.09799  1.101x
+    11 down_proj      4096x2048   0.10775   0.09748  1.105x
+    15 gate_proj      2048x4096   0.10777   0.09843  1.095x
+    15 up_proj        2048x4096   0.10778   0.09715  1.109x
+    15 down_proj      4096x2048   0.10774   0.09759  1.104x
+    19 gate_proj      2048x4096   0.10774   0.09711  1.109x
+    19 up_proj        2048x4096   0.10770   0.09713  1.109x
+    19 down_proj      4096x2048   0.10770   0.09720  1.108x
+    23 gate_proj      2048x4096   0.10840   0.09770  1.110x
+    23 up_proj        2048x4096   0.10815   0.09779  1.106x
+    23 down_proj      4096x2048   0.10814   0.09720  1.113x
+    27 gate_proj      2048x4096   0.10775   0.09771  1.103x
+    27 up_proj        2048x4096   0.10774   0.09734  1.107x
+    27 down_proj      4096x2048   0.10775   0.09749  1.105x
+    31 gate_proj      2048x4096   0.10791   0.09736  1.108x
+    31 up_proj        2048x4096   0.10803   0.09838  1.098x
+    31 down_proj      4096x2048   0.10790   0.09730  1.109x
+    35 gate_proj      2048x4096   0.10782   0.09819  1.098x
+    35 up_proj        2048x4096   0.10780   0.09732  1.108x
+    35 down_proj      4096x2048   0.10774   0.09873  1.091x
+    39 gate_proj      2048x4096   0.10798   0.09763  1.106x
+    39 up_proj        2048x4096   0.10811   0.09729  1.111x
+    39 down_proj      4096x2048   0.10795   0.09679  1.115x
+    43 gate_proj      2048x4096   0.10980   0.09839  1.116x
+    43 up_proj        2048x4096   0.10836   0.09840  1.101x
+    43 down_proj      4096x2048   0.10816   0.09751  1.109x
+
+33 tensors, full width, 52s
+  ratio   min 1.091x   median 1.107x   max 1.116x
+  mean    1.106x     geometric 1.106x
+  tensors where the free codebook LOSES: 0
+  gate_proj   n=11  median 1.108x
+  up_proj     n=11  median 1.107x
+  down_proj   n=11  median 1.105x
+wrote experiments/results/tessera_codebook_replication.json

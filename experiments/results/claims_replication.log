@@ -1,0 +1,17 @@
+                                              tensor         shape  trellis  learned  select
+                          layers.10.self_attn.b_proj     (64, 384)   1.115x   0.913x  1.338x
+                        layers.10.self_attn.f_b_proj   (2048, 128)   1.147x   1.012x  1.302x
+                        layers.20.self_attn.g_b_proj   (2048, 128)   1.118x   1.022x  1.312x
+              layers.10.mlp.shared_experts.gate_proj   (2048, 384)   1.156x   0.994x  1.321x
+              layers.20.mlp.shared_experts.down_proj   (2048, 384)   1.138x   1.002x  1.363x
+                   layers.10.mlp.experts.0.gate_proj   (2048, 384)   1.131x   1.002x  1.386x
+                   layers.30.mlp.experts.5.down_proj   (2048, 384)   1.119x   0.995x  1.365x
+                     layers.40.mlp.experts.9.up_proj   (2048, 384)   1.120x   0.977x  1.377x
+
+trellis_gain: min 1.115x  max 1.156x  mean 1.130x   (single-tensor claim was 1.131x)
+
+learned_values: min 0.913x  max 1.022x  mean 0.990x   (single-tensor claim was 1.006x)
+
+selection_penalty: min 1.302x  max 1.386x  mean 1.346x   (single-tensor claim was 1.37x)
+
+wrote experiments/results/tessera_claims_replication.json
