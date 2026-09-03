@@ -907,6 +907,20 @@ def main():
         (twin / "tessera_stock_twin_manifest.json").write_text(json.dumps({
             "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "wire_checkpoint": str(args.out), "arm": manifest["arm"] + " (stock twin of the same wires)",
+            # THE TWIN IS THE ARTIFACT THAT GETS SERVED, so it carries what
+            # shaped its bytes rather than a path to something that does.  The
+            # wire manifest has these three; the twin used to have only a
+            # ``wire_checkpoint`` string pointing at it, which is provenance
+            # only for as long as that directory outlives this one on this box
+            # -- and a served KL is read off the twin, quoted long afterwards,
+            # and compared against another twin.  Two arms of an A/B whose one
+            # difference is an ``activation_aware`` field could not be told
+            # apart from the artifacts that produced the numbers: ``arm``
+            # reads "tessera E2M1x2 q256=896 -> ..." for both (tessera#60).
+            # Nothing here changes a byte of the checkpoint.
+            "default": manifest["default"],
+            "input_scales_from": manifest["input_scales_from"],
+            "activation_aware": manifest["activation_aware"],
             "totals": {"quantized_params": params, "modules": len(twin_records),
                        "resident_bytes": twin_resident,
                        "resident_bpp": float(Fraction(twin_resident * 8, params)) if params else None,
