@@ -51,7 +51,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from export_checkpoint_driver import BASES, build_plan  # noqa: E402
 from tessera.alphabet import E4M3_GRID, tuple_grid  # noqa: E402
 from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # noqa: E402
-from tessera.stock import materialize_stock, share_global, stock_bytes, stock_dequant, stock_kind  # noqa: E402
+from tessera.stock import (  # noqa: E402
+    FLOAT_QUANTIZED, NVFP4_PACK_QUANTIZED, declared_format, materialize_stock,
+    share_global, stock_bytes, stock_dequant, stock_kind, vllm_fp4_predicate)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj",
@@ -131,6 +133,38 @@ def check_fp8_rtn_against_prismaquant(weight: torch.Tensor) -> str:
     if not (same_q and same_s):
         raise SystemExit("the local FP8 RTN is not PrismaQuant's quantize_dequantize_fp8_dynamic")
     return "identical to PrismaQuant's quantize_dequantize_fp8_dynamic on the first Linear"
+
+
+def stock_quantization_config(config_groups, ignore):
+    """The ``quantization_config`` block for these groups, and what it resolves to.
+
+    The top-level ``format`` is DERIVED from the groups (``declared_format``)
+    rather than fixed.  It used to be the constant ``"mixed-precision"``, and
+    the stock NVFP4 twin this exporter writes for the comparator arm is not
+    mixed: one group, every target.  That constant is the whole of vLLM's
+    FP4-model predicate, so our comparator answered False where a uniform-NVFP4
+    checkpoint from anyone else answers True, and the two arms of a speed
+    comparison were not the same compiled graph (#92).
+
+    The resolved predicate travels back beside the block so the manifest records
+    it.  A genuinely mixed artifact still declares ``mixed-precision`` -- that
+    is the honest label -- and this record is what turns the fusion it gives up
+    into a priced property of mixing instead of a silent one.
+
+    Returns ``(None, None)`` when nothing was quantized: such a checkpoint
+    declares no ``quantization_config`` at all, rather than one telling a
+    runtime to look for compressed tensors it does not hold.
+    """
+    if not config_groups:
+        return None, None
+    fmt = declared_format(config_groups)
+    return {
+        "quant_method": "compressed-tensors",
+        "format": fmt,
+        "config_groups": config_groups,
+        "ignore": list(ignore),
+        "quantization_status": "compressed",
+    }, vllm_fp4_predicate("compressed-tensors", fmt)
 
 
 def git_hash() -> str:
@@ -320,24 +354,22 @@ def main():
         return [regex_target(m) for m in sorted(set(found) | fused_names)]
 
     if nvfp4_modules:
-        group = {"format": "nvfp4-pack-quantized", "weights": dict(NVFP4_WEIGHTS)}
+        group = {"format": NVFP4_PACK_QUANTIZED, "weights": dict(NVFP4_WEIGHTS)}
         if input_scales is not None:
             group["input_activations"] = dict(NVFP4_INPUTS)
         group["targets"] = targets(nvfp4_modules)
         config_groups[f"group_{len(config_groups)}"] = group
     if fp8_modules:
         config_groups[f"group_{len(config_groups)}"] = {
-            "format": "float-quantized", "weights": dict(FP8_WEIGHTS),
+            "format": FLOAT_QUANTIZED, "weights": dict(FP8_WEIGHTS),
             "input_activations": dict(FP8_INPUTS), "targets": targets(fp8_modules),
         }
     ignore = ["lm_head", "model.embed_tokens"] + sorted(set(ignored) - {"lm_head", "model.embed_tokens"})
-    config["quantization_config"] = {
-        "quant_method": "compressed-tensors",
-        "format": "mixed-precision",
-        "config_groups": config_groups,
-        "ignore": ignore,
-        "quantization_status": "compressed",
-    }
+    quantization_config, fp4_predicate = stock_quantization_config(config_groups, ignore)
+    if quantization_config is None:
+        config.pop("quantization_config", None)
+    else:
+        config["quantization_config"] = quantization_config
     (args.out / "config.json").write_text(json.dumps(config, indent=2))
     if len(shards) > 1:
         total = sum((args.out / s).stat().st_size for s in shards)
@@ -368,6 +400,10 @@ def main():
         "activations": None if args.fp8_rtn else args.activations,
         "input_scales_from": str(args.input_scales) if input_scales is not None else None,
         "fp8_rtn_check": rtn_check,
+        # What the declaration above resolves to in the pinned serving runtime.
+        # ``None`` when this checkpoint quantized nothing and so declares no
+        # quantization_config.
+        "vllm_fp4_predicate": fp4_predicate,
         "resident_format_note": (
             "resident bytes are the stock format's (NVFP4 4.5 bpp, FP8 per-channel 8 bpp); "
             "wire_bpp is what the same unit costs on Tessera's kernel lane and is NOT what this checkpoint holds"

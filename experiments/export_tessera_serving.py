@@ -108,7 +108,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_stock_compressed import (  # noqa: E402
-    FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target)
+    FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
+    stock_quantization_config)
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
 from tessera.bf16_route import BF16_FAMILY  # noqa: E402
@@ -118,7 +119,9 @@ from tessera.export import (  # noqa: E402
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.serving.contract import load_serving_contract  # noqa: E402
 from tessera.serving.scheme import refuse_unserveable_wire  # noqa: E402
-from tessera.stock import materialize_stock, share_global, stock_bytes  # noqa: E402
+from tessera.stock import (  # noqa: E402
+    FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
+    share_global, stock_bytes, vllm_fp4_predicate)
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 
 FUSED = (
@@ -804,9 +807,17 @@ def main():
     config["quantization_config"] = {
         # The field that selects Tessera's own vLLM plugin (entry point
         # ``tessera = tessera.serving:register``).  No serve flag enables it.
-        "quant_method": "tessera", "format": "mixed-precision",
+        # ``format`` is NOT derived here, unlike the stock twin below.  vLLM's
+        # FP4-model predicate (``ModelConfig.is_nvfp4_quantized``) requires
+        # ``quantization == "compressed-tensors"``, which this is not, and
+        # ``tessera.serving.config`` reads ``config_groups`` and never this
+        # field.  Naming a format here would change nothing and assert
+        # something; the label stays generic and the record below says what the
+        # predicate resolves to and why (#92).
+        "quant_method": "tessera", "format": MIXED_PRECISION,
         "config_groups": config_groups, "ignore": ignore,
     }
+    tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)
     (args.out / "config.json").write_text(json.dumps(config, indent=2))
     if len(shards) > 1:
         size = sum((args.out / s).stat().st_size for s in shards)
@@ -868,6 +879,7 @@ def main():
             "unserveable_overrides": gate_overrides,
         },
         "stock_twin": str(twin) if twin is not None else None,
+        "vllm_fp4_predicate": tessera_fp4_predicate,
         "totals": totals, "modules": module_records,
     }
     (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -876,27 +888,28 @@ def main():
         twin_groups = {}
         if twin_modules[NVFP4]:
             twin_groups[f"group_{len(twin_groups)}"] = {
-                "format": "nvfp4-pack-quantized", "weights": dict(NVFP4_WEIGHTS),
+                "format": NVFP4_PACK_QUANTIZED, "weights": dict(NVFP4_WEIGHTS),
                 "input_activations": dict(NVFP4_INPUTS), "targets": stock_targets(twin_modules[NVFP4])}
         if twin_modules[FP8]:
             twin_groups[f"group_{len(twin_groups)}"] = {
-                "format": "float-quantized", "weights": dict(FP8_WEIGHTS),
+                "format": FLOAT_QUANTIZED, "weights": dict(FP8_WEIGHTS),
                 "input_activations": dict(FP8_INPUTS), "targets": stock_targets(twin_modules[FP8])}
         twin_config = json.loads((args.src / "config.json").read_text())
-        if twin_groups:
-            # A BF16 module is in no group: its twin tensor is the ordinary
-            # ``<module>.weight``, so it is ignored by the quantization config
-            # exactly as ``lm_head`` is.
-            twin_config["quantization_config"] = {
-                "quant_method": "compressed-tensors", "format": "mixed-precision",
-                "config_groups": twin_groups,
-                "ignore": sorted(set(ignore) | set(twin_modules[BF16])),
-                "quantization_status": "compressed",
-            }
+        # A BF16 module is in no group: its twin tensor is the ordinary
+        # ``<module>.weight``, so it is ignored by the quantization config
+        # exactly as ``lm_head`` is.  And when every module decoded to a plain
+        # bf16 tile there are no groups at all -- this IS a BF16 checkpoint, and
+        # the helper returns nothing to declare rather than an empty config that
+        # would tell a runtime to look for compressed tensors that do not exist.
+        #
+        # This is the comparator arm, so it is the artifact #92 was about: it
+        # goes through the same derivation as ``export_stock_compressed``, and
+        # the predicate it resolves to is recorded on the twin's own manifest.
+        twin_quant_config, twin_fp4_predicate = stock_quantization_config(
+            twin_groups, sorted(set(ignore) | set(twin_modules[BF16])))
+        if twin_quant_config is not None:
+            twin_config["quantization_config"] = twin_quant_config
         else:
-            # Every module decoded to a plain bf16 tile: this IS a BF16
-            # checkpoint.  Declaring an empty config would tell a runtime to
-            # look for compressed tensors that do not exist.
             twin_config.pop("quantization_config", None)
         (twin / "config.json").write_text(json.dumps(twin_config, indent=2))
         if len(shards) > 1:
@@ -907,6 +920,7 @@ def main():
         (twin / "tessera_stock_twin_manifest.json").write_text(json.dumps({
             "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "wire_checkpoint": str(args.out), "arm": manifest["arm"] + " (stock twin of the same wires)",
+            "vllm_fp4_predicate": twin_fp4_predicate,
             "totals": {"quantized_params": params, "modules": len(twin_records),
                        "resident_bytes": twin_resident,
                        "resident_bpp": float(Fraction(twin_resident * 8, params)) if params else None,

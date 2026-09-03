@@ -262,3 +262,146 @@ def share_global(
         + ", ".join(f"1/{d:g} -> {name}" for d, name in failures.items())
         + ". Encode the group under one pinned global instead of shifting it."
     )
+
+
+# --- what the checkpoint DECLARES, and what the runtime does with it ----------
+#
+# A compressed-tensors ``quantization_config`` carries a top-level ``format``
+# beside the per-group ones.  Ours was the constant ``"mixed-precision"``
+# whatever the artifact turned out to be, and the stock NVFP4 comparator twin is
+# not mixed: it is one group, ``nvfp4-pack-quantized``, over every target.  The
+# constant is not cosmetic.  In the pinned runtime the field is read twice, and
+# the two readings differ in kind:
+#
+#   1. As a per-group DEFAULT.  ``CompressedTensorsConfig.from_config`` keeps it
+#      as ``self.quant_format``
+#      (``model_executor/layers/quantization/compressed_tensors/
+#      compressed_tensors.py:250``), and ``get_scheme_dict`` substitutes it only
+#      for a group that declared none (``:963-964``:
+#      ``if scheme_dict.get("format") is None: scheme_dict["format"] =
+#      self.quant_format``).  Every group both exporters write declares its own
+#      ``format``, so the substitution never fires and the top-level string does
+#      not choose a scheme or change a byte in memory.
+#
+#   2. As the FP4-model predicate, where it is the whole answer.
+#      ``ModelConfig.is_nvfp4_quantized`` (``config/model.py:2096-2108``) is a
+#      substring test on this exact field, and ``"mixed-precision"`` does not
+#      contain ``"nvfp4"``.  A uniform-NVFP4 checkpoint from anyone else
+#      answers True and ours answered False, so the two are not the same
+#      compiled graph and no receipt of ours said so.
+#
+# ``declared_format`` derives the field from the groups that were actually
+# written; ``vllm_fp4_predicate`` states the consequence, with the attestation
+# that makes it a reading of a runtime rather than a claim about one (AGENTS
+# principle 14: vLLM publishes no machine-readable table for this predicate, so
+# the recorded value is honest only with the image and version it was read in).
+
+#: Per-group ``format`` strings the two exporters write.
+NVFP4_PACK_QUANTIZED = "nvfp4-pack-quantized"
+FLOAT_QUANTIZED = "float-quantized"
+#: The top-level label for an artifact whose groups do not agree on one format.
+MIXED_PRECISION = "mixed-precision"
+
+#: Where the predicate below was read.  Quoted, not paraphrased, because the
+#: value it resolves to is stamped onto artifacts: an image that moves the check
+#: makes a stamped record stale, and the version is what lets someone see that.
+VLLM_FP4_PREDICATE_ATTESTATION = {
+    "image": "vllm/vllm-openai:latest",
+    "version": "0.28.0",
+    "read": "2026-09-03",
+    "predicate": {
+        "path": "vllm/config/model.py",
+        "lines": "2096-2108",
+        "source": (
+            'self.quantization == "compressed-tensors" and quant_config is not None '
+            'and "nvfp4" in quant_config.get("format", "").lower()'
+        ),
+    },
+    "consumer": {
+        "path": "vllm/config/vllm.py",
+        "lines": "134-144",
+        "source": (
+            'is_custom_op_enabled("silu_and_mul") or is_custom_op_enabled("quant_fp8") '
+            "or model_config.is_nvfp4_quantized()"
+        ),
+        "note": (
+            "the predicate's ONE consumer in 0.28.0, the pass-config entry "
+            "fuse_act_quant at O1/O2/O3 (default optimization_level is O2, "
+            "config/vllm.py:401). fuse_attn_quant beside it is the hard constant "
+            "IS_QUANTIZED = False (config/vllm.py:113-120, pending vllm#25689), so "
+            "no attention+quant fusion is at stake either way."
+        ),
+    },
+    "scope": (
+        "a COMPILED serve only.  --enforce-eager sets compilation mode NONE "
+        "(config/vllm.py:1284-1290), so no fusion pass runs on either arm; the KL "
+        "harnesses in experiments/ serve eager by default and this predicate cannot "
+        "have moved any number they produced.  The default serve is where it bites: "
+        "optimization_level defaults to O2 (config/vllm.py:401), whose pass config "
+        "sets fuse_act_quant = enable_act_fusion, and under the default compiled "
+        "backend custom_ops resolves to ['none'] (config/vllm.py:1392-1399) so "
+        "neither silu_and_mul nor quant_fp8 is enabled -- +quant_fp8 is appended "
+        "only for blocked weights (config/vllm.py:1368-1375), and neither NVFP4 "
+        "group nor per-channel FP8 group is QuantizationStrategy.BLOCK.  So on a "
+        "default compiled serve this predicate is the ONLY thing switching "
+        "fuse_act_quant, and it switched it off for us and on for a uniform-NVFP4 "
+        "checkpoint from anyone else."
+    ),
+    "nvfp4_pattern_built": (
+        "SiluMulNvfp4QuantPattern is registered only when "
+        "silu_and_mul_nvfp4_quant_supported "
+        "(compilation/passes/fusion/act_quant_fusion.py:36-40,298-299), i.e. when the "
+        "op is in this build's torch.ops._C.  PENDING."
+    ),
+}
+
+
+def declared_format(config_groups) -> str:
+    """The top-level ``format`` for a config whose groups are ``config_groups``.
+
+    Groups that agree on one format make an artifact OF that format and it says
+    so; groups that disagree make a mixed artifact and it says that.  Keying on
+    the distinct formats rather than on the number of groups is the honest
+    reading of both consumers above: vLLM's substring predicate asks what the
+    weights are, not how many ``config_groups`` keys the exporter chose to use.
+
+    An empty mapping has no format to declare and is not a quantized checkpoint;
+    the caller writes no ``quantization_config`` at all rather than one that
+    tells a runtime to look for compressed tensors that do not exist.
+    """
+    if not config_groups:
+        raise ValueError(
+            "no config groups: a checkpoint with nothing quantized declares no "
+            "quantization_config, not a format")
+    formats = {group["format"] for group in config_groups.values()}
+    return formats.pop() if len(formats) == 1 else MIXED_PRECISION
+
+
+def vllm_fp4_predicate(quant_method: str, declared: str) -> dict:
+    """``ModelConfig.is_nvfp4_quantized`` for this declaration, and why.
+
+    Recorded on the artifact so a comparison against someone else's uniform
+    NVFP4 checkpoint can see whether the two arms compile the same graph,
+    instead of the answer being an unrecorded consequence of a constant.
+    """
+    compressed = quant_method == "compressed-tensors"
+    nvfp4 = "nvfp4" in declared.lower()
+    if not compressed:
+        reason = (
+            f"quant_method is {quant_method!r}, not 'compressed-tensors': the "
+            "predicate's first conjunct fails and the top-level format is not read "
+            "by it at all")
+    elif nvfp4:
+        reason = f"format {declared!r} contains 'nvfp4'"
+    else:
+        reason = f"format {declared!r} does not contain 'nvfp4'"
+    return {
+        "quant_method": quant_method,
+        "format": declared,
+        "vllm_is_nvfp4_quantized": compressed and nvfp4,
+        "reason": reason,
+        "consequence": (
+            "one of the three disjuncts of enable_act_fusion, i.e. of the "
+            "fuse_act_quant pass-config entry, on a compiled serve"),
+        "attested": VLLM_FP4_PREDICATE_ATTESTATION,
+    }
