@@ -262,8 +262,16 @@ def main() -> None:
             "unit_ratios": ratios, "geomean_ratio": gm,
             "gain": 1.0 - gm, "control_triplicate_spread": spread,
         }
-        if a.ceiling_json:
-            c = json.loads(Path(a.ceiling_json).read_text())
+        # A missing or half-written step-1 JSON must not cost this run its
+        # arms: the verdict is a ratio of two committed numbers and can be
+        # taken afterwards, but an encode that raised on the way to writing
+        # its own results is gone.
+        try:
+            c = json.loads(Path(a.ceiling_json).read_text()) if a.ceiling_json else None
+        except (OSError, ValueError) as exc:
+            log(f"    step-1 ceiling unreadable ({exc}); verdict not stamped")
+            c = None
+        if c is not None:
             cg = c["geomeans"]
             cctl = next(x for x in cg if x.startswith("drift control FIRST"))
             cgrid = next(x for x in cg if x.endswith("| landing=grid")

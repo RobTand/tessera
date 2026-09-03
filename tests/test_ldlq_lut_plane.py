@@ -672,3 +672,80 @@ def test_the_fresh_table_fit_wins_where_the_plane_starts_furthest():
             assert len(diag) == 1
             won[diag[0]["candidate"]] += 1
     assert won["new-table"] > won["old-table"] + won["kept"], won
+
+
+def test_the_exact_fit_off_is_the_fit_that_was_there():
+    """The byte claim, at the function it is made about (issue #50)."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=21, cols=128)
+    H = _hessian(cols=128, seed=21, device="cpu", coupling=4.0)
+    a = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H)
+    b = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                          metric=H, exact_fit=False)
+    assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1])
+    assert torch.equal(a[2], b[2])
+
+
+def test_the_exact_fit_never_raises_the_fit_it_replaces():
+    """The DP solves ``_fit_lut``'s own objective exactly, so on the same
+    targets it cannot cost more than the greedy -- which is the whole reason
+    issue #50's arm can be read as "the solver's share" of the landing."""
+    from tessera.encode import _fit_lut, _fit_lut_exact, _lut_cost
+
+    g = torch.Generator().manual_seed(22)
+    for trial in range(4):
+        targets = torch.exp(torch.rand(3000, generator=g) * 2.5 - 3.0)
+        weights = torch.rand(3000, generator=g).pow(2) + 1e-4
+        _, greedy = _fit_lut(targets, weights, 1.0)
+        _, exact = _fit_lut_exact(targets, weights, 1.0)
+        t, w = targets.double(), weights.double()
+        assert float(_lut_cost(t, w, exact.double())) <= \
+            float(_lut_cost(t, w, greedy.double())) * (1 + 1e-12), trial
+
+
+@cuda
+def test_the_exact_fit_reaches_the_bytes_only_where_the_greedy_is_not_already_right():
+    """Both halves of the mechanism's limit, pinned side by side.
+
+    An arm named after a setting that changed no byte is one failure; a wire
+    that changed length is the other.  But the honest third fact is *when* it
+    changes bytes: on a plain Gaussian weight the greedy's table is already the
+    optimum, and the flag is a no-op.  It only bites when the per-block amax
+    field is clustered with gaps -- loud rows and loud columns -- which is
+    where a greedy elimination can strand an entry.  Asserting only the first
+    half would have hidden that, and the size of issue #50's arm turns on it.
+    """
+    H = _hessian(seed=23)
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    h = H.diagonal() / H.diagonal().mean()
+
+    def blobs(w):
+        return (encode_linear(w, grid=K2, q256=CAP, name="x",
+                              ldl=L, ldl_block=32, refit_metric=h).blob,
+                encode_linear(w, grid=K2, q256=CAP, name="x", ldl=L, ldl_block=32,
+                              refit_metric=h, refit_lut_exact=True).blob)
+
+    smooth = _weights(seed=23).bfloat16()
+    base, exact = blobs(smooth)
+    assert base == exact, "on a smooth amax field the greedy is already optimal"
+
+    clustered = _weights(seed=0).clone()
+    clustered[::7] *= 12.0
+    clustered[:, ::11] *= 5.0
+    base, exact = blobs(clustered.bfloat16())
+    assert base != exact, "a clustered amax field is where the greedy strands an entry"
+    assert len(base) == len(exact), "the wire is unchanged"
+
+
+@cuda
+def test_the_exact_fit_is_refused_where_there_is_no_fit_to_solve():
+    """Off the LUT plane and at ``scale_refit=0`` the flag would name an arm
+    that did nothing; each is refused by its own message."""
+    w = _weights(seed=24).bfloat16()
+    H = _hessian(seed=24)
+    h = H.diagonal() / H.diagonal().mean()
+    with pytest.raises(GrammarError, match="no such table"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=h,
+                      scale_plane=ScalePlaneKind.CHANNEL, refit_lut_exact=True)
+    with pytest.raises(GrammarError, match="scale_refit=0"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", scale_refit=0,
+                      refit_lut_exact=True)
