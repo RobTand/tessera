@@ -56,11 +56,23 @@ _FP16_MAX = 65504.0
 def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
     """The RTN-optimal Gaussian spread on the grid's scalar values, in grid units.
 
-    Derived from the objective rather than chosen: over a dyadic ladder of
-    spreads below the grid's peak, the one whose nearest-value error on a
-    unit Gaussian is smallest, relative to the variance quantised.  On E2M1
-    this lands near ``peak / 2.7``; on E4M3, whose values are log-spaced, the
-    error is flat over a wide band and the ladder picks one point in it.
+    Derived from the objective rather than chosen: over a **quarter-binade**
+    ladder of spreads below the grid's peak (``peak * 2^(-k/4)``, forty rungs,
+    ten binades), the one whose nearest-value error on a unit Gaussian is
+    smallest, relative to the variance quantised.  On E2M1 this lands near
+    ``peak / 2.7``; on E4M3, whose values are log-spaced, the objective is
+    periodic in the binade and nearly flat across it: the four rungs of one
+    binade span 1.1% and the winner -- ``448 * 2^-2.25 = 94.18`` -- beats the
+    runner-up by 0.11%, so the ladder is choosing between near-equals.
+
+    The step is a quarter binade and **is not dyadic**, which is worth saying
+    plainly because the docstring said the opposite: the four rungs of a
+    binade sit in four different residue classes of ``log2(sigma)``, and which
+    class the ladder lands in is decided by that 0.11%.  Where the table's
+    outermost entry then *snaps* is a different question from the one this
+    objective asks -- a scalar RTN quantiser is not how the window body uses
+    the table (issue #89).
+
     Deterministic: the source is ``GAUSSIAN_SOURCE``'s fixed quantile sample.
     """
     scalar = torch.tensor(sorted(set(values)), dtype=torch.float64)

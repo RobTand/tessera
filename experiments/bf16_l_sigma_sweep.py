@@ -136,7 +136,7 @@ def base_channel_sigma(grid) -> float:
 
     BF16 carries its own constant because its alphabet is closed under x2 and
     the recipe pins 1.0 rather than deriving it; every other grid asks
-    ``default_channel_sigma``, which is the dyadic ladder #36 is about.
+    ``default_channel_sigma``, which is the quarter-binade ladder #36 is about.
     """
     return BF16_CHANNEL_SIGMA if grid is BF16_GRID else default_channel_sigma(grid)
 

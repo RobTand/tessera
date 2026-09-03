@@ -559,8 +559,8 @@ E4M3_RECIPE = WireRecipe(
 #: (W16A16) and there is no weight-side hardware format to satisfy.
 BF16_WINDOW_BITS = E4M3_WINDOW_BITS
 #: The modelled source spread in grid units.  It was **stated rather than
-#: searched** -- ``scale_channel.default_channel_sigma`` walks a dyadic ladder
-#: for the spread with the smallest nearest-value error, and on a grid with
+#: searched** -- ``scale_channel.default_channel_sigma`` walks a quarter-binade
+#: ladder for the spread with the smallest nearest-value error, and on a grid with
 #: eight exponent bits that error is scale-free over ~30 binades, so the
 #: ladder is choosing between equals and would build a 4096 x 65536 float64
 #: distance matrix to do it.  1.0 puts the L=14 table's quantiles

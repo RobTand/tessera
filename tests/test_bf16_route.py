@@ -212,8 +212,8 @@ def test_recipe_is_the_shipping_window():
     assert recipe.body is BodyKind.WINDOW and recipe.span == 1
     assert recipe.scale_plane is ScalePlaneKind.CHANNEL
     assert recipe.window_bits == BF16_WINDOW_BITS == E4M3_RECIPE.window_bits
-    # Stated, never searched: a dyadic ladder over a 65536-value grid is a
-    # 4096 x 65536 float64 matrix forty times over, and it is choosing
+    # Stated, never searched: a quarter-binade ladder over a 65536-value grid
+    # is a 4096 x 65536 float64 matrix forty times over, and it is choosing
     # between equals on a format with eight exponent bits.
     assert recipe.channel_sigma == BF16_CHANNEL_SIGMA is not None
 
