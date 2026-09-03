@@ -214,6 +214,33 @@ def test_a_replication_factor_that_is_not_whole_is_refused_by_that_name():
     assert "neither the whole module" not in msg, "that message is for a shape disagreement"
 
 
+def test_a_role_cut_finer_than_the_world_is_refused_because_rows_would_go_unserved():
+    """The other side of replication: MORE shards than ranks, which is not legal.
+
+    A replicated role has FEWER distinct shards than ranks and every row is
+    still held by somebody.  The opposite -- a rank asking for less than
+    ``1/tp_size`` of a role -- means no rank holds the rest, and an all-gather
+    would return a tile with rows nobody computed.  vLLM never asks for it
+    (``divide`` would have raised in the layer's own ``__init__``), so seeing it
+    is a checkpoint/serve disagreement, and it must NOT be waved through as the
+    replicated case: ``tp_size % shards`` is 4 % 8 == 4 here, so the replication
+    branch would refuse it too, with a message about a factor that is not the
+    complaint.
+
+    16 q heads and 8 KV heads over 4 ranks, with output partitions computed for
+    a world of 8 -- the shape of handing a tp=8 layer's sizes to a tp=4 group.
+    """
+    roles = [("q_proj", 16 * 64), ("k_proj", 8 * 64), ("v_proj", 8 * 64)]
+    with pytest.raises(ValueError) as e:
+        plan_shard("model.layers.0.self_attn.qkv_proj", roles=roles, columns=2048,
+                   out_partitions=[256, 64, 64], in_size=2048, tp_rank=0, tp_size=4)
+    msg = str(e.value)
+    assert "'k_proj'" in msg, "the refusal names the member that failed, not the container"
+    assert "8 shards for only 4 ranks" in msg and "less than 1/4 of the role" in msg
+    assert "served by nobody" in msg, "the refusal says what would go wrong, not just that it did"
+    assert "REPLICATED" not in msg, "replication is fewer shards than ranks, not more"
+
+
 def test_a_shape_that_is_neither_whole_nor_a_clean_split_is_refused_with_both_shapes():
     with pytest.raises(ValueError) as e:
         plan_shard("model.layers.0.mlp.down_proj", roles=[("weight", 1024)], columns=2048,
