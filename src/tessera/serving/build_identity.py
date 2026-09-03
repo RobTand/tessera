@@ -36,6 +36,22 @@ sites with only the overload suffix varying, which the functionalization
 pass rewrites -- so there was never a second build difference here to
 fingerprint; see ``experiments/compile_build_forensics.py``.
 
+WHICH PROGRAM RAN, NOT ONLY WHICH BUILD (issue #16).  On this runtime an
+eager arm and a compiled arm are not two ways of running one program.  vLLM
+0.28 flips two dispatch defaults together on "is inductor going to run":
+``custom_ops`` gains the base mode ``"none"`` instead of ``"all"``
+(``vllm/config/vllm.py:1392-1399``), so every ``CustomOp`` runs its torch
+decomposition rather than its CUDA kernel; and ``ir_op_priority`` becomes
+``["native"]`` instead of ``["vllm_c", "native"]``
+(``vllm/platforms/cuda.py:690-700``), which is what picks the RMSNorm kernel
+(``RMSNorm.forward_cuda`` and ``forward_native`` both call
+``ir.ops.rms_norm``).  vLLM prints both resolved values in its startup config
+line, so this module reads them off the log and puts them in the identity: two
+arms that ran different implementations of the same math are not comparable as
+measurements of the weights, and the record now says so in the field rather
+than leaving it to be inferred from ``compiled_forward``.  See
+``docs/measurements/serving-compile-dispatch-2026-09-03.md``.
+
 PRINCIPLE 14.  Every field is derived, never asserted: the AOT and backbone
 keys and the fresh-compile count come from vLLM's own log lines, and the
 digests from the bytes vLLM wrote into the pinned cache root the wrapper
@@ -71,9 +87,10 @@ __all__ = [
     "require_deterministic_build",
     "require_distinct_build",
     "require_same_build",
+    "require_same_dispatch",
 ]
 
-SCHEMA = "tessera.serve_build_identity/1"
+SCHEMA = "tessera.serve_build_identity/2"
 
 #: The env var that switches inductor's numerics-affecting autotuning off.
 #: ``torch/_inductor/config.py`` reads it at import time.
@@ -95,6 +112,10 @@ _BACKBONE = re.compile(
     r"Using cache directory: \S*?torch_compile_cache/([0-9a-f]{6,})/rank_[0-9_]+/backbone")
 _FRESH = re.compile(r"Dynamo bytecode transform time")
 _VLLM_VERSION = re.compile(r"Initializing a V\d+ LLM engine \(v([0-9][^)]*)\)")
+# The resolved dispatch, printed by vLLM in the same startup config line.
+_CUSTOM_OPS = re.compile(r"'custom_ops': \[([^\]]*)\]")
+_IR_PRIORITY = re.compile(r"ir_op_priority=IrOpPriorityConfig\(([^)]*)\)")
+_IR_ENTRY = re.compile(r"(\w+)=\[([^\]]*)\]")
 
 
 class BuildIdentityError(RuntimeError):
@@ -117,7 +138,10 @@ def read_serve_log(text: str) -> dict:
     failures: list[str] = []
     fresh = 0
     version: str | None = None
+    dispatch: dict | None = None
     for line in text.splitlines():
+        if dispatch is None and (d := _read_dispatch(line)) is not None:
+            dispatch = d
         if (m := _AOT_LOADED.search(line)):
             loaded.add(m.group(1))
         if (m := _AOT_SAVED.search(line)):
@@ -144,6 +168,31 @@ def read_serve_log(text: str) -> dict:
         "fresh_compiles": fresh,
         "reload_failures": failures,
         "compiled_forward": bool(keys or backbone or fresh),
+        "dispatch": dispatch,
+    }
+
+
+def _strings(inner: str) -> list[str]:
+    return [v.strip().strip("'\"") for v in inner.split(",") if v.strip()]
+
+
+def _read_dispatch(line: str) -> dict | None:
+    """The ``custom_ops`` base mode and IR-op priority vLLM resolved, off its own line.
+
+    None when the line is not the config line: an old log, or a log truncated
+    before startup finished.  A record whose dispatch is None does not claim
+    the arms agreed, and ``require_same_dispatch`` refuses on it rather than
+    reading absence as agreement.
+    """
+    ops = _CUSTOM_OPS.search(line)
+    ir = _IR_PRIORITY.search(line)
+    if ops is None and ir is None:
+        return None
+    priority = ({name: _strings(vals) for name, vals in _IR_ENTRY.findall(ir.group(1))}
+                if ir is not None else None)
+    return {
+        "custom_ops": _strings(ops.group(1)) if ops is not None else None,
+        "ir_op_priority": priority,
     }
 
 
@@ -244,6 +293,10 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
         "eager": None if eager is None else bool(eager),
         "image": image,
         "vllm_version": parsed["vllm_version"],
+        # Which implementations ran, not only which build: see the module
+        # docstring.  It is identity, not provenance -- it decides the
+        # arithmetic as directly as the autotune choices do.
+        "dispatch": parsed["dispatch"],
         "aot": slots["aot"],
     }
     # The backbone slot is PROVENANCE, not identity, and the asymmetry is the
@@ -304,6 +357,11 @@ def _fingerprint(identity: dict) -> str:
 def load(path: str | Path) -> dict:
     record = json.loads(Path(path).read_text())
     if record.get("schema") != SCHEMA:
+        # /1 records predate the dispatch fields, so they cannot answer "did
+        # these two arms run the same implementations?" -- the question #16
+        # turned out to be about.  Refusing them is the point: an old record
+        # would compare equal on everything it knows and say nothing about the
+        # thing that differed.  Re-stamp from the serve log instead.
         raise BuildIdentityError(
             f"{path}: schema {record.get('schema')!r}, expected {SCHEMA!r}")
     return record
@@ -316,8 +374,11 @@ def compare(a: dict, b: dict) -> dict:
     incomplete = [name for name, rec in (("a", a), ("b", b)) if not rec["complete"]]
     ia, ib = a["identity"], b["identity"]
     differs = sorted(k for k in set(ia) | set(ib) if ia.get(k) != ib.get(k))
+    da, db = ia.get("dispatch"), ib.get("dispatch")
     return {
         "same_build": a["build_fingerprint"] == b["build_fingerprint"],
+        "same_dispatch": da is not None and db is not None and da == db,
+        "dispatch_known": da is not None and db is not None,
         "differs": differs,
         "incomplete": incomplete,
     }
@@ -343,6 +404,33 @@ def require_same_build(a: dict, b: dict, *, why: str) -> None:
             f"({', '.join(verdict['differs']) or 'no field differs, fingerprints do'}); "
             "any difference between them is a difference of the compiler as much as of "
             "the weights")
+
+
+def require_same_dispatch(a: dict, b: dict, *, why: str) -> None:
+    """Refuse unless both arms ran the same implementations of the same math.
+
+    Weaker than ``require_same_build`` and orthogonal to it: two arms may
+    share every kernel choice and still be one eager and one compiled, which
+    on this runtime means one ran ``vllm_c``/``forward_cuda`` and the other ran
+    ``native``/``forward_native``.  That difference is worth 0.2445 KL on the
+    NVFP4 route -- larger than the whole KL-vs-BF16 of a good 4-bit arm -- so a
+    cross-regime comparison is a measurement of the dispatch unless the
+    dispatch was pinned to match.
+    """
+    verdict = compare(a, b)
+    if not verdict["dispatch_known"]:
+        raise BuildIdentityError(
+            f"{why}: at least one arm's serve log does not record the dispatch vLLM "
+            "resolved (no 'custom_ops'/ir_op_priority in the startup config line), so "
+            "whether the two arms ran the same implementations is unknown; do not read "
+            "the absence as agreement")
+    if not verdict["same_dispatch"]:
+        ia, ib = a["identity"]["dispatch"], b["identity"]["dispatch"]
+        raise BuildIdentityError(
+            f"{why}: the two arms ran different implementations of the same math "
+            f"(a: {ia}, b: {ib}); vLLM picks the CUDA kernels when it does not compile "
+            "and the torch decompositions when it does, and the difference is a "
+            "measurement of that switch, not of the weights")
 
 
 def require_distinct_build(a: dict, b: dict, *, why: str) -> None:
