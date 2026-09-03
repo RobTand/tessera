@@ -97,7 +97,6 @@ __all__ = [
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_BF16]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
-_GRID = "BF16"
 
 
 class _Bf16Role:
@@ -164,37 +163,54 @@ class PreparedTesseraBf16Module:
 def prepare_tessera_bf16_module(parsed_roles, device=None) -> PreparedTesseraBf16Module:
     """``[(role, ParsedUnit)]`` in stacking order -> a prepared module.
 
-    Every role must be the scalar BF16 grid, window body, CHANNEL plane.  Each
-    is packed for the in-forward decoder and decoded once through it and once
-    through ``tessera.decode.materialize_bf16``; the two must agree element for
+    Every role must be the grids, body, plane and span
+    ``scheme.ROUTES[TESSERA_BF16]`` names -- read off that entry, never
+    restated here, so a fourth family is one ROUTES entry.  (The arity-1 half
+    of the grid check stays: it describes what a scalar grid IS, off the grid
+    object itself, not which grids this route holds.)  Each is packed for the
+    in-forward decoder and decoded once through it and once through
+    ``tessera.decode.materialize_bf16``; the two must agree element for
     element or the module is refused.  The per-row scale is the reference
     decoder's (``scale_rows * global`` in fp32), and it stays out of the tile.
     """
     from tessera.decode import materialize_bf16
-    from tessera.manifest import ScalePlaneKind
 
     device = torch.device("cuda" if device is None else device)
     if not parsed_roles:
         raise ValueError("a Tessera module needs at least one role")
+    # Derived from the route table, the way validate_tessera_scheme derives
+    # its grid/plane checks: a hand-written literal here is a second place to
+    # remember, and the one that fails at LOAD, hours after the ROUTES-derived
+    # export gate already accepted the wire.
+    route = ROUTES[TESSERA_BF16]
     roles = []
     scales = []
     offset = 0
     columns = None
     for name, parsed in parsed_roles:
         unit, grid = parsed.unit, parsed.grid
-        if grid.name != _GRID or grid.arity != 1:
+        if grid.name not in route["grids"] or grid.arity != 1:
             raise ValueError(
-                f"role {name!r}: the 16-bit route decodes the scalar BF16 grid, not {grid.name}")
-        if parsed.body.name != "WINDOW":
+                f"role {name!r}: the 16-bit route decodes {route['grid_kind']} grid "
+                f"{route['grids']} (tessera.serving.scheme.ROUTES[{TESSERA_BF16!r}]), "
+                f"not {grid.name}")
+        if parsed.body.name != route["body"]:
             raise ValueError(
-                f"role {name!r}: the 16-bit route decodes the window body (Tessera's BF16 "
-                f"recipe at every rung); this unit carries {parsed.body.name}, which has no "
-                "in-forward decoder here")
-        if getattr(unit, "scale_plane", None) is not ScalePlaneKind.CHANNEL:
+                f"role {name!r}: the 16-bit route decodes the {route['body']} body "
+                f"(tessera.serving.scheme.ROUTES[{TESSERA_BF16!r}]); this unit carries "
+                f"{parsed.body.name}, which has no in-forward decoder here")
+        plane = getattr(getattr(unit, "scale_plane", None), "name", None)
+        if plane != route["plane"]:
             raise ValueError(
                 f"role {name!r}: the row scale this route applies on the GEMM output is the "
-                f"CHANNEL plane's; this unit carries "
-                f"{getattr(getattr(unit, 'scale_plane', None), 'name', None)}")
+                f"{route['plane']} plane's (tessera.serving.scheme.ROUTES[{TESSERA_BF16!r}]); "
+                f"this unit carries {plane}")
+        span = int(getattr(unit, "span", 1))
+        if span != route["span"]:
+            raise ValueError(
+                f"role {name!r}: the 16-bit route decodes span-{route['span']} "
+                f"{route['body']} (tessera.serving.scheme.ROUTES[{TESSERA_BF16!r}]); "
+                f"this unit carries span {span}")
         steps, cols = unit.body_bits.shape
         if columns is None:
             columns = int(cols)

@@ -33,8 +33,10 @@ them degrade to BF16:
   ``loader_axes``, which is what the loader DOES.  Two different questions, two
   machine-readable fields, and a producer may gate on either.
 
-WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s ``RoutedExperts`` branch
-is the seam.  A Tessera MoE method would: parse one ``tessera.fused`` container
+WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s MoE branch is the seam
+(derived from vLLM's MoE layer module, never a hand-kept name list, so a
+version rename cannot slip it into the silent unquantized fallback).
+A Tessera MoE method would: parse one ``tessera.fused`` container
 per expert group, decode the per-expert wires into the STOCK packed expert
 layouts vLLM's fused-MoE kernels read (NVFP4: the packed w13/w2 triple, which
 needs ``--moe-backend flashinfer_b12x`` on GB10; FP8: the per-channel
@@ -72,26 +74,80 @@ __all__ = ["TesseraConfig", "QUANT_METHOD"]
 QUANT_METHOD = "tessera"
 
 
-def _moe_layer_classes() -> tuple:
-    """vLLM's routed-experts layer classes, tolerant of version renames.
+#: Names vLLM has used for its routed-experts layer.  A SEED, not the gate:
+#: each is imported tolerantly below (a missing name is not an error), and
+#: the namespace scan beside it covers what no seed can -- the next rename.
+#: Kept because ``isinstance`` against the actual objects is the one check
+#: that survives a move: a class defined outside the MoE module but
+#: re-exported from it has another ``__module__`` and only the import finds
+#: it.
+_MOE_SEED_NAMES = ("RoutedExperts", "FusedMoE", "SharedFusedMoE")
 
-    0.28 calls it ``RoutedExperts``; older builds called it ``FusedMoE``.  A
-    missing name is not an error -- the tuple simply gets shorter, and the
-    name-based check below still catches it.
+
+def _moe_layer_classes() -> tuple:
+    """vLLM's routed-experts layer classes, derived from the module that owns them.
+
+    The union of the seed names above (tolerant imports -- whatever a build
+    renamed or moved, the object itself is what ``isinstance`` needs) and
+    every ``torch.nn.Module`` subclass the MoE module's namespace carries:
+    0.28 calls it ``RoutedExperts``, older builds called it ``FusedMoE``, and
+    whatever a later build adds is picked up without an edit here.  Two
+    exclusions, both load-bearing: ``torch.nn.Module`` itself (everything is
+    an instance of it) and ``LinearBase`` subclasses (a linear layer the
+    module merely imports belongs to the Linear branch, and matching it here
+    would refuse every declared Linear as an expert).
     """
-    classes = []
     try:
         from vllm.model_executor.layers import fused_moe as _moe
     except Exception:  # noqa: BLE001 -- a build without the MoE package
         return ()
-    for name in ("RoutedExperts", "FusedMoE"):
+    try:
+        from vllm.model_executor.layers.linear import LinearBase
+    except Exception:  # noqa: BLE001 -- unreachable where the gate runs
+        LinearBase = None  # type: ignore[assignment]
+    classes: list = []
+    for name in _MOE_SEED_NAMES:
         obj = getattr(_moe, name, None)
-        if isinstance(obj, type):
+        if isinstance(obj, type) and obj not in classes:
             classes.append(obj)
+    for name in dir(_moe):
+        obj = getattr(_moe, name, None)
+        if not isinstance(obj, type) or obj is torch.nn.Module or obj in classes:
+            continue
+        if not issubclass(obj, torch.nn.Module):
+            continue
+        if LinearBase is not None and issubclass(obj, LinearBase):
+            continue
+        classes.append(obj)
     return tuple(classes)
 
 
-_MOE_CLASS_NAMES = frozenset({"RoutedExperts", "FusedMoE", "SharedFusedMoE"})
+def _moe_class_names() -> frozenset:
+    """The names of the imported MoE layer classes, generated, not maintained.
+
+    Catches a subclass defined in another module that carries one of these
+    names (a version rename, a downstream subclass): the set follows the
+    imports above, so it cannot go stale beside them the way a hand-written
+    frozenset did.
+    """
+    return frozenset(c.__name__ for c in _moe_layer_classes())
+
+
+def _looks_like_moe_layer(layer: torch.nn.Module) -> bool:
+    """Fail-closed backstop for a renamed or moved MoE layer.
+
+    Neither the module scan nor the generated name set can know a class name
+    vLLM has not shipped yet; without this, such a layer is not a LinearBase
+    and control reaches ``return None`` -- vLLM's silent unquantized MoE
+    fallback, the outcome this branch exists to prevent.  A layer whose type
+    name says MoE or expert refuses instead.  Narrow on purpose: it fires on
+    layers (``torch.nn.Module`` instances) only, so the LM head, embeddings
+    and attention keep vLLM's own default, and an explicit ``ignore`` still
+    wins at the call site (a declared-BF16 expert stack is an answer, not a
+    fallback).
+    """
+    return isinstance(layer, torch.nn.Module) and (
+        "moe" in type(layer).__name__.lower() or "expert" in type(layer).__name__.lower())
 
 
 class TesseraConfig(QuantizationConfig):
@@ -280,7 +336,8 @@ class TesseraConfig(QuantizationConfig):
 
         moe_classes = _moe_layer_classes()
         if (moe_classes and isinstance(layer, moe_classes)) or \
-                type(layer).__name__ in _MOE_CLASS_NAMES:
+                type(layer).__name__ in _moe_class_names() or \
+                _looks_like_moe_layer(layer):
             if prefix in self.ignore:
                 # The checkpoint DECLARED these experts BF16 (the exporter names
                 # a passed-through expert stack in ``ignore``), so vLLM's own

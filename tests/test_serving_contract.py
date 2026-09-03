@@ -130,11 +130,16 @@ def test_the_file_is_reachable_through_importlib_resources():
 
 
 def test_three_families_and_what_each_one_attests(contract):
+    from tessera.serving.lane import MODES
+
     formats = {entry["family"]: entry for entry in contract["formats"]}
     assert sorted(formats) == ["TESSERA_BF16_K1", "TESSERA_E2M1_K2", "TESSERA_E4M3_K1"]
     for family, rungs in _FAMILY_RUNGS.items():
         assert formats[family]["attested_rungs_q256"] == rungs
-        assert formats[family]["residency_modes"] == ["resident", "streamed"]
+        # Derived from the tuple the serve gates on, not restated: a row may
+        # claim a subset (a family served in one residency only), never
+        # anything outside it -- and the validator enforces exactly that.
+        assert sorted(formats[family]["residency_modes"]) == sorted(MODES)
 
 
 def test_a_cell_exists_exactly_where_a_receipt_does(contract):

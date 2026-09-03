@@ -423,6 +423,30 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 "disagreed with it would price an A side the runtime does not execute.")
         if entry["kind"] != FORMAT_KIND:
             raise ValueError(f"{where}.kind must be {FORMAT_KIND!r}, got {entry['kind']!r}")
+        # The residency, where a gate can read it.  It belongs on the ROW and
+        # is checked against the tuple the serve gates on, exactly as
+        # ``loader_axes`` is checked against ``ROUTE_TP_AXES``: a row claiming
+        # a residency the build does not serve -- or inventing a mode, or a
+        # typo -- would otherwise validate green while letting a producer
+        # under-price or over-attest a residency.  Membership, not equality:
+        # a family served in one residency only is an honest row.
+        # Imported here rather than at module scope for the reason
+        # ``loader_axes`` gives: this module is read by a producer with no
+        # torch, and ``lane`` is torch-free, but keeping the contract
+        # reader's module-level dependencies to ``json`` is the property that
+        # keeps that true.
+        from .lane import MODES
+
+        modes = entry["residency_modes"]
+        if (not isinstance(modes, list) or not modes
+                or any(not isinstance(m, str) for m in modes)
+                or len(set(modes)) != len(modes)
+                or any(m not in MODES for m in modes)):
+            raise ValueError(
+                f"{where}.residency_modes must be the residencies this build serves: a "
+                f"non-empty list of distinct modes from {list(MODES)} "
+                "(tessera.serving.lane.MODES -- the set lane.serve_mode and "
+                f"build_tessera_method gate on). Got {modes!r}.")
         alias = entry.get("candidate_rungs_q256")
         if alias is not None and list(alias) != list(entry["attested_rungs_q256"]):
             raise ValueError(

@@ -555,13 +555,20 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
             "grid": unit.grid.name, "body": unit.body.name,
             "plane": unit.manifest.scale_plane.kind.name, "q256": root // unit.grid.arity,
             "rows": geometry.rows, "columns": geometry.columns,
+            # The sidecar carries no span field, so there is nothing to compare
+            # the wire's span against except the span the route itself reads:
+            # a span mismatch was refused nowhere until this comparison named
+            # it (neither this function nor validate_tessera_scheme checked
+            # it, and the prepare_* gates below did not either).
+            "span": int(unit.manifest.span),
         }
         # THIS ROLE's rung, not the module's: the sidecar carries one per role
         # (``FUSED_MODULE_FIELDS``), so the member the reader parsed is compared
         # against the rate the sidecar promised for THAT member.
         expected = {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
                     "q256": int(member_q256), "rows": member.rows,
-                    "columns": declared["columns"]}
+                    "columns": declared["columns"],
+                    "span": ROUTES[declared["family"]]["span"]}
         if actual != expected:
             raise ValueError(
                 f"tessera target {target!r} role {member.name!r}: the wire is {actual} but the "
