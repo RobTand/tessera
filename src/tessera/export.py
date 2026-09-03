@@ -158,6 +158,14 @@ DEFAULT_CHANNEL_SIGMA: "float | None" = None
 #: ``sigma`` and ``block`` are the pair the held-out weight-space sweep chose
 #: over {0.3, 1, 3, 10} x {32, 128}; ``"hessian"`` is the exact quadratic, not
 #: a diagonal power, because the row's true proxy loss has a closed form.
+#: The block half of that sweep has since been *derived*:
+#: ``compensate.block_penalty(H_reg, block)`` prices what a block costs
+#: against full feedback in closed form, and ``compensate.choose_ldl_block``
+#: picks the largest block inside a budget.  It says this 32 is a good default
+#: for GLM experts (b16 buys 0.17%) and a poor one for dense Qwen attention
+#: (b8 buys 7.3%), so a caller that holds an H should price its own block
+#: rather than inherit this constant.  The constant stays 32 because moving it
+#: is a quality-for-encode-time trade nobody has priced (tessera#60).
 DEFAULT_LDLQ_SIGMA = 1.0
 DEFAULT_LDLQ_BLOCK = 32
 
