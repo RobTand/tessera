@@ -322,9 +322,12 @@ def route_for_grid(grid: str) -> "str | None":
 
     Derived from ``ROUTES`` rather than written a second time: a grid reaches a
     route because that route lists it, and a build that gains a route gains its
-    grids here with no edit.  ``None`` is the honest answer for a grid Tessera
-    can ENCODE and this plugin has no decoder for -- ``BF16`` today, whose wire
-    exists (``tessera.bf16_route``) and whose route does not (#9).
+    grids here with no edit.  ``BF16`` maps to ``TESSERA_BF16`` since issue #9
+    (contract v5: the ``TESSERA_BF16_K1`` row, reader range [256, 4096],
+    attested rung 1792); the export gate (``refuse_unserveable_wire``) resolves
+    through this mapping.  ``None`` is the honest answer for a grid Tessera
+    can ENCODE and this plugin has no decoder for -- a grid no ``ROUTES``
+    entry lists.
     """
     for family, route in ROUTES.items():
         if grid in route["grids"]:
