@@ -689,6 +689,33 @@ def viterbi_window(
     return states, sse
 
 
+def require_s6b_row_groups(cols: int, group: int) -> None:
+    """``cols`` must be a whole number of ``group``-weight S6b groups.
+
+    SCALE_BASE carries one E8M0 word per ``group`` consecutive weights of a
+    row and no word for a row's remainder.  Cut from the flattened tensor,
+    as ``_pack_scales`` did until #57, a width with ``cols % group`` puts
+    the last ``cols % group`` weights of one row and the first ``group -
+    cols % group`` of the next under one base -- a group straddling the row
+    boundary, its exponent set by whichever row is larger, on every other
+    row of the unit.  The wire cannot say a partial group (a per-row plane
+    at such a width is ``rows * ceil(cols / group)`` words, which is a
+    different reader), so the writer refuses the width, the way
+    ``kernel._require_column_groups`` refuses a half the GEMV cannot reach:
+    a fact about the plane, not a preference about the shape.  No roster
+    Linear is this wide on a quantizable path and no shipped recipe selects
+    this plane, so today the refusal keeps a latent defect latent.
+    """
+    if group <= 0 or cols % group:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {group}-weight S6b scale "
+            "groups; SCALE_BASE has no word for a row's remainder, so the last "
+            f"{cols % group if group > 0 else cols} weights of every other row "
+            "would share a base with the row below it (a group straddling the "
+            "row boundary, #57)"
+        )
+
+
 def _pack_scales(
     weights: torch.Tensor, group: int, half: int, peak: float = 6.0,
     headroom: float = 1.0,
@@ -701,12 +728,23 @@ def _pack_scales(
     one octave -- S6b is explicit that arbitrary legal E4M3 pairs are therefore
     *not* representable, and that the cost of that restriction is arm 5's to
     measure.
+
+    Groups are ``group`` consecutive weights **of one row**, halves ``half``
+    consecutive weights of one row, row-major: group ``r * (cols // group) +
+    j`` is columns ``[j * group, (j + 1) * group)`` of row ``r``.  A width
+    that is not a whole number of groups is refused (``require_s6b_row_groups``);
+    at every width accepted this is the flattened cut byte for byte.
     """
-    flat = weights.reshape(-1)
-    groups = flat.reshape(-1, group)
-    halves = flat.reshape(-1, half)
-    amax_group = groups.abs().amax(dim=1).clamp_min(1e-30)
-    amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
+    if weights.dim() == 1:
+        weights = weights.unsqueeze(0)
+    if weights.dim() != 2:
+        raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
+    rows, cols = weights.shape
+    require_s6b_row_groups(cols, group)
+    groups = weights.reshape(rows, -1, group)
+    halves = weights.reshape(rows, -1, half)
+    amax_group = groups.abs().amax(dim=2).reshape(-1).clamp_min(1e-30)
+    amax_half = halves.abs().amax(dim=2).reshape(-1).clamp_min(1e-30)
 
     # Base: the po2 that puts the group's amax at the top of the payload grid's
     # range -- 6.0 for E2M1, 448.0 for E4M3.  Scaling to the wrong peak wastes
@@ -795,6 +833,11 @@ def _refit_scales(
     and not a wire change.
     """
     per_group = group // half
+    # ``desired.reshape(-1, per_group)`` below pairs consecutive halves into
+    # groups.  Those are one row's consecutive halves -- the groups
+    # ``_pack_scales`` cut -- exactly because the width is a whole number of
+    # groups; at any other width the pairing would straddle rows (#57).
+    require_s6b_row_groups(int(work.shape[-1]), group)
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
     A = (U * U).sum(dim=1)

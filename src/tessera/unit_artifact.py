@@ -36,7 +36,7 @@ from .grammar import (
 )
 from .container import parse, serialize
 from .decode import reconstruct_unit
-from .encode import EncodedUnit
+from .encode import EncodedUnit, require_s6b_row_groups
 from .errors import GrammarError
 from .layout import TerminalSpec, build_plane_region, build_planes, build_terminal
 from .manifest import (
@@ -242,6 +242,18 @@ def build_unit_artifact(
             raise GrammarError("a CHANNEL scale plane carries no block-scale words")
         scale_plane = ScalePlane.channel(unit.scale_global)
     else:
+        # One E8M0 word per ``group`` weights of a row and none for a row's
+        # remainder: a width that is not a whole number of groups has no
+        # per-row plane on this wire, and the flat plane the encoder used to
+        # write there straddled rows (#57).  Refuse at the writer so the
+        # defect stays latent; the reader is unchanged.
+        require_s6b_row_groups(cols, int(unit.group))
+        if unit.scale_base.numel() != rows * cols // int(unit.group):
+            raise GrammarError(
+                f"an S6b scale plane carries one base word per {unit.group}-weight "
+                f"row group, {rows * cols // int(unit.group)} for this unit; "
+                f"got {unit.scale_base.numel()}"
+            )
         scale_plane = ScalePlane.s6b()
     # The depth the encoder *used*, not the depth the rate leaves room for.
     # Sizing this plane from the rate alone wrote a full-width, all-zero plane

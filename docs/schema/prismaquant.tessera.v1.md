@@ -464,6 +464,16 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 | SCALE_REFINE | 16-weight half | 4 |
 | RELEASE | released position | 4 |
 
+A group is `group_weights` consecutive weights **of one output row**, a half
+`half_weights` consecutive weights of one row, both row-major; there is no word
+for a row's remainder, so a writer refuses an S6b unit whose `columns` is not a
+whole number of `group_weights` (`encode.require_s6b_row_groups`, applied by
+`_pack_scales`, `_refit_scales` and `unit_artifact.build_unit_artifact`).
+Until #57 the encoder cut groups from the flattened tensor, which at
+`columns % group_weights == group_weights / 2` put one group per pair of rows
+across the row boundary; at every width the writer accepts the two cuts are the
+same bytes, and the reader (`wire.scales_from_planes`) is unchanged.
+
 ## 3b. Plane metadata that is derivable is also constrained
 
 Two descriptor fields are functions of others and must agree with what they are
