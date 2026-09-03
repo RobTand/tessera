@@ -474,10 +474,21 @@ Under `/home/rob/tessera-runs/ts83/`:
 - `census-<arm>-<mode>-<regime>.json` + `.log` — the six censuses.
 - `preflight/` — the two master-commit resident censuses, excluded from the set.
 - `kl_tessera_ts83-<arm>-streamed-<regime>.json` — the KL receipts.
-- `latency-<arm>-<mode>-<regime>.json` + `prof-<arm>-<mode>-<regime>/` — the
-  engine histograms and the chrome traces.
+- `latency-<arm>-<mode>-<regime>.json` — the engine histograms. The paired
+  `prof-<arm>-<mode>-<regime>/` directories exist and are **empty**: no trace was
+  captured, for the reason given in §4. They are left in place rather than
+  deleted so the gap is visible where a reader goes looking for it.
 - `power-baseline.json` — the idle series above.
+- `campaign.log`, `gapfill.log` — the run logs, including every arm that failed
+  and why.
 - `pytest-after.txt` — the suite line.
+
+The logprob dumps the bit-identical comparison is computed from are **not** under
+that directory — they are `/mnt/shared/tessera-kl/qwen_tessera_ts83-<arm>-streamed-<regime>.json.npz`,
+beside the teacher `qwen_teacher_bf16_v028.json.npz` and each dump's
+`.meta.json` (corpus sha, tokenizer identity) and `.build.json` (which compiled
+build served it). The comparison is two `numpy` loads and an `!=` count; it is
+reproducible from those files alone, without a serve.
 
 Drivers, in the worktree: `experiments/window_gemv_served.sh` (census + KL),
 `experiments/window_gemv_latency.sh` (profiled latency serve),
