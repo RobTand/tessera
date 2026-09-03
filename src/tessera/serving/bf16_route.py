@@ -97,6 +97,7 @@ from .window import PreparedWindow, prepare_window
 __all__ = [
     "ACTIVATION_CONTRACT",
     "GEMM_SYMBOL",
+    "STREAMED_APPLY_OP",
     "GEMV_MODULE_NAME",
     "GEMV_SYMBOL",
     "GEMV_MAX_M",
