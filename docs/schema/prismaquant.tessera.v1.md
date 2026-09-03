@@ -456,7 +456,7 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 
 | Plane | Element | Bits |
 |---|---|---|
-| ALPHABET / DESCENDANT | grid code | 8, or 16 on a grid wider than a byte (§1e) |
+| ALPHABET / DESCENDANT | grid code | 8 (byte count; a two-byte grid code is two elements -- §1e) |
 | BODY | bit | 1 (count = Σ_col R·rows) |
 | SCALE_BASE | 32-weight group | 8 (E8M0) |
 | COMPLETION | bit | 1 (count = Σ_col c·rows) |
