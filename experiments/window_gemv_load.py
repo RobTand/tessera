@@ -92,18 +92,35 @@ def delta(before: dict, after: dict, stem: str):
     return {"mean_s": s / n, "sum_s": s, "count": n}
 
 
-def completion(prompt_tokens: int, max_tokens: int) -> dict:
-    # A token-id prompt, so "512 tokens" is 512 tokens and not a tokenizer's
-    # opinion of a string.
-    ids = [(i * 7919) % 100000 + 1000 for i in range(prompt_tokens)]
+def completion(prompt_tokens: int, max_tokens: int, req: int) -> dict:
+    """One request's body.  Token ids, so "512 tokens" is 512 tokens and not a
+    tokenizer's opinion of a string.
+
+    EVERY REQUEST GETS ITS OWN PROMPT, and that is load-bearing rather than
+    tidy.  The serve runs with vLLM's default ``enable_prefix_caching=True``,
+    so a repeated prompt is a prefix-cache HIT: the many-row forward never
+    runs and a "prefill" window would time a cache lookup instead of the
+    materialised path this A/B exists to compare.  Perturbing the ids per
+    request is the fix that keeps the serve's configuration identical to the
+    KL serve's -- turning prefix caching off would make the latency arm a
+    different serve from the one whose KL is reported.
+    """
+    ids = [(i * 7919 + 104729 * (req + 1)) % 100000 + 1000 for i in range(prompt_tokens)]
     return {"model": "kl-target", "prompt": ids, "max_tokens": max_tokens,
             "temperature": 0.0, "stream": False}
 
 
+#: Monotonic across the whole run, so no two requests anywhere in it -- warmup,
+#: timed windows, profiled load -- share a prompt.
+_REQ = 0
+
+
 def drive(url: str, n: int, prompt_tokens: int, max_tokens: int) -> dict:
+    global _REQ
     t0 = time.time()
     for _ in range(n):
-        _post(url + "/v1/completions", completion(prompt_tokens, max_tokens))
+        _REQ += 1
+        _post(url + "/v1/completions", completion(prompt_tokens, max_tokens, _REQ))
     wall = time.time() - t0
     return {"requests": n, "prompt_tokens": prompt_tokens, "max_tokens": max_tokens,
             "wall_s": wall, "wall_s_per_request": wall / n}
