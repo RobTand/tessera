@@ -7,8 +7,9 @@ outlier input channels carry h_j hundreds of times the median.  This scores
 every arm on that proxy, from a BF16 forward over held-out-disjoint text.
 """
 import json, sys, torch
+from pathlib import Path
 from safetensors import safe_open
-sys.path.insert(0, "/home/rob/tessera/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.stock import stock_dequant
 from transformers import AutoModelForCausalLM, AutoTokenizer
 

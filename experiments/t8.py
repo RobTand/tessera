@@ -3,7 +3,9 @@
 Both arms carry the identical S6b scale plane (E8M0/32 + 4-bit refine/16, 0.5
 bpp) scaled to E4M3's peak, so the only difference measured is the payload:
 p trellis bits against 8 scalar bits."""
-import sys, glob, itertools, torch; sys.path.insert(0,"/home/rob/tessera/src")
+import sys, glob, itertools, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, E4M3_GRID, E2M1_GRID
 from tessera.encode import encode_unit, _pack_scales

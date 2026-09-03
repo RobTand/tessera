@@ -5,7 +5,9 @@ arms differ only in what they store.  Block shapes are swept rather than
 reasoned about: the last time a coalescing argument picked them it was wrong
 by 2.7x in the direction it predicted was better.
 """
-import sys, time, torch; sys.path.insert(0, "/home/rob/tessera/src")
+import sys, time, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.alphabet import build_forest, tuple_grid, lloyd_max_grid, E2M1_GRID
 from tessera.encode import encode_unit
 from tessera.decode import decode_codes_mixed, materialize_nvfp4, reconstruct_unit

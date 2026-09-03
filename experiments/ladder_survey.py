@@ -6,7 +6,9 @@ kernel for, so it is the one that has to hold on tensors it was not tuned on.
 Two models, several roles, kurtosis reported because that is what should
 predict where a Gaussian-fit grid stops working.
 """
-import sys, glob, torch; sys.path.insert(0, "/home/rob/tessera/src")
+import sys, glob, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, tuple_grid, lloyd_max_grid, E2M1_GRID
 from tessera.encode import encode_unit, _pack_scales

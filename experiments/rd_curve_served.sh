@@ -24,7 +24,7 @@ SRC=/home/rob/models/Qwen3-0.6B
 EXPORTS=/mnt/shared/tessera-exports
 KLDIR=/mnt/shared/tessera-kl
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
-export PYTHONPATH=/home/rob/tessera/src
+export PYTHONPATH="$(dirname "$0")/../src"
 export TRITON_CACHE_DIR=/home/rob/.claude/jobs/033fd976/tmp/triton
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 

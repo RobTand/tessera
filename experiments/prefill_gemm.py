@@ -16,7 +16,9 @@ reference point, not a matched arm.  Both swept arms now carry a value check on
 their winning config -- the nvfp4 arm did not, and spent its whole life reading
 the transpose of its own weights.
 """
-import sys, torch, triton, triton.language as tl; sys.path.insert(0, "/home/rob/tessera/src")
+import sys, torch, triton, triton.language as tl
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.alphabet import build_forest
 from tessera.encode import encode_unit
 from tessera.decode import reconstruct_unit, decode_codes, materialize_nvfp4

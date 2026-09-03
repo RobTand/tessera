@@ -1,4 +1,6 @@
-import sys, time, itertools, torch; sys.path.insert(0,"/home/rob/tessera/src")
+import sys, time, itertools, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.alphabet import build_forest
 from tessera.encode import encode_unit
 from tessera.decode import reconstruct_unit, decode_codes_mixed, materialize_nvfp4

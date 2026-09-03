@@ -13,7 +13,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "/home/rob/tessera/.claude/worktrees/agent-a6d34c0d5bba700a6/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 import torch
 from safetensors import safe_open
 from tessera.alphabet import E4M3_GRID

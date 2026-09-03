@@ -3,7 +3,9 @@ bits and E4M3's 256 codes are spread over 2^-9..448, so neither grid is matched
 to a Gaussian there.  Both constraints exist only so the STOCK lane can
 materialise into a hardware format.  The kernel lane reads an arbitrary value
 LUT, so ask what a grid matched to the source is worth."""
-import sys, glob, torch; sys.path.insert(0,"/home/rob/tessera/src")
+import sys, glob, torch
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from safetensors import safe_open
 from tessera.alphabet import build_forest, PayloadGrid, E4M3_GRID, E2M1_GRID, GAUSSIAN_SOURCE
 from tessera.encode import encode_unit, _pack_scales

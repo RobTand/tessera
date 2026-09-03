@@ -14,7 +14,7 @@ import pickle
 import sys
 
 sys.path.insert(0, "/home/rob/pq-wt/tessera-continuous")
-sys.path.insert(0, "/home/rob/tessera/.claude/worktrees/agent-a6d34c0d5bba700a6/src")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "src"))
 
 from prismaquant.tessera_campaign import (
     _calibration_tokens, _collect_activations, _measure_anchor)

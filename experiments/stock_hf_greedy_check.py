@@ -1,8 +1,9 @@
 """Greedy completion with the checkpoint's DEQUANTISED weights in HF (W16A16-equivalent):
 separates 'the weights are bad for this prompt' from 'the served path is bad'."""
 import sys, torch
+from pathlib import Path
 from safetensors import safe_open
-sys.path.insert(0, "/home/rob/tessera/src")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.stock import stock_dequant
 from transformers import AutoModelForCausalLM, AutoTokenizer
 SRC = "/home/rob/models/Qwen3-0.6B"

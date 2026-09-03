@@ -6,7 +6,8 @@ exactly the same construction one level up: 2^(7+1) alphabet, 7 bits spent,
 one bit of redundancy -> 3.5 bits/position with coding gain intact.
 """
 import torch, sys
-sys.path.insert(0,"/home/rob/tessera/src")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.alphabet import build_forest, value_order, E2M1_VALUES
 from tessera.encode import encode_unit, _pack_scales, e2m1_value_table
 from tessera.decode import decode_codes, dequantize

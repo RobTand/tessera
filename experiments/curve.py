@@ -5,7 +5,8 @@ A k-tuple's squared error is additive over its positions, and the subset is
 over k positions with 16 branches each -- no 16^k alphabet is ever built.
 """
 import torch, sys, os, math
-sys.path.insert(0,"/home/rob/tessera/src")
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.alphabet import value_order
 from tessera.encode import _pack_scales, e2m1_value_table
 from tessera.trellis import ConvCode
