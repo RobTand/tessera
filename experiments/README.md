@@ -13,6 +13,7 @@ code has been deleted is not a reproducible result.
 | `loadcost.py`, `bw.py` | `nvfp4-kernel-attestation.md` — decode cost, and the box's achievable bandwidth |
 | `rotfull.py` | `rotation-decision.md` — the full-tensor re-measurement |
 | `uniform_control.py` | `tessera-allocated-served-2026-09-02.md` §4 and §7 — the byte-matched uniform arm, and the verdict against it |
+| `tessera_dominated_rungs.py` | `tessera-dominated-rungs-2026-09-02.md` — the dominated-rung table, the accountant-vs-exporter identity, and the both-axes quality leg |
 
 They expect `PYTHONPATH=src` and a writable `TRITON_CACHE_DIR`. They read
 Qwen3.8-27B from the local HF cache and are not hermetic.

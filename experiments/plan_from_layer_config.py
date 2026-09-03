@@ -230,7 +230,7 @@ def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
 
     It records rather than refuses: the converter's job is to write the plan it
     was given, and a plan whose control cannot be byte-matched (two families,
-    or the 0.239-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
+    or the 0.241-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
     must never do is stay silent about it, so the reason lands in the block.
     ``experiments/uniform_control.py`` is where the match is *asserted*, because
     that is where the arm you would actually build gets written.

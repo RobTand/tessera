@@ -281,17 +281,22 @@ def test_the_bracket_says_whether_the_axis_or_the_search_owns_the_slack():
 
 
 def test_the_e2m1x2_coset_cap_is_a_hole_the_control_reports_rather_than_papers_over():
-    """R895 -> R896 jumps 0.239 bpp, and no control lands inside it.
+    """R895 -> R896 jumps 0.241 bpp, and no control lands inside it.
 
     ``wire_recipe`` changes body and plane at the coset cap, so the axis is
     dense on one side of 896 and stops on the other.  A candidate sitting in
     that gap has no byte-matched uniform arm, and saying so is the honest
     answer; silently taking the nearest rung would compare two byte budgets.
+
+    The figure was 0.23932 until 2026-09-02, when the accountant started
+    charging the TCQ forest the cap rung carries and the window rung below it
+    does not (issue #43): 512 B per unit on the *upper* side of the hole, so
+    the hole is wider than it was reported, not narrower.
     """
     below = sum(unit_wire_bits("E2M1x2", 895, r, c) * n for (r, c), n in QWEN_MULTISET.items())
     at_cap = sum(unit_wire_bits("E2M1x2", 896, r, c) * n for (r, c), n in QWEN_MULTISET.items())
     gap = Fraction(at_cap - below, QWEN_PARAMS)
-    assert float(gap) == pytest.approx(0.23932, abs=1e-5)
+    assert float(gap) == pytest.approx(0.24115, abs=1e-5)
     midpoint = [PlannedUnit(f"m{i}.weight", "E2M1x2", 896, r, c)
                 for i, ((r, c), n) in enumerate(QWEN_MULTISET.items()) for _ in range(n)]
     # a candidate in the hole: take the cap plan and shave it toward R895
@@ -308,13 +313,16 @@ def test_the_e2m1x2_coset_cap_is_a_hole_the_control_reports_rather_than_papers_o
 
 
 def test_wire_bits_rise_with_the_rung_on_every_grid():
-    """A PIN, not a proof: today's recipe table is monotone in the rung.
+    """A PIN, not a proof: monotone in the rung *at this shape*.
 
-    ``uniform_control`` ranks by bits and not by rung precisely so that this
-    can stop being true -- ``wire_recipe`` picks body and plane per rung, and a
-    boundary that moved could invert the two orders.  Recorded here so a future
-    inversion is a visible change rather than a silent one.  Passes on master
-    and on this branch alike.
+    ``uniform_control`` ranks by bits and not by rung precisely because the two
+    orders are not the same order -- ``wire_recipe`` picks body and plane per
+    rung, and below the E2M1x2 coset cap the window table's 4096 bytes beat the
+    forest's 512 only once the unit is large enough to amortise them.  At the
+    1024x3072 swept here they are amortised and the rung order holds; at 64x512
+    it inverts over 160 rungs (``tests/test_rate_menu.py``, issue tessera#43).
+    Recorded here so a future inversion *at production shape* is a visible
+    change rather than a silent one.
     """
     for name in ("E2M1", "E2M1x2", "E4M3", "BF16"):
         grid = grid_for_name(name)
@@ -361,7 +369,17 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     for each; this module prices a handful through the layout itself.  Two
     accountants for one wire is the bug that overcharged Tessera 6.25% on the
     DP and the byte gate, so they are pinned together rather than trusted.
+
+    One term is allowed to differ, and only one: a **TCQ** body's ALPHABET and
+    DESCENDANT planes.  This side started charging them on 2026-09-02 (issue
+    #43) because ``encode_linear`` writes them; PrismaQuant does not yet
+    (RobTand/prismaquant#126).  So the assertion is "equal, or light by exactly
+    the forest", which passes on both sides of that fix and still catches any
+    other drift.  A window body has no forest and must agree exactly.
     """
+    from tessera.grammar import bresenham_rate_schedule, forest_plane_bytes, root_from_q256
+    from tessera.manifest import BodyKind
+    from tessera.export import wire_recipe
     import sys
     tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
     if tree is None:
@@ -382,7 +400,15 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
         for q in (256, ceiling // 2, ceiling):
             mine = unit_wire_bits(grid_name, q, rows, columns)
             theirs = Fraction(artifact_bpp(family, q, shape=shape)) * rows * columns
-            assert mine == theirs, (grid_name, q, shape, mine, theirs)
+            grid = grid_for_name(grid_name)
+            if BodyKind(wire_recipe(grid, q).body) is BodyKind.TCQ:
+                rates = bresenham_rate_schedule(
+                    root_from_q256(q * grid.arity), columns, grid.rate_cap
+                )
+                forest = 8 * sum(forest_plane_bytes(rates, grid.rate_cap))
+            else:
+                forest = 0
+            assert theirs in (mine, mine - forest), (grid_name, q, shape, mine, theirs)
             checked += 1
     assert checked == 9
 

@@ -565,6 +565,18 @@ Three things the promotion changed rather than copied:
 * **The axis has a hole.** E2M1x2 jumps 0.239 bpp between R895 and R896, where
   the recipe leaves the window body for the coset trellis, so a candidate
   inside that gap has **no** byte-matched uniform arm on its own family. The
+
+  > **Corrected 2026-09-02 (issue #43): the figure is 0.241 bpp, and the hole
+  > is a step in a non-monotone axis, not a gap in a rising one.** 0.239 was
+  > read off an accountant that charged nothing for a TCQ body's
+  > ALPHABET/DESCENDANT planes -- 512 B per unit, on the *upper* side of the
+  > hole, so the true step is wider. And on a unit small enough for the window
+  > body's 4096-byte table to matter, R896 weighs *less* than R895: at 96x768
+  > by 0.1350 bpp, and 35 of 769 rungs there are matched or beaten by a higher
+  > rung. `tessera.control.rate_menu` prices and screens that; nothing in this
+  > receipt's E4M3 arms is affected.
+
+  The
   E4M3 arms of this receipt are nowhere near it; a future E2M1x2 allocation
   could be, and it now refuses instead of comparing two byte budgets.
 * **The record travels with the plan.** `plan_from_layer_config.py` prices the
