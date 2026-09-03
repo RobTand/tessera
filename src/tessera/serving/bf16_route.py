@@ -55,12 +55,17 @@ path, the tile a stock GEMM consumes with no decoder in the serve.
 decodes each forward into a transient tile the op owns.  That is the mode the
 family is a product in.
 
-WHAT IS NOT ATTESTED.  No ``lane_eligibility`` cell in this package's
-``runtime_contract.json`` names ``TESSERA_BF16``, because no container receipt
-covers it yet: there is no served census and no served KL against the twin the
-exporter writes.  Absence resolves ``unattested``, which is the honest status
-and not a refusal (principle 14).  A cell is added when a receipt exists, not
-when this module does.
+WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json`` v4
+publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
+``sm_121`` dense cells (``decode`` and ``batch``), because a container receipt
+covers exactly that: four route censuses on the pinned image -- both residency
+modes crossed with the eager and the compiled forward -- each recording all 112
+declared modules on this route in both the prefill and the decode shape, plus a
+served KL in both modes against the folded twin vanilla vLLM serves.  Nothing
+else is attested: one rung, one platform, dense structure only, no routed-MoE
+cell and no TP above world size 1.  A cell is added when a receipt exists, not
+when this module does; the receipt is
+``docs/measurements/tessera-bf16-route-served-2026-09-02.md``.
 """
 from __future__ import annotations
 
@@ -76,12 +81,14 @@ from .window import PreparedWindow, prepare_window
 
 __all__ = [
     "ACTIVATION_CONTRACT",
+    "GEMM_SYMBOL",
     "PreparedTesseraBf16Module",
     "prepare_tessera_bf16_module",
     "build_tessera_bf16_method",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_BF16]["activation_contract"]
+GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 _GRID = "BF16"
 
 
@@ -324,7 +331,7 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_BF16}:{layer.tessera_mode}",
-                    symbol="torch.mm", tile_m=0,
+                    symbol=GEMM_SYMBOL, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder,

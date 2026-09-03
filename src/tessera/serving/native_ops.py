@@ -1,7 +1,9 @@
 """Fail-closed bindings to the compiled quantization ops vLLM already ships.
 
-The two routes quantize their activations with vLLM's own registered CUDA
-operators and multiply with ``torch._scaled_mm``.  Nothing here is a Tessera
+The two routes with a quantized A side -- ``TESSERA_NVFP4`` (W4A4) and
+``TESSERA_FP8`` (W8A8); ``TESSERA_BF16`` is W16A16 and reaches none of this --
+quantize their activations with vLLM's own registered CUDA operators and
+multiply with ``torch._scaled_mm``.  Nothing here is a Tessera
 kernel: the plugin's only native code is the weight DECODER (``ext.py``), and
 the arithmetic that reaches the tensor cores is the arithmetic the stock
 compressed-tensors schemes run on this box.  That is what makes a Tessera serve

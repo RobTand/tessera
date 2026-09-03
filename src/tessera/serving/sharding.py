@@ -32,10 +32,11 @@ would serve correct logits at N times the intended memory and look merely
 disappointing.
 
 WHAT THE CUT DOES NOT YET REACH is downstream of this module and refuses on its
-own terms: a ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and of the
-two families only the window body threads a start state through its pad
-(``lane_planes.pack_window_planes``).  The span-2 TCQ packer refuses such a unit
-by name (``pack_unit_for_kernel``), so the NVFP4 route serves column cuts
+own terms: a ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and only the
+window body threads a start state through its pad
+(``lane_planes.pack_window_planes``) -- which the E4M3 and BF16 families ship
+and the span-2 TCQ body does not.  The span-2 packer refuses such a unit by
+name (``pack_unit_for_kernel``), so the NVFP4 route serves column cuts
 (RowParallel) at any TP and row cuts only on rank 0.  That is a decoder gap, not
 a seam gap, and it is loud where it bites.
 
@@ -355,7 +356,7 @@ def shard_parsed_roles(parsed_roles, plan: ShardPlan):
     axis there is one role and the whole of it is cut.
 
     What comes back is a list of ``ParsedUnit``s again -- re-derived from the
-    shard's own bytes -- because that is what both routes' ``prepare_*_module``
+    shard's own bytes -- because that is what every route's ``prepare_*_module``
     consume, and because a shard's planes are its own.
     """
     if plan.is_whole or plan.axis is None:

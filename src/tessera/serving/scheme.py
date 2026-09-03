@@ -96,8 +96,12 @@ STRUCTURES = (STRUCTURE_DENSE,)
 #: 1 or 2 over the E2M1 base) over the LUT plane the tile's ue4m3 block scales
 #: come from.  FP8: the scalar E4M3 grid over the CHANNEL plane the tile's
 #: per-row fp32 scale comes from.  ``tile`` is the stock tensor the route
-#: decodes to, ``columns_multiple`` the K quantum its mainloop needs, and
-#: ``activation_contract`` what it executes on the A side.
+#: decodes to, ``columns_multiple`` the K quantum its mainloop needs,
+#: ``activation_contract`` what it executes on the A side, and ``gemm_symbol``
+#: the callable it actually invokes -- the route module stamps that field on
+#: every route record and the census compares against the same field, so
+#: "which GEMM ran" has one spelling and adding a route that calls something
+#: else cannot silently read as a refusal.
 ROUTES: dict[str, dict] = {
     TESSERA_NVFP4: {
         "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
@@ -107,6 +111,7 @@ ROUTES: dict[str, dict] = {
         "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
         "columns_multiple": 16,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
@@ -116,6 +121,7 @@ ROUTES: dict[str, dict] = {
         "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
         "columns_multiple": 16,
         "activation_contract": FP8_ACTIVATION_CONTRACT,
+        "gemm_symbol": "torch._scaled_mm",
     },
     TESSERA_BF16: {
         "grids": ("BF16",), "plane": "CHANNEL",
@@ -130,6 +136,10 @@ ROUTES: dict[str, dict] = {
         # this route serves.
         "columns_multiple": 1,
         "activation_contract": BF16_ACTIVATION_CONTRACT,
+        # NOT ``torch._scaled_mm``: there is no scale to hand a scaled GEMM.
+        # The row scale is an fp32 epilogue, so this route calls the stock
+        # matmul and says so.
+        "gemm_symbol": "torch.mm",
     },
 }
 

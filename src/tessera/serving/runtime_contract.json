@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 3,
+ "contract_version": 4,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -76,13 +76,17 @@
    ],
    "reader_rate_step_q256": 1,
    "reader_rate_bound": "trellis_shaped_domain",
-   "attested_rungs_q256": [],
+   "attested_rungs_q256": [
+    1792
+   ],
    "native_terminal_q256": 4096,
    "residency_modes": [
     "resident",
     "streamed"
    ],
-   "candidate_rungs_q256": []
+   "candidate_rungs_q256": [
+    1792
+   ]
   }
  ],
  "lane_eligibility": {
@@ -174,6 +178,42 @@
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
     "predicates": []
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_decode_mm_w16a16",
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     1792
+    ],
+    "activation_contract": "bf16_unquantized",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_batch_mm_w16a16",
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     1792
+    ],
+    "activation_contract": "bf16_unquantized",
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": []
    }
   ]
  },
@@ -204,6 +244,11 @@
   "units": []
  },
  "changelog": [
+  {
+   "contract_version": 4,
+   "date": "2026-09-02",
+   "change": "TESSERA_BF16_K1 stops being unattested: attested_rungs_q256 [1792] (R=7, the rung the receipt served) and two sm_121 dense cells, decode and batch, both bf16_unquantized on torch.mm with the row scale as an fp32 epilogue. The receipt is docs/measurements/tessera-bf16-route-served-2026-09-02.md: four route censuses on the pinned image -- resident/eager, resident/compiled, streamed/eager, streamed/compiled -- each recording all 112 declared modules on the TESSERA_BF16 route with decoder torch_window in BOTH the prefill and the decode shape and zero problems, plus a served KL-vs-BF16 in both residency modes on the Qwen-tokenized n=8 x 512 corpus against the image-matched teacher, with the folded stock twin on vanilla vLLM as the control. route_status is backed_with_serve_flag because the residency is selected by TESSERA_SERVE_MODE and both values were served; qualification is device_qualified because the censuses ran on this GB10 (sm_121, capability [12, 1]), not on a table. Nothing wider is attested: one rung, one platform, dense structure only, no routed-MoE cell, and tensor_parallel.units still caps this family at max_world_size 1."
+  },
   {
    "contract_version": 3,
    "date": "2026-09-02",

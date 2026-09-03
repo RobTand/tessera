@@ -54,6 +54,7 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
+GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 _GRID = "E4M3"
 
 
@@ -272,7 +273,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",
-                    symbol="torch._scaled_mm", tile_m=0,
+                    symbol=GEMM_SYMBOL, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder,

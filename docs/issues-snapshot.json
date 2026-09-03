@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T00:41:06Z",
+ "generated": "2026-09-03T02:47:11Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -11,9 +11,41 @@
     "state": "OPEN",
     "title": "The allocator's cost cannot rank rungs of one format at matched bytes: Tessera menu ships 2.00x worse than uniform"
    },
+   "118": {
+    "state": "OPEN",
+    "title": "trellis_*: 168 KB of allocator machinery for the retired gridbook.trellis.wire.v1, superseded by tessera_* and refused at both seams"
+   },
+   "119": {
+    "state": "OPEN",
+    "title": "Tessera lane: the declared gates are named but never run, and the arm depends on two experiments/ scripts"
+   },
    "12": {
     "state": "OPEN",
     "title": "MiniMax M3 support"
+   },
+   "120": {
+    "state": "OPEN",
+    "title": "check_serving_shape fails OPEN on an unknown profile id while serving_lane_route fails closed: a typo turns a shape refusal into an admission"
+   },
+   "121": {
+    "state": "OPEN",
+    "title": "Shipcard: carry the byte-matched uniform control's verdict beside the bpp"
+   },
+   "122": {
+    "state": "OPEN",
+    "title": "Stale Tessera DEV pin: 7 of test_tessera_menu.py red on master because the contract moved to v2"
+   },
+   "123": {
+    "state": "OPEN",
+    "title": "D34 residue: 111 undated Gridbook mentions in 41 module docstrings, and the one that misstates a capability"
+   },
+   "124": {
+    "state": "OPEN",
+    "title": "The Tessera dev pin is a contract version behind, and nothing notices"
+   },
+   "125": {
+    "state": "OPEN",
+    "title": "build_candidates(cost_mode=) is a dead kwarg after the trellis surface was archived"
    },
    "19": {
     "state": "CLOSED",
@@ -154,16 +186,100 @@
     "title": "Documentation drift found by the math audit (Tier C)"
    },
    "26": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
+   },
+   "27": {
+    "state": "OPEN",
+    "title": "Release quota over a partial superblock is equal-count, not width-proportional"
+   },
+   "28": {
+    "state": "OPEN",
+    "title": "runtime_contract.json does not publish the plugin CUDA extension basenames a serve fingerprint must match"
+   },
+   "29": {
+    "state": "OPEN",
+    "title": "computation_graph.py records different vllm_ir overloads across builds of one cache key"
    },
    "3": {
     "state": "OPEN",
     "title": "Standing gate: a byte-matched uniform arm beside every rate-axis candidate"
    },
+   "30": {
+    "state": "OPEN",
+    "title": "Measurement runs do not record which compiled build served, and the determinism knob is untested"
+   },
+   "31": {
+    "state": "OPEN",
+    "title": "serving/config.py's MoE refusal recommends a flag the pinned build refuses"
+   },
+   "32": {
+    "state": "OPEN",
+    "title": "plan_shard refuses replicated-KV QKV under GQA when tp_size > num_kv_heads"
+   },
+   "33": {
+    "state": "CLOSED",
+    "title": "CanonicalEncodingError on a non-dyadic global_scale names the varint domain, not the scale"
+   },
+   "34": {
+    "state": "OPEN",
+    "title": "Audit leftovers the Tier C pass documented rather than fixed"
+   },
+   "35": {
+    "state": "OPEN",
+    "title": "LUT-plane block-scale refit: try a Gauss-Seidel sweep, the one untried optimiser on the 4-bit weight leg"
+   },
+   "36": {
+    "state": "OPEN",
+    "title": "E4M3 channel_sigma sits on a one-sided reach cliff, and the dyadic ladder cannot see the axis that matters"
+   },
+   "37": {
+    "state": "OPEN",
+    "title": "The default group knapsack allocates per-member rungs the Tessera exporter refuses"
+   },
+   "38": {
+    "state": "OPEN",
+    "title": "PrismaQuant's Tessera dev pin re-stales on every contract edit: attested path dead, 7 tests red"
+   },
+   "39": {
+    "state": "OPEN",
+    "title": "The byte baseline is blind to every condition the CHANNEL fixes touch"
+   },
    "4": {
     "state": "OPEN",
     "title": "Design a cost that ranks rungs of one format at matched bytes"
+   },
+   "40": {
+    "state": "CLOSED",
+    "title": "loadcost.py truncates to a multiple of 256 before measuring, so no published load figure covers the partial-superblock shape"
+   },
+   "41": {
+    "state": "OPEN",
+    "title": "The encoder can write two wires the serving plugin publishes no decodable range for"
+   },
+   "42": {
+    "state": "OPEN",
+    "title": "The window GEMV needs an A-side decision before it can be wired into a route"
+   },
+   "43": {
+    "state": "OPEN",
+    "title": "The q256 rate axis is not monotone in bits at the E2M1x2 cap, and small units carry up to 209 dominated rungs"
+   },
+   "44": {
+    "state": "OPEN",
+    "title": "Load cost over a trailing partial superblock has never been measured"
+   },
+   "45": {
+    "state": "OPEN",
+    "title": "The fold the BF16 route exists to avoid is below served resolution at R=7"
+   },
+   "46": {
+    "state": "OPEN",
+    "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
+   },
+   "47": {
+    "state": "OPEN",
+    "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
    },
    "5": {
     "state": "OPEN",

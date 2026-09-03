@@ -366,6 +366,30 @@ def test_every_route_names_the_builder_that_serves_it():
         assert callable(getattr(import_module(module_name), builder_name)), family
 
 
+def test_every_route_declares_the_gemm_it_invokes():
+    """The record a route writes and the census's expectation are ONE field.
+
+    The census refused all 112 modules of the BF16 route on its first served
+    run with ``symbol='torch.mm'``: it compared against the literal
+    ``"torch._scaled_mm"``, correct for the two routes that existed when it was
+    written and wrong for the first route that calls anything else.  A literal
+    in the checker is a second place to remember, and the failure it produces
+    reads like a broken route rather than a missing entry.  So the route table
+    owns the symbol, the route module stamps that field, and the census reads
+    the same one.
+    """
+    from importlib import import_module
+    from tessera.serving import scheme
+    for family, route in scheme.ROUTES.items():
+        symbol = route.get("gemm_symbol")
+        assert symbol, f"{family} does not declare the GEMM it invokes"
+        module_name = route["builder"][0]
+        module = import_module(module_name)
+        assert module.GEMM_SYMBOL == symbol, (
+            f"{module_name}.GEMM_SYMBOL is {module.GEMM_SYMBOL!r}, the route table says "
+            f"{symbol!r}; the record and the expectation must not be able to drift")
+
+
 def test_a_new_family_needs_only_a_routes_entry(monkeypatch):
     """Register a family at runtime; the dispatcher must find it."""
     import sys

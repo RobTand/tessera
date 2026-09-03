@@ -701,7 +701,12 @@ matmul: the route runs the stock BF16 GEMM on the exact code tile and scales
 the output in fp32 (4.04e-7 relative) instead of folding (1.65e-3). Measured on
 the six experts the fold is a rate-independent 0.0013-0.0018 on *every* arm
 including EXL3's and RTN's — 2.0% of the error at R=4, **15.4% at R=7** — so a
-served number taken on the twin is a ceiling, not the route's value.
+served number taken on the twin is a ceiling, not the route's value. **How big
+a ceiling is now measured, and it is small.** The share composes in quadrature,
+so 15.4% is a 2.4% gap in squared error, not a 15% one; on the dense Qwen units
+it is ~1.2%; and *served* at R=7 the twin's KL is 1.0011x the route's on `all`
+and 0.9961x on `confident` — below what the corpus resolves. Issue #45 carries
+the high-rung arm that would show it.
 
 Receipt, with the hand-offs for the plugin, the fused kernel's 32 KiB bf16
 table, and PrismaQuant's three changes:
@@ -713,8 +718,21 @@ packed window planes decoded to a bf16 tile in both residency modes,
 `torch.mm(..., out_dtype=torch.float32)` and the row scale as an fp32 epilogue,
 cross-checked element for element against `tessera.decode.materialize_bf16` at
 load. The contract publishes the family (`TESSERA_BF16_K1`, reader rate range
-[256, 4096] derived by loading 25 rungs, TP `max_world_size 1`) and
-**deliberately no `lane_eligibility` cell** -- absence resolves `unattested`,
-which is what "no container receipt yet" honestly reads as. Still not
+[256, 4096] derived by loading 25 rungs, TP `max_world_size 1`).
+
+**And it is served (contract v4).** Four route censuses on the pinned image --
+`resident`/`streamed` crossed with the eager and the compiled forward -- each
+record **112 of 112** declared modules on the `TESSERA_BF16` route, in both the
+prefill and the decode shape, zero problems, all four emitting the identical
+greedy continuation. Served KL-vs-BF16 at `q256 = 1792` (wire 7.129 bpp) is
+**0.004923** and **bit-identical between the two residency modes**, against
+0.004929 for the folded stock twin vanilla vLLM serves from the same encode.
+`attested_rungs_q256` moves `[] -> [1792]` and two `sm_121` dense cells appear,
+`decode` and `batch`, `bf16_unquantized` on `torch.mm`. Nothing wider: one
+rung, one platform, dense only, no routed-MoE cell, `max_world_size 1` -- every
+other rung in the reader's range still resolves `unattested`, which is the rule
+holding rather than bending. Footprint as the runtime reports it: `resident`
+loads 1.12 GiB, `streamed` 0.71 GiB, the 0.41 GiB being the wire. Receipt:
+`docs/measurements/tessera-bf16-route-served-2026-09-02.md`. Still not
 selectable from PrismaQuant: `ANCHOR_BUDGET_BITS` refuses `payload_bits >= 16`
 on a premise that is TCQ's alone (a window body has no forest).

@@ -35,9 +35,12 @@ work, which removes the main argument for building the serving backend first.
 > route with its table snapped to bf16, decoded to an ordinary bfloat16 tile
 > for the runtime's own GEMM, with the row scale applied as an fp32 epilogue
 > and **never folded into the tile**.  It exists because the E4M3 alphabet, not
-> the trellis, is what floors the window body above ~6 bpp.  The BF16 family is
-> `unattested` in `runtime_contract.json` until a container receipt covers it;
-> a family with no receipt publishes no `lane_eligibility` cell.
+> the trellis, is what floors the window body above ~6 bpp.  The BF16 family is attested at
+> `q256 = 1792` on `sm_121` at contract v4 -- two dense cells, `decode` and
+> `batch` -- on the four-census-plus-served-KL receipt in
+> `docs/measurements/tessera-bf16-route-served-2026-09-02.md`; the rule it
+> waited on still holds, that a family with no receipt publishes no
+> `lane_eligibility` cell.
 > The streamed residency mode is the kernel lane's shape: the body stays
 > compressed on disk *and in memory*, decoded inside the forward.  The only
 > operator knob is `TESSERA_SERVE_MODE=resident|streamed`.  What survives from
