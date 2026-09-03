@@ -153,7 +153,22 @@ Three things are tested; one is not, and cannot be here.
   `deterministic_effective()` is False there and `require_deterministic_build()`
   refuses, naming the warm cache.
 * **Not measured: whether two builds under the flag actually agree.** That is
-  the receipt #30 asks for and it needs two live serves from emptied caches,
-  which this change did not run. Until it exists the flag stays off, and the
-  practice remains the one that was measured to work: never empty the compile
-  cache mid-campaign, and now, stamp the build.
+   the receipt #30 asks for and it needs two live serves from emptied caches,
+   which this change did not run. Until it exists the flag stays off, and the
+   practice remains the one that was measured to work: never empty the compile
+   cache mid-campaign, and now, stamp the build.
+
+*Addendum 2026-09-03 (issue #30, determinism half: instrument verified, receipt
+still CPU-only).* `experiments/inductor_determinism_probe.py` now records the
+parameters each report was compiled under (`params`: hidden width, shapes,
+compile mode, device, identical in every child build) and carries the
+post-compile config-reset finding machine-checked (`knob.summary`), pinned by
+`tests/test_inductor_determinism_knob.py`. Re-measured on the host torch
+(2.11.0+cu130, GPU hidden, `TESSERA_PROBE_HIDDEN=256`): the env var reaches
+inductor at import (`on.at_import` [True, True]), reads False after a compile
+ran either way (`summary.on.resets_after_compile: True`), both arms' two
+fresh-cache builds agree bitwise, and both arms record zero `.best_config`
+records -- the CPU path has no Triton autotuning, so whether the flag
+suppresses device benchmarking is still unanswered. The campaign decision
+stands: the flag stays off until two K2 resident builds from empty caches with
+the flag are served and compared at 0.000000.
