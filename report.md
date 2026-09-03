@@ -171,24 +171,48 @@ This is why the binary reading above carries a positive and a negative control,
 and it is the concrete reason principle 14 says attested, not asserted: the
 runtime was never ambiguous, our instrument was.
 
-**What is still not attested** is the per-SM guard. The same binary carries the
-message `No compiled silu_and_mul nvfp4 quantization kernel for SM ` and an
-`_sm1xxa` variant of the symbol, so whether the fused kernel exists for a given
-target is a further question. The stamped record says so rather than implying the
-pattern always lands.
+**Settled on the hardware, not by argument.** The same probe, with the GPU
+visible and the extension actually imported (`--gpus all`, `import
+vllm._custom_ops`):
 
-That open question is not benign. `No compiled silu_and_mul nvfp4 quantization
-kernel for SM ` is a `TORCH_CHECK` message, so the guard's failure mode is a
-*raise at the first compiled forward*, not a silent slow path. This fix turns the
-`fuse_act_quant` pass on for the stock twin, and every compiled-mode receipt of a
-stock twin on record was taken while the twin declared `mixed-precision` — i.e.
-with that pass off. No compiled serve has ever exercised a derived-format twin on
-this image. **The twin's next compiled serve should go through
-`experiments/serve_smoke_graph.sh` before any speed number is taken from it.** I
-did not run that serve here (load; and one serve per box), so it is stated as the
-gate it is, not as a completed check.
+```
+vllm 0.28.0  cuda True  cc (12, 1)
+names registered under torch.ops._C: 20
+  silu_and_mul_nvfp4_quant  True
+  cutlass_scaled_fp4_mm     True
+  silu_and_mul              True
+  no_such_op_xyzzy          False    <- negative control
+silu_and_mul_nvfp4_quant_supported: True
+```
 
-Sizing the effect is a throughput measurement I did not
+Seven names became twenty and the op is there. `silu_and_mul_nvfp4_quant_
+supported` is literally `current_platform.is_cuda() and hasattr(torch.ops._C,
+"silu_and_mul_nvfp4_quant")` (`act_quant_fusion.py:36-38`), and it gates the
+`SiluMulNvfp4QuantPattern` registration at `:298-299`. So on the image and the
+hardware we serve on, the pattern **is** registered and the defect's consequence
+is live, not zero. The coordinator's "so the comparison may not be confounded
+after all" does not hold; the confound stands.
+
+**The per-SM guard is answered, and I had it open one commit too long.** I first
+wrote that the binary's `No compiled silu_and_mul nvfp4 quantization kernel for
+SM ` string left the guard unattested, and then — correctly — that its being a
+`TORCH_CHECK` makes the failure mode a raise at the first compiled forward rather
+than a slow path, which would make this fix a crash risk on the twin's next
+compiled serve. That framing was right to worry and cheap to settle, so I settled
+it instead of shipping the worry: with `--gpus all` on sparky I called the op.
+
+```
+cc (12, 1)
+CALL OK, out nonzero: True
+```
+
+`silu_and_mul_nvfp4_quant(out, block_scale, x, global_scale)` returns without
+raising on sm121 and writes nonzero packed output. The `TORCH_CHECK` does not
+fire on this target. Combined with the registration reading below, the pattern
+registers here *and* its kernel runs here, so turning `fuse_act_quant` on for the
+twin does not introduce a crash. The stamped record carries both.
+
+What is still not attested is the *size* of the fusion's effect. Sizing the effect is a throughput measurement I did not
 take and was not asked for — and could not honestly have taken today, with sparky
 at load 60 and 14 GB of 121 available.
 

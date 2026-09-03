@@ -367,13 +367,37 @@ VLLM_FP4_PREDICATE_ATTESTATION = {
         "'silu_and_mul_nvfp4_quant(Tensor! result, Tensor! result_block_scale, "
         "Tensor input, Tensor input_global_scale) -> ()' is in "
         "vllm/_C_stable_libtorch.abi3.so beside the cutlass_scaled_fp4_mm schema "
-        "that serves NVFP4 on this image.  Read out of the binary rather than off a "
-        "loaded runtime, because the extension needs libcuda to import.  What is NOT "
-        "read here is the per-SM guard: the same binary carries the message 'No "
-        "compiled silu_and_mul nvfp4 quantization kernel for SM ' and an "
-        "_sm1xxa variant of the symbol, so whether the fused kernel exists for a "
-        "given target is a further question this record does not answer."
+        "that serves NVFP4 on this image.  First read out of the binary, because "
+        "the extension needs libcuda and returns a uniform False without a GPU -- "
+        "hasattr(torch.ops._C, 'cutlass_scaled_fp4_mm') is False too on a CPU "
+        "container of this image, which demonstrably serves NVFP4 with it, so that "
+        "reading cannot tell a missing op from a missing driver.  Then confirmed on "
+        "the serving hardware: with --gpus all and vllm._custom_ops imported, "
+        "torch.ops._C carries 20 names, silu_and_mul_nvfp4_quant / "
+        "cutlass_scaled_fp4_mm / silu_and_mul are all present, a nonsense control "
+        "name is absent, and silu_and_mul_nvfp4_quant_supported is True.  "
+        "The per-SM guard is answered too, by calling the op rather than reading "
+        "it: on sm121 (compute capability 12.1) "
+        "silu_and_mul_nvfp4_quant(out, block_scale, x, global_scale) returns "
+        "without raising and writes nonzero packed output, so the "
+        "'No compiled silu_and_mul nvfp4 quantization kernel for SM ' TORCH_CHECK "
+        "in the binary does not fire on this target.  The pattern registers and "
+        "its kernel runs here."
     ),
+    "gpu_reading": {
+        "box": "sparky",
+        "compute_capability": "12.1",
+        "read": "2026-09-03",
+        "torch_ops_C_names": 20,
+        "hasattr": {
+            "silu_and_mul_nvfp4_quant": True,
+            "cutlass_scaled_fp4_mm": True,
+            "silu_and_mul": True,
+            "no_such_op_xyzzy": False,
+        },
+        "silu_and_mul_nvfp4_quant_supported": True,
+        "op_call_on_sm121": "ok, nonzero output",
+    },
 }
 
 
