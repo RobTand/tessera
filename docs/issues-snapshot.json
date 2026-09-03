@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T02:22:54Z",
+ "generated": "2026-09-03T02:45:28Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -268,6 +268,18 @@
    "44": {
     "state": "OPEN",
     "title": "Load cost over a trailing partial superblock has never been measured"
+   },
+   "45": {
+    "state": "OPEN",
+    "title": "The fold the BF16 route exists to avoid is below served resolution at R=7"
+   },
+   "46": {
+    "state": "OPEN",
+    "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
+   },
+   "47": {
+    "state": "OPEN",
+    "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
    },
    "5": {
     "state": "OPEN",

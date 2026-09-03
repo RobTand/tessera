@@ -542,14 +542,45 @@ E4M3_RECIPE = WireRecipe(
 #: decoded tile is a plain BF16 tensor, so the route is the BF16 GEMM
 #: (W16A16) and there is no weight-side hardware format to satisfy.
 BF16_WINDOW_BITS = E4M3_WINDOW_BITS
-#: The modelled source spread in grid units, **stated rather than searched**.
-#: ``scale_channel.default_channel_sigma`` walks a dyadic ladder for the
-#: spread with the smallest nearest-value error; on a grid with eight
-#: exponent bits that error is scale-free over ~30 binades, so the ladder is
-#: choosing between equals -- and it would build a 4096 x 65536 float64
+#: The modelled source spread in grid units.  It was **stated rather than
+#: searched** -- ``scale_channel.default_channel_sigma`` walks a dyadic ladder
+#: for the spread with the smallest nearest-value error, and on a grid with
+#: eight exponent bits that error is scale-free over ~30 binades, so the
+#: ladder is choosing between equals and would build a 4096 x 65536 float64
 #: distance matrix to do it.  1.0 puts the L=14 table's quantiles
 #: [7.6e-5, 4.05] deep inside the format with ~120 binades of margin at each
 #: end and gives the body reach 4.00 sigma, next to E4M3's 4.08.
+#:
+#: **Searched since, and it is a gauge, not a knob** (issue #18,
+#: ``experiments/bf16_l_sigma_sweep.py``).  With ``window_sigma`` left at
+#: ``None`` the table is built at ``sigma = channel_sigma``, so both ends of
+#: the scale move together; bf16 is closed under x2 and nearest-value snapping
+#: commutes with x2.  So a **dyadic** shift is written down rather than felt:
+#: the ALPHABET plane holds the doubled table and the fp32 global halves, the
+#: file hash moves and *the decoded tensor does not*.  Measured on four dense
+#: Qwen Linears, x0.25 / x0.5 / x1 / x2 / x4 decode **bit-identically** and
+#: x0.75 / x1.5 / x3 decode bit-identically to each *other* -- two orbits, one
+#: per odd part of the multiplier -- differing in ``wt`` by 0.007-0.02%.  The
+#: invariant is the tensor, not the file, and there is no dyadic value of this
+#: constant left to find.  The contrast is the proof that this is the grid's
+#: property and not the mechanism's: over those same four units the identical
+#: shift on E4M3 costs +5 to +19% ``wt`` at x2 and +70 to +98% at x4, because
+#: that table runs past 448.
+#:
+#: What remains searchable is ``L`` and the ``window_sigma``/``channel_sigma``
+#: *ratio* -- the table's spread against the row's, which is what sets reach.
+#: Searched (same issue, ``--stage reach``, which pins ``window_sigma = 1.0``
+#: so that ``channel_sigma`` *is* the ratio) and **the right ratio is
+#: rung-dependent**: over four dense Qwen Linears at identical bytes, the
+#: default ratio 1.0 minimises ``wt`` on 4 of 4 at R=4, and at R=8 a ratio of
+#: 0.707 -- reach 5.66 row-RMS instead of 4.00 -- wins on ``wt`` on 4 of 4
+#: (geomean 0.813x) and on ``h`` on 3 of 4 (geomean 0.742x).  Spending that
+#: needs a **wire change**, not a new value for this constant: ``BF16_RECIPE``
+#: leaves ``window_sigma`` at ``DEFAULT_WINDOW_SIGMA`` (``None``), which pins
+#: the ratio to 1 by construction and is what makes this constant a gauge in
+#: the first place.  Weight space, four units, no BF16 lane to serve on, so
+#: nothing here is promoted; see
+#: ``docs/measurements/tessera-bf16-gauge-and-dense4-residual-2026-09-02.md``.
 BF16_CHANNEL_SIGMA = 1.0
 BF16_RECIPE = WireRecipe(
     body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.CHANNEL,

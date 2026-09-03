@@ -171,6 +171,18 @@ shapes that carry a partial trailing superblock -- and the tensor every
 not `hash()`, which `PYTHONHASHSEED` randomises). Baseline at 3ea7ec3: 14
 encodes, 22 decodes, 0 changed across two runs.
 
+**Amended 2026-09-02 (issue #18 batch): 18 encodes, 22 decodes.** The matrix
+covered three of the four serialisable grids -- E2M1, E2M1x2, E4M3 -- and not
+`BF16`, which was added to the wire after these lines were written. Until the
+amendment a change to `BF16_WINDOW_BITS` or `BF16_CHANNEL_SIGMA` moved real
+bytes and this harness reported `0 changed`: the proof was silent on exactly
+the two constants issue #18 asks someone to search. The two new cases mirror
+the E4M3 shapes (32x256, 32x320) so the recipes differ only in the alphabet
+the window table snaps to, and a digest that moves on one grid and not the
+other localises the change. Re-baselining across the amendment reports the
+four new keys as `before None` and leaves all 32 pre-existing digests
+untouched (`4 changed of 36`, all four the new `bf16-*` keys).
+
 A fix may legitimately change future bytes. It may never change what today's
 bytes mean, and the decode half of the baseline is what says so.
 
