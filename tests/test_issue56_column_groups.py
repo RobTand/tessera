@@ -29,18 +29,32 @@ FORESTS = {rate: build_forest(rate) for rate in (1, 2, 3)}
 
 #: Even, but not a whole number of 16-column scale groups (264 % 16 == 8).
 BAD_COLS = 264
-#: Whole numbers of 16-groups: 256 (a full superblock) and 272 (17 groups,
-#: not a multiple of 256 -- the rule is mod 16, not mod 256).
-GOOD_COLS = [256, 272]
+#: Whole numbers of 16-groups that an S6b unit can also reach after #57:
+#: 256 (a full superblock) and 288 (9 S6b groups, not a multiple of 256 --
+#: the rule is mod 16 here and mod 32 there, neither is mod 256).
+GOOD_COLS = [256, 288]
+#: A whole number of 16-groups that S6b canNOT reach (272 % 32 == 16): the
+#: width where the two rules visibly differ.
+LUT_ONLY_COLS = 272
 ROWS = 32
 
+#: These write-side cases run on a LUT plane, and that is forced, not a
+#: preference.  Issue #57's rule is strictly stronger on S6b -- a group there
+#: is 32 weights, two halves sharing one base exponent, so ``_pack_scales``
+#: refuses ``cols % 32`` at ENCODE time and an S6b unit can no longer exist at
+#: an off-16 width for the writer to refuse.  A LUT plane's group IS the
+#: 16-column half, so it is the plane on which this rule is the binding one.
+#: The materialise-side cases need no plane at all: ``materialize_nvfp4``'s
+#: group is NVFP4's own 16.
 
-def _unit(cols, seed=0):
+
+def _unit(cols, seed=0, plane=ScalePlaneKind.LUT):
     torch.manual_seed(seed)
     weights = torch.randn(ROWS, cols) * 0.02
     rates = bresenham_rate_schedule(root_from_q256(640), cols)
     return encode_unit(
         weights, FORESTS, rates, CODE, released_positions=0, scale_refit=0,
+        scale_plane=plane,
     )
 
 
@@ -77,7 +91,7 @@ def test_odd_width_still_refuses_nibble_packing_first():
     weights = torch.randn(ROWS, 257) * 0.02
     unit = encode_unit(
         weights, FORESTS, (3,) * 257, CODE,
-        released_positions=0, scale_refit=0,
+        released_positions=0, scale_refit=0, scale_plane=ScalePlaneKind.LUT,
     )
     with pytest.raises(GrammarError, match="cannot pack 2 nibbles to a byte"):
         materialize_nvfp4(unit.codes, unit.scale_base, unit.scale_refine)
@@ -85,8 +99,8 @@ def test_odd_width_still_refuses_nibble_packing_first():
 
 @pytest.mark.parametrize("cols", GOOD_COLS)
 def test_whole_scale_groups_still_write_and_materialise(cols):
-    """The guards are not over-broad: multiples of 16 are unaffected."""
-    unit = _unit(cols)
+    """The guards are not over-broad: legal widths are unaffected."""
+    unit = _unit(cols, plane=ScalePlaneKind.S6B)
     _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
     assert len(blob) > 0
     packed, scales, _ = materialize_nvfp4(
@@ -94,6 +108,22 @@ def test_whole_scale_groups_still_write_and_materialise(cols):
     )
     assert packed.shape == (ROWS, cols // 2)
     assert scales.shape == (ROWS, cols // 16)
+
+
+def test_the_16_group_rule_stays_weaker_than_the_s6b_one():
+    """Two rules, not one: 272 writes on a LUT plane and is refused on S6b.
+
+    The LUT plane's group IS the 16-column half, so 17 of them tile a row
+    exactly.  S6b pairs halves into 32-weight groups under one base exponent,
+    so 17 halves leaves one without a partner and #57 refuses at encode.  A
+    single rule would have to pick one of these answers and be wrong about
+    the other plane.
+    """
+    _, _, blob = build_unit_artifact(
+        _unit(LUT_ONLY_COLS), "unit0", FORESTS, 640, CODE)
+    assert len(blob) > 0
+    with pytest.raises(GrammarError, match=r"whole number of 32-weight"):
+        _unit(LUT_ONLY_COLS, plane=ScalePlaneKind.S6B)
 
 
 def test_channel_plane_still_writes_off_group_widths():
