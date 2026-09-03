@@ -943,9 +943,11 @@ def _fit_lut(
     against each unused grid value at full cost.
 
     ``swaps`` is only the safety backstop bounding those passes: the
-    relative-improvement test below ends the refinement the first pass that
-    finds nothing, so a budget past convergence costs at most one fruitless
-    sweep, and every production caller takes this default.
+    refinement ends the first pass that improves the running cost by less
+    than one ulp of that cost in the cost's own dtype -- below that an
+    "improvement" is rounding noise, not a descent step, so the threshold
+    is ``torch.finfo(cost.dtype).eps`` scaled by the current cost, never a
+    constant -- and every production caller takes this default.
     """
     device = targets.device
     grid_values = e4m3_positive_values(device) * global_scale          # [119]
@@ -995,7 +997,14 @@ def _fit_lut(
 
     for _ in range(swaps):
         improved = False
-        base = float(_lut_cost(s, w, table))
+        base_cost = _lut_cost(s, w, table)
+        base = float(base_cost)
+        # The stop test is derived from the precision of the dtype the cost
+        # is accumulated in: a swap must lower the running cost by at least
+        # one ulp of that cost, else the "improvement" is rounding noise. An
+        # exactly-represented (non-floating) cost needs no threshold at all.
+        step = (torch.finfo(base_cost.dtype).eps
+                if base_cost.is_floating_point() else 0.0)
         all_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
         unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
         for i in range(table.numel()):
@@ -1003,7 +1012,7 @@ def _fit_lut(
                 trial = table.clone()
                 trial[i] = grid_values[byte - FIRST]
                 cost = float(_lut_cost(s, w, trial))
-                if cost < base * (1.0 - 1e-9):
+                if cost < base * (1.0 - step):
                     table, base, improved = trial, cost, True
                     candidate_bytes = candidate_bytes.clone()
                     candidate_bytes[i] = byte
