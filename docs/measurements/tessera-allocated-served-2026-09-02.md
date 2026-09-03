@@ -208,10 +208,22 @@ served here, not asserted.
 | uniform R1006 eager **vs compiled** | 0.020028 | 92.42% | |
 | allocated 4.0 **vs uniform R1006** | 0.368693 | 67.34% | the two byte-matched checkpoints disagree with each other about as much as the allocated one disagrees with the teacher |
 
-The eager-vs-compiled numbers (0.0288 / 0.0200) are larger than the single
-0.0176 the plugin receipt records for a uniform E4M3 wire. Reported, not
-explained: nothing here isolates whether that is the four-rung mix, the
-allocation's low rungs, or run-to-run scatter in the compiled path.
+The eager-vs-compiled numbers (0.0288 / 0.0200) are reported, not explained:
+nothing here isolates whether that is the four-rung mix or the allocation's low
+rungs.
+
+> **Corrected 2026-09-02** (#16,
+> `docs/measurements/serving-compile-divergence-2026-09-02.md`). This paragraph
+> originally compared those two numbers against "the single 0.0176 the plugin
+> receipt records for a uniform E4M3 wire", and offered run-to-run scatter as a
+> candidate explanation. Both halves were wrong. **0.0176 is not an
+> eager-vs-compiled number** — it is the plugin-vs-Gridbook *mutual* KL on the
+> K2/NVFP4 arm, a comparison of two runtimes in one regime. The plugin receipt's
+> own eager-vs-compiled figure for the uniform E4M3 wire is **0.026861**, which
+> sits between the two numbers above rather than below them. And it is **not
+> scatter**: measured across two independent lanes and both residency modes, the
+> gap reproduces to six decimals, so 0.0288 and 0.0200 are two deterministic
+> numbers for two different checkpoints, not two draws from one.
 
 ## 6. Allocator-predicted versus served
 
