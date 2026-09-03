@@ -41,7 +41,7 @@ torch = pytest.importorskip("torch")
 
 from tessera.serving import lane as serving_lane                     # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV, build_tessera_method  # noqa: E402
-from tessera.serving.scheme import TESSERA_FP8, TESSERA_NVFP4        # noqa: E402
+from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4        # noqa: E402
 from tessera.serving.sharding import (                               # noqa: E402
     AXIS_COLUMNS, AXIS_ROWS, ROUTE_TP_AXES, ShardPlan, TP_REFUSED, TP_SHARDED,
     axis_status, require_axis_supported)
@@ -140,14 +140,20 @@ def test_the_two_routes_publish_different_axes():
     """A pin on the table both the routes and the contract read."""
     assert ROUTE_TP_AXES[TESSERA_FP8] == {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED}
     assert ROUTE_TP_AXES[TESSERA_NVFP4] == {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED}
+    assert ROUTE_TP_AXES[TESSERA_BF16] == {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED}
     assert axis_status(TESSERA_NVFP4, AXIS_ROWS) == TP_REFUSED
+    # BF16 has FP8's answer because it has FP8's body, not because it is new.
+    assert ROUTE_TP_AXES[TESSERA_BF16] == ROUTE_TP_AXES[TESSERA_FP8]
 
 
 def test_an_unknown_route_or_axis_is_a_refusal_not_a_default():
     """Guessing ``sharded`` for a route this table never heard of is exactly
     the silent-wrong-rows outcome the seam exists to prevent."""
+    # Not a family this project has plans for: ``TESSERA_BF16`` stood here
+    # until it became a route, which is the point -- the refusal has to be for
+    # names the table does not carry, not for names it does not carry YET.
     with pytest.raises(ValueError, match="ROUTE_TP_AXES covers"):
-        axis_status("TESSERA_BF16", AXIS_ROWS)
+        axis_status("TESSERA_NOT_A_FAMILY", AXIS_ROWS)
     with pytest.raises(ValueError, match="is not a shard axis"):
         axis_status(TESSERA_FP8, "rows")
 

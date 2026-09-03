@@ -30,7 +30,15 @@ work, which removes the main argument for building the serving backend first.
 > `vllm.general_plugins` group registering `quant_method: "tessera"`.  A serve
 > installs one package -- Tessera -- and no second quantization stack.  Both
 > routes below are served by it (`TESSERA_NVFP4` W4A4 and `TESSERA_FP8` W8A8),
-> and the streamed residency mode is the kernel lane's shape: the body stays
+> and since 2026-09-02 a **third** the text below did not anticipate:
+> `TESSERA_BF16`, W16A16 -- the same window body and CHANNEL plane as the FP8
+> route with its table snapped to bf16, decoded to an ordinary bfloat16 tile
+> for the runtime's own GEMM, with the row scale applied as an fp32 epilogue
+> and **never folded into the tile**.  It exists because the E4M3 alphabet, not
+> the trellis, is what floors the window body above ~6 bpp.  The BF16 family is
+> `unattested` in `runtime_contract.json` until a container receipt covers it;
+> a family with no receipt publishes no `lane_eligibility` cell.
+> The streamed residency mode is the kernel lane's shape: the body stays
 > compressed on disk *and in memory*, decoded inside the forward.  The only
 > operator knob is `TESSERA_SERVE_MODE=resident|streamed`.  What survives from
 > the text below is its reasoning: the container is self-describing from bytes

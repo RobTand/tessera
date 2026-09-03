@@ -89,19 +89,30 @@ def main() -> int:
 
     import tessera
     import tessera.serving as serving
-    from tessera.serving import fp8_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_route, nvfp4_route
     from tessera.serving.lane import TESSERA_MODE_ENV
-    from tessera.serving.scheme import TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4
+    from tessera.serving.scheme import (
+        TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
     from tessera.serving.telemetry import DECODER_NATIVE_SPAN2, DECODER_TORCH_WINDOW
 
     # The executed A-side contract each route stamps on its layers: the value a
     # cell publishes, compared here against what the serve recorded.
     contract_for = {TESSERA_NVFP4: nvfp4_route.ACTIVATION_CONTRACT,
-                    TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT}
-    # The decoder each route must have used.  The FP8 route's decoder IS pure
-    # torch (the packed-window reader); the NVFP4 route's must be the native
-    # span-2 kernel unless the operator explicitly accepted the fallback.
-    decoder_for = {TESSERA_NVFP4: DECODER_NATIVE_SPAN2, TESSERA_FP8: DECODER_TORCH_WINDOW}
+                    TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT,
+                    TESSERA_BF16: bf16_route.ACTIVATION_CONTRACT}
+    # The decoder each route must have used.  The FP8 and BF16 routes' decoder
+    # IS pure torch (the same packed-window reader, carrying a table of E4M3
+    # bytes in one and of bf16 values in the other); the NVFP4 route's must be
+    # the native span-2 kernel unless the operator explicitly accepted the
+    # fallback.
+    decoder_for = {TESSERA_NVFP4: DECODER_NATIVE_SPAN2, TESSERA_FP8: DECODER_TORCH_WINDOW,
+                   TESSERA_BF16: DECODER_TORCH_WINDOW}
+    missing = sorted(set(TESSERA_FAMILIES) - set(contract_for))
+    if missing:
+        raise SystemExit(
+            f"this census has no expectation for {missing}; a family the plugin serves and "
+            "the census does not know would be counted as a mismatch on every module. Add "
+            "its contract and decoder above rather than widening the comparison.")
 
     with open(os.path.join(args.model, "config.json")) as fh:
         cfg = json.load(fh)

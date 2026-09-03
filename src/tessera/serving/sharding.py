@@ -73,7 +73,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from .scheme import TESSERA_FP8, TESSERA_NVFP4
+from .scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
 
 __all__ = [
     "AXIS_ROWS",
@@ -133,6 +133,15 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 ROUTE_TP_AXES: dict[str, dict[str, str]] = {
     TESSERA_NVFP4: {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED},
     TESSERA_FP8: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
+    # The third family, and the docstring above said what to do with one: it
+    # brings its own row.  BF16 gets FP8's answer for FP8's reason and not by
+    # analogy -- the axis answer is a property of the BODY, both routes ship
+    # the window body over the CHANNEL plane, and both threaded the start
+    # state the same way before this table existed (``bf16_route`` and
+    # ``fp8_route`` each pass ``initial_state=getattr(unit, "initial_state",
+    # None)`` into the same decoder).  What differs between them is the tile
+    # the decode lands in, which the shard never touches.
+    TESSERA_BF16: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
 }
 
 #: Why a refused axis is refused.  PROSE, and deliberately not a gate input

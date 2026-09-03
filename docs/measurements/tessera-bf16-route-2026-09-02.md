@@ -539,6 +539,18 @@ anyway.
 
 ## 8. Hand-off: the serving plugin (W2)
 
+> **Taken up 2026-09-02 (issue #9).**  `serving/bf16_route.py` and the
+> `TESSERA_BF16` `ROUTES` entry exist and are built to this section's spec: no
+> new flag, no new packing, the row scale an fp32 epilogue on an
+> `out_dtype=torch.float32` GEMM and never folded, and a load-time element-for-
+> element check against `materialize_bf16`.  Two things below are *not* what
+> shipped, and both are the contract's own vocabulary rather than a change of
+> mind: the rungs go in `attested_rungs_q256` (`candidate_rungs_q256` is a
+> deprecated alias that must carry the identical list), and both are **empty**
+> with **no `lane_eligibility` cell**, because "the route status is `backed`"
+> is a claim about a runtime and needs a receipt, not a hand-off's say-so
+> (principle 14, which this section already says).
+
 The plugin adds a **third family** alongside `TESSERA_NVFP4` (W4A4) and
 `TESSERA_FP8` (W8A8): `TESSERA_BF16`, **W16A16**, materialising into an
 ordinary bfloat16 weight. It needs no new flag — the checkpoint's
@@ -838,7 +850,17 @@ outlier work identified as the hard ones.
   unmeasured is the six-**expert** GLM R = 8 geomean and, with it, a
   BF16-vs-EXL3-K8 number on more than one tensor.
 - **R = 8 costs 40-80x R = 7, and the cost is the window kernel's, not the
-  family's.** On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
+  family's.** *(2026-09-02, later the same day: the attribution below stands
+  and the diagnosis under it is now COMPLETE, so read the two proposals at the
+  end of this bullet as history. The extra 20-40x this bullet could not account
+  for is a **register spill** -- 690 bytes per thread at R = 8 and none at
+  R <= 7, read off the compiled kernel -- and the fix is the class scan's
+  spelling, not `_tile`: the candidate `BL` widening is REFUTED, because a
+  wider tile puts more elements under each hoisted load. The dispatch rule this
+  bullet proposed shipped as `WINDOW_FUSED_MAX_RATE = 7` and has now been
+  withdrawn: the fused path is 8.1x faster than the reference at R = 8 and the
+  crossover moved to 11. See
+  `docs/measurements/tessera-window-viterbi-scan-2026-09-02.md`, issue #11.)* On one dense tensor (`model.layers.2.mlp.down_proj`, 1024x3072,
   identical code path, both arms) the encode seconds run **2, 3, 5, 10** at
   R = 4, 5, 6, 7 -- a clean 2x per bit -- and then **424 (E4M3) / 639 (BF16)**
   at R = 8; on `gate_proj` the R = 8 pair is 820 / 740 against the same 10 s at

@@ -11,7 +11,7 @@ log line someone parsed.
 Twelve ``setattr``s of Python scalars -- no tensor is touched, so this sits on
 the hot path without a synchronisation and cannot perturb what executed.
 
-This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the two
+This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the
 Tessera routes and owned here.  The attribute prefix is ``_tessera_route_``
 (Gridbook's is ``_cb_route_``): the two records must never be mistaken for one
 another if both plugins are ever installed in one process.
@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import torch
 
-from .scheme import FP8_ACTIVATION_CONTRACT, NVFP4_ACTIVATION_CONTRACT
+from .scheme import (
+    BF16_ACTIVATION_CONTRACT, FP8_ACTIVATION_CONTRACT, NVFP4_ACTIVATION_CONTRACT, ROUTES)
 
 __all__ = [
     "ROUTE_FIELDS",
@@ -33,14 +34,19 @@ __all__ = [
     "ATTR_PREFIX",
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
+    "BF16_ACTIVATION_CONTRACT",
     "emit_route",
     "read_route",
     "route_shape",
 ]
 
 #: Stamped on every record so a served route can be compared against a priced
-#: one instead of assumed equal.  The strings live in ``scheme`` (torch-free).
-ROUTE_CONTRACTS = frozenset((NVFP4_ACTIVATION_CONTRACT, FP8_ACTIVATION_CONTRACT))
+#: one instead of assumed equal.  DERIVED from ``ROUTES``, like the family
+#: list: a hand-written tuple here was a place a third family could be added
+#: and then emit a contract this set did not contain, so a census reading the
+#: record against it would call a served route unrecognised.  The strings
+#: themselves live in ``scheme``, which is torch-free.
+ROUTE_CONTRACTS = frozenset(route["activation_contract"] for route in ROUTES.values())
 ROUTE_STATES = frozenset(("served", "fallback", "error"))
 
 #: Which implementation produced the weight tile this route multiplied.  A
@@ -48,8 +54,10 @@ ROUTE_STATES = frozenset(("served", "fallback", "error"))
 #: pure-torch fallback, even though the two produce identical bytes: the
 #: fallback is a different residency contract (resident only) and a different
 #: load-time cost, and a census that cannot see the difference cannot attest
-#: the route.  ``torch_window`` is the FP8 route's decoder, which is pure
-#: torch by construction and needs no extension.
+#: the route.  ``torch_window`` is the FP8 and BF16 routes' decoder, which is
+#: pure torch by construction and needs no extension -- one value for one
+#: decoder, since it is the same ``serving.window`` object in both, carrying a
+#: table of E4M3 bytes in one and of bf16 values in the other.
 DECODER_NATIVE_SPAN2 = "native_span2"
 DECODER_TORCH_STOCK = "torch_materialize_stock"
 DECODER_TORCH_WINDOW = "torch_window"
