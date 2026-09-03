@@ -185,6 +185,18 @@ MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
 #: ``...self_attn`` (the whole attention block, every Linear in it) into the
 #: checkpoint's ``ignore`` list.  A tensor is a packed expert stack because of
 #: where it sits, not because it has three axes.
+#:
+#: ``.weight`` IS OPTIONAL, and that is the whole point of the suffix group.
+#: transformers-5 stores a packed stack as an ``nn.Parameter`` on the experts
+#: module rather than as a child Linear's ``weight``, so the tensor on disk is
+#: ``...mlp.experts.gate_up_proj`` with no suffix at all -- 98 of them on
+#: ``/mnt/shared/models/Qwen3.8-Flash-Next``, which is the one packed-source
+#: checkpoint on this box.  ``quantizable`` used to require the suffix before
+#: it looked at anything, so those tensors were classified as NOTHING: absent
+#: from ``expert_shapes``, so absent from ``ignore``, so the plugin refused
+#: the MoE layer at load -- after the dense body had been encoded.
+#: ``packed_expert_orientation`` already read both spellings, which is how far
+#: the inconsistency reached before it was found.
 PACKED_EXPERT_ND = re.compile(
     r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
 
@@ -446,10 +458,29 @@ def quantizable(src: Path):
     for shard, names in shards.items():
         with safe_open(str(src / shard), framework="pt") as handle:
             for name in names:
-                if not (name.endswith(".weight") and BODY_LAYER.match(name)):
+                if not BODY_LAYER.match(name):
+                    continue
+                # ``.weight`` is not what makes a tensor a body weight, and
+                # gating on it here is what dropped a whole layout: a
+                # transformers-5 packed expert stack is an ``nn.Parameter`` on
+                # the experts module, so the tensor on disk is
+                # ``...mlp.experts.gate_up_proj`` with no suffix at all.  It
+                # landed in NO bucket -- not dense, not packed, not routed -- so
+                # the export succeeded, encoded the dense body for hours, and
+                # produced a checkpoint the plugin refuses at load because the
+                # FusedMoE module reached neither ``config_groups`` nor the
+                # plan-time refusal.  ``probe`` is the same idiom
+                # ``ignored_modules`` uses (#86): match the patterns against the
+                # name in its ``.weight`` spelling, so one convention decides
+                # what a name means and the suffix decides nothing.
+                probe = name if name.endswith(".weight") else name + ".weight"
+                bare_packed = not name.endswith(".weight") and PACKED_EXPERT_ND.match(probe)
+                if not name.endswith(".weight") and not bare_packed:
                     continue
                 shape = tuple(handle.get_slice(name).get_shape())
-                if len(shape) >= 3:
+                if bare_packed:
+                    expert_shapes[name] = shape
+                elif len(shape) >= 3:
                     # Only an expert stack by NAME; anything else of rank 3 is
                     # not a Linear at all (a conv1d), so it is not a Linear the
                     # plugin must be told about and needs no ignore entry.
@@ -973,6 +1004,25 @@ def main():
             "contract_version": load_serving_contract()["contract_version"],
             "allow_unserveable": bool(args.allow_unserveable),
             "unserveable_overrides": gate_overrides,
+        },
+        # WHAT THE ROUTED-MoE LAYERS GOT, as a value rather than as a line of
+        # stdout.  Every expert of this model stayed at source precision and
+        # its FusedMoE module is named in ``ignore``; on a routed-MoE model
+        # that is most of the parameters, so a reader comparing this manifest's
+        # bpp against a target has to be able to see it without re-deriving it
+        # from the tensor names.  ``modules`` is exactly the set of ``ignore``
+        # entries this block accounts for -- read off ``ignored_modules``, the
+        # same rule that put them there, so this cannot drift from the list it
+        # claims to summarise (#86).  Both counts are zero on a dense model,
+        # which is the same statement in the other direction.
+        "routed_moe": {
+            "structure": "passed_through_bf16",
+            "reason": "this exporter writes no routed-MoE wires; the expert route is #5",
+            "packed_source_tensors": len(expert_shapes),
+            "unpacked_source_tensors": len(routed_shapes),
+            "modules": sorted({m for source in (expert_shapes, routed_shapes)
+                               for name, shape in source.items()
+                               for m in ignored_modules(name, shape)}),
         },
         "stock_twin": str(twin) if twin is not None else None,
         "vllm_fp4_predicate": tessera_fp4_predicate,

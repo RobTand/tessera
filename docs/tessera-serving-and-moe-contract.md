@@ -415,9 +415,32 @@ Three faults, all at plan time, all silent (fixed; see
   model's attention carries `k_conv1d.weight [8192, 1, 4]`. Its ignore entry —
   module minus leaf — is `...self_attn`, the parent of every attention Linear
   in the layer. `PACKED_EXPERT_ND` identifies a stack by where it sits.
+* **A fourth, found 2026-09-03 and fixed here.** `quantizable` tested
+  `name.endswith(".weight")` before it looked at anything else, and
+  transformers-5 stores a packed stack as an `nn.Parameter` on the experts
+  module — so the tensor on disk is `...mlp.experts.gate_up_proj`, with no
+  suffix at all. Those names were classified as **nothing**: not dense, not
+  packed, not routed, so `expert_shapes` was empty on a model with 96 stacks.
+  The classifier is what the PLAN is built from, so what survives here is the
+  plan-time half: a `--plan-json` naming such a stack fell through to the
+  generic "unknown tensor" check instead of the packed-expert refusal that says
+  what is missing and why. The fix reads the name through its `.weight`
+  spelling (`probe`), the same idiom `ignored_modules` uses, so one convention
+  decides what a name means and the suffix decides nothing.
+
+  The *load-time* half of this fault — the FusedMoE module never reaching
+  `ignore`, so the plugin refuses a layer it cannot find there after the dense
+  body has encoded for hours — was closed independently by #86, which replaced
+  the three `BODY_LAYER`-gated ignore sources with one rule over the tensors
+  actually written. Recorded because the two look like one bug and are not: the
+  classifier decides the plan, `ignored_modules` decides the ignore list, and
+  only the first is still this section's.
 
 Measured after the fix: **49 dense Linears (was 0), 2592 routed expert leaves
-across layers [1, 2, 3], 0 packed stacks.**
+across layers [1, 2, 3], 0 packed stacks** on GLM-5.3-Flash-4layer; and on
+`/mnt/shared/models/Qwen3.8-Flash-Next`, **96 packed stacks over 48 FusedMoE
+modules (was 0)**, the remaining two being the MTP sidecar's, which `BODY_LAYER`
+does not match by the same rule that keeps the vision tower out.
 
 ### 9.3 A packed expert stack cannot always be oriented, and this model is the case
 
@@ -432,8 +455,13 @@ That refusal is not defensive programming. This model has
 would be `[E, 4096, 4096]` — square — and no comparison of dims orients it. A
 default axis order there transposes every expert in silence.
 
-The packed path's tests are therefore **synthetic**: no packed-expert source is
-at hand, so they fix the contract, not agreement with a real checkpoint.
+The packed path's **orientation** tests are therefore synthetic: they fix the
+contract, not agreement with a real checkpoint. Its **classification** tests are
+not, as of 2026-09-03: `/mnt/shared/models/Qwen3.8-Flash-Next` is a packed
+source on this box, and `test_the_real_packed_source_is_classified_as_experts`
+reads its 96 body stacks off disk. That distinction is not pedantry — the
+spelling the classifier missed (§9.2's fourth fault) is one only a real
+checkpoint carried, and every synthetic packed fixture had written `.weight`.
 
 ### 9.4 The encode budget is real, and the fused path is already taken
 

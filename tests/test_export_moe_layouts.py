@@ -392,3 +392,119 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
             "missing, not quantized")
     assert router in written["ignore"], (
         f"the router is not named in ignore: {sorted(written['ignore'])}")
+
+
+# --------------------------------------------------------------------------
+# The packed stack that carries NO ``.weight`` suffix.
+#
+# transformers-5 stores a layer's packed experts as an ``nn.Parameter`` on the
+# experts module, not as a child Linear's ``weight``, so the tensor on disk is
+# ``...mlp.experts.gate_up_proj`` -- 96 body tensors of exactly that spelling
+# on ``/mnt/shared/models/Qwen3.8-Flash-Next``, the one packed source on this
+# box.  ``quantizable`` tested ``name.endswith(".weight")`` before it looked at
+# anything else, so those tensors were classified as NOTHING: not dense, not
+# packed, not routed.  Being absent from ``expert_shapes`` is what makes it
+# expensive -- ``ignore`` is built from that dict, so the FusedMoE module was
+# never named, and ``TesseraConfig.get_quant_method`` refuses a routed-MoE
+# layer it does not find in ``ignore``.  The export therefore succeeds, the
+# dense body encodes for hours, and the checkpoint refuses at load.
+#
+# ``packed_expert_orientation`` already read both spellings
+# (``name.endswith("gate_up_proj.weight") or name.endswith("gate_up_proj")``),
+# which is how far the inconsistency reached before anything caught it.
+# --------------------------------------------------------------------------
+
+#: An intermediate size that ORIENTS: ``2 * 48 != 128``, so a packed
+#: ``gate_up_proj`` is not square and ``packed_expert_orientation`` decides it
+#: instead of refusing.  These tests are about the plan-time classification, so
+#: the orientation must not be the thing that raises.
+PACKED_INTER = 48
+
+
+def _packed_checkpoint(suffix: str):
+    """The unpacked fixture with layer 1's experts replaced by a packed stack.
+
+    ``suffix`` is ``".weight"`` or ``""`` -- the two spellings a packed stack
+    is written under.  Everything else is identical, so a test that runs both
+    is comparing the spelling and nothing else.
+    """
+    t = _unpacked_checkpoint()
+    for e in range(EXPERTS):
+        for proj in ("gate_proj", "up_proj", "down_proj"):
+            t.pop(f"model.language_model.layers.1.mlp.experts.{e}.{proj}.weight")
+    t[f"model.language_model.layers.1.mlp.experts.gate_up_proj{suffix}"] = torch.zeros(
+        EXPERTS, 2 * PACKED_INTER, HIDDEN)
+    t[f"model.language_model.layers.1.mlp.experts.down_proj{suffix}"] = torch.zeros(
+        EXPERTS, HIDDEN, PACKED_INTER)
+    return t
+
+
+@pytest.mark.parametrize("suffix", [".weight", ""])
+def test_a_packed_stack_is_found_under_either_spelling(tmp_path, suffix):
+    """Both spellings land in ``expert_shapes``; neither reaches ``shapes``."""
+    src = _write(tmp_path, _packed_checkpoint(suffix), _config(inter=PACKED_INTER))
+
+    _shards, shapes, packed, routed = export.quantizable(src)
+
+    assert sorted(packed) == [
+        f"model.language_model.layers.1.mlp.experts.down_proj{suffix}",
+        f"model.language_model.layers.1.mlp.experts.gate_up_proj{suffix}"], sorted(packed)
+    assert routed == {}, sorted(routed)
+    assert not any(".mlp.experts." in n for n in shapes), sorted(shapes)
+
+
+@pytest.mark.parametrize("suffix", [".weight", ""])
+def test_planning_a_packed_stack_is_refused_before_any_encode(tmp_path, monkeypatch, suffix):
+    """A plan naming a packed stack refuses at PLAN time, under either spelling.
+
+    Without the suffix the stack was in no bucket at all, so the plan-time
+    guard could not see it either: the name fell through to the ``unknown``
+    check and refused there, naming no MoE reason -- or, on a checkpoint that
+    also had a matching dense name, would not have refused at all.
+    """
+    src = _write(tmp_path, _packed_checkpoint(suffix), _config(inter=PACKED_INTER))
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    stack = f"model.language_model.layers.1.mlp.experts.gate_up_proj{suffix}"
+    plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 1024}}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+                                     "--q256", "1024", "--plan-json", str(plan)])
+
+    with pytest.raises(SystemExit) as caught:
+        export.main()
+
+    message = str(caught.value)
+    assert "packed expert tensor" in message, message
+    assert stack in message, message
+    assert not out.exists() or not list(out.glob("*.safetensors")), (
+        "the refusal fired only after writing weights")
+
+
+#: The one packed-expert source on this box.  Skipped rather than synthesised
+#: where it is absent: the point of this test is that the spelling on REAL
+#: disk is the one the classifier missed, and a fixture cannot say that.
+QWEN_PACKED = Path("/mnt/shared/models/Qwen3.8-Flash-Next")
+
+
+@pytest.mark.skipif(not (QWEN_PACKED / "model.safetensors.index.json").exists(),
+                    reason=f"{QWEN_PACKED} is not on this box")
+def test_the_real_packed_source_is_classified_as_experts():
+    """96 body packed stacks, none of them planned as a dense Linear.
+
+    48 decoder layers x {gate_up_proj, down_proj}, every one of them written
+    with no ``.weight``.  The two remaining stacks in the checkpoint are the
+    MTP sidecar's (``mtp.layers.0.mlp.experts.*``), which ``BODY_LAYER`` does
+    not match by the same rule that keeps the vision tower out.
+    """
+    _shards, shapes, packed, routed = export.quantizable(QWEN_PACKED)
+
+    assert len(packed) == 96, sorted(packed)[:4]
+    assert all(n.endswith(("gate_up_proj", "down_proj")) for n in packed), sorted(packed)[:4]
+    assert not any(".mlp.experts." in n or n.endswith(".mlp.experts") for n in shapes), \
+        [n for n in shapes if ".experts" in n][:4]
+    assert routed == {}, sorted(routed)[:4]
+    # the ignore names come off ``ignored_modules`` (#86), the one rule, which
+    # reads a bare packed name through its ``.weight`` spelling
+    modules = {m for n, shape in packed.items() for m in export.ignored_modules(n, shape)}
+    assert len(modules) == 48, sorted(modules)[:4]
+    assert all(m.endswith(".mlp.experts") for m in modules), sorted(modules)[:4]
