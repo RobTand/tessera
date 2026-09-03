@@ -83,3 +83,50 @@ def test_shared_global_agrees_with_stock_share_global_on_qwen():
         from tessera.stock import _nvfp4_values
         after = _nvfp4_values(codes).float() * scale.repeat_interleave(16, dim=1) * shared
         assert torch.equal(after, before), r
+
+
+def test_a_units_blob_length_is_not_a_function_of_its_shape_grid_and_rate():
+    """The MoE expert parameter cannot be ``[E, 2, nbytes]`` with one stride.
+
+    Issue #5 planned a fused routed-expert parameter around the assumption that
+    two units of the same ``(shape, grid, q256)`` serialise to the same number
+    of bytes.  They do not, and the mechanism is here rather than in the body:
+    ``ScalePlane.encode`` writes ``global_scale`` as an exact ``Fraction``
+    through ``canonical.Writer.ratio`` (``manifest.py:312,314``), a varint pair
+    -- and a varint's LENGTH is a function of its VALUE, while the global scale
+    is a function of the DATA.
+
+    MEASURED at 32x256, one seed, weights scaled by 2^k for k in [-14, +14]:
+    the E4M3/window q1024 blob spans 21143..21146 bytes and the E2M1x2/TCQ q896
+    blob spans 5222..5225, while ``exact_bytes`` -- which counts the plane
+    region -- is 20544 and 4608 flat.  Real artifacts on this box carry
+    ``global_scale`` 2^-10 and 2^-12, two exponents apart, so a body of experts
+    at one shape genuinely lands on more than one length.  The encode is a
+    minute of CPU per unit, so what is asserted here is the mechanism, at the
+    manifest, in milliseconds; ``tests/test_wire.py`` owns the blob itself.
+
+    The consequence for the expert stack: pad each member to a declared stride
+    and carry its true length beside it.  ``parse_fused`` refuses trailing
+    bytes -- deliberately, a container is exactly its members -- so a padded
+    blob handed back without its length is a refusal, not a shorter read.
+    """
+    from fractions import Fraction
+
+    from tessera.canonical import Writer
+    from tessera.manifest import ScalePlane
+
+    def encoded(global_scale):
+        writer = Writer()
+        ScalePlane.channel(global_scale).encode(writer)
+        return writer.bytes
+
+    lengths = {g: len(encoded(g)) for g in (2.0 ** -10, 2.0 ** -12, 2.0 ** -24)}
+    assert len(set(lengths.values())) > 1, lengths
+    # And it is the denominator's width that moves, not the kind byte.
+    assert Fraction(2.0 ** -24).denominator.bit_length() > \
+        Fraction(2.0 ** -10).denominator.bit_length()
+
+    # The framing half: a container is exactly its members.
+    blob = pack_fused([("gate_proj", 8, b"\x01\x02"), ("up_proj", 8, b"\x03")])
+    with pytest.raises(GrammarError):
+        parse_fused(blob + b"\x00" * 4)

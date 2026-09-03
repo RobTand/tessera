@@ -18,10 +18,20 @@ them degrade to BF16:
   ``UnquantizedFusedMoEMethod`` when a config returns ``None``, so ``None``
   here would serve uninitialised or BF16 expert memory rather than say no.
   The expert route is designed (below) and not built.
-* tensor parallelism above one.  Not because the artifact is per-rank -- it is
-  deliberately TP-agnostic, one whole unit per role, and the loader cuts it at
-  load (``sharding``) -- but because the cutter, ``tessera.layout.slice_unit``,
-  is not in this build.  A refusal, never "every rank holds the whole weight"
+* tensor parallelism in a build with no unit slicer.  Not because the artifact
+  is per-rank -- it is deliberately TP-agnostic, one whole unit per role, and
+  the loader cuts it at load (``sharding``) -- but because the cut needs
+  ``tessera.layout.slice_unit``.  Where the slicer IS present, as it is here,
+  ``tp_size > 1`` is no longer refused wholesale: the route refuses the one
+  AXIS its decoders cannot start from, at ``create_weights``, off the
+  ``sharding.ROUTE_TP_AXES`` table.  A refusal, never "every rank holds the
+  whole weight".
+
+  A world size above one is ATTEMPTED and not ATTESTED.  The packaged
+  ``runtime_contract.json`` still says ``max_world_size: 1`` for every family,
+  because no multi-rank serve has been run; what it publishes above that is
+  ``loader_axes``, which is what the loader DOES.  Two different questions, two
+  machine-readable fields, and a producer may gate on either.
 
 WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s ``RoutedExperts`` branch
 is the seam.  A Tessera MoE method would: parse one ``tessera.fused`` container
@@ -55,6 +65,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 from .compile_identity import declare_compile_identity
 from .lane import TESSERA_MODE_ENV, build_tessera_method, serve_mode
 from .scheme import is_tessera_scheme, validate_tessera_scheme
+from .sharding import require_a_cutter
 
 __all__ = ["TesseraConfig", "QUANT_METHOD"]
 
@@ -221,23 +232,30 @@ class TesseraConfig(QuantizationConfig):
         return cls(groups, tuple(config.get("ignore", ())), config)
 
     # -- dispatch ----------------------------------------------------------
-    def _require_tp1(self, prefix: str) -> None:
-        """Refuse a TP group this build cannot cut a unit for.
+    def _require_a_cutter(self, prefix: str) -> None:
+        """Refuse a TP group this BUILD cannot cut a unit for -- and only that.
 
         The ARTIFACT is TP-agnostic and stays so: a unit is encoded once, whole,
-        and a rank takes its slice at load (``sharding``).  What is missing is
-        the cutter -- ``tessera.layout.slice_unit``, which records the trellis
-        state a sliced row starts from -- so the refusal is about this build,
-        not about the bytes.  It sits here, once, at method construction,
-        rather than at the first forward of every module.
+        and a rank takes its slice at load (``sharding``).  The cutter --
+        ``tessera.layout.slice_unit``, which records the trellis state a sliced
+        row starts from -- has landed, so this gate is no longer "one rank
+        only"; it is the whole-file question, asked once at method construction
+        rather than at the first forward of every module, and it is kept rather
+        than deleted because a build WITHOUT the slicer must still refuse rather
+        than serve rank 0's whole unit to every rank.
 
-        WHEN THE SLICER MERGES this gate comes out and the per-parameter
-        loaders take over: ``sharding.plan_shard`` derives the axis from the
-        sizes vLLM asks for, ``layout.can_shard`` says whether the cut is legal
-        on this unit, and ``sharding._shard_unit_for_rank`` cuts it.  Keep the
-        gate keyed on the slicer's PRESENCE rather than deleting it outright --
-        a build without the slicer must still refuse rather than serve rank 0's
-        whole unit to every rank.
+        The narrower question -- which AXIS this route's decoders can start from
+        -- is not answerable here: the axis is derived from the sizes vLLM asks
+        for, which arrive at ``create_weights``.  Each route asks it there
+        (``sharding.require_axis_supported``), off the same
+        ``sharding.ROUTE_TP_AXES`` table the packaged contract publishes.
+
+        WHAT IS NOT CLAIMED.  A world size above one is something this build
+        ATTEMPTS, not something it has served: ``runtime_contract.json`` still
+        says ``max_world_size: 1`` for every family and will until a multi-rank
+        serve has been run and measured.  That is the same status a rung with no
+        ``lane_eligibility`` cell has -- unattested, which is honest, and not a
+        refusal.
         """
         try:
             from vllm.distributed import get_tensor_model_parallel_world_size
@@ -245,15 +263,7 @@ class TesseraConfig(QuantizationConfig):
             world = int(get_tensor_model_parallel_world_size())
         except Exception:  # noqa: BLE001 -- no parallel state: a bare test build
             return
-        if world > 1:
-            raise ValueError(
-                f"tessera target {prefix!r}: this plugin serves tensor_parallel_size=1. A unit's "
-                "rows are bit-packed against a shared rate schedule and its trellis carries state "
-                "along a row, so a shard is not a byte range -- the loader cuts the unit itself, "
-                "through tessera.layout.slice_unit, which is not in this build. The checkpoint is "
-                "not the problem and does not need re-exporting -- one artifact serves any world "
-                "size, because the cut happens at load. Serve with -tp 1, or install a Tessera "
-                "carrying the unit slicer.")
+        require_a_cutter(prefix, world)
 
     def _declare_once(self) -> None:
         if self._declared:
@@ -288,7 +298,7 @@ class TesseraConfig(QuantizationConfig):
         if isinstance(layer, LinearBase):
             scheme = self.target_scheme.get(prefix)
             if scheme is not None:
-                self._require_tp1(prefix)
+                self._require_a_cutter(prefix)
                 self._declare_once()
                 return build_tessera_method(scheme, prefix, self._mode)
             if prefix in self.ignore:

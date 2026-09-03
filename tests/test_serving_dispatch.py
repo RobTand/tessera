@@ -9,7 +9,10 @@ parse -- which is what the ported "unset flag refuses by name" tests became.
 
 The other half of this file is the refusals that must NOT degrade: an
 undeclared Linear, a routed-MoE experts layer (where a ``None`` would hand vLLM
-``UnquantizedFusedMoEMethod`` and serve BF16 expert memory), and TP > 1.
+``UnquantizedFusedMoEMethod`` and serve BF16 expert memory), and a TP group in
+a build with no unit slicer.  A TP group in a build that HAS one is not a
+refusal any more: the per-axis answer belongs to ``create_weights``, where the
+axis is known, and lives in the route tests.
 
 vLLM is STUBBED here exactly as the Gridbook original stubs it; loading owes a
 container run.
@@ -64,9 +67,9 @@ def _install_vllm_stubs():
     embedding.ParallelLMHead = type("ParallelLMHead", (embedding.VocabParallelEmbedding,), {})
     fused = module("vllm.model_executor.layers.fused_moe")
     fused.RoutedExperts = type("RoutedExperts", (), {})
-    # A world size of ONE by default: without this module ``_require_tp1``'s
-    # import fails, the broad ``except`` swallows it, and the TP gate would be
-    # untested rather than passing.
+    # A world size of ONE by default: without this module
+    # ``_require_a_cutter``'s import fails, the broad ``except`` swallows it,
+    # and the TP gate would be untested rather than passing.
     distributed = module("vllm.distributed")
     distributed.get_tensor_model_parallel_world_size = lambda: 1
 
@@ -225,15 +228,41 @@ def test_a_routed_moe_layer_refuses_and_never_returns_none(monkeypatch, build):
     assert "flashinfer_b12x" in message and "compressed-tensors" in message
 
 
-def test_tensor_parallelism_above_one_refuses(monkeypatch):
-    """A unit is one blob per module against a shared rate schedule, so a shard
-    is not a byte range."""
+def test_a_world_size_above_one_reaches_its_route(monkeypatch):
+    """The config gate is about the CUTTER, not about the degree.
+
+    It used to refuse every ``tensor_parallel_size > 1`` with a message saying
+    ``tessera.layout.slice_unit`` was not in the build.  The slicer landed, the
+    seam cuts (``tests/test_serving_sharding.py``), and the message went on
+    being shipped -- narrower than the code and, by then, false.  What decides
+    now is the axis, and the axis is not known here: it arrives at
+    ``create_weights`` with the sizes vLLM asks for.
+    """
     import vllm.distributed as distributed
 
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     config = _resolved()
     monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
-    with pytest.raises(ValueError, match="tensor_parallel_size=1"):
+    method = config.get_quant_method(_layer(), TARGET)
+    assert type(method).__name__ == "TesseraNvfp4LinearMethod"
+
+
+def test_a_build_with_no_unit_slicer_still_refuses_a_tp_group(monkeypatch):
+    """The gate is keyed on the slicer's PRESENCE, not deleted.
+
+    A Tessera without ``layout.slice_unit`` must refuse rather than hand every
+    rank the whole unit: that serves correct logits at N times the intended
+    memory and looks merely disappointing.
+    """
+    import vllm.distributed as distributed
+
+    from tessera.serving import sharding
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved()
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(sharding, "have_unit_slicer", lambda: False)
+    with pytest.raises(ValueError, match="tensor_parallel_size=2"):
         config.get_quant_method(_layer(), TARGET)
 
 

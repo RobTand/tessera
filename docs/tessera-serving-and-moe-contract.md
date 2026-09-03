@@ -172,6 +172,20 @@ planes amortising.
 
 ### 7.1 Tessera artifacts are TP-degree-specific — EXL3's are not
 
+> **Superseded 2026-09-02 (#7). This section's conclusion inverted.** Schema
+> minor 4 added the INITIAL_STATE plane — one element per column carrying the
+> trellis state a row-sliced column starts from — and `tessera.layout.slice_unit`
+> cuts a whole unit on either axis at load. A Tessera artifact is now
+> **TP-agnostic**: the exporter never learns the TP degree and every rank cuts
+> its own shard out of the same bytes (`docs/design/tensor-parallel.md`,
+> `docs/schema/prismaquant.tessera.v1.md` §shard). The paragraph below is kept
+> because it states the cost correctly for the wire that existed when it was
+> written, and because the mechanism it names — the trellis running down rows
+> within a column — is exactly why the row axis needed a new plane and why the
+> span-2 route still refuses a row cut (`sharding.ROUTE_TP_AXES`).
+> **What has not moved:** no multi-rank serve has been run, so
+> `runtime_contract.json` still publishes `max_world_size: 1` per family.
+
 Reading vLLM's `exl3.py` beside our encoder settles an open question the wrong
 way for us. EXL3 shards by `Tensor.narrow` on `trellis` dim 0/1 and on
 `suh`/`svh` (`shard_exl3_col` / `shard_exl3_row`), because its trellis is a
