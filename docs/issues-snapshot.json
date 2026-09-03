@@ -1,0 +1,190 @@
+{
+ "default_repo": "RobTand/tessera",
+ "generated": "2026-09-03T00:41:06Z",
+ "repos": {
+  "RobTand/prismaquant": {
+   "116": {
+    "state": "OPEN",
+    "title": "Tessera is not an export lane: EXPORT_LANES is a 2-tuple and a test pins it"
+   },
+   "117": {
+    "state": "OPEN",
+    "title": "The allocator's cost cannot rank rungs of one format at matched bytes: Tessera menu ships 2.00x worse than uniform"
+   },
+   "12": {
+    "state": "OPEN",
+    "title": "MiniMax M3 support"
+   },
+   "19": {
+    "state": "CLOSED",
+    "title": "register_qwen3() silently stops overriding on newer transformers (broken by 5.13.1; good on 5.6.0)"
+   },
+   "2": {
+    "state": "CLOSED",
+    "title": "Possibly Useful Theoretical Basis"
+   },
+   "22": {
+    "state": "CLOSED",
+    "title": "Bit-exact zero-price: unmeasured-output_mse packed rows, and A16 rungs that are DP-legal but unexportable"
+   },
+   "23": {
+    "state": "CLOSED",
+    "title": "Footprint: production selector bypasses the tested manifest functions; latent double-subtraction"
+   },
+   "24": {
+    "state": "CLOSED",
+    "title": "aggregate_fused_siblings: empty format intersection makes the group vanish from the DP (no fallback, no error)"
+   },
+   "25": {
+    "state": "CLOSED",
+    "title": "Byte-budget selection: min-dloss vs max-disk ratchets now disagree, and the selection records neither"
+   },
+   "26": {
+    "state": "CLOSED",
+    "title": "DSv4-Flash MXFP4 decode: verify expert_dtype/scale_fmt against the real checkpoint before the first load"
+   },
+   "27": {
+    "state": "CLOSED",
+    "title": "export: silent BF16 coercion of an unschemed format should be a hard failure (and the exporter should declare EXPORTABLE_FORMATS)"
+   },
+   "28": {
+    "state": "CLOSED",
+    "title": "Runtime shape coercion is per-Linear, so it can de-promote one member of a packed/fused serving group (late fused-coherence failure)"
+   },
+   "29": {
+    "state": "CLOSED",
+    "title": "export: runtime coercion omits source_kind, so every FP8_SOURCE Linear is judged illegal and fills runtime_coercions with bogus rows"
+   },
+   "4": {
+    "state": "CLOSED",
+    "title": "Qwen3.5/3.6 MoE."
+   },
+   "6": {
+    "state": "CLOSED",
+    "title": "Gemma4 support"
+   },
+   "7": {
+    "state": "CLOSED",
+    "title": "Is this model only for single spark?  Qwen3.6-35B-A3B-PrismQuant-4.75bit"
+   },
+   "85": {
+    "state": "OPEN",
+    "title": "Archived-branch follow-ups: AURA, DSpark selection, and score persistence"
+   },
+   "87": {
+    "state": "OPEN",
+    "title": "shipgate: KL/PPL + greedy-smoke certify boundary-broken artifacts \u2014 three DSV4-Flash quants within ~3% PPL span a 6\u00d7 behavioral gap; proposal: add a sampled behavioral component"
+   },
+   "9": {
+    "state": "CLOSED",
+    "title": "Gemma4 full quantization: streaming-forward enablement (shared-KV state, beyond #6 rotary fix)"
+   }
+  },
+  "RobTand/tessera": {
+   "1": {
+    "state": "OPEN",
+    "title": "Allocated Tessera checkpoint is 2.00x worse served KL than a byte-matched uniform arm"
+   },
+   "10": {
+    "state": "OPEN",
+    "title": "Wire the window GEMV into the streamed route's forward"
+   },
+   "11": {
+    "state": "OPEN",
+    "title": "The fused window-Viterbi kernel collapses at R=8 (dispatch is a workaround)"
+   },
+   "12": {
+    "state": "OPEN",
+    "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.254x)"
+   },
+   "13": {
+    "state": "OPEN",
+    "title": "H-aware encode costs 19.2x (matched-pair control); mechanism is ~28% device work, ~72% launch/host"
+   },
+   "14": {
+    "state": "OPEN",
+    "title": "PrismaQuant: ANCHOR_BUDGET_BITS must become body-aware or BF16 is unallocatable"
+   },
+   "15": {
+    "state": "OPEN",
+    "title": "mink (per-member) rates have no converter path: refuse or round"
+   },
+   "16": {
+    "state": "OPEN",
+    "title": "Eager vs compiled KL divergence is unexplained, and compiled builds are not reproducible"
+   },
+   "17": {
+    "state": "OPEN",
+    "title": "Release mechanics: push, tag v0.1.0, and resolve PrismaQuant's pin"
+   },
+   "18": {
+    "state": "OPEN",
+    "title": "BF16 route: (L, sigma) unsearched, and the GLM expert evidence is one tensor"
+   },
+   "19": {
+    "state": "OPEN",
+    "title": "The attested menu path could not allocate at all, and only unit tests said otherwise"
+   },
+   "2": {
+    "state": "OPEN",
+    "title": "The continuous Tessera menu must not ship surrogate-selected"
+   },
+   "20": {
+    "state": "OPEN",
+    "title": "PrismaQuant cannot ship a Tessera artifact: fingerprint, EXPORT_LANES, and a gate that fails open"
+   },
+   "21": {
+    "state": "OPEN",
+    "title": "Gridbook retirement: four capability losses and the CB plumbing debt (D34)"
+   },
+   "22": {
+    "state": "OPEN",
+    "title": "Release can never reach a trailing partial superblock"
+   },
+   "23": {
+    "state": "OPEN",
+    "title": "Padding canonicality has two authorities and the normative one has no callers"
+   },
+   "24": {
+    "state": "OPEN",
+    "title": "Branches the audit fixes made provably unreachable"
+   },
+   "25": {
+    "state": "OPEN",
+    "title": "Documentation drift found by the math audit (Tier C)"
+   },
+   "26": {
+    "state": "OPEN",
+    "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
+   },
+   "3": {
+    "state": "OPEN",
+    "title": "Standing gate: a byte-matched uniform arm beside every rate-axis candidate"
+   },
+   "4": {
+    "state": "OPEN",
+    "title": "Design a cost that ranks rungs of one format at matched bytes"
+   },
+   "5": {
+    "state": "OPEN",
+    "title": "MoE: the plugin has no expert route, and the exporter mis-plans this model silently"
+   },
+   "6": {
+    "state": "OPEN",
+    "title": "NVFP4 MoE is refused on the pinned build by swiglu_limit clamp filtering"
+   },
+   "7": {
+    "state": "OPEN",
+    "title": "Tensor parallelism: NVFP4 row shards refused, and the contract still says max_world_size 1"
+   },
+   "8": {
+    "state": "CLOSED",
+    "title": "runtime_contract declares a rung set that nothing enforces"
+   },
+   "9": {
+    "state": "OPEN",
+    "title": "BF16 has a wire and no serving route"
+   }
+  }
+ }
+}

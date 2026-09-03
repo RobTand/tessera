@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Regenerate ``docs/issues-snapshot.json`` from the GitHub trackers.
+
+The snapshot exists so that ``tests/test_issue_refs.py`` can check every issue
+reference in the docs **offline**.  A test that needs the network is a test that
+gets skipped, and a reference check that gets skipped is how a finding goes
+missing -- which is the whole problem this pair of files is here to solve.
+
+    python tools/refresh_issues.py           # both repos
+    python tools/refresh_issues.py --check   # exit 1 if the snapshot is stale
+
+Run it after filing or closing anything.  It is not run by the test suite.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPOS = ("RobTand/tessera", "RobTand/prismaquant")
+SNAPSHOT = Path(__file__).resolve().parent.parent / "docs" / "issues-snapshot.json"
+
+
+def fetch(repo: str) -> dict[str, dict]:
+    out = subprocess.run(
+        ["gh", "issue", "list", "--repo", repo, "--state", "all", "--limit", "500",
+         "--json", "number,title,state"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    return {
+        str(row["number"]): {"title": row["title"], "state": row["state"]}
+        for row in json.loads(out)
+    }
+
+
+def build() -> dict:
+    return {
+        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "default_repo": REPOS[0],
+        "repos": {repo: fetch(repo) for repo in REPOS},
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true",
+                    help="exit 1 if the committed snapshot is missing an issue")
+    a = ap.parse_args()
+    fresh = build()
+    if a.check:
+        if not SNAPSHOT.exists():
+            print("no snapshot; run tools/refresh_issues.py", file=sys.stderr)
+            return 1
+        old = json.loads(SNAPSHOT.read_text())
+        stale = False
+        for repo, issues in fresh["repos"].items():
+            known = old.get("repos", {}).get(repo, {})
+            missing = sorted(set(issues) - set(known), key=int)
+            moved = sorted(
+                (n for n in set(issues) & set(known)
+                 if issues[n]["state"] != known[n]["state"]), key=int)
+            if missing:
+                print(f"{repo}: not in the snapshot: {missing}", file=sys.stderr)
+                stale = True
+            if moved:
+                print(f"{repo}: state changed: {moved}", file=sys.stderr)
+                stale = True
+        return 1 if stale else 0
+    SNAPSHOT.write_text(json.dumps(fresh, indent=1, sort_keys=True) + "\n")
+    counts = {r: len(v) for r, v in fresh["repos"].items()}
+    print(f"wrote {SNAPSHOT.relative_to(SNAPSHOT.parent.parent)}: {counts}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

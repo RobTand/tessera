@@ -204,19 +204,26 @@ def test_hoist_breaks_ties_left():
     assert "tie" in _hoist.__doc__.lower()
 
 
-# --- G2c: the boundary this worktree cannot move ---------------------------
+# --- G2c: the boundary, now that both sides have landed --------------------
 
 
-def test_calculator_terminal_record_digest_is_still_fabricated():
-    """A pin, not a fix.  ``layout.build_terminal(plane_region=None)`` digests
-    ``bytes(total_bytes)`` -- a look-valid sha256 of data never hashed -- and
-    ``calculator.terminal_rate`` hits it on every call.  ``layout.py`` belongs
-    to another worktree; when its fix lands, this test fails and the two
-    changes meet.  The calculator itself reads only ``exact_bpp``, so nothing
-    fabricated escapes this module today.
+def test_calculator_terminal_record_carries_no_digest_it_did_not_compute():
+    """This was a pin on the other worktree's bug and it fired on the merge,
+    which is what a pin is for.  ``layout.build_terminal(plane_region=None)``
+    used to digest ``bytes(total_bytes)`` -- a look-valid sha256 of data never
+    hashed -- and ``calculator.terminal_rate`` hits that path on every call.
+    It now stores ``ZERO_DIGEST``, a sentinel no payload can produce, so a
+    terminal built without a region fails ``container``'s unconditional digest
+    comparison loudly instead of matching an all-zero payload.  The calculator
+    itself reads only ``exact_bpp``, so neither form escaped this module.
     """
     from tessera.grammar import C_FULL_BITS, bresenham_rate_schedule, root_from_q256
-    from tessera.layout import TerminalSpec, build_planes, build_terminal
+    from tessera.layout import (
+        ZERO_DIGEST,
+        TerminalSpec,
+        build_planes,
+        build_terminal,
+    )
     from tessera.manifest import Geometry
 
     geometry = Geometry(
@@ -237,4 +244,7 @@ def test_calculator_terminal_record_digest_is_still_fabricated():
     record = build_terminal(
         geometry, rates, spec, planes, 0, 0, cap=C_FULL_BITS, arity=1
     )
-    assert record.payload_digest == hashlib.sha256(bytes(record.exact_bytes)).digest()
+    assert record.payload_digest == ZERO_DIGEST
+    # The point of the sentinel: it is not the digest of the payload it would
+    # otherwise have claimed, so nothing can match it by accident.
+    assert record.payload_digest != hashlib.sha256(bytes(record.exact_bytes)).digest()
