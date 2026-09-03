@@ -55,7 +55,7 @@ path, the tile a stock GEMM consumes with no decoder in the serve.
 decodes each forward into a transient tile the op owns.  That is the mode the
 family is a product in.
 
-WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json`` v4
+WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json`` v5
 publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
 ``sm_121`` dense cells (``decode`` and ``batch``), because a container receipt
 covers exactly that: four route censuses on the pinned image -- both residency

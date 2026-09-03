@@ -494,3 +494,51 @@ def test_a_unit_without_loader_axes_is_refused(contract):
                    lambda c: c["tensor_parallel"]["units"][0].pop("loader_axes"))
     with pytest.raises(ValueError, match=r"missing \['loader_axes'\]"):
         validate_serving_contract(bad)
+
+
+def test_every_published_family_states_the_a_side_a_gate_can_read():
+    """``activation_contract`` is on the FORMATS row, not only on the cells.
+
+    A family is decodable before any receipt covers it -- TESSERA_BF16_K1
+    landed exactly that way -- and while the field lived only on
+    ``lane_eligibility.cells`` such a family published its A-side contract in
+    changelog prose and nowhere a consumer could reach.  That is the failure
+    principle 14 names: a producer could not tell "unquantised by design" from
+    "nobody filled it in", and PrismaQuant's lane preflight hit it deriving an
+    executes glob for a family whose A side it could not price.
+
+    The two claims stay INDEPENDENT once a receipt lands.  This test originally
+    demonstrated that with ``TESSERA_BF16_K1``'s empty ``attested_rungs_q256``,
+    which stopped being empty at v5; pinning that emptiness would have made the
+    test a hostage to the next receipt rather than a statement about the field.
+    What it pins instead is the invariant that does not move: every row's A side
+    is its route's, and every cell's A side is its row's -- the row says what the
+    decoder feeds the GEMM, the cell says a receipt covered it.
+    """
+    from tessera.serving.contract import _FAMILY_TO_ROUTE, load_serving_contract
+    from tessera.serving.scheme import ROUTES
+
+    contract = load_serving_contract()
+    rows = {row["family"]: row for row in contract["formats"]}
+    assert rows, "the packaged contract publishes no formats[] rows"
+    for family, row in rows.items():
+        assert row["activation_contract"] == ROUTES[_FAMILY_TO_ROUTE[family]]["activation_contract"]
+    # The one this test exists for: an A side published as a value, whatever the
+    # attestation state beside it happens to be.
+    assert rows["TESSERA_BF16_K1"]["activation_contract"] == "bf16_unquantized"
+    for cell in contract["lane_eligibility"]["cells"]:
+        assert cell["activation_contract"] == rows[cell["family"]]["activation_contract"], (
+            f"{cell['id']} executes a different A side from its own family row")
+
+
+def test_a_row_whose_a_side_disagrees_with_its_route_is_refused():
+    """The route is the authority.  A row that priced an A side the runtime does
+    not execute is the currency error that moved an 87 GB allocation once."""
+    import copy
+
+    from tessera.serving.contract import load_serving_contract, validate_serving_contract
+
+    contract = copy.deepcopy(load_serving_contract())
+    contract["formats"][0]["activation_contract"] = "fp8_per_token_dynamic"
+    with pytest.raises(ValueError, match="route executes"):
+        validate_serving_contract(contract)

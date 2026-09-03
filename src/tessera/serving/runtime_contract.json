@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 4,
+ "contract_version": 5,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -24,6 +24,7 @@
    "family": "TESSERA_E2M1_K2",
    "grid": "E2M1x2",
    "name_pattern": "TESSERA_E2M1_K2_R{k}",
+   "activation_contract": "e2m1_group16_ue4m3_static",
    "reader_rate_range_q256": [
     896,
     896
@@ -47,6 +48,7 @@
    "family": "TESSERA_E4M3_K1",
    "grid": "E4M3",
    "name_pattern": "TESSERA_E4M3_K1_R{k}",
+   "activation_contract": "fp8_per_token_dynamic",
    "reader_rate_range_q256": [
     256,
     2048
@@ -70,6 +72,7 @@
    "family": "TESSERA_BF16_K1",
    "grid": "BF16",
    "name_pattern": "TESSERA_BF16_K1_R{k}",
+   "activation_contract": "bf16_unquantized",
    "reader_rate_range_q256": [
     256,
     4096
@@ -276,9 +279,14 @@
  },
  "changelog": [
   {
+   "contract_version": 5,
+   "date": "2026-09-02",
+   "change": "TESSERA_BF16_K1 stops being unattested. v4 gave its formats[] row an activation_contract, which says what the route EXECUTES; this says a receipt COVERED it, and the two are different claims: attested_rungs_q256 [1792] (R=7, the rung the receipt served) and two sm_121 dense cells, decode and batch, both bf16_unquantized on torch.mm with the row scale as an fp32 epilogue. The receipt is docs/measurements/tessera-bf16-route-served-2026-09-02.md: four route censuses on the pinned image -- resident/eager, resident/compiled, streamed/eager, streamed/compiled -- each recording all 112 declared modules on the TESSERA_BF16 route with decoder torch_window in BOTH the prefill and the decode shape and zero problems, plus a served KL-vs-BF16 in both residency modes on the Qwen-tokenized n=8 x 512 corpus against the image-matched teacher, with the folded stock twin on vanilla vLLM as the control. route_status is backed_with_serve_flag because the residency is selected by TESSERA_SERVE_MODE and both values were served; qualification is device_qualified because the censuses ran on this GB10 (sm_121, capability [12, 1]), not on a table. Nothing wider is attested: one rung, one platform, dense structure only, no routed-MoE cell, and tensor_parallel.units still caps this family at max_world_size 1."
+  },
+  {
    "contract_version": 4,
    "date": "2026-09-02",
-   "change": "TESSERA_BF16_K1 stops being unattested: attested_rungs_q256 [1792] (R=7, the rung the receipt served) and two sm_121 dense cells, decode and batch, both bf16_unquantized on torch.mm with the row scale as an fp32 epilogue. The receipt is docs/measurements/tessera-bf16-route-served-2026-09-02.md: four route censuses on the pinned image -- resident/eager, resident/compiled, streamed/eager, streamed/compiled -- each recording all 112 declared modules on the TESSERA_BF16 route with decoder torch_window in BOTH the prefill and the decode shape and zero problems, plus a served KL-vs-BF16 in both residency modes on the Qwen-tokenized n=8 x 512 corpus against the image-matched teacher, with the folded stock twin on vanilla vLLM as the control. route_status is backed_with_serve_flag because the residency is selected by TESSERA_SERVE_MODE and both values were served; qualification is device_qualified because the censuses ran on this GB10 (sm_121, capability [12, 1]), not on a table. Nothing wider is attested: one rung, one platform, dense structure only, no routed-MoE cell, and tensor_parallel.units still caps this family at max_world_size 1."
+   "change": "formats[] rows gain activation_contract: the A-side contract the route for that family EXECUTES, as a value a gate can read. It was published only on lane_eligibility cells, so a family with no cell yet -- exactly TESSERA_BF16_K1, whose v3 entry landed unattested -- published its activation contract in changelog PROSE and nowhere a gate could reach, which is the principle-14 failure that field exists to prevent: a consumer could not tell 'unquantised by design' from 'nobody filled it in'. PrismaQuant's lane preflight found it within the hour, deriving an executes glob for a family whose A side it could not price. The value is checked against tessera.serving.scheme.ROUTES[route]['activation_contract'] -- the dict the routes themselves dispatch on -- exactly as loader_axes is checked against ROUTE_TP_AXES, so the document and the code cannot drift; and every cell's activation_contract must equal its family's row, so the two places that carry it cannot disagree. The A side is a claim about execution, not about attestation: the row says what the decoder feeds the GEMM, the cell says a receipt covered it, and TESSERA_BF16_K1 now honestly publishes bf16_unquantized with attested_rungs_q256 still empty. ADDITIVE: a v3 reader ignores the new field, and the cells it already read are unchanged."
   },
   {
    "contract_version": 3,

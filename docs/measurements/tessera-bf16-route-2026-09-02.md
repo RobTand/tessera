@@ -564,7 +564,7 @@ anyway.
 > with **no `lane_eligibility` cell** on the day the route landed, because "the
 > route status is `backed`" is a claim about a runtime and needs a receipt, not
 > a hand-off's say-so (principle 14, which this section already says).  The
-> receipt arrived the same day: contract v4 attests `q256 = 1792` and publishes
+> receipt arrived the same day: contract v5 attests `q256 = 1792` and publishes
 > two `sm_121` dense cells on four route censuses plus a served KL against the
 > twin — `docs/measurements/tessera-bf16-route-served-2026-09-02.md`.  One rung,
 > one platform, dense only; every other rung in the reader's `[256, 4096]`

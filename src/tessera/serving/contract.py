@@ -180,10 +180,31 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         where = f"runtime_contract.formats[{i}]"
         _require_keys(entry, where,
                       required={"kind", "family", "grid", "name_pattern",
+                                "activation_contract",
                                 "reader_rate_range_q256", "reader_rate_step_q256",
                                 "reader_rate_bound", "attested_rungs_q256",
                                 "native_terminal_q256", "residency_modes"},
                       optional={"candidate_rungs_q256"})
+        # The A side, where a gate can read it.  It belongs on the ROW and not
+        # only on the cells because it is a claim about EXECUTION -- what this
+        # family's route feeds the GEMM -- and a family can be decodable before
+        # any receipt covers it.  Published only on cells, a family with no cell
+        # yet had its activation contract in changelog prose, which a consumer
+        # cannot tell apart from nobody having filled it in.  Checked against
+        # the dict the routes dispatch on, exactly as ``loader_axes`` is checked
+        # against ``ROUTE_TP_AXES``.
+        route = _FAMILY_TO_ROUTE.get(entry["family"])
+        if route is None or route not in ROUTES:
+            raise ValueError(
+                f"{where}.family {entry['family']!r} names no route this package serves, so "
+                "nothing here can say what its A side executes")
+        expected_contract = ROUTES[route]["activation_contract"]
+        if entry["activation_contract"] != expected_contract:
+            raise ValueError(
+                f"{where}.activation_contract is {entry['activation_contract']!r} but the "
+                f"{route} route executes {expected_contract!r} "
+                "(tessera.serving.scheme.ROUTES). The route is the authority; a document that "
+                "disagreed with it would price an A side the runtime does not execute.")
         if entry["kind"] != FORMAT_KIND:
             raise ValueError(f"{where}.kind must be {FORMAT_KIND!r}, got {entry['kind']!r}")
         alias = entry.get("candidate_rungs_q256")

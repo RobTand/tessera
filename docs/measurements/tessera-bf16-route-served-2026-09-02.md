@@ -15,7 +15,7 @@ nats (0.9961x). The signs disagree, so **no fold win is claimed here** — §3 h
 the arithmetic for why that is the expected answer at R = 7, and #45 carries the
 high-rung arm that would settle it.
 
-This is the receipt `runtime_contract.json` v4 cites when it moves
+This is the receipt `runtime_contract.json` v5 cites when it moves
 `TESSERA_BF16_K1` from `attested_rungs_q256: []` to `[1792]` and publishes two
 `sm_121` dense cells. Issue #9 asked for exactly this: a route module, one
 `ROUTES` entry, contract rows, and *a served census plus a KL against the
@@ -195,7 +195,7 @@ from `tessera-dense-reach-fix-2026-09-02.md` and
 
 ## 4. What this does and does not license
 
-**Licensed** (contract v4): `TESSERA_BF16_K1`, `attested_rungs_q256: [1792]`,
+**Licensed** (contract v5): `TESSERA_BF16_K1`, `attested_rungs_q256: [1792]`,
 two cells `tessera_bf16_k1_dense_sm121_{decode,batch}_mm_w16a16` —
 `activation_contract: bf16_unquantized`, `route_status:
 backed_with_serve_flag` (the residency is chosen by `TESSERA_SERVE_MODE` and
