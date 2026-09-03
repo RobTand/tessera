@@ -13,8 +13,8 @@ Exits non-zero on any disagreement, naming the units.
 
 Three outcomes, not two.  A plan that does not PRICE a unit is silent about
 it, which is a different thing from a plan that prices it differently, and the
-operator's next move differs: re-run the plan with the allocator attached
-against fix the encoder/allocator drift.  ``missing`` and ``extra`` stay
+operator's next move differs: re-run the plan with the allocator attached,
+versus fix the encoder/allocator drift.  ``missing`` and ``extra`` stay
 disagreements -- the plan and the export make contradictory claims about which
 units exist -- but ``unpriced`` gets its own bucket and its own verdict word.
 
@@ -48,9 +48,11 @@ def main(argv=None) -> int:
     for tensor in sorted(set(charged) & set(emitted)):
         want = charged[tensor]
         got = emitted[tensor]
-        # ``is None``, not truthiness: the writer emits None or [num, den]
-        # (plan_from_layer_config.py:437), so a [0, 1] charge -- a truthy list
-        # holding a falsy Fraction -- would otherwise be read as unpriced.
+        # ``is None``, not truthiness.  Latent rather than live: the writer
+        # emits None or [num, den] (plan_from_layer_config.py:437) and [0, 1]
+        # is truthy, so nothing misroutes today.  This states the contract --
+        # a charge of zero is a PRICE, not silence -- before a writer that
+        # encodes it as ``0`` or ``[]`` makes the distinction live.
         exact = want["prismaquant_charged_bits_exact"]
         want_bits = None if exact is None else Fraction(*exact)
         got_bits = Fraction(got["wire_bytes"] * 8)
