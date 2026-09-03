@@ -1,0 +1,97 @@
+{
+  "schema": "tessera.rung_pick_verification/1",
+  "arms": {
+    "uniform_R1006": {
+      "pick": {
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006,
+        "self_attn.o_proj": 1006,
+        "mlp.gate_proj": 1006,
+        "mlp.up_proj": 1006,
+        "mlp.down_proj": 1006
+      },
+      "kl_full": 0.013726961798965931,
+      "top1_agree": 0.9393346379647749,
+      "wire_bytes": 7865344,
+      "reference": "uniform_R749",
+      "vs_uniform": 0.2686561346054077,
+      "dkl_vs_uniform": -0.03736795485019684,
+      "dkl_bootstrap_se": 0.0022393984254449606,
+      "dkl_ci95": [
+        -0.041863813996315,
+        -0.033157262951135635
+      ],
+      "p_worse_than_uniform": 0.0
+    },
+    "served_allocation": {
+      "pick": {
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083,
+        "self_attn.o_proj": 934,
+        "mlp.gate_proj": 1107,
+        "mlp.up_proj": 1107,
+        "mlp.down_proj": 749
+      },
+      "kl_full": 0.02704443223774433,
+      "top1_agree": 0.9148727984344422,
+      "wire_bytes": 7864832,
+      "reference": "uniform_R749",
+      "vs_uniform": 0.529297947883606,
+      "dkl_vs_uniform": -0.024050481617450714,
+      "dkl_bootstrap_se": 0.00222181249409914,
+      "dkl_ci95": [
+        -0.028515350073575974,
+        -0.019923191517591476
+      ],
+      "p_worse_than_uniform": 0.0
+    },
+    "uniform_R749": {
+      "pick": {
+        "self_attn.q_proj": 749,
+        "self_attn.k_proj": 749,
+        "self_attn.v_proj": 749,
+        "self_attn.o_proj": 749,
+        "mlp.gate_proj": 749,
+        "mlp.up_proj": 749,
+        "mlp.down_proj": 749
+      },
+      "kl_full": 0.051094911992549896,
+      "top1_agree": 0.8823385518590998,
+      "wire_bytes": 5891584,
+      "reference": "uniform_R749",
+      "vs_uniform": 1.0,
+      "dkl_vs_uniform": 0.0,
+      "dkl_bootstrap_se": 0.0,
+      "dkl_ci95": [
+        0.0,
+        0.0
+      ],
+      "p_worse_than_uniform": 0.0
+    },
+    "AURA_fp32_p64_pick_R749": {
+      "pick": {
+        "mlp.down_proj": 826,
+        "mlp.gate_proj": 512,
+        "mlp.up_proj": 512,
+        "self_attn.o_proj": 900,
+        "self_attn.q_proj": 970,
+        "self_attn.k_proj": 970,
+        "self_attn.v_proj": 970
+      },
+      "kl_full": 0.03983507677912712,
+      "top1_agree": 0.8999510763209393,
+      "wire_bytes": 5889024,
+      "reference": "uniform_R749",
+      "vs_uniform": 0.7796290516853333,
+      "dkl_vs_uniform": -0.011259838938713074,
+      "dkl_bootstrap_se": 0.0020574189256876707,
+      "dkl_ci95": [
+        -0.015278412960469723,
+        -0.007153439335525036
+      ],
+      "p_worse_than_uniform": 0.0
+    }
+  }
+}

@@ -151,6 +151,12 @@ def main() -> int:
                          "(candidate 3: does the mispricing track refit gain?). "
                          "None = the exporter default, which is what served.")
     ap.add_argument("--rungs", default=",".join(str(r) for r in RUNGS))
+    ap.add_argument("--headroom", action="store_true",
+                    help="Instead of the rung sweep, measure per unit the two "
+                         "arms that bound what any rung above R1006 could ever "
+                         "buy: that unit at per-channel FP8 RTN (the wire's "
+                         "rate-to-infinity asymptote) and at BF16 (no weight "
+                         "quantization at all), the other six held at R1006.")
     ap.add_argument("--positions", default=None,
                     help="also write per-scored-position kl_full for every arm "
                          "to this .npz, so a paired bootstrap can say which "
@@ -317,12 +323,48 @@ def main() -> int:
     run("anchor:alloc_down_restored", {**ALLOC, "mlp.down_proj": UNIFORM_RUNG}, "anchor")
     run("anchor:uniform_down749", {**uniform, "mlp.down_proj": 749}, "anchor")
 
-    # the sweep: one unit moves, the other six hold at R1006
-    for role in ROLES:
-        for rung in rungs:
-            if rung == UNIFORM_RUNG:
-                continue
-            run(f"sweep:{role}@R{rung}", {**uniform, role: rung}, "sweep")
+    if args.headroom:
+        # What is there left to win above R1006?  Two arms per unit, the other
+        # six held at R1006: the unit at the wire's rate-to-infinity asymptote
+        # (per-channel FP8 RTN, which is what an E4M3 body converges to as the
+        # trellis stops making errors) and the unit at BF16 (no weight
+        # quantization at all).  The gap from that unit's R1006 arm to its RTN
+        # arm is an upper bound on everything any finer rung could buy for it.
+        def run_mixed(name: str, role: str, loader) -> dict:
+            set_arm(uniform)
+            loader(role)
+            t = time.time()
+            m = measure()
+            per_position[name] = measure.last_positions
+            row = {"arm": name, "kind": "headroom", "assignment": {**uniform},
+                   "moved_role": role, **m, "seconds": time.time() - t,
+                   "wire_bytes": sum(wire_bytes[(r, UNIFORM_RUNG)]
+                                     for r in ROLES if r != role)}
+            results["arms"].append(row)
+            print(f"{name:34s} kl_full {m['kl_full']:.6f}  "
+                  f"kl_top1024 {m['kl_top1024']:.6f}  "
+                  f"top1 {m['top1_agree']*100:.2f}%", flush=True)
+            return row
+
+        def one_rtn(role: str) -> None:
+            w = source[role]
+            s_row = (w.abs().amax(dim=-1) / FP8_MAX).clamp_min(1e-12).float()
+            tile = (w / s_row[:, None]).clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn)
+            holders[role].load(tile.view(torch.uint8), s_row)
+
+        def one_bf16(role: str) -> None:
+            holders[role].load_bf16(source[role])
+
+        for role in ROLES:
+            run_mixed(f"headroom:{role}@fp8_rtn", role, one_rtn)
+            run_mixed(f"headroom:{role}@bf16", role, one_bf16)
+    else:
+        # the sweep: one unit moves, the other six hold at R1006
+        for role in ROLES:
+            for rung in rungs:
+                if rung == UNIFORM_RUNG:
+                    continue
+                run(f"sweep:{role}@R{rung}", {**uniform, role: rung}, "sweep")
 
     Path(args.out).write_text(json.dumps(results, indent=2))
     if args.positions:

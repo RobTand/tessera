@@ -14,7 +14,8 @@ defines
 
 and this script imports ``fisher_probe_scalar`` from that tree rather than
 re-deriving it, runs at its shipped defaults (``n_probes=16``,
-``token_scope="all"``, ``temperature=1.0``, ``seed_base=7000``, bf16 model,
+``token_scope="all"``, ``temperature=1.0``, ``seed_base=7000``, fp32-resident
+model (``aura_cost.py --dtype`` defaults to ``float32``),
 eager attention, ``dw_dtype=bfloat16``) and takes its calibration from the same
 loader at the same defaults (``load_wikitext_calibration_windowed``, wikitext-2
 train, ``n=4``, ``seqlen=256``, ``seed=42``).
@@ -56,6 +57,10 @@ def main() -> int:
     ap.add_argument("--calib-seqlen", type=int, default=256)
     ap.add_argument("--calib-seed", type=int, default=42)
     ap.add_argument("--token-scope", default="all")
+    ap.add_argument("--dtype", default="float32", choices=("float32", "bfloat16"),
+                    help="Resident model dtype for the probe.  aura_cost.py's "
+                         "own --dtype default is float32 ('the historical "
+                         "default'), so that is the default here too.")
     args = ap.parse_args()
     rungs = tuple(int(r) for r in args.rungs.split(","))
     device = torch.device("cuda")
@@ -69,7 +74,9 @@ def main() -> int:
         tok, args.n_calib_samples, args.calib_seqlen,
         split="train", seed=args.calib_seed).to(device)
     model = AutoModelForCausalLM.from_pretrained(
-        str(MODEL), dtype=torch.bfloat16, attn_implementation="eager").to(device).eval()
+        str(MODEL),
+        dtype=torch.float32 if args.dtype == "float32" else torch.bfloat16,
+        attn_implementation="eager").to(device).eval()
 
     mods = dict(model.named_modules())
     weights = {r: mods[f"model.layers.0.{r}"].weight for r in ROLES}
@@ -108,6 +115,7 @@ def main() -> int:
     inv = 1.0 / args.n_probes
     out = {"schema": "tessera.rung_aura_cost/1", "rungs": list(rungs), "roles": list(ROLES),
            "n_probes": args.n_probes, "seed_base": args.seed_base,
+           "measurement_dtype": args.dtype,
            "token_scope": args.token_scope,
            "calib": {"loader": "prismaquant.calibration_data.load_wikitext_calibration_windowed",
                      "split": "train", "n": args.n_calib_samples,

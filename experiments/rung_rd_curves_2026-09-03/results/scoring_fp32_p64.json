@@ -1,0 +1,2808 @@
+{
+  "schema": "tessera.rung_cost_scoring/1",
+  "rungs": [
+    320,
+    512,
+    640,
+    749,
+    826,
+    900,
+    934,
+    970,
+    1006,
+    1044,
+    1083,
+    1107,
+    1150,
+    1200,
+    1262,
+    1340
+  ],
+  "baseline_kl": 0.013726962172588491,
+  "empirical_anchor_sets": {
+    "5anchor": [
+      320,
+      640,
+      900,
+      1083,
+      1340
+    ],
+    "7anchor": [
+      320,
+      640,
+      826,
+      970,
+      1083,
+      1200,
+      1340
+    ],
+    "9anchor": [
+      320,
+      512,
+      749,
+      900,
+      1006,
+      1083,
+      1150,
+      1262,
+      1340
+    ]
+  },
+  "candidates": {
+    "L1_shipped_menu": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8852941176470588,
+        "self_attn.k_proj": 0.8588235294117647,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8411764705882353,
+        "mlp.up_proj": 0.9882352941176471,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.9327731092436975,
+      "spearman_marginal_pooled": 0.5285714285714286,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 749,
+          "mlp.gate_proj": 1107,
+          "mlp.up_proj": 1107,
+          "self_attn.o_proj": 934,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7864832,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.025015078412110085,
+        "vs_uniform": 1.8223317073068757
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 320,
+            "mlp.gate_proj": 826,
+            "mlp.up_proj": 826,
+            "self_attn.o_proj": 1006,
+            "self_attn.q_proj": 826,
+            "self_attn.k_proj": 826,
+            "self_attn.v_proj": 826
+          },
+          "bytes": 5890048,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.09584882219710228,
+          "vs_uniform": 1.8766408836979926
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 1107,
+            "mlp.up_proj": 1107,
+            "self_attn.o_proj": 934,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7864832,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.025015078412110085,
+          "vs_uniform": 1.8223317073068757
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 26,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 3.067149508362254e-06,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.241838604435347,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 8.853142671292374e-07,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.03444934876253289,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 6.850399362941793e-07,
+          "measured_gain_per_byte": -7.965863630386954e-09,
+          "cand_dcost": 0.01683554147436575,
+          "measured_dkl": 0.0001957690645803898
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 6.064853588098789e-07,
+          "measured_gain_per_byte": -1.5522374925011004e-08,
+          "cand_dcost": 0.026704763319116587,
+          "measured_dkl": 0.0006834812126980845
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 3.2350851841559856e-07,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 0.025839272382890688,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 5.014563992920002e-06,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.0872935299887514,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 3.4545550605213483e-06,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.06721182325750336,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 2.711863267175571e-06,
+          "measured_gain_per_byte": -4.4210199284897604e-08,
+          "cand_dcost": 0.033323375827053414,
+          "measured_dkl": 0.0005432549288128218
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 2.417253724987169e-06,
+          "measured_gain_per_byte": -2.60138680485098e-09,
+          "cand_dcost": 0.05321825800931751,
+          "measured_dkl": 5.727213189559918e-05
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 2.0594641840768962e-06,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.05272228311236854,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.3354859853495085e-06,
+          "measured_gain_per_byte": -2.4573773755435268e-09,
+          "cand_dcost": 0.05333396831091797,
+          "measured_dkl": 9.813782286970628e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.7538638771540338e-05,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.5357917559390888,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 1.8158709292733327e-05,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.39978214378881693,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 9.092825550079778e-06,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.363131081167986,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 6.828858698090441e-06,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.2377535444327168,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 3.889910447023237e-06,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.15534746361232,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 2.535767794443985e-06,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.12983131107553203,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 8.179109986069786e-06,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.47739829166692127,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 6.18986583946087e-06,
+          "measured_gain_per_byte": -2.5134726757984372e-08,
+          "cand_dcost": 0.2281832143058855,
+          "measured_dkl": 0.0009265665672063359
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 4.510240626046733e-06,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 0.3463864800803891,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 2.7404611679024303e-06,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 0.3283291716040544,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.4357524924257832e-05,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.749807381644441,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 6.3280849974660165e-06,
+          "measured_gain_per_byte": -5.3858126366203015e-09,
+          "cand_dcost": 0.41795735791263544,
+          "measured_dkl": 0.0003557221530234977
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 1.7841780438773047e-06,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.09865790911423944,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.3544626990792656e-06,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.07905727881985858,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 1.1712579312847419e-06,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.07016303511568117,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "L1_remeasured_4x256": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8852941176470588,
+        "self_attn.k_proj": 0.861764705882353,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8323529411764706,
+        "mlp.up_proj": 0.9941176470588236,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.9327731092436975,
+      "spearman_marginal_pooled": 0.5531100974497201,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 749,
+          "mlp.gate_proj": 1083,
+          "mlp.up_proj": 1083,
+          "self_attn.o_proj": 1006,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7864832,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.020414952545949855,
+        "vs_uniform": 1.4872156191059285
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 749,
+            "mlp.up_proj": 749,
+            "self_attn.o_proj": 749,
+            "self_attn.q_proj": 749,
+            "self_attn.k_proj": 749,
+            "self_attn.v_proj": 749
+          },
+          "bytes": 5891584,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.05107467445142115,
+          "vs_uniform": 1.0
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 1083,
+            "mlp.up_proj": 1083,
+            "self_attn.o_proj": 1006,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7864832,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.020414952545949855,
+          "vs_uniform": 1.4872156191059285
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 24,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 2.218688676207545e-06,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.17493916474161253,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 6.929087618273336e-07,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.026962465740225205,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 7.989040699480518e-07,
+          "measured_gain_per_byte": -7.965863630386954e-09,
+          "cand_dcost": 0.019633866423043322,
+          "measured_dkl": 0.0001957690645803898
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 6.702923912379322e-09,
+          "measured_gain_per_byte": -1.5522374925011004e-08,
+          "cand_dcost": 0.0002951431457098863,
+          "measured_dkl": 0.0006834812126980845
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.4420716445506607e-07,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 0.011518114639355037,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 8.560362340818075e-06,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.14901878762896104,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.04985252740936e-06,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.03988193077327651,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 8.268372264810345e-06,
+          "measured_gain_per_byte": -4.4210199284897604e-08,
+          "cand_dcost": 0.10160175838998953,
+          "measured_dkl": 0.0005432549288128218
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 5.574603329363826e-06,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.14270984523171393,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 4.805214259928352e-07,
+          "measured_gain_per_byte": -2.4573773755435268e-09,
+          "cand_dcost": 0.019190103668449865,
+          "measured_dkl": 9.813782286970628e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.7701634639463646e-05,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.5389630035454047,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 9.315787499304188e-06,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.20509637758468102,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 4.69752415085315e-06,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.18760032448847141,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 9.237230186665656e-06,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.32160340617895145,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 2.2093316435813546e-06,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.08823186851806497,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.939565370243923e-06,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.09930574695648886,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 5.29774786758717e-06,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.30921894753532797,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 2.8730914697401547e-06,
+          "measured_gain_per_byte": -2.5134726757984372e-08,
+          "cand_dcost": 0.10591364394050107,
+          "measured_dkl": 0.0009265665672063359
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 8.694745366163312e-06,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 0.6677564441213424,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.5677469145298697e-06,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 0.18782862233599462,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.273713593150693e-05,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.6651841868870179,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 2.4312747231544745e-06,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.1344397670915498,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.0933755795779283e-06,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.06381814582880452,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 6.01468721562634e-07,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.03603038229648803,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "L1_10x_rows2560": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8852941176470588,
+        "self_attn.k_proj": 0.861764705882353,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8323529411764706,
+        "mlp.up_proj": 0.9941176470588236,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.9327731092436975,
+      "spearman_marginal_pooled": 0.5524155090192826,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 749,
+          "mlp.gate_proj": 1083,
+          "mlp.up_proj": 1083,
+          "self_attn.o_proj": 1006,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7864832,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.020414952545949855,
+        "vs_uniform": 1.4872156191059285
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 749,
+            "mlp.up_proj": 749,
+            "self_attn.o_proj": 749,
+            "self_attn.q_proj": 749,
+            "self_attn.k_proj": 749,
+            "self_attn.v_proj": 749
+          },
+          "bytes": 5891584,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.05107467445142115,
+          "vs_uniform": 1.0
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 1083,
+            "mlp.up_proj": 1083,
+            "self_attn.o_proj": 1006,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7864832,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.020414952545949855,
+          "vs_uniform": 1.4872156191059285
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 24,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 2.2164665489085585e-06,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.17476395444834203,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 6.892962831478091e-07,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.026821896969847547,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 7.45245922056113e-07,
+          "measured_gain_per_byte": -7.965863630386954e-09,
+          "cand_dcost": 0.018315163780451033,
+          "measured_dkl": 0.0001957690645803898
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 2.6991734095804746e-08,
+          "measured_gain_per_byte": -1.5522374925011004e-08,
+          "cand_dcost": 0.0011885000357064746,
+          "measured_dkl": 0.0006834812126980845
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.354182905701164e-07,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 0.010816129704416338,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 8.624573595141698e-06,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.15013657714422668,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.0543174054461703e-06,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.03996879944036069,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 7.515361040987799e-06,
+          "measured_gain_per_byte": -4.4210199284897604e-08,
+          "cand_dcost": 0.09234875647165808,
+          "measured_dkl": 0.0005432549288128218
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 5.268290838265465e-06,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.13486824545959591,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 5.05635865200383e-07,
+          "measured_gain_per_byte": -2.4573773755435268e-09,
+          "cand_dcost": 0.020193073912642495,
+          "measured_dkl": 9.813782286970628e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.7384441837022397e-05,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.5327917003811078,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 9.011928934578992e-06,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.19840662742369108,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 4.572389358379844e-06,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.18260294141625744,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 9.129278694926976e-06,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.3178449670425776,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 2.1608736913372088e-06,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.08629665173724277,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.8611826910367454e-06,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.09529255378108137,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 5.399061198285255e-06,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.31513240402151377,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 2.841020993419697e-06,
+          "measured_gain_per_byte": -2.5134726757984372e-08,
+          "cand_dcost": 0.10473139790142372,
+          "measured_dkl": 0.0009265665672063359
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 9.216765291622555e-06,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 0.7078475743966122,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.6992874865255997e-06,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 0.20358823518565905,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.3006004123168272e-05,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.6792255593283398,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 2.565147052125261e-06,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.14184237139431843,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.3161050857047455e-06,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.07681842164241459,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 6.332138010643431e-07,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.037932039538958406,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "L1_40x_rows20480": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8852941176470588,
+        "self_attn.k_proj": 0.861764705882353,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8323529411764706,
+        "mlp.up_proj": 0.9941176470588236,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.9327731092436975,
+      "spearman_marginal_pooled": 0.5498237611445158,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 749,
+          "mlp.gate_proj": 1083,
+          "mlp.up_proj": 1083,
+          "self_attn.o_proj": 1006,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7864832,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.020414952545949855,
+        "vs_uniform": 1.4872156191059285
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 749,
+            "mlp.up_proj": 749,
+            "self_attn.o_proj": 749,
+            "self_attn.q_proj": 749,
+            "self_attn.k_proj": 749,
+            "self_attn.v_proj": 749
+          },
+          "bytes": 5891584,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.05107467445142115,
+          "vs_uniform": 1.0
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 749,
+            "mlp.gate_proj": 1083,
+            "mlp.up_proj": 1083,
+            "self_attn.o_proj": 1006,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7864832,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.020414952545949855,
+          "vs_uniform": 1.4872156191059285
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 24,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 2.225605590702477e-06,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.17548454961570892,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 6.880445866517627e-07,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.02677319095579339,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 7.511745072086024e-07,
+          "measured_gain_per_byte": -7.965863630386954e-09,
+          "cand_dcost": 0.018460864689158613,
+          "measured_dkl": 0.0001957690645803898
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 2.1686148378834365e-08,
+          "measured_gain_per_byte": -1.5522374925011004e-08,
+          "cand_dcost": 0.0009548844854168348,
+          "measured_dkl": 0.0006834812126980845
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.3540725400136072e-07,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 0.010815248191596682,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 8.660409805741322e-06,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.15076041389834494,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.0699240551104493e-06,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.040272442416228904,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 7.696005352630816e-06,
+          "measured_gain_per_byte": -4.4210199284897604e-08,
+          "cand_dcost": 0.09456851377312747,
+          "measured_dkl": 0.0005432549288128218
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 5.289066661783547e-06,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.1354001065416588,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 5.264755138720913e-07,
+          "measured_gain_per_byte": -2.4573773755435268e-09,
+          "cand_dcost": 0.02102532612199584,
+          "measured_dkl": 9.813782286970628e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.749187069142549e-05,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.5348818361723744,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 9.047599436453354e-06,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.19919194919295702,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 4.522274989842108e-06,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.1806015739943344,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 8.900003394672618e-06,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.30986251818892185,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 2.1312705240918747e-06,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.08511441965013311,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.8823253861253845e-06,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.09637505976961969,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 5.462232853166762e-06,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.31881960717363755,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 2.857457998089747e-06,
+          "measured_gain_per_byte": -2.5134726757984372e-08,
+          "cand_dcost": 0.10533733164158043,
+          "measured_dkl": 0.0009265665672063359
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 9.28400859306741e-06,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 0.7130118599475772,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.7239922155815093e-06,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 0.20654805936438947,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.3073806964590978e-05,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.6827664949187993,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 2.555607673708827e-06,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.1413148819254033,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.3259269102117774e-06,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.07739170189524103,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 6.359019830157459e-07,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.038093072390575244,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "AURA_kl_adjoint": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.9264705882352942,
+        "self_attn.k_proj": 0.8558823529411764,
+        "self_attn.v_proj": 0.9735294117647059,
+        "self_attn.o_proj": 0.9382352941176471,
+        "mlp.gate_proj": 0.8029411764705883,
+        "mlp.up_proj": 0.9823529411764705,
+        "mlp.down_proj": 0.9882352941176471
+      },
+      "spearman_within_unit_mean": 0.9239495798319328,
+      "spearman_marginal_pooled": 0.5110304789550073,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 934,
+          "mlp.gate_proj": 900,
+          "mlp.up_proj": 900,
+          "self_attn.o_proj": 1044,
+          "self_attn.q_proj": 1200,
+          "self_attn.k_proj": 1200,
+          "self_attn.v_proj": 1200
+        },
+        "bytes": 7865344,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.015730813408084576,
+        "vs_uniform": 1.1459792203330752
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 826,
+            "mlp.gate_proj": 512,
+            "mlp.up_proj": 512,
+            "self_attn.o_proj": 900,
+            "self_attn.q_proj": 970,
+            "self_attn.k_proj": 970,
+            "self_attn.v_proj": 970
+          },
+          "bytes": 5889024,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.0456263482454005,
+          "vs_uniform": 0.8933262665980821
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 934,
+            "mlp.gate_proj": 900,
+            "mlp.up_proj": 900,
+            "self_attn.o_proj": 1044,
+            "self_attn.q_proj": 1200,
+            "self_attn.k_proj": 1200,
+            "self_attn.v_proj": 1200
+          },
+          "bytes": 7865344,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.015730813408084576,
+          "vs_uniform": 1.1459792203330752
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 19,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 1.4909376036816392e-08,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.001175574481750899,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 1.3513992258945343e-09,
+          "measured_gain_per_byte": -7.965863630386954e-09,
+          "cand_dcost": 3.3211987375584076e-05,
+          "measured_dkl": 0.0001957690645803898
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 6.114138609493166e-13,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 4.883484790174381e-08,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 3.953108979662839e-08,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.000688157211179707,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 3.2972292319669535e-09,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 6.415089193714904e-05,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 3.651137792718164e-09,
+          "measured_gain_per_byte": -4.4210199284897604e-08,
+          "cand_dcost": 4.48651811969208e-05,
+          "measured_dkl": 0.0005432549288128218
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 4.830783641757355e-09,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.0001236680612289883,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.4932712290846916e-07,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.002905308503307176,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 7.455495321387527e-08,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.001641401849956678,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.0004238364692272e-08,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.0003483075629051261,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 3.793782303835524e-08,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.0019424165395637884,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 3.86057285582478e-09,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.00022533391644878077,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1083->R1107",
+          "cand_gain_per_byte": 5.004184840002672e-09,
+          "measured_gain_per_byte": -2.5134726757984372e-08,
+          "cand_dcost": 0.00018447426994185848,
+          "measured_dkl": 0.0009265665672063359
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 6.132584403930135e-09,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 0.0004709824822218344,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 7.766070961733312e-10,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 9.304374297833447e-05,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 9.025097289787083e-09,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.00047132668086184064,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 8.695490742662017e-11,
+          "measured_gain_per_byte": -5.3858126366203015e-09,
+          "cand_dcost": 5.743197725713409e-06,
+          "measured_dkl": 0.0003557221530234977
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.2247626354254705e-08,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.0007148694550451386,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 4.766451632361824e-10,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 2.855295185850027e-05,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "EMPIRICAL_unit_kl": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 1.0,
+        "self_attn.k_proj": 1.0,
+        "self_attn.v_proj": 1.0,
+        "self_attn.o_proj": 1.0,
+        "mlp.gate_proj": 1.0,
+        "mlp.up_proj": 1.0,
+        "mlp.down_proj": 1.0
+      },
+      "spearman_within_unit_mean": 1.0,
+      "spearman_marginal_pooled": 1.0,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 1044,
+          "mlp.gate_proj": 900,
+          "mlp.up_proj": 900,
+          "self_attn.o_proj": 1107,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7859200,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.013417429303469718,
+        "vs_uniform": 0.9774507378087716
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 826,
+            "mlp.gate_proj": 512,
+            "mlp.up_proj": 512,
+            "self_attn.o_proj": 826,
+            "self_attn.q_proj": 1006,
+            "self_attn.k_proj": 1006,
+            "self_attn.v_proj": 1006
+          },
+          "bytes": 5886976,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.04475492099026644,
+          "vs_uniform": 0.8762644396849628
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 1044,
+            "mlp.gate_proj": 900,
+            "mlp.up_proj": 900,
+            "self_attn.o_proj": 1107,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7859200,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.013417429303469718,
+          "vs_uniform": 0.9774507378087716
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 0,
+      "inversions": []
+    },
+    "EMPIRICAL_interp_5anchor": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8558823529411764,
+        "self_attn.k_proj": 0.85,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8382352941176471,
+        "mlp.up_proj": 0.9882352941176471,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.926890756302521,
+      "spearman_marginal_pooled": 0.6883267675720506,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 1006,
+          "mlp.gate_proj": 826,
+          "mlp.up_proj": 826,
+          "self_attn.o_proj": 1340,
+          "self_attn.q_proj": 1107,
+          "self_attn.k_proj": 1107,
+          "self_attn.v_proj": 1107
+        },
+        "bytes": 7861248,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.014122783204580703,
+        "vs_uniform": 1.0288352970610373
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 640,
+            "mlp.gate_proj": 640,
+            "mlp.up_proj": 640,
+            "self_attn.o_proj": 934,
+            "self_attn.q_proj": 900,
+            "self_attn.k_proj": 900,
+            "self_attn.v_proj": 900
+          },
+          "bytes": 5888000,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.04536399822645691,
+          "vs_uniform": 0.8881896696102125
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 1006,
+            "mlp.gate_proj": 826,
+            "mlp.up_proj": 826,
+            "self_attn.o_proj": 1340,
+            "self_attn.q_proj": 1107,
+            "self_attn.k_proj": 1107,
+            "self_attn.v_proj": 1107
+          },
+          "bytes": 7861248,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.014122783204580703,
+          "vs_uniform": 1.0288352970610373
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1340,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1200,
+            "self_attn.k_proj": 1200,
+            "self_attn.v_proj": 1200
+          },
+          "bytes": 9824256,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.009337244901638437,
+          "vs_uniform": 1.3753087778512563
+        }
+      },
+      "n_inversions": 16,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 5.30950797706344e-09,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.0004186440849754981,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.201806618988546e-08,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.00046764699158082304,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.151817533304772e-08,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.00020050839619769473,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.1017014480025974e-08,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.00021434703372338534,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 3.762435248575266e-08,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.0007320194019628037,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 1.3855757156131603e-08,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.0003050483495493934,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.255598906474673e-08,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.0005014359792897254,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.6782497561642008e-08,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.0005842994351061281,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 1.4460247552531031e-08,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.0005774844462578792,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.0926358586318398e-08,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.000559429559619502,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 5.0663674942468614e-09,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.0002957137379042008,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 4.922440744992335e-09,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.00025706954546647967,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 2.1720969996746077e-09,
+          "measured_gain_per_byte": -5.3858126366203015e-09,
+          "cand_dcost": 0.00014346266263450848,
+          "measured_dkl": 0.0003557221530234977
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 1.566532575356931e-08,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.0008662298528693685,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.4116409804685259e-08,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.0008239466074798692,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 1.3362196700515142e-08,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.0008004490311476591,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "EMPIRICAL_interp_7anchor": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.8735294117647059,
+        "self_attn.k_proj": 0.9147058823529411,
+        "self_attn.v_proj": 0.9852941176470589,
+        "self_attn.o_proj": 0.9852941176470589,
+        "mlp.gate_proj": 0.8294117647058824,
+        "mlp.up_proj": 0.9882352941176471,
+        "mlp.down_proj": 0.9852941176470589
+      },
+      "spearman_within_unit_mean": 0.9373949579831933,
+      "spearman_marginal_pooled": 0.7198320547377152,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 1006,
+          "mlp.gate_proj": 826,
+          "mlp.up_proj": 826,
+          "self_attn.o_proj": 1340,
+          "self_attn.q_proj": 1107,
+          "self_attn.k_proj": 1107,
+          "self_attn.v_proj": 1107
+        },
+        "bytes": 7861248,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.014122783204580703,
+        "vs_uniform": 1.0288352970610373
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 640,
+            "mlp.gate_proj": 640,
+            "mlp.up_proj": 640,
+            "self_attn.o_proj": 934,
+            "self_attn.q_proj": 900,
+            "self_attn.k_proj": 900,
+            "self_attn.v_proj": 900
+          },
+          "bytes": 5888000,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.04536399822645691,
+          "vs_uniform": 0.8881896696102125
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 1006,
+            "mlp.gate_proj": 826,
+            "mlp.up_proj": 826,
+            "self_attn.o_proj": 1340,
+            "self_attn.q_proj": 1107,
+            "self_attn.k_proj": 1107,
+            "self_attn.v_proj": 1107
+          },
+          "bytes": 7861248,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.014122783204580703,
+          "vs_uniform": 1.0288352970610373
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1340,
+            "mlp.gate_proj": 1340,
+            "mlp.up_proj": 1340,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 9824256,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.008297211153399917,
+          "vs_uniform": 1.2221193136911175
+        }
+      },
+      "n_inversions": 19,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 3.3525570334959106e-09,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.00026434241697708555,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 5.613119796671524e-09,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 0.00021841771752808235,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 2.762247870986681e-09,
+          "measured_gain_per_byte": -1.9962447137687344e-09,
+          "cand_dcost": 0.0002206262619514482,
+          "measured_dkl": 0.00015944405777813635
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.0708477000810207e-08,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.0001864131676301041,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 1.2730506778350708e-08,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.0002476847398795914,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.577292186568535e-08,
+          "measured_gain_per_byte": -2.4573773755435268e-09,
+          "cand_dcost": 0.0006299074076280102,
+          "measured_dkl": 9.813782286970628e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 3.526669042987529e-08,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.0006861487290036536,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 1.4984554842182534e-08,
+          "measured_gain_per_byte": -4.73057392760667e-08,
+          "cand_dcost": 0.00032989995940549063,
+          "measured_dkl": 0.0010414831559018844
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.1658080946973359e-08,
+          "measured_gain_per_byte": -1.0326571791161757e-08,
+          "cand_dcost": 0.0004655771206983281,
+          "measured_dkl": 0.0004124019710518359
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 9.718337207194535e-09,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.00033835362820568496,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 2.0475296007594357e-08,
+          "measured_gain_per_byte": -2.5943623833932934e-08,
+          "cand_dcost": 0.0008177014213592883,
+          "measured_dkl": 0.0010360845614319457
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.2632630474114638e-08,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 0.0006467906802746694,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 4.298566567304636e-09,
+          "measured_gain_per_byte": -1.1487318951760984e-08,
+          "cand_dcost": 0.000250898733400437,
+          "measured_dkl": 0.0006704918325763851
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1262->R1340",
+          "cand_gain_per_byte": 1.9491650560380246e-10,
+          "measured_gain_per_byte": -7.670049775068888e-10,
+          "cand_dcost": 2.3352556703380364e-05,
+          "measured_dkl": 9.189333234514534e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 7.592854787982782e-09,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.0003965292484476128,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R1107->R1150",
+          "cand_gain_per_byte": 2.5803437763169722e-09,
+          "measured_gain_per_byte": -5.3858126366203015e-09,
+          "cand_dcost": 0.00017042654573818337,
+          "measured_dkl": 0.0003557221530234977
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 1.4444815573197276e-08,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.0007987405219355165,
+          "measured_dkl": 9.935009502851262e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 6.792895681174677e-09,
+          "measured_gain_per_byte": -3.396050406157354e-09,
+          "cand_dcost": 0.00039648773511880356,
+          "measured_dkl": 0.00019822067010659243
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R1044->R1083",
+          "cand_gain_per_byte": 6.608379935816552e-09,
+          "measured_gain_per_byte": -1.1285550963759563e-09,
+          "cand_dcost": 0.0003958683916751547,
+          "measured_dkl": 6.760496449330529e-05
+        }
+      ]
+    },
+    "EMPIRICAL_interp_9anchor": {
+      "spearman_within_unit": {
+        "self_attn.q_proj": 0.9529411764705882,
+        "self_attn.k_proj": 0.9294117647058824,
+        "self_attn.v_proj": 0.9882352941176471,
+        "self_attn.o_proj": 0.9911764705882353,
+        "mlp.gate_proj": 0.8911764705882353,
+        "mlp.up_proj": 0.9941176470588236,
+        "mlp.down_proj": 0.9882352941176471
+      },
+      "spearman_within_unit_mean": 0.9621848739495799,
+      "spearman_marginal_pooled": 0.7895189715944433,
+      "reallocate": {
+        "pick": {
+          "mlp.down_proj": 1044,
+          "mlp.gate_proj": 934,
+          "mlp.up_proj": 934,
+          "self_attn.o_proj": 1006,
+          "self_attn.q_proj": 1083,
+          "self_attn.k_proj": 1083,
+          "self_attn.v_proj": 1083
+        },
+        "bytes": 7860224,
+        "budget": 7865344,
+        "predicted_kl_on_measured_table": 0.014104065246544702,
+        "vs_uniform": 1.02747170635534
+      },
+      "reallocate_by_budget": {
+        "uniform_R749": {
+          "pick": {
+            "mlp.down_proj": 826,
+            "mlp.gate_proj": 512,
+            "mlp.up_proj": 512,
+            "self_attn.o_proj": 970,
+            "self_attn.q_proj": 934,
+            "self_attn.k_proj": 934,
+            "self_attn.v_proj": 934
+          },
+          "bytes": 5886976,
+          "budget": 5891584,
+          "uniform_kl": 0.05107467445142115,
+          "predicted_kl_on_measured_table": 0.04807645082473755,
+          "vs_uniform": 0.9412972542872434
+        },
+        "uniform_R1006": {
+          "pick": {
+            "mlp.down_proj": 1044,
+            "mlp.gate_proj": 934,
+            "mlp.up_proj": 934,
+            "self_attn.o_proj": 1006,
+            "self_attn.q_proj": 1083,
+            "self_attn.k_proj": 1083,
+            "self_attn.v_proj": 1083
+          },
+          "bytes": 7860224,
+          "budget": 7865344,
+          "uniform_kl": 0.013726962172588491,
+          "predicted_kl_on_measured_table": 0.014104065246544702,
+          "vs_uniform": 1.02747170635534
+        },
+        "uniform_R1262": {
+          "pick": {
+            "mlp.down_proj": 1262,
+            "mlp.gate_proj": 1262,
+            "mlp.up_proj": 1262,
+            "self_attn.o_proj": 1262,
+            "self_attn.q_proj": 1262,
+            "self_attn.k_proj": 1262,
+            "self_attn.v_proj": 1262
+          },
+          "bytes": 9831424,
+          "budget": 9831424,
+          "uniform_kl": 0.006789198943546834,
+          "predicted_kl_on_measured_table": 0.006789198943546834,
+          "vs_uniform": 1.0
+        }
+      },
+      "n_inversions": 11,
+      "inversions": [
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R749->R826",
+          "cand_gain_per_byte": 3.2504216756508023e-09,
+          "measured_gain_per_byte": -3.521294984732209e-09,
+          "cand_dcost": 0.00025628924828171445,
+          "measured_dkl": 0.00027764706695616523
+        },
+        {
+          "unit": "self_attn.q_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.3058796931505266e-09,
+          "measured_gain_per_byte": -1.2858821099662584e-08,
+          "cand_dcost": 8.97263906198733e-05,
+          "measured_dkl": 0.0005003624466300705
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 1.2928578489302585e-08,
+          "measured_gain_per_byte": -2.219452013131786e-08,
+          "cand_dcost": 0.0002250606943417794,
+          "measured_dkl": 0.0003863622064459813
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 9.108142102293666e-09,
+          "measured_gain_per_byte": -1.3222107887252677e-08,
+          "cand_dcost": 0.00017720801274222556,
+          "measured_dkl": 0.0002572493310543881
+        },
+        {
+          "unit": "self_attn.k_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.1449766092887469e-08,
+          "measured_gain_per_byte": -2.3504485851864555e-08,
+          "cand_dcost": 0.0002931140119779192,
+          "measured_dkl": 0.0006017148378077326
+        },
+        {
+          "unit": "self_attn.v_proj",
+          "step": "R1006->R1044",
+          "cand_gain_per_byte": 2.5433609406502532e-08,
+          "measured_gain_per_byte": -3.6155236836030017e-09,
+          "cand_dcost": 0.0004948363046129133,
+          "measured_dkl": 7.034362878818e-05
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 3.4441928712287616e-08,
+          "measured_gain_per_byte": -5.952559170949274e-09,
+          "cand_dcost": 0.0011991301900470056,
+          "measured_dkl": 0.00020724430009576994
+        },
+        {
+          "unit": "self_attn.o_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 8.764132857562136e-10,
+          "measured_gain_per_byte": -4.480096717490853e-09,
+          "cand_dcost": 4.487236023071814e-05,
+          "measured_dkl": 0.00022938095193553165
+        },
+        {
+          "unit": "mlp.gate_proj",
+          "step": "R1150->R1200",
+          "cand_gain_per_byte": 1.579147835541332e-10,
+          "measured_gain_per_byte": -1.3891180438965714e-09,
+          "cand_dcost": 1.212785537695743e-05,
+          "measured_dkl": 0.00010668426577125668
+        },
+        {
+          "unit": "mlp.up_proj",
+          "step": "R900->R934",
+          "cand_gain_per_byte": 2.344581209482148e-09,
+          "measured_gain_per_byte": -7.358541868904308e-10,
+          "cand_dcost": 0.0001224434090839957,
+          "measured_dkl": 3.842924905616586e-05
+        },
+        {
+          "unit": "mlp.down_proj",
+          "step": "R934->R970",
+          "cand_gain_per_byte": 2.7258959983828156e-08,
+          "measured_gain_per_byte": -1.7966958736348492e-09,
+          "cand_dcost": 0.0015073114512657616,
+          "measured_dkl": 9.935009502851262e-05
+        }
+      ]
+    }
+  },
+  "oracle_by_budget": {
+    "uniform_R749": {
+      "pick": {
+        "mlp.down_proj": 826,
+        "mlp.gate_proj": 512,
+        "mlp.up_proj": 512,
+        "self_attn.o_proj": 826,
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006
+      },
+      "bytes": 5886976,
+      "budget": 5891584,
+      "uniform_kl": 0.05107467445142115,
+      "kl": 0.04475492099026644,
+      "vs_uniform": 0.8762644396849628
+    },
+    "uniform_R1006": {
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1107,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "bytes": 7859200,
+      "budget": 7865344,
+      "uniform_kl": 0.013726962172588491,
+      "kl": 0.013417429303469718,
+      "vs_uniform": 0.9774507378087716
+    },
+    "uniform_R1262": {
+      "pick": {
+        "mlp.down_proj": 1262,
+        "mlp.gate_proj": 1262,
+        "mlp.up_proj": 1262,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1262,
+        "self_attn.k_proj": 1262,
+        "self_attn.v_proj": 1262
+      },
+      "bytes": 9831424,
+      "budget": 9831424,
+      "uniform_kl": 0.006789198943546834,
+      "kl": 0.006789198943546834,
+      "vs_uniform": 1.0
+    }
+  },
+  "reference": {
+    "uniform_R1006": {
+      "kl": 0.013726962172588491,
+      "bytes": 7865344
+    },
+    "served_allocation": {
+      "pick": {
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083,
+        "self_attn.o_proj": 934,
+        "mlp.gate_proj": 1107,
+        "mlp.up_proj": 1107,
+        "mlp.down_proj": 749
+      },
+      "kl_additive": 0.025015078412110085,
+      "kl_measured": 0.027044431803977653,
+      "bytes": 7864832,
+      "vs_uniform_additive": 1.8223317073068757,
+      "vs_uniform_measured": 1.970168742650355
+    },
+    "oracle_on_measured_table": {
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1107,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "kl": 0.013417429303469718,
+      "bytes": 7859200,
+      "vs_uniform": 0.9774507378087716
+    },
+    "additivity": {
+      "sum_of_single_unit_dkl": 0.011288116239521594,
+      "measured_joint_dkl": 0.013317469631389162,
+      "share": 0.8476171939536923
+    }
+  },
+  "reweighted_3a": {
+    "L1_shipped_menu": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.0026421752036109394,
+        "self_attn.k_proj": 0.0011028200481751865,
+        "self_attn.v_proj": 0.0004692623191799525,
+        "self_attn.o_proj": 0.0023076498084001894,
+        "mlp.gate_proj": 0.00019162884061075383,
+        "mlp.up_proj": 0.000138451222738987,
+        "mlp.down_proj": 0.0024818126147839953
+      },
+      "pick": {
+        "mlp.down_proj": 1006,
+        "mlp.gate_proj": 826,
+        "mlp.up_proj": 826,
+        "self_attn.o_proj": 1340,
+        "self_attn.q_proj": 1107,
+        "self_attn.k_proj": 1107,
+        "self_attn.v_proj": 1107
+      },
+      "kl": 0.014122783204580703,
+      "vs_uniform": 1.0288352970610373,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 3.9783827433277956,
+        "self_attn.k_proj": 2.116972395201655,
+        "self_attn.v_proj": 17.976988516024143,
+        "self_attn.o_proj": 31.50635184834485,
+        "mlp.gate_proj": 0.5285554308229655,
+        "mlp.up_proj": 1.2087454255847374,
+        "mlp.down_proj": 21.046498066907766
+      }
+    },
+    "L1_remeasured_4x256": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.0029820189296847735,
+        "self_attn.k_proj": 0.001111165129296446,
+        "self_attn.v_proj": 0.0004866618122837894,
+        "self_attn.o_proj": 0.00240110356201703,
+        "mlp.gate_proj": 0.00023533339481673232,
+        "mlp.up_proj": 0.00014695250385322815,
+        "mlp.down_proj": 0.002639684347452273
+      },
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006
+      },
+      "kl": 0.014422412021286097,
+      "vs_uniform": 1.0506630556676522,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 4.4900930997767565,
+        "self_attn.k_proj": 2.132991605587481,
+        "self_attn.v_proj": 18.64354637700673,
+        "self_attn.o_proj": 32.7822763115293,
+        "mlp.gate_proj": 0.6491024184457163,
+        "mlp.up_proj": 1.2829656777079084,
+        "mlp.down_proj": 22.38529661141894
+      }
+    },
+    "L1_10x_rows2560": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.002982340871666104,
+        "self_attn.k_proj": 0.001138844882048368,
+        "self_attn.v_proj": 0.00048752727503555913,
+        "self_attn.o_proj": 0.0025578505229460163,
+        "mlp.gate_proj": 0.0002315070090105046,
+        "mlp.up_proj": 0.00014714899616983992,
+        "mlp.down_proj": 0.0027172381957777957
+      },
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006
+      },
+      "kl": 0.014422412021286097,
+      "vs_uniform": 1.0506630556676522,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 4.490577855072744,
+        "self_attn.k_proj": 2.1861256346421625,
+        "self_attn.v_proj": 18.676701423371416,
+        "self_attn.o_proj": 34.922343181385564,
+        "mlp.gate_proj": 0.6385483860158395,
+        "mlp.up_proj": 1.2846811496565729,
+        "mlp.down_proj": 23.042975966073378
+      }
+    },
+    "L1_40x_rows20480": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.0029794119741168405,
+        "self_attn.k_proj": 0.0011355887867098065,
+        "self_attn.v_proj": 0.00048677157285461785,
+        "self_attn.o_proj": 0.0025612021071549904,
+        "mlp.gate_proj": 0.00022989877984527508,
+        "mlp.up_proj": 0.0001461197272641405,
+        "mlp.down_proj": 0.002706819098365413
+      },
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1262,
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006
+      },
+      "kl": 0.014422412021286097,
+      "vs_uniform": 1.0506630556676522,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 4.486167748032515,
+        "self_attn.k_proj": 2.1798752368920624,
+        "self_attn.v_proj": 18.64775119900212,
+        "self_attn.o_proj": 34.96810237368282,
+        "mlp.gate_proj": 0.6341125283621548,
+        "mlp.up_proj": 1.2756951395885634,
+        "mlp.down_proj": 22.954618967546427
+      }
+    },
+    "AURA_kl_adjoint": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 1.0196922740037309,
+        "self_attn.k_proj": 0.5687456473112298,
+        "self_attn.v_proj": 0.30846783625604957,
+        "self_attn.o_proj": 0.7091246659415701,
+        "mlp.gate_proj": 0.4777916006857326,
+        "mlp.up_proj": 0.32155513121488893,
+        "mlp.down_proj": 0.4734427914800092
+      },
+      "pick": {
+        "mlp.down_proj": 934,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1044,
+        "self_attn.q_proj": 1200,
+        "self_attn.k_proj": 1200,
+        "self_attn.v_proj": 1200
+      },
+      "kl": 0.015730813408084576,
+      "vs_uniform": 1.1459792203330752,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 1535.373634896346,
+        "self_attn.k_proj": 1091.7636447045327,
+        "self_attn.v_proj": 11817.106388657856,
+        "self_attn.o_proj": 9681.681834118483,
+        "mlp.gate_proj": 1317.856667812401,
+        "mlp.up_proj": 2807.3301646605655,
+        "mlp.down_proj": 4014.933575693294
+      }
+    },
+    "EMPIRICAL_unit_kl": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 1.0,
+        "self_attn.k_proj": 1.0,
+        "self_attn.v_proj": 1.0,
+        "self_attn.o_proj": 1.0,
+        "mlp.gate_proj": 1.0,
+        "mlp.up_proj": 1.0,
+        "mlp.down_proj": 1.0
+      },
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1107,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "kl": 0.013417429303469718,
+      "vs_uniform": 0.9774507378087716,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 1505.7225341796875,
+        "self_attn.k_proj": 1919.59912109375,
+        "self_attn.v_proj": 38309.0390625,
+        "self_attn.o_proj": 13653.00390625,
+        "mlp.gate_proj": 2758.224853515625,
+        "mlp.up_proj": 8730.478515625,
+        "mlp.down_proj": 8480.29296875
+      }
+    },
+    "EMPIRICAL_interp_5anchor": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.9180551109143701,
+        "self_attn.k_proj": 1.1124609391102434,
+        "self_attn.v_proj": 0.9029845159340016,
+        "self_attn.o_proj": 0.878259669603793,
+        "mlp.gate_proj": 1.441383306251083,
+        "mlp.up_proj": 1.1183835175771606,
+        "mlp.down_proj": 0.6753018886071568
+      },
+      "pick": {
+        "mlp.down_proj": 1044,
+        "mlp.gate_proj": 900,
+        "mlp.up_proj": 900,
+        "self_attn.o_proj": 1107,
+        "self_attn.q_proj": 1083,
+        "self_attn.k_proj": 1083,
+        "self_attn.v_proj": 1083
+      },
+      "kl": 0.013417429303469718,
+      "vs_uniform": 0.9774507378087716,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 1382.3362681225994,
+        "self_attn.k_proj": 2135.479040967151,
+        "self_attn.v_proj": 34592.469093748325,
+        "self_attn.o_proj": 11990.88269980242,
+        "mlp.gate_proj": 3975.6592587442606,
+        "mlp.up_proj": 9764.023272436516,
+        "mlp.down_proj": 5726.757857738868
+      }
+    },
+    "EMPIRICAL_interp_7anchor": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 1.510613961717396,
+        "self_attn.k_proj": 1.019749306527892,
+        "self_attn.v_proj": 0.9071372767461127,
+        "self_attn.o_proj": 0.9218223262988134,
+        "mlp.gate_proj": 1.2540780365598658,
+        "mlp.up_proj": 0.7818052375087438,
+        "mlp.down_proj": 0.8616568490299039
+      },
+      "pick": {
+        "mlp.down_proj": 1006,
+        "mlp.gate_proj": 826,
+        "mlp.up_proj": 826,
+        "self_attn.o_proj": 1340,
+        "self_attn.q_proj": 1107,
+        "self_attn.k_proj": 1107,
+        "self_attn.v_proj": 1107
+      },
+      "kl": 0.014122783204580703,
+      "vs_uniform": 1.0288352970610373,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 2274.5654826043346,
+        "self_attn.k_proj": 1957.5098725469024,
+        "self_attn.v_proj": 34751.5573699167,
+        "self_attn.o_proj": 12585.643821826163,
+        "mlp.gate_proj": 3459.0292086874983,
+        "mlp.up_proj": 6825.533829473187,
+        "mlp.down_proj": 7307.1025183035745
+      }
+    },
+    "EMPIRICAL_interp_9anchor": {
+      "fitted": true,
+      "per_unit_scale": {
+        "self_attn.q_proj": 0.7989234051790145,
+        "self_attn.k_proj": 1.0721193477714424,
+        "self_attn.v_proj": 1.054989609139819,
+        "self_attn.o_proj": 1.1931607761721736,
+        "mlp.gate_proj": 1.65243427832375,
+        "mlp.up_proj": 1.1273292405023823,
+        "mlp.down_proj": 0.940320639575949
+      },
+      "pick": {
+        "mlp.down_proj": 1006,
+        "mlp.gate_proj": 1006,
+        "mlp.up_proj": 1006,
+        "self_attn.o_proj": 1006,
+        "self_attn.q_proj": 1006,
+        "self_attn.k_proj": 1006,
+        "self_attn.v_proj": 1006
+      },
+      "kl": 0.013726962172588491,
+      "vs_uniform": 1.0,
+      "implied_h_ratio": {
+        "self_attn.q_proj": 1202.956974261611,
+        "self_attn.k_proj": 2058.0393576896654,
+        "self_attn.v_proj": 40415.63814706893,
+        "self_attn.o_proj": 16290.228737862968,
+        "mlp.gate_proj": 4557.785295273723,
+        "mlp.up_proj": 9842.123714241898,
+        "mlp.down_proj": 7974.1945081664235
+      }
+    }
+  },
+  "measured_dkl": {
+    "self_attn.q_proj|320": 0.04792462741325512,
+    "self_attn.q_proj|512": 0.009863622267885449,
+    "self_attn.q_proj|640": 0.0035615320774907006,
+    "self_attn.q_proj|749": 0.002638149284803236,
+    "self_attn.q_proj|826": 0.002915796351759401,
+    "self_attn.q_proj|900": 0.0021393390084432744,
+    "self_attn.q_proj|934": 0.0016810077510467942,
+    "self_attn.q_proj|970": 0.00046795023397456885,
+    "self_attn.q_proj|1006": 0.0,
+    "self_attn.q_proj|1044": 0.0005003624466300705,
+    "self_attn.q_proj|1083": -0.00018120418556049137,
+    "self_attn.q_proj|1107": 1.4564879019898433e-05,
+    "self_attn.q_proj|1150": 0.0006980460917179829,
+    "self_attn.q_proj|1200": 0.0003323464011026223,
+    "self_attn.q_proj|1262": -0.00022563250797368907,
+    "self_attn.q_proj|1340": -6.618845019555272e-05,
+    "self_attn.k_proj|320": 0.03198674711929142,
+    "self_attn.k_proj|512": 0.009052909167078842,
+    "self_attn.k_proj|640": 0.0030608509618008893,
+    "self_attn.k_proj|749": 0.002258359802679074,
+    "self_attn.k_proj|826": 0.0011747328969130538,
+    "self_attn.k_proj|900": 0.0006901295217749178,
+    "self_attn.k_proj|934": 0.0010764917282208991,
+    "self_attn.k_proj|970": 0.0003793896294386652,
+    "self_attn.k_proj|1006": 0.0,
+    "self_attn.k_proj|1044": 0.0002572493310543881,
+    "self_attn.k_proj|1083": -0.00035670090561510347,
+    "self_attn.k_proj|1107": 0.00018655402319771829,
+    "self_attn.k_proj|1150": 0.00024382615509331747,
+    "self_attn.k_proj|1200": 0.0008455409929010501,
+    "self_attn.k_proj|1262": -0.00040422295404273813,
+    "self_attn.k_proj|1340": -0.00030608513117303185,
+    "self_attn.v_proj|320": 0.1809172304875697,
+    "self_attn.v_proj|512": 0.04202200206991745,
+    "self_attn.v_proj|640": 0.022834693965613256,
+    "self_attn.v_proj|749": 0.009548405261888895,
+    "self_attn.v_proj|826": 0.005996258874695362,
+    "self_attn.v_proj|900": 0.0027192394794083377,
+    "self_attn.v_proj|934": 0.0020131997166314454,
+    "self_attn.v_proj|970": 0.0010538798722269007,
+    "self_attn.v_proj|1006": 0.0,
+    "self_attn.v_proj|1044": 7.034362878818e-05,
+    "self_attn.v_proj|1083": -0.0009841521192203544,
+    "self_attn.v_proj|1107": -0.0012254516672481532,
+    "self_attn.v_proj|1150": -0.00018396851134626878,
+    "self_attn.v_proj|1200": -0.001874758072795234,
+    "self_attn.v_proj|1262": -0.0031368248383359665,
+    "self_attn.v_proj|1340": -0.0027244228672841306,
+    "self_attn.o_proj|320": 0.2057788573832428,
+    "self_attn.o_proj|512": 0.052622570800221355,
+    "self_attn.o_proj|640": 0.03304298154995167,
+    "self_attn.o_proj|749": 0.008782925554450944,
+    "self_attn.o_proj|826": 0.004499392150199576,
+    "self_attn.o_proj|900": 0.003469599669693499,
+    "self_attn.o_proj|934": 0.003676843969789269,
+    "self_attn.o_proj|970": 0.003050222788771536,
+    "self_attn.o_proj|1006": 0.0,
+    "self_attn.o_proj|1044": -0.000486038668981505,
+    "self_attn.o_proj|1083": 0.0005500458924504407,
+    "self_attn.o_proj|1107": -0.0008279320778445502,
+    "self_attn.o_proj|1150": -0.0012447164483266344,
+    "self_attn.o_proj|1200": -0.0010153354963911027,
+    "self_attn.o_proj|1262": -0.0013450065704241204,
+    "self_attn.o_proj|1340": -0.0022431722825753952,
+    "mlp.gate_proj|320": 0.05127008378855635,
+    "mlp.gate_proj|512": 0.01261361506120566,
+    "mlp.gate_proj|640": 0.0034098626349536865,
+    "mlp.gate_proj|749": 0.0028484149921663565,
+    "mlp.gate_proj|826": 0.001812892067455732,
+    "mlp.gate_proj|900": 0.0014639977373022382,
+    "mlp.gate_proj|934": 0.0012842723534765062,
+    "mlp.gate_proj|970": 0.0007585514548240097,
+    "mlp.gate_proj|1006": 0.0,
+    "mlp.gate_proj|1044": 0.0006704918325763851,
+    "mlp.gate_proj|1083": 1.2904113986019622e-05,
+    "mlp.gate_proj|1107": 0.0009394706811923555,
+    "mlp.gate_proj|1150": 0.00019424418880514827,
+    "mlp.gate_proj|1200": 0.00030092845457640495,
+    "mlp.gate_proj|1262": 0.0001670924651412803,
+    "mlp.gate_proj|1340": 0.0002589857974864256,
+    "mlp.up_proj|320": 0.03807997901845585,
+    "mlp.up_proj|512": 0.009014820749279104,
+    "mlp.up_proj|640": 0.004601245756951797,
+    "mlp.up_proj|749": 0.0021230447782229073,
+    "mlp.up_proj|826": 0.0018504340121424118,
+    "mlp.up_proj|900": 0.00037823801171289577,
+    "mlp.up_proj|934": 0.00041666726076906163,
+    "mlp.up_proj|970": 0.00014420894727314865,
+    "mlp.up_proj|1006": 0.0,
+    "mlp.up_proj|1044": -0.00045020834573794404,
+    "mlp.up_proj|1083": -0.0009512691348499518,
+    "mlp.up_proj|1107": -0.0009545538056853244,
+    "mlp.up_proj|1150": -0.0005988316526618267,
+    "mlp.up_proj|1200": -0.0014131171829313213,
+    "mlp.up_proj|1262": -0.001483519833148577,
+    "mlp.up_proj|1340": -0.0017902603821278555,
+    "mlp.down_proj|320": 0.06837174582154783,
+    "mlp.down_proj|512": 0.02312727508712888,
+    "mlp.down_proj|640": 0.014400375682547133,
+    "mlp.down_proj|749": 0.009148412604621244,
+    "mlp.down_proj|826": 0.004900130856993614,
+    "mlp.down_proj|900": 0.004439298070806813,
+    "mlp.down_proj|934": 0.0013445248342540163,
+    "mlp.down_proj|970": 0.001443874929282529,
+    "mlp.down_proj|1006": 0.0,
+    "mlp.down_proj|1044": 0.00019822067010659243,
+    "mlp.down_proj|1083": 0.0002658256345998977,
+    "mlp.down_proj|1107": -5.989100368522168e-05,
+    "mlp.down_proj|1150": -7.674348797583573e-05,
+    "mlp.down_proj|1200": -0.00044873654259161046,
+    "mlp.down_proj|1262": -0.0005096489902578459,
+    "mlp.down_proj|1340": -0.0010314126537270749
+  },
+  "dkl_bootstrap_se": {
+    "self_attn.q_proj|320": 0.003466555383056402,
+    "self_attn.q_proj|512": 0.0026549212634563446,
+    "self_attn.q_proj|640": 0.0005506594898179173,
+    "self_attn.q_proj|749": 0.0003585511294659227,
+    "self_attn.q_proj|826": 0.0005122227012179792,
+    "self_attn.q_proj|900": 0.0006621063221246004,
+    "self_attn.q_proj|934": 0.000541972869541496,
+    "self_attn.q_proj|970": 0.00033086290932260454,
+    "self_attn.q_proj|1006": 0.0,
+    "self_attn.q_proj|1044": 0.000274702935712412,
+    "self_attn.q_proj|1083": 0.00027830014005303383,
+    "self_attn.q_proj|1107": 0.0003402872825972736,
+    "self_attn.q_proj|1150": 0.00035615809611044824,
+    "self_attn.q_proj|1200": 0.0003659538342617452,
+    "self_attn.q_proj|1262": 0.00039717345498502254,
+    "self_attn.q_proj|1340": 0.0003727822913788259,
+    "self_attn.k_proj|320": 0.0027614568825811148,
+    "self_attn.k_proj|512": 0.0008816493209451437,
+    "self_attn.k_proj|640": 0.0005162273882888258,
+    "self_attn.k_proj|749": 0.00045203499030321836,
+    "self_attn.k_proj|826": 0.0004257582186255604,
+    "self_attn.k_proj|900": 0.00041790390969254076,
+    "self_attn.k_proj|934": 0.0003323738055769354,
+    "self_attn.k_proj|970": 0.00034539547050371766,
+    "self_attn.k_proj|1006": 0.0,
+    "self_attn.k_proj|1044": 0.000294672412564978,
+    "self_attn.k_proj|1083": 0.00019907984824385494,
+    "self_attn.k_proj|1107": 0.00023544183932244778,
+    "self_attn.k_proj|1150": 0.00020451414457056671,
+    "self_attn.k_proj|1200": 0.00038885630783624947,
+    "self_attn.k_proj|1262": 0.00032479313085787,
+    "self_attn.k_proj|1340": 0.00031163624953478575,
+    "self_attn.v_proj|320": 0.00623360276222229,
+    "self_attn.v_proj|512": 0.002393599832430482,
+    "self_attn.v_proj|640": 0.0022748708724975586,
+    "self_attn.v_proj|749": 0.0008691098191775382,
+    "self_attn.v_proj|826": 0.0008155926479957998,
+    "self_attn.v_proj|900": 0.0005821186932735145,
+    "self_attn.v_proj|934": 0.0006253642495721579,
+    "self_attn.v_proj|970": 0.0003895113477483392,
+    "self_attn.v_proj|1006": 0.0,
+    "self_attn.v_proj|1044": 0.000415092014009133,
+    "self_attn.v_proj|1083": 0.00036595590063370764,
+    "self_attn.v_proj|1107": 0.00044190968037582934,
+    "self_attn.v_proj|1150": 0.000481974653666839,
+    "self_attn.v_proj|1200": 0.0004669399932026863,
+    "self_attn.v_proj|1262": 0.0005494252545759082,
+    "self_attn.v_proj|1340": 0.0005147852352820337,
+    "self_attn.o_proj|320": 0.005819233134388924,
+    "self_attn.o_proj|512": 0.00265184766612947,
+    "self_attn.o_proj|640": 0.00273788720369339,
+    "self_attn.o_proj|749": 0.0006002392619848251,
+    "self_attn.o_proj|826": 0.0006138377357274294,
+    "self_attn.o_proj|900": 0.0004685494350269437,
+    "self_attn.o_proj|934": 0.0007323921890929341,
+    "self_attn.o_proj|970": 0.0005488210008479655,
+    "self_attn.o_proj|1006": 0.0,
+    "self_attn.o_proj|1044": 0.0003193510347045958,
+    "self_attn.o_proj|1083": 0.0004557807114906609,
+    "self_attn.o_proj|1107": 0.00042808055877685547,
+    "self_attn.o_proj|1150": 0.00031049721292220056,
+    "self_attn.o_proj|1200": 0.00034354356466792524,
+    "self_attn.o_proj|1262": 0.0004814229905605316,
+    "self_attn.o_proj|1340": 0.00035415837191976607,
+    "mlp.gate_proj|320": 0.00327159371227026,
+    "mlp.gate_proj|512": 0.0014733461430296302,
+    "mlp.gate_proj|640": 0.0006720684468746185,
+    "mlp.gate_proj|749": 0.0007099673966877162,
+    "mlp.gate_proj|826": 0.0008277706801891327,
+    "mlp.gate_proj|900": 0.00037212896859273314,
+    "mlp.gate_proj|934": 0.000306147790979594,
+    "mlp.gate_proj|970": 0.0002670246467459947,
+    "mlp.gate_proj|1006": 0.0,
+    "mlp.gate_proj|1044": 0.0003678212524391711,
+    "mlp.gate_proj|1083": 0.00027048058109357953,
+    "mlp.gate_proj|1107": 0.0003350471961311996,
+    "mlp.gate_proj|1150": 0.00023515417706221342,
+    "mlp.gate_proj|1200": 0.0002666237414814532,
+    "mlp.gate_proj|1262": 0.00033579542650841177,
+    "mlp.gate_proj|1340": 0.00030295958276838064,
+    "mlp.up_proj|320": 0.002064806642010808,
+    "mlp.up_proj|512": 0.0008254210697486997,
+    "mlp.up_proj|640": 0.0005511606577783823,
+    "mlp.up_proj|749": 0.00036340352380648255,
+    "mlp.up_proj|826": 0.0004426304076332599,
+    "mlp.up_proj|900": 0.00024797808146104217,
+    "mlp.up_proj|934": 0.00023582414723932743,
+    "mlp.up_proj|970": 0.0002816998166963458,
+    "mlp.up_proj|1006": 0.0,
+    "mlp.up_proj|1044": 0.000186164936167188,
+    "mlp.up_proj|1083": 0.00026618625270202756,
+    "mlp.up_proj|1107": 0.0003137401945423335,
+    "mlp.up_proj|1150": 0.0003402644651941955,
+    "mlp.up_proj|1200": 0.00024800209212116897,
+    "mlp.up_proj|1262": 0.0002582474844530225,
+    "mlp.up_proj|1340": 0.00031477230368182063,
+    "mlp.down_proj|320": 0.0028408574871718884,
+    "mlp.down_proj|512": 0.0018509947694838047,
+    "mlp.down_proj|640": 0.0007936567417345941,
+    "mlp.down_proj|749": 0.0009520361199975014,
+    "mlp.down_proj|826": 0.00046662811655551195,
+    "mlp.down_proj|900": 0.0006075204582884908,
+    "mlp.down_proj|934": 0.00033258425537496805,
+    "mlp.down_proj|970": 0.00025775653193704784,
+    "mlp.down_proj|1006": 0.0,
+    "mlp.down_proj|1044": 0.00028024401399306953,
+    "mlp.down_proj|1083": 0.00021162486518733203,
+    "mlp.down_proj|1107": 0.0002503531286492944,
+    "mlp.down_proj|1150": 0.0002293477882631123,
+    "mlp.down_proj|1200": 0.00019493211584631354,
+    "mlp.down_proj|1262": 0.00025928206741809845,
+    "mlp.down_proj|1340": 0.0002502252464182675
+  },
+  "wire_bytes": {
+    "self_attn.q_proj|320": 348160,
+    "self_attn.q_proj|512": 544768,
+    "self_attn.q_proj|640": 675840,
+    "self_attn.q_proj|749": 787456,
+    "self_attn.q_proj|826": 866304,
+    "self_attn.q_proj|900": 942080,
+    "self_attn.q_proj|934": 976896,
+    "self_attn.q_proj|970": 1013760,
+    "self_attn.q_proj|1006": 1050624,
+    "self_attn.q_proj|1044": 1089536,
+    "self_attn.q_proj|1083": 1129472,
+    "self_attn.q_proj|1107": 1154048,
+    "self_attn.q_proj|1150": 1198080,
+    "self_attn.q_proj|1200": 1249280,
+    "self_attn.q_proj|1262": 1312768,
+    "self_attn.q_proj|1340": 1392640,
+    "self_attn.k_proj|320": 182272,
+    "self_attn.k_proj|512": 280576,
+    "self_attn.k_proj|640": 346112,
+    "self_attn.k_proj|749": 401920,
+    "self_attn.k_proj|826": 441344,
+    "self_attn.k_proj|900": 479232,
+    "self_attn.k_proj|934": 496640,
+    "self_attn.k_proj|970": 515072,
+    "self_attn.k_proj|1006": 533504,
+    "self_attn.k_proj|1044": 552960,
+    "self_attn.k_proj|1083": 572928,
+    "self_attn.k_proj|1107": 585216,
+    "self_attn.k_proj|1150": 607232,
+    "self_attn.k_proj|1200": 632832,
+    "self_attn.k_proj|1262": 664576,
+    "self_attn.k_proj|1340": 704512,
+    "self_attn.v_proj|320": 182272,
+    "self_attn.v_proj|512": 280576,
+    "self_attn.v_proj|640": 346112,
+    "self_attn.v_proj|749": 401920,
+    "self_attn.v_proj|826": 441344,
+    "self_attn.v_proj|900": 479232,
+    "self_attn.v_proj|934": 496640,
+    "self_attn.v_proj|970": 515072,
+    "self_attn.v_proj|1006": 533504,
+    "self_attn.v_proj|1044": 552960,
+    "self_attn.v_proj|1083": 572928,
+    "self_attn.v_proj|1107": 585216,
+    "self_attn.v_proj|1150": 607232,
+    "self_attn.v_proj|1200": 632832,
+    "self_attn.v_proj|1262": 664576,
+    "self_attn.v_proj|1340": 704512,
+    "self_attn.o_proj|320": 346112,
+    "self_attn.o_proj|512": 542720,
+    "self_attn.o_proj|640": 673792,
+    "self_attn.o_proj|749": 785408,
+    "self_attn.o_proj|826": 864256,
+    "self_attn.o_proj|900": 940032,
+    "self_attn.o_proj|934": 974848,
+    "self_attn.o_proj|970": 1011712,
+    "self_attn.o_proj|1006": 1048576,
+    "self_attn.o_proj|1044": 1087488,
+    "self_attn.o_proj|1083": 1127424,
+    "self_attn.o_proj|1107": 1152000,
+    "self_attn.o_proj|1150": 1196032,
+    "self_attn.o_proj|1200": 1247232,
+    "self_attn.o_proj|1262": 1310720,
+    "self_attn.o_proj|1340": 1390592,
+    "mlp.gate_proj|320": 514048,
+    "mlp.gate_proj|512": 808960,
+    "mlp.gate_proj|640": 1005568,
+    "mlp.gate_proj|749": 1172992,
+    "mlp.gate_proj|826": 1291264,
+    "mlp.gate_proj|900": 1404928,
+    "mlp.gate_proj|934": 1457152,
+    "mlp.gate_proj|970": 1512448,
+    "mlp.gate_proj|1006": 1567744,
+    "mlp.gate_proj|1044": 1626112,
+    "mlp.gate_proj|1083": 1686016,
+    "mlp.gate_proj|1107": 1722880,
+    "mlp.gate_proj|1150": 1788928,
+    "mlp.gate_proj|1200": 1865728,
+    "mlp.gate_proj|1262": 1960960,
+    "mlp.gate_proj|1340": 2080768,
+    "mlp.up_proj|320": 514048,
+    "mlp.up_proj|512": 808960,
+    "mlp.up_proj|640": 1005568,
+    "mlp.up_proj|749": 1172992,
+    "mlp.up_proj|826": 1291264,
+    "mlp.up_proj|900": 1404928,
+    "mlp.up_proj|934": 1457152,
+    "mlp.up_proj|970": 1512448,
+    "mlp.up_proj|1006": 1567744,
+    "mlp.up_proj|1044": 1626112,
+    "mlp.up_proj|1083": 1686016,
+    "mlp.up_proj|1107": 1722880,
+    "mlp.up_proj|1150": 1788928,
+    "mlp.up_proj|1200": 1865728,
+    "mlp.up_proj|1262": 1960960,
+    "mlp.up_proj|1340": 2080768,
+    "mlp.down_proj|320": 509952,
+    "mlp.down_proj|512": 804864,
+    "mlp.down_proj|640": 1001472,
+    "mlp.down_proj|749": 1168896,
+    "mlp.down_proj|826": 1287168,
+    "mlp.down_proj|900": 1400832,
+    "mlp.down_proj|934": 1453056,
+    "mlp.down_proj|970": 1508352,
+    "mlp.down_proj|1006": 1563648,
+    "mlp.down_proj|1044": 1622016,
+    "mlp.down_proj|1083": 1681920,
+    "mlp.down_proj|1107": 1718784,
+    "mlp.down_proj|1150": 1784832,
+    "mlp.down_proj|1200": 1861632,
+    "mlp.down_proj|1262": 1956864,
+    "mlp.down_proj|1340": 2076672
+  }
+}
