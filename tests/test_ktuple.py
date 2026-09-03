@@ -181,12 +181,12 @@ def test_ktuple_round_trip(base_size, rate):
     grid = tuple_grid(lloyd_max_grid(base_size), 2)
     forests = {rate: build_forest(rate, grid=grid)}
     torch.manual_seed(0)
-    weights = torch.randn(64, 8, device=device) * 0.02
+    weights = torch.randn(64, 32, device=device) * 0.02
     unit = encode_unit(
-        weights, forests, (rate,) * 8, CC,
+        weights, forests, (rate,) * 32, CC,
         rotation=RotationState.NONE, with_diagonals=False, completion=0,
     )
-    assert unit.body_bits.shape == (32, 8)      # one code per PAIR of rows
+    assert unit.body_bits.shape == (32, 32)      # one code per PAIR of rows
     codes = decode_codes_mixed(unit, forests, CC, 0)
     assert torch.equal(codes.long(), unit.codes)
     out = reconstruct_unit(unit, forests, CC, completion=0)
@@ -218,10 +218,10 @@ def test_release_is_refused_at_arity_above_one():
     device = _device()
     grid = tuple_grid(E2M1_GRID, 2)
     forests = {7: build_forest(7, grid=grid)}
-    weights = torch.randn(16, 8, device=device) * 0.02
+    weights = torch.randn(16, 32, device=device) * 0.02
     with pytest.raises(GrammarError, match="release is not defined"):
         encode_unit(
-            weights, forests, (7,) * 8, CC, rotation=RotationState.NONE,
+            weights, forests, (7,) * 32, CC, rotation=RotationState.NONE,
             with_diagonals=False, completion=0, released_positions=4,
         )
 
@@ -230,10 +230,10 @@ def test_rows_must_be_a_whole_number_of_tuples():
     device = _device()
     grid = tuple_grid(E2M1_GRID, 2)
     forests = {7: build_forest(7, grid=grid)}
-    weights = torch.randn(15, 8, device=device) * 0.02
+    weights = torch.randn(15, 32, device=device) * 0.02
     with pytest.raises(GrammarError, match="whole number of arity-2 tuples"):
         encode_unit(
-            weights, forests, (7,) * 8, CC,
+            weights, forests, (7,) * 32, CC,
             rotation=RotationState.NONE, with_diagonals=False, completion=0,
         )
 
@@ -353,12 +353,14 @@ def test_lloyd_max_beats_e2m1_as_a_scalar_quantiser():
 # --------------------------------------------------------------------------
 
 
-def _arity2_unit(rows=16, cols=16, rate=7):
-    # cols=16 is the smallest writable width: one 16-column scale group.
-    # The writer (issue #56) refuses a width that is not a whole number of
-    # groups, so these wire tests run at the boundary rather than below it;
-    # every property they pin -- round-trip identity, weight-row geometry,
-    # fail-closed reads -- is width-independent.
+def _arity2_unit(rows=16, cols=32, rate=7):
+    # cols=32 is the smallest writable width: the writer refuses a width that
+    # is not a whole number of 16-column scale groups (issue #56) and the S6b
+    # pack refuses one that is not a whole number of 32-weight groups, since a
+    # group's two halves share a base exponent and may not straddle two output
+    # rows (issue #57).  These wire tests therefore run at the boundary rather
+    # than below it; every property they pin -- round-trip identity, weight-row
+    # geometry, fail-closed reads -- is width-independent.
     device = _device()
     grid = tuple_grid(E2M1_GRID, 2)
     forests = {rate: build_forest(rate, grid=grid)}
@@ -402,11 +404,11 @@ def test_arity2_geometry_declares_weight_rows_not_trellis_steps():
     from tessera.footprint import terminal_payload_bpp
     from tessera.unit_artifact import build_unit_artifact
 
-    _weights, unit, forests, _grid = _arity2_unit(rows=16, cols=16)
-    assert unit.body_bits.shape == (8, 16)          # 16 rows / arity 2
+    _weights, unit, forests, _grid = _arity2_unit(rows=16, cols=32)
+    assert unit.body_bits.shape == (8, 32)          # 16 rows / arity 2
     manifest, _region, _blob = build_unit_artifact(unit, "u0", forests, q256=7 * 256)
     assert manifest.geometry.rows == 16
-    assert manifest.geometry.quantizable_params == 16 * 16
+    assert manifest.geometry.quantizable_params == 16 * 32
 
     # bpp needs a unit big enough for the body to dominate: the ALPHABET and
     # DESCENDANT planes are 256 bytes each *per unit* regardless of size, which

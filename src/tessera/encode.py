@@ -701,10 +701,25 @@ def _pack_scales(
     one octave -- S6b is explicit that arbitrary legal E4M3 pairs are therefore
     *not* representable, and that the cost of that restriction is arm 5's to
     measure.
+
+    Groups are cut per output row, and a width that is not a whole number of
+    groups is refused: the two halves of a group share one base exponent, so
+    a group spanning two rows would couple unrelated magnitudes (issue #57).
     """
-    flat = weights.reshape(-1)
-    groups = flat.reshape(-1, group)
-    halves = flat.reshape(-1, half)
+    if weights.ndim != 2:
+        raise GrammarError(
+            f"expected a 2-D weight, got shape {tuple(weights.shape)}"
+        )
+    rows, cols = weights.shape
+    if cols % group:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {group}-weight scale "
+            "groups; a group's two halves share one base exponent within one "
+            "octave, so a group spanning two output rows would couple "
+            "unrelated magnitudes"
+        )
+    groups = weights.reshape(rows, -1, group).reshape(-1, group)
+    halves = weights.reshape(rows, -1, half).reshape(-1, half)
     amax_group = groups.abs().amax(dim=1).clamp_min(1e-30)
     amax_half = halves.abs().amax(dim=1).clamp_min(1e-30)
 
@@ -793,10 +808,26 @@ def _refit_scales(
     The bytes' meaning is unchanged -- ``scales_from_planes`` reads them exactly
     as it reads the amax plane -- which is what makes this an encoder choice
     and not a wire change.
+
+    Halves are cut per output row, like the pack's: the refit groups the same
+    halves the pack grouped, so it refuses the same widths (issue #57).
     """
+    if work.ndim != 2 or units.ndim != 2:
+        raise GrammarError(
+            f"expected 2-D work and units, got {tuple(work.shape)} and "
+            f"{tuple(units.shape)}"
+        )
+    rows, cols = work.shape
+    if cols % group:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {group}-weight scale "
+            "groups; a group's two halves share one base exponent within one "
+            "octave, so a group spanning two output rows would couple "
+            "unrelated magnitudes"
+        )
     per_group = group // half
-    W = work.float().reshape(-1, half)
-    U = units.float().reshape(-1, half)
+    W = work.float().reshape(rows, -1, half).reshape(-1, half)
+    U = units.float().reshape(rows, -1, half).reshape(-1, half)
     A = (U * U).sum(dim=1)
     B = (W * U).sum(dim=1)
     # A half whose codes are all zero, or whose fit points the wrong way, has
@@ -804,6 +835,8 @@ def _refit_scales(
     desired = torch.where(A > 0, B / A.clamp_min(1e-30), effective)
     desired = torch.where(desired > 0, desired, effective)
 
+    # Consecutive halves pair within a row: the guard above leaves an even
+    # number of halves per row, so no group spans rows here either.
     g = desired.reshape(-1, per_group)
     Ag, Bg = A.reshape(-1, per_group), B.reshape(-1, per_group)
     prev = effective.reshape(-1, per_group)
