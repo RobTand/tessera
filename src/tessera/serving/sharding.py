@@ -22,7 +22,7 @@ route reaching into planes it does not own.
 TODAY.  ``tp_size == 1`` is what this plugin has SERVED, and at ``tp_size == 1``
 the seam returns the whole unit unchanged -- the same object, so the caller's
 parsed view of it stays valid and the served arithmetic is bit-identical to a
-build with no TP support at all.  At ``tp_size > 1`` the seam now CUTS: it asks
+build with no TP support at all.  At ``tp_size > 1`` the seam CUTS: it asks
 ``tessera.layout.can_shard`` first (refusing with the granularity the operator
 can act on), calls ``tessera.layout.slice_unit``, and re-derives the parsed view
 by writing the shard and reading it back -- a shard is a whole artifact, so the
@@ -31,14 +31,26 @@ holds.  It still never falls back to "every rank holds the whole weight": that
 would serve correct logits at N times the intended memory and look merely
 disappointing.
 
-WHAT THE CUT DOES NOT YET REACH is downstream of this module and refuses on its
-own terms: a ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and only the
-window body threads a start state through its pad
-(``lane_planes.pack_window_planes``) -- which the E4M3 and BF16 families ship
-and the span-2 TCQ body does not.  The span-2 packer refuses such a unit by
-name (``pack_unit_for_kernel``), so the NVFP4 route serves column cuts
-(RowParallel) at any TP and row cuts only on rank 0.  That is a decoder gap, not
-a seam gap, and it is loud where it bites.
+TWO GATES, AND THEY ANSWER DIFFERENT QUESTIONS.  ``require_a_cutter`` refuses a
+TP group in a build with no ``tessera.layout.slice_unit`` -- the whole-file
+answer, asked once per module at method construction.  ``require_axis_supported``
+refuses the ONE axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
+and asked at ``create_weights`` where ``plan_shard`` has just named the axis.  A
+ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and only the window body
+threads a start state through its pad (``lane_planes.pack_window_planes``) --
+which the E4M3 and BF16 families ship and the span-2 TCQ body does not, so the
+span-2 packer refuses such a unit by name (``pack_unit_for_kernel``).  So the NVFP4 route serves column cuts
+(RowParallel) at any TP and refuses row cuts -- on every rank, including rank 0,
+whose shard would in fact pack, because a group whose ranks disagree about
+whether a module exists hangs on its first collective rather than failing.
+
+NONE OF THIS IS ATTESTED.  ``runtime_contract.json``'s
+``tensor_parallel.units[].max_world_size`` is still 1 and stays 1 until a
+multi-rank serve has been run: what is published above it is
+``loader_axes``, which is ``ROUTE_TP_AXES`` -- a statement about what this
+build's loader DOES, checked against this module so the two cannot drift.  A
+two-rank serve is therefore something this build will attempt and nothing has
+measured, and that distinction is machine-readable rather than a footnote.
 
 WHICH AXIS.  vLLM's parallel Linears split one of the two axes and tell the
 method by the sizes they ask for, so the axis is DERIVED from the shapes
@@ -61,9 +73,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
+from .scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
+
 __all__ = [
     "AXIS_ROWS",
     "AXIS_COLUMNS",
+    "AXES",
+    "TP_SHARDED",
+    "TP_REFUSED",
+    "TP_STATUSES",
+    "ROUTE_TP_AXES",
+    "axis_status",
+    "have_unit_slicer",
+    "require_a_cutter",
+    "require_axis_supported",
     "ShardPlan",
     "plan_shard",
     "can_shard",
@@ -79,6 +102,137 @@ __all__ = [
 AXIS_ROWS = "row"
 #: The input axis: RowParallel gives a rank its own columns.
 AXIS_COLUMNS = "column"
+#: Both, in the order the contract's ``loader_axes`` writes them.
+AXES = (AXIS_ROWS, AXIS_COLUMNS)
+
+#: The loader cuts this axis and the route serves the shard.
+TP_SHARDED = "sharded"
+#: The loader refuses this axis by name, on every rank.
+TP_REFUSED = "refused"
+TP_STATUSES = (TP_SHARDED, TP_REFUSED)
+
+#: WHAT THE LOADER DOES WITH EACH AXIS, PER ROUTE.  This table is the one
+#: source: the routes gate on it at ``create_weights`` and
+#: ``runtime_contract.json``'s ``tensor_parallel.units[].loader_axes`` is
+#: checked against it (``contract.validate_serving_contract``), so the document
+#: and the code cannot drift the way two spec files once did about one runtime.
+#:
+#: It is a machine-readable STATUS, and it is a statement about this build's
+#: DECODERS, not an attestation: ``max_world_size`` in the same block is the
+#: attestation, and it is still 1 because no multi-rank serve has been run.
+#: A producer that wants "will this even load" reads this; a producer that
+#: wants "has this been measured" reads ``max_world_size``.
+#:
+#: The row axis's answer is a property of the BODY, not of the tile: the window
+#: body's L-bit pad IS ``state_{-1}``, so a row shard costs the window decoders
+#: an argument, while the span-2 TCQ body's ``SELECT_PAD`` feeds a window whose
+#: bit order ``build_span2_luts`` reverses and threading the state through that
+#: reversal is unwritten.  It is keyed by ROUTE because family, body and route
+#: are one-to-one today (``export_tessera_serving.check_recipe`` enforces it);
+#: a third family with a different body brings its own row.
+ROUTE_TP_AXES: dict[str, dict[str, str]] = {
+    TESSERA_NVFP4: {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED},
+    TESSERA_FP8: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
+    # The third family, and the docstring above said what to do with one: it
+    # brings its own row.  BF16 gets FP8's answer for FP8's reason and not by
+    # analogy -- the axis answer is a property of the BODY, both routes ship
+    # the window body over the CHANNEL plane, and both threaded the start
+    # state the same way before this table existed (``bf16_route`` and
+    # ``fp8_route`` each pass ``initial_state=getattr(unit, "initial_state",
+    # None)`` into the same decoder).  What differs between them is the tile
+    # the decode lands in, which the shard never touches.
+    TESSERA_BF16: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
+}
+
+#: Why a refused axis is refused.  PROSE, and deliberately not a gate input
+#: (principle 14): ``ROUTE_TP_AXES`` is what a gate reads, this is what a
+#: person reads.  The contract may carry its own wording.
+ROUTE_TP_AXIS_REASONS: dict[str, dict[str, str]] = {
+    TESSERA_NVFP4: {
+        AXIS_ROWS: (
+            "a row shard begins mid-column, so it carries an INITIAL_STATE plane, and the "
+            "span-2 TCQ decoders this route packs for (tessera.lane_planes."
+            "pack_unit_for_kernel) supply state_{-1} = 0 themselves"),
+    },
+}
+
+
+def axis_status(family: str, axis: str) -> str:
+    """``TP_SHARDED`` or ``TP_REFUSED`` for one (route, axis).
+
+    Raises on an unknown route or axis rather than defaulting: a family this
+    table has never heard of is a route this module cannot answer for, and
+    guessing ``sharded`` there is exactly the silent-wrong-rows outcome the
+    whole seam exists to prevent.
+    """
+    axes = ROUTE_TP_AXES.get(str(family))
+    if axes is None:
+        raise ValueError(
+            f"no tensor-parallel answer is published for the route {family!r}; "
+            f"tessera.serving.sharding.ROUTE_TP_AXES covers {sorted(ROUTE_TP_AXES)}")
+    if axis not in axes:
+        raise ValueError(f"{axis!r} is not a shard axis; the axes are {list(AXES)}")
+    return axes[axis]
+
+
+def have_unit_slicer() -> bool:
+    """Is ``tessera.layout.slice_unit`` in this build?
+
+    The TP gate is keyed on the cutter's PRESENCE rather than deleted outright:
+    a build without it must still refuse rather than serve rank 0's whole unit
+    to every rank, which is correct logits at N times the intended memory and
+    looks merely disappointing.
+    """
+    try:
+        from tessera.layout import slice_unit  # noqa: F401
+    except Exception:  # noqa: BLE001 -- an older Tessera, or a partial install
+        return False
+    return True
+
+
+def require_a_cutter(prefix: str, world: int) -> None:
+    """Refuse a TP group in a build that cannot cut a unit.  ``world<=1`` passes."""
+    if int(world) <= 1 or have_unit_slicer():
+        return
+    raise ValueError(
+        f"tessera target {prefix!r}: this build cannot serve tensor_parallel_size={int(world)}. A "
+        "unit's rows are bit-packed against a shared rate schedule and its trellis carries state "
+        "along a row, so a shard is not a byte range -- the loader cuts the unit itself, through "
+        "tessera.layout.slice_unit, which is not in this build. The checkpoint is not the problem "
+        "and does not need re-exporting -- one artifact serves any world size, because the cut "
+        "happens at load. Serve with -tp 1, or install a Tessera carrying the unit slicer.")
+
+
+def require_axis_supported(family: str, plan: "ShardPlan") -> None:
+    """Refuse, at ``create_weights``, an axis this route's decoders cannot start.
+
+    Called with the plan and NOT with the rank, on purpose.  A row cut of a
+    span-2 unit is packable on rank 0 -- its shard starts at row 0, so it
+    carries no INITIAL_STATE plane -- and refusing only where it bites would
+    mean rank 0 building a layer while its peers raised.  A TP group whose
+    ranks disagree about whether a module exists does not fail: it hangs on the
+    first collective, which is a worse bug than the one being reported.  So the
+    refusal is symmetric across the group, and it arrives before any byte is
+    loaded rather than from inside a packer.
+    """
+    if plan.axis is None or plan.tp_size <= 1:
+        return                       # nothing is cut: replicated, or one rank
+    if axis_status(family, plan.axis) == TP_SHARDED:
+        return
+    reason = ROUTE_TP_AXIS_REASONS.get(family, {}).get(plan.axis, "this route does not cut it")
+    served = [axis for axis in AXES if axis_status(family, axis) == TP_SHARDED]
+    layer = ("column-parallel (ColumnParallelLinear, MergedColumnParallelLinear, "
+             "QKVParallelLinear)" if plan.axis == AXIS_ROWS else
+             "row-parallel (RowParallelLinear: o_proj, down_proj)")
+    raise ValueError(
+        f"tessera target {plan.prefix!r}: {family} does not serve a {plan.axis} cut, and this is a "
+        f"{layer} module at tensor_parallel_size={plan.tp_size}. It is refused on every rank, "
+        f"including rank 0 whose shard would pack, because a group whose ranks disagree about a "
+        f"module hangs on its first collective instead of failing. The reason is the body, not the "
+        f"tile: {reason}. This route serves {served} cuts. Serve this model with "
+        f"tensor_parallel_size=1, or export this Linear to a Tessera route that cuts the "
+        f"{plan.axis} axis (TESSERA_FP8, the E4M3 window wire) -- the checkpoint does not need "
+        "re-exporting for the TP degree itself, only for the route.")
 
 
 @dataclass(frozen=True)

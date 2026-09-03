@@ -307,6 +307,15 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     Moves every role's LUT table onto one shared global (exact binade shift,
     refused otherwise) and packs each role's planes for the native decoder.
 
+    The native decoder serves the span-2 TCQ body over the **LUT** scale plane.
+    Both halves of that are refused by name here: the body a paragraph below,
+    and the plane here.  A CHANNEL-plane unit is a supported export -- a caller
+    that names ``body=BodyKind.TCQ`` over the E4M3 recipe gets exactly one
+    (``export.py``'s recipe resolver) -- and it carries no ``scale_lut`` at
+    all, so without this it reached ``shared_lut_global`` as ``None`` and came
+    back as ``AttributeError: 'NoneType' object has no attribute 'to'``.  An
+    unserved plane is a refusal, and a refusal says which plane.
+
     ``allow_torch_fallback`` lets a caller that only needs ONE decode, at load,
     accept the pure-torch decoder when the CUDA extension cannot build.  A
     caller that decodes inside the forward must leave it False: the fallback
@@ -325,6 +334,13 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     if bodies != {"TCQ"}:
         raise ValueError(
             f"the native decoder serves the span-2 TCQ body today; roles carry {sorted(bodies)}")
+    from tessera.manifest import ScalePlaneKind
+
+    planes = {ScalePlaneKind(u.scale_plane).name for u in units}
+    if planes != {"LUT"}:
+        raise ValueError(
+            f"the native decoder serves the LUT scale plane today; roles carry "
+            f"{sorted(planes)}")
     tables = [u.scale_lut for u in units]
     globals_ = [float(u.scale_global) for u in units]
     shared, moved = shared_lut_global(tables, globals_, names)

@@ -90,10 +90,10 @@ def bits_to_bytes(bits: int) -> int:
 def as_ratio(value: Fraction) -> tuple[int, int]:
     """(numerator, denominator) of a Fraction in lowest terms.
 
-    This is the only form in which a rate reaches a hash domain.  It worked on
-    an ``int`` and crashed with a bare ``AttributeError`` on a ``float``, for
-    the accidental reason that ``int`` carries ``.numerator``; the gate is now
-    stated rather than inherited from the numeric tower's attribute table.
+    It worked on an ``int`` and crashed with a bare ``AttributeError`` on a
+    ``float``, for the accidental reason that ``int`` carries ``.numerator``;
+    the gate is now stated rather than inherited from the numeric tower's
+    attribute table.
     """
     value = require_exact_rational(value)
     return (value.numerator, value.denominator)

@@ -73,8 +73,25 @@ and writes the exporter's `--plan-json` plus a provenance sidecar
   hold an NVFP4-via-compressed-tensors module and a Tessera wire at once, and a
   silent BF16 substitution there would be a different artifact than the one
   priced;
-* enforces the fused-family invariant (q/k/v, gate/up) unless
-  `--allow-fused-disagreement`, which records each disagreement instead;
+* enforces the fused-family invariant (q/k/v, gate/up). A **per-member (mink)**
+  allocation — PrismaQuant's group knapsack gives one family per fused group and
+  a rate per member — lands here, and the deliberate answer is to **refuse**:
+  vLLM builds one method per fused module, and no single rate for the group is
+  derivable from the objective (the members' rates differ precisely because
+  their sensitivities do, so min / bytes-weighted / max are taste, not
+  arithmetic, and any of them moves both the bytes and the loss off the point
+  the DP chose). `--allow-fused-disagreement` writes the plan anyway, and what
+  it writes is the plan that will **serve**: every member of a disagreeing group
+  is named `"BF16"` — which is what the exporter does with it — dropped from the
+  unit table and the charged-bits total, and the demotion recorded
+  (`fused_disagreements[].planned_as`, `totals.demoted_to_bf16_params`).
+  Corrected 2026-09-02 (Tessera issue #15): the flag used to write the members'
+  Tessera rungs and price them as Tessera while the exporter passed the module
+  through, so the sidecar whose stated job is that the bytes served are the
+  bytes priced under-reported a seven-unit mink plan at 3.90 bpp against ~12 bpp
+  served. A whole-GROUP option name (`TESSERA_E4M3_K1_G3`) is refused by name
+  for the same reason: it is not a rung and PrismaQuant is meant to have
+  expanded it to its members before the assignment was written;
 * prices every unit through PrismaQuant's **own** accountant
   (`prismaquant.tessera_formats.artifact_bpp`) and writes the charge as an exact
   rational, so the byte check downstream is equality, not a float comparison;
@@ -85,8 +102,9 @@ and writes the exporter's `--plan-json` plus a provenance sidecar
   described a 4-bit checkpoint nobody priced. Both coverage modes now write
   `"BF16"` explicitly and `unplanned_body_linears` is an invariant zero.
 
-`tests/test_plan_from_layer_config.py` — 17 tests, all passing on the host venv
-— covers the mapping, the refusals, the fused invariant, both coverage modes,
+`tests/test_plan_from_layer_config.py` — 19 tests, all passing on the host venv
+— covers the mapping, the refusals, the fused invariant and the mink demotion,
+both coverage modes,
 the broadcast's two shape refusals, the BF16-naming invariant, and
 (skipif-guarded on the PrismaQuant tree) that the sidecar reproduces
 PrismaQuant's own `body_assignment_payload_bits_total`.
@@ -208,10 +226,22 @@ served here, not asserted.
 | uniform R1006 eager **vs compiled** | 0.020028 | 92.42% | |
 | allocated 4.0 **vs uniform R1006** | 0.368693 | 67.34% | the two byte-matched checkpoints disagree with each other about as much as the allocated one disagrees with the teacher |
 
-The eager-vs-compiled numbers (0.0288 / 0.0200) are larger than the single
-0.0176 the plugin receipt records for a uniform E4M3 wire. Reported, not
-explained: nothing here isolates whether that is the four-rung mix, the
-allocation's low rungs, or run-to-run scatter in the compiled path.
+The eager-vs-compiled numbers (0.0288 / 0.0200) are reported, not explained:
+nothing here isolates whether that is the four-rung mix or the allocation's low
+rungs.
+
+> **Corrected 2026-09-02** (#16,
+> `docs/measurements/serving-compile-divergence-2026-09-02.md`). This paragraph
+> originally compared those two numbers against "the single 0.0176 the plugin
+> receipt records for a uniform E4M3 wire", and offered run-to-run scatter as a
+> candidate explanation. Both halves were wrong. **0.0176 is not an
+> eager-vs-compiled number** — it is the plugin-vs-Gridbook *mutual* KL on the
+> K2/NVFP4 arm, a comparison of two runtimes in one regime. The plugin receipt's
+> own eager-vs-compiled figure for the uniform E4M3 wire is **0.026861**, which
+> sits between the two numbers above rather than below them. And it is **not
+> scatter**: measured across two independent lanes and both residency modes, the
+> gap reproduces to six decimals, so 0.0288 and 0.0200 are two deterministic
+> numbers for two different checkpoints, not two draws from one.
 
 ## 6. Allocator-predicted versus served
 
@@ -511,3 +541,36 @@ Artifacts and logs: `/mnt/shared/tessera-runs/allocated/` (checkpoints, export
 logs, `regret_uniform.json`), `/home/rob/tessera-runs/allocated/` on sparklina
 (censuses, arm logs, KL compares), KL dumps
 `/mnt/shared/tessera-kl/qwen_tessera_<arm>.json.npz`.
+
+## 11. The control, since promoted (added after the run)
+
+§4's matched arm was a driver with the run's paths in it
+(`allocated_serve_2026-09-02/find_uniform.py`), which is the wrong home for the
+only check that saw this failure. It is now `tessera.control` plus
+`experiments/uniform_control.py` (#3), and the library re-derives every
+byte figure this receipt published from the wire's own accountant
+(`calculator.terminal_rate`) rather than from PrismaQuant's closed form: the
+allocation at 1761722368 bits, the control at R1006 / 1761837056 (65.1 ppm
+fatter, the direction that makes the 2.00x conservative), R750 and R1262 at the
+other two budgets, and the layer-0 separator pair at 7864832 against 7865344
+bytes. `tests/test_uniform_control.py` pins them, and pins the library against
+`prismaquant.tessera_formats.artifact_bpp` so the allocator's budget and the
+control stay one currency.
+
+Three things the promotion changed rather than copied:
+
+* **The match is asserted, not eyeballed.** A control further from the
+  candidate than a control may be (default 0.1% of its bytes; this one is 65
+  ppm) is refused where it is built, not discovered after two serves.
+* **The axis has a hole.** E2M1x2 jumps 0.239 bpp between R895 and R896, where
+  the recipe leaves the window body for the coset trellis, so a candidate
+  inside that gap has **no** byte-matched uniform arm on its own family. The
+  E4M3 arms of this receipt are nowhere near it; a future E2M1x2 allocation
+  could be, and it now refuses instead of comparing two byte budgets.
+* **The record travels with the plan.** `plan_from_layer_config.py` prices the
+  control into `<plan>.provenance.json` as `uniform_control`, unserved and
+  saying so — a built-but-unserved control must not read like a passed gate.
+
+What the promotion does **not** do is serve anything. The verdict field stays
+`measured: false` until someone runs the second arm, which is the price §7's
+lesson says is worth paying.

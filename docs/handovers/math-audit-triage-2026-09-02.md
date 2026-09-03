@@ -90,7 +90,7 @@ Issue references are verified offline against `docs/issues-snapshot.json`
    so nothing breaks -- but a property on a valid artifact is broken. The fix
    needs `grid_codes` threaded too (at cap 7 the grid is 256, not 16).
 
-9. [#22] **Release can never reach a trailing partial superblock.** Found while
+9. [FIXED, #22] **Release can never reach a trailing partial superblock.** Found while
    verifying item 7's fix, not by the audit. `encode._canonical_release_order`
    (`encode.py:1656`) and `decode.release_order` (`decode.py:420`) both floor
    `blocks = max(1, cols // superblock)` while `block_of` can return `blocks`,
@@ -99,7 +99,15 @@ Issue references are verified offline against `docs/issues-snapshot.json`
    released 640-column unit decodes at the same rmse as a 512-column one. But
    item 7's fix made `layout` count that superblock, so the layout and the
    release order now disagree, and the unit spends 11 bytes on a granule
-   release cannot populate.
+   release cannot populate. Fixed by giving the superblock count one authority,
+   `grammar.superblock_count` (the ceiling), and routing the release quota, the
+   plane granules and the shard path through it; the quota now refuses a
+   superblock it cannot fill rather than truncating, because under the ceiling
+   a truncated placement is no longer what the reader respreads back. That
+   refusal is a behaviour change -- an equal-count quota over unequal blocks
+   caps releases on a narrow trailing superblock, and 64x640 at 4000 releases
+   now refuses where it used to encode -- so whether the quota should instead
+   be width-proportional is open as #27.
 
 ## Tier B — real, latent (no live path), cheap
 - [#26] §4 P0 completion `argmin` ignores `sub_w` (`encode.py:1407` computes it,
@@ -162,6 +170,18 @@ shapes that carry a partial trailing superblock -- and the tensor every
 `--diff` the two. Deterministic across processes (it seeds from `zlib.crc32`,
 not `hash()`, which `PYTHONHASHSEED` randomises). Baseline at 3ea7ec3: 14
 encodes, 22 decodes, 0 changed across two runs.
+
+**Amended 2026-09-02 (issue #18 batch): 18 encodes, 22 decodes.** The matrix
+covered three of the four serialisable grids -- E2M1, E2M1x2, E4M3 -- and not
+`BF16`, which was added to the wire after these lines were written. Until the
+amendment a change to `BF16_WINDOW_BITS` or `BF16_CHANNEL_SIGMA` moved real
+bytes and this harness reported `0 changed`: the proof was silent on exactly
+the two constants issue #18 asks someone to search. The two new cases mirror
+the E4M3 shapes (32x256, 32x320) so the recipes differ only in the alphabet
+the window table snaps to, and a digest that moves on one grid and not the
+other localises the change. Re-baselining across the amendment reports the
+four new keys as `before None` and leaves all 32 pre-existing digests
+untouched (`4 changed of 36`, all four the new `bf16-*` keys).
 
 A fix may legitimately change future bytes. It may never change what today's
 bytes mean, and the decode half of the baseline is what says so.

@@ -182,6 +182,44 @@ def test_release_placement_is_recovered_not_stored():
     assert torch.equal(recovered, reconstruct_unit(unit, FORESTS, CODE))
 
 
+def test_release_reaches_a_trailing_partial_superblock():
+    """A 640-column unit has three superblocks -- 256, 256, 128 -- and the
+    layout gives the last one a granule.  The release quota used to run over
+    ``cols // superblock`` blocks, a floor, so positions 512..639 were
+    unreachable: the unit paid for a granule release could never populate.
+    Encoder and decoder floored alike, so the round trip never noticed; the
+    only way to see it is to look at *which* superblocks were placed in.
+    """
+    cols, superblock = 640, 256
+    _, unit = _unit(cols=cols, q256=640, released=8)
+    blocks = sorted(set(((unit.release_index % cols) // superblock).tolist()))
+    assert blocks == [0, 1, 2]
+    _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+    assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, CODE))
+
+
+@pytest.mark.parametrize("cols", [320, 384, 512, 640, 768])
+def test_release_placement_survives_the_bytes_at_every_width(cols):
+    """A regression pin, not a fail-before test: it passed under the floor too,
+    because encoder and decoder floored alike.  It exists because the reader
+    regenerates a whole unit's placement from the total alone, so any future
+    change to the partition has to move both sides at once -- at *every* column
+    count, including the ones where the ceiling and the floor differ."""
+    _, unit = _unit(cols=cols, q256=640, released=64)
+    assert unit.released_positions == 64
+    _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
+    assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, CODE))
+
+
+def test_release_refuses_a_superblock_quota_it_cannot_fill():
+    """A trailing partial superblock holds fewer positions than a complete one,
+    so a uniform quota can overrun it.  Truncating silently would place fewer
+    releases than asked, and the reader -- which respreads the *placed* count --
+    would then recover a different set.  Refuse instead."""
+    with pytest.raises(GrammarError, match="releases .* of .* positions"):
+        _unit(rows=8, cols=640, q256=640, released=8 * 640 - 1)
+
+
 def test_decoder_derives_its_own_scale():
     """reconstruct_unit with no scale argument must equal the encoder's."""
     weights, unit = _unit(diagonals=False)
@@ -262,3 +300,37 @@ def test_fused_replay_equals_the_eager_path_bit_for_bit(memory):
         fused = replay_body(bits, forest, code)
         assert torch.equal(eager, fused)
     _fused_replay.cache_clear()
+
+
+def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
+    """A scale the codec cannot write is refused by the plane, not by the codec.
+
+    ``ScalePlane`` already refuses a global scale that is not exactly
+    representable as a float.  That is a weaker condition than the wire's:
+    ``Fraction(3.7e-5)`` IS float-exact and has a 68-bit denominator, so it
+    passed construction and then failed deep inside ``canonical.Writer.ratio``
+    with ``value exceeds 64-bit domain: 147573952589676412928`` -- a codec error
+    naming a 21-digit integer, with no mention of a scale, a plane, or a unit.
+    The first person to hit it reads that and looks in the codec (#33).
+
+    Dyadic rationals of modest denominator -- what every shipped plane snaps to
+    -- stay legal, including ones that are not powers of two.
+    """
+    from fractions import Fraction
+
+    from tessera.errors import ManifestError
+    from tessera.manifest import ScalePlane
+
+    for good in (2.0**-10, 2.0**-12, 0.75, 1.0, 2.0**20):
+        assert ScalePlane.channel(good).global_scale == Fraction(good)
+        assert ScalePlane.lut(bytes([0x30, 0x38]), good).global_scale == Fraction(good)
+
+    for maker, field in ((lambda g: ScalePlane.channel(g), "CHANNEL"),
+                         (lambda g: ScalePlane.lut(bytes([0x30, 0x38]), g), "LUT")):
+        with pytest.raises(ManifestError) as excinfo:
+            maker(3.7e-5)
+        message = str(excinfo.value)
+        # The three things the codec's message could not say.
+        assert f"{field} global scale" in message
+        assert "3.7e-05" in message
+        assert "denominator" in message

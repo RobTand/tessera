@@ -105,9 +105,13 @@ read by a decoder.
 
 **Accounting.** The table is charged on the ALPHABET plane, inline, per
 unit: `2^L` bytes — `0.0156` bpp at `L = 14` and `0.0625` at `L = 16` on a
-2048×4096 unit. `Storage.REFERENCE` is not used: nothing resolves a
-by-reference plane today, and a second sharing mechanism is not the price
-of a quarter-percent.
+2048×4096 unit. `Storage.REFERENCE` is not used — and since the 2026-09-02
+audit it cannot be: `PlaneDescriptor.__post_init__` refuses that storage at
+construction, because `byte_length` charged it 0 bytes and no accountant
+charged it anywhere else. Nothing resolves a by-reference plane today, and a
+second sharing mechanism is not the price of a quarter-percent. The enum
+member stays as the named future; the refusal is the one line that moves when
+bundle-level accounting exists.
 
 **Why this body exists.** Measured on six GLM-5.3-Flash experts
 (`docs/measurements/tessera-window-body-2026-09-02.md`): below the E2M1x2
@@ -164,7 +168,21 @@ row words are plane bytes under the payload digest.
 
 **Accounting.** 16 bits per output row on the DIAG_SV plane, inline:
 `0.0039` bpp on a 2048×4096 unit, plus the ratio's manifest bytes. No
-block-scale planes. `calculator.terminal_rate(with_row_scale=True, window_bits=L)` prices the rows and a window table exactly; it does **not** price a TCQ unit's ALPHABET/DESCENDANT forest planes (per-unit blob bytes: ~1.4 KB at 64×512, 0.0013 bpp at 2048×4096), so a byte quotation that must match `ExportedUnit.exact_bytes` at small shapes reads the container, not the accountant.
+block-scale planes. `calculator.terminal_rate(with_row_scale=True,
+window_bits=L)` prices the rows and a window table exactly; it does **not**
+price a TCQ unit's ALPHABET/DESCENDANT forest planes. Those bytes are
+`sum over the distinct rates R present of 2^(R+1) + 2^(cap+1)` — one byte
+per anchor, plus one flattened forest per rate holding the grid's whole code
+space — so they are a function of the schedule and the grid alone and **not
+of the shape**. On E2M1 a Bresenham schedule mixes only the two rates
+bracketing its root, so a shipped unit carries **20–56 B** (measured: 20 at
+rate 1 alone, 44 over {1,2}, 56 over {2,3}, 32 at rate 3 alone; 76 B is the
+bound an importance-placed schedule using all three would reach), and
+exactly **512 B** at the E2M1x2 cap — the only two places `wire_recipe`
+still writes a TCQ body at all. A schedule carrying every legal rate of an
+8-bit grid would reach 2300 B. That is 0.00002–0.0022 bpp on a 2048×4096
+unit, so a byte quotation that must match `ExportedUnit.exact_bytes` at
+small shapes reads the container, not the accountant.
 
 ### 1d. Schema minor 4 (2026-09-02): the shard record and the INITIAL_STATE plane
 
@@ -228,7 +246,13 @@ consumer that indexes `plane_elements` positionally takes its order from
 `Manifest.plane_order`.
 
 **RELEASE under a shard.** A whole unit's per-superblock release counts are the
-Bresenham spread of the total, which the reader regenerates. A shard's are the
+Bresenham spread of the total over `ceil(columns / superblock_columns)`
+superblocks — the same ceiling §3b gives a granule to, so the quota reaches a
+trailing partial superblock like any other — which the reader regenerates. A
+uniform quota can overrun a partial superblock, which holds fewer positions
+than a complete one; a writer that would place fewer releases than it declares
+refuses instead, because the reader respreads the *placed* count and would
+otherwise recover a different set. A shard's are the
 *restriction* of its parent's, which no spread reproduces, so a shard writes
 the RELEASE descriptor with `PER_SUPERBLOCK` granularity and its counts on the
 wire. The restriction is well defined because S9's placement is a **threshold**
@@ -361,6 +385,10 @@ enumeration, not asserted.
 
 **D4 — bit order.** Planes pack MSB-first within each byte; the final byte is
 zero-padded and the pad bits must be zero. Padding is charged as physical bytes.
+The rule has exactly two enforcement points and no third: `wire.refuse_dirty_slack`
+on the read path (every `unpack_*`, `parse(verify=False)` included), and
+`container.verify_plane_region` over a plane's declared extent under
+`parse(verify=True)`.
 
 **D5 — canonical plane order**, which is also the truncation order:
 
@@ -461,7 +489,12 @@ must not be the unverified one.
    not the encoder's to choose. Unconstrained, the same logical content admits
    many byte strings, and identity here is a function of content; the slack is
    also a covert channel. MSB-first packing puts sub-byte pad bits in the low
-   bits of the final content byte (finding F4).
+   bits of the final content byte (finding F4). Enforced by
+   `wire.refuse_dirty_slack` at the bytes-to-values seam and by
+   `container.verify_plane_region` over the declared extent — those two and
+   nothing else. A third statement of one rule can only disagree with the
+   other two, which is what `bitio.check_padding_zero` was doing with no
+   callers at all until it was deleted.
 
 ## 4. Parse algorithm
 
@@ -488,7 +521,9 @@ must not be the unverified one.
 7. For each plane fully present in that terminal, verify its `content_digest`
    over the plane's exact byte range.
 8. Verify that all padding is zero: alignment bytes, and the sub-byte slack in
-   each plane's final content byte.
+   each plane's final content byte (`container.verify_plane_region`). The
+   unpackers repeat the sub-byte half themselves (`wire.refuse_dirty_slack`),
+   so a `verify=False` reader and a direct `unpack_*` caller are covered too.
 9. On a complete artifact only, additionally verify the manifest's whole-region
    payload digest.
 

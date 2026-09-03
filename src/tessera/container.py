@@ -37,7 +37,7 @@ from .errors import PlaneLayoutError, SchemaError, TruncationError
 from .footprint import account_terminal, plane_region_bytes
 from .exact import bits_to_bytes
 from .manifest import Manifest, TerminalRecord
-from .planes import BitOrder, PlaneDescriptor, Storage
+from .planes import BitOrder, PlaneDescriptor
 
 __all__ = [
     "MAGIC",
@@ -126,9 +126,12 @@ def plane_ranges(
     """
     order = {kind: index for index, kind in enumerate(manifest.plane_order)}
     ranges, offset = [], 0
+    # No ``Storage.REFERENCE`` skip: the descriptor cannot hold that storage
+    # (``planes.PlaneDescriptor.__post_init__``), so skipping it here would
+    # claim the container supports a plane it can never be handed -- and the
+    # skip silently produced the offsets for a *different* region if it ever
+    # had been.
     for descriptor in manifest.planes:
-        if descriptor.storage is Storage.REFERENCE:
-            continue
         count = terminal.plane_elements[order[descriptor.kind]]
         total = descriptor.byte_length(count)
         content = bits_to_bytes(count * descriptor.element_bits)

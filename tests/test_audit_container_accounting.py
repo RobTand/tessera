@@ -106,6 +106,44 @@ def test_reference_storage_is_refused_not_charged_zero():
         _descriptor(storage=Storage.REFERENCE)
 
 
+def test_reference_storage_has_no_skip_left_to_reach():
+    """#24: the branches that skipped a REFERENCE plane are gone.
+
+    A pin, not a fail-before: the refusal above is 249dc9a's, and this states
+    the consequence the deletions rest on -- no module in the package branches
+    on that storage any more.  The enum member survives in ``planes.py`` as the
+    named future the refusal there reserves.
+    """
+    package = pathlib.Path(container.__file__).parent
+    branching = {
+        path.name
+        for path in sorted(package.rglob("*.py"))
+        if "storage is Storage.REFERENCE" in path.read_text()
+    }
+    assert branching == set(), f"a REFERENCE branch is back in {branching}"
+
+
+def test_no_reader_can_meet_an_arity_above_two():
+    """#24: what makes ``layout._steps_of``'s 4 and 8 unreachable.
+
+    A pin.  ``arity`` is the grid's tuple order, so the arities a parsed
+    manifest can carry are the tuple orders in ``SERIALISABLE_GRIDS`` -- 1 and
+    2.  E2M1^3 is refused twice over, by the registry and by the 256-code
+    ceiling on the byte-wide ALPHABET/DESCENDANT planes; E2M1^4 (65536 codes)
+    constructs, and is refused the same two ways.
+    """
+    from tessera.alphabet import SERIALISABLE_GRIDS, grid_digest, tuple_grid
+
+    assert {grid.arity for grid in SERIALISABLE_GRIDS.values()} == {1, 2}
+    for k in (3, 4):
+        grid = tuple_grid(E2M1_GRID, k)
+        assert grid.arity == k
+        assert grid_digest(grid) not in SERIALISABLE_GRIDS
+        assert grid.size > 256
+        with pytest.raises(GrammarError, match="SERIALISABLE_GRIDS"):
+            build_forest(3, grid=grid).alphabet_plane()
+
+
 def test_lsb_first_is_refused_not_half_honoured():
     """The packer is MSB-first unconditionally; a verifier alone is half a feature."""
     with pytest.raises(PlaneLayoutError):

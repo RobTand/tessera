@@ -22,8 +22,9 @@ import os
 import torch
 
 from .alphabet import AnchorForest, PayloadGrid
-from .encode import EncodedUnit, e2m1_value_table, grid_value_table
+from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
+from .grammar import superblock_count
 from .manifest import BodyKind, ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
@@ -263,6 +264,7 @@ def replay_body(
     INITIAL_STATE plane of a shard (``layout.slice_unit``).  ``None`` is the
     pinned zero start every whole unit has and every kernel assumes.
     """
+    require_memory(code)
     device = body_bits.device
     rows, cols = body_bits.shape
     subsets, table_next, table_sub = _replay_tables(forest, code, str(device))
@@ -417,7 +419,7 @@ def release_order(
     whole unit writes one total and lets the reader respread it.
     """
     device = decoded.device
-    blocks = max(1, cols // superblock)
+    blocks = superblock_count(cols, superblock)
     if len(counts) != blocks:
         raise GrammarError(
             f"{len(counts)} release counts for {blocks} superblocks"
@@ -444,7 +446,13 @@ def release_order(
 
 
 def bresenham_release_counts(total: int, blocks: int) -> "tuple[int, ...]":
-    """The uniform spread ``encode._canonical_release_order`` applies."""
+    """The uniform spread ``encode._canonical_release_order`` applies.
+
+    ``blocks`` is ``grammar.superblock_count`` -- the ceiling -- so the spread
+    reaches a trailing partial superblock like any other.  It is one block per
+    granule the layout writes, which is the property that keeps the release
+    quota and the plane's granularity describing the same partition.
+    """
     per, remainder = divmod(total, blocks)
     return tuple(per + (1 if index < remainder else 0) for index in range(blocks))
 

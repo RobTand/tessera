@@ -14,6 +14,17 @@ honest status and not a refusal.  Today the table is DENSE-ONLY on sm_121, at
 one rung per family, both residency modes -- exactly the axes the served
 receipts cover.  Routed-MoE experts, TP>1 and any other rung are not in it.
 
+TWO CLAIMS ABOUT TENSOR PARALLELISM, AND THEY ARE NOT THE SAME.
+``tensor_parallel.units[].max_world_size`` is an ATTESTATION: the largest world
+size a served receipt covers.  It is 1, and it stays 1 until a multi-rank serve
+has been run and measured.  Beside it, ``loader_axes`` says what this build's
+LOADER does with a shard on each axis, which is a different question with a
+different answer -- the E4M3 family cuts both axes, the E2M1x2 family cuts
+columns only.  ``_validate_loader_axes`` checks that block against
+``sharding.ROUTE_TP_AXES``, the dict the routes themselves gate on, so the
+published table and the executed behaviour are one artifact rather than two
+documents that can disagree about one runtime.
+
 WHAT ``requires_plugin`` MEANS.  Every Tessera route is reachable only in a
 process where this plugin is installed and registered (entry point
 ``vllm.general_plugins``).  Stock vLLM has no reader for these bytes, so the
@@ -84,6 +95,59 @@ def _require_keys(payload: Mapping[str, Any], where: str, required: set[str],
     unknown = sorted(set(payload) - required - set(optional))
     if unknown:
         raise ValueError(f"{where} carries unknown field(s) {unknown}")
+
+
+def _validate_loader_axes(axes: Any, family: str, where: str) -> None:
+    """``loader_axes`` must BE ``sharding.ROUTE_TP_AXES``, not agree with it in prose.
+
+    Principle 14 applied to this package's own table: the status is the value a
+    gate reads and it is compared against the dict the routes themselves gate
+    on, so a contract that said a family shards an axis its loader refuses --
+    or the reverse -- is a refusal here rather than a surprise at load.  The
+    ``reason`` beside it is prose: required where the status is ``refused``
+    (a refusal an operator cannot act on is a wall), and ``null`` otherwise.
+
+    Imported here rather than at module scope because ``sharding`` imports
+    ``scheme``, and this module is read by a producer on a machine with no
+    torch; neither import pulls torch, but keeping the contract reader's
+    module-level dependencies to json is the property that keeps it true.
+    """
+    from .sharding import AXES, ROUTE_TP_AXES, TP_REFUSED, TP_STATUSES
+
+    route = _FAMILY_TO_ROUTE.get(family)
+    if route is None or route not in ROUTE_TP_AXES:
+        raise ValueError(
+            f"{where}.unit {family!r} names no route this package serves, so nothing here can "
+            "say what its loader does with a shard axis")
+    if not isinstance(axes, Mapping) or sorted(axes) != sorted(AXES):
+        raise ValueError(
+            f"{where}.loader_axes must describe exactly the axes {sorted(AXES)}, got "
+            f"{sorted(axes) if isinstance(axes, Mapping) else type(axes).__name__}")
+    for axis in AXES:
+        entry = axes[axis]
+        _require_keys(entry, f"{where}.loader_axes[{axis!r}]",
+                      required={"status", "reason"})
+        status = entry["status"]
+        if status not in TP_STATUSES:
+            raise ValueError(
+                f"{where}.loader_axes[{axis!r}].status {status!r} is not one of "
+                f"{list(TP_STATUSES)}")
+        expected = ROUTE_TP_AXES[route][axis]
+        if status != expected:
+            raise ValueError(
+                f"{where}.loader_axes[{axis!r}].status is {status!r} but the {route} loader "
+                f"{expected} a {axis} cut (tessera.serving.sharding.ROUTE_TP_AXES). The table "
+                "the routes gate on is the authority; a document that disagreed with it would "
+                "be a claim about a runtime that does not exist.")
+        reason = entry["reason"]
+        if status == TP_REFUSED and not (isinstance(reason, str) and reason.strip()):
+            raise ValueError(
+                f"{where}.loader_axes[{axis!r}] is refused and carries no reason; a refusal an "
+                "operator cannot act on is a wall, not a contract")
+        if status != TP_REFUSED and reason is not None:
+            raise ValueError(
+                f"{where}.loader_axes[{axis!r}] is {status!r} and still carries a reason "
+                f"{reason!r}; the field explains a refusal and is null otherwise")
 
 
 def validate_serving_contract(contract: Mapping[str, Any]) -> None:
@@ -196,14 +260,24 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             raise ValueError(
                 f"{where}.rungs_q256 names {unknown_rungs}, which the family does not publish")
 
+    _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
+                  required={"axis", "semantics", "units"},
+                  # Prose for a person; no gate reads it (principle 14).
+                  optional={"units_note"})
     for i, unit in enumerate(contract["tensor_parallel"]["units"]):
         where = f"runtime_contract.tensor_parallel.units[{i}]"
-        _require_keys(unit, where, required={"unit", "kind", "max_world_size"})
+        _require_keys(unit, where,
+                      required={"unit", "kind", "max_world_size", "loader_axes"})
         if unit["max_world_size"] != 1:
             raise ValueError(
-                f"{where}: a Tessera unit is one blob per vLLM module against a shared rate "
-                "schedule; a sharded form needs per-rank wires, not a byte range, so no cell "
-                "may admit a world size above one")
+                f"{where}.max_world_size is {unit['max_world_size']}, and it may only be 1. This "
+                "field is an ATTESTATION -- the largest world size a served receipt covers -- and "
+                "no multi-rank Tessera serve has been run. It is NOT a statement that the bytes "
+                "cannot shard: they can, the artifact is TP-agnostic and the loader cuts a unit "
+                "at load (tessera.layout.slice_unit). What this build's loader does with each "
+                "axis is loader_axes, beside it; raising this number needs a two-rank serve with "
+                "a per-rank census and a KL against the single-rank arm.")
+        _validate_loader_axes(unit["loader_axes"], unit["unit"], where)
     if contract["expert_parallel"]["units"]:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "

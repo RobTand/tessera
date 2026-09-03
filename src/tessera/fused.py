@@ -106,6 +106,31 @@ def _po2_exponent(value: float, what: str) -> int:
     return int(exponent)
 
 
+#: The E4M3FN bytes the fused decoder can read: positive **normals**.  The
+#: kernel turns a scale byte into a scale by field arithmetic,
+#: ``2^(e - 7) * (1 + m / 8)``, which is the value only when the exponent field
+#: is non-zero -- a subnormal byte encodes ``2^-6 * (m / 8)`` and a byte with
+#: ``e = 15`` is NaN.  ``0x00`` (zero) and ``0x7F`` (NaN) are outside the range
+#: for the same reason, and every negative byte is: a scale is positive.
+_LUT_BYTE_MIN, _LUT_BYTE_MAX = 0x08, 0x7E
+
+
+def _check_lut_bytes(table: torch.Tensor, name: str, what: str) -> torch.Tensor:
+    """Refuse a LUT scale byte the fused decoder's field arithmetic misreads."""
+    byte = table.to(torch.uint8)
+    bad = (byte < _LUT_BYTE_MIN) | (byte > _LUT_BYTE_MAX)
+    if bool(bad.any()):
+        offenders = ", ".join(f"0x{int(b):02x}" for b in byte[bad][:8].tolist())
+        raise GrammarError(
+            f"{name}'s {what} carries {int(bad.sum())} scale byte(s) outside the "
+            f"E4M3 normal range 0x{_LUT_BYTE_MIN:02x}..0x{_LUT_BYTE_MAX:02x} "
+            f"({offenders}); the fused decoder reads a scale byte as "
+            f"2^(e-7)*(1+m/8), which is not its value when the exponent field "
+            f"is zero"
+        )
+    return byte
+
+
 def shared_lut_global(
     tables: "list[torch.Tensor]", globals_: "list[float]", names: "list[str] | None" = None
 ) -> "tuple[float, list[torch.Tensor]]":
@@ -116,13 +141,27 @@ def shared_lut_global(
     multiplier and each unit's table moved onto it, as uint8 E4M3 bytes; every
     ``bytes -> value * shared`` equals the original ``value * own`` exactly.
     A group already on one global comes back untouched.
+
+    Exactness is necessary and not sufficient.  A binade shift can move a
+    normal byte onto a **subnormal** one and round-trip perfectly -- ``0x18``
+    at global 32 lands on ``0x01`` at global 1024, and ``0x01``'s float value
+    is exactly what it was -- but the fused decoder does not read the byte's
+    float value, it reads the byte's fields.  So the range is checked on every
+    table this returns, moved or not, and a group that cannot be carried in
+    normals is refused rather than served wrong.  Counted over the twenty-two
+    ``.tessera`` artifacts on this box: fourteen carry a LUT plane and none has
+    a byte outside the range, so this refuses nothing that exists.
     """
     if not tables or len(tables) != len(globals_):
         raise GrammarError("shared_lut_global needs one table per global")
     names = names or [f"member{i}" for i in range(len(tables))]
     exps = [_po2_exponent(g, f"{n}'s scale_global") for g, n in zip(globals_, names)]
     if len(set(exps)) == 1:
-        return float(globals_[0]), [t.to(torch.uint8) for t in tables]
+        return float(globals_[0]), [
+            _check_lut_bytes(t, n, "LUT table") for t, n in zip(tables, names)
+        ]
+    for t, n in zip(tables, names):
+        _check_lut_bytes(t, n, "LUT table")
     failures = {}
     for e in range(min(exps), max(exps) + 1):          # smallest multiplier first
         shared = float(2.0 ** e)
@@ -133,13 +172,20 @@ def shared_lut_global(
             moved = values * ratio
             snapped = moved.to(torch.float8_e4m3fn)
             back = snapped.float()
-            if not bool(torch.isfinite(back).all()) or not torch.equal(back, moved):
+            byte = snapped.view(torch.uint8)
+            out_of_range = bool(
+                ((byte < _LUT_BYTE_MIN) | (byte > _LUT_BYTE_MAX)).any()
+            )
+            if (not bool(torch.isfinite(back).all())
+                    or not torch.equal(back, moved)
+                    or out_of_range):
                 failures[shared] = name
                 break
-            moved_tables.append(snapped.view(torch.uint8))
+            moved_tables.append(byte)
         else:
             return shared, moved_tables
     raise GrammarError(
-        "no single scale_global carries every role's LUT table exactly: "
+        "no single scale_global carries every role's LUT table exactly, in "
+        "E4M3 normals: "
         + ", ".join(f"{g:g} fails on {n}" for g, n in failures.items())
     )

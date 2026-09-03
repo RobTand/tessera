@@ -46,6 +46,7 @@ from .diagonals import (
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
+from .grammar import superblock_count
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -53,8 +54,32 @@ __all__ = [
     "encode_unit",
     "e2m1_value_table",
     "grid_value_table",
+    "require_memory",
     "LUT_ENTRIES",
 ]
+
+
+def require_memory(code: ConvCode) -> ConvCode:
+    """Refuse a convolutional code with no memory, at both ends of the wire.
+
+    The encoder reads a super-symbol's select bit as ``state >> (memory - 1)``
+    and the decoder builds its start states as ``1 << (memory - 1)``.  At
+    ``memory = 0`` those are a shift by minus one: torch evaluates the first as
+    zero and raises nothing, so the vectorised trellis reports anchors it did
+    not emit, and the second raises a bare ``ValueError: negative shift count``
+    one layer later.  A code with no memory is not a degenerate case this
+    trellis defines, and a silently wrong encode is worse than a refusal, so
+    both ends refuse it by name.  ``ConvCode`` itself is wire (its memory and
+    generators are bound into the encoder profile id) and is left alone; this
+    is the check the two consumers make.
+    """
+    if code.memory < 1:
+        raise GrammarError(
+            f"a convolutional code needs at least one memory element, got "
+            f"{code.memory}; the select bit is state >> (memory - 1) and the "
+            f"decoder's start states are 1 << (memory - 1)"
+        )
+    return code
 
 #: Entries in the per-unit scale table of a ``ScalePlaneKind.LUT`` plane.  The
 #: SCALE_REFINE plane is four bits per half, so sixteen is what a nibble
@@ -115,6 +140,11 @@ class EncodedUnit:
     scale_refine: torch.Tensor   # [halves] uint8, 4-bit refinement word
     release_index: torch.Tensor  # [n_released] int64, flat position indices
     release_code: torch.Tensor   # [n_released] int64, the override nibble
+    # The unweighted squared error of this unit's reconstruction against the
+    # weight it was built from, in the weight's own units -- ``sum (w - s q)^2``
+    # over the planes and codes the unit carries, computed after release.
+    # Diagnostic, never wire: no plane holds it and ``unit_artifact`` parses one
+    # back as 0.0, so two units with different ``sse`` can be byte-identical.
     sse: float
     rotation: RotationState = RotationState.NONE
     rotation_block: int = 1
@@ -260,6 +290,7 @@ def viterbi_columns(
     rows, cols = targets.shape
     grid = forest.grid
     arity = grid.arity
+    require_memory(code)
     if rows % arity:
         raise GrammarError(
             f"{rows} rows is not a whole number of arity-{arity} tuples; a "
@@ -327,6 +358,20 @@ def viterbi_columns(
                 dim=2,
             )                                                        # [cols, 4, 4]
             acc, arg = terms.min(dim=2)
+            # The fold is exact in COST and not in labels.  ``trellis.TCQ``
+            # enumerates the ``4^(L-1)`` label assignments lexicographically
+            # and keeps the first strict minimum; this keeps the first minimum
+            # of each 4x4 step in turn.  Both reach the same super-symbol cost
+            # -- that is what makes the fold a valid substitute for the
+            # enumeration -- but when two assignments tie they can land on
+            # different labels, and hence on different stored bytes.  Measured:
+            # never at ``L = 2`` (exhaustive over binary error tables, and 6000
+            # random end-to-end trials agree exactly); at ``L = 3`` about one
+            # column in 5000, e.g. labels ``(2,0,1)`` from the oracle against
+            # ``(2,1,0)`` here at identical cost.  So the two encoders are
+            # equal-cost, not byte-identical, above ``L = 2``.  Making them
+            # agree is a determinism change that rewrites those columns' bytes;
+            # it is written down here rather than taken.
             fold[sup, offset - 1] = arg.to(torch.uint8)
 
         branch = torch.stack(
@@ -553,6 +598,17 @@ def viterbi_window(
     cost front is ``2^L`` floats per column and the traceback ``2^(L-R)``
     bytes per position per column.
 
+    ``chunk`` is exact in the states and approximate in the float.  Columns
+    are independent, so the returned states are bit-identical at every chunk
+    size; ``sse``, however, is accumulated one chunk at a time in fp32 and so
+    depends on how the columns were partitioned.  Measured on 32x96 CPU
+    targets at L=8, R=2: identical states at chunk 7/16/32/96/512, and
+    ``sse`` spread over 3.05e-05 on a total of 910.09 -- about one ulp per
+    partial sum.  A figure anyone quotes is recomputed from the codes, not
+    read off this return; the equality tests that do read it hold ``chunk``
+    fixed, which is also the sense in which the fused path below returns "the
+    identical sse float".
+
     ``impl`` picks the machine, never the answer.  ``"reference"`` is the
     torch chain below -- the definition, and the only path on CPU;
     ``"fused"`` is the Triton step kernel in ``window_viterbi``, which
@@ -655,12 +711,17 @@ def _pack_scales(
     # range -- 6.0 for E2M1, 448.0 for E4M3.  Scaling to the wrong peak wastes
     # binades at one end and clips at the other.
     #
-    # ``headroom`` scales that landing point.  ``amax / peak`` is a *heuristic*:
-    # it guarantees nothing is clipped, which is not the same as minimising
-    # error.  Below 1.0 the extremes clip and everything else is coded finer;
-    # above 1.0 the reverse.  Which is better is a property of the weight
-    # distribution and the grid, so it is a question for the objective, not for
-    # a rule -- principle 2.  1.0 is exactly today's behaviour, byte for byte.
+    # ``headroom`` scales that landing point.  ``amax / peak`` is a *heuristic*,
+    # and a weaker one than it looks: the exponent below is a ``floor``, so the
+    # base lands on or under ``amax / peak`` and the group's own peak can be
+    # clipped by up to 2x -- measured at 10% on ``amax = 6.6`` against a peak
+    # of 6.0, where the largest encodable value comes back 6.0.  ``ceil`` would
+    # clip nothing; it would also spend a binade.  Below 1.0 the extremes clip
+    # harder and everything else is coded finer; above 1.0 the reverse.  Which
+    # is better is a property of the weight distribution and the grid, so it is
+    # a question for the objective, not for a rule -- principle 2.  1.0 and
+    # ``floor`` are exactly today's behaviour, byte for byte, and every shipped
+    # recipe selects the CHANNEL or LUT plane rather than this one.
     target = amax_group / (peak * headroom)
     exponent = torch.floor(torch.log2(target)).clamp(-127, 128)
     base_byte = (exponent + 127).clamp(0, 255).to(torch.uint8)
@@ -668,7 +729,17 @@ def _pack_scales(
     per_half = amax_half / (peak * headroom)
     base_for_half = torch.repeat_interleave(exponent, group // half)
     ratio = per_half / torch.exp2(base_for_half)
-    # ratio in [1, 4); d picks the octave, m the mantissa within it.
+    # d picks the octave, m the mantissa within it -- and the wire allows
+    # ``ratio`` in [1, 4).  What this expression can PRODUCE is [0, 2): the
+    # base is ``floor(log2(amax_group / (peak * headroom)))`` and every half's
+    # ``per_half <= amax_group``, so ``ratio < 2`` always and ``delta`` is
+    # provably zero here, whatever the weights.  Half the refine code space is
+    # dead on the pack, and only ``_refit_scales`` (which searches bases) ever
+    # emits ``d = 1``.  Evaluating both bases per group at pack time is the fix,
+    # and it rewrites S6b bytes -- which is why it is written down here and not
+    # taken: no shipping recipe selects this plane, and the replay path that
+    # can (``export.encode_settings_from_config``) promises byte identity on
+    # the checkpoints that already carry it.
     delta = (ratio >= 2.0).to(torch.long)
     mantissa = torch.floor((ratio / torch.exp2(delta.float()) - 1.0) * 8.0)
     mantissa = mantissa.clamp(0, 7).to(torch.long)
@@ -702,8 +773,19 @@ def _refit_scales(
     on ``A`` and ``B``: three base candidates are tried, each half rounds to its
     nearest ``(d, m)`` under that base, and a group keeps the word it had
     wherever no candidate lowers its error.  No group ends worse than it began,
-    and the trellis pass that follows is optimal for the new plane, so the
-    alternation in ``encode_unit`` is monotone in weight-space squared error.
+    so the *step* is monotone in weight-space squared error.
+
+    The *alternation* in ``encode_unit`` is monotone only where the trellis
+    pass that follows descends that same error, and two settings stop it from
+    doing so.  ``trellis_weighting="none"`` -- ``encode_unit``'s signature
+    default -- minimises the per-half normalised error instead; only
+    ``"scale"`` weights each position by its scale squared, which per column
+    is the same argmin as the true squared error, and that is what the
+    exporter ships (``export.DEFAULT_TRELLIS_WEIGHTING``).  And under ``ldl``
+    the trellis minimises the error against the LDLQ-compensated target while
+    this step refits against ``work``, whatever the weighting.  Outside those
+    two cases each half can undo the other's gain, and only the trailing refit
+    is guaranteed.
 
     Words are emitted canonical: a group whose halves both carry ``d = 1`` is
     written one base higher with ``d = 0``, the form ``scale_codec`` names.
@@ -980,8 +1062,12 @@ def _refit_scales_lut_metric(
     (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
     given the others.  The accept test is where the cross terms come back: the
     candidate planes are scored on the **full quadratic**, and the plane the
-    unit already has is one of the candidates, so the step is monotone in the
-    metric's own error and the alternation with the trellis stays monotone.
+    unit already has is one of the candidates, so the *step* is monotone in
+    the metric's own error.  The *alternation* with the trellis is not: the
+    Viterbi's branch metric never sees ``metric``, so under an H-weighted
+    refit the two halves descend different errors by construction.  ``ldl``
+    and ``trellis_weighting="none"`` separate them further, exactly as in
+    ``_refit_scales``.
 
     Landing is unchanged and needs no rounding rule of its own: the table holds
     exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
@@ -1000,6 +1086,9 @@ def _refit_scales_lut_metric(
     S = effective.reshape(rows, nb)
     Ub = U.reshape(rows, nb, half)
 
+    from .scale_channel import check_refit_metric
+
+    check_refit_metric(metric, cols)
     if metric.ndim == 1:
         h = metric.to(W.dtype).to(W.device).reshape(1, nb, half)
         A = (Ub * Ub * h).sum(dim=2)
@@ -1008,12 +1097,7 @@ def _refit_scales_lut_metric(
 
         def cost(C: torch.Tensor) -> float:
             return float((A * C * C - 2.0 * B * C).sum())
-    elif metric.ndim == 2:
-        if metric.shape != (cols, cols):
-            raise GrammarError(
-                f"a full refit metric is [cols, cols] = ({cols}, {cols}), "
-                f"got {tuple(metric.shape)}"
-            )
+    else:
         H = metric.to(W.dtype).to(W.device)
         Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
         A = torch.einsum("rbi,bij,rbj->rb", Ub, Hd, Ub)
@@ -1033,11 +1117,6 @@ def _refit_scales_lut_metric(
         def cost(C: torch.Tensor) -> float:
             Ec = W - C.repeat_interleave(half, dim=1) * U
             return float(((Ec @ H) * Ec).sum())
-    else:
-        raise GrammarError(
-            f"a refit metric is per-column [cols] or a full [cols, cols] Hessian, "
-            f"got shape {tuple(metric.shape)}"
-        )
 
     valid = (A > 0) & (target > 0)
     target = torch.where(valid, target, S)
@@ -1423,7 +1502,18 @@ def encode_unit(
             reachable = blocks[:, :: 1 << (depth - level)]
             per_pos = vectors[reachable][a]              # [steps, n, D, arity]
             want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
-            c_bits = ((want - per_pos) ** 2).sum(dim=3).argmin(dim=2)
+            # The completion bits choose among the descendants the anchor
+            # reaches, under the SAME metric the trellis scored the anchor
+            # with: per-position weights, summed over the tuple's coordinates
+            # (``viterbi_columns``' ``sq * wrows``).  At arity 1 the sum has
+            # one term and a positive scalar cancels in the argmin, which is
+            # why every artifact written so far is unaffected; at arity > 1
+            # the coordinates carry different weights and the unweighted pick
+            # is a different code.
+            err = (want - per_pos) ** 2
+            if sub_w is not None:
+                err = err * sub_w.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+            c_bits = err.sum(dim=3).argmin(dim=2)
             anchors[:, which] = a
             body_bits[:, which] = b.to(body_dtype)
             completion_bits[:, which] = c_bits
@@ -1515,7 +1605,9 @@ def encode_unit(
         # plane never interleave, and the identity-factor tests pin that on the
         # LUT plane's two bodies as they already did on CHANNEL.
         ldl_factor = ldl.to(device=device, dtype=torch.float32)
-        # Descending block starts; only the lowest-index block may be short.
+        # Descending block starts.  No block is ever short: ``cols %
+        # ldl_block`` is refused above, so ``max(..., 0)`` is the floor on a
+        # case this function cannot reach, not a short trailing block.
         block_spans = [
             (max(stop - ldl_block, 0), stop) for stop in range(cols, 0, -ldl_block)
         ]
@@ -1529,9 +1621,14 @@ def encode_unit(
             # Normalised to the column's loudest position so the fp32 path
             # costs stay O(1); a per-column constant moves no argmin.
             weights = (scale / scale.amax(dim=0, keepdim=True)) ** 2
+        # ``trellis_pass`` writes ``codes``/``anchors``/``body_bits``; its
+        # return is the Viterbi's own cost, in whatever units this pass's
+        # targets and weights are, and it is deliberately dropped -- the unit's
+        # ``sse`` is computed once at the end, from the planes and codes the
+        # unit returns.
         if ldl is None:
             targets = work / scale
-            sse = trellis_pass(targets, weights)
+            trellis_pass(targets, weights)
         else:
             # LDLQ: quantise column blocks last to first, and push each
             # block's reconstruction residual into the blocks still to come.
@@ -1539,7 +1636,6 @@ def encode_unit(
             ldlq_target = base.clone()
             recon = torch.zeros_like(base)
             targets = torch.empty_like(base)
-            sse = 0.0
             for start, stop in block_spans:
                 if stop < cols:
                     residual = base[:, stop:] - recon[:, stop:]
@@ -1549,7 +1645,7 @@ def encode_unit(
                 # Only this block's columns are read; scaling the whole matrix
                 # once per block would cost the pass a factor of cols/block.
                 targets[:, start:stop] = ldlq_target[:, start:stop] / scale[:, start:stop]
-                sse += trellis_pass(targets, weights, span_cols=(start, stop))
+                trellis_pass(targets, weights, span_cols=(start, stop))
                 block_units = (
                     vectors[codes[:, start:stop]].permute(0, 2, 1).reshape(rows, stop - start)
                 )
@@ -1583,16 +1679,10 @@ def encode_unit(
             base_byte, refine, effective = _refit_scales(
                 work, units, group, half, base_byte, refine, effective
             )
-    if scale_refit or ldl is not None:
-        # The plane moved after the last pass; the codes are unchanged and
-        # decode against the new plane.  Report the error in ITS target units
-        # so ``sse`` means one thing at every setting -- and under LDLQ that
-        # must be the error against the WEIGHT, not against the compensated
-        # target the last block was measured on, or the number would flatter
-        # every compensated arm by construction.
-        scale = current_scale()
-        units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
-        sse = float(((work / scale - units) ** 2).sum())
+    # The plane may have moved after the last pass, and release below may still
+    # move codes.  ``sse`` is computed once, at the end, from the planes and
+    # codes the unit actually returns.
+    scale = current_scale()
 
     # Stage B: release, in S9's canonical order -- descending |decoded value|
     # within the superblock, on the PRE-release decode so the decoder can
@@ -1617,6 +1707,27 @@ def encode_unit(
         best = ((flat_t / flat_s).unsqueeze(1) - values.unsqueeze(0)) ** 2
         release_code = best.argmin(dim=1)
         codes.reshape(-1)[release_index] = release_code
+
+    # ``sse``, and it means ONE thing: the unweighted squared error of this
+    # unit's reconstruction against the weight it was built from, in the
+    # weight's own units, over the planes and codes the unit returns.
+    #
+    # It used to mean three.  The trellis total is in per-half *normalised*
+    # units and is the WEIGHTED sum when ``trellis_weighting="scale"`` -- the
+    # shipping setting -- so the same weights reported 444.11 unweighted and
+    # 138.08 weighted; the refit branch replaced it with an unweighted
+    # normalised sum, whose units move with every refit; and neither was
+    # recomputed after release, which mutates ``codes``, so what came back was
+    # the error of an encoding the unit no longer held.  Weight space is the
+    # one form that does not drift: it is what ``trellis_weighting="scale"``
+    # and the plain refit both minimise, and it is the axis the LDLQ receipt's
+    # own ``plain`` column is measured on, so the diagnostic and the receipt
+    # now speak about the same quantity.
+    #
+    # Diagnostic, not wire: no plane carries it, ``unit_artifact`` parses one
+    # back as 0.0, and no artifact byte depends on it.
+    units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
+    sse = float(((work - units * scale) ** 2).sum())
 
     return EncodedUnit(
         rates=rates,
@@ -1662,12 +1773,20 @@ def _canonical_release_order(
     rate schedule uses, so the total is met exactly with no superblock more
     than one release away from any other.  A quality-driven allocation is S9's
     lambda-greedy pass; this is the uniform baseline it has to beat.
+
+    The block count is ``grammar.superblock_count`` -- a **ceiling**, the same
+    one the layout gives a granule to.  It used to be a floor here and in
+    ``decode.release_order``, which meant the quota ran over one block fewer
+    than ``block_of`` produces and **no release could ever land in a trailing
+    partial superblock**: on a 640-column unit positions 512..639 were
+    unreachable, while the layout allocated the granule for them anyway.  The
+    round trip did not notice, because encoder and decoder floored alike.
     """
+    from .decode import bresenham_release_counts
+
     device = decoded.device
-    rows = decoded.shape[0]
-    blocks = max(1, cols // superblock)
-    per, remainder = divmod(total, blocks)
-    counts = [per + (1 if index < remainder else 0) for index in range(blocks)]
+    blocks = superblock_count(cols, superblock)
+    counts = bresenham_release_counts(total, blocks)
 
     flat = decoded.abs().reshape(-1)
     position = torch.arange(flat.numel(), device=device)
@@ -1678,6 +1797,21 @@ def _canonical_release_order(
         if not count:
             continue
         members = position[block_of == index]
+        if count > members.numel():
+            # A trailing partial superblock holds fewer positions than a
+            # complete one, so a uniform quota can overrun it.  Truncating
+            # silently would place fewer releases than ``total``, and the
+            # reader -- which regenerates this order from the *placed* count --
+            # would then respread a different total and recover a different
+            # set.  Refuse instead of corrupting exactly the positions release
+            # exists to protect.  This is a real behaviour change and not only
+            # a guard: an equal-count quota over unequal blocks caps releases
+            # on a narrow trailing superblock, and whether the quota should be
+            # width-proportional instead is open as #27.
+            raise GrammarError(
+                f"superblock {index} releases {count} of {members.numel()} "
+                "positions"
+            )
         magnitude = flat[members]
         # Stable descending sort: ties fall back to ascending position, which
         # makes the order total and so reproducible by the decoder.

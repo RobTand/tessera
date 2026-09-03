@@ -1,0 +1,30 @@
+
+== L5.gate_proj (2048, 4096)
+    arm                                                     bpp       wt      out       a4       a8      s
+    EXL3 K=3 (LDLQ, W4A16)                                3.012  0.17384  0.14260  0.16927  0.14482      0
+    EXL3 K=4 (LDLQ, W4A16)                                4.012  0.08816  0.07237  0.11671  0.07672      0
+    EXL3 K=5 (LDLQ, W4A16)                                5.012  0.04482  0.03674  0.09877  0.04470      0
+    E2M1x2 TCQ q640 (exporter default)                    3.001  0.19964  0.19268  0.21250  0.19431     18
+    E2M1x2 window q704 L=12                               3.005  0.15628  0.15088  0.17610  0.15297     76
+    E2M1x2 TCQ q768 (exporter default)                    3.501  0.15096  0.14553  0.17140  0.14768     17
+    E2M1x2 window q832 L=12                               3.505  0.11526  0.11067  0.14339  0.11355     69
+    E2M1x2 TCQ q896 (exporter default)                    4.001  0.08728  0.08410  0.12424  0.08786     12
+Traceback (most recent call last):
+  File "/home/rob/tessera/experiments/tessera_window_wire.py", line 136, in <module>
+    main()
+  File "/home/rob/tessera/experiments/tessera_window_wire.py", line 125, in main
+    wire(f"{gname} window q{q_win} L={L}", grid=grid, q256=q_win,
+  File "/home/rob/tessera/experiments/tessera_window_wire.py", line 115, in wire
+    unit = encode_linear(w, name=tname, scale_refit=a.refit, **kw)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/tessera/src/tessera/export.py", line 239, in encode_linear
+    rates, forests = _plan_for(grid, q256, columns, body)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/tessera/src/tessera/export.py", line 179, in _plan_for
+    rates = bresenham_rate_schedule(root, columns, cap=grid.rate_cap)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rob/tessera/src/tessera/grammar.py", line 226, in bresenham_rate_schedule
+    _check_rate(upper, cap)
+  File "/home/rob/tessera/src/tessera/grammar.py", line 161, in _check_rate
+    raise GrammarError(
+tessera.errors.GrammarError: rate 8 outside the shaped domain (1, 2, 3, 4, 5, 6, 7) (max_trellis_rate = native - 1)

@@ -75,7 +75,7 @@ import torch
 
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_BF16, parse_tessera_blob_for_scheme, validate_tessera_scheme
-from .sharding import plan_shard, shard_parsed_roles
+from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
 from .telemetry import DECODER_TORCH_WINDOW, emit_route, route_shape
 from .window import PreparedWindow, prepare_window
 
@@ -271,6 +271,12 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             # shape check it replaces; at TP>1 it names the axis to cut on.
             plan = plan_shard(prefix, rows=rows, columns=columns,
                               out_size=out_size, in_size=in_size)
+            # And the per-axis answer, asked here because here is where the
+            # axis is known.  This route cuts both, for the reason
+            # ``ROUTE_TP_AXES`` records; the call is what keeps the published
+            # ``loader_axes`` a statement about the loader rather than about
+            # the table.
+            require_axis_supported(TESSERA_BF16, plan)
             weight_loader = extra_weight_attrs.get("weight_loader")
             # The whole container as one opaque blob: a blob has no output axis
             # to split.  No activation scale of any kind: the A side is bf16

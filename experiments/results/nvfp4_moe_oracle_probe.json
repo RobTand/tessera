@@ -1,0 +1,85 @@
+{
+    "schema": "tessera.nvfp4_moe_oracle_probe/1",
+    "vllm_version": "0.1.dev20051+g487ecf187",
+    "torch_version": "2.13.0+cu130",
+    "device_capability": "DeviceCapability(major=12, minor=1)",
+    "is_device_capability_family_100": false,
+    "is_device_capability_family_120": true,
+    "model_dims": {
+        "source": "GLM-5.3-Flash text_config",
+        "num_experts": 288,
+        "experts_per_token": 8,
+        "hidden_dim": 4096,
+        "moe_intermediate_size": 2048,
+        "swiglu_limit": 10.0
+    },
+    "activation": "MoEActivation.SILU",
+    "routing_method": "2",
+    "supports_current_device": {
+        "FLASHINFER_TRTLLM": {
+            "TrtLlmNvFp4ExpertsMonolithic": false,
+            "TrtLlmNvFp4ExpertsModular": false
+        },
+        "FLASHINFER_CUTLASS": {
+            "FlashInferExperts": true
+        },
+        "FLASHINFER_CUTEDSL": {
+            "FlashInferCuteDSLExperts": false
+        },
+        "FLASHINFER_CUTEDSL_BATCHED": {
+            "FlashInferCuteDSLBatchedExperts": false
+        },
+        "FLASHINFER_B12X": {
+            "FlashInferB12xExperts": true
+        },
+        "VLLM_CUTLASS": {
+            "CutlassExpertsFp4": true
+        },
+        "MARLIN": {
+            "MarlinExperts": true
+        },
+        "HUMMING": {
+            "BatchedHummingGroupedExperts": true,
+            "HummingGroupedExperts": true,
+            "HummingIndexedExperts": true
+        },
+        "EMULATION": {
+            "Nvfp4QuantizationEmulationTritonExperts": true
+        }
+    },
+    "availability_probes": {
+        "has_flashinfer": true,
+        "has_flashinfer_trtllm_fused_moe": true,
+        "has_flashinfer_cutlass_fused_moe": true,
+        "has_flashinfer_cutedsl_moe_nvfp4": true,
+        "has_flashinfer_cutedsl_grouped_gemm_nt_masked": true,
+        "has_flashinfer_b12x_moe": true
+    },
+    "cases": {
+        "clamped_explicit_b12x": {
+            "raised": "ValueError",
+            "message": "Model sets swiglu_limit=10.0, but the explicitly requested moe_backend='flashinfer_b12x' does not apply the SwiGLU clamp. Use 'flashinfer_trtllm', 'flashinfer_cutlass', 'flashinfer_cutedsl', 'cutlass', 'marlin', or 'humming' instead.",
+            "where": [
+                "  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py\", line 263, in select_nvfp4_moe_backend",
+                "    raise ValueError(",
+                "ValueError: Model sets swiglu_limit=10.0, but the explicitly requested moe_backend='flashinfer_b12x' does not apply the SwiGLU clamp. Use 'flashinfer_trtllm', 'flashinfer_cutlass', 'flashinfer_cutedsl', 'cutlass', 'marlin', or 'humming' instead."
+            ]
+        },
+        "clamped_auto": {
+            "selected": "FLASHINFER_CUTLASS",
+            "kernel": "FlashInferExperts"
+        },
+        "clamped_explicit_flashinfer_cutlass": {
+            "selected": "FLASHINFER_CUTLASS",
+            "kernel": "FlashInferExperts"
+        },
+        "unclamped_auto": {
+            "selected": "FLASHINFER_CUTLASS",
+            "kernel": "FlashInferExperts"
+        },
+        "unclamped_explicit_b12x": {
+            "selected": "FLASHINFER_B12X",
+            "kernel": "FlashInferB12xExperts"
+        }
+    }
+}

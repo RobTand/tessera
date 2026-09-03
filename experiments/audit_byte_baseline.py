@@ -34,7 +34,7 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import torch
 
-from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
+from tessera.alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid
 from tessera.export import encode_linear
 
 ARTIFACT_GLOBS = (
@@ -55,6 +55,15 @@ def _cases():
         ("e2m1-256-512c",     E2M1_GRID,  256, 64, 512),
         ("e4m3-1024-256c",    E4M3_GRID, 1024, 32, 256),
         ("e4m3-1024-320c",    E4M3_GRID, 1024, 32, 320),
+        # The fourth serialisable grid.  It was added after this matrix was
+        # written, so until now a change to `BF16_WINDOW_BITS` or
+        # `BF16_CHANNEL_SIGMA` -- exactly the two constants issue #18 asks
+        # someone to search -- moved real bytes and this harness reported
+        # "0 changed".  Same shapes as the E4M3 rows on purpose: the two
+        # recipes differ only in the alphabet the window table snaps to, so a
+        # digest that moves on one and not the other localises the change.
+        ("bf16-1024-256c",    BF16_GRID, 1024, 32, 256),
+        ("bf16-1024-320c",    BF16_GRID, 1024, 32, 320),
     ]
 
 

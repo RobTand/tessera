@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T02:47:11Z",
+ "generated": "2026-09-03T02:58:48Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -46,6 +46,10 @@
    "125": {
     "state": "OPEN",
     "title": "build_candidates(cost_mode=) is a dead kwarg after the trellis surface was archived"
+   },
+   "126": {
+    "state": "OPEN",
+    "title": "artifact_bpp under-prices the TCQ-at-cap rung by 512 bytes a unit: the ALPHABET and DESCENDANT planes are not charged"
    },
    "19": {
     "state": "CLOSED",

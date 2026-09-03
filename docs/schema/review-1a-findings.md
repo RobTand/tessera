@@ -86,6 +86,11 @@ that contradicts it.
 (`planes.py:157-170`), and `bitio.check_padding_zero` exists — but `parse`
 never calls it. Padding content is therefore unconstrained.
 
+*(2026-09-02, #23: `bitio.check_padding_zero` still had no callers after this
+fix landed, so the module was deleted. The rule's enforcement is
+`container.verify_plane_region` plus `wire.refuse_dirty_slack`; the name above
+is the state at review time and no longer resolves.)*
+
 Two consequences, both real for a content-addressed format: the encoding is
 **not canonical** (the same logical content has many legal byte strings, so
 identity is not a function of content), and the slack is a covert channel.

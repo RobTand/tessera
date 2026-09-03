@@ -411,6 +411,19 @@ What the plugin does with them:
   family, and `config._require_tp1` refuses a larger world at method
   construction.  The refusal is a field and a gate, not prose.
 
+  > **Superseded 2026-09-02 (#7), later the same day.**  The cutter merged, and
+  > this gate went on refusing every world above one with a message saying the
+  > cutter was absent — narrower than the code, and by then false.  It is now
+  > `config._require_a_cutter` (refuses only where `layout.slice_unit` is
+  > *missing*) plus `sharding.require_axis_supported` at `create_weights`
+  > (refuses the one axis a route cannot start: `TESSERA_NVFP4` on rows).
+  > `max_world_size` is **unchanged at 1** and keeps its meaning — the largest
+  > world size a served receipt covers — because no multi-rank serve has been
+  > run; what the contract adds beside it is `loader_axes`, the per-axis
+  > statement of what the loader does, checked against
+  > `sharding.ROUTE_TP_AXES`.  Everything measured in this document is at
+  > `tp_size == 1` and is unaffected.
+
 **The two families differ, and the plugin now says so correctly.**  This is the
 one place an earlier draft of this work had it backwards:
 

@@ -630,7 +630,11 @@ shards with no kernel change; the span-2 family **refuses**, because its
 window's reversed bit order makes a threaded start state unwritten and
 untested, and a decoder starting every row at the pinned zero state would
 decode a sliced unit wrongly and quietly.  `max_world_size: [1]` is in the
-contract: what is built is the seam, not the cut.
+contract: what is built is the seam, not the cut.  *(Corrected 2026-09-02, #7:
+the cut is built too — `config` no longer refuses every world above one, and
+`sharding.require_axis_supported` refuses the one axis a route cannot start,
+published as `tensor_parallel.units[].loader_axes`.  `max_world_size` stays 1
+because it is an attestation and no multi-rank serve has been run.)*
 
 **The move is exact, and the one arm that was not is understood.**  Twelve
 served arms (three checkpoints x two residency modes x eager/compiled) against

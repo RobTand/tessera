@@ -20,9 +20,29 @@ ONE method per fused module, so ``q/k/v`` must agree on ``(grid, q256)`` and so
 must ``gate/up``.  The exporter's answer to a disagreement is to pass the whole
 group through as BF16 and print it; that is the right answer at export time and
 the wrong thing to discover after a 20-minute encode, so a disagreement is
-reported here, up front, with the members and their rungs.  ``--allow-fused-
-disagreement`` downgrades it to a warning and writes the plan anyway, so the
-exporter's own passthrough is what happens.
+reported here, up front, with the members and their rungs.
+
+That is the case a **per-member (mink) allocation** lands in: PrismaQuant's
+group knapsack gives one family per fused group and a rate per member, and this
+serving path cannot express it.  **Refusing is the default, and it is the
+answer**, because no single rate for the group is derivable from the objective
+-- the members' rates differ precisely because their sensitivities do, and min
+/ bytes-weighted / max are all taste, not arithmetic; and any of them moves
+both the bytes and the loss off the point the DP chose, so the allocation that
+served would not be the allocation that was selected.  ``--allow-fused-
+disagreement`` is for the operator who wants the plan anyway, and what it now
+writes is the plan that will **serve**: every member of a disagreeing group is
+named ``"BF16"``, dropped from the unit table and the charged-bits total, and
+the demotion is recorded (``fused_disagreements[].planned_as``,
+``totals.demoted_to_bf16_params``).  Before that, the plan named Tessera rungs
+for members the exporter was about to pass through, and the sidecar priced them
+as Tessera -- a three-to-four-fold under-report in the one currency the byte
+budget is spent in, produced by the file whose stated job is that the bytes
+served are the bytes priced.
+
+A whole-GROUP option name (``TESSERA_E4M3_K1_G3``) is refused by name for the
+same reason: it is not a rung, no rate stands for it, and PrismaQuant is meant
+to have expanded it to its members before the assignment was written.
 
 **It says whether the plan covers the model.**  A PrismaQuant campaign may price
 a *subset* -- ``--layer-stride 28`` prices decoder layer 0 and nothing else --
@@ -60,9 +80,25 @@ from pathlib import Path
 
 from safetensors import safe_open
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from tessera.control import (  # noqa: E402
+    control_block,
+    uniform_control,
+    units_from_plan,
+)
+from tessera.errors import TesseraError  # noqa: E402
+
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
 FAMILY = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)$")
+#: ``TESSERA_<BASE>_K<arity>_G<n>`` -- a whole fused GROUP at one family with a
+#: rung per member, the option PrismaQuant's group knapsack builds.  It is not a
+#: rung and there is no rate it could stand for, so it is named here in order to
+#: be refused by name: ``expand_fused_sibling_assignment`` is supposed to have
+#: replaced it with the members' own rungs before an assignment is written, and
+#: one that reaches a plan means that expansion did not happen.
+GROUP = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_G(?P<option>\d+)$")
 
 #: The exporter's fused groups, as ``export_tessera_serving.FUSED`` spells them.
 FUSED = (("self_attn", "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -97,6 +133,15 @@ def parse_entry(qname: str, entry) -> tuple:
         raise PlanError(f"{qname}: unreadable layer_config entry {entry!r}")
     fmt = entry.get("tessera_format")
     if fmt:
+        if GROUP.match(fmt):
+            raise PlanError(
+                f"{qname}: {fmt!r} is a whole-GROUP option (one family, a rung per member), "
+                "not a rung, and there is no single rate it could stand for -- the members "
+                "have different shapes and different sensitivities, which is the entire "
+                "reason the option exists.  PrismaQuant expands it to its members' own rungs "
+                "in expand_fused_sibling_assignment before writing an assignment; a plan that "
+                "still carries the group name means that expansion did not run.  Re-export "
+                "the layer_config from an allocator that expands it.")
         match = FORMAT.match(fmt)
         if not match:
             raise PlanError(f"{qname}: {fmt!r} is not the TESSERA_<BASE>_K<arity>_R<rung> spelling")
@@ -174,8 +219,36 @@ def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "
     return Fraction(artifact_bpp(family, rung, shape=(rows, cols))) * rows * cols
 
 
+def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
+    """The byte-matched uniform arm this plan has to beat, as a record.
+
+    An allocation over a rate axis is a *claim* -- that choosing rungs beats
+    spending the same bytes at one rung -- and on 2026-09-02 that claim was
+    false by 2.00x while every other check in the pipeline passed.  So the
+    sidecar carries the arm that tests it, priced but not served, next to the
+    bpp (tessera#3, principle 12).
+
+    It records rather than refuses: the converter's job is to write the plan it
+    was given, and a plan whose control cannot be byte-matched (two families,
+    or the 0.239-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
+    must never do is stay silent about it, so the reason lands in the block.
+    ``experiments/uniform_control.py`` is where the match is *asserted*, because
+    that is where the arm you would actually build gets written.
+    """
+    try:
+        units = units_from_plan(plan, shapes)
+        control = uniform_control(units, rule=rule, assert_match=False)
+    except TesseraError as exc:
+        return {"schema": "tessera.uniform_control.v1", "built": False,
+                "refusal": str(exc)}
+    block = control_block(control)
+    block["built"] = True
+    return block
+
+
 def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
-          prismaquant: "Path | None"):
+          prismaquant: "Path | None", control_rule: str = "nearest",
+          with_control: bool = True):
     meta = config.get("__prismaquant__")
     assignment = {k: v for k, v in config.items() if not k.startswith("__")}
     if not assignment:
@@ -277,6 +350,38 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             f"--allow-fused-disagreement to write the plan anyway and let the exporter's own "
             f"passthrough handle it.")
 
+    # The override writes a plan, and what it must write is the plan that will
+    # SERVE.  The exporter's answer to a disagreeing group is to drop every
+    # member and pass the module through (``export_tessera_serving``: "roles
+    # disagree ...; vLLM builds one method per fused module"), so a plan that
+    # still names Tessera rungs for those members describes an encode that will
+    # not happen, and the sidecar -- whose whole job is "the bytes served must
+    # be the bytes priced" -- reports a rate three to four times below the one
+    # the checkpoint will carry.  Recording the demotion is not the converter
+    # ROUNDING the allocation to a rate of its own invention: no single rate is
+    # derivable from the members' (a mink group exists precisely because their
+    # sensitivities differ, and min / bytes-weighted / max are all taste), and
+    # inventing one would move the point the DP chose off the frontier it was
+    # chosen on.  What exists is the exporter's own resolution, and this makes
+    # it visible before the encode instead of after it.
+    demoted_params = 0
+    for entry in disagreements:
+        entry["planned_as"] = "BF16"
+        entry["reason"] = (
+            "vLLM builds one quantization method per fused module; the "
+            "exporter passes the whole group through at source precision"
+        )
+        members = groups[entry["module"]]
+        entry["demoted_params"] = {}
+        for member in members:
+            chosen.pop(member, None)
+            tensor = member + ".weight"
+            if tensor in shapes:
+                plan[tensor] = "BF16"
+                rows, columns = shapes[tensor]
+                entry["demoted_params"][member] = rows * columns
+                demoted_params += rows * columns
+
     total_params, total_charged = 0, Fraction(0)
     for qname, (grid, rung, family) in sorted(chosen.items()):
         tensor = qname + ".weight"
@@ -320,15 +425,27 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
                      "at another depth"),
         },
         "fused_disagreements": disagreements,
+        "fused_disagreement_policy": (
+            "refused" if not disagreements else
+            "demoted_to_bf16_by_--allow-fused-disagreement"
+        ),
         "totals": {
             "tessera_units": len(chosen),
             "quantized_params": total_params,
+            # Params the allocation gave a Tessera rung and the plan gives
+            # BF16.  Non-zero only under --allow-fused-disagreement, and it is
+            # the machine-readable form of "the allocation served is not the
+            # allocation that was chosen".
+            "demoted_to_bf16_params": demoted_params,
             "prismaquant_charged_bits": float(total_charged) if total_charged else None,
             "prismaquant_charged_bpp": (float(total_charged / total_params)
                                         if total_charged and total_params else None),
         },
         "units": units,
     }
+    if with_control:
+        provenance["uniform_control"] = uniform_control_block(
+            plan, shapes, rule=control_rule)
     return plan, provenance
 
 
@@ -343,8 +460,22 @@ def main(argv=None):
                          "broadcast-by-role: apply its per-role assignment at every depth "
                          "(an EXTRAPOLATION, stamped as one in the sidecar)")
     ap.add_argument("--allow-fused-disagreement", action="store_true",
-                    help="write the plan even when a fused module's members disagree, letting the "
-                         "exporter pass the group through as BF16")
+                    help="write the plan even when a fused module's members disagree.  The whole "
+                         "group is then planned BF16 -- which is what the exporter does with it -- "
+                         "and the demotion is recorded in the sidecar "
+                         "(fused_disagreements[].planned_as, totals.demoted_to_bf16_params), so "
+                         "the plan states the allocation that will SERVE and not the one that was "
+                         "chosen")
+    ap.add_argument("--write-uniform-plan", type=Path, default=None,
+                    help="also write the byte-matched UNIFORM control plan here -- the arm "
+                         "the candidate has to beat at the same bytes (tessera#3).  The byte "
+                         "match is ASSERTED before it is written; a plan whose control cannot "
+                         "be matched refuses rather than exporting a second byte budget")
+    ap.add_argument("--control-rule", choices=("nearest", "no_larger"), default="nearest",
+                    help="nearest: minimise |candidate - control| bytes (default).  no_larger: "
+                         "the heaviest rung that does not outweigh the candidate")
+    ap.add_argument("--no-uniform-control", action="store_true",
+                    help="do not price the uniform control into the sidecar")
     ap.add_argument("--prismaquant", type=Path, default=None,
                     help="a PrismaQuant tree, imported read-only for its own wire accounting "
                          "(prismaquant.tessera_formats.artifact_bpp) so the sidecar carries the "
@@ -355,7 +486,9 @@ def main(argv=None):
     shapes = body_weights(args.model)
     plan, provenance = build(config, shapes, cover=args.cover,
                              allow_disagreement=args.allow_fused_disagreement,
-                             prismaquant=args.prismaquant)
+                             prismaquant=args.prismaquant,
+                             control_rule=args.control_rule,
+                             with_control=not args.no_uniform_control)
     provenance["source_layer_config"] = str(args.layer_config.resolve())
     provenance["model"] = str(args.model.resolve())
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -376,11 +509,39 @@ def main(argv=None):
     by_rung = collections.Counter((u["family"], u["q256"]) for u in provenance["units"])
     for (family, rung), n in sorted(by_rung.items()):
         print(f"    {family}_R{rung}: {n}")
+    demoted = provenance["totals"]["demoted_to_bf16_params"]
+    if demoted:
+        modules = len(provenance["fused_disagreements"])
+        print(f"  DEMOTED: {modules} fused module(s) whose members took different rungs are "
+              f"planned BF16 ({demoted} params, "
+              f"{100.0 * demoted / max(demoted + provenance['totals']['quantized_params'], 1):.1f}% "
+              f"of the allocated body).  This plan is NOT the allocation that was chosen; "
+              f"--allow-fused-disagreement asked for the exporter's passthrough and this is it.")
     totals = provenance["totals"]
     if totals["prismaquant_charged_bpp"] is not None:
         print(f"  PrismaQuant charges {totals['prismaquant_charged_bits']:.0f} bits over "
               f"{totals['quantized_params']} params = "
               f"{totals['prismaquant_charged_bpp']:.6f} bpp")
+    block = provenance.get("uniform_control")
+    if block and block.get("built"):
+        control = block["control"]
+        match = control["match"]
+        print(f"  uniform control: {control['grid']} R{control['q256']} at "
+              f"{match['control_bpp']:.6f} bpp against the candidate's "
+              f"{match['candidate_bpp']:.6f} "
+              f"({match['relative_slack_ppm']:.1f} ppm, the {match['fatter_arm']} arm is "
+              f"fatter){'' if match['byte_matched'] else '  NOT BYTE-MATCHED'}")
+        print("    unserved: this is the arm the candidate has to beat at the same bytes")
+    elif block:
+        print(f"  uniform control: NOT BUILT -- {block['refusal']}")
+    if args.write_uniform_plan is not None:
+        units = units_from_plan(plan, shapes)
+        control = uniform_control(units, rule=args.control_rule)
+        args.write_uniform_plan.parent.mkdir(parents=True, exist_ok=True)
+        args.write_uniform_plan.write_text(
+            json.dumps(control.plan, indent=2, sort_keys=True))
+        print(f"  -> {args.write_uniform_plan}  (uniform {control.grid} "
+              f"R{control.q256}, the control arm)")
     print(f"  -> {args.out}\n  -> {sidecar}")
     return 0
 

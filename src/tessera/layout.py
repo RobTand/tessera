@@ -36,7 +36,12 @@ import torch
 from .encode import EncodedUnit
 from .errors import GrammarError, PlaneLayoutError
 from .exact import bits_to_bytes
-from .grammar import C_FULL_BITS, RELEASE_BITS, completion_capacity
+from .grammar import (
+    C_FULL_BITS,
+    RELEASE_BITS,
+    completion_capacity,
+    superblock_count,
+)
 from .trellis import body_bits as _body_bits
 from .manifest import (
     BodyKind,
@@ -259,9 +264,11 @@ def build_plane_region(
     """
     payloads = payloads or {}
     region = bytearray()
+    # No ``Storage.REFERENCE`` skip: ``PlaneDescriptor.__post_init__`` refuses
+    # that storage at construction (``tests/test_audit_container_accounting.py::
+    # test_reference_storage_is_refused_not_charged_zero``), so a skip here
+    # could only ever advertise support for a plane no descriptor can hold.
     for descriptor in planes:
-        if descriptor.storage is Storage.REFERENCE:
-            continue
         need = content_byte_length(descriptor)
         payload = payloads.get(descriptor.kind, bytes(need))
         if len(payload) != need:
@@ -335,8 +342,10 @@ def build_planes(
     # ``superblock_quota_ok`` already declares such a superblock legal (it
     # constrains only *complete* ones), so flooring it away was the layout
     # refusing to describe a shape the grammar admits -- and the restart table
-    # it wrote then had one entry fewer than the stream had segments.
-    superblocks = max(1, -(-len(rates) // geometry.superblock_columns))
+    # it wrote then had one entry fewer than the stream had segments.  The
+    # count lives in ``grammar`` so the release quota cannot floor what the
+    # granules ceiling.
+    superblocks = superblock_count(len(rates), geometry.superblock_columns)
     if spec is not None and max_released and max_released != spec.released_positions:
         # One parameter cannot mean both the plane's full extent and the
         # terminal's slice of it.  When a caller declares both, they are the
@@ -648,7 +657,18 @@ def _manifest_granularity(manifest):
 
 
 def _steps_of(manifest) -> int:
-    """Trellis steps per column, from the BODY plane's declared element count."""
+    """Trellis steps per column, from the BODY plane's declared element count.
+
+    The arity is not on the wire, so it is recovered by trying the ones a
+    readable artifact can carry: ``SERIALISABLE_GRIDS`` holds arity 1 and
+    arity 2 today, and 4 and 8 are also tried, though no serialisable grid
+    carries them.  A non-power-of-two tuple -- ``k = 3`` over
+    E2M1 is legal to *build* (``alphabet.tuple_grid``) -- would not be found,
+    and cannot arrive either: a grid outside ``SERIALISABLE_GRIDS`` is refused
+    at ``build_unit_artifact`` and no reader can resolve its digest, so no
+    manifest reaches here holding one.  The refusal below says which set it
+    searched rather than claiming no arity works.
+    """
     from .trellis import body_bits as _bits
 
     wire = plane_order(manifest.shard is not None and manifest.shard.has_initial_state)
@@ -656,7 +676,14 @@ def _steps_of(manifest) -> int:
         terminal.plane_elements[wire.index(PlaneKind.BODY)]
         for terminal in manifest.terminals
     )
-    for arity in (1, 2, 4, 8):
+    # 1 and 2 are the arities a reader can meet: ``arity`` is the grid's tuple
+    # order, and the only serialisable grids are E2M1, E2M1x2, E4M3 and BF16
+    # (``alphabet.SERIALISABLE_GRIDS``).  A wider tuple is refused twice over --
+    # by that registry, and by the 256-code ceiling on the byte-wide
+    # ALPHABET/DESCENDANT planes, which E2M1^3's 4096 codes already break.  The
+    # 4 and 8 this loop used to try could only mis-attribute a body-bit count
+    # that 1 and 2 had already failed to explain; refusing is the honest answer.
+    for arity in (1, 2):
         if manifest.geometry.rows % arity:
             continue
         steps = manifest.geometry.rows // arity
@@ -665,8 +692,8 @@ def _steps_of(manifest) -> int:
         if sum(_bits(rate, steps, manifest.span) for rate in manifest.rates) == elements:
             return steps
     raise GrammarError(
-        f"the BODY plane declares {elements} bits, which no arity over this "
-        "rate schedule produces"
+        f"the BODY plane declares {elements} bits, which no arity in "
+        f"(1, 2, 4, 8) over this rate schedule produces"
     )
 
 
@@ -1031,7 +1058,11 @@ def _slice_release(unit, rows, columns, r0, r1, c0, c1, superblock):
             f"only on superblock boundaries: columns [{c0}, {c1}) is neither a "
             f"union of {superblock}-column superblocks nor inside one"
         )
-    blocks = max(1, width // superblock)
+    # The guard above admits only widths where the ceiling and the floor agree
+    # -- a union of whole superblocks, or a cut inside one -- so this is the
+    # same number either way; it counts through ``grammar`` so the shard path
+    # and the whole-unit path can never drift apart.
+    blocks = superblock_count(width, superblock)
     flat = unit.release_index.long()
     row = flat // columns
     col = flat % columns
