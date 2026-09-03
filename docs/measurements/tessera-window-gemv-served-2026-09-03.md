@@ -1,10 +1,16 @@
 # The window GEMV, served: census, two-arm KL and latency (2026-09-03)
 
-> **STATUS: the census and the KL are measured and final. The latency is
-> deferred.** §2 (census) is complete: six serves, all four mode x regime
-> combinations. §3 (KL) is complete for three of four arms and the eager A/B --
-> the comparison #83 asked for -- is decisive; the fourth arm is re-queued and is
-> marked `PENDING`. §4 (latency) is **deferred to a quiet box** and states why:
+> **STATUS: the census is measured and final. The KL is measured but does not
+> reach the kernel. The latency is deferred.** §2 (census) is complete: six
+> serves, all four mode x regime combinations, 112/112. §3 (KL) is complete for
+> three of four arms, **and it does not measure what #83 asked for**: the dump
+> scores prompt positions, so every scored forward is 512 rows and routes past
+> the GEMV kernel (`GEMV_MAX_M = 8`) in both arms. The arms are bit-identical
+> there, which establishes that the lane does not perturb the many-row path -- a
+> real null, and a smaller claim than "bit-exact as served". **The served KL of
+> the GEMV kernel itself is not taken by this campaign**; §3 says what would take
+> it. The fourth arm is re-queued and marked `PENDING`.
+> §4 (latency) is **deferred to a quiet box** and states why:
 > sparky ran at load 33-68 on 20 CPUs and went into swap, the two arms taken
 > differ by 8x where the kernel difference is at most ~2x, and no latency claim is
 > made from them. One deliverable is **missing rather than deferred** and §4 says
@@ -186,8 +192,27 @@ one commit so a reader does not have to check that two commits describe the same
 
 ## 3. The served KL, two arms, byte-identical bytes
 
-**Result: the window-GEMV lane is arithmetically identical to the path it
-replaces, and the evidence is stronger than the KL.** On the eager pair the two
+> **READ THIS FIRST: the GEMV kernel was not on the KL path, in either arm.**
+> The result below is real and it is a null, but it is **not** the served KL of
+> the window GEMV. `kl_tool.py dump` scores prompt positions -- it sends
+> `max_tokens: 1` with `prompt_logprobs` over a 512-token prompt
+> (`kl_tool.py:262`) -- so every one of the 4088 scored positions comes from a
+> **512-row prefill forward**. `GEMV_MAX_M = 8`, so M = 512 routes to the
+> materialised `torch._scaled_mm` in **both** arms, which this campaign's own
+> census records directly: armA's prefill phase reports
+> `(torch._scaled_mm, window_gemv)`, and `census_expected`'s eager *batch* set
+> contains no `gemv` symbol at all. During the KL dump the two arms ran the same
+> GEMM over the same materialised FP8 bytes.
+>
+> **So the served numerical output of the GEMV kernel is not measured by this
+> campaign.** That is a gap in the deliverable, stated rather than papered over,
+> and section 4's missing trace compounds it: the strongest evidence here that
+> the kernel ran at all is the eager census decode record
+> `(tessera_window_gemv::gemv, window_gemv)`, 113 modules. It ran; what it
+> computed, as served, has not been compared to anything.
+
+**What the two-arm KL does establish: the lane's presence does not perturb the
+path it does not serve.** On the eager pair the two
 arms' served logprob dumps are **bit-identical** -- 0 of 8,380,400 values differ,
 in both the top-K token ids and their logprobs:
 
@@ -196,17 +221,23 @@ in both the top-K token ids and their logprobs:
 | armA vs armB, `ids` (int32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
 | armA vs armB, `lps` (float32, 4088x1025) | 1 | 4,190,200 | **0** | 0 |
 
-That is the headline rather than the KL agreement, because it is a much harder
-claim. `ids` is the **top-1024 set plus the prompt token at each of 4088 scored
+`ids` is the **top-1024 set plus the prompt token at each of 4088 scored
 positions**, so its ordering tracks the logits directly: any numerical difference
 between the two paths would have reordered ties and shown up as differing ids
-long before it moved a mean. It did not. The two arms produced the same logits,
-value for value.
+long before it moved a mean. It did not.
 
-This is not a vacuous comparison of an arm against itself. The census (section 2)
-records a different decoder in each arm, and the serve logs record the GEMV lane
-refusing **112 of 112** modules in arm B and **0 of 112** in arm A. The routes
-genuinely differed; the arithmetic did not.
+**Under M > 8, identity is the expected outcome, not a surprise.** Both arms
+decode the same wire to the same FP8 weights and hand them to the same
+`_scaled_mm`; the honest reading is that this **confirms the lane's weight
+materialisation is exact on the many-row path** and that installing the lane
+costs nothing there. That is worth having -- a lane that perturbed the path it
+does not serve would be a defect -- but it is a smaller claim than "the window
+GEMV is bit-exact as served", and this document does not make the larger one.
+
+The arms are not vacuously the same object: the census records a different
+decoder in each, and the serve logs record the GEMV lane refusing **112 of 112**
+modules in arm B and **0 of 112** in arm A. The routes differed. On the forwards
+the KL actually scored, the arithmetic could not.
 
 ### The KL, for completeness
 
@@ -221,9 +252,9 @@ precision on the eager pair, as bit-identical dumps require:
 | armB (torch) | compiled | PENDING (lost to the startup memory race; re-queued) | | | |
 
 Arm A vs arm B, eager: **delta +0.000000, ratio 1.0000x, on the mean and on the
-tail alike.** The tail is reported beside the mean because a lower mean KL can
-hide a heavier tail, and for a lane meant to be arithmetically equivalent to what
-it replaces, tail movement would have been the interesting result. There is none.
+tail alike** -- on prefill-scored positions both arms served through
+`_scaled_mm`. The tail is reported beside the mean because a lower mean KL can
+hide a heavier tail; there is no tail movement to report either.
 
 **A note on the eager/compiled difference, which is not this lane's.** armA
 compiled reads 0.46687 against armA eager's 0.46599. The two dumps differ almost
@@ -233,8 +264,20 @@ carry the same corpus `source_sha256` and the same 4088 scored positions. This
 divergence is present in the arm that uses the GEMV lane and belongs to the
 eager-vs-compiled question tracked separately in #16; it is reported here and not
 chased. Whether armB compiled lands on 0.46687 (lane-neutral under compile too)
-or on 0.46599 (a GEMV-specific interaction) is the one open question this
-measurement leaves, and it is what the re-queued arm answers.
+or on 0.46599 is a question about compiled **materialisation**, not about the
+GEMV lane, for the same reason the rest of this section is: the scored forwards
+are M = 512 in both arms. The re-queued arm completes the table; it does not
+close the gap named at the top of this section.
+
+### What would close it
+
+A decode-regime dump: feed each sequence's prefix incrementally so that, with
+prefix caching on, every scored position is an **M = 1** forward and therefore
+routes to the GEMV kernel in arm A and to torch decode in arm B. The teacher must
+be re-dumped the same way and the metric identity shown unchanged, or the
+comparison is against a differently-produced reference. That needs a serve, a
+teacher rebuild and a change to `kl_tool.py` (which lives outside this repo), so
+it is filed rather than fixed here.
 
 ### Method
 
@@ -259,8 +302,15 @@ recorded, and they are not evidence about the lane.
 
 | arm | regime | TTFT | TPOT (engine) | ITL | decode wall/req | peak load1/cpu | swap in use |
 |---|---|---|---|---|---|---|---|
-| armA (GEMV) | eager | 70.34 ms | 43.541 ms (n=12) | 43.541 ms (n=1524) | 5,602 ms | 3.413 | moderate |
-| armB (torch) | eager | 541.69 ms | 349.367 ms (n=12) | 349.367 ms (n=1524) | 44,913 ms | 2.49 | 13 of 15 GiB |
+| armA (GEMV) | eager | 70.34 ms | 43.541 ms (n=12) | 43.541 ms (n=1524) | 5,602 ms | 3.413 | not in receipt |
+| armB (torch) | eager | 541.69 ms | 349.367 ms (n=12) | 349.367 ms (n=1524) | 44,913 ms | 2.49 | not in receipt |
+
+Both receipts predate `c6d6064`, so **neither carries a swap reading** and the
+column says so rather than inventing one. The swap figures quoted below are
+box-level, from `free -g` on sparky at 19:30 and 19:41 local (13 of 15 GiB, then
+10 of 15), which brackets armB's window (23:23-23:32 UTC = 19:23-19:32 local) and
+not armA's (19:18-19:19 local). Scoped that way deliberately: it is enough to say
+armB ran into swap and not enough to put a number in armA's row.
 
 **The two arms differ by 8x. The kernel difference cannot be 8x** -- #10's
 in-process bench puts it at 1.28-2.08x at M=1 -- so what this table measures is
