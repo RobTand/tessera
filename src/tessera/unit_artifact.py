@@ -29,6 +29,7 @@ from .alphabet import (
     grid_digest,
 )
 from .grammar import (
+    require_column_groups,
     completion_capacity,
     completion_limit_from_elements,
     completion_widths as completion_widths_for,
@@ -229,24 +230,16 @@ def build_unit_artifact(
     # a width that is not a whole number of groups has no group for the
     # remainder: a GEMV would never reach those columns and a GEMM would
     # index one group past the plane (and ``materialize_nvfp4`` dies in the
-    # reshape).  That is the rule ``kernel._require_column_groups`` states
-    # for the kernel lane; it is restated here -- rather than imported,
-    # which would drag the Triton kernel module into the format writer --
-    # with the same message, and refused here, where the bytes are decided,
-    # so no artifact is ever written at a width nothing can serve.  A
-    # CHANNEL plane carries one word per output row and no per-half plane,
-    # so the rule is vacuous there: ``materialize_fp8``/``materialize_bf16``
-    # serve those units at any width, and refusing them would forbid
-    # servable artifacts.
+    # reshape).  Refused HERE, where the bytes are decided, so no artifact is
+    # ever written at a width nothing can serve -- through the same
+    # ``grammar.require_column_groups`` the kernel lane and the materialiser
+    # call, because a rule stated in three places is three rules.  A CHANNEL
+    # plane carries one word per output row and no per-half plane, so the
+    # rule is vacuous there: ``materialize_fp8``/``materialize_bf16`` serve
+    # those units at any width, and refusing them would forbid servable
+    # artifacts.
     if plane_kind is not ScalePlaneKind.CHANNEL:
-        half = unit.half
-        if half <= 0 or cols % half:
-            raise GrammarError(
-                f"{cols} columns is not a whole number of {half}-groups; the scale "
-                "plane has no group for the remainder, so the last "
-                f"{cols % half if half > 0 else cols} columns would leave the dot "
-                "product (GEMV) or index one group past the plane (GEMM)"
-            )
+        require_column_groups(cols, int(unit.half))
     if plane_kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
             raise GrammarError("a LUT scale plane needs the unit's table")

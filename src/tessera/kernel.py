@@ -29,6 +29,7 @@ import triton.language as tl
 from .alphabet import AnchorForest
 from .decode import _replay_tables
 from .errors import GrammarError
+from .grammar import require_column_groups as _require_column_groups
 from .manifest import WINDOW_BITS_MAX, RotationState
 from .trellis import ConvCode, SUBSET_COUNT
 from .lane_planes import (  # noqa: F401 -- the packers live there, Triton-free
@@ -56,23 +57,6 @@ __all__ = ["build_code_lut", "build_tuple_index_lut", "build_anchor_values",
 # wrong weight is not an exception, so the shape is checked, not assumed --
 # the same discipline ``tessera_gemv_window``'s reach check already applies.
 # ---------------------------------------------------------------------------
-
-
-def _require_column_groups(cols: int, half: int) -> None:
-    """``cols`` must be a whole number of ``half``-sized scale groups.
-
-    The scale plane is ``[cols // half, rows]``, so the remainder has no
-    group of its own: a GEMV walking ``cols // half`` groups never reaches
-    those columns, and the GEMM, which indexes by ``k // half``, reaches one
-    group past the plane.  Neither raises on its own.
-    """
-    if half <= 0 or cols % half:
-        raise GrammarError(
-            f"{cols} columns is not a whole number of {half}-groups; the scale "
-            "plane has no group for the remainder, so the last "
-            f"{cols % half if half > 0 else cols} columns would leave the dot "
-            "product (GEMV) or index one group past the plane (GEMM)"
-        )
 
 
 def _require_byte_aligned_rows(rows: int) -> None:

@@ -115,3 +115,46 @@ def test_channel_plane_still_writes_off_group_widths():
     assert torch.equal(
         read_unit_artifact(blob), reconstruct_unit(unit, E2M1_GRID, None)
     )
+
+
+def test_the_rule_has_one_home_and_all_three_stages_call_it():
+    """One rule, one place it is written, three stages that owe it.
+
+    The writer, the materialiser and the kernel lane all refuse the same
+    widths, so the temptation is three copies of the same sentence -- and
+    three sentences drift. ``grammar.require_column_groups`` is the single
+    definition; this pins that the other two modules *call* it rather than
+    restate it, by checking that the message they raise is character for
+    character the one the owner raises, and that no module but the owner
+    contains the sentence.
+    """
+    import inspect
+    from pathlib import Path
+
+    from tessera import decode as decode_mod
+    from tessera import grammar as grammar_mod
+    from tessera import unit_artifact as unit_mod
+
+    with pytest.raises(GrammarError) as owner:
+        grammar_mod.require_column_groups(BAD_COLS, 16)
+
+    with pytest.raises(GrammarError) as writer:
+        build_unit_artifact(_unit(BAD_COLS), "unit0", FORESTS, 640, CODE)
+    with pytest.raises(GrammarError) as materialiser:
+        materialize_nvfp4(
+            torch.zeros(ROWS, BAD_COLS, dtype=torch.int64),
+            torch.ones(ROWS, BAD_COLS // 16), 1.0, half=16,
+        )
+    assert str(writer.value) == str(owner.value)
+    assert str(materialiser.value) == str(owner.value)
+
+    # And the message itself is written in exactly one file. The fragment is
+    # taken from the raise, not from prose about it, so a module may explain
+    # the rule in a comment and still be caught if it re-raises it.
+    raised = "-groups; the scale "
+    homes = sorted(
+        path.name
+        for path in Path(inspect.getsourcefile(grammar_mod)).parent.glob("*.py")
+        if raised in path.read_text()
+    )
+    assert homes == ["grammar.py"], homes
