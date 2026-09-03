@@ -661,13 +661,16 @@ def _steps_of(manifest) -> int:
 
     The arity is not on the wire, so it is recovered by trying the ones a
     readable artifact can carry: ``SERIALISABLE_GRIDS`` holds arity 1 and
-    arity 2 today, and 4 and 8 are also tried, though no serialisable grid
-    carries them.  A non-power-of-two tuple -- ``k = 3`` over
-    E2M1 is legal to *build* (``alphabet.tuple_grid``) -- would not be found,
-    and cannot arrive either: a grid outside ``SERIALISABLE_GRIDS`` is refused
-    at ``build_unit_artifact`` and no reader can resolve its digest, so no
-    manifest reaches here holding one.  The refusal below says which set it
-    searched rather than claiming no arity works.
+    arity 2, and those are the two this loop searches.  A non-power-of-two
+    tuple -- ``k = 3`` over E2M1 is legal to *build* (``alphabet.tuple_grid``)
+    -- would not be found, and cannot arrive either: a grid outside
+    ``SERIALISABLE_GRIDS`` is refused at ``build_unit_artifact`` and no reader
+    can resolve its digest, so no manifest reaches here holding one.  The
+    refusal below says which set it searched rather than claiming no arity
+    works -- and it says so by *formatting the set it searched*, because the
+    two were typed separately until 2026-09-03 and drifted the moment the loop
+    narrowed: the docstring still promised 4 and 8, and the refusal still named
+    them, three commits after the loop stopped trying them.
     """
     from .trellis import body_bits as _bits
 
@@ -683,7 +686,8 @@ def _steps_of(manifest) -> int:
     # ALPHABET/DESCENDANT planes, which E2M1^3's 4096 codes already break.  The
     # 4 and 8 this loop used to try could only mis-attribute a body-bit count
     # that 1 and 2 had already failed to explain; refusing is the honest answer.
-    for arity in (1, 2):
+    searched = (1, 2)
+    for arity in searched:
         if manifest.geometry.rows % arity:
             continue
         steps = manifest.geometry.rows // arity
@@ -693,7 +697,7 @@ def _steps_of(manifest) -> int:
             return steps
     raise GrammarError(
         f"the BODY plane declares {elements} bits, which no arity in "
-        f"(1, 2, 4, 8) over this rate schedule produces"
+        f"{searched} over this rate schedule produces"
     )
 
 
