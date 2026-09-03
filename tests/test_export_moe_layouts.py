@@ -37,6 +37,7 @@ import json
 from pathlib import Path
 
 import pytest
+import torch
 
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
@@ -284,6 +285,15 @@ def test_the_routed_ignore_entry_is_the_fused_moe_prefix(leaf):
     assert match.group("moe") + ".experts" == "model.language_model.layers.2.mlp.experts"
 
 
+#: These two go all the way through a real encode, which is a GPU job.  They
+#: had no guard, so a host-safe run (``CUDA_VISIBLE_DEVICES=""``) reported them
+#: RED for absent hardware -- a false red says nothing about the code and hides
+#: a real one in the same colour.  Same spelling as test_merge_guard.py.
+cuda = pytest.mark.skipif(not torch.cuda.is_available(),
+                          reason="the encoder is a GPU job")
+
+
+@cuda
 def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
     """End to end: run the exporter and read the ignore list it writes."""
     src = _write(tmp_path, _unpacked_checkpoint())
@@ -348,6 +358,7 @@ def test_planning_the_router_is_refused_before_any_encode(tmp_path, monkeypatch)
     assert not out.exists() or not list(out.glob("*.safetensors"))
 
 
+@cuda
 def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypatch):
     """The weight must survive into the checkpoint, unencoded.
 
