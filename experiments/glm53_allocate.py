@@ -14,6 +14,10 @@ Two cost sources, kept separate on purpose:
 They answer the same question two ways, so the run reports both and the DP is
 solved on each.  Where they disagree the disagreement is the finding.
 
+Ranking rungs on the L1 currency below warns per ``docs/ARCHITECTURE.md``
+§4.9: rung monotonicity in that currency is measured false, so the ranking
+is a screen, not a selection.
+
 **Per-expert Fisher.** The W-side run stored the raw squared error per sampled
 expert, so the Fisher weighting is applied HERE, from
 `h_trace_per_expert` -- not the layer-pooled `h_trace` the measurement loop
@@ -29,6 +33,7 @@ import argparse
 import collections
 import json
 import pickle
+import re
 import sys
 
 W = "/mnt/shared/dq-runs/glm53-tessera-alloc-20260901/artifacts"
@@ -40,6 +45,62 @@ MODEL = "/mnt/shared/models/GLM-5.3-Flash-BF16"
 # VocabParallelEmbedding has no quantized path) -- docs/measurements/
 # glm53-body-budget-2026-09-01.md
 MIA_BODY_GIB = 157.601
+
+
+#: The rung suffix of a menu format: ``<family>_R<rung>``.  Stripping it
+#: leaves the family, so two entries sharing a stem are two rungs of one
+#: family -- the condition ``docs/ARCHITECTURE.md`` §4.9 warns about --
+#: whatever the families happen to be called.  Entries without the suffix
+#: (``BF16``, ``NVFP4``) name no rung and never trigger the warning.
+_FORMAT_RUNG = re.compile(r"^(?P<family>.+)_R(?P<rung>\d+)$")
+
+
+def l1_ranked_families(menu):
+    """Families of ``menu`` ranked at more than one rung, with their rungs.
+
+    ``menu`` is ``[(format, bits), ...]``.  Returns ``{family: [rungs]}``
+    over the families with two or more distinct rungs, sorted by family
+    with rungs in numeric order -- and ``{}`` when no family is ranked
+    against itself, which is when there is nothing to warn about.
+    """
+    rungs = collections.defaultdict(set)
+    for fmt, _bits in menu:
+        match = _FORMAT_RUNG.match(str(fmt))
+        if match:
+            rungs[match.group("family")].add(int(match.group("rung")))
+    return {family: sorted(names)
+            for family, names in sorted(rungs.items()) if len(names) > 1}
+
+
+def warn_l1_rung_ranking(menu, *, file=None):
+    """Print the §4.9 warning when ``menu`` ranks rungs on the L1 currency.
+
+    The ``predicted_dloss`` rows below score every format as
+    ``mean(0.5 * h_trace * squared_error)`` -- the additive-Fisher L1
+    surrogate whose rung ranking tessera#1 measured inverting -- so a menu
+    holding more than one rung of one family is a rung ranking in exactly
+    the currency ``docs/ARCHITECTURE.md`` §4.9 says must refuse or warn.
+    Returns the warning text, or ``None`` when the menu ranks no family
+    against itself.
+    """
+    ranked = l1_ranked_families(menu)
+    if not ranked:
+        return None
+    detail = "; ".join(
+        f"{family} (R{', R'.join(str(rung) for rung in rungs)})"
+        for family, rungs in ranked.items())
+    warning = (
+        f"L1-CURRENCY WARNING: this allocation ranks more than one rung of "
+        f"{detail} on the additive-Fisher L1 surrogate "
+        f"(0.5 * h_trace * squared_error).  Rung monotonicity in that "
+        f"currency is measured false (docs/ARCHITECTURE.md §4.9): an "
+        f"allocation ranked on it served 2.00x worse KL than the "
+        f"byte-matched uniform arm at 4.0 bpp "
+        f"(docs/measurements/tessera-allocated-served-2026-09-02.md).  "
+        f"This ranking is a screen, not a selection -- serve the "
+        f"byte-matched uniform control before anything it proposes ships.")
+    print(warning, file=file if file is not None else sys.stdout, flush=True)
+    return warning
 
 
 def unit_bits(fmt, shape):
@@ -153,6 +214,12 @@ def main():
         row["h_trace"] = sum(float(p["h_trace"]) for p in parts)
         row["out_features"] = sum(int(p["out_features"]) for p in parts)
         return row
+
+    # The rows below rank every format as mean(0.5 * h_trace * squared_error)
+    # -- the additive-Fisher L1 surrogate -- so a menu holding more than one
+    # rung of one family is a rung ranking in the currency §4.9 says must
+    # refuse or warn.  Warn where the bytes are decided, before the DP runs.
+    warn_l1_rung_ranking(menu)
 
     units, candidates, coverage = {}, {}, collections.Counter()
     for name, entry in cost["units"].items():
