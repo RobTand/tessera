@@ -72,7 +72,14 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
     },
 }
 
-_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896], "TESSERA_E4M3_K1": [1024]}
+#: The rungs each family ATTESTS -- rungs a container receipt covers.
+#: ``TESSERA_BF16_K1`` attests none: the route exists and the reader takes a
+#: continuous range (below), but no served census and no served KL against the
+#: exporter's plain-BF16 twin exist yet, so every BF16 rung resolves
+#: ``unattested``.  An empty list here is the honest state and is deliberately
+#: not the same thing as an absent family.
+_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896], "TESSERA_E4M3_K1": [1024],
+                 "TESSERA_BF16_K1": []}
 
 
 @pytest.fixture(scope="module")
@@ -101,12 +108,28 @@ def test_the_file_is_reachable_through_importlib_resources():
     assert path.name == "runtime_contract.json"
 
 
-def test_two_families_at_one_attested_rung_each(contract):
+def test_three_families_and_what_each_one_attests(contract):
     formats = {entry["family"]: entry for entry in contract["formats"]}
-    assert sorted(formats) == ["TESSERA_E2M1_K2", "TESSERA_E4M3_K1"]
+    assert sorted(formats) == ["TESSERA_BF16_K1", "TESSERA_E2M1_K2", "TESSERA_E4M3_K1"]
     for family, rungs in _FAMILY_RUNGS.items():
         assert formats[family]["attested_rungs_q256"] == rungs
         assert formats[family]["residency_modes"] == ["resident", "streamed"]
+
+
+def test_a_family_with_no_receipt_publishes_no_cell(contract):
+    """Absence resolves ``unattested``; it is never invented into a cell.
+
+    ``TESSERA_BF16_K1`` is a served ROUTE with no served MEASUREMENT, and the
+    two are different claims.  Publishing a cell for it would attest a route
+    status nobody has observed -- which is the failure principle 14 exists for,
+    and the one a route module is most tempting to commit the day it is
+    written.
+    """
+    attested = {c["family"] for c in contract["lane_eligibility"]["cells"]}
+    unattested = {f for f, rungs in _FAMILY_RUNGS.items() if not rungs}
+    assert unattested, "this test is vacuous if every family is attested"
+    assert not (attested & unattested), (
+        f"{sorted(attested & unattested)} publish a lane_eligibility cell but attest no rung")
 
 
 #: MEASURED, not chosen: each rate was encoded and taken through the route's own
@@ -117,6 +140,12 @@ def test_two_families_at_one_attested_rung_each(contract):
 _READER_RATES = {
     "TESSERA_E2M1_K2": ("E2M1x2", [896, 896], 1),
     "TESSERA_E4M3_K1": ("E4M3", [256, 2048], 1),
+    # ``experiments/bf16_reader_rate_range.py``: 25 rungs, every integer rate
+    # 1..16 plus nine of the non-integer rungs a Bresenham schedule makes, each
+    # encoded and taken through the route's load path.  The one candidate that
+    # refused (777 over 128 columns) refused on GEOMETRY -- "it needs 9/2
+    # columns at rate 4" -- and loads at 512 columns, so it bounds nothing.
+    "TESSERA_BF16_K1": ("BF16", [256, 4096], 1),
 }
 
 
@@ -241,11 +270,12 @@ def test_each_cell_executes_the_contract_its_route_module_exposes(contract):
     Imported lazily: the route modules import torch, and the contract half of
     this file must stay readable where it is not installed.
     """
-    from tessera.serving import fp8_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_route, nvfp4_route
 
     by_family = {
         "TESSERA_E2M1_K2": nvfp4_route.ACTIVATION_CONTRACT,
         "TESSERA_E4M3_K1": fp8_route.ACTIVATION_CONTRACT,
+        "TESSERA_BF16_K1": bf16_route.ACTIVATION_CONTRACT,
     }
     for cell in contract["lane_eligibility"]["cells"]:
         assert cell["activation_contract"] == by_family[cell["family"]]

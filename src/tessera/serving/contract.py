@@ -277,4 +277,5 @@ def reader_rate_grid(route: str, grid: str, contract: Mapping[str, Any] | None =
 _FAMILY_TO_ROUTE = {
     "TESSERA_E2M1_K2": "TESSERA_NVFP4",
     "TESSERA_E4M3_K1": "TESSERA_FP8",
+    "TESSERA_BF16_K1": "TESSERA_BF16",
 }

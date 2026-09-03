@@ -1,6 +1,6 @@
 {
  "schema": "tessera.runtime-contract.v1",
- "contract_version": 2,
+ "contract_version": 3,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -64,6 +64,25 @@
    "candidate_rungs_q256": [
     1024
    ]
+  },
+  {
+   "kind": "tessera_wire",
+   "family": "TESSERA_BF16_K1",
+   "grid": "BF16",
+   "name_pattern": "TESSERA_BF16_K1_R{k}",
+   "reader_rate_range_q256": [
+    256,
+    4096
+   ],
+   "reader_rate_step_q256": 1,
+   "reader_rate_bound": "trellis_shaped_domain",
+   "attested_rungs_q256": [],
+   "native_terminal_q256": 4096,
+   "residency_modes": [
+    "resident",
+    "streamed"
+   ],
+   "candidate_rungs_q256": []
   }
  ],
  "lane_eligibility": {
@@ -171,6 +190,11 @@
     "unit": "TESSERA_E4M3_K1",
     "kind": "tessera_wire_family",
     "max_world_size": 1
+   },
+   {
+    "unit": "TESSERA_BF16_K1",
+    "kind": "tessera_wire_family",
+    "max_world_size": 1
    }
   ]
  },
@@ -180,6 +204,11 @@
   "units": []
  },
  "changelog": [
+  {
+   "contract_version": 3,
+   "date": "2026-09-02",
+   "change": "Third family: TESSERA_BF16_K1, the scalar BF16 grid over the CHANNEL plane and the same window body the E4M3 family ships, decoded to a plain bf16 tile and served W16A16 through the stock BF16 GEMM (activation contract bf16_unquantized -- a value, because a gate must be able to tell 'unquantised by design' from 'nobody filled it in'). It exists because the E4M3 ALPHABET floors the window body at ~0.022 out-space from R=6 upward while the identical trellis over bf16 keeps halving at ~1.93x per bit, so above ~6 bpp an 8-bit tile has nothing left to buy. reader_rate_range_q256 is [256, 4096] continuous at step 1, DERIVED the way E4M3's was in v2 -- 25 candidate rungs (every integer rate 1..16 plus nine non-integer rungs of the kind a Bresenham schedule makes: 300, 777, 779, 1000, 1023, 1500, 2047, 2500, 4095) encoded and taken through the route's own load path, parse -> shard -> prepare including the element-for-element cross-check against tessera.decode.materialize_bf16 (experiments/bf16_reader_rate_range.py). 4096 is the grammar's shaped domain (code rate 1..16 over a 16-bit alphabet) and the sweep reaches it: the recipe widens the window table to max(14, rate) above R=14 rather than refusing, and L=15 and L=16 both load. The only candidate refused was q256=777 over 128 columns, and that is a GEOMETRY refusal ('it needs 9/2 columns at rate 4') not a rate one -- it loads at 512 columns, so it does not bound the range. attested_rungs_q256 is EMPTY and there is no lane_eligibility cell: no container receipt covers this family yet -- no served census and no served KL against the plain-BF16 twin the exporter writes -- so every BF16 rung resolves unattested, which is the honest status and not a refusal. A cell is added when a receipt exists. Additive: a v1/v2 reader that does not know this family simply does not match it. tensor_parallel gains a TESSERA_BF16_K1 unit at max_world_size 1, the same refusal the other two families carry: a Tessera unit is one blob per vLLM module against a shared rate schedule, so a sharded form needs per-rank wires and not a byte range."
+  },
   {
    "contract_version": 2,
    "date": "2026-09-02",

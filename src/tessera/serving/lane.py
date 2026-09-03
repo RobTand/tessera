@@ -6,8 +6,10 @@ bytes are Tessera's, the plugin serves them.  What the operator does choose is
 the RESIDENCY, ``TESSERA_SERVE_MODE=resident|streamed``:
 
 * ``resident`` decodes every module once at load and holds its stock tile
-  (4.5 bpw for an NVFP4 module, 8.0 plus one fp32 per row for an FP8 one --
-  the wire's smaller bytes are then on disk only);
+  (4.5 bpw for an NVFP4 module, 8.0 plus one fp32 per row for an FP8 one,
+  16.0 plus one fp32 per row for a BF16 one -- the wire's smaller bytes are
+  then on disk only.  On the BF16 route that is the source precision, so it is
+  the correctness path and not a size claim);
 * ``streamed`` holds the wire's own bytes per module and decodes every forward
   into a transient tile.
 
@@ -20,11 +22,13 @@ function.
 
 WHICH ROUTE a module takes is the CHECKPOINT's fact, not the operator's: the
 scheme's ``family`` (FAMILY = ROUTE, ``scheme.ROUTES``) picks ``TESSERA_NVFP4``
-(an E2M1-based grid over a LUT plane -> the NVFP4 tile, W4A4) or ``TESSERA_FP8``
-(E4M3 over the CHANNEL plane -> the per-channel FP8 pair, W8A8).  One
-checkpoint may carry both, module by module, and a single serve executes each
-on its own tensor-core path -- which is what makes this a product an allocator
-can target rather than two lanes an operator has to choose between.
+(an E2M1-based grid over a LUT plane -> the NVFP4 tile, W4A4), ``TESSERA_FP8``
+(E4M3 over the CHANNEL plane -> the per-channel FP8 pair, W8A8) or
+``TESSERA_BF16`` (BF16 over the CHANNEL plane -> a plain bf16 tile, W16A16).
+One checkpoint may carry all three, module by module, and a single serve
+executes each on its own path -- which is what makes this a product an
+allocator can target across the whole 3-to-8-bit range rather than a set of
+lanes an operator has to choose between.
 """
 from __future__ import annotations
 

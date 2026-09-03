@@ -703,8 +703,18 @@ the six experts the fold is a rate-independent 0.0013-0.0018 on *every* arm
 including EXL3's and RTN's — 2.0% of the error at R=4, **15.4% at R=7** — so a
 served number taken on the twin is a ceiling, not the route's value.
 
-Not served, not selectable: no lane carries `TESSERA_BF16` yet, and
-PrismaQuant's `ANCHOR_BUDGET_BITS` refuses `payload_bits >= 16` on a premise
-that is TCQ's alone (a window body has no forest). Receipt, with the hand-offs
-for the plugin, the fused kernel's 32 KiB bf16 table, and PrismaQuant's three
-changes: `docs/measurements/tessera-bf16-route-2026-09-02.md`.
+Receipt, with the hand-offs for the plugin, the fused kernel's 32 KiB bf16
+table, and PrismaQuant's three changes:
+`docs/measurements/tessera-bf16-route-2026-09-02.md`.
+
+**The plugin hand-off is taken up (issue #9).** `TESSERA_BF16` is a third
+`ROUTES` entry and `serving/bf16_route.py` is its route module: W16A16, the
+packed window planes decoded to a bf16 tile in both residency modes,
+`torch.mm(..., out_dtype=torch.float32)` and the row scale as an fp32 epilogue,
+cross-checked element for element against `tessera.decode.materialize_bf16` at
+load. The contract publishes the family (`TESSERA_BF16_K1`, reader rate range
+[256, 4096] derived by loading 25 rungs, TP `max_world_size 1`) and
+**deliberately no `lane_eligibility` cell** -- absence resolves `unattested`,
+which is what "no container receipt yet" honestly reads as. Still not
+selectable from PrismaQuant: `ANCHOR_BUDGET_BITS` refuses `payload_bits >= 16`
+on a premise that is TCQ's alone (a window body has no forest).

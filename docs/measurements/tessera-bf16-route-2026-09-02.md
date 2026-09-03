@@ -539,6 +539,18 @@ anyway.
 
 ## 8. Hand-off: the serving plugin (W2)
 
+> **Taken up 2026-09-02 (issue #9).**  `serving/bf16_route.py` and the
+> `TESSERA_BF16` `ROUTES` entry exist and are built to this section's spec: no
+> new flag, no new packing, the row scale an fp32 epilogue on an
+> `out_dtype=torch.float32` GEMM and never folded, and a load-time element-for-
+> element check against `materialize_bf16`.  Two things below are *not* what
+> shipped, and both are the contract's own vocabulary rather than a change of
+> mind: the rungs go in `attested_rungs_q256` (`candidate_rungs_q256` is a
+> deprecated alias that must carry the identical list), and both are **empty**
+> with **no `lane_eligibility` cell**, because "the route status is `backed`"
+> is a claim about a runtime and needs a receipt, not a hand-off's say-so
+> (principle 14, which this section already says).
+
 The plugin adds a **third family** alongside `TESSERA_NVFP4` (W4A4) and
 `TESSERA_FP8` (W8A8): `TESSERA_BF16`, **W16A16**, materialising into an
 ordinary bfloat16 weight. It needs no new flag — the checkpoint's

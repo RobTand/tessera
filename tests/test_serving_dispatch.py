@@ -26,7 +26,7 @@ torch = pytest.importorskip("torch")
 from tessera.serving import lane                                    # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
 from tessera.serving.scheme import (                               # noqa: E402
-    TESSERA_FP8, TESSERA_NVFP4, validate_tessera_scheme)
+    TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4, validate_tessera_scheme)
 
 
 def _install_vllm_stubs():
@@ -148,6 +148,12 @@ def _fp8_scheme(**over):
             "roles": [["down_proj", 1024]], **over}
 
 
+def _bf16_scheme(**over):
+    return {"family": TESSERA_BF16, "grid": "BF16", "body": "WINDOW", "plane": "CHANNEL",
+            "q256": 1792, "rows": 1024, "columns": 2048, "wire_bytes": 1867776,
+            "roles": [["down_proj", 1024]], **over}
+
+
 def _config(scheme=None, targets=(TARGET,), ignore=(), extra_groups=None, quant_method="tessera"):
     groups = {"tessera": {"format": "TESSERA", "targets": list(targets),
                           "scheme": _scheme() if scheme is None else scheme}}
@@ -181,6 +187,31 @@ def test_a_declared_target_dispatches_to_its_route(monkeypatch):
     assert type(config.get_quant_method(_layer(), TARGET)).__name__ == "TesseraNvfp4LinearMethod"
     assert type(config.get_quant_method(_layer(), FP8_TARGET)).__name__ == "TesseraFp8LinearMethod"
     assert set(config.target_scheme) == {TARGET, FP8_TARGET}
+
+
+BF16_TARGET = "model.layers.2.mlp.down_proj"
+
+
+def test_all_three_families_dispatch_from_one_checkpoint(monkeypatch):
+    """One serve, three routes, chosen module by module by the BYTES.
+
+    The BF16 arm is what issue #9 was: the wire, the recipe, the encoder, the
+    exporter and the stock twin all existed and ``ROUTES`` had two entries, so
+    a checkpoint declaring ``TESSERA_BF16`` was refused at config parse with
+    "family must be one of ('TESSERA_NVFP4', 'TESSERA_FP8')".  An allocator
+    that can spend 3 to 8 bits per Linear needs all three in one artifact, so
+    the assertion is that one config resolves all three and not that each
+    resolves alone.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(extra_groups={
+        "tessera_fp8": {"format": "TESSERA", "targets": [FP8_TARGET], "scheme": _fp8_scheme()},
+        "tessera_bf16": {"format": "TESSERA", "targets": [BF16_TARGET], "scheme": _bf16_scheme()},
+    }))
+    assert type(config.get_quant_method(_layer(), TARGET)).__name__ == "TesseraNvfp4LinearMethod"
+    assert type(config.get_quant_method(_layer(), FP8_TARGET)).__name__ == "TesseraFp8LinearMethod"
+    assert type(config.get_quant_method(_layer(), BF16_TARGET)).__name__ == "TesseraBf16LinearMethod"
+    assert set(config.target_scheme) == {TARGET, FP8_TARGET, BF16_TARGET}
 
 
 def test_an_ignored_linear_is_served_unquantized(monkeypatch):

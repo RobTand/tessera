@@ -10,7 +10,7 @@ the sidecar scheme a gate reads without parsing the blob, the refusal when blob
 and scheme disagree, and the tile the tensor core runs.
 
 FAMILY = ROUTE.  A Tessera family names what the decoded tile *is* on the
-hardware, not the body inside the blob.  Two families, one plugin:
+hardware, not the body inside the blob.  Three families, one plugin:
 
 * ``TESSERA_NVFP4`` is any E2M1-based grid over a LUT scale plane, decoded to
   the stock NVFP4 tile (nibble-packed E2M1 codes + group-16 ue4m3 block scales
@@ -19,6 +19,12 @@ hardware, not the body inside the blob.  Two families, one plugin:
   minor 3: one fp16 word per output row times a global), decoded to the stock
   per-channel FP8 pair (E4M3 bytes + one fp32 scale per row) and served through
   ``torch._scaled_mm`` W8A8.
+* ``TESSERA_BF16`` is the scalar BF16 grid over the same CHANNEL plane and the
+  same window body, decoded to a plain bf16 tile and served through the stock
+  BF16 GEMM, W16A16.  It exists because the E4M3 *alphabet* floors the body at
+  ~0.022 out-space from R = 6 upward while the identical trellis over bf16
+  keeps halving; above ~6 bpp an 8-bit tile has nothing left to buy.  Its row
+  scale is applied on the GEMM output and never folded into the tile.
 
 The body (span-2 coset trellis, or the window body) is the decoder's business
 and the manifest's fact; the scheme carries it only so a receipt can be scoped
@@ -43,8 +49,10 @@ from typing import Any, Mapping
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
+    "BF16_ACTIVATION_CONTRACT",
     "TESSERA_NVFP4",
     "TESSERA_FP8",
+    "TESSERA_BF16",
     "TESSERA_FAMILIES",
     "TESSERA_SCHEME_KEY",
     "STRUCTURE_DENSE",
@@ -62,9 +70,16 @@ __all__ = [
 #: this module must stay importable without it.
 NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
+#: W16A16.  There is no A-side quantiser to name -- the route hands ``x``
+#: to the stock bf16 GEMM as it arrives -- and the honest spelling of that is
+#: a contract that says so, not the absence of one.  A gate that reads this
+#: field must be able to tell "unquantised, by design" from "nobody filled it
+#: in", and only a value can carry that.
+BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
 
 TESSERA_NVFP4 = "TESSERA_NVFP4"
 TESSERA_FP8 = "TESSERA_FP8"
+TESSERA_BF16 = "TESSERA_BF16"
 
 #: A scheme with ``family`` in ``TESSERA_FAMILIES`` is ours.
 TESSERA_SCHEME_KEY = "family"
@@ -87,6 +102,7 @@ ROUTES: dict[str, dict] = {
     TESSERA_NVFP4: {
         "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
         "short": "NVFP4",
+        "grid_kind": "an E2M1-based",
         "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
         "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
         "columns_multiple": 16,
@@ -95,10 +111,25 @@ ROUTES: dict[str, dict] = {
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
         "short": "FP8",
+        "grid_kind": "the scalar E4M3",
         "builder": ("tessera.serving.fp8_route", "build_tessera_fp8_method"),
         "tile": "fp8 per-channel (E4M3 bytes, one fp32 scale per row)",
         "columns_multiple": 16,
         "activation_contract": FP8_ACTIVATION_CONTRACT,
+    },
+    TESSERA_BF16: {
+        "grids": ("BF16",), "plane": "CHANNEL",
+        "short": "BF16",
+        "grid_kind": "the scalar BF16",
+        "builder": ("tessera.serving.bf16_route", "build_tessera_bf16_method"),
+        "tile": "bf16 (the raw table values, one fp32 scale per row applied on the GEMM output)",
+        # No K quantum.  The other two routes decode to a PACKED tile whose
+        # mainloop reads groups -- a nibble pair, a group-16 block scale -- and
+        # 16 is that group.  A bf16 tile is one word per weight, so the GEMM
+        # takes any K, and asserting a quantum here would refuse a geometry
+        # this route serves.
+        "columns_multiple": 1,
+        "activation_contract": BF16_ACTIVATION_CONTRACT,
     },
 }
 
@@ -197,9 +228,12 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     route = ROUTES[family]
     grid = scheme["grid"]
     if grid not in route["grids"]:
-        kind = "an E2M1-based" if family == TESSERA_NVFP4 else "the scalar E4M3"
+        # The description comes off the route, not off an if-chain here: an
+        # if-chain is a second place to remember, and the one that describes
+        # every family it has not heard of as the family it was written for.
         raise ValueError(
-            f"tessera target {target!r}: {family} holds {kind} grid {route['grids']}, got {grid!r}")
+            f"tessera target {target!r}: {family} holds {route['grid_kind']} grid "
+            f"{route['grids']}, got {grid!r}")
     if scheme["plane"] != route["plane"]:
         raise ValueError(
             f"tessera target {target!r}: {family} decodes the {route['plane']} scale plane to its "
