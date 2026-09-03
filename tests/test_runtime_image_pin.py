@@ -67,19 +67,30 @@ def test_the_pin_is_the_contract_field_and_nothing_else_holds_it():
 
     digest = parse_reference(node)[2]
     assert digest is not None
-    # Every other tracked file that ACTS must read the pin, never repeat it: a
-    # second copy of a 64-hex string is a second thing to forget to update.
-    # Prose is exempt on purpose -- a measurement doc recording the digest its
-    # serve ran under is a receipt, and receipts are not copies of the pin,
-    # they are the reason the pin exists.
-    acting = {".py", ".sh", ".json", ".toml", ".cfg", ".ini", ".yaml", ".yml"}
+    # Every tracked file that ACTS must read the pin, never repeat it: a second
+    # copy of a 64-hex string is a second thing to forget to update.
+    #
+    # RECEIPTS ARE EXEMPT, and the exemption is the point rather than a hole in
+    # it.  A measurement doc or a committed .build.json sidecar recording the
+    # digest its serve ran under is not a copy of the pin -- it is the thing
+    # the pin exists to make possible, and a test that failed on one would
+    # forbid the receipts this issue is about.  So the scan covers the code
+    # that decides (src/, tests/, tools/, and the wrapper scripts) and skips
+    # docs/ and experiments/results/, which only record.
+    acting_suffixes = {".py", ".sh", ".json", ".toml", ".cfg", ".ini",
+                       ".yaml", ".yml"}
+    acting_roots = ("src/", "tests/", "tools/", "experiments/")
+    exempt_prefixes = ("experiments/results/",)
     listed = subprocess.run(["git", "-C", str(ROOT), "ls-files"],
                             capture_output=True, text=True, check=True)
     hex_body = digest.split(":", 1)[1]
     holders = []
     for name in listed.stdout.split():
         path = ROOT / name
-        if (path.name == "runtime_contract.json" or path.suffix not in acting
+        if (path.name == "runtime_contract.json"
+                or not name.startswith(acting_roots)
+                or name.startswith(exempt_prefixes)
+                or path.suffix not in acting_suffixes
                 or not path.is_file()):
             continue
         try:
