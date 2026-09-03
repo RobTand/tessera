@@ -456,6 +456,22 @@ across layers [1, 2, 3], 0 packed stacks** on GLM-5.3-Flash-4layer; and on
 modules (was 0)**, the remaining two being the MTP sidecar's, which `BODY_LAYER`
 does not match by the same rule that keeps the vision tower out.
 
+`experiments/moe_plan_baseline.py --diff` over the seven expert layouts it
+builds plus the real Qwen checkpoint (85 rows, 2026-09-03) says exactly this and
+nothing more:
+
+* `tensors` — the sha256 over every written tensor's name and bytes — is
+  **unchanged in all seven cases**. No encode moved.
+* `ignore` and `quantization_config` move in **two** cases, both packed and
+  suffix-less (`qwen38_packed_nosuffix`, `gptoss_packed`): each gains its
+  `<moe>.experts` entry, which is the fix.
+* `manifest` moves in all seven, for one reason: the new `routed_moe` block. It
+  is a statement about what *this producer wrote* — layout counts and the
+  modules passed through — never about what a runtime executes.
+* The two plan-time refusals stop reading "plan names tensors that are not 2-D
+  body weights" and start naming the packed stack, its shape and its orientation.
+* `classify/Qwen3.8-Flash-Next/packed` goes `[]` -> 96.
+
 ### 9.3 A packed expert stack cannot always be oriented, and this model is the case
 
 `[E, A, B]` is ambiguous on its face, and transformers-5 architectures genuinely
