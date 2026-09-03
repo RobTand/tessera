@@ -1,4 +1,4 @@
-# The per-unit reach lever: a 2.8% oracle on the shipping grid, and no rule that reaches it (2026-09-03)
+# The per-unit reach lever: a 2.8% oracle on the shipping grid, and the first-order rule does not reach it (2026-09-03)
 
 **Verdict.** Issue #80 is real -- `channel_sigma`'s optimum *is* per-unit -- and
 it is **not worth shipping on E4M3**. The per-unit ceiling at the wire's own
