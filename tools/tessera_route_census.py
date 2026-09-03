@@ -15,7 +15,8 @@ It exits non-zero unless every Tessera module, in both shapes, reports
 checkpoint declares for that module, that route's activation contract, and a
 ``(symbol, decoder)`` pair the route owns for the driven regime (the streamed
 FP8 route reports the window-GEMV pair in the decode regime and the
-materialised pair in batch) -- so the JSON it writes is a receipt only when
+materialised pair in batch, and the streamed BF16 route the same shape over
+``torch.mm``) -- so the JSON it writes is a receipt only when
 the run also passed.
 
 usage::
@@ -122,9 +123,7 @@ def main() -> int:
     contract_for = {TESSERA_NVFP4: nvfp4_route.ACTIVATION_CONTRACT,
                     TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT,
                     TESSERA_BF16: bf16_route.ACTIVATION_CONTRACT}
-    # The decoder each route must have used.  The FP8 and BF16 routes' decoder
-    # IS pure torch (the same packed-window reader, carrying a table of E4M3
-    # bytes in one and of bf16 values in the other); the NVFP4 route's must be
+    # The decoder each route must have used.  The NVFP4 route's must be
     # the native span-2 kernel unless the operator explicitly accepted the
     # fallback.
     decoder_for = {TESSERA_NVFP4: DECODER_NATIVE_SPAN2, TESSERA_FP8: DECODER_TORCH_WINDOW,
@@ -137,14 +136,21 @@ def main() -> int:
     symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
     # The streamed FP8 route serves two launches: the window GEMV in the
     # decode regime, the materialised tile under ``_scaled_mm`` in batch (and
-    # wherever the GEMV lane did not prepare).  The pairs each regime may
-    # report live where the dispatch lives (``fp8_gemv.census_expected``), not
-    # in a second spelling here; every other family reports one pair.
+    # wherever the GEMV lane did not prepare).  The streamed BF16 route is the
+    # same shape over ``torch.mm``: the window GEMV in the decode regime where
+    # the lane prepared, the kernel-decoded tile above it, the torch decode
+    # where it did not.  The pairs each regime may report live where the
+    # dispatch lives (``fp8_gemv.census_expected``, ``bf16_route.
+    # census_expected``), not in a second spelling here; every other family
+    # reports one pair.
     fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
+    bf16_expected = bf16_route.census_expected(compiled=args.compiled)
 
     def _expected(family, regime):
         if family == TESSERA_FP8:
             return fp8_expected[regime]
+        if family == TESSERA_BF16:
+            return bf16_expected[regime]
         return {(symbol_for[family], decoder_for[family])}
     missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
     if missing:
