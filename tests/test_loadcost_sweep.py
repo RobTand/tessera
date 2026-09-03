@@ -29,7 +29,11 @@ import torch
 
 from tessera.decode import materialize_nvfp4
 from tessera.errors import GrammarError
-from tessera.grammar import superblock_count, superblock_widths
+from tessera.grammar import (
+    require_column_groups,
+    superblock_count,
+    superblock_widths,
+)
 
 HARNESS = Path(__file__).resolve().parents[1] / "experiments" / "loadcost.py"
 
@@ -60,18 +64,20 @@ def test_sweep_measures_the_baseline_and_both_partial_extremes():
     widths = module.sweep_widths(5120)
     # The shipping tensor itself, un-narrowed (#40), anchors the pair.
     assert widths[0] == 5120
-    assert widths == (5120, 4865, 5119)
+    assert widths == (5120, 4896, 5088)
     assert len(set(widths)) == 3
-    one_past, nearly_full = widths[1], widths[2]
-    # The rule, not the roster: residues 1 and 255 mod 256, with the trailing
-    # block holding exactly 1 and 255 columns.
-    assert one_past % 256 == 1
-    assert superblock_widths(one_past, 256)[-1] == 1
-    assert nearly_full % 256 == 255
-    assert superblock_widths(nearly_full, 256)[-1] == 255
+    one_group, nearly_full = widths[1], widths[2]
+    # The rule, not the roster: the extremes of trailing fill are one scale
+    # group and all-but-one, because the group is the granule a partial block
+    # is made of.  Residues 1 and 255 are NOT the extremes -- they are not
+    # wires (see the encodability test below).
+    assert one_group % 256 == module.SCALE_GROUP
+    assert superblock_widths(one_group, 256)[-1] == module.SCALE_GROUP
+    assert nearly_full % 256 == 256 - module.SCALE_GROUP
+    assert superblock_widths(nearly_full, 256)[-1] == 256 - module.SCALE_GROUP
     # Both probes span the same block count as the baseline: the ceiling (#22)
     # reaches the trailing block instead of flooring it away.
-    assert superblock_count(one_past, 256) == superblock_count(5120, 256)
+    assert superblock_count(one_group, 256) == superblock_count(5120, 256)
     assert superblock_count(nearly_full, 256) == superblock_count(5120, 256)
 
 
@@ -80,13 +86,41 @@ def test_sweep_keeps_the_shipping_shape_first_on_a_partial_tensor():
     widths = module.sweep_widths(5119)
     assert widths[0] == 5119
     assert 4864 in widths  # the conforming baseline below it
-    assert any(w % 256 == 1 for w in widths[1:])
+    assert any(w % 256 == module.SCALE_GROUP for w in widths[1:])
 
 
 def test_sweep_degrades_to_fewer_widths_rather_than_a_filler():
     module = _load()
-    assert module.sweep_widths(256) == (256, 1, 255)
+    assert module.sweep_widths(256) == (256, 32, 224)
+    # The shipping shape is unconditional even when it is not a wire: the
+    # encoder is what says so, and an empty sweep would say nothing at all.
     assert module.sweep_widths(1) == (1,)
+
+
+def test_every_derived_probe_is_a_width_the_encoder_can_actually_take():
+    """The defect #44 sat behind for its whole life.
+
+    The sweep asked for ``base + 1`` and ``base - 1`` columns -- residues 1 and
+    255 mod 256 -- and neither is a wire: a width must be a whole number of
+    32-weight scale groups, because a group's two halves share one base
+    exponent (`grammar.require_column_groups`, #57). So the run printed a
+    shape line for 4865 columns and then died inside ``_pack_scales``, and the
+    measurement this harness was fixed for (#40) had still never been taken.
+
+    Checked against the grammar's own guard rather than against ``% 32``, so
+    the harness cannot drift from the rule it has to satisfy.
+    """
+    module = _load()
+    for cols in (5120, 5119, 4096, 2048, 256):
+        widths = module.sweep_widths(cols)
+        for width in widths[1:]:          # widths[0] is the tensor as given
+            require_column_groups(width, module.SCALE_GROUP)
+    # And the old probes really are refused, so this is a fixed bug and not a
+    # style preference.
+    with pytest.raises(GrammarError):
+        require_column_groups(4865, module.SCALE_GROUP)
+    with pytest.raises(GrammarError):
+        require_column_groups(5119, module.SCALE_GROUP)
 
 
 def test_sweep_refuses_a_non_positive_width():
@@ -116,34 +150,41 @@ def test_shape_note_labels_a_narrowed_width_not_shipping():
 
 
 def test_pack_branch_agrees_with_the_owning_guard_at_sweep_widths():
-    """The replay-only probes are the format's doing, not the harness's.
+    """The pack applies at every sweep width now, and that is the fix showing.
 
-    Every ``cols % 256 == 1`` probe is odd, and ``materialize_nvfp4`` itself
-    refuses an odd column count -- probed here on the CPU at the sweep's own
-    widths, with no encoder or GPU in the path -- while the even baseline
-    packs.  The harness's ``pack_applies`` branch must agree with that guard
-    width for width, or the sweep would either crash the matched pair or skip
-    a pack it could have measured.
+    ``materialize_nvfp4`` packs two nibbles to a byte and refuses an odd
+    column count.  The sweep used to probe ``base +/- 1``, which is always
+    odd, so the harness grew a replay-only branch to survive it -- a
+    workaround for widths that turned out not to be encodable at all (#44).
+
+    With the granule corrected to the scale group, every derived probe is a
+    multiple of 32 and therefore even, so the guard passes at all of them and
+    the matched triple carries a pack figure at every point instead of an
+    ``n/a``.  ``pack_applies`` stays: it guards ``report``, which
+    ``--truncate`` and a raw tensor can still reach at any width.  It is
+    simply no longer reachable from the sweep.
     """
     module = _load()
+    rows = 2
     widths = module.sweep_widths(5120)
     for width in widths:
-        assert module.pack_applies(width) == (width % 2 == 0)
-    rows = 2
-    for probe in widths[1:]:
-        assert probe % 2 == 1  # k * 256 +/- 1 is always odd
-        codes = torch.zeros(rows, probe, dtype=torch.uint8)
-        with pytest.raises(GrammarError, match="cannot pack 2 nibbles"):
-            materialize_nvfp4(
-                codes, torch.zeros(0, dtype=torch.uint8), torch.zeros(0, dtype=torch.uint8))
-    baseline = widths[0]
-    codes = torch.zeros(rows, baseline, dtype=torch.uint8)
-    groups = rows * baseline // 32
-    base = torch.full((groups,), 127, dtype=torch.uint8)
-    refine = torch.zeros(2 * groups, dtype=torch.uint8)
-    packed, e4m3, _global = materialize_nvfp4(codes, base, refine)
-    assert packed.shape == (rows, baseline // 2)
-    assert e4m3.shape == (rows, baseline // 16)
+        assert width % module.SCALE_GROUP == 0
+        assert module.pack_applies(width) is True
+        codes = torch.zeros(rows, width, dtype=torch.uint8)
+        groups = rows * width // 32
+        base = torch.full((groups,), 127, dtype=torch.uint8)
+        refine = torch.zeros(2 * groups, dtype=torch.uint8)
+        packed, e4m3, _global = materialize_nvfp4(codes, base, refine)
+        assert packed.shape == (rows, width // 2)
+        assert e4m3.shape == (rows, width // 16)
+    # And the branch still tells the truth about a width the sweep no longer
+    # produces but ``report`` can still be handed.
+    assert module.pack_applies(4865) is False
+    with pytest.raises(GrammarError, match="cannot pack 2 nibbles"):
+        materialize_nvfp4(
+            torch.zeros(rows, 4865, dtype=torch.uint8),
+            torch.zeros(0, dtype=torch.uint8),
+            torch.zeros(0, dtype=torch.uint8))
 
 
 def test_truncate_and_sweep_refuse_together_before_touching_cuda():

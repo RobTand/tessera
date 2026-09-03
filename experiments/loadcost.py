@@ -20,32 +20,67 @@ from tessera.grammar import superblock_count
 #: shape line and the release quota cannot disagree about it.
 SUPERBLOCK = 256
 
+#: Weights per scale group.  The granule of a trailing partial superblock is
+#: this, NOT the column: a group's two halves share one base exponent, so a
+#: width that is not a whole number of groups is not a wire and
+#: ``encode._pack_scales`` refuses it (#57).  Named beside ``SUPERBLOCK`` and
+#: passed to the encoder, so the sweep cannot ask for a width the wire has no
+#: room for -- which is exactly what it used to do (#44, 2026-09-03).
+SCALE_GROUP = 32
+
 #: Keep the old single-width behaviour, narrowed and labelled not shipping.
 TRUNCATE_FLAG = "--truncate"
 #: Measure the matched triple in one process instead of one width.
 SWEEP_FLAG = "--sweep"
 
 
-def sweep_widths(cols, superblock=SUPERBLOCK):
+def sweep_widths(cols, superblock=SUPERBLOCK, group=SCALE_GROUP):
     """The #44 matched triple, derived from the tensor's own width.
 
     The full width first (the shipping shape, #40), then the largest
-    conforming prefix (the baseline), then one column past a superblock
-    multiple (a 1-column tail) and one column short of a multiple (a nearly
-    full tail).  Entries below 1 column and duplicates fall away, so a narrow
-    tensor measures fewer widths rather than a filler.  Every entry is a
-    column prefix of the same tensor, which is what makes the sweep a matched
-    pair.
+    conforming prefix (the baseline), then a trailing block holding **one
+    scale group**, then one holding **all but one**.  Entries below one group
+    and duplicates fall away, so a narrow tensor measures fewer widths rather
+    than a filler.  Every entry is a column prefix of the same tensor, which
+    is what makes the sweep a matched pair.
+
+    The granule is the scale group, not the column, and that is the whole
+    correction here.  This sweep asked for ``base + 1`` and ``base - 1`` until
+    2026-09-03 -- a 1-column tail and a 255-column one -- and neither is a
+    wire: ``encode._pack_scales`` refuses any width that is not a whole number
+    of 32-weight groups, because a group's two halves share one base exponent.
+    So the measurement #44 was filed to take had never run.  It did not fail
+    loudly either: the run printed a shape line for 4865 columns and *then*
+    died in the encoder, and the harness had grown a ``pack_applies``
+    branch to handle those probes being odd -- a workaround for a width that
+    could not be encoded at all.
     """
     if cols <= 0:
         raise GrammarError(f"sweep needs a positive column count, got {cols}")
     if superblock <= 0:
         raise GrammarError(f"superblock_columns must be positive: {superblock}")
+    if group <= 0 or superblock % group:
+        raise GrammarError(
+            f"a superblock of {superblock} columns must be a whole number of "
+            f"{group}-weight scale groups"
+        )
     base = cols // superblock * superblock
-    ordered = []
-    for width in (cols, base, base - superblock + 1, base - 1):
-        if width >= 1 and width not in ordered:
+    # The shipping shape is unconditional (#40): whatever the tensor is, it is
+    # measured, and if it is not a wire the encoder says so.  Returning an
+    # empty sweep for a narrow tensor would be the silent nothing this harness
+    # exists to avoid.
+    ordered = [cols]
+    for width in (base, base - superblock + group, base - group):
+        if width >= group and width not in ordered:
             ordered.append(width)
+    # Derived, then checked: a probe the encoder would refuse is a bug in this
+    # function, and it must not reach a GPU to be found.
+    for width in ordered:
+        if width != cols and width % group:
+            raise GrammarError(
+                f"sweep produced {width} columns, which is not a whole number "
+                f"of {group}-weight scale groups and is therefore not a wire"
+            )
     return tuple(ordered)
 
 
