@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T23:05:13Z",
+ "generated": "2026-09-03T23:38:21Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -313,6 +313,10 @@
     "state": "CLOSED",
     "title": "Wire the window GEMV into the streamed route's forward"
    },
+   "100": {
+    "state": "OPEN",
+    "title": "The \"pinned\" vLLM is a floating tag, and the two boxes hold different images under it"
+   },
    "11": {
     "state": "CLOSED",
     "title": "The fused window-Viterbi kernel collapses at R=8 (dispatch is a workaround)"
@@ -618,7 +622,7 @@
     "title": "runtime_contract declares a rung set that nothing enforces"
    },
    "80": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "channel_sigma's optimum is per-unit, not per-grid: 1.5x spread between the units that want it widest and narrowest"
    },
    "81": {
@@ -638,11 +642,11 @@
     "title": "E4M3's window table saturates at 1.167x reach: a 4x spread request delivers 1.167x, silently"
    },
    "85": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refit-objective comparisons on the LUT plane are confounded by the landing, which reorders the arms"
    },
    "86": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A Linear outside the decoder body is passed through but never named in ignore, and the plugin refuses exactly that"
    },
    "87": {
@@ -674,12 +678,32 @@
     "title": "A uniformly-NVFP4 export declares \"mixed-precision\" and loses vLLM's FP4 fusion"
    },
    "93": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A dropped arm is invisible: the pair stage's byte-match audit counts survivors, not the grid"
    },
    "94": {
     "state": "OPEN",
     "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
+   },
+   "95": {
+    "state": "OPEN",
+    "title": "choose_ldl_block floors LUT/S6B at 16 on a constraint the production LDLQ path does not have"
+   },
+   "96": {
+    "state": "CLOSED",
+    "title": "The pair stage's repeat control disappears if the repeat arm fails"
+   },
+   "97": {
+    "state": "OPEN",
+    "title": "Land #18's offline pair reporter against pair_grid_audit, or not at all"
+   },
+   "98": {
+    "state": "CLOSED",
+    "title": "A tracked empty file \"63\" sits at the repo root"
+   },
+   "99": {
+    "state": "OPEN",
+    "title": "GLM attention is built with quant_config=None, so wires the exporter writes there are never executed and the weight they replaced is gone"
    }
   }
  }
