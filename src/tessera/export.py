@@ -165,8 +165,12 @@ DEFAULT_CHANNEL_SIGMA: "float | None" = None
 #: picks the largest block inside a budget.  It says this 32 is a good default
 #: for GLM experts (b16 buys 0.17%) and a poor one for dense Qwen attention
 #: (b8 buys 7.3%), so a caller that holds an H should price its own block
-#: rather than inherit this constant.  The constant stays 32 because moving it
-#: is a quality-for-encode-time trade nobody has priced (tessera#60).
+#: rather than inherit this constant.  The ``floor`` to pass on *this* path is
+#: **1**: the block here goes to ``encode_unit(ldl=...)``, which reads the
+#: scale plane once per pass before the block loop and refits it after, so no
+#: scale group constrains the schedule (tessera#95).  The constant stays 32
+#: because moving it is a quality-for-encode-time trade nobody has priced
+#: (tessera#60).
 DEFAULT_LDLQ_SIGMA = 1.0
 DEFAULT_LDLQ_BLOCK = 32
 

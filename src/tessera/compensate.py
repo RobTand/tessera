@@ -42,6 +42,12 @@ step: it computes a modified target ``W + comp``, and the ordinary encoder runs
 on that.  :func:`compensated_targets` returns the target so the caller can
 re-encode it whole and check that it reproduces the stitched reconstruction.
 
+That alignment requirement belongs to :func:`compensated_targets` and not to
+LDLQ: ``encode.encode_unit(ldl=...)`` -- the path production takes -- runs the
+same schedule *inside* one encode, reading the scale plane once per pass across
+every block and refitting it after the loop, so it stitches nothing and no
+scale group floors its block (tessera#95).
+
 **What this does not fix.**  The trellis still couples output features, which
 the loss says are independent, and still leaves input features to a block
 diagonal it never sees.  Compensation routes around that; it does not remove
@@ -91,9 +97,15 @@ def block_ldl(H: torch.Tensor, block: int) -> torch.Tensor:
     identity, so a compensation slice taken strictly *below* the current block
     never reads it -- which is what makes the diagonal block "uncompensated":
     the ``block`` columns quantised together see no correction from each other.
-    Smaller blocks therefore compensate more; the floor is set by the scale
-    group, since a group's scale is fit to whatever target the group ends up
-    with and cannot be fit to half of one.
+    Smaller blocks therefore compensate more.  How small a block may get is
+    the *caller's* constraint and not this factorisation's, so the floor is
+    stated where the path is known: :func:`compensated_targets` stitches
+    independently-encoded slices and floors at the encoder's scale group and
+    rotation block, since a group's scale is fit to whatever target the group
+    ends up with and cannot be fit to half of one, while
+    ``encode.encode_unit(ldl=...)`` reads one plane per pass across every
+    block and refits it after the loop, so nothing there floors the schedule
+    above a single column.
     """
     n = H.shape[0]
     if n % block:
@@ -197,7 +209,7 @@ def block_penalty(H_reg: torch.Tensor, block: int) -> float:
 
 
 def choose_ldl_block(
-    H_reg: torch.Tensor, *, max_penalty: float, floor: int = 16
+    H_reg: torch.Tensor, *, max_penalty: float, floor: int
 ) -> int:
     """Largest power-of-two block whose predicted penalty is within budget.
 
@@ -208,16 +220,36 @@ def choose_ldl_block(
     ``block_penalty`` says it buys.  Passing a budget states that trade once,
     where a constant hides it.
 
-    ``floor`` is the smallest block the wire allows: a scale group's scale is
-    fit to whatever target the group ends up with and cannot be fit to half of
-    one, so the block may not cut inside a group.  **The caller derives it from
-    the recipe's own plane, never from this default** -- ``S6B`` and ``LUT``
-    group 16 weights and so floor at 16, while ``CHANNEL`` carries one scalar
-    per row and groups nothing, so its floor is 1.  The 16 here is the
-    tightest of those, safe for every plane and wrong for one of them.  A
-    budget the floor itself cannot meet is refused rather than quietly served
-    with the floor -- the caller asked for a quality this wire cannot reach,
-    and the refusal names what the floor does cost so a real budget can be set.
+    ``floor`` is the smallest block **the caller's own path** allows, and it
+    has no default on purpose.  The two callers of this factorisation have
+    different floors, and the one that has a floor is not the one production
+    takes:
+
+    * :func:`compensated_targets` stitches independently-encoded slices, so a
+      block must be aligned to the encoder's scale group *and* its rotation
+      block or the slices stop equalling the spans of a whole-matrix encode.
+      Its floor is the larger of those two, read off the encoder the caller
+      holds -- a narrower slice is refused by the encoder itself.
+    * ``encode.encode_unit(ldl=..., ldl_block=...)`` -- the path every LDLQ arm
+      in this repo is measured on -- has no such floor.  The scale plane is
+      read once per pass *before* the block loop and refit once *after* it, so
+      every block quantises against the same plane whatever its width and no
+      scale is ever fit to part of a group.  Its floor is 1.
+
+    What going wrong looks like: a 16 that is right for the stitching path,
+    inherited by the production path, silently deletes every block below 16 --
+    which is where the whole of the measured win lives.  ``1645c23`` validated
+    ``block_penalty`` against measured dense-Qwen ``b8`` and ``b4`` arms and
+    shipped a chooser that, floored at 16, could not return either of them,
+    and nothing raised.  A floor is a property of the caller's path, so the
+    caller states it and this function never guesses.
+
+    A budget the floor itself cannot meet is refused rather than quietly served
+    with the floor -- the caller asked for a quality its path cannot reach, and
+    the refusal names what the floor does cost so a real budget can be set.  At
+    ``floor=1`` that refusal is unreachable rather than dead: a block of one
+    skips nothing, so ``block_penalty`` is exactly 1.0 there and every legal
+    budget meets it.
     """
     if max_penalty < 1.0:
         raise GrammarError(
@@ -227,9 +259,11 @@ def choose_ldl_block(
     at_floor = block_penalty(H_reg, floor)
     if at_floor > max_penalty:
         raise GrammarError(
-            f"no legal block meets a budget of {max_penalty}: the smallest the "
-            f"wire allows is {floor}, and it already costs {at_floor:.6f} of "
-            f"full feedback. Raise the budget or lower the scale-group floor.")
+            f"no legal block meets a budget of {max_penalty}: the smallest "
+            f"block the caller's path allows is {floor}, and it already costs "
+            f"{at_floor:.6f} of full feedback. Raise the budget, or state the "
+            f"floor this path really has -- the stitching path's scale-group "
+            f"floor is not the encode_unit path's.")
     best, b = floor, floor * 2
     while b <= n and n % b == 0 and block_penalty(H_reg, b) <= max_penalty:
         best, b = b, b * 2
