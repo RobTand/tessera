@@ -1,0 +1,114 @@
+wire: E2M1x2 q256=896 -> body TCQ plane LUT span 2 L=0
+H from wikitext-2-raw-v1/train (local datasets cache)  fit 16384 tok (sha 229c6f72307f)  eval 8192 tok (sha 30ec7255e693)
+
+== model.layers.0.self_attn.q_proj (2048, 1024)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.04375   0.10155   0.09869   0.04283           62.2
+    baseline (no LDLQ, plain refit)                0.06053   0.09727   0.10274   0.06006            5.9
+    LDLQ sigma=1.0 block=32                        0.05149   0.09910   0.10769   0.05025           56.5
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.05417   0.09831   0.09511   0.05393            1.6
+    LDLQ 1.0/32 + refit h^1.0                      0.04375   0.10155   0.09869   0.04283           25.5
+    refit full-H only                              0.05584   0.10150   0.10563   0.05541            2.7
+    LDLQ 1.0/32 + refit full-H                     0.04822   0.10274   0.11094   0.04699           56.8
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.04296   0.10499   0.10709   0.04188           56.8
+    refit full-H only (Gauss-Seidel)               0.04897   0.11084   0.10833   0.04872            7.0
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.04375   0.10155   0.09869   0.04283           48.5
+    -- drift control: bytes IDENTICAL  out 0.043748 -> 0.043748  (+0.0000%)  hfit 0.042830 -> 0.042830  (+0.0000%)
+
+== model.layers.1.self_attn.k_proj (1024, 1024)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.04567   0.09842   0.08852   0.04477           47.4
+    baseline (no LDLQ, plain refit)                0.06008   0.09601   0.09327   0.05973            4.2
+    LDLQ sigma=1.0 block=32                        0.04777   0.09778   0.09848   0.04683           29.8
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.05354   0.09635   0.08460   0.05337            0.7
+    LDLQ 1.0/32 + refit h^1.0                      0.04567   0.09842   0.08852   0.04477           12.3
+    refit full-H only                              0.05207   0.10306   0.09617   0.05166            0.6
+    LDLQ 1.0/32 + refit full-H                     0.04542   0.10247   0.10216   0.04432           22.1
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.04256   0.10341   0.10378   0.04137           28.8
+    refit full-H only (Gauss-Seidel)               0.04985   0.10709   0.10280   0.04921            0.7
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.04567   0.09842   0.08852   0.04477           12.6
+    -- drift control: bytes IDENTICAL  out 0.045668 -> 0.045668  (+0.0000%)  hfit 0.044769 -> 0.044769  (+0.0000%)
+
+== model.layers.13.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.08348   0.09788   0.10063   0.07793           37.4
+    baseline (no LDLQ, plain refit)                0.10042   0.09550   0.09809   0.10033            1.5
+    LDLQ sigma=1.0 block=32                        0.08500   0.09729   0.10360   0.07934           56.6
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.09789   0.09581   0.09553   0.09756            4.3
+    LDLQ 1.0/32 + refit h^1.0                      0.08348   0.09788   0.10063   0.07793           44.3
+    refit full-H only                              0.10007   0.09819   0.09973   0.09926            1.4
+    LDLQ 1.0/32 + refit full-H                     0.08596   0.09966   0.10547   0.07992           44.0
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.08404   0.10065   0.10394   0.07758           47.3
+    refit full-H only (Gauss-Seidel)               0.09387   0.10356   0.10213   0.09096            3.5
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.08348   0.09788   0.10063   0.07793           77.4
+    -- drift control: bytes IDENTICAL  out 0.083479 -> 0.083479  (+0.0000%)  hfit 0.077934 -> 0.077934  (+0.0000%)
+
+== model.layers.14.mlp.gate_proj (3072, 1024)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.05304   0.09862   0.09010   0.05093           41.8
+    baseline (no LDLQ, plain refit)                0.07106   0.09635   0.09685   0.07084            1.9
+    LDLQ sigma=1.0 block=32                        0.05556   0.09790   0.10585   0.05363           36.8
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.06175   0.09686   0.08525   0.06129            1.9
+    LDLQ 1.0/32 + refit h^1.0                      0.05304   0.09862   0.09010   0.05093           37.5
+    refit full-H only                              0.06481   0.10152   0.10026   0.06390            2.2
+    LDLQ 1.0/32 + refit full-H                     0.05473   0.10109   0.10932   0.05239           50.0
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.05123   0.10217   0.10963   0.04868           78.3
+    refit full-H only (Gauss-Seidel)               0.06010   0.10636   0.10596   0.05849            2.4
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.05304   0.09862   0.09010   0.05093           38.6
+    -- drift control: bytes IDENTICAL  out 0.053043 -> 0.053043  (+0.0000%)  hfit 0.050928 -> 0.050928  (+0.0000%)
+
+== model.layers.2.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.02686   0.10643   0.04534   0.02677           98.8
+    baseline (no LDLQ, plain refit)                0.03107   0.09543   0.05029   0.03118            9.1
+    LDLQ sigma=1.0 block=32                        0.02691   0.09571   0.05569   0.02698          143.6
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.02857   0.09844   0.04504   0.02854            2.6
+    LDLQ 1.0/32 + refit h^1.0                      0.02686   0.10643   0.04534   0.02677           60.7
+    refit full-H only                              0.02574   0.28714   0.04889   0.02547           11.5
+    LDLQ 1.0/32 + refit full-H                     0.02072   0.22229   0.05504   0.02038           97.4
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.02383   0.23400   0.05628   0.02340           59.4
+    refit full-H only (Gauss-Seidel)               0.02916   0.30075   0.05067   0.02919           14.0
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.02686   0.10643   0.04534   0.02677           53.1
+    -- drift control: bytes IDENTICAL  out 0.026865 -> 0.026865  (+0.0000%)  hfit 0.026775 -> 0.026775  (+0.0000%)
+
+== model.layers.27.self_attn.o_proj (1024, 2048)  eval rows 8192
+    arm                                                out     plain       hwt      hfit   clip%      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]   0.07519   0.09729   0.09800   0.06427           26.0
+    baseline (no LDLQ, plain refit)                0.09801   0.09388   0.09579   0.09655            1.2
+    LDLQ sigma=1.0 block=32                        0.07484   0.09624   0.09991   0.06404           30.6
+    -- best LDLQ: sigma=1.0 block=32
+    refit h^1.0 only                               0.09584   0.09443   0.09411   0.09443            1.1
+    LDLQ 1.0/32 + refit h^1.0                      0.07519   0.09729   0.09800   0.06427           31.4
+    refit full-H only                              0.09648   0.11011   0.10001   0.09255            1.5
+    LDLQ 1.0/32 + refit full-H                     0.07709   0.10247   0.10423   0.06532           29.5
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)      0.07585   0.10843   0.10453   0.06351           31.1
+    refit full-H only (Gauss-Seidel)               0.09432   0.12686   0.10873   0.08471            2.0
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]   0.07519   0.09729   0.09800   0.06427           29.3
+    -- drift control: bytes IDENTICAL  out 0.075189 -> 0.075189  (+0.0000%)  hfit 0.064273 -> 0.064273  (+0.0000%)
+
+== geomean, all units -- out-space (held-out rows) and hfit (the fit rows' own quadratic, the one the refit's guard is monotone in)
+    arm                                                      out   vs base      hfit
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)            0.04922   0.7514x   0.04620
+    LDLQ 1.0/32 + refit full-H                           0.05043   0.7699x   0.04759
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]      0.05113   0.7805x   0.04855
+    LDLQ 1.0/32 + refit h^1.0                            0.05113   0.7805x   0.04855
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]       0.05113   0.7805x   0.04855
+    LDLQ sigma=1.0 block=32                              0.05348   0.8164x   0.05086
+    refit full-H only (Gauss-Seidel)                     0.05795   0.8847x   0.05621
+    refit full-H only                                    0.06004   0.9165x   0.05914
+    refit h^1.0 only                                     0.06029   0.9203x   0.05994
+    baseline (no LDLQ, plain refit)                      0.06551   1.0000x   0.06519
+
+== issue #35 promotion rule (written before the numbers)
+    control  'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]'  out geomean 0.05113
+    GS       'LDLQ 1.0/32 + refit full-H (Gauss-Seidel)'  out geomean 0.04922  (-3.7306% vs control)
+    Jacobi   'LDLQ 1.0/32 + refit full-H'  out geomean 0.05043
+    needs    < 0.05044 (control / 1.0138)
+    hfit <= baseline on every unit: True  {'model.layers.0.self_attn.q_proj': True, 'model.layers.1.self_attn.k_proj': True, 'model.layers.13.mlp.down_proj': True, 'model.layers.14.mlp.gate_proj': True, 'model.layers.2.mlp.down_proj': True, 'model.layers.27.self_attn.o_proj': True}
+    hfit GS <= Jacobi on every unit: False  {'model.layers.0.self_attn.q_proj': True, 'model.layers.1.self_attn.k_proj': True, 'model.layers.13.mlp.down_proj': True, 'model.layers.14.mlp.gate_proj': True, 'model.layers.2.mlp.down_proj': False, 'model.layers.27.self_attn.o_proj': True}
+    VERDICT: PROMOTE to a serve

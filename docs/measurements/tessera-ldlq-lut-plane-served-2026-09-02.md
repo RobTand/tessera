@@ -209,6 +209,22 @@ rather than stepping every block from the same residual) is the standard fix
 for exactly this, and would plausibly make the full-H objective win here too.
 The per-plane default records what was measured *with this optimiser*.
 
+> **Tried, 2026-09-03 (issue #35) -- and the diagnosis above was right.**
+> `tessera-lut-refit-gauss-seidel-2026-09-03` sweeps the blocks sequentially and
+> the sign flips on this very unit: `layers.0.self_attn.q_proj` goes from
+> **0.04822 out / 0.04699 hfit** to **0.04296 / 0.04188**, below the `h^1.0`
+> default's 0.04375 / 0.04283. Over the same six units the full-H objective goes
+> from **1.38% ahead of the default on the geomean but ahead on only one unit**
+> (the `L2.mlp.down_proj` margin above) to **3.73% ahead, on four of six**
+> (out geomean 0.04922 vs Jacobi's 0.05043 vs the default's 0.05113). It is a **weight-space screen**, opt-in and encoder-side, with no
+> byte of the wire moved and no serve behind it, so **the per-plane default in
+> the next section stands unchanged** until a served A/B and a GLM six-expert
+> arm exist. That receipt also finds what the step was hiding: the separable
+> `_fit_lut` table fit gives back 24-91% of *either* optimiser's gain (above half
+> on nine of twelve pass-0 rows), and is now the larger of the two approximations
+> by several times. It also finds that the one unit where the sweep loses to
+> Jacobi loses **at the step**, not at the non-positive-target revert.
+
 ## The decision rule, written before the numbers
 
 Three candidate recipes for "what an exporter does on the LUT plane when it is
