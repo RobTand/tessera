@@ -16,33 +16,55 @@ are counted and refused by name.  A BF16 choice is not a refusal -- it is a
 plain BF16 module, which is exactly what the exporter's passthrough does.
 
 **It checks the fused-group invariant before the exporter does.**  vLLM builds
-ONE method per fused module, so ``q/k/v`` must agree on ``(grid, q256)`` and so
-must ``gate/up``.  The exporter's answer to a disagreement is to pass the whole
-group through as BF16 and print it; that is the right answer at export time and
-the wrong thing to discover after a 20-minute encode, so a disagreement is
-reported here, up front, with the members and their rungs.
+ONE method per fused module, so ``q/k/v`` must agree on what that method is
+built FROM -- the family, and with it the grid, the body and the scale plane --
+and so must ``gate/up``.  That set is
+``export_tessera_serving.module_scheme_key``, and this script imports it rather
+than restating it, so the plan-time check and the export-time check cannot
+drift into describing two different sets again.  The exporter's answer to a
+disagreement is to pass the whole group through as BF16 and print it; that is
+the right answer at export time and the wrong thing to discover after a
+20-minute encode, so a disagreement is reported here, up front, with the
+members and their rungs.
 
-That is the case a **per-member (mink) allocation** lands in: PrismaQuant's
-group knapsack gives one family per fused group and a rate per member, and this
-serving path cannot express it.  **Refusing is the default, and it is the
-answer**, because no single rate for the group is derivable from the objective
--- the members' rates differ precisely because their sensitivities do, and min
-/ bytes-weighted / max are all taste, not arithmetic; and any of them moves
-both the bytes and the loss off the point the DP chose, so the allocation that
-served would not be the allocation that was selected.  ``--allow-fused-
-disagreement`` is for the operator who wants the plan anyway, and what it now
-writes is the plan that will **serve**: every member of a disagreeing group is
-named ``"BF16"``, dropped from the unit table and the charged-bits total, and
-the demotion is recorded (``fused_disagreements[].planned_as``,
-``totals.demoted_to_bf16_params``).  Before that, the plan named Tessera rungs
-for members the exporter was about to pass through, and the sidecar priced them
-as Tessera -- a three-to-four-fold under-report in the one currency the byte
-budget is spent in, produced by the file whose stated job is that the bytes
-served are the bytes priced.
+**The RATE is not part of that invariant** (#37).  Every decoder in
+``tessera.serving`` reads a role from that role's OWN manifest -- the FP8 route
+calls ``prepare_window``/``materialize_fp8`` per role, the NVFP4 route carries a
+per-role rate/arity/memory into ``_nvfp4_decode_span2_out`` -- the exporter
+writes a per-role ``q256`` list into the module's scheme, and the runtime
+publishes the rule as a value a producer reads
+(``runtime_contract.json``'s ``fused_module.fields``, contract v6).  So the case
+a **per-member (mink) allocation** lands in -- PrismaQuant's group knapsack
+gives one family per fused group and a rate per member -- is planned and
+encoded as allocated, member by member.  This file used to refuse it on the
+premise that "this serving path cannot express it".  That premise was false,
+and the refusal cost the allocator's chosen point its Tessera export.
 
-A whole-GROUP option name (``TESSERA_E4M3_K1_G3``) is refused by name for the
-same reason: it is not a rung, no rate stands for it, and PrismaQuant is meant
-to have expanded it to its members before the assignment was written.
+What has NOT changed is that no single rate for a group is derivable from the
+objective: the members' rates differ precisely because their sensitivities do,
+and min / bytes-weighted / max are all taste, not arithmetic.  That reasoning is
+now the reason this script does not NEED such a rate -- it plans each member at
+the rung the DP chose.  Rounding a group to one rate is still not something
+this file does.
+
+A disagreement that REMAINS -- two members on different families, grids, bodies
+or planes, or a member the allocation never priced -- is still refused by
+default, because it is still one vLLM method and there is still no way to decode
+two routes into one tile.  ``--allow-fused-disagreement`` is for the operator
+who wants the plan anyway, and what it writes is the plan that will **serve**:
+every member of a disagreeing group is named ``"BF16"``, dropped from the unit
+table and the charged-bits total, and the demotion is recorded
+(``fused_disagreements[].planned_as``, ``totals.demoted_to_bf16_params``).
+Before that, the plan named Tessera rungs for members the exporter was about to
+pass through, and the sidecar priced them as Tessera -- a three-to-four-fold
+under-report in the one currency the byte budget is spent in, produced by the
+file whose stated job is that the bytes served are the bytes priced.
+
+A whole-GROUP option name (``TESSERA_E4M3_K1_G3``) is still refused by name: it
+names a family and an option index, not the rung each member took, so nothing
+in it says what to encode.  PrismaQuant is meant to have expanded it to its
+members' own rungs before the assignment was written, and those rungs are
+exactly what this script now carries through.
 
 **It says whether the plan covers the model.**  A PrismaQuant campaign may price
 a *subset* -- ``--layer-stride 28`` prices decoder layer 0 and nothing else --
@@ -84,10 +106,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.control import (  # noqa: E402
     control_block,
+    grid_for_name,
     uniform_control,
     units_from_plan,
 )
 from tessera.errors import TesseraError  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from export_tessera_serving import module_scheme_key  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
@@ -333,8 +360,15 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             continue
         groups[module] = members
         present = [m for m in members if m in chosen]
-        recipes = {(chosen[m][0], chosen[m][1]) for m in present}
-        if len(present) != len(members) or len(recipes) != 1:
+        # NOT ``{(grid, q256)}`` (#37): what one vLLM method is built from is
+        # the family/grid/body/plane its route decodes with, and the exporter's
+        # own key is imported rather than restated so there is one statement of
+        # the rule.  A rate disagreement is not a disagreement -- the roles are
+        # decoded from their own manifests and the scheme carries a per-role
+        # ``q256`` list.
+        schemes = {module_scheme_key(grid_for_name(chosen[m][0]), chosen[m][1])
+                   for m in present}
+        if len(present) != len(members) or len(schemes) != 1:
             disagreements.append({
                 "module": module,
                 "members": {m: (f"{chosen[m][2]}_R{chosen[m][1]}" if m in chosen else "ABSENT")
@@ -342,13 +376,15 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             })
     if disagreements and not allow_disagreement:
         raise PlanError(
-            f"{len(disagreements)} fused module(s) do not share one (grid, q256): "
+            f"{len(disagreements)} fused module(s) do not share one scheme "
+            f"(family, grid, body, scale plane): "
             f"{json.dumps(disagreements[:3], indent=2)}\n"
             f"vLLM builds ONE quantization method per fused module, so the exporter would pass "
             f"the whole group through as BF16.  That is a finding about the allocation -- it "
-            f"chose an assignment this serving path cannot express.  Re-run with "
-            f"--allow-fused-disagreement to write the plan anyway and let the exporter's own "
-            f"passthrough handle it.")
+            f"chose an assignment this serving path cannot express.  Differing RUNGS are not "
+            f"this refusal (#37): they are written as a per-role q256 list and served.  Re-run "
+            f"with --allow-fused-disagreement to write the plan anyway and let the exporter's "
+            f"own passthrough handle it.")
 
     # The override writes a plan, and what it must write is the plan that will
     # SERVE.  The exporter's answer to a disagreeing group is to drop every
@@ -425,8 +461,13 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
                      "at another depth"),
         },
         "fused_disagreements": disagreements,
+        # ``none`` is the ordinary case and became the COMMON one once differing
+        # rungs stopped being a disagreement (#37): a mink allocation now plans
+        # every member at its own rung and disagrees about nothing.  The other
+        # value can only appear under the override, because a disagreement
+        # without it has already raised.
         "fused_disagreement_policy": (
-            "refused" if not disagreements else
+            "none" if not disagreements else
             "demoted_to_bf16_by_--allow-fused-disagreement"
         ),
         "totals": {
@@ -460,7 +501,8 @@ def main(argv=None):
                          "broadcast-by-role: apply its per-role assignment at every depth "
                          "(an EXTRAPOLATION, stamped as one in the sidecar)")
     ap.add_argument("--allow-fused-disagreement", action="store_true",
-                    help="write the plan even when a fused module's members disagree.  The whole "
+                    help="write the plan even when a fused module's members disagree on "
+                         "family/grid/body/plane (differing RUNGS are not a disagreement).  The whole "
                          "group is then planned BF16 -- which is what the exporter does with it -- "
                          "and the demotion is recorded in the sidecar "
                          "(fused_disagreements[].planned_as, totals.demoted_to_bf16_params), so "
@@ -512,8 +554,8 @@ def main(argv=None):
     demoted = provenance["totals"]["demoted_to_bf16_params"]
     if demoted:
         modules = len(provenance["fused_disagreements"])
-        print(f"  DEMOTED: {modules} fused module(s) whose members took different rungs are "
-              f"planned BF16 ({demoted} params, "
+        print(f"  DEMOTED: {modules} fused module(s) whose members do not share one scheme "
+              f"are planned BF16 ({demoted} params, "
               f"{100.0 * demoted / max(demoted + provenance['totals']['quantized_params'], 1):.1f}% "
               f"of the allocated body).  This plan is NOT the allocation that was chosen; "
               f"--allow-fused-disagreement asked for the exporter's passthrough and this is it.")

@@ -150,6 +150,61 @@ def _validate_loader_axes(axes: Any, family: str, where: str) -> None:
                 f"{reason!r}; the field explains a refusal and is null otherwise")
 
 
+def _validate_fused_module(block: Any, where: str) -> None:
+    """``fused_module`` must BE ``scheme.FUSED_MODULE_FIELDS``, not agree with it.
+
+    The same move ``loader_axes`` makes against ``ROUTE_TP_AXES``, for the
+    question a producer's group allocator actually asks: inside one vLLM-fused
+    module, which of a scheme's facts must every role share, and which is free
+    per role?  The answer is a property of the DECODERS -- they read each role
+    from that role's own manifest -- so it is published as a value the allocator
+    reads, and checked here against the dict the loader itself gates on.  A
+    document that said the rate was shared would cost a producer every
+    per-member rung its objective picked; one that said a family was free would
+    invite a checkpoint vLLM cannot build a method for.
+
+    ``mixed_rung_receipt`` is the OTHER claim, and it is not this one.  It says
+    whether a container receipt has covered a served module whose members took
+    different rungs -- the distinction ``loader_axes`` and ``max_world_size``
+    already draw between what the loader does and what has been measured.  It
+    is a boolean a gate reads, never prose.
+    """
+    from .scheme import (FUSED_CONTAINER, FUSED_MODULE_FIELDS, FUSED_MODULE_SCHEMA,
+                         FUSED_Q256_SPELLING)
+
+    _require_keys(block, where,
+                  required={"schema", "container", "fields", "sidecar_q256",
+                            "mixed_rung_receipt"},
+                  # Prose for a person, exactly as ``tensor_parallel.units_note``
+                  # is; no gate reads a ``*_note``, and none may.
+                  optional={"fields_note", "sidecar_q256_note", "mixed_rung_receipt_note"})
+    if block["schema"] != FUSED_MODULE_SCHEMA:
+        raise ValueError(f"{where}.schema must be {FUSED_MODULE_SCHEMA!r}, got {block['schema']!r}")
+    if block["container"] != FUSED_CONTAINER:
+        raise ValueError(
+            f"{where}.container must be {FUSED_CONTAINER!r}: it is the magic "
+            "``tessera.fused.parse_fused`` refuses anything else on")
+    if block["sidecar_q256"] != FUSED_Q256_SPELLING:
+        raise ValueError(
+            f"{where}.sidecar_q256 must be {FUSED_Q256_SPELLING!r} "
+            "(tessera.serving.scheme.FUSED_Q256_SPELLING); it names how a mixed-rung module is "
+            "spelled in the checkpoint, and a producer that wrote another spelling would write "
+            "a checkpoint this build refuses at load")
+    fields = block["fields"]
+    if not isinstance(fields, Mapping) or dict(fields) != FUSED_MODULE_FIELDS:
+        raise ValueError(
+            f"{where}.fields must equal tessera.serving.scheme.FUSED_MODULE_FIELDS "
+            f"{FUSED_MODULE_FIELDS}, got {dict(fields) if isinstance(fields, Mapping) else fields!r}. "
+            "The dict the loader gates on is the authority; a document that disagreed with it "
+            "would tell a producer's allocator that a fused group may vary something this build "
+            "refuses, or may not vary something it serves.")
+    if not isinstance(block["mixed_rung_receipt"], bool):
+        raise ValueError(
+            f"{where}.mixed_rung_receipt must be a boolean: it says whether a container receipt "
+            "covers a SERVED module whose members took different rungs, which is a different "
+            "claim from what the loader accepts and must not be inferred from it")
+
+
 def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     """Refuse a contract this package would not itself honour.
 
@@ -163,7 +218,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
                             "formats", "lane_eligibility", "tensor_parallel",
-                            "expert_parallel"},
+                            "expert_parallel", "fused_module"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -303,6 +358,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "
             "routed-MoE experts, so the contract makes no expert-parallel claim")
+    _validate_fused_module(contract["fused_module"], "runtime_contract.fused_module")
 
 
 def _reader_rate(entry: Mapping[str, Any], where: str) -> tuple[int, int, int]:

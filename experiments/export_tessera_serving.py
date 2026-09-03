@@ -37,10 +37,16 @@ is what selects the plugin: there is no serve flag to enable it, only
 ONE BLOB PER vLLM MODULE.  Every role a vLLM fusion stacks (q/k/v, gate/up)
 is encoded as its own Tessera unit and framed into a ``tessera.fused``
 container in stacking order; unfused Linears are a one-member container.  A
-fused module's roles must share one family (vLLM builds one method per
-module); an NVFP4 module's roles are checked at export for the exact binade
-shift the lane applies at load (``shared_lut_global``), so an unserveable
-group is refused here, not there.
+fused module's roles must share one family -- vLLM builds one method per
+module -- and with it the grid, body and scale plane that method's route
+decodes (``module_scheme_key``).  They need NOT share a RATE: every decoder in
+``tessera.serving`` reads a role from that role's own manifest, so a fused
+group whose members took different rungs is written as one container with a
+per-role ``q256`` list in its scheme, and the runtime publishes that rule as a
+value a producer's group allocator reads (``runtime_contract.json``'s
+``fused_module``, contract v6, #37).  An NVFP4 module's roles are additionally
+checked at export for the exact binade shift the lane applies at load
+(``shared_lut_global``), so an unserveable group is refused here, not there.
 
 THE STOCK TWIN.  ``--stock-twin DIR`` also writes the materialisation of the
 SAME wires (``tessera.stock.materialize_stock``; NVFP4 groups moved onto one
@@ -196,6 +202,33 @@ def family_for(grid) -> str:
     if grid.name == "BF16":
         return BF16
     return FP8 if grid.name == "E4M3" else NVFP4
+
+
+def module_scheme_key(grid, q256: int) -> tuple:
+    """The facts every role of one vLLM-fused module must agree on.
+
+    NOT ``(grid, q256)`` (#37).  vLLM builds one quant method per module, so
+    what has to be shared is what that method is built from -- the family, and
+    with it the grid, body and scale plane its route decodes to one tile.  The
+    RATE is not one of them: every decoder in ``tessera.serving`` reads a role
+    from that role's OWN manifest, and the runtime says so in a value
+    (``runtime_contract.json``'s ``fused_module.fields``, checked against
+    ``scheme.FUSED_MODULE_FIELDS``).  The old key compared the rate too, so a
+    group whose members took different rungs -- which is exactly what
+    PrismaQuant's group knapsack allocates, folded ON by default -- was passed
+    through at source precision by this script, and the allocator's chosen point
+    had no Tessera export at all.
+
+    The body and the plane are DERIVED from the rung here rather than assumed
+    constant, because ``wire_recipe`` picks them per rung: ``E2M1x2`` writes the
+    window body below the coset cap and the TCQ body at it.  Two such members
+    would decode on two different decoders, and this key separates them, so the
+    relaxation cannot let a mixed-body group through the back door.  (Every
+    sub-cap ``E2M1x2`` rung is refused by ``check_recipe`` before this anyway;
+    the key does not rely on that.)
+    """
+    recipe = wire_recipe(grid, q256)
+    return (family_for(grid), grid.name, recipe.body.name, recipe.scale_plane.name)
 
 
 def check_recipe(grid, q256: int, where: "str | None" = None, *,
@@ -545,7 +578,9 @@ def main():
         if rows % (grid.arity * 32) or cols % 16:
             passthrough.append(name); continue
         plan[name] = (grid, q256, rows, cols)
-    # group by vLLM module: a fused module needs every role quantizable on ONE recipe
+    # Group by vLLM module: every role quantizable, and every role on the same
+    # ``module_scheme_key`` -- one family/grid/body/plane.  The RATE may differ
+    # per role (#37); see ``module_scheme_key``.
     modules: dict[str, list[str]] = {}
     for name in list(plan):
         fused = fused_module(name)
@@ -555,7 +590,7 @@ def main():
         key, members = fused
         if key in modules:
             continue
-        recipes = {(plan[m][0].name, plan[m][1]) for m in members if m in plan}
+        recipes = {module_scheme_key(plan[m][0], plan[m][1]) for m in members if m in plan}
         if all(m in plan for m in members) and len(recipes) == 1:
             modules[key] = list(members)
         else:
@@ -622,21 +657,27 @@ def main():
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
-            grid, q256, _r, _c = plan[members[0]]
+            grid, _q0, _r, _c = plan[members[0]]
             family = family_for(grid)
-            recipe = wire_recipe(grid, q256)
+            # The module-level facts, which the grouping key already proved every
+            # member shares.  The RATE is read per member below.
+            recipe = wire_recipe(grid, plan[members[0]][1])
+            rungs = [int(plan[m][1]) for m in members]
             roles = []
             role_records = []
             stock_tensors: dict[str, dict] = {}
             for member in members:
+                member_grid, q256, _mr, _mc = plan[member]
+                member_recipe = wire_recipe(member_grid, q256)
                 weight = weights_cache.pop(member).to(args.device, torch.float32).contiguous()
                 # A missing key renders RTN and raises nothing; ``for_unit``
                 # refuses instead, and is the same call the library exporters make.
                 extra = ({} if activation is None else
                          activation.for_unit(member, weight.shape[1], args.device,
-                                             scale_plane=recipe.scale_plane))
+                                             scale_plane=member_recipe.scale_plane))
                 exported, unit, forests = encode_linear_planes(
-                    weight, grid=grid, q256=q256, name=member, verify=not args.no_verify, **extra)
+                    weight, grid=member_grid, q256=q256, name=member,
+                    verify=not args.no_verify, **extra)
                 extra.clear()
                 parse_unit_artifact(exported.blob, device=args.device)      # the reader accepts what we wrote
                 role = module_of(member).rsplit(".", 1)[-1]
@@ -644,7 +685,7 @@ def main():
                 stock_tensors[member] = materialize_stock(unit, forests, DEFAULT_CODE)
                 role_records.append({
                     "tensor": member, "role": role, "rows": exported.rows, "cols": exported.columns,
-                    "grid": grid.name, "q256": q256, "family": family,
+                    "grid": member_grid.name, "q256": q256, "family": family,
                     "wire_bytes": exported.exact_bytes, "blob_bytes": len(exported.blob),
                     "wire_bpp": float(exported.bpp), "own_global": float(unit.scale_global),
                     "resident_bytes_stock": stock_bytes(stock_tensors[member]),
@@ -655,8 +696,11 @@ def main():
             blob = pack_fused([(r, rows, b) for r, rows, b, _u, _f in roles])
             rows_total = sum(r[1] for r in roles)
             cols = role_records[0]["cols"]
+            # The module's rung is a scalar when its roles agree and the list of
+            # theirs when they do not, the same spelling the scheme uses (#37).
+            module_q256 = rungs[0] if len(set(rungs)) == 1 else list(rungs)
             record = {
-                "family": family, "grid": grid.name, "q256": q256, "roles": role_records,
+                "family": family, "grid": grid.name, "q256": module_q256, "roles": role_records,
                 "container_bytes": len(blob), "rows": rows_total, "cols": cols,
                 "wire_bytes": sum(r["wire_bytes"] for r in role_records),
             }
@@ -709,7 +753,11 @@ def main():
                 # will declare ``routed_moe`` here rather than change the schema.
                 "family": family, "structure": "dense",
                 "grid": grid.name, "body": recipe.body.name, "plane": recipe.scale_plane.name,
-                "q256": q256, "rows": rows_total, "columns": cols, "wire_bytes": len(blob),
+                # An int when every role took the same rung -- what every
+                # checkpoint before #37 carries -- and one rung per role, in
+                # ``roles`` order, when they did not.  ``validate_tessera_scheme``
+                # reads both; a plugin older than contract v6 refuses the list.
+                "q256": module_q256, "rows": rows_total, "columns": cols, "wire_bytes": len(blob),
                 "roles": [[r, rows] for r, rows, *_ in roles],
             }
             config_groups[f"tessera_{module.replace('.', '_')}"] = {"format": "TESSERA", "targets": [module], "scheme": scheme}

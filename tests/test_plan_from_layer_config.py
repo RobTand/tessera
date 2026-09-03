@@ -5,6 +5,13 @@ and ``TESSERA_<BASE>_K<arity>_R<rung>``) and the exporter's (tensor names and
 ``{"grid", "q256"}``), so what it must not do is quietly change the assignment:
 drop a unit, invent a rate, or write a plan whose fused groups the serving path
 cannot express.  Each test below pins one of those.
+
+Differing RUNGS inside one fused group are NOT such a case (#37): the serving
+path decodes each role from its own manifest and the exporter writes a per-role
+``q256`` list, so a mink allocation is planned member by member.  What a fused
+group must still share is its ROUTE -- family, grid, body, scale plane -- and
+that is one imported key (``export_tessera_serving.module_scheme_key``) rather
+than a rule this file states a second time.
 """
 from __future__ import annotations
 
@@ -111,20 +118,84 @@ def test_a_bf16_choice_is_a_bf16_module_and_not_a_refusal():
     assert provenance["totals"]["tessera_units"] == 6
 
 
-def test_a_fused_group_that_does_not_share_one_rung_is_refused_before_the_encode():
-    # vLLM builds ONE method per fused module.  The exporter's answer is to pass
-    # the group through as BF16 and say so; that is correct and it is also a
-    # 20-minute encode away, so the disagreement is surfaced here.
+def test_a_fused_group_whose_members_took_different_rungs_is_planned_as_allocated():
+    """Differing RUNGS are not a disagreement (#37).
+
+    vLLM builds ONE method per fused module, but that method decodes each role
+    from that role's OWN manifest -- proved element-for-element by
+    ``experiments/fused_member_rung_identity.py`` and published as a value by
+    ``runtime_contract.json``'s ``fused_module.fields`` (``q256: per_member``).
+    So the converter carries each member's rung through, and the exporter writes
+    them as a per-role ``q256`` list in the module's scheme.  It used to refuse
+    this, and the refusal cost the allocator's chosen point its export.
+    """
     config = uniform_config()
     config["model.layers.0.self_attn.k_proj"] = tessera("TESSERA_E4M3_K1_R920")
+    plan, provenance = build(config, one_layer_shapes())
+    assert plan["model.layers.0.self_attn.q_proj.weight"] == {"grid": "E4M3", "q256": 1083}
+    assert plan["model.layers.0.self_attn.k_proj.weight"] == {"grid": "E4M3", "q256": 920}
+    assert plan["model.layers.0.self_attn.v_proj.weight"] == {"grid": "E4M3", "q256": 1083}
+    assert provenance["fused_disagreements"] == []
+    assert provenance["fused_disagreement_policy"] == "none"
+    totals = provenance["totals"]
+    assert totals["tessera_units"] == 7
+    assert totals["demoted_to_bf16_params"] == 0
+    assert totals["quantized_params"] == sum(r * c for r, c in one_layer_shapes().values())
+
+
+def test_a_mink_allocation_plans_every_member_at_the_rung_the_dp_chose():
+    """A per-member (mink) allocation, end to end: Tessera issues #15 and #37.
+
+    PrismaQuant's group knapsack gives one family per fused group and a RATE
+    PER MEMBER, which is the whole reason the option exists -- the members'
+    sensitivities differ.  No single rate for the group is derivable from the
+    objective (min / bytes-weighted / max are taste, not arithmetic), and the
+    converter never needs one: it plans each member at its own rung, and #15's
+    rule still holds -- every unit the sidecar prices is a unit that will be
+    encoded, and nothing is charged for that will not serve.
+    """
+    config = {
+        "model.layers.0.self_attn.q_proj": tessera("TESSERA_E4M3_K1_R1083"),
+        "model.layers.0.self_attn.k_proj": tessera("TESSERA_E4M3_K1_R920"),
+        "model.layers.0.self_attn.v_proj": tessera("TESSERA_E4M3_K1_R1200"),
+        "model.layers.0.self_attn.o_proj": tessera("TESSERA_E4M3_K1_R934"),
+        "model.layers.0.mlp.gate_proj": tessera("TESSERA_E4M3_K1_R1107"),
+        "model.layers.0.mlp.up_proj": tessera("TESSERA_E4M3_K1_R1000"),
+        "model.layers.0.mlp.down_proj": tessera("TESSERA_E4M3_K1_R749"),
+    }
+    plan, provenance = build(config, one_layer_shapes())
+    assert {name: entry["q256"] for name, entry in plan.items()} == {
+        "model.layers.0.self_attn.q_proj.weight": 1083,
+        "model.layers.0.self_attn.k_proj.weight": 920,
+        "model.layers.0.self_attn.v_proj.weight": 1200,
+        "model.layers.0.self_attn.o_proj.weight": 934,
+        "model.layers.0.mlp.gate_proj.weight": 1107,
+        "model.layers.0.mlp.up_proj.weight": 1000,
+        "model.layers.0.mlp.down_proj.weight": 749,
+    }
+    totals = provenance["totals"]
+    assert provenance["fused_disagreements"] == []
+    assert totals["tessera_units"] == 7
+    assert totals["demoted_to_bf16_params"] == 0
+    assert totals["quantized_params"] == sum(r * c for r, c in one_layer_shapes().values())
+    # every priced unit is a unit that will be encoded (#15)
+    assert {u["qname"] for u in provenance["units"]} == set(config)
+
+
+def test_a_fused_group_split_across_two_families_is_still_refused_and_still_demoted():
+    """What the relaxation did NOT relax.
+
+    A rate is per role; a ROUTE is not.  Two members on two families would need
+    two decoders to produce one tile, so the refusal stands, and
+    ``--allow-fused-disagreement`` still writes the plan that will SERVE --
+    every member BF16, dropped from the unit table, and the demotion recorded --
+    rather than naming rungs the exporter is about to discard.
+    """
+    config = uniform_config()
+    config["model.layers.0.self_attn.k_proj"] = tessera("TESSERA_BF16_K1_R1792")
     with pytest.raises(SystemExit, match="do not share one"):
         build(config, one_layer_shapes())
     plan, provenance = build(config, one_layer_shapes(), allow_disagreement=True)
-    # The override writes the plan that will SERVE.  The exporter discards every
-    # member of a disagreeing group and passes the module through, so naming
-    # k_proj's rung here would describe an encode that does not happen -- and
-    # the sidecar, whose job is that the bytes served are the bytes priced,
-    # would charge for it.
     assert plan["model.layers.0.self_attn.k_proj.weight"] == "BF16"
     assert plan["model.layers.0.self_attn.q_proj.weight"] == "BF16"
     assert plan["model.layers.0.self_attn.v_proj.weight"] == "BF16"
@@ -144,52 +215,6 @@ def test_a_fused_group_that_does_not_share_one_rung_is_refused_before_the_encode
     assert totals["quantized_params"] == 3 * 3072 * 1024 + 1024 * 2048
     assert provenance["fused_disagreement_policy"] == \
         "demoted_to_bf16_by_--allow-fused-disagreement"
-
-
-def test_a_mink_allocation_refuses_by_default_and_never_prices_what_it_will_not_serve():
-    """A per-member (mink) allocation, end to end: Tessera issue #15.
-
-    PrismaQuant's group knapsack gives one family per fused group and a RATE
-    PER MEMBER, which is the whole reason the option exists -- the members'
-    sensitivities differ.  This serving path cannot express it, and the
-    deliberate answer is to refuse: no single rate for the group is derivable
-    from the objective (min / bytes-weighted / max are taste, not arithmetic)
-    and any of them moves the point off the frontier the DP chose it on.
-
-    What must not happen -- and did, under the override -- is a plan that names
-    rungs the exporter will discard while the sidecar charges for them.  Here
-    five of seven units are demoted, two thirds of the allocated body, and the
-    plan and the totals both say so.
-    """
-    config = {
-        "model.layers.0.self_attn.q_proj": tessera("TESSERA_E4M3_K1_R1083"),
-        "model.layers.0.self_attn.k_proj": tessera("TESSERA_E4M3_K1_R920"),
-        "model.layers.0.self_attn.v_proj": tessera("TESSERA_E4M3_K1_R1200"),
-        "model.layers.0.self_attn.o_proj": tessera("TESSERA_E4M3_K1_R934"),
-        "model.layers.0.mlp.gate_proj": tessera("TESSERA_E4M3_K1_R1107"),
-        "model.layers.0.mlp.up_proj": tessera("TESSERA_E4M3_K1_R1000"),
-        "model.layers.0.mlp.down_proj": tessera("TESSERA_E4M3_K1_R749"),
-    }
-    with pytest.raises(SystemExit) as excinfo:
-        build(config, one_layer_shapes())
-    message = str(excinfo.value)
-    assert "2 fused module(s) do not share one" in message
-    assert "R1083" in message and "R920" in message      # the members and their rates
-
-    plan, provenance = build(config, one_layer_shapes(), allow_disagreement=True)
-    demoted = {"self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj",
-               "mlp.gate_proj", "mlp.up_proj"}
-    for role in demoted:
-        assert plan[f"model.layers.0.{role}.weight"] == "BF16", role
-    assert plan["model.layers.0.self_attn.o_proj.weight"] == {"grid": "E4M3", "q256": 934}
-    assert plan["model.layers.0.mlp.down_proj.weight"] == {"grid": "E4M3", "q256": 749}
-    totals = provenance["totals"]
-    assert totals["tessera_units"] == 2
-    assert totals["demoted_to_bf16_params"] == 2048 * 1024 + 2 * 1024 * 1024 + 2 * 3072 * 1024
-    # the charged-bits total covers only what will actually be encoded
-    assert totals["quantized_params"] == 1024 * 2048 + 1024 * 3072
-    assert {u["qname"] for u in provenance["units"]} == {
-        "model.layers.0.self_attn.o_proj", "model.layers.0.mlp.down_proj"}
 
 
 def test_a_whole_group_option_name_is_refused_as_the_thing_it_is():
