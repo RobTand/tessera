@@ -23,6 +23,7 @@ The pass order is forced by what each stage needs:
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 import torch
@@ -1004,6 +1005,34 @@ def _pack_scales_lut(
     return table_bytes, index.to(torch.uint8), table[index], global_scale
 
 
+#: Opt-in sink for the metric refit's own arithmetic (``refit_diagnostics``).
+#: ``None`` -- the state every encode runs in -- means the refit records
+#: nothing and costs nothing extra.
+_REFIT_DIAG: "list | None" = None
+
+
+@contextmanager
+def refit_diagnostics():
+    """Collect one record per metric-aware LUT refit call, for a measurement.
+
+    A refit's *landed* error is the only number an encode acts on, and it is
+    the sum of two different things: how good a point the step reaches, and
+    how much of that the sixteen-entry table and its nearest-in-linear landing
+    give back.  A screen that moves and a screen that does not are the same
+    landed number until those are separated, so this yields the list the refit
+    appends to.  Debug-only: floats out, no byte in.  For a 1-D metric the
+    recorded costs are the separable parabola ``sum A c^2 - 2 B c``, which
+    equals the true weighted error only up to a constant -- so compare records
+    within one call, never a 1-D call's numbers against a full-H call's.
+    """
+    global _REFIT_DIAG
+    outer, _REFIT_DIAG = _REFIT_DIAG, []
+    try:
+        yield _REFIT_DIAG
+    finally:
+        _REFIT_DIAG = outer
+
+
 def _refit_scales_lut_metric(
     work: torch.Tensor,
     units: torch.Tensor,
@@ -1013,6 +1042,7 @@ def _refit_scales_lut_metric(
     effective: torch.Tensor,
     global_scale: float,
     metric: torch.Tensor,
+    gauss_seidel: bool = False,
 ):
     """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
 
@@ -1056,7 +1086,17 @@ def _refit_scales_lut_metric(
     (a) Every block moves at once, so the vector step is Jacobi, not the joint
     minimiser -- corrected by an exact per-row step length ``t*`` along the
     direction, which is the true minimiser on that line and is identically 1
-    when the metric is separable.  (b) ``_fit_lut`` chooses the sixteen table
+    when the metric is separable.  ``gauss_seidel`` replaces that Jacobi step
+    with one sequential sweep: block ``b`` is solved against a residual that
+    already carries blocks ``0..b-1``, which is the textbook fix for exactly
+    this and is what issue #35 asks to be measured.  It is **encoder-side and
+    opt-in**: no byte of the wire's grammar moves, the same decoder reads the
+    result, and with the flag off this function computes what it always
+    computed.  It is deliberately not offered through ``export.ActivationSource``
+    -- an exporter cannot set it, so no checkpoint config can be written that
+    records a refit the merge guard has no field for.  Promoting it means
+    adding the field there and to the guard's list, in the same change.
+    (b) ``_fit_lut`` chooses the sixteen table
     entries under the separable second-order model ``sum_b A_b (c_b - s*_b)^2``,
     i.e. the expansion around the current plane with cross-block terms dropped.
     (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
@@ -1103,11 +1143,34 @@ def _refit_scales_lut_metric(
         A = torch.einsum("rbi,bij,rbj->rb", Ub, Hd, Ub)
         E = W - S.repeat_interleave(half, dim=1) * U
         G = E @ H
-        step = ((G.reshape(rows, nb, half) * Ub).sum(dim=2)).div(A.clamp_min(1e-30))
-        step = torch.where(A > 0, step, torch.zeros_like(step))
+        if gauss_seidel:
+            # One in-place sweep in the natural block order.  Each block's
+            # coordinate step is the exact minimiser GIVEN the blocks already
+            # moved, so ``G`` has to carry those moves: block ``b``'s update
+            # changes ``E`` only on its own sixteen columns, and the gradient
+            # field it feeds forward is that change through H's rows for those
+            # columns.  Total work is one ``E @ H``'s worth of flops, split
+            # into ``nb`` panels.
+            live = G.clone()
+            step = torch.zeros_like(S)
+            for b in range(nb):
+                lo, hi = b * half, (b + 1) * half
+                Ubb = Ub[:, b, :]
+                d = (live[:, lo:hi] * Ubb).sum(dim=1).div(A[:, b].clamp_min(1e-30))
+                d = torch.where(A[:, b] > 0, d, torch.zeros_like(d))
+                step[:, b] = d
+                live = live - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+            del live
+        else:
+            step = ((G.reshape(rows, nb, half) * Ub).sum(dim=2)).div(A.clamp_min(1e-30))
+            step = torch.where(A > 0, step, torch.zeros_like(step))
         # The exact step length along that direction, per row -- rows are
         # independent under H, so each has its own line minimiser and the
-        # pre-landing candidate can never raise the loss.
+        # pre-landing candidate can never raise the loss.  ``G`` here is the
+        # gradient field at ``S``, before any sweep, which is what makes ``t``
+        # the minimiser of the true line through ``S`` in direction ``D`` under
+        # either optimiser; a Gauss-Seidel direction already satisfies ``t=1``
+        # descent, and the line search can only improve on it.
         D = step.repeat_interleave(half, dim=1) * U
         num = (G * D).sum(dim=1)
         den = ((D @ H) * D).sum(dim=1)
@@ -1118,6 +1181,7 @@ def _refit_scales_lut_metric(
             Ec = W - C.repeat_interleave(half, dim=1) * U
             return float(((Ec @ H) * Ec).sum())
 
+    stepped = target if _REFIT_DIAG is None else target.clone()
     valid = (A > 0) & (target > 0)
     target = torch.where(valid, target, S)
     weights = torch.where(valid, A, torch.zeros_like(A))
@@ -1133,13 +1197,44 @@ def _refit_scales_lut_metric(
     # separable metric it never wins, because re-assignment lands every block
     # on its own minimiser.
     best_bytes, best_index, best_eff = table_bytes, index.long(), S
-    best = cost(S)
-    for cand_bytes, cand_table in ((table_bytes, old_table), (new_bytes, new_table)):
+    before = best = cost(S)
+    won = "kept"
+    for label, cand_bytes, cand_table in (("old-table", table_bytes, old_table),
+                                          ("new-table", new_bytes, new_table)):
         idx = _nearest(flat_t, cand_table)
         eff = cand_table[idx].reshape(rows, nb)
         here = cost(eff)
         if here < best:
-            best, best_bytes, best_index, best_eff = here, cand_bytes, idx, eff
+            best, best_bytes, best_index, best_eff, won = here, cand_bytes, idx, eff, label
+    if _REFIT_DIAG is not None:
+        # Debug-only, floats only, appended after every decision this call
+        # made.  The refit's landed error is three things added together and
+        # the landed number alone cannot tell them apart:
+        #
+        #   before   -> stepped     the STEP.  Jacobi against Gauss-Seidel,
+        #                           each with its exact per-row line search;
+        #                           the only quantity issue #35 is about.
+        #   stepped  -> continuous  the non-positive-target REVERT.  A block
+        #                           whose optimum is a collapsed scale keeps
+        #                           the one it has, which un-does part of any
+        #                           step, both optimisers' alike.
+        #   continuous -> landed    the LANDING.  ``_fit_lut``'s separable
+        #                           model -- the one that drops every
+        #                           cross-block term -- plus nearest-in-linear
+        #                           assignment into sixteen table entries.
+        #
+        # ``reverted`` counts the blocks the middle leg held back.
+        _REFIT_DIAG.append({
+            "gauss_seidel": bool(gauss_seidel),
+            "metric_ndim": int(metric.ndim),
+            "rows": int(rows), "blocks": int(nb),
+            "before": before,
+            "stepped": cost(stepped),
+            "continuous": cost(target),
+            "landed": best,
+            "reverted": int((~valid).sum()),
+            "candidate": won,
+        })
     return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
 
 
@@ -1152,6 +1247,7 @@ def _refit_scales_lut(
     effective: torch.Tensor,
     global_scale: float,
     metric: "torch.Tensor | None" = None,
+    gauss_seidel: bool = False,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -1171,6 +1267,7 @@ def _refit_scales_lut(
     if metric is not None:
         return _refit_scales_lut_metric(
             work, units, half, table_bytes, index, effective, global_scale, metric,
+            gauss_seidel=gauss_seidel,
         )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
@@ -1237,6 +1334,7 @@ def encode_unit(
     ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
     refit_metric: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
 
@@ -1284,6 +1382,15 @@ def encode_unit(
     body's reach, and is CHANNEL-only for the same reason -- a block scale
     already tracks its own sixteen weights.  Both are encoder settings; neither
     is wire.
+
+    ``refit_gauss_seidel`` sweeps the LUT plane's block scales sequentially
+    instead of stepping every block from one residual (issue #35).  It is
+    meaningful only where the blocks are actually coupled -- a full-Hessian
+    ``refit_metric`` on the LUT plane -- and is refused anywhere else rather
+    than accepted as a no-op, for the same reason ``refit_metric`` is: a
+    silently ignored encoder setting is how an export ships bytes it did not
+    ask for.  Encoder-side and opt-in: the wire, the decoder and the profile
+    id are untouched, and with it off the encode is byte for byte what it was.
 
     ``span`` is the trellis super-symbol length (``viterbi_columns``) and
     ``scale_plane`` how segment 2b is written; both are wire and both default
@@ -1554,6 +1661,36 @@ def encode_unit(
             "and there is no measured floor for one, so this would be silently "
             "ignored"
         )
+    if refit_gauss_seidel:
+        # The sweep is a different OPTIMISER for one objective: the coupled
+        # least squares the LUT plane's block scales solve under a full
+        # Hessian.  Under no metric there is no such solve; under a diagonal
+        # one the sixteen-column blocks decouple exactly and a sequential
+        # sweep computes the same numbers as a parallel one, so accepting the
+        # flag there would name an arm that did nothing -- the failure mode
+        # the sweep is being measured against.  On CHANNEL there is one scale
+        # per row and no block to sweep.  Refuse, one message per reason.
+        if refit_metric is None:
+            raise GrammarError(
+                "refit_gauss_seidel is a sweep order for the metric-aware block-scale "
+                "refit, and without refit_metric no such refit runs: the plain "
+                "least squares is already per-block exact"
+            )
+        if refit_metric.ndim == 1:
+            raise GrammarError(
+                "refit_gauss_seidel needs a metric that couples the blocks. A 1-D "
+                f"refit_metric ({tuple(refit_metric.shape)}) is separable: each "
+                "16-column block's step is already its joint minimiser, so a "
+                "sequential sweep computes exactly the parallel one's numbers and "
+                "the flag would name an arm that changed nothing"
+            )
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_gauss_seidel sweeps the LUT plane's per-{half} block scales; "
+                f"the {scale_plane.name} plane has no block sweep to order "
+                "(CHANNEL's row scales are independent under H and its refit is "
+                "already the exact minimiser), so this would be silently ignored"
+            )
     if scale_refit == 0 and (refit_metric is not None or refit_reach_floor):
         named = "refit_metric" if refit_metric is not None else "refit_reach_floor"
         raise GrammarError(
@@ -1673,7 +1810,7 @@ def encode_unit(
         elif scale_plane is ScalePlaneKind.LUT:
             table_bytes, refine, effective = _refit_scales_lut(
                 work, units, half, table_bytes, refine, effective, global_scale,
-                metric=refit_metric,
+                metric=refit_metric, gauss_seidel=refit_gauss_seidel,
             )
         else:
             base_byte, refine, effective = _refit_scales(

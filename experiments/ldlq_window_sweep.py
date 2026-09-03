@@ -34,6 +34,7 @@ of them alone is choosing its answer.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import sys
@@ -47,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.alphabet import SERIALISABLE_GRIDS              # noqa: E402
 from tessera.compensate import block_ldl, regularize_hessian  # noqa: E402
+from tessera.encode import refit_diagnostics                  # noqa: E402
 from tessera.export import (                                 # noqa: E402
     DEFAULT_CODE, encode_linear_planes, wire_recipe)
 from tessera.manifest import ScalePlaneKind                  # noqa: E402
@@ -81,8 +83,24 @@ def main() -> None:
                          "best.  A per-unit best gives every unit a differently named arm, which is "
                          "not a thing a geomean can be taken over -- and an exporter has to pick one "
                          "setting for the whole checkpoint anyway.")
+    ap.add_argument("--gauss-seidel", action="store_true",
+                    help="add the Gauss-Seidel sweep of the metric refit's block scales "
+                         "beside the Jacobi step it replaces (issue #35).  LUT plane and "
+                         "a full-H metric only -- under a diagonal metric the blocks "
+                         "decouple and the encoder refuses the flag rather than name an "
+                         "arm that changed nothing.")
+    ap.add_argument("--drift-control", action="store_true",
+                    help="run the served default (`LDLQ <pair> + refit h^<first alpha>`) as "
+                         "the FIRST arm and again as the LAST, under distinct names.  One "
+                         "process, same weights, same H: the two runs are the same encode, "
+                         "so any difference between them is drift and bounds what a "
+                         "difference between two ARMS is allowed to mean.  Needs --pair, "
+                         "because a per-unit best is not known before the sweep runs.")
     ap.add_argument("--out", default="experiments/results/tessera_ldlq_window_sweep.json")
     a = ap.parse_args()
+    if a.drift_control and a.pair is None:
+        raise SystemExit("--drift-control needs --pair: the control arm has to be the same "
+                         "named arm on every unit, and a per-unit best is not one")
 
     grid = grid_by_name(a.grid)
     recipe = wire_recipe(grid, a.q256)
@@ -144,23 +162,47 @@ def main() -> None:
                     f"{r['hweighted']:9.5f} {r['hfit']:9.5f} {'':>7} {secs:6.1f}")
                 return r
 
-            def run(arm, **kw):
+            def run(arm, dup_ok=False, **kw):
                 t0 = time.time()
-                _, unit, forests = encode_linear_planes(
-                    W, grid=grid, q256=a.q256, name=name, verify=False, **kw)
+                with refit_diagnostics() as diag:
+                    _, unit, forests = encode_linear_planes(
+                        W, grid=grid, q256=a.q256, name=name, verify=False, **kw)
                 secs = time.time() - t0
                 st = materialize_stock(unit, forests, DEFAULT_CODE)
                 What = stock_dequant(st).to(dev).float()
                 # A lever that encodes to the same bytes as an arm without it
                 # is a silent no-op -- exactly what a named arm hides.  Say so,
-                # loudly, next to the number.
-                key = hash(What.cpu().numpy().tobytes())
-                if key in seen_bytes:
+                # loudly, next to the number.  sha256, not hash(): the digest
+                # is written to the JSON and read across processes, and
+                # PYTHONHASHSEED is randomised per run.
+                key = hashlib.sha256(
+                    What.cpu().numpy().tobytes()).hexdigest()
+                if key in seen_bytes and not dup_ok:
                     log(f"    !! IDENTICAL BYTES: {arm!r} == {seen_bytes[key]!r} "
                         f"-- that lever did nothing on this unit")
-                else:
-                    seen_bytes[key] = arm
-                return score(arm, What, secs)
+                seen_bytes.setdefault(key, arm)
+                r = score(arm, What, secs)
+                r["sha256"] = key
+                # Where the refit's own arithmetic went, pass by pass.  The
+                # landed number is the only one the encode acts on, but it is
+                # the STEP and the LANDING added together, and #35 is a
+                # question about the step alone.
+                r["refit"] = [dict(d) for d in diag]
+                return r
+
+            # The drift control runs FIRST, before any other arm has touched
+            # the box, and again LAST after every one of them has.  Both are
+            # the same encode of the same weights in the same process, so the
+            # pair bounds every other difference in the table: an arm-to-arm
+            # gap smaller than the control's own spread is not a result.
+            control = None
+            if a.drift_control:
+                pair = (a.pair[0], int(a.pair[1]))
+                Lc = block_ldl(regularize_hessian(H, sigma_reg=pair[0]), pair[1])
+                mc = hn.pow(a.alphas[0])
+                control = (f"LDLQ {pair[0]}/{pair[1]} + refit h^{a.alphas[0]}",
+                           dict(ldl=Lc, ldl_block=pair[1], refit_metric=mc))
+                run(f"drift control FIRST [{control[0]}]", dup_ok=True, **control[1])
 
             run("baseline (no LDLQ, plain refit)")
 
@@ -193,14 +235,45 @@ def main() -> None:
             for alpha in a.alphas:
                 m = hn.pow(alpha)
                 run(f"refit h^{alpha} only", refit_metric=m)
+                # Under --drift-control this arm IS the control arm, run a
+                # third time.  Its bytes matching the control's is the
+                # encoder being deterministic, not a lever doing nothing, so
+                # it must not raise the no-op warning that means the latter.
                 run(f"LDLQ {best[0]}/{best[1]} + refit h^{alpha}",
+                    dup_ok=(control is not None and
+                            control[0] == f"LDLQ {best[0]}/{best[1]} + refit h^{alpha}"),
                     ldl=L, ldl_block=best[1], refit_metric=m)
             run("refit full-H only", refit_metric=H)
             run(f"LDLQ {best[0]}/{best[1]} + refit full-H",
                 ldl=L, ldl_block=best[1], refit_metric=H)
+            if a.gauss_seidel:
+                # The ONE difference from the arm above: the sweep order of
+                # the metric refit's block scales.  Same LDLQ factor, same
+                # block, same metric, same everything else -- two treatments
+                # in one arm would make the comparison say nothing.
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H (Gauss-Seidel)",
+                    ldl=L, ldl_block=best[1], refit_metric=H,
+                    refit_gauss_seidel=True)
+                run("refit full-H only (Gauss-Seidel)",
+                    refit_metric=H, refit_gauss_seidel=True)
             if channel:
                 run(f"LDLQ {best[0]}/{best[1]} + refit full-H + reach floor",
                     ldl=L, ldl_block=best[1], refit_metric=H, refit_reach_floor=True)
+
+            if control is not None:
+                last = run(f"drift control LAST [{control[0]}]", dup_ok=True, **control[1])
+                first = res[f"drift control FIRST [{control[0]}]"]
+                same = last["sha256"] == first["sha256"]
+                log(f"    -- drift control: bytes {'IDENTICAL' if same else 'DIFFER'}"
+                    f"  out {first['out']:.6f} -> {last['out']:.6f}"
+                    f"  ({last['out'] / first['out'] - 1.0:+.4%})"
+                    f"  hfit {first['hfit']:.6f} -> {last['hfit']:.6f}"
+                    f"  ({last['hfit'] / first['hfit'] - 1.0:+.4%})")
+                res["_drift"] = {
+                    "bytes_identical": same,
+                    "out_first": first["out"], "out_last": last["out"],
+                    "hfit_first": first["hfit"], "hfit_last": last["hfit"],
+                }
 
             out["units"][name] = res
             Path(a.out).write_text(json.dumps(out, indent=1))
@@ -210,14 +283,67 @@ def main() -> None:
     # Geomean of the out-space score per arm, over the units every arm ran on.
     arms = set.intersection(*[{k for k in v if not k.startswith("_")}
                               for v in out["units"].values()])
-    log("\n== geomean out-space (held-out rows), all units")
-    rows = sorted(
-        ((arm, math.exp(sum(math.log(out["units"][u][arm]["out"]) for u in out["units"])
-                        / len(out["units"]))) for arm in arms), key=lambda r: r[1])
+
+    def geo(arm, field):
+        return math.exp(sum(math.log(out["units"][u][arm][field]) for u in out["units"])
+                        / len(out["units"]))
+
+    log("\n== geomean, all units -- out-space (held-out rows) and hfit (the fit "
+        "rows' own quadratic, the one the refit's guard is monotone in)")
+    rows = sorted(((arm, geo(arm, "out")) for arm in arms), key=lambda r: r[1])
     base = dict(rows)["baseline (no LDLQ, plain refit)"]
+    log(f"    {'arm':<50} {'out':>9} {'vs base':>9} {'hfit':>9}")
     for arm, g in rows:
-        log(f"    {arm:<44} {g:9.5f}  {g / base:6.4f}x")
+        log(f"    {arm:<50} {g:9.5f} {g / base:8.4f}x {geo(arm, 'hfit'):9.5f}")
     out["geomean_out"] = dict(rows)
+    out["geomean_hfit"] = {arm: geo(arm, "hfit") for arm in arms}
+
+    # The promotion rule of issue #35, evaluated in the run rather than by
+    # hand afterwards: Gauss-Seidel is promoted only if it beats the SERVED
+    # h^1.0 default on the out geomean by more than the 1.38% the two refit
+    # objectives already span, and stays monotone on hfit.  The margin is
+    # written here so that it cannot be chosen once the numbers are visible.
+    MARGIN = 0.0138
+    gs = next((x for x in arms if "Gauss-Seidel" in x and x.startswith("LDLQ")), None)
+    ja = next((x for x in arms if x.endswith("refit full-H") and x.startswith("LDLQ")), None)
+    ctl = next((x for x in arms if x.startswith("drift control FIRST")), None) or \
+        next((x for x in arms if "refit h^" in x and x.startswith("LDLQ")), None)
+    if gs and ctl:
+        need = geo(ctl, "out") / (1.0 + MARGIN)
+        got = geo(gs, "out")
+        # (i) the guard reading: every refit arm at or below the baseline on
+        # hfit.  (ii) the arm reading: GS at or below Jacobi on hfit, per
+        # unit.  Both are reported; they answer different questions and a
+        # single word "monotone" would hide which one held.
+        guard = {u: out["units"][u][gs]["hfit"] <= out["units"][u]["baseline (no LDLQ, plain refit)"]["hfit"]
+                 for u in out["units"]}
+        versus = ({u: out["units"][u][gs]["hfit"] <= out["units"][u][ja]["hfit"]
+                   for u in out["units"]} if ja else {})
+        verdict = {
+            "control_arm": ctl, "gs_arm": gs, "jacobi_arm": ja,
+            "margin_required": MARGIN,
+            "control_out_geomean": geo(ctl, "out"),
+            "gs_out_geomean": got,
+            "gs_over_control": got / geo(ctl, "out"),
+            "threshold_out_geomean": need,
+            "beats_margin": got < need,
+            "hfit_below_baseline_per_unit": guard,
+            "hfit_gs_below_jacobi_per_unit": versus,
+            "promoted": bool(got < need and all(guard.values())),
+        }
+        out["verdict_issue_35"] = verdict
+        log(f"\n== issue #35 promotion rule (written before the numbers)")
+        log(f"    control  {ctl!r}  out geomean {geo(ctl, 'out'):.5f}")
+        log(f"    GS       {gs!r}  out geomean {got:.5f}  "
+            f"({got / geo(ctl, 'out') - 1.0:+.4%} vs control)")
+        if ja:
+            log(f"    Jacobi   {ja!r}  out geomean {geo(ja, 'out'):.5f}")
+        log(f"    needs    < {need:.5f} (control / 1.0138)")
+        log(f"    hfit <= baseline on every unit: {all(guard.values())}  {guard}")
+        if versus:
+            log(f"    hfit GS <= Jacobi on every unit: {all(versus.values())}  {versus}")
+        log(f"    VERDICT: {'PROMOTE to a serve' if verdict['promoted'] else 'MEASURED AND REJECTED'}")
+
     Path(a.out).write_text(json.dumps(out, indent=1))
     Path(a.out).with_suffix(".log").write_text("\n".join(lines) + "\n")
     print(f"\nwrote {a.out}")
