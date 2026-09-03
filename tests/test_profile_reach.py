@@ -239,3 +239,35 @@ def test_an_explicitly_resolved_default_spread_is_the_default_profile():
         None, (4,),
         channel_sigma=1.25 * default_channel_sigma(E4M3_GRID), **kw)
     assert moved != implicit
+
+
+def test_a_resolved_channel_spread_spelled_as_window_sigma_is_the_default(
+):
+    """#90, #81's sibling one slot over.
+
+    Under a CHANNEL plane the encoder resolves an unset ``window_sigma`` to the
+    channel spread, for the table and for the reach both.  So ``None`` and that
+    resolved number are one encoder, and must be one profile.  Before the fix
+    the second spelling cost a different id, 20 extra bytes and a schema-minor
+    bump that drops the artifact below every reader under minor 5 -- all for a
+    byte-identical decoded tensor.
+    """
+    grid = E4M3_GRID
+    resolved = default_channel_sigma(grid)
+    common = dict(
+        code=None, rates=(4,) * 8, grid=grid, span=1,
+        scale_plane=ScalePlaneKind.CHANNEL, body=BodyKind.WINDOW,
+        window_bits=6, window_seed=0,
+    )
+    assert (encoder_profile_id(window_sigma=None, **common)
+            == encoder_profile_id(window_sigma=resolved, **common))
+    # And the normalisation is not a blanket one: a spread that is NOT the
+    # resolved default is a different encoder and must keep its own id, or
+    # this test would pass against a function that erases the slot.
+    assert (encoder_profile_id(window_sigma=None, **common)
+            != encoder_profile_id(window_sigma=resolved * 1.25, **common))
+    # Off a CHANNEL plane the encoder never resolves window_sigma from the
+    # channel spread, so the equality must NOT hold there.
+    s6b = dict(common, scale_plane=ScalePlaneKind.S6B)
+    assert (encoder_profile_id(window_sigma=None, **s6b)
+            != encoder_profile_id(window_sigma=resolved, **s6b))

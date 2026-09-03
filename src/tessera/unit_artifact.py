@@ -95,6 +95,27 @@ def _normalize_reach(
     if channel_sigma is not None and grid is not None:
         if float(channel_sigma) == float(default_channel_sigma(grid)):
             channel_sigma = None
+    # #90, the same class one slot over.  Under a CHANNEL plane the encoder
+    # resolves an unset ``window_sigma`` to the channel spread -- both for the
+    # table (``encode.py``: ``table_sigma = channel_sigma`` when
+    # ``window_sigma is None``) and for the reach (``reach_sigma =
+    # channel_sigma if window_sigma is None else window_sigma``).  So
+    # ``None`` and that resolved number build the same table at the same
+    # reach and quantise the same rows: one encoder, and therefore one
+    # profile.  Left alone, the second spelling cost 20 extra bytes and a
+    # schema-minor bump that drops the artifact below every reader under
+    # minor 5 -- for a byte-identical decoded tensor.
+    #
+    # Normalised AFTER the channel clause above, so the comparison is against
+    # the spread the encoder will actually resolve, not the spelling the
+    # caller happened to pass.
+    if (window_sigma is not None
+            and ScalePlaneKind(scale_plane) is ScalePlaneKind.CHANNEL):
+        resolved = channel_sigma
+        if resolved is None and grid is not None:
+            resolved = default_channel_sigma(grid)
+        if resolved is not None and float(window_sigma) == float(resolved):
+            window_sigma = None
     return window_seed, window_sigma, channel_sigma
 
 
