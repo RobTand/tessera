@@ -8,3 +8,6 @@ __pycache__/
 .claude/
 dist/
 *.egg-info/
+
+# python -m build output
+build/
