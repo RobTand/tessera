@@ -120,7 +120,8 @@ from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
-from tessera.serving.contract import load_serving_contract  # noqa: E402
+from tessera.serving.contract import (  # noqa: E402
+    classify_construction, construction_entry, load_serving_contract)
 from tessera.serving.scheme import refuse_unserveable_wire  # noqa: E402
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
@@ -329,6 +330,80 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
                               "body": recipe.body.name, "plane": recipe.scale_plane.name,
                               "refusal": str(exc)})
     return recipe
+
+
+def unrouted_modules(src_config, modules):
+    """Which of these vLLM modules the pinned runtime will NOT route to a plugin.
+
+    THE PRODUCER MAY NOT KEEP THIS ROSTER.  ``LinearBase.__init__`` takes
+    ``UnquantizedLinearMethod()`` in the ``quant_config is None`` branch
+    *without calling* ``get_quant_method`` (vLLM 0.28,
+    ``model_executor/layers/linear.py:258``), so a projection a model builds
+    with ``quant_config=None`` is invisible to every quantization plugin --
+    ours cannot refuse it, warn about it, or even see the prefix.  A wire
+    written there deletes the ``<module>.weight`` the runtime wants and puts
+    bytes in its place that no loader maps: not a slow route, no route, and no
+    refusal either.
+
+    Principle 14 says a claim about what a runtime DOES is derived from a
+    machine-readable table that runtime publishes.  The table is
+    ``runtime_contract.json``'s ``construction`` block (contract v10), whose
+    rows are generated from the census receipts under
+    ``docs/measurements/construction/`` -- and the census itself
+    (``tools/tessera_construction_census.py``) OBSERVES the answer by building
+    the model the way the loader does with a probe quant config that records
+    every prefix it is offered.  Nothing here reads source, and nothing here
+    keeps a list.
+
+    Returns ``{checkpoint module: (verdict, vllm module pattern)}`` for every
+    module that is not ``offered``:
+
+    * ``never_offered`` -- the runtime builds this module with
+      ``quant_config=None``.  On GLM-5.3-Flash that is every attention
+      projection, the whole KDA layer, the indexer and the vision tower.
+    * ``absent`` -- the runtime builds no module of this name at all.  It is
+      what a fused role named at the wrong seam looks like: the checkpoint has
+      ``self_attn.{q,k,v}_proj`` on a KDA layer and vLLM builds ONE
+      ``self_attn.in_proj_qkvbfg_a``, so the ``qkv_proj`` this script would
+      declare corresponds to nothing.
+    * ``uncensused`` -- no census covers this architecture.  That is an honest
+      gap, not a clearance: the answer is unknown, so the wire is unpriced.
+    """
+    architectures = list(src_config.get("architectures") or ())
+    entry = construction_entry(architectures)
+    if entry is None:
+        return {module: ("uncensused", "-") for module in modules}, None
+    verdicts = {}
+    for module in modules:
+        verdict, pattern = classify_construction(entry, module)
+        if verdict != "offered":
+            verdicts[module] = (verdict, pattern)
+    return verdicts, entry
+
+
+def _unrouted_refusal(verdicts, architectures) -> str:
+    kinds = {}
+    for module, (verdict, pattern) in sorted(verdicts.items()):
+        kinds.setdefault(verdict, []).append((module, pattern))
+    lines = [f"{len(verdicts)} planned module(s) are not routed through this plugin by the "
+             f"pinned runtime, so a wire written there is dead weight and the "
+             f"<module>.weight it replaced is gone:"]
+    reasons = {
+        "never_offered": "built with quant_config=None -- vLLM's own BF16 method, and "
+                         "get_quant_method is never called, so this plugin cannot even refuse it",
+        "absent": "the runtime builds no module of this name (a fused role named at the wrong "
+                  "seam, or a name from another architecture)",
+        "uncensused": f"no construction census covers {architectures}; run "
+                      "tools/tessera_construction_census.py inside the serving image and add "
+                      "the receipt under docs/measurements/construction/",
+    }
+    for verdict, rows in sorted(kinds.items()):
+        lines.append(f"  {verdict} ({len(rows)}): {reasons[verdict]}")
+        for module, pattern in rows[:12]:
+            lines.append(f"    {module}   -> {pattern}")
+        if len(rows) > 12:
+            lines.append(f"    ... and {len(rows) - 12} more")
+    return "\n".join(lines)
 
 
 def module_of(tensor_name: str) -> str:
@@ -608,6 +683,17 @@ def main():
                          "diagonal h^1.0 on the LUT plane")
     ap.add_argument("--refit-reach-floor", action="store_true",
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
+    ap.add_argument("--passthrough-unrouted", action="store_true",
+                    help="pass a Linear the pinned runtime will not route through this plugin "
+                         "through at source precision instead of refusing the export. The SAFE "
+                         "direction: it never writes a wire nothing executes. See "
+                         "unrouted_modules.")
+    ap.add_argument("--allow-unrouted", action="store_true",
+                    help="write the wire anyway for a Linear the pinned runtime will not route "
+                         "(or that no census covers). A RESEARCH escape: the module keeps "
+                         "vLLM's BF16 method, the weight it wants is not in the checkpoint, and "
+                         "the refusal is stamped verbatim into the manifest's serving_gate "
+                         "block.")
     ap.add_argument("--allow-unserveable", action="store_true",
                     help="write wires this plugin build publishes no decode for (see check_recipe). "
                          "The checkpoint is then a RESEARCH artifact that will not load under this "
@@ -761,6 +847,40 @@ def main():
             "no tensor here fits, leaves nothing to encode. The checkpoint would carry an empty "
             "config_groups and the plugin refuses that at load. Pass --layers 0 to write a "
             "passthrough copy deliberately.")
+
+    # THE CONSTRUCTION GATE, and it is placed here for the same reason
+    # ``check_recipe`` is placed at argument time: before the first encode.  A
+    # refusal that arrives after the encode is not a refusal; it is a bill.
+    # It runs on the MODULE names, not the tensor names, because the module is
+    # what the runtime builds and what ``config_groups`` will declare.
+    unrouted, census = unrouted_modules(src_config, modules)
+    unrouted_records = [
+        {"module": module, "vllm_module_pattern": pattern, "verdict": verdict}
+        for module, (verdict, pattern) in sorted(unrouted.items())]
+    if unrouted:
+        message = _unrouted_refusal(unrouted, list(src_config.get("architectures") or ()))
+        if args.passthrough_unrouted:
+            print(f"  --passthrough-unrouted: {message}", flush=True)
+            for module in unrouted:
+                for member in modules.pop(module):
+                    del plan[member]
+                    passthrough.append(member)
+            print(f"  {len(unrouted)} module(s) pass through at source precision; "
+                  f"{len(modules)} module(s) remain in the plan", flush=True)
+        elif args.allow_unrouted:
+            print(f"  --allow-unrouted: {message}", flush=True)
+        else:
+            raise SystemExit(
+                f"{message}\n\n"
+                "This is a fact about the pinned runtime, read from "
+                "runtime_contract.json's construction block (contract v"
+                f"{load_serving_contract()['contract_version']}), which is generated from the "
+                "census receipts under docs/measurements/construction/. Pass "
+                "--passthrough-unrouted to export these at source precision (the safe fix), or "
+                "--allow-unrouted to write the dead wire anyway as a research artifact -- the "
+                "refusal is then stamped into the manifest's serving_gate block.")
+    owned = {m for members in modules.values() for m in members}
+    assert owned == set(plan)
 
     input_scales = {}
     if args.input_scales:
@@ -1023,6 +1143,17 @@ def main():
             "contract_version": load_serving_contract()["contract_version"],
             "allow_unserveable": bool(args.allow_unserveable),
             "unserveable_overrides": gate_overrides,
+            # What the pinned runtime does with each planned module, from the
+            # contract's construction block -- and which way this run resolved
+            # a module it will not route.  ``unrouted`` non-empty together with
+            # ``allow_unrouted`` true is an artifact whose declared wires the
+            # runtime never executes.
+            "construction_census": None if census is None else {
+                "architecture": census["architecture"], "runtime": census["runtime"],
+                "model": census["model"], "receipt": census.get("receipt")},
+            "allow_unrouted": bool(args.allow_unrouted),
+            "passthrough_unrouted": bool(args.passthrough_unrouted),
+            "unrouted": unrouted_records,
         },
         # WHAT THE ROUTED-MoE LAYERS GOT, as a value rather than as a line of
         # stdout.  Every expert of this model stayed at source precision and
