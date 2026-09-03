@@ -276,7 +276,11 @@ def test_graph_capture_survives_other_threads_encoding(monkeypatch):
 
     from tessera import window_viterbi
 
-    monkeypatch.setattr(window_viterbi, "_GRAPH", True)   # capture even for small batches
+    # Capture even for small batches, and start every thread cold so the
+    # capture really happens inside the barrier rather than being answered
+    # from a plan an earlier test left behind.
+    monkeypatch.setenv("TESSERA_WINDOW_GRAPH", "1")
+    window_viterbi.window_plan_cache_clear()
     cases = [(8, 3, 1, 64, 160, True, 32, seed) for seed in range(6)]
     expected = {}
     for L, R, arity, rows, cols, weighted, chunk, seed in cases:
