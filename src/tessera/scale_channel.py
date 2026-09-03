@@ -159,7 +159,8 @@ def initial_channel_scale(
     work: torch.Tensor, sigma: float, reach: "float | None" = None
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """The initial plane: every row's RMS lands on ``sigma`` grid units, and
-    every row's largest weight lands inside the body's ``reach``.
+    every row's largest weight lands within one fp16 ulp of the body's
+    ``reach``.
 
     ``reach`` is the largest magnitude, in grid units, the body can emit: the
     window table's extreme entry, or the largest anchor a TCQ forest reaches.
@@ -171,6 +172,31 @@ def initial_channel_scale(
     clip.  Rows inside the reach are untouched, so on a light-tailed source
     this is the plain RMS start byte for byte; ``None`` is that start for
     every row.
+
+    **"Within one ulp", not "inside".**  ``scale = amax / reach`` is a *lower*
+    bound -- an effective scale below it puts ``amax / effective`` back past the
+    reach -- and ``land_channel_scale`` rounds to **nearest**, so about a third
+    of the raised rows land one fp16 ulp under their own bound and the trellis
+    clips them to the table's extreme entry anyway.  Measured (issue #87,
+    ``experiments/reach_land_census.py``): 29609 of the 87870 raised rows over
+    196 dense Qwen3-0.6B Linears at E4M3/L=14, 16-44% per unit, worst shortfall
+    3.2e-4 relative -- one ulp, as the mechanism predicts.  The clipped energy
+    is 9.1e-10 of the h-weighted budget on the worst unit, which is why this is
+    stated rather than fixed: closing it would move a row word by one ulp on
+    every CHANNEL artifact with rows past the reach, and that is a re-cut of the
+    E4M3 wire under an unchanged ``encoder_profile_id``.
+
+    The BF16 wire has no shortfall at all, and not by luck: its reach is exactly
+    4.0 and its source words are bf16, so ``amax / 4`` over a power-of-two
+    global is exact in fp16.  0 of 100575 raised rows landed short.
+
+    ``refit_channel_scale``'s ``floor`` lands the *same* bound with
+    ``land_at_least``, which rounds **up**.  The two halves of one rule
+    therefore differ by design and not by oversight: the refit re-imposes the
+    bound exactly, the start honours it to a rounding.  Anything that reads
+    this start as an exact guarantee -- as the refit's ``floor`` docstring
+    does when it says "which no later step recovers" -- is reading one ulp too
+    much into it.
 
     Why per row and not per unit: the source model the alphabet and the
     table were fit to is a Gaussian, whose rows exceed the E4M3 table's
