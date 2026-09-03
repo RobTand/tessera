@@ -55,7 +55,8 @@ import torch
 
 from .errors import GrammarError
 
-__all__ = ["regularize_hessian", "block_ldl", "compensated_targets"]
+__all__ = ["regularize_hessian", "block_ldl", "compensated_targets",
+           "block_penalty", "choose_ldl_block"]
 
 
 def regularize_hessian(
@@ -124,6 +125,115 @@ def block_ldl(H: torch.Tensor, block: int) -> torch.Tensor:
     index = torch.arange(m, device=L.device)
     blocked[index, index] = eye
     return L
+
+
+def block_penalty(H_reg: torch.Tensor, block: int) -> float:
+    """Predicted LDLQ proxy loss at ``block``, relative to full feedback.
+
+    ``block_ldl`` zeroes the strictly-lower part of each diagonal block, so a
+    column sees earlier columns from earlier *blocks* only.  What that costs is
+    not a taste and does not need a sweep -- it is a closed form in the Hessian
+    the encoder already holds.
+
+    With ``H = L D L^T`` (``L`` unit lower), LDLQ's proxy loss is
+    ``sum_j D_jj ||eta_j||^2`` when every column sees every earlier column's
+    error, and ``sum_j H_jj ||eta_j||^2`` when none does -- and
+    ``H_jj = D_jj + sum_{k<j} L[j,k]^2 D_kk``.  Block-``b`` feedback keeps the
+    cross-block terms and drops the within-block ones, so the loss interpolates
+    exactly between those two ends:
+
+        Loss(b) ~ tr(D) + S(b),
+        S(b) = sum over diagonal blocks of sum_{j>k in the block} L[j,k]^2 D_kk
+
+    taking ``||eta_j||^2`` as column-independent, which is what a fixed grid
+    with per-column scales gives.  This function returns ``1 + S(b)/tr(D)``.
+
+    Validated against the measured sweeps of tessera#60, both at 4.00 bpp:
+
+    * dense Qwen 0.6B attention (layers 0-1 q/k/v, out-space geomean)
+      ``b8/b32`` **measured 0.9273**, predicted 0.9268;
+      ``b4/b32`` measured 0.9154, predicted 0.9214.
+    * GLM-5.3 experts (L5/L20 gate/up, E2M1x2 TCQ q896 + LDLQ + refit)
+      ``b16/b32`` measured 0.9983, predicted 0.9993;
+      ``b256/b32`` measured 1.0051, predicted 1.0120.
+
+    What it predicts well is the *material* effect: where the axis is worth
+    taking, it lands to within a twentieth of a percent (Qwen ``b8/b32``, 7.3%
+    measured).  Where the axis is nearly flat it over-predicts the excess by
+    about 2x (GLM ``b256/b32``: 1.20% predicted against 0.51% measured), which
+    is the constant-``||eta||`` assumption showing -- a coarser block also
+    moves the errors it is pricing.  Read it as a screen that says *whether*
+    the axis is worth spending encode time on, not as an out-space number: the
+    absolute penalty at one block is a proxy-loss statement.  The same formula
+    explains why the axis is worth 7% on one population and 0.2% on the other:
+    at ``b=32`` it costs Qwen attention 9.8% of full feedback and GLM experts
+    0.14%, a factor of 70.
+
+    ``H_reg`` must already be regularised (see ``regularize_hessian``) -- the
+    damping changes ``D`` and so changes the answer, and regularising twice
+    would price a Hessian no encode uses.
+    """
+    n = H_reg.shape[0]
+    if H_reg.ndim != 2 or H_reg.shape[1] != n:
+        raise GrammarError(f"H must be square, got {tuple(H_reg.shape)}")
+    if block < 1 or n % block:
+        raise GrammarError(f"{n} inputs is not a multiple of the LDL block {block}")
+    try:
+        C = torch.linalg.cholesky(H_reg.float())
+    except Exception as exc:                        # noqa: BLE001 - re-raised
+        raise GrammarError(
+            "Cholesky failed on the regularised Hessian: it is not positive "
+            "definite. Raise sigma_reg rather than pricing a block size on a "
+            "Hessian no encode could use."
+        ) from exc
+    d = torch.diagonal(C)
+    L = C / d.unsqueeze(0)                 # unit lower: L[i, j] = C[i, j]/C[j, j]
+    D = d ** 2
+    skipped = 0.0
+    for start in range(0, n, block):
+        tri = torch.tril(L[start:start + block, start:start + block], diagonal=-1)
+        skipped += float(((tri ** 2) * D[start:start + block].unsqueeze(0)).sum())
+    return 1.0 + skipped / float(D.sum())
+
+
+def choose_ldl_block(
+    H_reg: torch.Tensor, *, max_penalty: float, floor: int = 16
+) -> int:
+    """Largest power-of-two block whose predicted penalty is within budget.
+
+    ``max_penalty`` is the caller's exchange rate, not a constant of the
+    method: encode time goes as roughly ``1/block`` (measured on GLM experts,
+    ``block * seconds`` is 5184 / 6100 / 6060 / 7347 across 16 / 32 / 128 /
+    256), so halving the block roughly doubles the encode and buys whatever
+    ``block_penalty`` says it buys.  Passing a budget states that trade once,
+    where a constant hides it.
+
+    ``floor`` is the smallest block the wire allows: a scale group's scale is
+    fit to whatever target the group ends up with and cannot be fit to half of
+    one, so the block may not cut inside a group.  **The caller derives it from
+    the recipe's own plane, never from this default** -- ``S6B`` and ``LUT``
+    group 16 weights and so floor at 16, while ``CHANNEL`` carries one scalar
+    per row and groups nothing, so its floor is 1.  The 16 here is the
+    tightest of those, safe for every plane and wrong for one of them.  A
+    budget the floor itself cannot meet is refused rather than quietly served
+    with the floor -- the caller asked for a quality this wire cannot reach,
+    and the refusal names what the floor does cost so a real budget can be set.
+    """
+    if max_penalty < 1.0:
+        raise GrammarError(
+            f"max_penalty is a ratio against full feedback and is at least 1.0, "
+            f"got {max_penalty}")
+    n = H_reg.shape[0]
+    at_floor = block_penalty(H_reg, floor)
+    if at_floor > max_penalty:
+        raise GrammarError(
+            f"no legal block meets a budget of {max_penalty}: the smallest the "
+            f"wire allows is {floor}, and it already costs {at_floor:.6f} of "
+            f"full feedback. Raise the budget or lower the scale-group floor.")
+    best, b = floor, floor * 2
+    while b <= n and n % b == 0 and block_penalty(H_reg, b) <= max_penalty:
+        best, b = b, b * 2
+    return best
 
 
 def compensated_targets(
