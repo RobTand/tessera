@@ -136,11 +136,12 @@ The LUT refit objective was promoted on a 1.38% six-unit geomean that won
 on 2 of 6 units, while the served KL quoted for the pick measured the
 other arm (tessera#65,
 `docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md`). So a
-per-plane promotion now clears four legs in
+per-plane promotion now clears five legs in
 `tessera.control.assert_plane_promotion`: the GLM six-expert gate exactly
 as the 2026-09-02 receipt wrote it, a geomean that beats the incumbent, a
-strict majority of the receipt's own units, and a served KL on the promoted
-arm that beats **the incumbent's own served KL at matched bytes**. The
+strict majority of the receipt's own units, a served KL on the promoted
+arm that beats **the incumbent's own served KL at matched bytes**, and the
+`landing` the per-unit ratios were taken at (below). The
 geomean is derived from the per-unit ratios, so it cannot arrive without
 them, and a served number for a different arm is not evidence. `served_bar`
 takes no default for the same reason the other three legs are ratios: it is
@@ -155,3 +156,54 @@ record through the gate, watches `hessian` refuse at 2 of 6, and pins
 `DEFAULT_REFIT_OBJECTIVE["lut16"]` to the `h^1.0` that refusal leaves
 standing. Flipping that default without a promotion this gate accepts turns
 the suite red.
+
+#### The fifth leg: a screen taken off the wire does not promote
+
+On the LUT plane a per-block scale lands on one of sixteen E4M3 entries, and
+`tessera.encode.lut_landing` can remove that landing to read issue #50's
+ceiling. **The arms reorder when it does.** Six dense Qwen3-0.6B units,
+E2M1x2 `q256=896`, LDLQ 1.0/32, held-out `out` geomeans (tessera#85): on the
+wire Gauss-Seidel 0.9627 beats Jacobi 0.9864 beats `h^1.0` 1.0000; with the
+landing removed Jacobi 0.7057 beats Gauss-Seidel 0.7274 beats `h^1.0`
+0.7843. So every on-wire arm score on this plane is a **joint** measurement
+of the refit and the table fit, and the receipts reported it as a property
+of the refit.
+
+Two consequences, and only one of them is a refusal.
+
+* **Refused.** `assert_plane_promotion` takes `landing`, defaulting to
+  `tessera.encode.LUT_LANDING_WIRE` -- the state every encode runs in -- and
+  refuses anything else by name. The landing-disabled column holds the most
+  attractive numbers ever measured on this plane -- Jacobi at 0.7057 against
+  the on-wire default -- and a six-unit record at that level with a unit
+  majority clears all four of the older legs; the gate had no way to ask what
+  its ratios were ratios *of*. (#85 publishes geomeans, not per-unit
+  `landing=none` ratios, so `tests/test_landing_ordering.py` demonstrates that
+  with a synthetic record at that level, geomean 0.708, and says so.) The
+  claim is
+  caller-asserted exactly as `served_arm` is, and knowable for the same
+  reason: non-wire ratios exist only inside a `lut_landing` context, whose
+  sink already reports `serialisable=False`.
+* **Recorded, not refused.** `tessera.control.landing_ordering` puts the two
+  orderings side by side and derives `same_best`, `same_order` and the
+  inverted arm pairs as values (`tessera.landing_ordering.v1`), with no
+  tolerance -- a "disagree by more than x%" would be a threshold from
+  intuition. A disagreement does **not** block a promotion: what ships is the
+  landed wire, so the on-wire ordering is the correct measurement of the
+  shipped object rather than a confound in it. "Gauss-Seidel plus this
+  landing beats Jacobi plus this landing" is true and is the sentence a
+  default selection needs; what #85 corrects is the attribution, and an
+  attribution error is fixed by reporting the pair. Refusing on it would also
+  pin one measurement -- one wire, one `(sigma, block)`, six weight-space Qwen
+  units, no serve -- as a standing rule about the plane, which is the
+  roster-not-rule failure AGENTS.md rule 3 names. The disagreement is a
+  **re-run trigger** for the day a better landing lands (issue #50).
+
+The pair is not free and is not readable off `refit_diagnostics`. That
+instrument's `continuous` leg is a within-call quantity by its own contract --
+for a 1-D metric it records the separable parabola, equal to the weighted
+error only up to a constant -- and the arms being ranked are 1-D (`h^1.0`)
+against full-H (Jacobi, Gauss-Seidel). The diagnostics give the *size* of the
+landing leg within one arm; the ordering across arms costs one extra
+`lut_landing("none")` encode per arm (`experiments/lut_landing_ceiling.py`,
+no serve and no KL). `tests/test_landing_ordering.py` pins both halves.

@@ -59,6 +59,10 @@ __all__ = [
     "grid_value_table",
     "require_memory",
     "LUT_ENTRIES",
+    "LUT_LANDING_MODES",
+    "LUT_LANDING_WIRE",
+    "lut_landing",
+    "refit_diagnostics",
 ]
 
 
@@ -1361,9 +1365,17 @@ _LUT_LANDING_SINK: "dict | None" = None
 #:              block, which the LUT plane's index does not have.
 #: ``"none"``   the continuous per-block optimum itself.  Not a plane at all.
 #:
-#: Only the first is a wire.  The other two are ceiling reads for issue #50 and
-#: are refused everywhere they could be mistaken for an encoder setting.
+#: Only ``LUT_LANDING_WIRE`` is a wire.  The other two are ceiling reads for
+#: issue #50 and are refused everywhere they could be mistaken for an encoder
+#: setting -- including in a promotion's evidence (issue #85).
 LUT_LANDING_MODES = ("table", "grid", "none")
+
+#: The one mode of :data:`LUT_LANDING_MODES` that is a wire.  Named rather than
+#: taken as "the first entry": a downstream gate has to say *which* landing a
+#: number was taken under (``tessera.control.assert_plane_promotion``, issue
+#: #85), and a rule spelled as a position in a tuple is a rule that moves when
+#: the tuple is reordered.  One rule, one home -- this is the home.
+LUT_LANDING_WIRE = "table"
 
 
 @contextmanager
