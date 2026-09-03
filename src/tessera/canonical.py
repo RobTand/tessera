@@ -182,6 +182,12 @@ class Reader:
 
     def blob(self) -> bytes:
         length = self.uint()
+        # The same domain the writer enforces.  Without it a hostile length
+        # prefix is a size no conforming encoder can produce, and the reader
+        # answers it with a slice attempt instead of a domain rejection --
+        # and this runs on every ``Manifest.decode``.
+        if length >= _MAX_BLOB:
+            raise CanonicalEncodingError("blob too large")
         end = self._offset + length
         if end > len(self._data):
             raise CanonicalEncodingError("truncated blob")

@@ -13,6 +13,10 @@ from .exact import bits_to_bytes
 __all__ = ["BitWriter", "BitReader"]
 
 
+def _round_up_8(bits: int) -> int:
+    return bits + (-bits % 8)
+
+
 class BitWriter:
     """MSB-first bit packer."""
 
@@ -23,6 +27,14 @@ class BitWriter:
     def write(self, value: int, width: int) -> None:
         if width < 0:
             raise PlaneLayoutError(f"negative field width: {width}")
+        if not width and value:
+            # A zero-width field holds exactly one value.  ``0 <= value < 1``
+            # is what the general bound below says at width 0, and the
+            # short-circuit skipped it -- so ``write(1, 0)`` dropped the 1 and
+            # said nothing.
+            raise PlaneLayoutError(
+                f"value {value} does not fit in a zero-width field"
+            )
         if width and not 0 <= value < (1 << width):
             raise PlaneLayoutError(f"value {value} does not fit in {width} bits")
         for shift in range(width - 1, -1, -1):
@@ -75,7 +87,19 @@ class BitReader:
         return self._limit - self._bit_count
 
     def check_padding_zero(self) -> None:
-        """Canonicality: trailing pad bits in the final byte must be zero."""
-        while self._bit_count % 8:
-            if self.read(1):
+        """Canonicality: trailing pad bits in the final byte must be zero.
+
+        The pad bits live *past* the declared extent by definition -- that is
+        what makes them padding -- so they are read against the physical bytes,
+        not against ``self._limit``.  Reading them through ``read`` instead
+        raised "read past declared plane extent" on every well-formed plane
+        whose bit length was not a byte multiple, which is to say the check
+        could not pass, only fail for the wrong reason.
+
+        The reader is left where it was: this inspects the pad bits, it does
+        not consume them.
+        """
+        physical = len(self._data) * 8
+        for index in range(self._bit_count, min(physical, _round_up_8(self._bit_count))):
+            if (self._data[index // 8] >> (7 - index % 8)) & 1:
                 raise PlaneLayoutError("non-zero padding bit in final plane byte")

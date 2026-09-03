@@ -37,6 +37,7 @@ from .grammar import (
 from .planes import (
     CANONICAL_PLANE_ORDER,
     SHARD_PLANE_ORDER,
+    CountGranularity,
     PlaneDescriptor,
     PlaneKind,
     Storage,
@@ -152,6 +153,19 @@ class Geometry:
             raise ManifestError(
                 f"group_weights {self.group_weights} is not a multiple of "
                 f"half_weights {self.half_weights}"
+            )
+        # The denominator of every bpp figure this artifact quotes.  Unbounded
+        # above, a wire value of 1e12 validated cleanly and understated the
+        # rate by orders of magnitude; the ceiling is the unit's own position
+        # count, because a unit cannot hold more quantizable parameters than it
+        # holds weights.  Below it is legitimate -- a profile-pinned or
+        # otherwise excluded sub-tensor is exactly what the convention exists
+        # for (CLAUDE.md principle 12).
+        if self.quantizable_params > self.rows * self.columns:
+            raise ManifestError(
+                f"geometry.quantizable_params {self.quantizable_params} exceeds "
+                f"the {self.rows * self.columns} weight positions this unit "
+                "holds; every bpp figure divides by it"
             )
 
     @property
@@ -681,8 +695,25 @@ class Manifest:
         wire = self.plane_order
         extents = [0] * len(wire)
         order = {kind: index for index, kind in enumerate(wire)}
+        # The quota boundaries a granular plane may be cut at: its running
+        # prefix sums, 0 and the full extent included.  ``planes.py`` states
+        # the rule -- "the last non-empty plane [is] cut at a per-superblock
+        # quota boundary" -- and nothing enforced it, so a terminal could name
+        # a count that falls in the middle of a granule and price it exactly.
+        # A WHOLE_PLANE plane has no granule structure and is deliberately not
+        # bound: a whole unit's RELEASE counts are respread by the reader.
+        boundaries: "dict[int, set[int]]" = {}
         for descriptor in self.planes:
             extents[order[descriptor.kind]] = descriptor.element_count
+            if descriptor.count_granularity in (
+                CountGranularity.PER_SUPERBLOCK,
+                CountGranularity.PER_BLOCK,
+            ):
+                allowed, running = {0}, 0
+                for count in descriptor.counts:
+                    running += count
+                    allowed.add(running)
+                boundaries[order[descriptor.kind]] = allowed
 
         for terminal in self.terminals:
             if len(terminal.plane_elements) != len(wire):
@@ -706,12 +737,27 @@ class Manifest:
                         f"{kind.name} carries {count} elements after an earlier "
                         "plane was left incomplete"
                     )
+                allowed = boundaries.get(index)
+                if allowed is not None and count not in allowed:
+                    raise ManifestError(
+                        f"terminal {terminal.slot_id!r} cuts {kind.name} at "
+                        f"{count} elements, which is not a per-superblock quota "
+                        f"boundary of {sorted(allowed)}"
+                    )
                 if count < extent:
                     truncated = True
 
     @property
     def schedule(self) -> RateSchedule:
-        return RateSchedule(rates=self.rates, root=self.branch.root)
+        """This unit's rate schedule, at the cap the manifest is entitled to.
+
+        ``cap=None`` -- the same deferral ``__post_init__`` applies when it
+        calls ``validate_rate_schedule``.  The ceiling belongs to the payload
+        grid, which is committed in ``encoder_profile_id`` and resolved only
+        after this manifest validates; asserting E2M1's cap of 3 here made the
+        property raise on every real E4M3 unit, whose rates run to 5.
+        """
+        return RateSchedule(rates=self.rates, root=self.branch.root, cap=None)
 
     def plane(self, kind: PlaneKind) -> PlaneDescriptor | None:
         for descriptor in self.planes:
