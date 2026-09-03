@@ -169,6 +169,29 @@ GPU never left ~17 W. **Holding the GPU lock is not the same as loading the GPU*
 which is also why each arm's window is checked for foreign load rather than
 assumed quiet.
 
+### The box was contended, and every latency number says so
+
+**This is the load the latency half was taken under, and it is not a quiet box.**
+sparky ran at load average 33–68 on 20 CPUs (1.7–3.4 runnable processes per core)
+throughout this session: five jobs queued on the GPU lock and eight concurrent
+encodes from other agents. **The GPU lock serialises GPU jobs, not CPU-bound
+ones**, so holding it is not evidence the box was quiet — the same point the
+17 W idle baseline makes from the other direction.
+
+A host-driven latency number taken at that load is noise. So `os.getloadavg()` is
+recorded at both ends of every timed window into each receipt, with the CPU count
+so it reads as a ratio, and each receipt carries its own `contended` verdict at a
+threshold of one runnable process per core. **It is a label, never a filter**:
+the numbers are reported either way, because a contaminated measurement that says
+it is contaminated is useful while one that does not is worse than none.
+
+Read the latency section accordingly — a **contended TTFT/TPOT is not evidence of
+a latency win or loss**, and none is claimed from it. What the profile's kernel
+names establish (which kernels launched, under eager and under a compiled
+forward) is *not* load-sensitive and stands on its own. The census and the KL are
+correctness measurements — which decoder ran, and the KL of byte-identical bytes
+— and contention changes how long they take, not what they say.
+
 ### A confound caught before it was measured
 
 The load driver built one token-id prompt per `(prompt_tokens, max_tokens)` pair
