@@ -135,6 +135,16 @@ rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
 Images outside the pinned repository (Mia's GLM image) are resolved and
 stamped, not refused.
 
+`experiments/serve_lock.sh` is the one lock protocol for every serve and every
+GPU-only probe.  Acquisition publishes one symlink at the host-local
+`serve.lock` pathname; its target binds PID, `/proc` start ticks and a random
+nonce, so publication has no directory-to-owner gap and PID reuse is not
+ownership.  Release first matches that exact target.  A dead token is reaped
+only after the PID/start pair no longer names its publisher and Docker reports
+no running container.  During the rolling transition, the same pathname also
+excludes legacy directory-lock clients; old directories retain their stricter
+hour-old, dead-owner, no-container recovery rule.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and

@@ -30,17 +30,10 @@ source "$HERE/runtime_image.sh"
 runtime_image_require "$IMAGE" || exit 2
 source "$HERE/serve_lock.sh"
 SERVE_LOCK_OWNER="moe_route_load_probe"
-waited=0
-until mkdir "$SERVE_LOCK" 2>/dev/null; do
-  waited=$((waited + 10)); sleep 10
-  if [ "$waited" -ge 600 ]; then
-    echo "serve lock busy after ${waited}s ($(cat "$SERVE_LOCK/owner" 2>/dev/null)); not probing" >&2
-    exit 3
-  fi
-done
-echo "$$ $(date -u +%FT%TZ) $SERVE_LOCK_OWNER" > "$SERVE_LOCK/owner"
-trap 'if [ "$(awk "NR==1{print \$1}" "$SERVE_LOCK/owner" 2>/dev/null)" = "$$" ]; then
-        rm -f "$SERVE_LOCK/owner"; rmdir "$SERVE_LOCK" 2>/dev/null; fi' EXIT
+SERVE_LOCK_TIMEOUT=600
+SERVE_LOCK_POLL_S=10
+serve_lock_acquire || exit $?
+trap serve_lock_release EXIT
 
 mkdir -p "$WORK" "$(dirname "$OUT")"
 docker run --rm --gpus all --ipc=host \
