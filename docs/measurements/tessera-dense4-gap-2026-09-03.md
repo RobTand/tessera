@@ -28,8 +28,16 @@ a reason measured rather than assumed. Two facts, in tension:
   PrismaQuant era does not apply to this lane.
 * **The encoder does.** A *fresh* `b=32` export at `82cdf513` -- same recipe,
   same block, same 220,301,312 wire bytes -- differs from that artifact in
-  **161 of 784** quantized tensors (`ldlq-block-serve/bytecmp_vs_ldlqH1.txt`),
-  with per-tensor differing fractions up to 0.15.
+  **161 of 784** quantized tensors of the served NVFP4 twin
+  (`ldlq-block-serve/bytecmp_vs_ldlqH1.txt`), with per-tensor differing
+  fractions up to 0.15. The same drift is visible one level up, on the wire
+  itself and not only on its materialisation: hashing the two checkpoints'
+  raw safetensors byte ranges, **69 of 112 `wire_bytes` blobs differ**
+  (270 of 339 tensors identical overall -- the identical remainder is the
+  bf16 passthrough), while their `activation_aware` blocks are equal
+  (`ts12_wire_0902_vs_82cdf51.json`). Same declared recipe, different bytes:
+  the config field a merge guard compares cannot see this, which is the point
+  of hashing rather than reading it.
 
 So quoting the published number as the control would put a commit's worth of
 encoder change inside a delta meant to carry only the LDLQ block. The control

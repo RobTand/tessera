@@ -26,17 +26,40 @@ import hashlib
 import json
 from pathlib import Path
 
-from safetensors import safe_open
+
+
+#: The wire blob is stored under ``<module>.wire_bytes``.  An earlier draft of
+#: this script filtered on ``key.endswith(".tessera")``, matched zero keys in a
+#: real checkpoint and reported ``NOTHING COMPARED`` -- which at least failed
+#: loudly, but only because the verdict was written to distinguish "nothing
+#: differs" from "nothing was looked at".  Hash every tensor instead of
+#: guessing a suffix, and count the wire keys separately so a run that compares
+#: only side tables cannot be read as a wire result.
+WIRE_SUFFIX = "wire_bytes"
 
 
 def blobs(path: Path) -> "dict[str, str]":
+    """sha256 of every tensor's raw bytes, read straight out of the file.
+
+    Deliberately not through a tensor library: the checkpoint holds bf16
+    (layernorms, passthroughs) that numpy cannot represent, and the claim being
+    made is about *bytes*, so decoding them into an array first would put a
+    dtype round-trip between the file and the hash for no reason.  safetensors'
+    own layout is enough -- an 8-byte little-endian header length, a JSON
+    header, then the tensor arena whose ``data_offsets`` are relative to its
+    start.
+    """
+    f = path / "model.safetensors"
+    raw = f.read_bytes()
+    n = int.from_bytes(raw[:8], "little")
+    header = json.loads(raw[8:8 + n])
+    base = 8 + n
     out = {}
-    with safe_open(str(path / "model.safetensors"), framework="pt") as handle:
-        for key in handle.keys():
-            if key.endswith(".tessera"):
-                t = handle.get_tensor(key).contiguous().cpu()
-                out[key] = hashlib.sha256(
-                    memoryview(t.numpy()).tobytes()).hexdigest()
+    for key, spec in header.items():
+        if key == "__metadata__":
+            continue
+        lo, hi = spec["data_offsets"]
+        out[key] = hashlib.sha256(raw[base + lo:base + hi]).hexdigest()
     return out
 
 
@@ -75,11 +98,17 @@ def main() -> None:
     aware_ref, src_ref = activation_aware(args.reference)
     aware_new, src_new = activation_aware(args.fresh)
 
+    wire_shared = [k for k in shared if k.endswith(WIRE_SUFFIX)]
+    wire_differ = [k for k in wire_shared if ref[k] != new[k]]
+
     result = {
-        "schema": "tessera.dense4_block_byte_identity/1",
+        "schema": "tessera.dense4_block_byte_identity/2",
         "reference": str(args.reference), "fresh": str(args.fresh),
         "units_reference": len(ref), "units_fresh": len(new),
         "units_compared": len(shared),
+        "wire_keys_compared": len(wire_shared),
+        "wire_keys_differing": len(wire_differ),
+        "wire_differing_names": wire_differ[:20],
         "identical": len(same), "differing": len(differ),
         "differing_names": differ[:20],
         "only_in_reference": len(set(ref) - set(new)),
@@ -90,8 +119,8 @@ def main() -> None:
         "activation_aware_fresh_from": src_new,
         "activation_aware_equal": aware_ref == aware_new,
         "activation_aware_compared": bool(aware_ref) and bool(aware_new),
-        "verdict": ("BYTE-IDENTICAL" if shared and not differ else
-                    "DIFFERS" if differ else "NOTHING COMPARED"),
+        "verdict": ("NOTHING COMPARED" if not wire_shared else
+                    "DIFFERS" if differ else "BYTE-IDENTICAL"),
         "config_verdict": (
             "EQUAL" if aware_ref and aware_new and aware_ref == aware_new else
             "UNEQUAL" if aware_ref and aware_new else "NOT COMPARED"),
