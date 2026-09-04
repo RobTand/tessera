@@ -718,6 +718,15 @@ def main():
                          "plane (export.DEFAULT_REFIT_OBJECTIVE), which is not one "
                          "value -- the exact quadratic on the CHANNEL plane, the "
                          "diagonal h^1.0 on the LUT plane")
+    ap.add_argument("--refit-metric-trailing", default=None,
+                    help="error the LAST refit minimises, when it should differ from "
+                         "--refit-metric: plain | hessian | h^ALPHA, at the SAME pass "
+                         "count (tessera#75's fair pair). Unset is the uniform "
+                         "schedule -- the encode that was already there, byte for "
+                         "byte. Recorded in the checkpoint's activation_aware block "
+                         "and compared by the merge guard (tessera#103), so a part "
+                         "encoded under one trailing objective cannot merge with a "
+                         "part encoded under another.")
     ap.add_argument("--refit-reach-floor", action="store_true",
                     help="hold every refit row scale high enough that the pass's target stays inside the body's reach")
     ap.add_argument("--passthrough-unrouted", action="store_true",
@@ -765,6 +774,8 @@ def main():
                     "refit_reach_floor": args.refit_reach_floor}
         if args.refit_metric is not None:      # else: the measured per-plane map
             settings["refit_objective"] = args.refit_metric
+        if args.refit_metric_trailing is not None:   # else: the uniform schedule
+            settings["refit_objective_trailing"] = args.refit_metric_trailing
         activation = ActivationSource.from_capture(args.hessian, **settings)
 
     default_grid = grid_for(args.grid)

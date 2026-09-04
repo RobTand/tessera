@@ -9,9 +9,13 @@ ran on every pass.  ``refit_metric_trailing`` is the missing half -- inner
 passes minimise ``refit_metric``, the trailing refit minimises
 ``refit_metric_trailing``, ``None`` is the encode that was already there.
 
-Encoder-side and opt-in like ``refit_gauss_seidel``: no ``ActivationSource``
-field, no config entry, no wire change, refused wherever it would be silently
-ignored.  CPU-only: the schedule is visible in bytes at 32x64 without a GPU.
+Opt-in like ``refit_gauss_seidel``, and no wire change: the schedule is a
+schedule, so the bytes move and their length does not.  It is refused wherever
+it would be silently ignored.  It stopped being encoder-only with tessera#103,
+which gave ``ActivationSource`` a ``refit_objective_trailing`` field, put it in
+the exported config and made the merge guard compare it; the exporter flag that
+sets it is pinned at the bottom of this file.  CPU-only throughout: the
+schedule is visible in bytes at 32x64 without a GPU.
 """
 import pytest
 import torch
@@ -185,3 +189,117 @@ def test_the_diagnostic_records_the_optimiser_that_ran():
     for i in range(3):
         for k in ("before", "stepped", "continuous", "landed", "reverted"):
             assert control[i][k] == swept[i][k], (i, k)
+
+
+# --------------------------------------------------------------------------
+# the trailing objective has to reach an ARTIFACT, not only ``encode_linear``
+# --------------------------------------------------------------------------
+#
+# ``ActivationSource.refit_objective_trailing`` landed with tessera#103, and
+# the merge guard compares it.  But an exporter still had no way to *set* it:
+# ``experiments/export_tessera_serving.py`` plumbed ``--refit-metric`` alone,
+# so #75's B-Jac arm -- the only one that clears the GLM gate -- could be
+# encoded in a measurement script and not in a checkpoint.  These two pin the
+# flag end to end: it must reach the recorded config AND the bytes.
+
+import importlib.util
+import json
+from pathlib import Path
+
+import numpy as np
+from safetensors import safe_open
+from safetensors.torch import save_file
+
+_ROOT = Path(__file__).resolve().parents[1]
+_BODY = "model.language_model.layers.0."
+_ROUTED = _BODY + "mlp.down_proj"
+_UNROUTED = _BODY + "self_attn.o_proj"
+
+
+def _exporter():
+    spec = importlib.util.spec_from_file_location(
+        "export_tessera_serving",
+        _ROOT / "experiments" / "export_tessera_serving.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _tiny_checkpoint(tmp_path: Path) -> Path:
+    """A two-Linear GLM checkpoint; only ``down_proj`` is routed (#99)."""
+    src = tmp_path / "src"
+    src.mkdir(parents=True)
+    g = torch.Generator(device="cpu").manual_seed(31)
+    save_file({_ROUTED + ".weight":
+               (torch.randn(32, 64, generator=g) * 0.02).to(torch.bfloat16),
+               _UNROUTED + ".weight":
+               (torch.randn(32, 64, generator=g) * 0.02).to(torch.bfloat16)},
+              str(src / "model.safetensors"), metadata={"format": "pt"})
+    (src / "config.json").write_text(json.dumps({
+        "architectures": ["Glm5NextForConditionalGeneration"],
+        "text_config": {"hidden_size": 64, "moe_intermediate_size": 32},
+    }))
+    return src
+
+
+def _tiny_capture(tmp_path: Path) -> Path:
+    """A ``capture_h_full.py``-shaped payload for the one routed unit."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "h.pt"
+    torch.save({"H": {_ROUTED: _hessian(seed=33)},
+                "provenance": {"text_sha256": "0" * 64, "fit_tokens": 4096,
+                               "fit_ids_sha256": "1" * 64}}, str(path))
+    return path
+
+
+def _export(tmp_path: Path, monkeypatch, name: str, *extra: str) -> Path:
+    out = tmp_path / name
+    monkeypatch.setattr(
+        "sys.argv",
+        ["export_tessera_serving.py", str(_tiny_checkpoint(tmp_path)), str(out),
+         "--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--no-verify",
+         "--passthrough-unrouted", "--hessian", str(_tiny_capture(tmp_path)),
+         "--refit-metric", "h^1.0", *extra])
+    _exporter().main()
+    return out
+
+
+def _wire(out: Path) -> bytes:
+    with safe_open(str(out / "model.safetensors"), framework="np") as handle:
+        return np.asarray(handle.get_tensor(_ROUTED + ".wire_bytes")).tobytes()
+
+
+def test_the_export_flag_records_the_trailing_objective(tmp_path, monkeypatch):
+    """The block a merge guard and an auditor read must name what ran.
+
+    Without this the flag would be a shell argument: the bytes would carry a
+    trailing full-H refit and ``activation_aware`` would say ``None``, which
+    is the config-lying-about-the-bytes failure tessera#103 exists to stop --
+    and two parts encoded under different trailing objectives would merge.
+    """
+    def block(out: Path) -> dict:
+        config = json.loads((out / "config.json").read_text())
+        return config["quantization_config"]["activation_aware"]
+
+    control = block(_export(tmp_path / "a", monkeypatch, "out"))
+    swapped = block(_export(tmp_path / "b", monkeypatch, "out",
+                            "--refit-metric-trailing", "hessian"))
+    assert control["refit_objective"] == swapped["refit_objective"] == "h^1.0"
+    assert control["refit_objective_trailing"] is None      # the old encode
+    assert swapped["refit_objective_trailing"] == "hessian"
+
+
+def test_the_export_flag_reaches_the_bytes_and_moves_no_others(tmp_path, monkeypatch):
+    """#75's matched pair, at the exporter: same wire length, different wire.
+
+    A flag that changed the config and not the bytes would be worse than
+    absent -- it would label an artifact with a recipe it was not encoded
+    under.  The equal length is the pair's other half: the schedule is a
+    schedule, so the wire does not move and a served A/B is at identical
+    bytes.
+    """
+    control = _wire(_export(tmp_path / "a", monkeypatch, "out"))
+    swapped = _wire(_export(tmp_path / "b", monkeypatch, "out",
+                            "--refit-metric-trailing", "hessian"))
+    assert control != swapped, "the trailing objective reached no byte"
+    assert len(control) == len(swapped), "the schedule changed the wire"
