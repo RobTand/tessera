@@ -1,9 +1,19 @@
 # The trailing refit's objective, served (2026-09-04)
 
 **Status: the exporter flag, the pair instrument and the encoder-drift finding
-are measured and stand. The served A/B is IN FLIGHT — the "Served" and "The
-gate, verbatim" sections below are marked `PENDING` and no number in them may
-be quoted until they are filled.**
+are measured and stand. The served A/B is IN FLIGHT — the three `PENDING`
+sections below are produced by one pool action, not by hand, and no number in
+them may be quoted until they are filled.**
+
+The action is `experiments/refit_trailing_run_all.sh`, submitted to the
+PrismaBuild pool as key `aadd46b6525d…` (checkout `/home/rob/tmp/wf75`, tag
+`sparky`, `gpu 1 / mem_gb 40 / cpu 4`). It exports the control, runs the pair
+check, and **serves only if the pair check passes** — same-day arms whose codes
+differ would mean the encoder is not deterministic, and a served number on top
+of that is two treatments again, arriving by a different door. It leaves
+`/mnt/shared/tessera-runs/refit-trailing/DONE` carrying the verdict lines, and
+copies the three receipts beside it; `pb-queue/done/aadd46b6525d….json` holds
+the whole log under `detail.stdout`.
 
 **What this is.** tessera#75's fair pair, taken to the one leg a screen cannot
 supply. The measurement half is on master (`experiments/refit_trailing_pair.py`,
@@ -112,9 +122,11 @@ above.
 
 ## The gate, verbatim
 
-PENDING — `experiments/results/refit_trailing_pair_gate.json`, run with
+PENDING — `experiments/results/refit_trailing_pair_gate_served.json`, run with
 `--served-arm B-Jac --served-kl-json …/kl_bjac.json --served-bar-json
-…/kl_a4h1.json`.
+…/kl_a4h1.json`. A separate file from the merged
+`refit_trailing_pair_gate.json`, which is the screen's own verdict and stays
+the record of what a screen earns.
 
 ## Scope
 
@@ -123,3 +135,13 @@ plane), one `(sigma, block)` = (1.0, 32), one Hessian capture, one corpus, one
 box, prefill regime, eager. The screen's cross-check is six GLM-5.3-Flash
 experts, which are a different input distribution and not a serve. Nothing here
 licenses a default.
+
+One more seam, and it is the same one this page found in the incumbent's bytes.
+The screen's ratios (0.9191x, 6/6, GLM 0.9999x) were measured at `9add21d`'s
+encoder, and **eleven** commits have touched `src/tessera/{encode,trellis}.py`
+since — including the exact LUT table fit (`f2f319d`) and the block-landed
+refit (`3c35ee0`), which are the machinery this pair exercises. The served leg
+below is built by today's encoder. So the gate is fed a screen and a serve
+taken at different encoders; that is weaker than the drift the incumbent
+carried (the arms *within* each leg are matched), but it is the same kind of
+gap, and re-running the screen at this checkout is what would close it.
