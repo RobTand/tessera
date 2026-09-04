@@ -406,7 +406,11 @@ Fail-before on pristine master `42615e4`: 2 collection errors (`rate_set` and
 `tessera.serving.census` do not exist).
 
 Impacted set (`tools/impacted_tests.py --ref master...HEAD`, verdict `narrowed`,
-87 files) is run by `experiments/ts104_chain.sh`; see the branch's own chain log.
+87 files), run in this worktree on the pool venv:
+
+```
+1634 passed, 8 skipped, 14 warnings in 579.89s (0:09:39)
+```
 
 ## Reproduce
 
