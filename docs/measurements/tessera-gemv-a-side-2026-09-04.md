@@ -402,11 +402,20 @@ pin (`out-of-pool-ts60-encode-sparklina`).
 So the blocker is contention, not a defect, and the pool's own issue tracker
 already names the structural half: `RobTand/prismabuild#5` -- a box-local
 worktree pins its actions to one box, so `/home/rob/tmp/wf110` can only ever be
-served by sparky however idle the rest of the fleet is. What is worth filing
-separately is the *readability* failure that produced the misdiagnosis: a
-claimed record whose `status`/`detail` describe an attempt that already ended
-reads exactly like a leak to anyone auditing the queue, and it took a live
-lease check and a log tail to tell the two apart.
+served by sparky however idle the rest of the fleet is. The *readability*
+failure that produced the misdiagnosis is now filed as
+`RobTand/prismabuild#10`: a claimed record whose `status`/`detail` describe an
+attempt that already ended reads exactly like a leak to anyone auditing the
+queue, and it took a live lease check and a log tail to tell the two apart. Two
+readers hit it independently, which is the argument for fixing the record
+rather than the readers.
+
+Re-checked at the end of this pass, and the ledger is clean on its own terms:
+`reservations/sparky/held/` contains exactly two entries, `87cf849b` and
+`ef037166`, each holding one of the box's two GPU tokens, each with a lease
+heartbeating within the last minute; `free/` holds 24 tokens, all `cpu-*` and
+`mem_gb-*`. There is no orphaned GPU reservation. `6c90ba1b` is one of
+nineteen actions in `ready/` waiting on a two-token pool.
 
 The propagation and exact-fold legs ran **locally, on CPU, at `nice -n 19` on
 three torch threads**, not through the pool. That is stated rather than
