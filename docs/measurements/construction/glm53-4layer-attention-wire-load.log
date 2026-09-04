@@ -1,0 +1,222 @@
+pbrun: queued b55e047de10d tags=['sparky'] demand={'gpu': 1, 'mem_gb': 16}
+UPTIME-BEFORE:  21:16:45 up 2 days, 11:12,  5 users,  load average: 6.44, 8.03, 19.58
+Mem:             121           9          78           0          36         111
+image prismaquant/glm53-mia-sm121:487ecf187 -> sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69 (local id sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69)
+[tsrun] linked 53 headers; vllm 0.1.dev20051+g487ecf187; plugin ['tessera', 'lora_filesystem_resolver', 'lora_hf_hub_resolver']
+[load] quant_method: tessera config_groups: ['tessera_model_language_model_layers_0_self_attn_f_b_proj', 'tessera_model_language_model_layers_1_mlp_shared_experts_down_proj']
+INFO 09-04 01:16:53 [api_utils.py:273] non-default args: {'trust_remote_code': True, 'max_model_len': 512, 'gpu_memory_utilization': 0.3, 'disable_log_stats': True, 'enforce_eager': True, 'model': '/art/glm4l-attn-small-cpu'}
+INFO 09-04 01:17:03 [model.py:679] Resolved architecture: Glm5NextForConditionalGeneration
+INFO 09-04 01:17:03 [model.py:1973] Using max model len 512
+WARNING 09-04 01:17:03 [model.py:970] Model does not support mm_device_do_normalize, forcing mm_device_do_normalize = False.
+INFO 09-04 01:17:06 [scheduler.py:242] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 09-04 01:17:06 [config.py:605] Mamba cache mode is set to 'align' for Glm5NextForConditionalGeneration by default when prefix caching is enabled
+WARNING 09-04 01:17:06 [vllm.py:1267] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+INFO 09-04 01:17:06 [vllm.py:1319] Auto-enabling VLLM_USE_BREAKABLE_CUDAGRAPH=1. Set VLLM_USE_BREAKABLE_CUDAGRAPH=0 to opt out.
+INFO 09-04 01:17:06 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+INFO 09-04 01:17:06 [vllm.py:1518] Cudagraph is disabled under eager mode
+INFO 09-04 01:17:06 [compilation.py:329] Enabled custom fusions: norm_quant, act_quant
+[transformers] The following generation flags are not valid and may be ignored: ['top_p']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
+WARNING 09-04 01:17:09 [system_utils.py:157] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=535) INFO 09-04 01:17:12 [core.py:122] Initializing a V1 LLM engine (v0.1.dev20051+g487ecf187) with config: model='/art/glm4l-attn-small-cpu', speculative_config=None, tokenizer='/art/glm4l-attn-small-cpu', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=512, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=tessera, quantization_config=None, enforce_eager=True, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False, jit_monitor_mode='warn', jit_monitor_verbose=False), seed=0, served_model_name=/art/glm4l-attn-small-cpu, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.NONE: 0>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['all'], 'ir_enable_torch_wrap': False, 'splitting_ops': [], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_vision_items_per_batch': 0, 'encoder_cudagraph_max_frames_per_batch': None, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.NONE: 0>, 'cudagraph_num_of_warmups': 0, 'cudagraph_capture_sizes': [], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': True, 'fuse_act_quant': True, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False, 'enable_qk_norm_rope_fusion': False, 'fuse_rope_kvcache_cat_mla': False, 'fuse_act_padding': False, 'fuse_qk_norm_rope_kvcache': False}, 'max_cudagraph_capture_size': 0, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': False, 'static_all_moe_layers': []}, kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native']), enable_flashinfer_autotune=True, enable_cutedsl_warmup=True, enable_jit_warmup=True, enable_bf16x3_router_gemm=False, moe_backend='auto', linear_backend='auto')
+(EngineCore pid=535) INFO 09-04 01:17:16 [parallel_state.py:1638] world_size=1 rank=0 local_rank=0 distributed_init_method=file:///ext/vllm_dist_af746056e73f4823812862ea894840a7 backend=nccl
+(EngineCore pid=535) INFO 09-04 01:17:16 [parallel_state.py:1982] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
+(EngineCore pid=535) INFO 09-04 01:17:16 [gpu_worker.py:386] Using V2 Model Runner
+(EngineCore pid=535) INFO 09-04 01:17:16 [model_runner.py:353] Loading model from scratch...
+(EngineCore pid=535) INFO 09-04 01:17:16 [cuda.py:595] Using backend AttentionBackendEnum.FLASH_ATTN for vit attention
+(EngineCore pid=535) INFO 09-04 01:17:16 [mm_encoder_attention.py:375] Using AttentionBackendEnum.FLASH_ATTN for MMEncoderAttention.
+(EngineCore pid=535) WARNING 09-04 01:17:16 [vllm.py:1267] Enforce eager set, disabling torch.compile and CUDAGraphs. This is equivalent to setting -cc.mode=none -cc.cudagraph_mode=none
+(EngineCore pid=535) INFO 09-04 01:17:16 [kernel.py:306] Final IR op priority after setting platform defaults: IrOpPriorityConfig(rms_norm=['vllm_c', 'native'], fused_add_rms_norm=['vllm_c', 'native'])
+(EngineCore pid=535) INFO 09-04 01:17:16 [vllm.py:1518] Cudagraph is disabled under eager mode
+(EngineCore pid=535) INFO 09-04 01:17:16 [compilation.py:329] Enabled custom fusions: norm_quant, act_quant
+(EngineCore pid=535) INFO 09-04 01:17:16 [cuda.py:536] Using FLASHINFER_MLA_SPARSE_SM120 attention backend out of potential backends: ['FLASHINFER_MLA_SPARSE_SM120'].
+(EngineCore pid=535) INFO 09-04 01:17:16 [mla_attention.py:475] Using fp8_ds_mla KV cache format for FLASHINFER_MLA_SPARSE_SM120 backend.
+(EngineCore pid=535) WARNING 09-04 01:17:16 [mla_attention.py:551] Sparse MLA impl has no dense-MHA prefill path; using the top-k MQA path only.
+(EngineCore pid=535) INFO 09-04 01:17:16 [deep_gemm.py:191] deep_gemm not found in site-packages, trying vendored vllm.third_party.deep_gemm
+(EngineCore pid=535) INFO 09-04 01:17:16 [deep_gemm.py:136] DeepGEMM E8M0 enabled on current platform.
+(EngineCore pid=535) INFO 09-04 01:17:16 [unquantized.py:319] Using FlashInfer CUTLASS Unquantized MoE backend out of potential backends: ['FlashInfer TRTLLM', 'FlashInfer CUTLASS', 'TRITON', 'BATCHED_TRITON'].
+(EngineCore pid=535) INFO 09-04 01:17:16 [weight_utils.py:858] Filesystem type for checkpoints: EXT4. Checkpoint size: 5.93 GiB. Available RAM: 103.59 GiB.
+(EngineCore pid=535) INFO 09-04 01:17:16 [weight_utils.py:881] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
+(EngineCore pid=535) 
+Loading safetensors checkpoint shards:   0% Completed | 0/10 [00:00<?, ?it/s]
+(EngineCore pid=535) Process EngineCore:
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355] EngineCore failed to start.
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355] Traceback (most recent call last):
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 1324, in run_engine_core
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return func(*args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 1082, in __init__
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     super().__init__(
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 133, in __init__
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return func(*args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self._init_executor()
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/executor/uniproc_executor.py", line 74, in _init_executor
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self.driver_worker.load_model()
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_worker.py", line 443, in load_model
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/model_runner.py", line 355, in load_model
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self.model = model_loader.load_model(
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return func(*args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/base_loader.py", line 64, in load_model
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     self.load_weights(model, model_config)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return func(*args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/default_loader.py", line 427, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     loaded_weights = model.load_weights(self.get_all_weights(model_config, model))
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/glm4_1v.py", line 2343, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/reload/torchao_decorator.py", line 50, in patched_model_load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return original_load_weights(self, weights, *args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 423, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     autoloaded_weights = set(self._load_module("", self.module, weights))
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 357, in _load_module
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     yield from self._load_module(
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 330, in _load_module
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     loaded_params = module_load_weights(weights)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py", line 1010, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return loader.load_weights(weights)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/reload/torchao_decorator.py", line 50, in patched_model_load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     return original_load_weights(self, weights, *args, **kwargs)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 423, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     autoloaded_weights = set(self._load_module("", self.module, weights))
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 357, in _load_module
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     yield from self._load_module(
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 330, in _load_module
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     loaded_params = module_load_weights(weights)
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]   File "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py", line 904, in load_weights
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]     param = params_dict[name]
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355]             ~~~~~~~~~~~^^^^^^
+(EngineCore pid=535) ERROR 09-04 01:17:17 [core.py:1355] KeyError: 'layers.0.self_attn.f_b_proj.wire_bytes'
+(EngineCore pid=535) Traceback (most recent call last):
+(EngineCore pid=535)   File "/usr/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+(EngineCore pid=535)     self.run()
+(EngineCore pid=535)   File "/usr/lib/python3.12/multiprocessing/process.py", line 108, in run
+(EngineCore pid=535)     self._target(*self._args, **self._kwargs)
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 1359, in run_engine_core
+(EngineCore pid=535)     raise e
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 1324, in run_engine_core
+(EngineCore pid=535)     engine_core = EngineCoreProc(*args, engine_index=dp_rank, **kwargs)
+(EngineCore pid=535)                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535)     return func(*args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 1082, in __init__
+(EngineCore pid=535)     super().__init__(
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core.py", line 133, in __init__
+(EngineCore pid=535)     self.model_executor = executor_class(vllm_config)
+(EngineCore pid=535)                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535)     return func(*args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/executor/abstract.py", line 109, in __init__
+(EngineCore pid=535)     self._init_executor()
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/executor/uniproc_executor.py", line 74, in _init_executor
+(EngineCore pid=535)     self.driver_worker.load_model()
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu_worker.py", line 443, in load_model
+(EngineCore pid=535)     self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/model_runner.py", line 355, in load_model
+(EngineCore pid=535)     self.model = model_loader.load_model(
+(EngineCore pid=535)                  ^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535)     return func(*args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/base_loader.py", line 64, in load_model
+(EngineCore pid=535)     self.load_weights(model, model_config)
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+(EngineCore pid=535)     return func(*args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/default_loader.py", line 427, in load_weights
+(EngineCore pid=535)     loaded_weights = model.load_weights(self.get_all_weights(model_config, model))
+(EngineCore pid=535)                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/glm4_1v.py", line 2343, in load_weights
+(EngineCore pid=535)     return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/reload/torchao_decorator.py", line 50, in patched_model_load_weights
+(EngineCore pid=535)     return original_load_weights(self, weights, *args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 423, in load_weights
+(EngineCore pid=535)     autoloaded_weights = set(self._load_module("", self.module, weights))
+(EngineCore pid=535)                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 357, in _load_module
+(EngineCore pid=535)     yield from self._load_module(
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 330, in _load_module
+(EngineCore pid=535)     loaded_params = module_load_weights(weights)
+(EngineCore pid=535)                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py", line 1010, in load_weights
+(EngineCore pid=535)     return loader.load_weights(weights)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/reload/torchao_decorator.py", line 50, in patched_model_load_weights
+(EngineCore pid=535)     return original_load_weights(self, weights, *args, **kwargs)
+(EngineCore pid=535)            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 423, in load_weights
+(EngineCore pid=535)     autoloaded_weights = set(self._load_module("", self.module, weights))
+(EngineCore pid=535)                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 357, in _load_module
+(EngineCore pid=535)     yield from self._load_module(
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py", line 330, in _load_module
+(EngineCore pid=535)     loaded_params = module_load_weights(weights)
+(EngineCore pid=535)                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+(EngineCore pid=535)   File "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py", line 904, in load_weights
+(EngineCore pid=535)     param = params_dict[name]
+(EngineCore pid=535)             ~~~~~~~~~~~^^^^^^
+(EngineCore pid=535) KeyError: 'layers.0.self_attn.f_b_proj.wire_bytes'
+(EngineCore pid=535) 
+Loading safetensors checkpoint shards:   0% Completed | 0/10 [00:00<?, ?it/s]
+(EngineCore pid=535) 
+[rank0]:[W904 01:17:18.075283820 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+INFO 09-04 01:17:18 [utils.py:615] [shutdown] Process manager: send sigterm to process EngineCore
+Traceback (most recent call last):
+  File "/ts99_load.py", line 12, in main
+    llm = LLM(model=art, enforce_eager=True, max_model_len=512,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/entrypoints/llm.py", line 339, in __init__
+    self.llm_engine = LLMEngine.from_engine_args(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/llm_engine.py", line 179, in from_engine_args
+    return cls(
+           ^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/llm_engine.py", line 105, in __init__
+    self.engine_core = EngineCoreClient.make_client(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core_client.py", line 110, in make_client
+    return SyncMPClient(vllm_config, executor_class, log_stats)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py", line 178, in sync_wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core_client.py", line 812, in __init__
+    super().__init__(
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/core_client.py", line 609, in __init__
+    with launch_core_engines(
+  File "/usr/lib/python3.12/contextlib.py", line 144, in __exit__
+    next(self.gen)
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/utils.py", line 1206, in launch_core_engines
+    wait_for_engine_startup(
+  File "/usr/local/lib/python3.12/dist-packages/vllm/v1/engine/utils.py", line 1286, in wait_for_engine_startup
+    raise RuntimeError(
+RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}
+[load] RAISED RuntimeError
+LOAD_EXIT=3
+UPTIME-AFTER:  21:17:20 up 2 days, 11:13,  5 users,  load average: 6.67, 7.89, 19.10
+{"local_result_claim_sha256": "92adb6cfd098c60cbf813bef9bbcedda742cf912e4a6cbc37832d7d8960cdd0f", "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/36/36462e7c3bf50e1d9be0c7d7bbc5eadb5fe520a055600ba3fcd94b79dc19419e", "reaped_staging_files": 0, "receipt": {"action_key": "b55e047de10d2be0a5b3cdb95c4e16b13f391f91aa8ac87527026df6757424fb", "action_manifest_sha256": "3531e92a433be5a01a5e8353af71b31ae291768be0aada8baba84774b71b777f", "producer": {"action_key": "b55e047de10d2be0a5b3cdb95c4e16b13f391f91aa8ac87527026df6757424fb", "attestation_sha256": "56074d6d31684119e7ecd58c36d5c9ee51f80989a88b513c45817bd49518daba", "evidence": {"accelerators": [{"compute_capability": "12.1", "driver_version": "595.84", "kind": "nvidia"}], "hostname": "sparky", "libc": "glibc-2.39", "machine": "aarch64", "slurm": null, "source": "local", "system": "linux"}, "executable": {"bytes": 1543048, "path": "/bin/bash", "resolved_path": "/usr/bin/bash", "sha256": "af955ef55333c8fc9c5aa50df91ad1a629d9a79a9afa125cd5e9629585f78015"}, "host_class": null, "inputs": [], "platform_key": "linux-aarch64-sm121", "runtime": {"core": {"bytes": 160959, "path": "/mnt/shared/prismabuild-fleet/repo/src/prismabuild/core.py", "resolved_path": "/mnt/shared/prismabuild-fleet/repo/src/prismabuild/core.py", "sha256": "92b9c241dc71a71875c04ede391573a79792596074efff1849cea65532c19f64"}, "launch_kind": "script", "launcher": {"bytes": 2285, "path": "/mnt/shared/prismabuild-fleet/repo/tools/prismabuild_worker.py", "resolved_path": "/mnt/shared/prismabuild-fleet/repo/tools/prismabuild_worker.py", "sha256": "9d6851f927ddf09e75d7eb187b49be9dbfba05274536d765077d93e26ec79418"}, "runtime_sha256": "cb1f960195d509d2a5e4d161ec44855675dd1ffe9932d07b79ca8c82cd7038fb", "schema": "prismaquant.prismabuild.worker_runtime.v1"}, "schema": "prismaquant.prismabuild.worker_attestation.v2", "toolchain": {"declared": {}, "verified": {}}, "worker_id": "sparky"}, "receipt_sha256": "8fc92fb7acae821d4f1880338754d5c9119b61b8466b75d71050a3541c90aad9", "result": {"bytes": 26433, "sha256": "36462e7c3bf50e1d9be0c7d7bbc5eadb5fe520a055600ba3fcd94b79dc19419e"}, "schema": "prismaquant.prismabuild.cas_receipt.v3"}, "recovered_declared_result": false, "status": "published"}
+pbrun: executed on sparky in 35s

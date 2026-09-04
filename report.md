@@ -4,14 +4,24 @@ Branch `muse/ts-99-glmattn`, rebased onto master `5970451`. Not pushed, not merg
 
 ## 0. The headline
 
-**PENDING RECEIPT — §1.2 is not yet filled in.** From source read in the pinned
-image, the load is *predicted* to fail loudly, from `params_dict[name]` at
-`vllm/models/glm5next/nvidia/model.py:904` hitting an unmapped `...wire_bytes`
-key. That is a reading, not an attestation, and it is written here as one; the
-verdict in this line is not final until §1.2 carries the log.
+**The load fails LOUDLY — measured, not predicted.** A GLM Tessera artifact
+whose plan includes attention refuses to load with
 
-**What IS attested, and is the more alarming half:** the belt that should have
-caught the *other* side of the defect is disabled by design. The generic "weights were not initialized from checkpoint"
+```
+File "/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py", line 904, in load_weights
+    param = params_dict[name]
+KeyError: 'layers.0.self_attn.f_b_proj.wire_bytes'
+```
+
+and the engine core dies with it (`LOAD_EXIT=3`). **This is a caught bug, not a
+shipped one**, and it is the good outcome: nobody can serve a wrong artifact
+built this way. Full log committed at
+`docs/measurements/construction/glm53-4layer-attention-wire-load.log`.
+
+**But it is loud by ONE thread only, and the belt that should have caught the
+other half of the defect is disabled by design.** The refusal above is about the
+*extra* key. The *deleted* `f_b_proj.weight` is invisible to vLLM's own
+missing-weight check. The generic "weights were not initialized from checkpoint"
 check — the one that would catch the *missing* `o_proj.weight` — does **not**
 fire: `default_loader.py:456-464` adds every parameter of any module whose
 `quant_method` has `process_weights_after_loading` to `loaded_weights`, and
@@ -45,7 +55,55 @@ whole point is to observe the defect the gate now prevents.
 
 ### 1.2 The load
 
-PLACEHOLDER_LOAD
+Run in `prismaquant/glm53-mia-sm121:487ecf187`
+(`sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69`),
+Tessera installed as a real vLLM plugin (entry point present:
+`plugin ['tessera', 'lora_filesystem_resolver', 'lora_hf_hub_resolver']`),
+`TESSERA_SERVE_MODE=resident`, `enforce_eager=True`, `max_model_len=512`.
+`uptime` before `21:16:45 ... load average: 6.44, 8.03, 19.58`, after
+`21:17:20 ... 6.67, 7.89, 19.10`; the whole load is 35 s because it never
+finishes.
+
+The plugin is asked, and answers, for the artifact as a whole:
+
+```
+[load] quant_method: tessera config_groups: [
+  'tessera_model_language_model_layers_0_self_attn_f_b_proj',
+  'tessera_model_language_model_layers_1_mlp_shared_experts_down_proj']
+```
+
+and then dies on the first attention wire:
+
+```
+File ".../vllm/model_executor/model_loader/reload/torchao_decorator.py", line 50, in patched_model_load_weights
+File ".../vllm/model_executor/models/utils.py", line 423, in load_weights     # AutoWeightsLoader
+File ".../vllm/model_executor/models/utils.py", line 330, in _load_module
+File ".../vllm/models/glm5next/nvidia/model.py", line 904, in load_weights
+    param = params_dict[name]
+KeyError: 'layers.0.self_attn.f_b_proj.wire_bytes'
+
+RuntimeError: Engine core initialization failed. See root cause above.
+LOAD_EXIT=3
+```
+
+Read it precisely. The module the wire was written for is
+`self_attn.f_b_proj`, which the census classifies `never_offered`. vLLM built
+it with `quant_config=None`, so `TesseraLinearMethod` was never installed on
+it, so no `wire_bytes` parameter exists on the module, so the checkpoint's
+`wire_bytes` tensor has no home. **The plugin was never asked and never got to
+refuse — the refusal came from the model class, by accident of a dict lookup.**
+The control module in the same artifact
+(`mlp.shared_experts.down_proj`, `offered`) is fine, which is what proves the
+artifact is otherwise well-formed and the failure is specific to the unrouted
+module.
+
+The verdict for the issue: **loud, so this is a caught bug rather than a shipped
+one — but it is loud for a reason that is not a gate.** `params_dict[name]`
+raising is an implementation detail of one model class's `load_weights`; the
+three `continue` branches immediately above it (bias, kv-scale remap,
+PP-missing) show how easily a name lands in a skip path instead. Nothing in
+the plugin, the loader, or the contract was checking. §1.3 is the half where
+that already happened.
 
 ### 1.3 The belt that does not fire
 
