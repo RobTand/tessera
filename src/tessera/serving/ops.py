@@ -23,6 +23,16 @@ residency).  The streamed residency decodes inside a traced forward, where that
 path's data-dependent shapes cannot run, and refuses.  Which decoder ran
 travels on the route record (``telemetry``'s ``decoder`` field), so a census
 can never read a fallback serve as a native one.
+
+THE NATIVE DECODE IS HELD TO THE REFERENCE AT LOAD.  ``prepare_tessera_module``
+decodes the module once through the native symbol and compares the tile, byte
+for byte, with what ``tessera.stock.materialize_stock`` writes for the same
+roles on the same shared global -- the equality the FP8 and BF16 routes have
+always required of their window decoders (``fp8_route``, ``bf16_route``).  A
+disagreement refuses the module at load, naming it, the role and the first
+differing tile; nothing is served that the reference decoder would not have
+produced.  The fallback path has no such check, and cannot: the substitute IS
+the reference, so there is nothing independent to hold it to.
 """
 from __future__ import annotations
 
@@ -301,8 +311,49 @@ def _torch_fallback_tile(parsed_roles, moved_tables, shared, device):
     return (torch.cat(packed_parts, 0).contiguous(), torch.cat(scale_parts, 0).contiguous())
 
 
+def _require_reference_agreement(prepared: PreparedTesseraModule, roles, reference,
+                                 prefix=None) -> None:
+    """Refuse a prepared module whose native decode is not the reference tile.
+
+    One decode through the same functional op the forward runs, held to
+    ``reference()`` -- ``_torch_fallback_tile``, ``materialize_stock`` on the
+    moved tables, built only once the decode has run -- with
+    ``torch.equal`` on both uint8 planes: bit-exact, no tolerance, because the
+    reference is bit-exact.  The message names the module, the role owning the
+    first differing byte and its tile -- row and group-16 column block -- so
+    a refusal at load says where the decoder went wrong, not only that it did.
+    """
+    # The decode first: a role this decoder cannot start (a sliced unit's
+    # INITIAL_STATE plane) is refused by ``decode`` itself, by name, before a
+    # reference is built for it.
+    packed, scales = prepared.decode()
+    reference = reference()
+    where = f"{prefix}: " if prefix else ""
+    for plane, got, want in (("packed", packed, reference[0]), ("scales", scales, reference[1])):
+        if got.shape != want.shape:
+            raise RuntimeError(
+                f"{where}the span-2 decoder wrote a {plane} plane of shape {tuple(got.shape)}; "
+                f"tessera.stock.materialize_stock writes {tuple(want.shape)}; refusing to serve "
+                "bytes the reference decoder would not produce")
+        if torch.equal(got, want):
+            continue
+        differ = got != want
+        wrong = int(differ.sum())
+        row, col = (int(v) for v in torch.nonzero(differ)[0])
+        role = next(r for r in reversed(roles) if r.row_offset <= row)
+        # A packed byte holds columns 2c, 2c+1; a scale byte IS its group.
+        group = col // (GROUP_SIZE // 2) if plane == "packed" else col
+        raise RuntimeError(
+            f"{where}role {role.name!r}: the span-2 decoder disagrees with "
+            f"tessera.stock.materialize_stock on {wrong} of {want.numel()} {plane} bytes, first "
+            f"at row {row} (role row {row - role.row_offset}), group {group} (columns "
+            f"{group * GROUP_SIZE}-{group * GROUP_SIZE + GROUP_SIZE - 1}); refusing to serve "
+            "bytes the reference decoder would not produce")
+
+
 def prepare_tessera_module(parsed_roles, device=None, *,
-                           allow_torch_fallback: bool = False) -> PreparedTesseraModule:
+                           allow_torch_fallback: bool = False,
+                           prefix: str | None = None) -> PreparedTesseraModule:
     """``[(role, ParsedUnit)]`` in stacking order -> a prepared module.
 
     Moves every role's LUT table onto one shared global (exact binade shift,
@@ -325,6 +376,13 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     caller that decodes inside the forward must leave it False: the fallback
     cannot run there, and pretending otherwise would substitute a residency the
     operator did not ask for.
+
+    On the native path the prepared module is decoded once here and held to
+    the reference tile (``_require_reference_agreement``); ``prefix`` is the
+    vLLM module name a refusal carries.  The cost is one native decode plus
+    one pure-torch ``materialize_stock`` per module at load, in both
+    residencies, and it is unconditional: the FP8 and BF16 routes take no knob
+    to skip theirs, so neither does this one.
     """
     from tessera.fused import shared_lut_global
     from tessera.lane_planes import prepare_span2_planes
@@ -409,5 +467,9 @@ def prepare_tessera_module(parsed_roles, device=None, *,
                                      device=device, body=route["body"], decoder=DECODER_TORCH_STOCK,
                                      tile=tile)
     require_tessera_ext("Tessera NVFP4 native decode")
-    return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
-                                 device=device, body=route["body"], decoder=DECODER_NATIVE_SPAN2)
+    prepared = PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
+                                     device=device, body=route["body"], decoder=DECODER_NATIVE_SPAN2)
+    _require_reference_agreement(
+        prepared, roles, lambda: _torch_fallback_tile(parsed_roles, moved, shared, device),
+        prefix=prefix)
+    return prepared

@@ -49,7 +49,7 @@ def _nvfp4_roles(*, grid="E2M1x2", body="TCQ", plane="LUT", span=2):
                             unit=unit, forests={}, code=None))]
 
 
-def _stub_nvfp4_tail(monkeypatch):
+def _stub_nvfp4_tail(monkeypatch, decode=None):
     import tessera.fused
     import tessera.lane_planes
     from tessera.serving import ext as ext_module
@@ -66,6 +66,20 @@ def _stub_nvfp4_tail(monkeypatch):
     monkeypatch.setattr(tessera.lane_planes, "prepare_span2_planes", _planes)
     monkeypatch.setattr(ext_module, "get_tessera_ext", lambda: object())
     monkeypatch.setattr(ext_module, "require_tessera_ext", lambda op: object())
+    # The reference decoder and the native seam, after the gate: the decode
+    # writes what the reference returns (zeros), so the load-time equality
+    # check passes and only the ROUTES gates can refuse.
+    monkeypatch.setattr(ops, "_torch_fallback_tile",
+                        lambda parsed_roles, moved, shared, device: (
+                            torch.zeros(4, 32, dtype=torch.uint8, device=device),
+                            torch.zeros(4, 4, dtype=torch.uint8, device=device)))
+    monkeypatch.setattr(ops, "_decode_impl", decode or _zero_decode)
+
+
+def _zero_decode(select, label, point, nibbles, lut_bytes, label_lut, subset_nibbles,
+                 rows, cols, rate, arity, memory, half, packed_out, scale_out):
+    packed_out.zero_()
+    scale_out.zero_()
 
 
 def _window_roles(*, grid="E4M3", body="WINDOW", plane="CHANNEL", span=1,
@@ -161,6 +175,22 @@ def test_nvfp4_refuses_a_span_no_route_reads(monkeypatch):
     _stub_nvfp4_tail(monkeypatch)  # the tail is stubbed so only the gate can refuse
     with pytest.raises(ValueError, match="span"):
         ops.prepare_tessera_module(_nvfp4_roles(span=99), device="cpu")
+
+
+def test_nvfp4_refuses_a_decode_the_reference_would_not_produce(monkeypatch):
+    """The gate AFTER the ROUTES gates: what the span-2 decoder wrote is held
+    to ``tessera.stock.materialize_stock`` byte for byte at load, and a
+    disagreement refuses the module naming it, the role and the first
+    differing tile (#130).  The CUDA twin in ``test_serving_nvfp4_route`` runs
+    it on real bytes; this one runs the comparison itself on any device."""
+    def _one_bit_wrong(*args):
+        _zero_decode(*args)
+        args[-1][2, 3] = 0x10       # scale plane, role row 2, group 3
+
+    _stub_nvfp4_tail(monkeypatch, decode=_one_bit_wrong)
+    with pytest.raises(RuntimeError, match=r"a\.layer: role 'weight'.*materialize_stock.*"
+                                            r"1 of 16 scales bytes.*row 2.*group 3.*refusing"):
+        ops.prepare_tessera_module(_nvfp4_roles(), device="cpu", prefix="a.layer")
 
 
 # --- FP8: fp8_route.prepare_tessera_fp8_module --------------------------------

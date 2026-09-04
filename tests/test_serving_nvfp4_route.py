@@ -430,3 +430,65 @@ def test_an_unloaded_input_global_scale_is_refused_by_the_gates_own_predicate(mo
     gs = layer.trellis_input_global_scale.data
     assert torch.isnan(gs).all(), "the unloaded scale must be a value the gate refuses"
     assert not float(gs.reshape(-1)[0]) > 0.0
+
+
+# --- the load-time reference gate --------------------------------------------
+
+def _corrupting_decode(monkeypatch, plane, pos):
+    """Wrap the native seam so every role's decode lands with ONE bit wrong at
+    role-relative ``pos`` on ``plane`` -- the defect the gate must catch."""
+    from tessera.serving import ops
+
+    real = ops._decode_impl
+
+    def _corrupt(select, label, point, nibbles, lut_bytes, label_lut, subset_nibbles,
+                 rows, cols, rate, arity, memory, half, packed_out, scale_out):
+        real(select, label, point, nibbles, lut_bytes, label_lut, subset_nibbles,
+             rows, cols, rate, arity, memory, half, packed_out, scale_out)
+        target = packed_out if plane == "packed" else scale_out
+        r, c = pos
+        target[r, c] ^= 0x01
+
+    monkeypatch.setattr(ops, "_decode_impl", _corrupt)
+
+
+@requires_cuda
+@pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
+@pytest.mark.parametrize("plane,pos,group", [("packed", (3, 9), 1), ("scales", (5, 2), 2)])
+def test_a_decoder_that_disagrees_with_the_reference_is_refused_at_load(monkeypatch, mode,
+                                                                        plane, pos, group):
+    """The NVFP4 route cross-checks the span-2 decoder against
+    ``tessera.stock.materialize_stock`` on the loaded bytes, in both
+    residencies, and refuses the module -- naming it, the role and the first
+    differing tile -- on any inequality.  The FP8 and BF16 routes have done
+    this since they existed; this route served the decoder's output
+    unchallenged (#130).  A single flipped bit is the smallest defect there is,
+    and it lands in every role, so the first differing tile is the first
+    role's."""
+    _requires_native_ext()
+    _corrupting_decode(monkeypatch, plane, pos)
+    roles = (("q_proj", 64), ("k_proj", 64))
+    with pytest.raises(RuntimeError) as excinfo:
+        _drive(monkeypatch, mode, roles=roles, cols=512)
+    msg = str(excinfo.value)
+    assert "test.layer" in msg
+    assert "role 'q_proj'" in msg
+    assert "materialize_stock" in msg
+    assert f"{plane} bytes" in msg and "2 of" in msg
+    assert f"row {pos[0]}" in msg and f"group {group}" in msg
+    assert "refusing to serve" in msg
+
+
+@requires_cuda
+def test_the_reference_gate_runs_on_an_honest_decode_and_passes(monkeypatch):
+    """The positive control: the same drive with the real seam prepares and
+    serves, so the refusal above is the gate and not the harness."""
+    _requires_native_ext()
+    from tessera.serving import ops
+
+    seen = []
+    real = ops._decode_impl
+    monkeypatch.setattr(ops, "_decode_impl", lambda *a: (seen.append(1), real(*a))[1])
+    _g, _w, layer, _m, _ = _drive(monkeypatch, MODE_RESIDENT, roles=(("q_proj", 64), ("k_proj", 64)),
+                                   cols=512)
+    assert layer.tessera_decoder == telemetry.DECODER_NATIVE_SPAN2 and seen
