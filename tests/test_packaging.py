@@ -206,3 +206,31 @@ def test_the_readme_pins_its_links_to_the_version_it_ships_with():
         f"README.md pins links to {stale} but the distribution is v{declared}; "
         "the pinned links and the version are bumped together or the page "
         "documents one release and links to another")
+
+
+def test_the_jit_toolchain_is_named_by_one_extra_and_referenced_by_the_rest():
+    """Both native routes build a packaged ``.cu`` with torch's JIT at first
+    use, which needs a ``ninja``.  An extra that installs a runtime able to
+    reach that build and does not carry the builder installs a consumer
+    straight onto the fallback decode -- silently, because the fallback is a
+    named substitute rather than an error.  The builder is named in one extra
+    and referenced by the others, so there is no second copy to bump."""
+    project = _pyproject()["project"]
+    extras = project["optional-dependencies"]
+    assert "native" in extras, (
+        "no extra declares the JIT build toolchain; ninja is a build "
+        "requirement of both native routes and was declared nowhere")
+    reference = f"{project['name']}[native]"
+    for extra, requirements in extras.items():
+        if extra == "native":
+            continue
+        assert reference in requirements, (
+            f"extra {extra!r} installs a runtime that reaches the JIT build "
+            f"and does not carry {reference}; if it genuinely cannot reach "
+            "one, say so here")
+    restated = sorted(
+        extra for extra, requirements in extras.items()
+        if extra != "native" and any("ninja" in item for item in requirements))
+    assert not restated, (
+        f"extras {restated} name ninja directly instead of referencing "
+        f"{reference}; that is the copy this test exists to prevent")

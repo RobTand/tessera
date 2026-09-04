@@ -25,9 +25,19 @@ dependencies = ["torch>=2.4", "numpy", "safetensors"]
 
 [project.optional-dependencies]
 # The serving half registers with vLLM; the fused kernels are Triton (bundled
-# with torch on Linux) plus one CUDA source JIT-built by torch at first use.
-serve = ["vllm>=0.28"]
-kernels = ["triton"]
+# with torch on Linux) plus two CUDA sources JIT-built by torch at first use.
+#
+# `native` is that JIT toolchain's PyPI half, named once and referenced rather
+# than restated: torch builds the packaged .cu sources with ninja, and both
+# the serving half and the kernel half reach that build.  The toolchain's
+# other half, an nvcc, is not installable from PyPI, so it is a documented
+# requirement (README, docs/ARCHITECTURE.md 5.3) rather than a declared one --
+# and what a route does without one is per route and per residency, published
+# in runtime_contract.json's native_extensions[].when_unavailable, never
+# asserted here.
+native = ["ninja"]
+serve = ["vllm>=0.28", "tessera-quant[native]"]
+kernels = ["triton", "tessera-quant[native]"]
 
 [project.urls]
 Homepage = "https://github.com/RobTand/tessera"

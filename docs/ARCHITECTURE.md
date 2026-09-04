@@ -1257,19 +1257,26 @@ the build inputs -- and refuses anything else, in either direction, and
 that has moved (which would silently stop excluding anything). Measured on
 this tree: the sdist rebuilds a wheel with an identical 76-entry namelist.
 
-Two extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
-host, and `kernels` installs Triton. A PyPI vLLM is a **working install, not
-an attested one**: every cell in the contract is pinned to an image digest
-(§3), and a serve on any other runtime gains no claim from it.
+Three extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
+host, `kernels` installs Triton, and `native` installs the `ninja` both of
+them need to build the packaged `.cu` sources -- named once there and
+referenced by the other two (`tessera-quant[native]`), so a consumer cannot
+install a runtime that reaches the JIT build without its builder. A PyPI
+vLLM is a **working install, not an attested one**: every cell in the
+contract is pinned to an image digest (§3), and a serve on any other runtime
+gains no claim from it.
 
 ### 5.3 The JIT build and what degrades without a compiler
 
 The native extensions are built by torch at first use from the packaged
 `.cu` sources and need an `nvcc` and a `ninja` on the box
-(`src/tessera/serving/ext.py`, "TOOLCHAIN"). Neither is a declared
-dependency; the same file records where each is looked for. When a build is
-unavailable the outcome is per extension and per residency, and it is a
-value the route record stamps, never a boolean:
+(`src/tessera/serving/ext.py`, "TOOLCHAIN"). The `ninja` is declared -- the
+`native` extra, which `serve` and `kernels` both reference. The `nvcc` is
+not installable from PyPI and is therefore a documented requirement, stated
+in the README beside the install commands and here; `ext.py` records where
+each is looked for. When a build is unavailable the outcome is per extension
+and per residency, and it is a value the route record stamps, never a
+boolean:
 
 - `substituted` -- a *named* substitute decoder ran and the serve is a
   different numeric object than the native one. The resident NVFP4 route
