@@ -204,6 +204,13 @@ def test_live_legacy_owner_blocks_atomic_acquisition(tmp_path: Path) -> None:
     assert owner.read_text() == f"{os.getpid()} live-holder\n"
 
 
+def test_live_legacy_owner_survives_a_denied_signal_probe(tmp_path: Path) -> None:
+    """EPERM from kill -0 is not evidence that an existing process is dead."""
+    result, owner = _live_legacy_owner_contender(tmp_path, probe_denied=True)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert owner.read_text() == f"{os.getpid()} live-holder\n"
+
+
 def test_two_dead_owner_reapers_cannot_unlink_the_new_holder(tmp_path: Path) -> None:
     """Compare+unlink and the replacement acquire are one serialized transition."""
     lock = tmp_path / "serve.lock"

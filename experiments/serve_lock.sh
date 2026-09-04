@@ -62,7 +62,7 @@ _serve_lock_reap_legacy_directory() {
   [ "$age" -gt 3600 ] || return 1
   owner=$(cat "$SERVE_LOCK/owner" 2>/dev/null || true)
   owner_pid=${owner%% *}
-  if [[ "$owner_pid" =~ ^[0-9]+$ ]] && kill -0 "$owner_pid" 2>/dev/null; then
+  if [[ "$owner_pid" =~ ^[0-9]+$ ]] && [ -e "/proc/$owner_pid" ]; then
     return 1
   fi
   _serve_lock_no_containers || return 1
