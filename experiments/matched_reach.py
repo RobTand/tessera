@@ -60,6 +60,16 @@ def realised_reach(grid, window_bits: int, sigma: float, *, seed: int = 0,
                               seed=seed, half=half).realised
 
 
+#: How finely the two edges of a plateau are resolved.  The plateaus are
+#: wide -- a step is one grid spacing over the outermost quantile, about
+#: 4e-3 in ratio on BF16 -- so resolving the edges to 1e-9 puts the midpoint
+#: six orders of magnitude inside its own plateau and stops about 25
+#: bisections earlier than running the floats together would.  Each of those
+#: bisections is a full window-table build (0.5 s at L=16 on a GB10 core),
+#: so the tolerance is the difference between a search and a coffee break.
+EDGE_TOL = 1e-9
+
+
 def _first_ratio_at_least(grid, window_bits, target, base_sigma, lo, hi,
                           *, strict: bool, seed=0, half=16) -> float:
     """Bisect the monotone step function for its first ratio past ``target``.
@@ -85,6 +95,8 @@ def _first_ratio_at_least(grid, window_bits, target, base_sigma, lo, hi,
     for _ in range(200):
         mid = 0.5 * (lo + hi)
         if mid <= lo or mid >= hi:      # the floats have met; the edge is hi
+            break
+        if hi - lo <= EDGE_TOL * max(1.0, hi):
             break
         if over(mid):
             hi = mid
@@ -122,20 +134,28 @@ def matched_ratio(grid, window_bits: int, target_reach: float, *,
             "width": past - first}
 
 
-def reach_grid(grid, widths, *, base_sigma: float, seed: int = 0,
+def reach_grid(grid, widths, *, base_sigma: float, rows=None, seed: int = 0,
                half: int = 16) -> dict:
-    """The full factorial: every width, at every width's own shipped reach.
+    """The factorial: each row width, at every width's own shipped reach.
 
     The diagonal is ratio 1.0 by construction -- a width at its own reach is
     the shipped arm -- and that is asserted here rather than assumed, because
     a diagonal that came back at anything else would mean the target table
     and the encode disagree about what ``sigma`` means.
+
+    ``rows`` restricts which widths are *searched for*; the columns are
+    always every width's own reach, because a column is a target and costs
+    one table build.  A caller that wants one row's ratios pays for one row:
+    each cell is two bisections over the table builder, which is the
+    expensive part and is why the run script asks for a row at a time rather
+    than reciting the whole grid before every encode.
     """
     widths = [int(L) for L in widths]
+    rows = widths if rows is None else [int(L) for L in rows]
     own = {L: realised_reach(grid, L, base_sigma, seed=seed, half=half)
            for L in widths}
     cells = {}
-    for L in widths:
+    for L in rows:
         for target_L in widths:
             m = matched_ratio(grid, L, own[target_L], base_sigma=base_sigma,
                               seed=seed, half=half)
@@ -164,7 +184,8 @@ def main() -> None:
     grid = grids[a.grid]
     sigma = BF16_CHANNEL_SIGMA if a.sigma is None else a.sigma
 
-    g = reach_grid(grid, a.widths, base_sigma=sigma)
+    g = reach_grid(grid, a.widths, base_sigma=sigma,
+                   rows=None if a.ratios_for is None else [a.ratios_for])
     if a.ratios_for is not None:
         # The diagonal is spelled exactly 1.0 and not its interval midpoint:
         # ratio 1.0 is the value the recipe stores and the sweep's

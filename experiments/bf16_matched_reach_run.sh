@@ -86,10 +86,20 @@ row() {
       --out "$OUT/mr_${pop}_L${L}.json" "$@"
 }
 
+# The eight dense Qwen Linears the landed `pair_dense.json` swept, named
+# rather than inherited: `DENSE_UNITS` in `bf16_route_weight_space.py` is a
+# DIFFERENT six, so a row taking the default would sweep a population the
+# landed run never touched -- no shared shipped baseline, and therefore no
+# cross-run control and no A to compare a B against.
+DENSE=(model.layers.2.mlp.down_proj model.layers.2.self_attn.q_proj
+       model.layers.2.self_attn.k_proj model.layers.14.mlp.gate_proj
+       model.layers.2.mlp.up_proj model.layers.14.mlp.down_proj
+       model.layers.27.self_attn.o_proj model.layers.14.self_attn.v_proj)
+
 case "${1:-all}" in
-  dense-14) row 14 dense --rungs 1024 1536 2048 ;;
-  dense-12) row 12 dense --rungs 1024 1536 2048 ;;
-  dense-16) row 16 dense --rungs 1024 1536 2048 ;;
+  dense-14) row 14 dense --units "${DENSE[@]}" --rungs 1024 1536 2048 ;;
+  dense-12) row 12 dense --units "${DENSE[@]}" --rungs 1024 1536 2048 ;;
+  dense-16) row 16 dense --units "${DENSE[@]}" --rungs 1024 1536 2048 ;;
   glm-14)   row 14 glm --layers 5 20 42 --projs gate_proj up_proj \
                        --experts 0 --rungs 1024 1536 2048 ;;
   glm-16)   row 16 glm --layers 5 20 42 --projs gate_proj up_proj \
