@@ -77,6 +77,7 @@ _serve_lock_reap_legacy_directory() {
 
 serve_lock_acquire() {
   local pid start nonce token observed current started now timeout poll
+  local guard guard_fd acquired reaped refused
   [ -z "${SERVE_LOCK_TOKEN:-}" ] || {
     echo "serve_lock: this process already owns $SERVE_LOCK" >&2
     return 2
@@ -99,36 +100,79 @@ serve_lock_acquire() {
     echo "serve_lock: SERVE_LOCK_TIMEOUT must be whole seconds" >&2
     return 2
   }
+  guard=${SERVE_LOCK_GUARD:-${SERVE_LOCK}.guard}
+  if [ -L "$guard" ] || { [ -e "$guard" ] && [ ! -f "$guard" ]; }; then
+    echo "serve_lock: refusing non-file transition guard at $guard" >&2
+    return 2
+  fi
+  exec {guard_fd}>> "$guard" || {
+    echo "serve_lock: cannot open transition guard $guard" >&2
+    return 2
+  }
+  if [ -L "$guard" ] || [ ! -f "$guard" ]; then
+    exec {guard_fd}>&-
+    echo "serve_lock: transition guard changed while opening $guard" >&2
+    return 2
+  fi
   started=$(date +%s)
-  while ! ln -s -- "$token" "$SERVE_LOCK" 2>/dev/null; do
-    if [ -L "$SERVE_LOCK" ]; then
-      observed=$(readlink -- "$SERVE_LOCK" 2>/dev/null || true)
-      if _serve_lock_atomic_owner_is_dead "$observed"; then
-        current=$(readlink -- "$SERVE_LOCK" 2>/dev/null || true)
-        if [ "$current" = "$observed" ]; then
-          echo "serve_lock: removing dead atomic owner $observed" >&2
-          unlink -- "$SERVE_LOCK" 2>/dev/null || true
-          continue
+  while true; do
+    flock -x "$guard_fd" || {
+      exec {guard_fd}>&-
+      echo "serve_lock: cannot lock transition guard $guard" >&2
+      return 2
+    }
+    acquired=0
+    reaped=0
+    refused=0
+    if ln -s -- "$token" "$SERVE_LOCK" 2>/dev/null; then
+      acquired=1
+    else
+      if [ -L "$SERVE_LOCK" ]; then
+        observed=$(readlink -- "$SERVE_LOCK" 2>/dev/null || true)
+        if _serve_lock_atomic_owner_is_dead "$observed"; then
+          current=$(readlink -- "$SERVE_LOCK" 2>/dev/null || true)
+          if [ "$current" = "$observed" ]; then
+            echo "serve_lock: removing dead atomic owner $observed" >&2
+            if unlink -- "$SERVE_LOCK" 2>/dev/null; then
+              reaped=1
+            fi
+          fi
         fi
+      elif [ -d "$SERVE_LOCK" ]; then
+        if _serve_lock_reap_legacy_directory; then
+          reaped=1
+        fi
+      elif [ -e "$SERVE_LOCK" ]; then
+        refused=1
       fi
-    elif [ -d "$SERVE_LOCK" ]; then
-      if _serve_lock_reap_legacy_directory; then
-        continue
+      # Keep the guard across stale-token removal AND replacement publication.
+      # Otherwise a second reaper can validate the old token, pause, then
+      # unlink the new owner after the first reaper publishes it.
+      if [ "$reaped" = 1 ] && ln -s -- "$token" "$SERVE_LOCK" 2>/dev/null; then
+        acquired=1
       fi
-    elif [ -e "$SERVE_LOCK" ]; then
+    fi
+    flock -u "$guard_fd" || true
+    if [ "$acquired" = 1 ]; then
+      exec {guard_fd}>&-
+      SERVE_LOCK_TOKEN=$token
+      export SERVE_LOCK_TOKEN
+      echo "serve_lock: acquired $SERVE_LOCK token=$token owner=${SERVE_LOCK_OWNER:-unnamed}" >&2
+      return 0
+    fi
+    if [ "$refused" = 1 ]; then
+      exec {guard_fd}>&-
       echo "serve_lock: refusing non-lock object at $SERVE_LOCK" >&2
       return 2
     fi
     now=$(date +%s)
     if [ "$timeout" -gt 0 ] && [ $((now - started)) -ge "$timeout" ]; then
+      exec {guard_fd}>&-
       echo "serve lock busy after $((now - started))s ($(_serve_lock_describe)); not probing" >&2
       return 3
     fi
     sleep "$poll"
   done
-  SERVE_LOCK_TOKEN=$token
-  export SERVE_LOCK_TOKEN
-  echo "serve_lock: acquired $SERVE_LOCK token=$token owner=${SERVE_LOCK_OWNER:-unnamed}" >&2
 }
 
 serve_lock_release() {
