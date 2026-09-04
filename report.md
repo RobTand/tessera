@@ -87,6 +87,29 @@ floor, so this is quantiles snapping onto the floor, not halving through it). So
 `log2(σ) mod 1`, and the issue's parameterisation is right. m=0.5 and m=1 share
 residue 0.55735 and measure identically; m=0.75 and m=1.5 share 0.14232.
 
+**And the gauge is exact in the code, not just in the table.** Every row's
+pre-fp16 scale is proportional to `1/sigma` — a row inside the reach starts at
+`rms/sigma`, and a row past it starts at `reach·rms/amax`, which is
+`amax/(4.0773·sigma)` since `reach = 4.0773·sigma`. `channel_global` then
+returns `2^floor(log2(median scale))`, **a power of two**. So under
+`sigma → 2^k·sigma` every stored fp16 row word is *bit-identical* and only the
+global's exponent moves, while every table value scales by the same `2^k`. The
+encode is exactly gauge-equivalent, not approximately.
+
+The measurement says so to eight digits. At R2048 `m=1` and `m=0.5` read
+`wt = 0.026461195201` and `0.026461195201` — identical to twelve decimals — and
+`h = 0.010237647902` against `0.010237653232`, a relative difference of 5e-7,
+which is the residue of those few table entries that hit the grid's floor.
+`rho=0.5` (table halved, row scales untouched) reads 0.010183, 0.5% *better*.
+Every arm whose table-over-row-scale ratio is a power of two times the
+default's reads ~0.0102; every arm that is not reads 0.0134–0.0149.
+
+**So the dyadic residue is a gauge coordinate.** On the dyadic lattice the
+encoder is exactly invariant. Off it, two things land differently and both are
+small: the E4M3 snap in the table (8e-4 relative energy) and the fp16 word each
+row scale rounds to (~5e-4, one fp16 ulp). Neither is 37% of anything. The
+question is what amplifies them.
+
 **But the residue barely moves the table's own error.** For every unclamped
 sigma the reach is exactly `4.0773·σ`, so the reach-aware row scales at the two
 sigmas are exactly proportional and the two normalised tables differ only in
