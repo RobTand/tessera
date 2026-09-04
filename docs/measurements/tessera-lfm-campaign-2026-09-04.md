@@ -452,3 +452,83 @@ Independent review also corrected present-tense route docstrings and added a
 dated supersession note to the historical MoE design document in `06e5ac9`.
 Those are prose-only corrections to the now-measured scope; no frozen encoder
 or serving snapshot, contract byte, default or quality threshold moved.
+
+## 11. Selector-selected population and final assertion repair
+
+The selector ran in the promotion checkout through CPU action
+`b71e10f4a79c9de1f1e39d6d9bb35e180591553cf8168a0bfd8445a302e995d4`,
+using the exact fetched base `424dad5f134f42e84e5f2ea8cd2ee1d19042c236`.
+It reported `narrowed`, 52 files, via direct tree comparison because the PB
+snapshot is parentless. Receipt CAS:
+`ba9bfee7643e5776ab9dcf829b9fe9b33c4f127b4a212147ad1ff22398f151ab`.
+Seven core files had the 180/0/0 CPU result in §9. The remaining 45 files
+were submitted once as an explicit pytest argument list in action
+`4ffaeea0a706b4ef0f88ba4e5996845971f2b17aedade2b268ca3796babd027b`,
+on source snapshot `4d9c0e8d7a05dea7571dec9bd4f50e5180aa86ba`.
+The already-reviewed census-test AST scoping fix `dcf8ee8` was included as
+`16477b9` before this run; no old known test failure was intentionally rerun.
+
+This action was **red: 647 passed, one failed, 301 skipped, zero uncollected**,
+serial CPU with torch 2.11.0+cpu and no CUDA device. The deployed pool retried
+its nonzero result three times; the final worker returned one in 208.057
+seconds, with pytest reporting 206.16 seconds. Logs and the action's final
+failure record remain in PB; no successful CAS result is claimed for it.
+The population is `astra-lfm-promotion-selected-r1.surface.json` in the
+parent `lfm25` directory, and earlier automatic-attempt populations were
+preserved by the harness as `surface.superseded-*.json` siblings.
+
+The sole failure was `tests/test_serving_moe_route.py:130`: expected regex
+`every expert of a stack`, actual refusal
+`m: group 'w13' carries 2 expert row(s) for 3 experts; every expert must have its own row of projection containers`.
+The existing guard correctly refused the missing expert; the test retained
+old explanatory wording after the projection-granularity prose correction.
+Test-only commit `c98434d` matches the named group/row-count refusal instead
+of its explanatory suffix. No production behavior, wire or gate changed.
+
+Only that failing file was run against pristine master
+`dbfce8bb72f2dd384a2cc723f3df434b4d3e7f47`: action
+`c3733bc17a818cca0cc14011eb4fb8cd218b99881e13711e69f93c0540413246`,
+six passed, zero skipped/uncollected, CPU-only, 65.33 seconds, original
+worker exit zero; receipt CAS
+`a43c16e1dc0b5001949a8f308f1911c70561616a2a2459d5631801bcd726eb42`.
+The branch therefore owned this assertion drift rather than borrowing a
+baseline excuse. After the fix, the complete affected file passed **9/0/0**,
+CPU-only, in 66.16 seconds, through action
+`9da0943d7e16081c563668b9c67d97efa95ce3f64b607ee27603b16aa5346266`
+on snapshot `ee6b2a32ef3e926cb4ba154ca93f0cd2a9920de7`; receipt CAS
+`ea6a03b0ff6d056b2f18835183a74a94cd8fa8e231f3b46140a4b2cb08e15ca1`.
+Its population is `astra-lfm-moe-row-message-green-r1.surface.json`.
+The 44 unaffected files were not recomputed, and these separate-source
+targeted results are not described as one all-green merge-suite receipt.
+The coordinator owns the dual-population full suite on the integrated tree.
+
+The 45-file run's 301 skip reasons, verbatim:
+
+| count | reason |
+|---:|---|
+| 81 | `the encoder is a CUDA path` |
+| 79 | `needs a CUDA device` |
+| 29 | `the Viterbi is CUDA` |
+| 24 | `the kernel lane is a CUDA path` |
+| 23 | `the lane is a CUDA kernel` |
+| 15 | `the encoder is a GPU job` |
+| 14 | `the Tessera encoder is a CUDA path` |
+| 6 | `/home/rob/tessera-runs/compile-dispatch is not on this box` |
+| 6 | `needs CUDA` |
+| 5 | `the kernel lane runs on CUDA` |
+| 5 | `the reach checkpoint is not on this box` |
+| 4 | `Qwen3-0.6B is not on this box` |
+| 2 | `no stock twin` |
+| 1 | `/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box` |
+| 1 | `/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box` |
+| 1 | `E2M1 publishes no reader range` |
+| 1 | `could not import 'vllm': No module named 'vllm'` |
+| 1 | `the PrismaQuant tree or the allocation outputs are not on this box` |
+| 1 | `the PrismaQuant tree with tessera_formats is not on this box` |
+| 1 | `the shipped checkpoint is not here` |
+| 1 | `the two surviving compile caches from 2026-09-02 are not on this box` |
+
+Final independent read-only review found no blocking scope, provenance or
+negative-matrix defect. Its prose and verification-attribution findings were
+fixed in the separate commits recorded in §10. Contract raw SHA256 remains
+`75137c73bce8837713b427d977beb0eec280faccb39fd3225acf1b3bd00eb0b1`.
