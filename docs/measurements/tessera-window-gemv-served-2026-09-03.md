@@ -246,6 +246,21 @@ Both regimes, then: **0 of 8,380,400 values differ in each**, on byte-identical
 bytes, with the GEMV lane refusing 0/112 modules in arm A and 112/112 in arm B in
 both.
 
+**Build provenance, which makes the eager pair the cleanest comparison here.**
+The two eager arms carry the **same `build_fingerprint`**, `eaeedd6b3ee434be…` —
+byte-identical weights *and* an identical build, differing only in whether the
+lane was reachable. The two compiled arms carry different fingerprints
+(`d62c417b…`, `f58a4e78…`), which is expected and deliberate: each arm compiles
+into its **own `VLLM_CACHE` root**, because vLLM's compile-cache key does not see
+the GEMV lane (#91) and a shared cache would let one arm serve the other arm's
+compiled artifacts. Separate roots are what keep the compiled A/B honest; the
+cost is that the compiled pair is not build-identical, only weight-identical.
+
+All six censuses and every arm in this document were produced from **one
+checkout at branch commit `3d9b2dd`** (off master `c71f37b`), before #100 added
+`image_digest` to the build identity. No arm straddles that change, and nothing
+was rebased mid-campaign.
+
 `ids` is the **top-1024 set plus the prompt token at each of 4088 scored
 positions**, so its ordering tracks the logits directly: any numerical difference
 between the two paths would have reordered ties and shown up as differing ids
