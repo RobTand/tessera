@@ -20,9 +20,9 @@ and that is the correct proportion for this night.
   at `0c588fe`, on dl380g10 through `pbrun --cpus 24`:
   **1381 passed, 497 skipped, 0 failed**, rc 0, 16m54s. Attested in
   `pb-queue/done/4ddf06e57495*.json` (receipt sha `5834ec21ae04…`).
-  The GB10 run of the same commit reads 1404 passed / 487 skipped; the two
-  boxes collect 13 tests differently (GPU-gated collection), which is expected
-  and not investigated at this hour.
+  The GB10 run of the same commit reads 1404 passed / 487 skipped. The two
+  boxes collect 13 tests differently; I have not investigated why, and am not
+  going to guess at it here.
 
 Merges landed tonight after the compaction point:
 
@@ -194,38 +194,104 @@ cycle.
 
 ---
 
-## 4. What is open, and why
+## 4. What is open, and why — all 17
 
-**17 issues.** None of them is "unstarted and unassigned"; the ones with no
-agent are the ones I judged not worth spending on tonight.
+Two have an agent on them. One is mid-campaign. The other fourteen are listed
+with what exists, because "no agent" is not the same as "nothing done".
 
-- **#12** (dense-4 gap) — agent running, branch `claude/ts-12-dense4` at
-  `97e0de3`, provenance rows going in.
-- **#101** (encoder identity) — agent running, branch `claude/ts-101-identity`
-  at `8db5585`, rebuilt as a *behaviour-derived* identity because the
-  version-counter design was the one you refused.
-- **#60** (LDLQ block size) — **not closable, and my first read of it was
-  wrong.** Both encodes are alive and progressing on **sparklina**, not sparky:
-  b8 at `[160/196]` (18,265 s), b4 at `[100/196]` (19,272 s); only b32 has
-  finished (12,871 s). Sparky's idle GPU meant nothing — I looked at the wrong
-  box. The agent **retracted its 6.15x encode-cost figure with nothing in its
-  place**; the matched pair that would replace it has not run, and the
-  quiet-window per-arm rates it could offer instead contend with each other at
-  ~1.5x, so it is correctly declining to publish them. #60 still needs: both
-  encodes done, the byte-check, the serve brackets against a re-run bar, the
-  GLM b4 leg, `assert_plane_promotion`, and the matched-pair cost. Work is on
+### Being worked right now
+
+- **#12** dense-4 gap — agent live, `claude/ts-12-dense4` (+12), last commit
+  `97e0de3` "Let provenance name every number this receipt now carries".
+- **#101** encoder identity — agent live, `claude/ts-101-identity` (+1),
+  `8db5585`, rebuilt as a **behaviour-derived** identity because the
+  version-counter design on `muse/ts-101-encver` is the one you refused by name.
+  That older branch (+1, 6 code files) should be dropped, not merged.
+- **#60** LDLQ block size — **not closable, and my first read of it was wrong.**
+  Both encodes are alive on **sparklina**, not sparky: b8 at `[180/196]`
+  (~20 min out), b4 ~6 h out; only b32 has finished (12,871 s). Sparky's idle
+  GPU meant nothing — I looked at the wrong box. The agent **retracted its
+  6.15x encode-cost figure with nothing in its place**, correctly declining to
+  publish the contended per-arm rates it could have offered instead. Still
+  needs: both encodes, the byte-check, serve brackets against a re-run bar, the
+  GLM b4 leg, `assert_plane_promotion`, and the matched-pair cost. Work on
   `muse/ts-60-serve` at `e82d795`, unpushed; outputs under
   `/mnt/shared/tessera-runs/ldlq-block-serve/`.
-- **#110** (the two arms disagree at M=1: mutual KL 0.012, top-1 91%) and
-  **#111** (E4M3 `lane_eligibility` names no route for the window-GEMV lane) —
-  both filed tonight by the #102/#104 work, both unreviewed by me. #111 is a
-  principle-14 hole: the contract cannot attest what the census observed.
-- **#5** (MoE) stays open. The plan guard and fused layout landed; there is
-  still **no expert route in the plugin**, so the issue is not closable on a
-  documentation fix.
-- **#17** (release mechanics) is the one gating your tag.
 
----
+### The wire decision, which is three issues that must move together
+
+- **#106** — `2f6a15a` loosened `_fit_lut`'s stop test from `1e-9` to
+  `finfo(float32).eps` (~119x looser), which changes which sixteen E4M3 entries
+  land on the wire. **What is missing is a receipt, not a fix**: nobody has
+  hashed a real unit either side of that commit. Must be measured against
+  master, not against `muse/ts-78-79-guards` — that branch is already-landed and
+  comparing to it would be two treatments, not a control.
+- **#87** — `initial_channel_scale` rounds its reach bound to nearest, so 16% of
+  the rows it raised clip anyway. `muse/ts-87-landfloor` (+17, 21 code files) is
+  **held**, not abandoned: it carries a default-path E4M3 byte move that cannot
+  be declared until #101 lands the field that declares it.
+- **#101** is therefore the gate on both.
+
+### Filed tonight from the #102/#104 work, no owner
+
+- **#110** — the window GEMV and its torch fallback disagree as served at M=1
+  (mutual KL 0.012, top-1 91%), on byte-identical bytes through the same inode.
+  The existing bit-exactness receipts pin the decoded *weight tile*, not the two
+  *GEMMs*. Consistent with accumulation order rather than a defect; the issue
+  correctly declines to say which arm is closer to BF16. I read it for form:
+  well-scoped.
+- **#111** — the E4M3 `lane_eligibility` cells declare `scaled_mm_w8a8` for both
+  regimes and have no window-GEMV cell, which was harmlessly true only while the
+  lane was unreachable. Now false against an observed census. Principle 14 from
+  the other direction: an attested claim gone stale. The issue offers two shapes
+  and picks neither, which is right. Also flags the same gap for BF16.
+
+### Ready to measure, blocked only on a quiet box
+
+- **#109** — the window-GEMV **latency** A/B. #83's campaign delivered the
+  served KL (`8d32bb5`); the latency half was deferred and nothing tracked it.
+  It needs an idle box with an idle-power trace recorded before the run.
+  **Sparky is idle at 5.22 W right now** — this is the one open item whose only
+  blocker is currently satisfiable. I did not take it, because I have just told
+  the #60 agent to route its serve bracket to sparky, and two serves on one box
+  would poison exactly the measurement #109 exists to get right.
+- **#83** — the parent. Its KL deliverable landed; it stays open for the latency
+  half tracked by #109.
+
+### Untouched tonight, and why
+
+- **#105** — the LUT landing's loss is in the assignment; rescue the coupled
+  landing and measure it in the encoder. Real work, needs the encoder, not a
+  night's slot. `ts50-coupled-landing` (`32b0439`) is prior art.
+- **#107** — `refit_gauss_seidel` is per-source where `refit_objective` is
+  per-plane, so it refuses every mixed-plane export. Small and well-specified;
+  a good first item in the morning.
+- **#108** — `contract.vllm_module_name` reimplements vLLM's `WeightsMapper` and
+  diverges in three places. Principle 14 shaped: the fix is to derive, not to
+  patch the three.
+- **#75** — trailing-pass full-H refit. `muse/ts-75-trailing` (+1, 3 code files)
+  is an explicit WIP: *"worker wedged, work preserved"*. Resumable, not
+  finished.
+- **#18** — BF16 route `(L, sigma)` unsearched and the GLM evidence is one
+  tensor. `muse/ts-18-lsigma` is merged; what remains is the search.
+- **#16** — eager vs compiled KL divergence unexplained, compiled builds not
+  reproducible. `muse/ts-16-compiled` is merged and says what it did **not**
+  measure. Note the adjacency to #110: both are "two ways of computing the same
+  thing disagree by a little, and nobody has said why".
+- **#5** — MoE. The plan guard and fused layout landed (`2975448`); there is
+  still **no expert route in the plugin**, so it is not closable on a doc fix.
+- **#17** — release mechanics. See §5.
+
+### Branch hygiene
+
+Fourteen branches sit unmerged. Most are stale or superseded rather than
+pending: `muse/ts-78-79-guards` and `muse/ts-86-ignore` are already-landed or
+report-only, `ts-12-mechanism` / `issue39-baseline-reach` / `perf/ldlq-tcq-graph`
+are WIP snapshots preserved from the 2026-09-03 sweep, and `tmp-master` /
+`ts-5-preRebase-b0da95e` are pre-rebase copies. Only
+`muse/ts-87-landfloor` (held on #101) and `muse/ts-75-trailing` (WIP) carry work
+that still wants landing. Worth one deliberate pass with `git branch -d`, and
+not at this hour.
 
 ## 5. What I deliberately did not do
 
@@ -237,8 +303,10 @@ uploads to PyPI through a Trusted Publisher. Publishing a package is yours to
 decide, not mine to infer from "dispatch the open items", and I would rather
 hand you a clean 220 commits than a package you did not choose to ship.
 
-The consequence to weigh: the night's work exists on one box's disk. `/` has
-254 GB free and nothing is at risk in the next few hours, but it is one box.
+The consequence to weigh, stated accurately: the work is not on *one* disk —
+`/mnt/shared/tessera-x86` on the NAS is at `0c588fe`, so everything but the
+three handover commits has a second copy. But it exists nowhere off this LAN,
+and `origin/master` is 220 commits behind.
 
 If you want the commits durable without publishing anything, the push and the
 tag are separable — `git push origin master` alone fires no `v*` tag job.
@@ -247,10 +315,10 @@ Everything else #17 needs is a matter of five values in one commit
 (`tessera_serving_runtime_pin.json` plus two module constants), and it cannot
 be written until the tagged commit exists.
 
-**I did not dispatch more agents.** Two are running (#12, #101), the #60 encode
-campaign is live, and the standing rule is a handful at a time. Nine open issues
-have no agent because I judged them not worth spending on tonight, not because
-I ran out of room.
+**I did not dispatch more agents.** Two are running (#12, #101) plus the #60
+campaign and its agent, and the standing rule is a handful at a time. The other
+fourteen open issues have no agent tonight; §4 says what each one has and why I
+left it, rather than leaving you to infer that nothing was done on them.
 
 ## 6. Cleanups I owe
 
