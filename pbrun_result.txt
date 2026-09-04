@@ -1,0 +1,34 @@
++ cd /home/rob/tmp/musefix/ts-89-dyadic
++ export TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache PYTHONPATH=.
++ TMPDIR=/home/rob/tmp
++ TRITON_CACHE_DIR=/home/rob/.triton-cache
++ PYTHONPATH=.
++ PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
++ O=/home/rob/tmp/musefix/out
++ /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python experiments/ts89_dyadic_reach.py --stage refit --out /home/rob/tmp/musefix/out/ts89_fullh.json --rungs 2048 --refits 4 --fullh /mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt
+
+== model.layers.2.mlp.down_proj (1024, 3072)  R=2048  (8 b/wt)   h top-6 share 0.9990  h_max/med 2.18e+06
+     refit      m     sigma   reach reach_rms        wt         h  h ratio  rows@clip  moved  top6%      s
+         4   1.00   94.1804   384.0    4.0972   0.02646   0.01024   1.0000        222      0  99.06      6
+         4   0.75   70.6353   288.0    4.1002   0.02653   0.01399   1.3667        219      0  99.50      6
+
+    at scale_refit=4, the two refit knobs, both sigmas
+    refit arm                  m        wt         h  h ratio  rows@clip  moved  top6%      s
+    metric=h                1.00   0.02796   0.00983   1.0000        340    996  98.87      6
+    metric=h                0.75   0.02817   0.00969   0.9853        388   1003  98.83      6
+    metric=H(full)          1.00   0.04804   0.01074   1.0000        428   1009  97.17      6
+    metric=H(full)          0.75   0.04549   0.01039   0.9677        426   1009  97.33      6
+    reach_floor             1.00   0.02649   0.01394   1.0000          0    154  99.48      6
+    reach_floor             0.75   0.02655   0.01399   1.0035          0    138  99.50      6
+    metric=h+floor          1.00   0.02718   0.01378   1.0000          0    878  99.45      6
+    metric=h+floor          0.75   0.02720   0.01369   0.9940          0    870  99.45      6
+
+wrote /home/rob/tmp/musefix/out/ts89_fullh.json
++ echo '=== FULLH exit 0'
+=== FULLH exit 0
+++ cat /home/rob/tmp/musefix/impacted.txt
+++ tr '\n' ' '
++ /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python -m pytest -q -p no:randomly tests/test_audit_byte_baseline.py tests/test_audit_container_accounting.py tests/test_audit_doc_claims.py tests/test_audit_sec2.py tests/test_bf16_route.py tests/test_calculator.py tests/test_channel_plane.py tests/test_compensate.py tests/test_completion_rate_axis.py tests/test_doc_route_71.py tests/test_e4m3_ladder.py tests/test_encoder_fit_caps.py tests/test_export.py tests/test_export_plan_cache.py tests/test_full_grammar.py tests/test_fused.py tests/test_fused_member_rungs.py tests/test_grid_space_continuity.py tests/test_issue56_column_groups.py tests/test_kernel.py tests/test_kernel_shape_guards.py tests/test_kernel_window.py tests/test_kernel_window_gemv.py tests/test_ktuple.py tests/test_landing_ordering.py tests/test_lane_planes.py tests/test_ldlq_lut_plane.py tests/test_ldlq_window.py tests/test_loadcost_sweep.py tests/test_lut_stop_dtype.py tests/test_math_audit_scale_and_trellis.py tests/test_menu_selection_requirement.py tests/test_merge_guard.py tests/test_moe_wire_layout.py tests/test_payload_grid.py tests/test_plane_promotion.py tests/test_profile_reach.py tests/test_rate_menu.py tests/test_recipe_table.py tests/test_refit_trailing.py tests/test_review_1a.py tests/test_route_census_regimes.py tests/test_route_grid_and_census_guard.py tests/test_s6b_row_groups.py tests/test_scale_refit.py tests/test_serving_attested_wire.py tests/test_serving_bf16_gemv.py tests/test_serving_bf16_route.py tests/test_serving_contract.py tests/test_serving_dispatch.py tests/test_serving_export_gate.py tests/test_serving_fp8_gemv.py tests/test_serving_fp8_route.py tests/test_serving_loader_gates.py tests/test_serving_moe_dispatch.py tests/test_serving_name_mapping.py tests/test_serving_native_extensions.py tests/test_serving_nvfp4_route.py tests/test_serving_ops_compile.py tests/test_serving_residency_modes.py tests/test_serving_sharding.py tests/test_serving_tp_axes.py tests/test_serving_window.py tests/test_slice_unit.py tests/test_span_and_lut.py tests/test_stock.py tests/test_tcq_graph.py tests/test_uniform_control.py tests/test_window_body.py tests/test_window_viterbi_fast.py tests/test_wire.py
+........................................................................ [  5%]
+........................................................................ [ 10%]
+.......
