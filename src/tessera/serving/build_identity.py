@@ -536,8 +536,13 @@ def main(argv: list[str] | None = None) -> int:
     cm = sub.add_parser("compare", help="two sidecars: same build or not")
     cm.add_argument("a")
     cm.add_argument("b")
-    cm.add_argument("--require", choices=["same", "distinct"], default=None,
-                    help="exit 4 unless the two arms are provably that")
+    cm.add_argument("--require", choices=["same", "distinct", "same-dispatch"],
+                    default=None,
+                    help="exit 4 unless the two arms are provably that.  "
+                         "same/distinct are about the compiled build; "
+                         "same-dispatch is about which implementations ran, "
+                         "which is the check a cross-regime KL needs and the "
+                         "one an eager-vs-compiled pair fails")
 
     args = ap.parse_args(argv)
     if args.cmd == "stamp":
@@ -571,6 +576,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.require == "same":
             require_same_build(a, b, why=f"{args.a} vs {args.b}")
+        elif args.require == "same-dispatch":
+            require_same_dispatch(a, b, why=f"{args.a} vs {args.b}")
         else:
             require_distinct_build(a, b, why=f"{args.a} vs {args.b}")
     except BuildIdentityError as exc:

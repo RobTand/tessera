@@ -1,0 +1,133 @@
+{
+ "args": {
+  "qwen": "experiments/results/refit_trailing_pair_qwen_cl.json",
+  "glm": "experiments/results/refit_trailing_pair_glm_cl.json",
+  "field": "out",
+  "served_bar": 0.531,
+  "out": "experiments/results/refit_trailing_pair_gate_cl.json"
+ },
+ "control": "A drift control FIRST [refit h^1.0 x4]",
+ "arms": {
+  "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+   "unit_ratios": [
+    0.9850009836563416,
+    0.95144312480036,
+    0.9957228498067237,
+    0.9778328672778482,
+    0.6659607716214245,
+    0.9917608104833666
+   ],
+   "geomean": 0.9190652914716335,
+   "wins": 6,
+   "glm_ratio": 0.9999431860171497,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: the served KL measures arm None, not the promoted arm 'B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)' -- a served number for a different arm is not evidence for it"
+  },
+  "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+   "unit_ratios": [
+    0.9501751282366502,
+    0.9213929573011966,
+    0.994482446798019,
+    0.9512252848725525,
+    0.5877403066140168,
+    0.9875429730928258
+   ],
+   "geomean": 0.88507163403691,
+   "wins": 6,
+   "glm_ratio": 1.0104022098039154,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.01x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+   "unit_ratios": [
+    1.100570061581818,
+    0.9979194470322003,
+    1.0296718536956344,
+    1.031779983605185,
+    0.7711394800352552,
+    1.0262303364718408
+   ],
+   "geomean": 0.9868007810860517,
+   "wins": 2,
+   "glm_ratio": 1.0586700100028348,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.059x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+   "unit_ratios": [
+    0.9814812453208309,
+    0.9350280185552392,
+    1.0066830750677656,
+    0.9657429553704818,
+    0.8883648583661563,
+    1.0096153798468803
+   ],
+   "geomean": 0.9635362222130645,
+   "wins": 4,
+   "glm_ratio": 1.0391491726808195,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "B-GS+CL T R_h T R_h T R_h T R_H(GS,CL)   (trailing full-H, sweep, coupled landing)": {
+   "unit_ratios": [
+    0.8698495133324118,
+    0.8770474381953745,
+    0.9909859704511335,
+    0.9131085339001287,
+    0.3974007101521866,
+    0.9825679582622053
+   ],
+   "geomean": 0.8037260762880132,
+   "wins": 6,
+   "glm_ratio": 1.015985730761475,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.016x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "C-GS+CL T R_H T R_H T R_H T R_H(GS,CL)   (full-H every pass, sweep, coupled landing)": {
+   "unit_ratios": [
+    0.8912317536849705,
+    0.9033419383319256,
+    0.9997263580641323,
+    0.9320542933570659,
+    0.8265348034476466,
+    1.0032252942096556
+   ],
+   "geomean": 0.9239265905146649,
+   "wins": 5,
+   "glm_ratio": 1.039204973387724,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  }
+ },
+ "log": [
+  "screen   : experiments/results/refit_trailing_pair_qwen_cl.json",
+  "crosscheck: experiments/results/refit_trailing_pair_glm_cl.json",
+  "field    : out   landing offered: 'table' (the wire)",
+  "GLM gate : 1x   served bar: 0.531 (the incumbent h^1.0's served KL)",
+  "",
+  "== B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)",
+  "   Qwen six-unit out geomean 0.9191x, wins 6/6   per-unit 0.9850 0.9514 0.9957 0.9778 0.6660 0.9918",
+  "   GLM six-expert out geomean 0.9999x against the 1x gate: CLEARS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: the served KL measures arm None, not the promoted arm 'B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)' -- a served number for a different arm is not evidence for it",
+  "",
+  "== B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)",
+  "   Qwen six-unit out geomean 0.8851x, wins 6/6   per-unit 0.9502 0.9214 0.9945 0.9512 0.5877 0.9875",
+  "   GLM six-expert out geomean 1.0104x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.01x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)",
+  "   Qwen six-unit out geomean 0.9868x, wins 2/6   per-unit 1.1006 0.9979 1.0297 1.0318 0.7711 1.0262",
+  "   GLM six-expert out geomean 1.0587x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.059x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)",
+  "   Qwen six-unit out geomean 0.9635x, wins 4/6   per-unit 0.9815 0.9350 1.0067 0.9657 0.8884 1.0096",
+  "   GLM six-expert out geomean 1.0391x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== B-GS+CL T R_h T R_h T R_h T R_H(GS,CL)   (trailing full-H, sweep, coupled landing)",
+  "   Qwen six-unit out geomean 0.8037x, wins 6/6   per-unit 0.8698 0.8770 0.9910 0.9131 0.3974 0.9826",
+  "   GLM six-expert out geomean 1.0160x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.016x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== C-GS+CL T R_H T R_H T R_H T R_H(GS,CL)   (full-H every pass, sweep, coupled landing)",
+  "   Qwen six-unit out geomean 0.9239x, wins 5/6   per-unit 0.8912 0.9033 0.9997 0.9321 0.8265 1.0032",
+  "   GLM six-expert out geomean 1.0392x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  ""
+ ]
+}

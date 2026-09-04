@@ -52,6 +52,7 @@ from .errors import GrammarError
 from .grammar import Q256_UNIT, bresenham_rate_schedule
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import ConvCode
+from .encoder_identity import encoder_fixture_id, stamped_fixture_id
 from .unit_artifact import build_unit_artifact, read_unit_artifact
 
 __all__ = [
@@ -171,6 +172,14 @@ DEFAULT_CHANNEL_SIGMA: "float | None" = None
 #: scale group constrains the schedule (tessera#95).  The constant stays 32
 #: because moving it is a quality-for-encode-time trade nobody has priced
 #: (tessera#60).
+#:
+#: A caller that wants the derived block instead of the constant passes a
+#: **budget** rather than an int -- ``ldlq_block={"max_penalty": 1.02}`` -- and
+#: every unit then gets the largest block whose predicted penalty is inside it,
+#: priced from that unit's own Hessian.  That is the only spelling under which
+#: one export gives GLM's experts a coarse block and dense attention a fine
+#: one, which is what the two measured populations ask for; a global flip to
+#: another constant cannot (tessera#12, tessera#60).
 DEFAULT_LDLQ_SIGMA = 1.0
 DEFAULT_LDLQ_BLOCK = 32
 
@@ -260,14 +269,75 @@ def _coerce_refit_objective(obj, field: str):
         raise GrammarError(
             f"an empty {field} map names no plane, so every export "
             "through it would refuse; pass an objective string instead")
+    _check_plane_keys(items, field)
+    for value in items.values():
+        _check_refit_objective(value)
+    return MappingProxyType(items)
+
+
+def _check_plane_keys(items: dict, field: str) -> None:
+    """The keys of a per-plane map, checked once for every field that has one.
+
+    Both per-plane settings -- the refit objective and the sweep flag -- are
+    keyed by the *config's* plane spelling rather than by ``ScalePlaneKind``,
+    because the map travels into ``tessera_config.json`` and the merge guard
+    compares it there.  A typo'd key would otherwise be a plane nobody names,
+    which resolves to whatever the field's missing-key rule is and raises
+    nothing.
+    """
     unknown = sorted(set(items) - set(_PLANE_NAMES.values()))
     if unknown:
         raise GrammarError(
             f"{unknown} are not scale planes: the {field} map is keyed by the "
             f"config's own plane spelling, one of "
             f"{sorted(_PLANE_NAMES.values())}")
-    for value in items.values():
-        _check_refit_objective(value)
+
+
+def _coerce_refit_gauss_seidel(obj):
+    """``refit_gauss_seidel``: a bool for every plane, or ``{plane: bool}``.
+
+    Per-plane for the same reason its sibling is (tessera#107): the sweep is
+    an option *of the LUT plane's* block-scale refit, and ``encode_linear``
+    refuses it anywhere else rather than ignore it -- so one bool applied to
+    every unit cannot be true on a checkpoint whose units sit on different
+    planes.  GLM is exactly that shape -- E4M3/CHANNEL attention beside
+    E2M1x2/LUT16 experts -- and ``experiments/export_tessera_serving.py``
+    builds it from ONE ``ActivationSource``, reading ``(grid, q256)`` per
+    member, so a bare ``True`` refuses at the first CHANNEL unit and the
+    sweep cannot be measured on that model at all.  ``{"lut16": True}`` is
+    one value the whole export can carry: the LUT units sweep, the CHANNEL
+    units do not, and the config records which planes swept.
+
+    A map with no plane set to ``True`` is refused rather than accepted as a
+    second spelling of ``False``: it encodes the same bytes while comparing
+    unequal to ``False`` at the merge guard, so two parts of one checkpoint
+    that spell the default differently would refuse over bytes that agree.
+    """
+    if isinstance(obj, bool):
+        return obj
+    try:
+        items = dict(obj)
+    except (TypeError, ValueError):
+        # A string is the ValueError half: ``dict("yes")`` fails on the pair
+        # shape rather than on the type, and the sibling never meets it
+        # because a string is its scalar.  Both are the same mistake here.
+        raise GrammarError(
+            f"refit_gauss_seidel must be a bool or a plane -> bool mapping, "
+            f"got {obj!r}") from None
+    _check_plane_keys(items, "refit_gauss_seidel")
+    for key, value in items.items():
+        if not isinstance(value, bool):
+            raise GrammarError(
+                f"refit_gauss_seidel[{key!r}] is {value!r}: the sweep is on or "
+                "off on a plane, and a non-bool would be read for its "
+                "truthiness while the config recorded the value")
+    if not any(items.values()):
+        raise GrammarError(
+            f"{dict(items)!r} turns the sweep on nowhere, which is the encode "
+            "``refit_gauss_seidel=False`` already names, byte for byte -- and "
+            "the merge guard compares this field, so two parts spelling the "
+            "same default two ways would refuse over bytes that agree. Pass "
+            "False, or name the plane that sweeps")
     return MappingProxyType(items)
 
 
@@ -314,19 +384,21 @@ class ActivationSource:
     an un-weighted last pass, and encoding it anyway would write bytes the
     config misdescribes.  ``refit_gauss_seidel`` sweeps the LUT
     plane's block scales sequentially instead of stepping every block from one
-    residual (issue #35); off is the encode that was already there.  Both ride
-    into the exported config and the merge guard compares them, in the same
-    change that added them (tessera#103).
+    residual (issue #35); off is the encode that was already there.  It is
+    per-plane in the same spelling (tessera#107) -- a bool for every plane, or
+    ``{plane: bool}`` -- because a sweep off the LUT plane is refused rather
+    than ignored, so one bool over a mixed-plane checkpoint cannot be true.
+    All three ride into the exported config and the merge guard compares them.
     """
 
     hessians: "Mapping[str, torch.Tensor]"
     provenance: "dict"
     ldlq_sigma: "float | None" = DEFAULT_LDLQ_SIGMA
-    ldlq_block: int = DEFAULT_LDLQ_BLOCK
+    ldlq_block: "int | Mapping[str, float]" = DEFAULT_LDLQ_BLOCK
     refit_objective: str = DEFAULT_REFIT_OBJECTIVE
     refit_reach_floor: bool = False
     refit_objective_trailing: "str | Mapping | None" = None
-    refit_gauss_seidel: bool = False
+    refit_gauss_seidel: "bool | Mapping" = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, dict):
@@ -346,9 +418,41 @@ class ActivationSource:
                 f"the LDLQ regulariser must be positive (or None to turn LDLQ off), "
                 f"got {self.ldlq_sigma}"
             )
-        if self.ldlq_block < 1:
-            raise GrammarError(f"the LDLQ block must be at least one column, got "
-                               f"{self.ldlq_block}")
+        if isinstance(self.ldlq_block, int):
+            if self.ldlq_block < 1:
+                raise GrammarError(f"the LDLQ block must be at least one column, got "
+                                   f"{self.ldlq_block}")
+        else:
+            try:
+                budget = dict(self.ldlq_block)
+            except TypeError:
+                raise GrammarError(
+                    f"ldlq_block is a block width, or a budget "
+                    f"{{'max_penalty': ratio}} to derive one per unit, got "
+                    f"{self.ldlq_block!r}") from None
+            if set(budget) != {"max_penalty"}:
+                raise GrammarError(
+                    f"a derived-block budget names exactly 'max_penalty' -- the "
+                    f"ratio against full feedback a unit may pay -- got "
+                    f"{sorted(budget)}. The floor is not a caller field here: on "
+                    f"the encode_unit path it is 1 (tessera#95)")
+            try:
+                penalty = float(budget["max_penalty"])
+            except (TypeError, ValueError):
+                raise GrammarError(
+                    f"max_penalty is a ratio, got {budget['max_penalty']!r}") from None
+            if not penalty >= 1.0:
+                raise GrammarError(
+                    f"max_penalty is a ratio against full feedback and is at "
+                    f"least 1.0, got {penalty}")
+            if self.ldlq_sigma is None:
+                raise GrammarError(
+                    "a derived-block budget with LDLQ off prices nothing: the "
+                    "block only exists inside the LDLQ schedule, and the "
+                    "penalty is read off the *regularised* Hessian, which needs "
+                    "ldlq_sigma. Pass a sigma, or drop the budget")
+            object.__setattr__(self, "ldlq_block",
+                               MappingProxyType({"max_penalty": penalty}))
         object.__setattr__(self, "refit_objective",
                            _coerce_refit_objective(self.refit_objective,
                                                    "refit_objective"))
@@ -357,11 +461,33 @@ class ActivationSource:
                 self, "refit_objective_trailing",
                 _coerce_refit_objective(self.refit_objective_trailing,
                                         "refit_objective_trailing"))
+        object.__setattr__(self, "refit_gauss_seidel",
+                           _coerce_refit_gauss_seidel(self.refit_gauss_seidel))
 
     @staticmethod
     def unit_name(tensor_name: str) -> str:
         """The Hessian key for a tensor name: one trailing ``.weight`` removed."""
         return tensor_name.removesuffix(".weight")
+
+    @staticmethod
+    def _plane_key(scale_plane: "ScalePlaneKind | None", carries: str) -> str:
+        """The config's spelling of ``scale_plane``, refusing an unstated one.
+
+        Every per-plane setting resolves through here, so the one thing a
+        caller cannot do is look a per-plane value up without saying which
+        plane it is on.  ``carries`` names the setting, so the refusal says
+        which one made the plane necessary.
+        """
+        if scale_plane is None:
+            raise GrammarError(
+                f"this ActivationSource carries {carries}, so it "
+                "needs the scale plane the unit is actually encoded on. Pass the "
+                "plane from the SAME resolved recipe the encode uses "
+                "(`resolve(q256).scale_plane`), never a re-derived one: an "
+                "override the encode honoured and this call did not would price a "
+                "different artifact than it ships"
+            )
+        return _PLANE_NAMES[ScalePlaneKind(scale_plane)]
 
     @staticmethod
     def _objective_for_plane(obj, scale_plane: "ScalePlaneKind | None") -> str:
@@ -372,19 +498,17 @@ class ActivationSource:
         (see ``DEFAULT_REFIT_OBJECTIVE``) -- and then a caller that does not
         say which plane it is encoding on cannot be served a default, because
         the two measured answers disagree.
+
+        A plane the map does not name is refused rather than defaulted: every
+        refit runs under *some* objective, so there is no neutral value to
+        fall back to, and another plane's entry is a measurement made
+        somewhere else.  ``gauss_seidel_for`` reads an unnamed plane the other
+        way, and says why.
         """
         if isinstance(obj, str):
             return obj
-        if scale_plane is None:
-            raise GrammarError(
-                "this ActivationSource carries a per-plane refit objective, so it "
-                "needs the scale plane the unit is actually encoded on. Pass the "
-                "plane from the SAME resolved recipe the encode uses "
-                "(`resolve(q256).scale_plane`), never a re-derived one: an "
-                "override the encode honoured and this call did not would price a "
-                "different artifact than it ships"
-            )
-        key = _PLANE_NAMES[ScalePlaneKind(scale_plane)]
+        key = ActivationSource._plane_key(
+            scale_plane, "a per-plane refit objective")
         if key not in obj:
             raise GrammarError(
                 f"no refit objective for the {key!r} scale plane in {dict(obj)!r}. "
@@ -411,6 +535,66 @@ class ActivationSource:
             return None
         return self._objective_for_plane(obj, scale_plane)
 
+    def gauss_seidel_for(self, scale_plane: "ScalePlaneKind | None") -> bool:
+        """Whether the units on ``scale_plane`` sweep their block scales.
+
+        A bool applies everywhere -- including to planes ``encode_linear``
+        refuses it on, which is the point: a bare ``True`` still fails loudly
+        off the LUT plane rather than being quietly dropped.
+
+        A map is read the *opposite* way to ``objective_for``'s: a plane the
+        map does not name is off, not a refusal.  The asymmetry is not
+        carelessness, it is the difference between the two settings.  An
+        objective has no neutral value -- every refit minimises something, so
+        an unnamed plane would have to borrow a measurement made on another
+        one.  The sweep does have one: ``False`` is this field's own default
+        and is the encode that was already there, byte for byte, so an
+        unnamed plane is served the default rather than another plane's
+        answer.  That is what makes ``{"lut16": True}`` usable on a
+        mixed-plane checkpoint (tessera#107), which is the whole point of the
+        map.
+        """
+        flag = self.refit_gauss_seidel
+        if isinstance(flag, bool):
+            return flag
+        key = self._plane_key(scale_plane, "a per-plane refit_gauss_seidel map")
+        return bool(flag.get(key, False))
+    def block_for(self, H_reg: "torch.Tensor") -> int:
+        """The LDLQ block for a unit whose regularised Hessian is ``H_reg``.
+
+        A stated ``ldlq_block`` is returned as it stands and ``H_reg`` is not
+        read -- that path is byte for byte what it always was, and costs no
+        Cholesky.  A budget is resolved here, per unit, against that unit's own
+        Hessian, at ``floor=1``: the block goes to ``encode_unit(ldl=...)``,
+        which reads the scale plane once per pass *before* the block loop and
+        refits it once after, so no scale group constrains the schedule and
+        every width down to a single column is legal (tessera#95).  Passing the
+        stitching path's floor of 16 here would delete every block below 16,
+        which on dense attention is where the whole of the measured win lives.
+
+        Why a budget and not a better constant: ``block_penalty`` at ``b=32``
+        reads 1.098 on dense Qwen attention and 1.0014 on GLM experts, a factor
+        of 70 in what the same constant costs the two populations (tessera#60).
+        A budget states the exchange rate once and lets each unit answer it,
+        which is the only spelling under which one export can serve both.
+
+        What it cannot see: the penalty is a function of ``H`` alone, so units
+        that share a Hessian get the same block however differently they spend
+        it.  ``q_proj``, ``k_proj`` and ``v_proj`` of one layer read the same
+        hidden state and have bit-identical Hessians, yet halving the block was
+        measured worth 5.5% on ``q``/``k`` against 2.0% on ``v_proj``
+        (``docs/measurements/tessera-dense4-residual-mechanism-2026-09-03.md``).
+        A budget therefore over-provisions ``v_proj`` at the rate it provisions
+        ``q``/``k``; it spends encode time where feedback is being *skipped*,
+        which is not the same claim as spending it where it pays most.
+        """
+        if isinstance(self.ldlq_block, int):
+            return self.ldlq_block
+        from .compensate import choose_ldl_block
+
+        return choose_ldl_block(
+            H_reg, max_penalty=float(self.ldlq_block["max_penalty"]), floor=1)
+
     def for_unit(self, tensor_name: str, in_features: int,
                  device: "str | torch.device" = "cpu",
                  scale_plane: "ScalePlaneKind | None" = None) -> dict:
@@ -422,7 +606,9 @@ class ActivationSource:
 
         ``scale_plane`` is the plane the unit is encoded on, and it selects the
         refit objective when this source carries the per-plane map -- and the
-        trailing objective likewise.
+        trailing objective and the Gauss-Seidel sweep likewise.  It is the
+        reason a mixed-plane export can carry a sweep at all: the resolution
+        happens per unit, at the plane the encode resolved (tessera#107).
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -442,11 +628,10 @@ class ActivationSource:
         if self.ldlq_sigma is not None:
             from .compensate import block_ldl, regularize_hessian
 
-            kwargs["ldl"] = block_ldl(
-                regularize_hessian(H, sigma_reg=float(self.ldlq_sigma)),
-                self.ldlq_block,
-            )
-            kwargs["ldl_block"] = self.ldlq_block
+            H_reg = regularize_hessian(H, sigma_reg=float(self.ldlq_sigma))
+            block = self.block_for(H_reg)
+            kwargs["ldl"] = block_ldl(H_reg, block)
+            kwargs["ldl_block"] = block
         objective = self.objective_for(scale_plane)
         if objective == "hessian":
             kwargs["refit_metric"] = H
@@ -481,7 +666,7 @@ class ActivationSource:
             alpha = float(trailing.removeprefix("h^"))
             h = H.diagonal()
             kwargs["refit_metric_trailing"] = (h / h.mean()).pow(alpha)
-        kwargs["refit_gauss_seidel"] = bool(self.refit_gauss_seidel)
+        kwargs["refit_gauss_seidel"] = self.gauss_seidel_for(scale_plane)
         return kwargs
 
     @classmethod
@@ -538,7 +723,15 @@ class ActivationSource:
         """
         return {
             "ldlq_sigma": self.ldlq_sigma,
-            "ldlq_block": self.ldlq_block,
+            # An int is written as the int it always was, so a stated-block
+            # export's config is byte for byte what it was before budgets
+            # existed.  A budget is written as its own dict: the merge guard
+            # already compares this field, and two parts built against the same
+            # Hessian identity (compared beside it) under the same budget chose
+            # the same block for every unit, because the choice is a
+            # deterministic function of exactly those two things.
+            "ldlq_block": (self.ldlq_block if isinstance(self.ldlq_block, int)
+                           else dict(self.ldlq_block)),
             "refit_objective": (self.refit_objective
                                 if isinstance(self.refit_objective, str)
                                 else dict(self.refit_objective)),
@@ -548,7 +741,13 @@ class ActivationSource:
                 if isinstance(self.refit_objective_trailing, str)
                 else dict(self.refit_objective_trailing)),
             "refit_reach_floor": bool(self.refit_reach_floor),
-            "refit_gauss_seidel": bool(self.refit_gauss_seidel),
+            # The whole map, not the value at the plane this part happened to
+            # use: two parts of one checkpoint sit on different planes and
+            # must record the same setting, which is what lets the guard
+            # compare them at all (tessera#107).
+            "refit_gauss_seidel": (bool(self.refit_gauss_seidel)
+                                   if isinstance(self.refit_gauss_seidel, bool)
+                                   else dict(self.refit_gauss_seidel)),
             "hessian": dict(self.provenance),
             "note": "encoder-side only: the wire, the decoder and the lane are "
                     "unchanged, but this encode is not reproducible from the "
@@ -1136,8 +1335,10 @@ def encode_linear_planes(
     ``refit_gauss_seidel`` orders the LUT plane's metric-aware block-scale
     refit as a sequential sweep instead of a parallel step (issue #35).  It is
     a measurement option, encoder-side and opt-in: ``ActivationSource``
-    carries it (tessera#103) and the merge guard compares it, and with it off
-    the encode is byte for byte what it was.
+    carries it (tessera#103, per scale plane since tessera#107) and the merge
+    guard compares it, and with it off the encode is byte for byte what it
+    was.  Here it is one bool for the unit, because here there is one unit and
+    its plane is already resolved.
 
     ``refit_coupled_landing`` (issue #50) is the rule ``refit_gauss_seidel``
     used to be held to, and still is until somebody wants it on a real export:
@@ -1171,6 +1372,14 @@ def encode_linear_planes(
     """
     if weight.ndim != 2:
         raise ValueError(f"{name}: expected a 2-D weight, got {tuple(weight.shape)}")
+    # Compute the encoder identity here, before any encode and on the calling
+    # thread, rather than leaving ``build_unit_artifact`` to trigger it from
+    # wherever the last unit happens to finish.  The fixture encodes are torch
+    # work, the graph-capture contract forbids surprise device work from a
+    # worker thread while a capture may be running, and this call is memoised
+    # so every unit after the first pays nothing.  Inside the fixture build
+    # itself it answers ``None`` and does no work.
+    stamped_fixture_id()
     rows, columns = weight.shape
     if rows % grid.arity:
         raise GrammarError(
@@ -1434,6 +1643,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
+        # Which *encoder* cut the bytes, derived from what it does rather than
+        # declared by anyone (``encoder_identity``, tessera#101).  Written by
+        # every part one exporter produces, which is what keeps the merge
+        # guard from comparing a missing key against a missing key and
+        # passing; the guard compares this stamped string and computes
+        # nothing, so only a process that is about to encode ever pays for it.
+        "encoder_fixture_id": encoder_fixture_id().hex(),
         "blob_suffix": BLOB_SUFFIX,
         "grid": {
             # The digest is the wire identity and the only field a reader may

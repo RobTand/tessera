@@ -32,6 +32,33 @@ leaves a body Linear unnamed does not get a passthrough: the exporter falls
 back to its `--grid`/`--q256` default, so the converter names every unpriced
 Linear `"BF16"` explicitly.
 
+### 3.1 Which encoder cut the bytes is on the artifact
+
+Three identities travel with a Tessera checkpoint and they answer different
+questions. `encoder_profile_id` binds the **arguments** a reader must
+reproduce — code, grid, span, body, plane, window width, reach spellings — and
+is input-only by decision: it "contains nothing an encode alone can produce".
+`CONTAINER_VERSION` versions the **container** around the bytes. Neither can
+see an **encoder** change: same arguments, different bytes out. That gap
+merged two differently-encoded halves once already (issue #78), and closing it
+is issue #101.
+
+The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
+**derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
+at fixed arguments and the result is hashed, so the value moves exactly when
+the encoder's output moves and never when a comment or a refactor does. It is
+a sibling of the profile id and never an input to it. It rides in the manifest
+at schema minor 6 and in `tessera_config.json`; `merge_tessera_parts.py`
+compares the stamped value across parts. `encoder_identity.resumable` states
+the rule for whether a cached unit may be reused, and nothing calls it yet —
+no path reuses a cached wire shard today, so the rule sits with the identity
+rather than being invented inside the first consumer that needs one. Both
+compare, never compute: only a process about to encode pays for the fixtures. The untagged spelling —
+the encoder the field was born against — writes no field and no minor, so
+every artifact already on disk is byte-identical across the bump. The wire is
+`docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
+set is blind to.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
@@ -100,6 +127,44 @@ prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
 the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
 manifest's `serving_gate`).
 
+The census answers "which patterns" in the *runtime's* namespace and a
+producer names modules in the *checkpoint's*, so the two are joined by
+`contract.vllm_module_name` -- the one place this repo computes what vLLM
+would do rather than reading what it did. The algorithm is code
+(`WeightsMapper._map_name_with_shard`), not a table, so it cannot be derived
+from the receipt: the receipt publishes the rename table and vLLM keeps the
+loop. Principle 14 is therefore met by attestation rather than derivation, in
+three parts (issue #108):
+
+* **The replay is faithful and its scope is named.**
+  `contract._MAPPER_FIELDS_REPLAYED` is `orig_to_new_{substr,prefix,suffix}`,
+  applied in vLLM's order with vLLM's semantics -- a substring rule replaces
+  *one* occurrence, and the prefix and suffix loops fall *through*, each rule
+  seeing what the last one rewrote. All three differed before #108, and none
+  can fire on the two committed censuses, which is why it went unseen.
+* **Every other field refuses, by name.** `_require_replayable_mapper` raises
+  on any non-empty field outside that set -- `orig_to_new_renaming` (a list of
+  transformers objects, not replayable from JSON), `orig_to_new_regex`, a
+  populated `orig_to_new_stacked` (which `get_unstacked_mapper` empties, so a
+  populated one says the census fell back to the raw mapper and the receipt's
+  own field name is wrong), and whatever vLLM adds next. The refusal fires at
+  export, where the bytes are decided.
+* **The census admits every field, so the refusal has something to see.**
+  `tools/tessera_construction_census.py::_weights_mapper_table` reads
+  `dataclasses.fields` off the runtime's own mapper instead of a hardcoded
+  four-name roster, which used to drop `orig_to_new_regex` and
+  `orig_to_new_renaming` on the way into the receipt -- so a producer reading
+  that receipt would have mapped the name as though the rule were not there.
+  The receipt shape is unchanged for a mapper using only the replayed fields,
+  so the two committed censuses stand as taken.
+
+The attestation itself is `test_vllm_module_name_agrees_with_the_real_weights_mapper`
+in `tests/test_serving_name_mapping.py`: inside the pinned image it runs the
+committed receipt tables *and* synthetic tables built for the three
+divergences through both the real `WeightsMapper` and `vllm_module_name`, name
+by name, and fails on any disagreement. Receipt:
+`docs/measurements/construction/vllm-module-name-attestation-2026-09-04.md`.
+
 ### 4.4c A LANE inside a route is gated too, and by the rung
 
 `check_recipe` asks whether the *route* publishes a decode for these bytes.
@@ -116,7 +181,7 @@ reports as a served module. All six allocated checkpoints under
 `/mnt/shared/tessera-runs/allocated` carried a rate outside the set, so no
 artifact we held could exercise the lane at all.
 
-The predicate is therefore published (`runtime_contract.json` v11,
+The predicate is therefore published (`runtime_contract.json` v12,
 `native_extensions[].lane.requires`, which *is*
 `kernel_window_gemv.SUPPORTED_RATES` and `WINDOW_BITS_SUPPORTED` --
 `tests/test_lane_reachability.py` ties the two ends) and read on both sides:
@@ -148,6 +213,15 @@ it (`docs/measurements/tessera-gemv-lane-reachable-2026-09-03.md`). Scope:
 family's streamed GEMV lane is unreachable at its own attested rung for the
 same reason, and no BF16 receipt covers it.
 
+The lane belongs to **both** window routes, and the published table says so
+since contract v14: `bf16_route.prepare_bf16_gemv` repacks through
+`kernel_window_gemv.prepare_value_unit` exactly as `fp8_gemv` does and
+branches its `apply` on the same `layer.tessera_gemv`, so
+`native_extensions[tessera_window_gemv].routes` lists `TESSERA_FP8` and
+`TESSERA_BF16`. It listed one until then, which said a BF16 serve is
+unaffected by whether the `.so` mapped -- the exact claim a consumer keys a
+serve fingerprint on.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every
@@ -165,6 +239,77 @@ torch decode by design, and only zero modules in *every* phase is the void
 the field exists to catch. The per-phase counts stay in the block, and
 `all_required_engaged` is three-valued so "nobody said what to require" never
 reads as "everything required was engaged".
+
+### 4.5b What the contract says a serve EXECUTES, and the join that checks it
+
+A `lane_eligibility` cell says: on this platform, for this payload family, at
+these rungs, in this regime, at this residency, the plugin executes **these
+launches** on a route with this status. The launch half is
+`executes` -- a list of `{symbol, decoder}` -- and it arrived with
+`lane_eligibility` schema **v4** (contract v13, issue #111). Before it, a
+cell published the A-side contract and the rungs, and the launch appeared
+only inside the cell's `id`: the E4M3 family said `..._decode_scaled_mm_w8a8`
+for both regimes and no cell named the window-GEMV lane at all. That was
+accidentally true while the lane was unreachable (§4.4c) and false the moment
+a rate-constrained artifact was served -- the R1024 census records
+`tessera_window_gemv::gemv` on 112 of 112 modules in the decode regime
+(`docs/measurements/tessera-lane-eligibility-executes-2026-09-04.md`).
+
+Three things follow, and each is a rule rather than a value:
+
+- **The value is derived, never asserted.** `contract.validate_serving_contract`
+  builds each cell's `executes` from `scheme.ROUTE_LAUNCHES` -- the torch-free
+  table the routes' own `fp8_gemv.census_expected` / `bf16_route.census_expected`
+  are built from, and the home of `WINDOW_GEMV_SYMBOL` -- narrowed by the
+  regime, by the residency the cell's `TESSERA_SERVE_MODE` flag names, and by
+  the lanes each rung reaches under `native_extensions[].lane.requires`. So a
+  cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
+  drop rate 4 from the published predicate and the document stops validating
+  (`tests/test_lane_reachability.py`).
+- **The regime is *this* contract's, and two vocabularies say "decode".** Here
+  `decode` is the one-row forward and `batch` is every M > 1
+  (`contract.CENSUS_PHASE_REGIMES`, which is also what stamps a census
+  record); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
+  counts. Reading the second into a cell is how the batch cell first published
+  the prefill launch alone -- true of the 64-row shape the census drives, false
+  of the 2-to-8-row forwards the same regime covers, where the lane serves its
+  own `gemv` exactly as it does at one row. So the E4M3 batch/streamed cell
+  executes **both** launches and the decode/streamed cell executes the GEMV
+  alone, and neither is conditioned on a rate.
+  `tests/test_serving_contract.py::test_the_launch_tables_regimes_are_the_routes_own_dispatch`
+  derives both regime sets from the routes' own `decode_is_gemv`, over every M
+  the dispatch distinguishes rather than the two anyone drove.
+- **The residency is a condition, not a label.** Both window routes set
+  `layer.tessera_gemv = None` in `resident`, so the lane exists in `streamed`
+  alone and one rung's decode regime has two answers. The E4M3 family
+  therefore carries four cells, and two cells of one `(platform, family,
+  structure, regime)` must cover **disjoint** residencies -- otherwise a
+  consumer resolving "what runs here" gets whichever cell it read first. A
+  cell `id` is now its scope and never a launch, because an id that names a
+  launch is a second, unparsed spelling of `executes`.
+- **The census closes the loop.** Deriving `executes` proves the document
+  agrees with the code; only a serve proves the code agrees with the machine.
+  `census.cell_launch_agreement` joins every served route record to the cell
+  covering its `(platform, family, structure, regime, residency, rung)` and
+  refuses a disagreement, and `tools/tessera_route_census.py` writes the block
+  into the receipt. It is eager-only and says so: a compiled record stamps
+  both launches as one `a+b` pair because one graph serves every M.
+  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline, so
+  the R1024 evidence is reproducible without a GPU
+  (`/home/rob/tessera-runs/ts111/replay-R1024.txt`: 112 of 112 in both phases,
+  and 112 refusals when the pre-#111 value is put back).
+
+`TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
+1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch
+window decode under `torch.mm` without being told to. The day a reachable BF16
+rung is attested the same derivation produces its GEMV cell.
+
+Schema v4 is **not** additive: a v3 reader must not read a v4 cell, both
+because `executes` is a key it does not know and because the E4M3 decode
+answer it would have read off one cell is now two. PrismaQuant's
+`lane_eligibility` parser pins `tessera.lane-eligibility.v3` exactly and
+refuses unknown cell keys, so it fails closed (loudly, not silently) until it
+is widened.
 
 ### 4.5a A served KL names which FORWARD it scored
 
@@ -325,7 +470,11 @@ Two consequences, and only one of them is a refusal.
   pin one measurement -- one wire, one `(sigma, block)`, six weight-space Qwen
   units, no serve -- as a standing rule about the plane, which is the
   roster-not-rule failure AGENTS.md rule 3 names. The disagreement is a
-  **re-run trigger** for the day a better landing lands (issue #50).
+  **re-run trigger** for the day a better landing lands (issue #50). That
+  landing has since landed and did **not** cash the ceiling: the coupled
+  landing wins the Qwen screen (0.8037x) and **fails** the GLM six-expert
+  cross-check at 1.0160x, so it stays opt-in and the default is unmoved
+  (`docs/measurements/tessera-coupled-landing-glm-2026-09-04.md`).
 
 The pair is not free and is not readable off `refit_diagnostics`. That
 instrument's `continuous` leg is a within-call quantity by its own contract --

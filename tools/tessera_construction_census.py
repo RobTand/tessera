@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import dataclasses
 import json
 import os
 import platform
@@ -77,6 +78,47 @@ def normalise(prefix: str) -> str:
     return NUMERIC_SEGMENT.sub("*", prefix)
 
 
+def _json_safe(value):
+    """A mapper field as JSON.
+
+    The refused fields (``orig_to_new_regex``, ``orig_to_new_renaming``) do not
+    need to round-trip -- the producer refuses on their PRESENCE
+    (``contract._require_replayable_mapper``), so a lossy rendering of one
+    cannot mislead a gate.  What matters is that a non-empty field is never
+    dropped on the way into the receipt.
+    """
+    if isinstance(value, dict):
+        return {_json_key(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, re.Pattern):
+        return {"regex": value.pattern, "flags": int(value.flags)}
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(dataclasses.asdict(value))
+    return repr(value)
+
+
+def _json_key(key) -> str:
+    return key.pattern if isinstance(key, re.Pattern) else str(key)
+
+
+def _mapper_field_names(unstacked) -> list:
+    """Every field the runtime's ``WeightsMapper`` declares, not the four we know.
+
+    A hardcoded roster is what made this receipt lossy: it listed substr /
+    prefix / suffix / stacked, so a model class declaring ``orig_to_new_regex``
+    or ``orig_to_new_renaming`` produced a receipt that OMITTED the rule, and a
+    producer reading that receipt would compute a name as though the rule were
+    not there.  Reading ``dataclasses.fields`` means a field vLLM adds tomorrow
+    lands in the receipt today, where the producer's refusal can see it.
+    """
+    if dataclasses.is_dataclass(unstacked):
+        return [f.name for f in dataclasses.fields(unstacked)]
+    return [name for name in vars(type(unstacked)) if name.startswith("orig_to_new_")]
+
+
 def _weights_mapper_table(model_class) -> "dict | None":
     """The rename table vLLM hands a quant config, as data.
 
@@ -86,6 +128,10 @@ def _weights_mapper_table(model_class) -> "dict | None":
     the CHECKPOINT's namespace has to apply the same table to know which vLLM
     module it named.  Publishing it here means the producer reads it rather
     than reproducing it.
+
+    Every non-empty field is recorded, including the ones the producer cannot
+    replay: the producer's job is to REFUSE on those, and it can only do that
+    if the receipt says they are there.
     """
     mapper = getattr(model_class, "hf_to_vllm_mapper", None)
     if mapper is None:
@@ -95,13 +141,11 @@ def _weights_mapper_table(model_class) -> "dict | None":
     except Exception:  # noqa: BLE001 -- an older WeightsMapper
         unstacked = mapper
     table = {}
-    for field in ("orig_to_new_substr", "orig_to_new_prefix", "orig_to_new_suffix",
-                  "orig_to_new_stacked"):
+    for field in _mapper_field_names(unstacked):
         value = getattr(unstacked, field, None)
         if value:
-            table[field] = {str(k): (list(v) if isinstance(v, (list, tuple)) else v)
-                            for k, v in dict(value).items()}
-    return table or {}
+            table[field] = _json_safe(value)
+    return table
 
 
 def _probe_config_class():
