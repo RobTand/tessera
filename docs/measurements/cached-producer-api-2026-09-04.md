@@ -1,7 +1,7 @@
 # Exact cached-unit producer boundary — 2026-09-04
 
-This is producer/API evidence for PrismaQuant #183 and the shared identity
-needed by #186. It is not a served measurement, eligibility change, or
+This is producer/API evidence for RobTand/prismaquant#183 and the shared identity
+needed by RobTand/prismaquant#186. It is not a served measurement, eligibility change, or
 promotion. No GPU action was submitted for this work.
 
 ## Source and interface
