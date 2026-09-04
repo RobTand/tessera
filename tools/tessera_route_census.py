@@ -27,13 +27,15 @@ the document" is finally a question with an answer, and this is where it has
 to be asked: the cell is DERIVED from the dispatch table, which proves the
 document agrees with the code, and only a serve proves the code agrees with
 the machine.  ``census.cell_launch_agreement`` joins every record to the cell
-covering its ``(platform, family, structure, regime, residency, rung)``, the
+covering its ``(platform, family, structure, regime, residency, rung)`` and
+explicit runtime image/execution mode, the
 ``cell_launch_agreement`` block lands in the receipt, and a disagreement is a
 refusal.  A module at a rung no cell covers is ``unattested``, which is the
-only negative signal a closed-world table has and is not a failure.  The check
-is EAGER-ONLY: a compiled record stamps both launches as one ``a+b`` pair
-because one graph serves every M, so a compiled run writes ``agrees: null``
-with a reason rather than reading a traced record as a disagreement.
+only negative signal a closed-world table has and is not a failure. Compiled
+dense agreement is unsupported: its trace combines launches as ``a+b`` for a
+graph serving every M. A compiled routed-MoE record may agree only when its
+cell and observation name a single launch. Unsupported observations are counted
+as unattested and retain their exact records.
 
 AND ONE QUESTION THE PER-MODULE CHECK CANNOT ASK.  Everything above is a check
 on AGREEMENT, and agreement is what a void experiment produces: every regime
@@ -55,6 +57,7 @@ could not prepare, so the receipt says WHY it took nothing.
 usage::
 
     tessera_route_census.py <checkpoint-dir> <out.json> \
+        --runtime-image <repository@sha256:digest> \
         [--expect-modules N] [--prompt-tokens 64] [--gpu-memory-utilization 0.3]
 
 The two forwards it drives are the two regimes ``lane_eligibility`` declares.
@@ -190,7 +193,8 @@ def declared_rung(scheme):
 
 
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
-                            declared_rungs, record_owners, families_by_route):
+                            declared_rungs, record_owners, families_by_route,
+                            runtime_image=None, execution_mode=None):
     """Check each observed structure against its own cells, using declared owners.
 
     This aggregates existing per-structure checks; it publishes no new cells.
@@ -204,9 +208,10 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
     structures = sorted({STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind")), "unknown")
                          for records in records_by_phase.values()
                          for record in records.values()})
+    runtime = {"image": runtime_image, "execution_mode": execution_mode}
     blocks, problems = {}, []
     for structure in structures:
-        phases, verdicts = {}, []
+        phases, verdicts, unsupported_reasons = {}, [], set()
         for phase, records in sorted(records_by_phase.items()):
             selected = {name: record for name, record in records.items()
                         if STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind")), "unknown")
@@ -217,16 +222,22 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 {phase: selected}, cells=cells, phase_regimes=phase_regimes,
                 platform=platform, structure=structure, rungs_by_module=rungs,
                 families_by_route=families_by_route,
+                runtime_image=runtime_image, execution_mode=execution_mode,
                 symbol_alias=census_symbol_base if structure == "routed_moe" else None)
             phases.update(block["phases"])
             verdicts.append(block["agrees"])
             problems.extend(failures)
+            if block.get("unsupported_reason"):
+                unsupported_reasons.add(block["unsupported_reason"])
         agrees = (False if False in verdicts else True if True in verdicts else None)
         blocks[structure] = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform,
-                             "structure": structure, "phases": phases, "agrees": agrees}
+                             "structure": structure, "runtime": dict(runtime),
+                             "phases": phases, "agrees": agrees}
+        if unsupported_reasons:
+            blocks[structure]["unsupported_reasons"] = sorted(unsupported_reasons)
     verdicts = [block["agrees"] for block in blocks.values()]
-    return {"schema": "tessera.cell-launch-agreement/2", "platform": platform,
-            "structures": blocks,
+    return {"schema": "tessera.cell-launch-agreement.by-structure/1", "platform": platform,
+            "runtime": runtime, "structures": blocks,
             "agrees": False if False in verdicts else True if True in verdicts else None}, problems
 
 
@@ -256,10 +267,14 @@ def _git_head(path):
         return None
 
 
-def main() -> int:
+def parse_args(argv=None):
+    """Resolve the explicit runtime context before importing a serving runtime."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("model")
     ap.add_argument("out")
+    ap.add_argument("--runtime-image", required=True,
+                    help="exact repository@sha256:digest checked by the outer container "
+                         "launcher; required to bind cell agreement to the runtime measured")
     ap.add_argument("--expect-modules", type=int, default=None,
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -292,7 +307,19 @@ def main() -> int:
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
                          "inside a container a worktree's .git pointer resolves nowhere and the "
                          "receipt would carry None")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    from tessera.serving.contract import require_runtime_image
+
+    try:
+        args.runtime_image = require_runtime_image(args.runtime_image, "--runtime-image")
+    except ValueError as exc:
+        ap.error(str(exc))
+    args.execution_mode = "compiled" if args.compiled else "eager"
+    return args
+
+
+def main() -> int:
+    args = parse_args()
 
     # The census function must run in the process that holds the model.
     os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
@@ -583,31 +610,25 @@ def main() -> int:
     # ``lane_eligibility`` cells publish ``executes`` since schema v4 (#111), a
     # value DERIVED from the dispatch table -- which proves the document agrees
     # with the code.  Only a serve proves the code agrees with the machine, so
-    # the join is made here, per module, in both phases.  A compiled record
-    # stamps the two launches as one ``a+b`` pair because one graph serves
-    # every M, and no cell publishes that form: the check is eager-only and
-    # says so rather than reading a traced record as a disagreement.
-    if args.compiled:
-        agreement, agreement_problems = (
-            {"schema": "tessera.cell-launch-agreement/1", "agrees": None,
-             "skipped": "a compiled record stamps one shape-polymorphic pair for both "
-                        "launches; cells publish launches, so there is nothing to join"},
-            [])
-    else:
-        agreement, agreement_problems = all_structure_agreement(
-            tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
-            phase_regimes=CENSUS_PHASE_REGIMES,
-            platform=f"sm_{torch.cuda.get_device_capability(0)[0]}"
-                     f"{torch.cuda.get_device_capability(0)[1]}",
-            declared_rungs=declared_rungs, record_owners=record_owner,
-            families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
+    # the join is made here, per module, in both phases, under the actual
+    # image and execution mode. Compiled dense records retain an explicit
+    # unsupported result; a routed single-launch observation can be checked.
+    agreement, agreement_problems = all_structure_agreement(
+        tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
+        phase_regimes=CENSUS_PHASE_REGIMES,
+        platform=f"sm_{torch.cuda.get_device_capability(0)[0]}"
+                 f"{torch.cuda.get_device_capability(0)[1]}",
+        declared_rungs=declared_rungs, record_owners=record_owner,
+        families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        runtime_image=args.runtime_image, execution_mode=args.execution_mode)
     problems.extend(agreement_problems)
 
     receipt = {
-        "schema": "tessera.serving.route_census/1",
+        "schema": "tessera.serving.route_census/2",
         "checkpoint": os.path.abspath(args.model),
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
+        "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
         "tessera_config_groups": len(tessera_groups),
         "declared_names_mapped_to_module_space": name_map is not None,
         "declared_name_mapping": name_map,

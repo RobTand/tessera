@@ -164,8 +164,13 @@ manifest digest under the containerd snapshotter and the config digest under
 overlay2: the same image reads two ids on the two GB10s. Both KL wrappers
 stamp the resolved digest into the build sidecar's `identity`; the local id
 rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
-Images outside the pinned repository (Mia's GLM image) are resolved and
-stamped, not refused.
+An explicit digest reference on any repository must be present in that
+image's `RepoDigests`, and its requested digest is the stamp even when the
+local image has other aliases. Missing or mismatched explicit images refuse
+before a census or serve (#126). Floating tags outside the default pinned
+repository remain resolved and stamped without being compared to that
+unrelated pin; they cannot supply an exact-runtime census context. Scoped
+lane images do not change the existing dense default.
 
 `experiments/serve_lock.sh` is the one lock protocol for every serve and every
 GPU-only probe.  Acquisition publishes one symlink at the host-local
@@ -433,13 +438,42 @@ and refuses a repeated tensor name across shards before aggregating their
 headers. It recomputes each group's maximum wire length from those headers. A missing
 projection cannot pass merely because another wire has the declared stride.
 
-The eager route census emits `tessera.cell-launch-agreement/2`, aggregating
-the existing per-structure blocks. Each record resolves its rung through its
-declared owner; a MoE stack has one rung only when every group and role agrees.
-Dense cells cannot cover routed experts, and absent MoE cells remain explicitly
-unattested. A routed record retains its exact observed backend suffix; matching
-also accepts the route-owned base symbol when a cell publishes that entry point.
-An explicitly backend-specific cell still requires that exact backend.
+The route census emits `tessera.serving.route_census/2` with its measured
+`runtime={image,execution_mode}`. Its `tessera.cell-launch-agreement.by-structure/1`
+aggregate contains `tessera.cell-launch-agreement/3` per-structure blocks under
+that context. Each record resolves its rung through its declared owner; a MoE
+stack has one rung only when every group and role agrees. Dense cells cannot
+cover routed experts, and absent MoE cells remain explicitly unattested. A
+routed record retains its exact observed backend suffix; matching also accepts
+the route-owned base symbol when a cell publishes that entry point. An
+explicitly backend-specific cell still requires that exact backend.
+Compiled dense per-cell agreement remains unsupported because its trace combines
+launches across shapes. A compiled routed-MoE record can agree only when the
+record and the runtime-scoped cell each name one launch. Unsupported records
+are counted as unattested and retained verbatim in the receipt.
+
+Lane eligibility schema v5 additionally requires each cell's `runtime` scope:
+an exact `image` manifest reference and a nonempty, distinct `execution_modes`
+list (`eager`, `compiled`). Image and execution mode participate in overlap
+and lookup alongside platform, family, structure, token-count regime and
+residency. A missing context or mismatched image/mode is unattested; the global
+`versions.attested_on` image is never an implicit cell fallback. Its existing
+dense pin remains unchanged. The eight dense cells preserve both measured
+execution modes on that pin; the migration receipt records the historical
+headers and their contemporaneous global image binding separately, because
+those older census files did not each record a digest. Existing cell IDs stay
+stable, with an optional hash of canonical runtime scope to distinguish
+disjoint variants; IDs must be unique, and explicit fields decide eligibility.
+
+The census requires `--runtime-image` as an exact digest reference, checked
+before loading vLLM. Its existing `--compiled` flag determines both the
+recorded execution mode and `LLM(enforce_eager=...)`. The plugin wrapper
+injects its selected image after caller-supplied Docker environment arguments;
+shell census callers pass that container value instead of reconstructing an
+image from the global pin. Historical tag callers must supply an exact digest
+for new censuses. Offline replay reads only the receipt's explicit runtime
+context: missing context remains unattested, and a mode contradicting the
+receipt's `compiled` field is refused.
 
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the
@@ -496,7 +530,7 @@ the receipt's histogram and is never pinned by an expectation of ours.
 And the stack stays **unattested** in the cell-agreement block.
 `census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
 `lane_eligibility` structure whose cells could cover it (`moe` ->
-`routed_moe`), and contract v14 publishes `dense` only -- so the block counts
+`routed_moe`), and contract v15 publishes `dense` only -- so the block counts
 the stack and covers it with nothing, checked before the rung lookup rather
 than left to the accident that the record's name carries a suffix no
 declaration does. That is the same honest absence §4.4 records for the loader,
@@ -513,9 +547,10 @@ duplicate or reordered spellings are not a second form of the same contract.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
-A `lane_eligibility` cell says: on this platform, for this payload family, at
-these rungs, in this regime, at this residency, the plugin executes **these
-launches** on a route with this status. The launch half is
+A `lane_eligibility` cell says: on this platform, for this payload family and
+structure, at these rungs, in this regime and residency, under this exact image
+and execution mode, the plugin executes **these launches** on a route with
+this status. The launch half is
 `executes` -- a list of `{symbol, decoder}` -- and it arrived with
 `lane_eligibility` schema **v4** (contract v13, issue #111). Before it, a
 cell published the A-side contract and the rungs, and the launch appeared
@@ -526,13 +561,14 @@ a rate-constrained artifact was served -- the R1024 census records
 `tessera_window_gemv::gemv` on 112 of 112 modules in the decode regime
 (`docs/measurements/tessera-lane-eligibility-executes-2026-09-04.md`).
 
-Three things follow, and each is a rule rather than a value:
+The following are rules rather than measured values:
 
 - **The value is derived, never asserted.** `contract.validate_serving_contract`
   builds each cell's `executes` from `scheme.ROUTE_LAUNCHES` -- the torch-free
-  table the routes' own `fp8_gemv.census_expected` / `bf16_route.census_expected`
-  are built from, and the home of `WINDOW_GEMV_SYMBOL` -- narrowed by the
-  regime, by the residency the cell's `TESSERA_SERVE_MODE` flag names, and by
+  table the routes' own `fp8_gemv.census_expected`, `bf16_route.census_expected`,
+  and `moe_route.census_expected` are built from, and the home of
+  `WINDOW_GEMV_SYMBOL` -- narrowed by the cell's structure, regime, by the
+  residency the cell's `TESSERA_SERVE_MODE` flag names, and by
   the lanes each rung reaches under `native_extensions[].lane.requires`. So a
   cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
   drop rate 4 from the published predicate and the document stops validating
@@ -554,21 +590,25 @@ Three things follow, and each is a rule rather than a value:
   `layer.tessera_gemv = None` in `resident`, so the lane exists in `streamed`
   alone and one rung's decode regime has two answers. The E4M3 family
   therefore carries four cells, and two cells of one `(platform, family,
-  structure, regime)` must cover **disjoint** residencies -- otherwise a
+  structure, regime, runtime image, execution mode)` must cover **disjoint**
+  residencies -- otherwise a
   consumer resolving "what runs here" gets whichever cell it read first. A
   cell `id` is now its scope and never a launch, because an id that names a
   launch is a second, unparsed spelling of `executes`.
 - **The census closes the loop.** Deriving `executes` proves the document
   agrees with the code; only a serve proves the code agrees with the machine.
   `census.cell_launch_agreement` joins every served route record to the cell
-  covering its `(platform, family, structure, regime, residency, rung)` and
-  refuses a disagreement, and `tools/tessera_route_census.py` writes the block
-  into the receipt. It is eager-only and says so: a compiled record stamps
-  both launches as one `a+b` pair because one graph serves every M.
-  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline, so
-  the R1024 evidence is reproducible without a GPU
-  (`/home/rob/tessera-runs/ts111/replay-R1024.txt`: 112 of 112 in both phases,
-  and 112 refusals when the pre-#111 value is put back).
+  covering its `(platform, family, structure, regime, residency, rung)` under
+  the measured image and execution mode. Missing or mismatched runtime context
+  is unattested; a covered launch disagreement refuses. The route census writes
+  that context with the block. Compiled dense agreement remains unsupported
+  because its trace combines launches as `a+b`; a compiled routed single-launch
+  observation may be compared with its explicitly scoped cell.
+  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline under
+  its recorded runtime context. The historical R1024 replay at
+  `/home/rob/tessera-runs/ts111/replay-R1024.txt` recorded 112 of 112 in both
+  phases and 112 refusals under the pre-#111 negative control; a source receipt
+  missing explicit runtime context now remains unattested under v5.
 
 `TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
 1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch

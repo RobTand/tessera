@@ -163,12 +163,12 @@ def lane_engagement(records_by_phase: Mapping[str, Mapping[str, Mapping[str, Any
 
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
-CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/1"
+CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/3"
 
 
 def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                           rungs_by_module, families_by_route, structure="dense",
-                          symbol_alias=None):
+                          symbol_alias=None, runtime_image=None, execution_mode=None):
     """Every served record's launch against the CELL that covers it (#111).
 
     The lane-engagement block above asks whether a lane took any modules.  This
@@ -183,19 +183,33 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     The route and the residency come off the record's own ``policy`` field
     (``ROUTE:mode``) and ``families_by_route`` turns the route into the payload
     family a cell is keyed by (``contract.PAYLOAD_FAMILY_BY_ROUTE``), so the
-    caller supplies only the rung per module -- the one fact a route record
-    does not carry.  A module the table does not cover
+    caller supplies the rung per module and the measured image/execution mode.
+    Since lane schema v5, those runtime facts must match the cell's explicit
+    scope. Missing context and cells without scope cover nothing; a global
+    image pin is never borrowed. A module the table does not cover
     is counted as ``unattested`` and is NOT a problem: absence is the honest
-    state a v4 table has for a rung no receipt covered, and inventing a
+    state a closed-world table has for a rung no receipt covered, and inventing a
     verdict from it is the failure the whole table is shaped to avoid.
 
     Returns ``(block, problems)``.  ``agrees`` is three-valued for the same
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
+    from .contract import cell_runtime_scope
+
+    runtime = {"image": runtime_image, "execution_mode": execution_mode}
+    unsupported_reason = (
+        "compiled dense route records combine shape-polymorphic launches; "
+        "per-cell agreement is unsupported for this observation"
+        if execution_mode == "compiled" and structure != "routed_moe" else None)
     by_regime = {}
     for cell in cells:
         if cell.get("platform") != platform or cell.get("structure") != structure:
+            continue
+        if runtime_image is None or execution_mode is None or "runtime" not in cell:
+            continue
+        image, execution_modes = cell_runtime_scope(cell)
+        if image != runtime_image or execution_mode not in execution_modes:
             continue
         modes = _cell_modes(cell)
         for mode in modes:
@@ -209,7 +223,7 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     for phase, records in sorted(records_by_phase.items()):
         regime = phase_regimes.get(phase)
         counts = collections.Counter()
-        covered = unattested = 0
+        covered = unattested = unsupported = 0
         for name, record in sorted(records.items()):
             # THE RECORD'S OWN STRUCTURE, CHECKED BEFORE ITS RUNG.  This block
             # is keyed to one structure and a record of another is not
@@ -225,6 +239,10 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             if STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind"))) != structure:
                 unattested += 1
                 continue
+            if unsupported_reason:
+                unattested += 1
+                unsupported += 1
+                continue
             policy = str(record.get("policy", ""))
             route, _, mode = policy.partition(":")
             family = families_by_route.get(route)
@@ -234,8 +252,16 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             if cell is None:
                 unattested += 1
                 continue
-            covered += 1
             pair = (str(record.get("symbol")), str(record.get("decoder")))
+            if execution_mode == "compiled" and (
+                    len(cell["executes"]) != 1 or any("+" in item for item in pair)):
+                # Only the routed single-launch observation can be joined to
+                # a phase cell. A combined trace does not identify which of
+                # its branches the driven phase executed.
+                unattested += 1
+                unsupported += 1
+                continue
+            covered += 1
             allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
             # The route may carry an observed backend suffix while a cell
@@ -252,10 +278,13 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
         covered_total += covered
         phases[phase] = {"regime": regime, "modules": len(records),
                          "covered_by_cell": covered, "unattested": unattested,
+                         "unsupported_records": unsupported,
                          "cells": dict(sorted(counts.items()))}
     block = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform, "structure": structure,
-             "phases": phases,
+             "runtime": runtime, "phases": phases,
              "agrees": None if not covered_total else not problems}
+    if unsupported_reason:
+        block["unsupported_reason"] = unsupported_reason
     return block, problems
 
 

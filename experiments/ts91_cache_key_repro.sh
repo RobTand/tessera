@@ -78,7 +78,7 @@ EXT=$EXT_A "$GPULOCK" "$WT/experiments/tessera_plugin_run.sh" \
   -e TESSERA_SERVE_MODE=streamed \
   -v "$RUNS":"$RUNS" -v /mnt/shared:/mnt/shared:ro -v "$CACHE":/root/.cache/vllm \
   $extra -- \
-  "python3 tools/tessera_route_census.py '$MODEL' '$out' --tessera-commit $COMMIT $flag" \
+  "python3 tools/tessera_route_census.py '$MODEL' '$out' --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" --tessera-commit $COMMIT $flag" \
   2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 set -e

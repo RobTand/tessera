@@ -27,7 +27,8 @@ exec docker run --rm --gpus all \
   -v "$TS/tools":/work/tools:ro -v "$TS/tests":/work/tests:ro \
   -v "$EXT":/ext -v /home/rob/models:/home/rob/models:ro \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext -e TRITON_CACHE_DIR=/ext/triton \
-  -w /work "${extra[@]}" --entrypoint bash "$IMG" -c '
+  -w /work "${extra[@]}" -e TESSERA_CENSUS_RUNTIME_IMAGE="$IMG" \
+  --entrypoint bash "$IMG" -c '
 # torch.utils.cpp_extension pulls CUDA headers the stock image does not ship.
 # Link ONLY the missing names from the cu13 wheel include dir: putting the whole
 # directory on the include path breaks nvcc with __cudaLaunch errors.
