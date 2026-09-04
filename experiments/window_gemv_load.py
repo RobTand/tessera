@@ -31,6 +31,27 @@ import time
 import urllib.request
 
 
+def _utc() -> str:
+    """One spelling of "now, in UTC", so every mark in a receipt is the same
+    clock the Netdata window will be cut on."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+#: Whole-second marks are the right resolution for a Netdata window (its finest
+#: tier is 10 s) and the WRONG one for cutting a chrome trace: the profiled
+#: sub-loads run for a few seconds, so a one-second rounding is a large
+#: fraction of the window being cut.  Both are recorded; the trace cut reads
+#: this one.
+_MARKS_UNIX: dict = {}
+
+
+def _mark(name: str, marks: dict) -> str:
+    """Stamp ``name`` in both clocks and return the UTC string."""
+    _MARKS_UNIX[name] = time.time()
+    marks[name] = _utc()
+    return marks[name]
+
+
 def load_now() -> dict:
     """The host's run-queue load, right now.
 
@@ -47,6 +68,7 @@ def load_now() -> dict:
            "ncpu": os.cpu_count(),
            "load1_per_cpu": round(one / (os.cpu_count() or 1), 3)}
     out.update(_meminfo())
+    out.update(_swap_io())
     return out
 
 
@@ -78,6 +100,55 @@ def _meminfo() -> dict:
     except OSError:
         pass
     return out
+
+
+#: ``/proc/vmstat`` counts swap traffic in PAGES, and the page size is a
+#: property of the kernel this runs on rather than a constant worth assuming --
+#: GB10 boxes are configured with a 64 KiB page in some images and 4 KiB in
+#: others, and a 16x error in a contention figure is the kind that gets read as
+#: "the box was fine".
+_PAGE_BYTES = os.sysconf("SC_PAGE_SIZE")
+
+
+def _swap_io() -> dict:
+    """Cumulative pages swapped in and out, since boot.
+
+    SWAP IN USE IS NOT SWAP ACTIVITY, and the difference decides whether a
+    receipt's contention label is describing this run or last night's.  A box
+    that thrashed hours ago still reports GiB resident in swap with nothing
+    moving; a box with a modest resident figure and pages streaming is
+    thrashing right now.  ``_meminfo``'s ``swap_used_gib`` reads the first and
+    is what the ``contended`` verdict is built on -- deliberately conservative,
+    and NOT relaxed here.  These counters are the second reading, differenced
+    across each timed window by ``_swap_delta``, so a receipt can say "2 GiB
+    resident, nothing moved" or "2 GiB resident and 400 MiB paged during the
+    window" and a reader can tell those apart instead of guessing which one
+    the label meant.
+    """
+    out: dict = {}
+    try:
+        with open("/proc/vmstat") as fh:
+            for line in fh:
+                k, _, v = line.partition(" ")
+                if k in ("pswpin", "pswpout"):
+                    out[k] = int(v)
+    except OSError:
+        pass
+    return out
+
+
+def _swap_delta(start: dict, end: dict) -> dict:
+    """Pages (and MiB) swapped between two ``load_now()`` readings."""
+    out: dict = {}
+    for key, name in (("pswpin", "swap_in"), ("pswpout", "swap_out")):
+        if key in start and key in end:
+            pages = max(0, end[key] - start[key])
+            out[name + "_pages"] = pages
+            out[name + "_mib"] = round(pages * _PAGE_BYTES / (1024 * 1024), 2)
+    if out:
+        out["moved"] = bool(out.get("swap_in_pages", 0) or out.get("swap_out_pages", 0))
+    return out
+
 
 #: vLLM 0.28 publishes per-output-token latency as
 #: ``vllm:request_time_per_output_token_seconds``; the name this script first
@@ -197,16 +268,24 @@ def main() -> int:
     ap.add_argument("--prefill-requests", type=int, default=12)
     ap.add_argument("--prefill-prompt-tokens", type=int, default=512)
     ap.add_argument("--warmup-requests", type=int, default=4)
+    # The PROFILED sub-loads, which are not the timed ones.  Longer than the
+    # 2x24 the first campaign used: the trace is cut to these marks in both
+    # arms, and a window of a second or two is not many multiples of the
+    # clock's resolution nor many steady-state decode steps.
+    ap.add_argument("--profile-decode-requests", type=int, default=3)
+    ap.add_argument("--profile-decode-out-tokens", type=int, default=64)
+    ap.add_argument("--profile-prefill-requests", type=int, default=2)
     args = ap.parse_args()
 
-    started = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    started = _utc()
     # Warm up: the first forwards of a compiled serve pay capture, and the
     # first of any serve pays allocator growth.  Neither belongs in the number.
     drive(args.url, args.warmup_requests, 32, 32)
     drive(args.url, 2, args.prefill_prompt_tokens, 1)
 
     windows = {}
-    marks = {"decode_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    marks = {}
+    _mark("decode_start", marks)
     loads = {"decode_start": load_now()}
     b = scrape(args.url)
     windows["decode"] = drive(args.url, args.decode_requests, 32, args.decode_out_tokens)
@@ -215,10 +294,11 @@ def main() -> int:
     windows["decode"]["tpot"] = delta(b, a, TPOT_STEM)
     windows["decode"]["itl"] = delta(b, a, "vllm:inter_token_latency_seconds")
     windows["decode"]["series_moved"] = moved(b, a)
-    marks["decode_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _mark("decode_end", marks)
     loads["decode_end"] = load_now()
 
     marks["prefill_start"] = marks["decode_end"]
+    _MARKS_UNIX["prefill_start"] = _MARKS_UNIX["decode_end"]
     loads["prefill_start"] = load_now()
     b = scrape(args.url)
     windows["prefill"] = drive(args.url, args.prefill_requests,
@@ -228,16 +308,33 @@ def main() -> int:
     windows["prefill"]["tpot"] = delta(b, a, TPOT_STEM)
     windows["prefill"]["itl"] = delta(b, a, "vllm:inter_token_latency_seconds")
     windows["prefill"]["series_moved"] = moved(b, a)
-    marks["prefill_end"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _mark("prefill_end", marks)
     loads["prefill_end"] = load_now()
 
     # The profile, over its own short load.  A profiled forward is not a timed
     # forward, so nothing above is taken from this window.
+    #
+    # THE PROFILED SUB-LOADS ARE MARKED, and that is what lets two arms'
+    # traces be cut the same way.  ``window_gemv_trace_summary.py --phases``
+    # identifies a decode bin by the presence of a window-GEMV launch, which
+    # works only in the arm that HAS the lane: the fallback arm has no such
+    # marker, so bins identified that way would be identified by two different
+    # rules in the two arms and the comparison would not be one.  A trace's
+    # absolute clock is ``baseTimeNanoseconds + ts``, so these marks cut both
+    # arms by the same wall-clock rule.
     profiled = None
     try:
         _post(args.url + "/start_profile", None)
-        profiled = {"decode": drive(args.url, 2, 32, 24),
-                    "prefill": drive(args.url, 2, args.prefill_prompt_tokens, 1)}
+        _mark("profile_decode_start", marks)
+        prof_decode = drive(args.url, args.profile_decode_requests, 32,
+                            args.profile_decode_out_tokens)
+        _mark("profile_decode_end", marks)
+        marks["profile_prefill_start"] = marks["profile_decode_end"]
+        _MARKS_UNIX["profile_prefill_start"] = _MARKS_UNIX["profile_decode_end"]
+        prof_prefill = drive(args.url, args.profile_prefill_requests,
+                             args.prefill_prompt_tokens, 1)
+        _mark("profile_prefill_end", marks)
+        profiled = {"decode": prof_decode, "prefill": prof_prefill}
         _post(args.url + "/stop_profile", None, timeout=900.0)
         # The trace is flushed asynchronously; give the writer a moment.
         time.sleep(20)
@@ -245,11 +342,16 @@ def main() -> int:
         profiled = {"error": f"{type(exc).__name__}: {exc}"}
 
     receipt = {
-        "schema": "tessera.window_gemv.served_latency/1",
+        # /2 adds ``marks_unix``, ``swap_io`` and the profiled sub-load marks.
+        # A reader of a /1 receipt (the 2026-09-03 campaign's four) must not
+        # assume those fields: those runs have no swap-activity reading and
+        # their traces cannot be cut by wall clock.
+        "schema": "tessera.window_gemv.served_latency/2",
         "arm": args.arm, "serve_mode": args.mode, "forward": args.regime,
         "started_utc": started,
-        "finished_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "finished_utc": _utc(),
         "marks_utc": marks,
+        "marks_unix": dict(_MARKS_UNIX),
         "host_load": loads,
         # A verdict the receipt carries itself, so a reader does not have to
         # decide from four raw numbers whether the box was quiet.  The threshold
@@ -266,6 +368,14 @@ def main() -> int:
         "max_swap_used_gib": max(v.get("swap_used_gib", 0.0) for v in loads.values()),
         "min_mem_available_gib": min(v.get("mem_available_gib", 0.0)
                                      for v in loads.values()),
+        # Pages actually swapped during each timed window, beside the resident
+        # figure the ``contended`` label reads.  See ``_swap_io``: the label
+        # stays conservative and these say whether it is describing this run.
+        "swap_io": {
+            "decode": _swap_delta(loads["decode_start"], loads["decode_end"]),
+            "prefill": _swap_delta(loads["prefill_start"], loads["prefill_end"]),
+            "page_bytes": _PAGE_BYTES,
+        },
         "windows": windows,
         "profiled_load": profiled,
     }
@@ -288,6 +398,12 @@ def main() -> int:
     print(f"host load1/cpu peaked at {lo:.2f}, swap in use peaked at {sw:.1f} GiB, "
           f"available memory bottomed at {av:.1f} GiB "
           f"({'box was quiet' if quiet else 'CONTENDED -- report these as contended'})")
+    for name in ("decode", "prefill"):
+        io = receipt["swap_io"][name]
+        if io:
+            print(f"  {name} window: swapped in {io.get('swap_in_mib', 0)} MiB, "
+                  f"out {io.get('swap_out_mib', 0)} MiB "
+                  f"({'PAGES MOVED' if io.get('moved') else 'nothing moved'})")
     print("->", args.out)
     return 0
 
