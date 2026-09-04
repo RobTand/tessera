@@ -904,10 +904,7 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     if structure not in STRUCTURES:
         raise ValueError(
             f"tessera target {target!r}: structure {structure!r} is not served; this plugin "
-            f"serves {STRUCTURES} today. Routed-MoE expert stacks decode per-expert wires to "
-            "the stock packed layouts and run vLLM's own fused-MoE kernels; that route is not "
-            "built, carries no lane_eligibility cell and no served measurement, and is refused "
-            "here rather than mis-served through the dense method.")
+            f"serves {STRUCTURES} today. No method is registered for this structure.")
     if structure == STRUCTURE_ROUTED_MOE:
         return validate_tessera_moe_scheme(scheme, target)
     missing = [f for f in _REQUIRED if f not in scheme]

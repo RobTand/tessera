@@ -379,9 +379,9 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 def test_the_table_is_dense_only(contract):
     """No cell mentions routed MoE, and there is no expert-parallel claim.
 
-    A cell is attested by a served measurement, and no served measurement
-    covers routed-MoE experts: the expert route is not built, and the dispatch
-    refuses such a layer by name rather than returning ``None``.  So the table
+    A cell requires a served promotion receipt. The expert route is built,
+    but the packaged table carries no routed-MoE quality qualification yet;
+    parsing and dispatching a stack do not attest it. The table therefore
     says ``dense`` and nothing else, and the absence resolves ``unattested``
     rather than ``denied``.
     """
