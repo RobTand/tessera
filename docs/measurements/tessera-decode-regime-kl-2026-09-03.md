@@ -343,8 +343,10 @@ whole point is that every launch is attributable.
   receipt validates the harness and the lane on a uniform-rate checkpoint.
 * **The compiled forward -- filed as #113 and since measured**
   (`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`: mutual
-  `KL >= 0.012585` at 88.67%, the same finding at the same size, so it is not
-  an artifact of eager dispatch). Both arms here served with
+  `KL >= 0.012585` at 88.67% -- but *below* a `0.019423` same-artifact rebuild
+  delta, so the compiled pass does **not** establish that this finding survives
+  the compiled forward; the eager result here carries no build term and is
+  unaffected). Both arms here served with
   `--enforce-eager`, so every served KL this lane has is eager, while vLLM
   compiles by default. The route trace is eager-only by construction: under
   `torch.compile` the dispatch's Python body runs at trace time, so a count

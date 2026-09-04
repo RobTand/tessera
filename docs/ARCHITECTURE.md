@@ -349,8 +349,12 @@ receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
 a compiled serve, where the trace declines and the attestation is
 `compile_identity`'s per-arm AOT key plus the mutual KL itself. That arm was
 taken for #113: compiled, the same two arms read mutual `KL >= 0.012585` at
-88.67% in the decode regime and `0.000000` at 100.00% in the prefill one
-(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`).
+88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
+and that decode number is **below** the same-artifact rebuild delta measured
+beside it (`KL >= 0.019423`, arm A re-served, one lane state, two builds), so
+**only the eager pair is currently a lane-attributable KL difference**; a
+compiled serve on this stack stamps `inductor_deterministic: false`
+(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md` §7).
 
 ### 4.6 The stock twin isolates the wire from the kernel
 

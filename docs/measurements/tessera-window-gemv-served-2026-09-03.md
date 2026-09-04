@@ -37,8 +37,8 @@
 > and where this campaign's only KL is §3's prefill-regime null -- was filed as
 > **#113** and measured the next day: on these same two arms, compiled, the
 > decode regime reads mutual `KL >= 0.012585` at 88.67% where the prefill
-> regime reads `0.000000` at 100.00%, receipt at
-> `docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`. Nothing is
+> regime reads `0.000000` at 100.00% -- a number that sits **below** the same-artifact rebuild delta (`KL >= 0.019423` decode, arm A re-served, one lane state, two builds), so it is **not** yet a lane-attributable separation, receipt at
+> `docs/measurements/tessera-compiled-decode-kl-2026-09-04.md` §7. Nothing is
 > restated here as this campaign's result; the pointers are here so a reader who
 > lands on this receipt is not left at its gaps.
 >
@@ -47,9 +47,11 @@
 > `KL >= 0.012111` at 91.02% top-1, arms 0.436065 / 0.432477 against the BF16
 > teacher) are measured and on master; the served latency A/B is unmeasured
 > (#109), the compiled-serve decode-regime KL is measured off-campaign (#113:
-> mutual `KL >= 0.012585` at 88.67%), and which arm is closer to BF16 at M = 1
-> is open (#110) -- more open than before, since the arms' ordering flips
-> between eager and compiled at 256 positions. **Nothing here is a served
+> mutual `KL >= 0.012585` at 88.67%, below a `0.019423` same-artifact rebuild
+> delta, so not yet lane-attributable), and which arm is closer to BF16 at
+> M = 1 is open (#110) -- more open than before, since the arms' ordering flips
+> between eager and compiled at 256 positions and a rebuild of one arm moves
+> its teacher KL 5.3x further than the flip. **Nothing here is a served
 > latency or speed claim for the lane.**
 
 **What this is.** Issue #10 wired `fp8_gemv.streamed_apply` into the streamed
@@ -385,7 +387,8 @@ paragraph. What was *not* in doubt there is engagement: §4's recovered trace
 shows the GEMV launching 9 016 times under a compiled forward with zero CUTLASS
 GEMM launches in every purely-decode bin. **#113 supplied the missing number
 the next day**: compiled, on these arms, mutual `KL >= 0.012585` at 88.67% over
-256 M = 1 positions against `0.000000` at 100.00% over 4088 prefill ones, and
+256 M = 1 positions against `0.000000` at 100.00% over 4088 prefill ones --
+a number that sits **below** the same-artifact rebuild delta (`KL >= 0.019423` decode, arm A re-served, one lane state, two builds), so it is **not** yet a lane-attributable separation -- and
 the compiled prefill dumps of *this* campaign carry the same
 `kl_tool.py fingerprint` as #113's, so the null above is an identity across
 campaigns as well as across arms

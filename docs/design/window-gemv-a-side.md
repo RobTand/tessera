@@ -363,7 +363,11 @@ box. What is still open here
    hardlinked arms: mutual `KL >= 0.012585` at 88.67% in the decode regime
    against `0.000000` at 100.00% in the prefill one
    (`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`). So both
-   dispatch regimes now carry two arms and two KLs, in streamed residency.
+   dispatch regimes now carry two arms and two KLs, in streamed residency --
+   but the **compiled** pair is below a `0.019423` same-artifact rebuild delta
+   (§7 there), so the protocol's next requirement is a within-arm floor for
+   both arms before a compiled A-vs-B number may be read as a lane effect. Add
+   that to this item: **two arms, two KLs, and a repeat of each arm.**
    "Two latencies" is unmeasured and filed as **#109**, and *which* arm is
    right is **#110** -- harder than it looked, since the arms' ordering against
    BF16 flips between eager and compiled at 256 positions.
