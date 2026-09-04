@@ -24,3 +24,15 @@ Population: serial CPU, torch 2.11.0+cpu, no CUDA device. All three skip reasons
 were exactly `the encoder is a GPU job`. Receipt CAS:
 `c6a596c911131aabbc2b3ad0bb5aa4ce43ad80f3d5c23031fdd458ee513322ba`.
 This test count does not cover the CUDA encoder surface or promote a MoE cell.
+
+The bounded metadata correction additionally preserves unrelated declarations
+such as tied `lm_head`, even though they need not have a distinct stored tensor.
+Actual correction attempt `048b1221c8d8` refused the unwanted head removal before
+creating a new model. A new helper test failed in action `22ebe9be737a` at
+`test_ts5_passthrough_correction.py:13`; the two existing refusal conditions
+already held. Final action
+`42987b1e225203d6353c916e72743278dd3d6a27d9e00f65e43aecf993305ece`
+passed all three tests, CPU/no CUDA, zero skips and zero uncollected modules.
+Receipt CAS: `0a400a46771df47cff1dac8ed3206c52485250f1c1b63d48673b8ce1275cade7`.
+The successful actual correction and its exact config/weight identities are
+recorded in `tessera-lfm-campaign-2026-09-04.md` §6.
