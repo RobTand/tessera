@@ -506,3 +506,133 @@ two-runtime shape flicker, and it bites hardest exactly when a box is busy
 enough to be worth queueing behind. `experiments/ts109_submit.sh` retries the
 submission for both; neither is routed around, and a refusal that survives the
 whole loop is reported rather than worked past.
+
+## 8. Rep 1's ratio, computed at last -- and what arm B actually serves
+
+The 2026-09-04 campaign's rep 1 never had a ratio: its parse was the
+`lane_by_frames` scan that spun for 55 minutes and was killed, so only rep 2's
+receipt was written. Computed now on the same bytes with the indexed parser
+(`ratio-streamed-eager-rep1.json`), it is the first pair in this issue's
+history that has a **fallback trace at all** -- the 2026-09-03 receipts carry
+`profiled_load: {"error": "HTTPError: HTTP Error 404"}` -- and that trace
+withdraws the argument §3 built on the prefill row.
+
+### The two reps, side by side
+
+Fallback over engaged, from the engine's own histograms in both reps (the
+`series_moved` recovery §3 describes is no longer needed; both receipts carry
+`source: histogram/histogram`):
+
+| | rep 1 (A then B) | rep 2 (B then A) |
+|---|---|---|
+| `decode.tpot` / `decode.itl` | 34.522 -> 282.381 ms, **8.180x** | 44.786 -> 286.369 ms, **6.394x** |
+| `decode.ttft` | 67.737 -> 439.528 ms, 6.489x | 245.997 -> 442.605 ms, 1.799x |
+| `prefill.ttft` | 69.783 -> 272.597 ms, 3.906x | 248.423 -> 275.580 ms, 1.109x |
+| `max_load1_per_cpu`, engaged / fallback | 0.059 / 0.151 | 0.463 / 0.525 |
+| box GPU power over the decode window (§7.1) | 14.0 W / 43.0 W | 72.1 W / 43.0 W |
+
+**The fallback arm barely moves between reps and the engaged arm moves a lot.**
+Fallback: 282.4 vs 286.4, 439.5 vs 442.6, 272.6 vs 275.6 -- every row within
+1.4%. Engaged: 34.5 vs 44.8, 67.7 vs 246.0, 69.8 vs 248.4. The reason is in the
+traces below: for the same 192 decode steps the fallback spends 50.6 s of
+device time and the engaged arm spends 1.21 s, so the fallback is GPU-bound and
+indifferent to a busy host while the engaged arm is neither. Contention lands
+on the engaged arm, which is why the crossover exists and why rep 2's numbers
+are the ones to distrust.
+
+### Arm B does not serve the route arm A replaces; it serves no CUDA extension at all
+
+§6 called the B side "kernel-decode the window into a tile, then
+`torch._scaled_mm`", and §3 read the prefill row as a null window that "should
+read 1.00x" because `GEMV_MAX_M = 8` refuses prefill in *both* arms. Both
+statements are wrong about the arm that was built, and the fallback trace is
+what says so.
+
+`fp8_gemv._materialised_path` opens with `ext = kg._ext()` and decodes the tile
+with `ext.window_decode(...)`. Arm B is made by pointing
+`TORCH_EXTENSIONS_DIR` at a read-only mount so that `_ext()` raises -- so
+`_materialised_path` cannot run either. What the route does instead it says
+itself: *"the window GEMV lane did not prepare (…); serving streamed through
+the torch window decode instead"* (`bf16_route.py:775`, `fp8_route.py:320`).
+
+The traces agree exactly. Both cuts contain the same 192 decode steps -- 192
+`cublas_gemv` (`lm_head`) launches, 10,752 attention, 21,504 `fp8_quant` in
+each -- so this is step for step:
+
+| bucket | engaged (armA rep 1) | fallback (armB rep 1) |
+|---|---|---|
+| `window_gemv` | 37,044 launches, 369.3 ms | -- |
+| `window_decode` | 588 launches, 83.8 ms | **none** |
+| `scaled_mm/cutlass` | 336 launches, 4.6 ms | 21,504 launches, 322.2 ms |
+| `elementwise/triton` | 124,620 launches, 216.9 ms | **453,312 launches, 49,350.7 ms** |
+| device ms in the cut | **1,211.7** | **50,569.0** |
+| lane, by enclosing frame | 684.6 ms (56.5%) | 49,347.2 ms (97.6%) |
+
+Arm B runs `_scaled_mm` -- 21,504 launches, one per unit per step, against the
+engaged arm's 336 -- and has **no `window_decode` kernel at all**. The 453,312
+elementwise launches are the torch window decode standing in for it.
+
+So the prefill row is not a null window. In prefill both arms take the
+materialised path, but only arm A has a CUDA kernel to materialise with, so
+3.906x on the quiet rep is the **window-decode kernel's** own A/B at prefill
+shapes -- a measurement, not a symptom. "A pair whose null arm moves by 4.3x
+cannot price a lane at 8x" was reasoning from a control that was never null.
+The box *did* move -- §7.1's power table and rep 2's engaged arm say so -- but
+the prefill row is not the evidence for it, and the 2026-09-03 pair's 4.29x is
+explained without invoking the box at all.
+
+### The engaged arm is host-bound in eager, and that caps the served ratio
+
+Per decode step, engaged: **6.31 ms of device time inside a 34.52 ms step**, so
+18.3% device-busy. Fallback: 263.4 ms of device inside a 282.4 ms step, 93.3%
+device-busy. The lane difference on the device is 41.7x per step; the served
+ratio is 8.18x. The gap is 28 ms per step of host time in the engaged arm that
+the lane cannot remove and the fallback's own slowness hides. That is a bound
+on what any eager served ratio can show here, and it is the strongest argument
+yet for taking the `compiled` pass §5 defers: a launch-bound arm is what CUDA
+graphs are for (principle 10).
+
+### What this means for what #109 asks
+
+#109 wants the GEMV "against the route it replaces". As built, the pair prices
+**the whole Tessera CUDA extension against no extension** -- the GEMV *and* the
+CUDA window decode, against a torch decode. Two readings are open and the
+choice is the owner's, not this document's:
+
+* If "the route it replaces" is the streamed route as it shipped before the
+  kernel lane -- pure torch over packed bits, which is what
+  `tessera-lane-two-families` records it as -- then this pair is the right
+  comparison, and 8.180x on the quieter rep is the answer, stated as pricing
+  two kernels rather than one.
+* If it is the materialised path `fp8_gemv.py`'s docstring names -- CUDA
+  `window_decode` then `_scaled_mm` -- then arm B has to keep the extension and
+  refuse only the GEMV. **There is no knob for that today**: `GEMV_MAX_M = 8`
+  is a module constant (`kernel_window.py:78`) with no env spelling. Giving it
+  one would be a *process*-level fact fixed at import, the same shape as
+  `TORCH_EXTENSIONS_DIR`, so it would not fight `flags.py`'s in-run latch --
+  but it is a serving-path edit made for a measurement and wants an owner's
+  decision before anyone makes it.
+
+Whichever it is, §6's exchange rate has to be re-read against these arms: the
+engaged lane is 37.8% of the decode window by kernel-name bucket and 56.5% by
+enclosing frame, and the fallback's is 97.6%, which puts this pair's Amdahl
+ceiling at 1/(1 - 0.976) = 41x rather than anything near 1.4x.
+
+### And the pair is still refused, on the one clause that has not moved
+
+`ratio-streamed-eager-rep1.json` ends `VERDICT: NOT EVIDENCE about the lane`.
+Its four reasons are resident swap (2.7 GiB on both arms, above
+`window_gemv_load.py`'s 1 GiB threshold) and a non-zero page-in delta during
+the timed windows (**10 pages** on the engaged arm, **224** on the fallback,
+0.04 and 0.88 MiB). Load was 0.059 and 0.151 per core. So the clause that
+refuses rep 1 is not the clause the campaign's own verdict quoted -- that one
+quoted rep 2's 0.463 and 0.525 -- and on rep 1 it is a residue from an earlier
+stampede plus a handful of pages.
+
+That threshold is **deliberately not relaxed here.** §2 already names why:
+loosening the rule that decides whether one's own receipt is admissible is the
+self-serving edit, and the branch that wrote the gate declined to make it. What
+is added is the reading a decision needs: rep 1 fails on resident swap and 234
+pages, not on load, and the two reps' ratios differ by 28% (8.180 vs 6.394)
+which is larger than any effect those pages could have. The number to take is
+still the one from a box that passes the gate on its own terms.
