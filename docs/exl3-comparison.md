@@ -1,16 +1,22 @@
 # Matching `Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw`
 
-> **QUALITY COUNTERWEIGHT, 2026-09-01.** This document establishes that the
-> *size* win against EXL3 lives in the sub-4.5 bpp band, which is Tessera's
-> thesis. That arithmetic stands. What it does not price is quality at that
-> size, and quality now has a number: **EXL3 at 4.0117 bpw beats Tessera at
-> 4.0000 by 1.72×** on real GLM routed experts, held out
-> (`docs/measurements/exl3-head-to-head-2026-09-01.md`). Reaching the band is
-> necessary and is not sufficient — read every "size win" claim below against
-> that. Separately, Mia's shipped artifact does not reconstruct under the
-> exllamav3 version its own ABI names, so do not use it as a working
-> comparator (`docs/measurements/exl3-head-to-head-2026-09-01.md`, §"Why this
-> arm quantizes").
+> **QUALITY COUNTERWEIGHT, 2026-09-01, amended 2026-09-04.** This document
+> establishes that the *size* win against EXL3 lives in the sub-4.5 bpp band,
+> which is Tessera's thesis. That arithmetic stands. It does not price quality.
+> The quality gap against EXL3 K=4 on shared GLM expert rows is **1.176x on the
+> weight leg, 1.070x under W4A4, 1.017x in weight space**
+> (`docs/measurements/tessera8-targets-2026-09-01.md`, "Tessera-4 vs EXL3
+> K=4, measured on the same rows"). The **1.72x** this banner stated on
+> 2026-09-01 was built on a superseded EXL3 rel_err of 0.0565 and **is
+> retired**; the corrected EXL3 K=4 figure is 0.0679 out-space on the capture
+> held-out rows. Separately, Tessera's dense 4.0-bpp wire serves at parity
+> with PrismaQuant NVFP4 GPTQ+JSO at equal residency (0.9988x,
+> `docs/ARCHITECTURE.md`, "What the same bracket settles about the dense 4-bit
+> route"). Reaching the band is necessary and is not sufficient -- read every
+> "size win" claim below against that. Mia's shipped artifact still does not
+> reconstruct under the exllamav3 version its own ABI names, so do not use it
+> as a working comparator (`docs/measurements/exl3-head-to-head-2026-09-01.md`,
+> section "Why this arm quantizes").
 
 
 **Status:** measured 2026-08-31 from the local copy at

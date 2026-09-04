@@ -5,6 +5,11 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+**Provenance:** current as of `b83fd17` (2026-09-04), the last code change
+before `v0.1.0`; contract v16, lane-eligibility schema v5. Re-stamp this
+line with any change to the wire, the recipe table, the serving lane, the
+plugin contract or a gate (AGENTS.md principle 10).
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -1127,9 +1132,11 @@ no serve and no KL). `tests/test_landing_ordering.py` pins both halves.
 was one round number (`export.DEFAULT_LDLQ_BLOCK = 32`) applied to every unit
 of every model. It is measurably the wrong shape of knob:
 `compensate.block_penalty(H_reg, block)` prices what a block costs against
-full feedback in closed form, and at `b=32` that is **14.7%** of full feedback
+full feedback in closed form, and at `b=32` that is **9.8%** of full feedback
 on dense Qwen attention against **0.14%** on GLM experts -- a factor of 70
-between two populations one constant has to serve.
+between two populations one constant has to serve (and 14.7% on `q`/`k`/`v`
+specifically against `o_proj`'s 1.4%, a factor of ten inside one model;
+`compensate.block_penalty` and `tessera-dense4-gap-2026-09-03.md`).
 
 `ActivationSource.ldlq_block` therefore takes either the width it always took
 or a **budget**, `{"max_penalty": ratio}`, and `ActivationSource.block_for`
@@ -1171,3 +1178,97 @@ that artifact and `82cdf513` closed a further 2.1% with no recipe change, and
 the block is worth 1.94% against its own session's control. Quoting the
 published incumbent instead of re-running it would have credited the block
 with twice its size.
+
+## 5. Packaging and release
+
+The distribution is `tessera-quant`; the import name is `tessera`
+(`pyproject.toml`). What the wheel carries, how the plugin registers once
+installed, and what the two CI jobs prove are gates in their own right, so
+they are recorded here with the rest.
+
+### 5.1 The plugin is delivered by an entry point
+
+`pyproject.toml` declares one entry point in the `vllm.general_plugins`
+group, `tessera = tessera.serving:register`. vLLM loads every plugin in that
+group at start-up; `register` imports vLLM lazily and registers
+`quant_method="tessera"` (`src/tessera/serving/__init__.py`). Nothing the
+operator passes selects the plugin: the checkpoint's `quantization_config`
+names the method, and the only operator knob is `TESSERA_SERVE_MODE`
+(`resident` or `streamed`, `src/tessera/serving/lane.py`). The entry point
+has to resolve without vLLM present, because the producer imports the same
+package on a box that has none; `tests/test_packaging.py` holds it to that.
+
+### 5.2 What the wheel ships besides Python
+
+Four non-Python files are opened at run time, and each is declared in
+`[tool.setuptools.package-data]` because an editable install reads the tree
+and would never notice one missing:
+
+| File | Opened by | Why it is in the wheel |
+|---|---|---|
+| `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
+| `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
+| `tessera/serving/csrc/window_gemv.cu` | the streamed FP8 route's JIT build | the window-body GEMV as the serving lane builds it |
+| `tessera/csrc/window_gemv.cu` | `tessera.kernel_window_gemv` | the same source, built by the library; the duplicate is an open issue, not a design |
+
+`tests/test_packaging.py` refuses either half of that table on its own: a
+glob that matches no file, and a runtime data file no glob covers.
+`tools/check_wheel.py` asserts the same on a *built* wheel, installed with no
+dependencies into an empty directory and imported with the source tree off
+the path, and prints the wheel's own file list; CI runs it on every push and
+the publish job runs it on the bytes it is about to upload.
+
+Two extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
+host, and `kernels` installs Triton. A PyPI vLLM is a **working install, not
+an attested one**: every cell in the contract is pinned to an image digest
+(§3), and a serve on any other runtime gains no claim from it.
+
+### 5.3 The JIT build and what degrades without a compiler
+
+The native extensions are built by torch at first use from the packaged
+`.cu` sources and need an `nvcc` and a `ninja` on the box
+(`src/tessera/serving/ext.py`, "TOOLCHAIN"). Neither is a declared
+dependency; the same file records where each is looked for. When a build is
+unavailable the outcome is per extension and per residency, and it is a
+value the route record stamps, never a boolean:
+
+- `substituted` -- a *named* substitute decoder ran and the serve is a
+  different numeric object than the native one. The resident NVFP4 route
+  decodes once at load and may substitute `tessera.stock.materialize_stock`;
+  the window GEMV substitutes the torch window decode in both residencies.
+- `refused` -- no serve exists. The streamed NVFP4 route decodes inside a
+  traced forward whose data-dependent shapes the substitute cannot run, so it
+  refuses instead of serving something else (`ops.prepare_tessera_module`).
+
+The decoder that actually ran is the `decoder` field on every route record
+(`telemetry.py`), which is how a fingerprint tells a native serve from a
+fallback one. A census (`tools/tessera_route_census.py`) that reads
+`substituted` on a module is reporting a serve the contract does not attest.
+
+### 5.4 The two hosted jobs, and what each does not prove
+
+`.github/workflows/ci.yml` has two jobs.
+
+**`pure`** runs on every push to master and every pull request, in an
+interpreter with pytest and nothing else: the bytes-only tests (whatever
+`tests/conftest.py` can collect without torch, reported with the modules it
+could not), an import of the byte layer that asserts torch never entered the
+process, the empty-denylist refusal (build item 11), and the wheel check
+above. It proves the parser's dependency boundary and the wheel's contents.
+It does not run a CUDA kernel, a decoder against a served artifact, or the
+merged suite: those are the two-population suite of §1.1, dispatched through
+PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
+claim also needs a served receipt (§3).
+
+**`publish`** runs only on a `v*` tag and only after `pure` is green. It
+refuses a tag that does not name the version in `pyproject.toml`, builds the
+sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
+`pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
+is no API token in the repository. The trigger is a bare tag match with no
+ancestry check and no GitHub `environment`, and the action is pinned to a
+branch, not a digest -- recorded as an open issue against #17, not a property
+this section claims.
+
+The version string appears in `pyproject.toml` and in the contract's
+`versions.tessera`; the publish job checks the tag against the first only.
+Reconciling the copies is an open issue.

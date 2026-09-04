@@ -5,15 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tessera-quant"
 version = "0.1.0"
-description = "Tessera: continuous-rate trellis-coded quantization of LLM weights onto hardware-native NVFP4, FP8 and BF16 tiles, with its own vLLM serving plugin"
+description = "Tessera: trellis-coded quantization of LLM weights onto hardware-native NVFP4, FP8 and BF16 tiles, continuous-rate on the FP8 and BF16 grids, with its own vLLM serving plugin"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{name = "Robert Tand", email = "robert.tand@icloud.com"}]
 keywords = ["quantization", "trellis", "NVFP4", "FP8", "vLLM", "LLM"]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
+    # The only minor the suite and CI exercise; requires-python is wider.
+    "Programming Language :: Python :: 3.12",
     "Operating System :: POSIX :: Linux",
+    "Environment :: GPU :: NVIDIA CUDA",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.10"
@@ -28,6 +32,8 @@ kernels = ["triton"]
 [project.urls]
 Homepage = "https://github.com/RobTand/tessera"
 Source = "https://github.com/RobTand/tessera"
+Documentation = "https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md"
+Issues = "https://github.com/RobTand/tessera/issues"
 
 [project.entry-points."vllm.general_plugins"]
 # Tessera's serving half: registers quant_method="tessera" with vLLM.  The
