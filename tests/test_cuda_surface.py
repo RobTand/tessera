@@ -233,3 +233,48 @@ def test_the_population_is_published_as_a_table_not_scraped(tmp_path):
     assert payload["counts"]["skipped"] == 1
     assert payload["counts"]["passed"] == 1
     assert payload["skip_reasons"] == {"ts112 synthetic gate": 1}
+
+
+def test_both_mechanisms_survive_a_parallel_run(tmp_path):
+    """`--cpus N` fans pytest out; neither the gate nor the report may break.
+
+    `tools/merge_suite.py` passes `-n N` whenever the submission reserves more
+    than one core, so both mechanisms have to hold under xdist -- and both have
+    a way to go wrong there that a serial run cannot show. The gate lives in
+    `pytest_sessionstart`, which every worker also runs, so it must refuse once
+    on the controller rather than N times or, worse, from a worker whose
+    failure reads as a test error. The report lives in
+    `pytest_terminal_summary`, and its counts have to be the aggregate the
+    controller collected, not one worker's share.
+
+    Skipped where xdist is absent -- which is every venv on this fleet, so this
+    test appears in the very histogram it is about until one grows it.
+    """
+
+    pytest.importorskip("xdist", reason="parallel run needs pytest-xdist")
+
+    refused = _run([STDLIB_ONLY_TEST, "-q", "-n", "2", "--dist", "loadfile",
+                    "--strict-cuda"], CUDA_VISIBLE_DEVICES="")
+    out = refused.stdout + refused.stderr
+    assert refused.returncode != 0, out
+    assert "Refusing rather than skipping" in out, out
+    # Once, on the controller -- not once per worker.
+    assert out.count("Refusing rather than skipping") == 1, out
+    assert " passed" not in refused.stdout, out
+
+    surface = tmp_path / "surface.json"
+    ran = _run([STDLIB_ONLY_TEST, "-q", "-n", "2", "--dist", "loadfile",
+                "--surface-json", str(surface)], CUDA_VISIBLE_DEVICES="")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+
+    import json
+
+    payload = json.loads(surface.read_text())
+    # The aggregate the controller collected, not a single worker's share.
+    assert payload["counts"]["passed"] == _passed_in_tail(ran.stdout)
+    assert payload["counts"]["passed"] > 1
+
+
+def _passed_in_tail(stdout):
+    match = re.search(r"(\d+) passed", stdout)
+    return int(match.group(1)) if match else 0
