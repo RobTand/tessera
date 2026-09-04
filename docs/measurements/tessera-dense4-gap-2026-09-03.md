@@ -482,6 +482,11 @@ counterfactual quoted above is the one run with the test file under
 | the 49-unit b8/b32 censuses | `/mnt/shared/tessera-runs/ldlq-block/census_block_{8,32}.json` (tessera#60) |
 | the served arms | `/mnt/shared/tessera-runs/ldlq-block-serve/` (`muse/ts-60-serve`, exported at `82cdf513`) |
 | the derived-block price table | `experiments/dense4_block_budget_price.py` |
-| the byte-identity check | `experiments/dense4_block_byte_identity.py` |
+| the byte-identity check, and the two pairs it produced | `experiments/dense4_block_byte_identity.py`; `experiments/dense4_block_byte_identity_pair.sh`; results `/mnt/shared/tessera-runs/ldlq-block/ts12_byte_identity{,_pair}.json` |
+| the wire drift between the 2026-09-02 artifact and `82cdf513` | `/mnt/shared/tessera-runs/ldlq-block/ts12_wire_0902_vs_82cdf51.json` (69 of 112 `wire_bytes` blobs) |
+| the comparator re-scored on the bracket's teacher, and the teacher-vs-teacher zero | `experiments/dense4_comparator_one_teacher.sh`; `/mnt/shared/tessera-runs/ldlq-block/ts12_kl_{nvfp4prod_vs_lina,teacher_vs_teacher}.json` |
+| the bracket reader that resolves the pre-registered zones | `experiments/dense4_read_bracket.py` |
+| the pre-change counterfactual (`16 failed, 4 passed`) | test file run out of `ts12-pre`, pool action `80c1cd3fada2` on sparky |
+| the impacted-file suite (`181 passed, 1 skipped`) | pool action `ae6350752e26` on sparky, 173.77 s |
 | the Hessian | `/mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt`, wikitext-2 **train**, 16,384 fit tokens, `text_sha256 a5c5fd09...`, `fit_ids_sha256 229c6f72...` |
 | the KL corpus | `/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json` -- the **Qwen** contract, wikitext-2 **test**, disjoint from the capture; 8 x 512, 4,088 scored positions |
