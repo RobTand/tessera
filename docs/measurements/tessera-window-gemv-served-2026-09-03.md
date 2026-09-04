@@ -371,7 +371,10 @@ The A/B protocol this section points at is explicit that eager is half of it --
 residency modes" -- and the compiled half is where the production configuration
 lives, because vLLM compiles by default. The compiled arms of *this* campaign
 have a KL, but it is the prefill-regime null above and it is uninformative for
-the same `GEMV_MAX_M` reason. So the compiled serve's decode-regime KL for this
+the same `GEMV_MAX_M` reason -- `kl_tessera_ts83-arm{A,B}-streamed-compiled.json`
+read `0.4668730966935983` at 62.67% top-1 over 4088 positions in **both** arms,
+identical to the last digit, exactly as the eager prefill pair reads
+`0.46599389451679424` in both. So the compiled serve's decode-regime KL for this
 lane is **unmeasured**, and it is filed as **#113** rather than left in this
 paragraph. What is *not* in doubt there is engagement: §4's recovered trace
 shows the GEMV launching 9 016 times under a compiled forward with zero CUTLASS
