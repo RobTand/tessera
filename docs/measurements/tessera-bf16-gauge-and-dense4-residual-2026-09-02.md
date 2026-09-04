@@ -920,18 +920,96 @@ argument cannot move the table here at all.  The grid is `BF16_GRID`, the
 recipe's own.  `tests/test_matched_reach.py` pins all four, including by
 building each table at `half` 8, 16 and 32 and asserting one reach.
 
-**No numbers yet, and that is the state of this section.**  The apparatus,
-the ratios and the reading are here; the two `L=14` rows -- the cheap and
-decisive ones -- were submitted to the PrismaBuild pool on 2026-09-04
-(action keys `9f7abf6f...` for `glm-14` and `8b60e5a1...` for `dense-14`) and
-were still queued behind other agents' work when this was written, with
-sparklina's GPU held out of the pool until ~07:00 and sparky draining roughly
-one item every two and a half minutes.  The records outlive the session that
-submitted them, so the rows will run; what they will not do is run tonight.  Nothing below this line
-should be read as measured until those files exist at
-`/mnt/shared/tessera-runs/reach/matched/`, and
-`experiments/matched_reach_report.py` is what turns them into the table above.
-The costs, from the landed runs' own per-arm wall clocks: the `L=14` row is
-about 12 minutes of GPU on the six GLM experts and 10 on the eight dense
-Linears (three rungs each); the `L=16` row, which carries the expensive
-width, is about 38 minutes on the experts; the `L=12` row about 11.
+### The `L=14` row, measured
+
+Both `L=14` rows ran on sparky through the PrismaBuild pool on 2026-09-04
+(action keys `9f7abf6f...`, `8b60e5a1...`; about 13 and 9 minutes of GPU).
+Rows are the table's entry count, byte-matched by the sweep; columns are the
+realised reach, which costs nothing.  Every cell is the geomean over the
+population's units against that unit's own byte-matched shipped pair, with
+the unanimity count beside it.
+
+**Six GLM experts, gate = held-out capture rows (`out`):**
+
+| L | reach 3.671875 | reach 4.0 | reach 4.3125 |
+|---|---|---|---|
+| 12 | **1.0134x** 0/6 | — | — |
+| 14 | 1.0094x 0/6 | 1.0000x (the reference) | **0.9915x 6/6** |
+| 16 | — | — | **1.0029x** 1/6 |
+| *R=6* | | | |
+| 12 | **1.0414x** 0/6 | — | — |
+| 14 | 1.0233x 0/6 | 1.0000x | **0.9862x 6/6** |
+| 16 | — | — | **0.9801x** 6/6 |
+| *R=8* | | | |
+| 12 | **1.1170x** 0/6 | — | — |
+| 14 | 1.0440x 0/6 | 1.0000x | **0.9610x 6/6** |
+| 16 | — | — | **0.9332x** 6/6 |
+
+(the first block is R=4; bold cells are the byte-costing `L` arms and the free
+matched-reach ones.)
+
+**The split, read as registered.**  On the GLM experts the two axes point the
+same way and the free half carries the majority of the win: `L=16` at R=8 is
+`recovered +0.576` -- 58% of a 0.9332x win is the reach, available at zero
+bytes -- and the per-unit fractions are tight (+0.52 to +0.61 across six
+experts).  R=6 reads +0.694 the same way.  The `L=12` side reads +0.706 at
+R=4, +0.567 at R=6 and +0.389 at R=8 ("both halves are real").  R=4 `L=16` is
+**not read**: its L arm moves 0.29%, below the registered 1% conditioning
+floor, and its per-unit fractions (-6.45 to +1.23) are exactly the noise-about-
+nothing the floor exists to refuse.
+
+**Eight dense Qwen3-0.6B Linears, gate = captured `h`:**
+
+| L | reach 3.671875 | reach 4.0 | reach 4.3125 |
+|---|---|---|---|
+| 12 | **0.8916x** 8/8 | — | — |
+| 14 | 1.0091x 3/8 | 1.0000x | 1.0006x 4/8 |
+| 16 | — | — | **1.1882x** 0/8 |
+| *R=6* | | | |
+| 12 | **0.9003x** 8/8 | — | — |
+| 14 | 1.0295x 0/8 | 1.0000x | **0.9844x 5/8** |
+| 16 | — | — | **1.1720x** 0/8 |
+| *R=8* | | | |
+| 12 | **0.9565x** 6/8 | — | — |
+| 14 | 1.0678x 1/8 | 1.0000x | **0.9606x 7/8** |
+| 16 | — | — | **1.1655x** 0/8 |
+
+**On dense the two axes are antagonistic, and that is the finding.**  Five of
+the six dense cells come back opposite-signed: fewer entries wins at matched
+bytes (0.8916x at R=4) while *less reach* alone loses (1.0091x), and more
+entries loses (1.1655x at R=8) while *more reach* alone wins (0.9606x, 7/8).
+There is no fraction of one recoverable from the other, and the report says
+so rather than filing a negative fraction in the "entry count" band.  The one
+readable dense cell, R=4 `L=16`, is +0.003: that loss is entry count, whole.
+
+Two consequences worth separating from the decomposition itself:
+
+* **A cell the earlier one-sided grid stepped over.**  Its ratios were
+  `[1.0, 1.25, 1.41, 1.75]`, whose realised reaches are 4.0 then **5.0**.  At
+  GLM R=4 that grid saw 1.0000x then 1.0135x (0/6) and concluded no spread
+  helps; the matched reach of 4.3125, which lies between its first two rungs,
+  is **0.9915x on 6 of 6 experts at zero bytes**.  At R=8 the coarse grid's
+  own 5.0 (0.9375x, 6/6) is still the better free point, so this is a gap in
+  the earlier grid's resolution at low rate, not a new optimum everywhere.
+* **The one-sidedness cost nothing.**  `r=0.91596` is the first spread below
+  the shipped one ever measured on this grid, and it is worse in all six
+  populations x rungs (1.0094x to 1.0678x).  The axis really is monotone
+  downward from the shipped point, so the earlier grid missed nothing by
+  never going there.  A negative result, recorded as one.
+
+**Controls.**  Cross-run: the shipped `(L=14, r=1)` baseline is re-encoded in
+these separate processes and is byte- **and** tensor-identical to the same arm
+in the landed grids -- 18 of 18 shared (unit, rung) baselines on GLM, 24 of 24
+on dense.  In-run: 18 of 18 and 24 of 24 repeated-last baselines identical.
+Byte match: 3 of 3 arms per unit sit at their reference's exact bpp.  Physical
+check: `rows_over_reach` agrees at every matched reach, on every cell.
+
+**What is still missing, precisely.**  This is the `L=14` row only, so the
+factorial has one row of three.  Attributing the residual to entry count --
+"the L=16 entries alone cost 1.1655/0.9606 = 1.21x on dense R=8" -- assumes
+the two axes compose multiplicatively, which one row cannot test.  The cell
+that tests it is `L=16` at reach 4.0 (the wide table with its spread narrowed
+to the shipped reach), which is the queued `L=16` row: about 38 minutes of GPU
+on the experts, 11 for `L=12`.  Nothing here moves a default in any case --
+both axes change `encoder_profile_id`, there is no BF16 serving lane, and both
+gates are weight-space or H-weighted columns.  House principle 3: a screen.
