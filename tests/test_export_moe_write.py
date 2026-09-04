@@ -311,9 +311,15 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
             for role, projection in zip(roles, export.MOE_GROUP_PROJECTIONS[group]):
                 blob = bytes(wires[f"{STACK}.{expert}.{projection}.wire"].tolist())
                 lengths.append(len(blob))
+                # ``parse_tessera_expert_blob`` returns ``[(role, unit)]`` --
+                # the parsed unit artifact itself, whose geometry hangs off its
+                # manifest.  (This read was ``parsed.unit.geometry`` and was
+                # wrong; nothing caught it because the case is @cuda-gated and
+                # the CPU suite skips it.  It is the check, not a formality:
+                # the parse compares the wire's columns against the sidecar's.)
                 (name, parsed), = parse_tessera_expert_blob(blob, role, STACK)
                 assert name == projection
-                assert parsed.unit.geometry.columns == declaration["columns"]
+                assert parsed.manifest.geometry.columns == declaration["columns"]
         assert max(lengths) == stride, (
             f"group {group}: declared wire_stride {stride}, blobs max {max(lengths)}; the "
             "stride is the max over the group's blobs and unpack_moe_wires refuses anything else")

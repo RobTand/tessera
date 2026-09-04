@@ -138,6 +138,28 @@ describes. It fired on real bytes.
   EXPORTER wrote rather than what the probe built. Read the original bullet as
   the state at the hour, and
   `docs/measurements/tessera-moe-export-seam-2026-09-04.md` for the pair.
+
+  **The pair has now run, on the GPU** (pool `2be23f3a9e9d`, sparky, GB10
+  sm121, the pinned image `prismaquant/glm53-mia-sm121:487ecf187`, `rc=0` in
+  100.8 s; result at `experiments/results/moe_route_load_probe_export.json`).
+  Everything but the producer of the bytes was pinned — same shapes, seed,
+  weights, rung, `TESSERA_SERVE_MODE=resident`, same probe code, both legs in
+  one process — and the two arms agree to the last digit they print:
+  `TesseraMoEMethod` / `TRITON` / `TritonExperts`, 12 `load_weights` calls
+  landing on `w13_wire` and `w2_wire`, `w13_weight [4, 512, 512]
+  float8_e4m3fn` after `process_weights_after_loading`,
+  `tile_is_materialize_stock_byte_for_byte: true`, and the fused-MoE output
+  `[17, 512]` at `rel_l2` **0.014298978779530125** vs the emulated W8A8
+  reference in *both* arms. The route record both arms emit is
+  `{"kind": "moe", "policy": "TESSERA_FP8:resident",
+  "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+  "contract": "fp8_per_token_dynamic", "state": "served",
+  "decoder": "torch_materialize_stock"}`. The one number that differs is
+  `wire_bytes_on_disk` — 998984 for the probe's own bytes, 999596 for the
+  exporter's — which is the point: **different byte streams, from different
+  producers, decoding to the same tile and the same kernel output**. The five
+  negative legs (flipped payload byte, understated stride, overstated stride,
+  wrong expert count, wrong rung) all refused with the expected message.
 - **No served census, no KL, no `routed_moe` cell.** This is what the loader
   *does*; what has been *served* is a different published fact, and the
   `loader_axes` precedent is that the two are published separately or not at

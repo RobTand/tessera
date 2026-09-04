@@ -19,7 +19,7 @@ the two.
 | 1. The plugin has no MoE route | closed before this pass (`moe_route.py`, load-and-execute receipt) |
 | 2. The exporter mis-plans this model silently | closed on master (`ee54038`/`d82b29e`/`3caa49c`, then `7375914`/`2975448`) |
 | 3. The fused parameter layout | closed on master (`c9561e3`, `moe_layout.py`) |
-| 4. Both source layouts | **unpacked: written and read back here (CPU). packed 3-D: still refused** — §2, §4 |
+| 4. Both source layouts | **unpacked: written, read back (CPU), and loaded + executed on the GPU from the exporter's own bytes. packed 3-D: still refused** — §2, §4, §5 |
 | 5. Contract rows + a served census and KL | **OPEN.** No serve was run; §5 says why and what it costs |
 
 **No `routed_moe` cell was added to `runtime_contract.json`,** and none should
@@ -96,8 +96,10 @@ stride is still the max, derived the same way.)
 
 This covers the exporter's plumbing and the plugin's *reader* acceptance. It
 does **not** cover the CUDA encoder path or the fused-MoE kernel — those are
-`tests/test_export_moe_write.py`'s three `@cuda` cases and the load probe, and
-§5 says where they stand. A CPU run is not a GPU receipt.
+`tests/test_export_moe_write.py`'s three `@cuda` cases and the load probe, both
+of which ran on the GPU late in the pass and are in §5. A CPU run is not a GPU
+receipt, and this one was not: the GPU run found a defect in a `@cuda` test
+that every CPU run had skipped.
 
 ## 3. What is refused before the first encode
 
@@ -166,24 +168,48 @@ packed-source model this repo can serve.
 ## 5. What was NOT done, and why
 
 * **No served census and no KL.** Item 5 stays open. Both GB10 GPUs in the pool
-  were held for the whole of this pass — sparky's three tokens by other agents'
+  were held for nearly all of this pass — sparky's three tokens by other agents'
   jobs, sparklina's by an out-of-pool encode — behind a 19-deep GPU queue whose
-  head-of-line item was **3.6 h old**, so the encode campaign in §4 was costed
-  and scripted but not submitted. It is also more than an encode: no GLM
+  head-of-line item was **3.6 h old**. Two short GPU jobs did eventually land
+  (below); the encode campaign in §4, which is ~75 GPU-minutes and then a
+  serve, was costed and scripted but not submitted. It is also more than an encode: no GLM
   artifact has ever been served in this repo (every served receipt here is
   Qwen3-0.6B), so the serve needs a GLM teacher dump on the pinned image before
   a student KL means anything.
-* **No GPU leg of this pass ran.** Two jobs are queued and unclaimed:
-  `93f5bae3b4be` (the three `@cuda` cases of `tests/test_export_moe_write.py`
-  plus `tests/test_export_moe_layouts.py`) and `2be23f3a9e9d`
-  (`experiments/moe_route_load_probe.sh`, whose `positive_exported` leg is the
-  matched pair: the same experts, shapes, rung, seed and weights, with only the
-  producer of the bytes varying). The CPU halves did land, both through the
-  pool on sparky: `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22
-  passed, 2 skipped in 29.74 s** — and `tests/test_export_moe_write.py` —
-  `cb8372740b1b`, **11 passed, 3 skipped in 0.78 s**. Every skip in both is a
-  `@cuda` case. So the CUDA-gated surface of this pass is *unmeasured*, not
-  *passing*; §2 says which legs the CPU run does and does not cover.
+* **The GPU legs ran late in the pass, and one of them was red.** Both jobs
+  sat unclaimed for hours behind other agents' work and then landed on sparky
+  (GB10, sm121):
+  * `2be23f3a9e9d` — `experiments/moe_route_load_probe.sh` in the pinned image
+    `prismaquant/glm53-mia-sm121:487ecf187`, **`rc=0` in 100.8 s**. Its
+    `positive_exported` arm is the matched pair this receipt exists for: the
+    bytes **the exporter wrote** load through `RoutedExperts.load_weights` (12
+    calls onto `w13_wire`/`w2_wire`), materialize to `w13_weight [4, 512, 512]
+    float8_e4m3fn` **byte for byte equal to `materialize_stock`**, and run
+    through vLLM's own fused-MoE kernel (`TRITON`/`TritonExperts`) to a
+    `[17, 512]` output at `rel_l2` **0.014298978779530125** — the same digits
+    as the arm the probe encoded itself, while `wire_bytes_on_disk` differs
+    (999596 vs 998984). Different producers, different bytes, same tile, same
+    kernel output. The full record is
+    `experiments/results/moe_route_load_probe_export.json`, and
+    `docs/measurements/tessera-moe-route-load-2026-09-04.md` carries it.
+  * `93f5bae3b4be` — `tests/test_export_moe_write.py` +
+    `tests/test_export_moe_layouts.py` on the GPU: **1 failed, 37 passed in
+    68.06 s**. The failure was mine and it was real:
+    `test_a_planned_stack_is_written_as_the_plugin_reads_it` read
+    `parsed.unit.geometry`, but `parse_tessera_expert_blob` returns
+    `[(role, unit)]` and the geometry hangs off `unit.manifest`. Nothing had
+    caught it because the case is `@cuda`-gated and every CPU run skipped it —
+    the exact shape of "unmeasured, not passing" this section warned about, in
+    this section's own tests. Fixed here, and re-run.
+  * The CPU halves had landed earlier, both through the pool on sparky:
+    `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22 passed, 2 skipped
+    in 29.74 s** — and `tests/test_export_moe_write.py` — `cb8372740b1b`,
+    **11 passed, 3 skipped in 0.78 s**. Every skip in both is a `@cuda` case.
+  * A prediction this receipt made and got wrong, recorded because it was
+    wrong: `test_export_moe_layouts.py::test_the_exported_ignore_names_what_vllm_builds`
+    was flagged as likely to fail on a GPU box because it exports a fixture
+    whose attention is `never_offered` without `--passthrough-unrouted`. It
+    passed.
 * **The whole suite ran only in part, on CPU.** After merging `master`, the six
   files this branch touches or that `master` touched —
   `test_serve_build_identity` (the merged-in one), `test_export_moe_write`,

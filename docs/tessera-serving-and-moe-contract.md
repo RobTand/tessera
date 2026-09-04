@@ -1182,6 +1182,18 @@ being an argument there: at ONE shape and ONE rung the eight `w13` blobs run
 is the plumbing and the reader's acceptance; the CUDA encoder and the fused-MoE
 kernel are not in it.
 
+**And loaded and executed, on the GPU, from those same written bytes.**
+`experiments/moe_route_load_probe.sh` (pool `2be23f3a9e9d`, sparky GB10 sm121,
+the pinned image `prismaquant/glm53-mia-sm121:487ecf187`, `rc=0` in 100.8 s)
+runs two arms in one process differing only in who produced the bytes. The
+EXPORTER's arm loads through `RoutedExperts.load_weights` (12 calls onto
+`w13_wire`/`w2_wire`), materializes `w13_weight [4, 512, 512] float8_e4m3fn`
+byte for byte equal to `materialize_stock`, and executes through vLLM's own
+`TRITON`/`TritonExperts` fused-MoE kernel to `rel_l2` 0.014298978779530125 —
+identical to the probe-encoded arm, while the bytes on disk differ (999596 vs
+998984). What is still NOT measured is a serve: no `routed_moe` cell, no served
+census, no KL.
+
 ### What §14's list looks like now
 
 1. ~~The exporter's write half~~ — **done**, unpacked source.
