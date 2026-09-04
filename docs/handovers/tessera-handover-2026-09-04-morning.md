@@ -227,7 +227,32 @@ agent are the ones I judged not worth spending on tonight.
 
 ---
 
-## 5. Cleanups I owe
+## 5. What I deliberately did not do
+
+**I did not push.** Local `master` is **220 commits ahead of `origin/master`**
+and has never been pushed. That is the single highest-value thing waiting on
+you, and I left it because #17 frames the push and the tag as one release act:
+`.github/workflows/ci.yml`'s `publish` job fires on `push.tags: ["v*"]` and
+uploads to PyPI through a Trusted Publisher. Publishing a package is yours to
+decide, not mine to infer from "dispatch the open items", and I would rather
+hand you a clean 220 commits than a package you did not choose to ship.
+
+The consequence to weigh: the night's work exists on one box's disk. `/` has
+254 GB free and nothing is at risk in the next few hours, but it is one box.
+
+If you want the commits durable without publishing anything, the push and the
+tag are separable — `git push origin master` alone fires no `v*` tag job.
+
+Everything else #17 needs is a matter of five values in one commit
+(`tessera_serving_runtime_pin.json` plus two module constants), and it cannot
+be written until the tagged commit exists.
+
+**I did not dispatch more agents.** Two are running (#12, #101), the #60 encode
+campaign is live, and the standing rule is a handful at a time. Nine open issues
+have no agent because I judged them not worth spending on tonight, not because
+I ran out of room.
+
+## 6. Cleanups I owe
 
 - Root-owned `/home/rob/tessera-runs/ts91/cache-*` and `ext-A-*` (~476 MB) need
   an interactive `sudo rm -rf`.
