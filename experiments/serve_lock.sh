@@ -24,7 +24,13 @@ SERVE_LOCK=${SERVE_LOCK:-/home/rob/tessera-runs/serve.lock}
 # The poll interval is a knob so the tests can exercise the reaping rules in
 # seconds rather than minutes; production leaves it at 15.
 SERVE_LOCK_POLL=${SERVE_LOCK_POLL:-15}
-_serve_lock_owner_pid() { awk 'NR==1{print $1}' "$SERVE_LOCK/owner" 2>/dev/null; }
+# `|| true` is load-bearing, not defensive: awk exits 2 on a file that is not
+# there, an ownerless lock is exactly that case, and under the `set -e` every
+# caller of this library uses, `pid="$(_serve_lock_owner_pid)"` would then take
+# awk's status and END THE SCRIPT with exit 2 and no message -- so the reaping
+# rule below would never run in production, only in a test that forgot -e.
+# tests/test_serve_lock.py caught it that way round.
+_serve_lock_owner_pid() { awk 'NR==1{print $1}' "$SERVE_LOCK/owner" 2>/dev/null || true; }
 # `/proc/<pid>`, not `kill -0`: kill reports EPERM as failure, so it calls a
 # live process owned by another user dead, and this lock's whole job is to not
 # delete a lock somebody is holding.
