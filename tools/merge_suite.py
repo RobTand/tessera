@@ -276,6 +276,44 @@ def _verdict(arms: list[dict]) -> str:
     return f"green on {len(arms)} population(s): {names}"
 
 
+def _commits_measured(arms: list[dict]) -> dict:
+    """The trees the arms actually ran, and whether they agree.
+
+    Two arms that ran different commits are two measurements, not one merge
+    receipt, and a reader must be told that without having to diff the rows.
+    """
+
+    by_arm = {r["arm"]: (r.get("surface") or {}).get("commit") for r in arms}
+    stamped = {c for c in by_arm.values() if c}
+    return {
+        "by_arm": by_arm,
+        "agree": (len(stamped) <= 1) if stamped else None,
+        "unstamped_arms": sorted(a for a, c in by_arm.items() if not c),
+    }
+
+
+def _arm_commit(record: dict, population: dict) -> tuple[str, bool]:
+    """Which tree this arm ran, and whether that is established or assumed.
+
+    The arms of a run are separate processes on separate boxes and they do not
+    start together: an x86 arm can finish while the GPU arm is still queued
+    behind a held reservation, and the clone a pool action runs in can be
+    fast-forwarded in between.  Reading the checkout once, at receipt-assembly
+    time, and stamping that commit on every row is the same error this file is
+    about -- a number separated from the context that gives it meaning -- just
+    one level up.
+
+    So the arm's own published population answers first.  A surface written
+    before this field existed cannot answer, and then the population commit is
+    the best available guess and is labelled as one.
+    """
+
+    stamped = (record.get("surface") or {}).get("commit")
+    if stamped:
+        return stamped, True
+    return population["commit"], False
+
+
 LEDGER_HEADER = """# Suite populations
 
 One row per arm per `tools/merge_suite.py` run. The two arms of a run are
@@ -286,6 +324,13 @@ other (tessera#112).
 `master head?` is whether the commit under test was master's tip at submit
 time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
 master ref resolved in that checkout and the question was not answered.
+
+`commit` is the tree that arm's own run reported measuring, which is not
+always the tree the receipt was assembled against: the arms are separate
+processes on separate boxes, and a queued arm can place after the checkout has
+moved. `(assumed)` marks a row whose run predates that field, where the
+receipt's own commit is the best available guess. Rows of one run with two
+commits are two measurements, not one merge receipt.
 
 `exit` is the status the submitting process observed. `not observed` means the
 receipt was assembled after the fact from what the run published (`--resume`):
@@ -319,10 +364,16 @@ def _record_markdown(path: Path, receipt: dict) -> None:
             # a row that looks watched when it was not is the same overclaim
             # the whole file exists to prevent.
             exit_text = "not observed"
+        commit, established = _arm_commit(record, population)
+        commit_text = f"`{commit[:12]}`" if established \
+            else f"`{commit[:12]}` (assumed)"
+        # ``master head?`` was answered against the population commit. If this
+        # arm ran a different tree, that answer is not about this row.
+        row_head = head_text if commit == population["commit"] else "unknown"
         rows.append(
             f"| {record.get('measured_utc', receipt['generated_utc'])} | "
-            f"`{population['commit'][:12]}` | "
-            f"{head_text} | {record['arm']} | "
+            f"{commit_text} | "
+            f"{row_head} | {record['arm']} | "
             f"{surface.get('device', 'no population published')} | "
             f"{cell('passed')} | {cell('failed')} | {cell('skipped')} | "
             f"{len(surface.get('not_collected', []))} | {exit_text} |"
@@ -418,6 +469,7 @@ def main() -> int:
         "submitted_from": os.uname().nodename,
         "assembled_by": "resume" if args.resume else "submit",
         "population": _population_of(args.checkout),
+        "commits_measured": _commits_measured(arms),
         "verdict": _verdict(arms),
         "arms": arms,
         "reading_note": (

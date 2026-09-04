@@ -278,3 +278,39 @@ def test_both_mechanisms_survive_a_parallel_run(tmp_path):
 def _passed_in_tail(stdout):
     match = re.search(r"(\d+) passed", stdout)
     return int(match.group(1)) if match else 0
+
+
+def test_the_population_names_the_tree_it_was_measured_on(tmp_path):
+    """A population without its commit is half a receipt.
+
+    The arms of a merge run are separate processes on separate boxes, and
+    nothing makes them start together: an x86 arm can publish and finish while
+    the GPU arm is still queued behind a held reservation, and the clone the
+    queued arm will run in can be fast-forwarded while it waits.  A receipt
+    that asks the checkout which commit it is at *assembly* time then stamps
+    one commit on two arms that ran two trees.
+
+    So the run states its own commit, at the moment it runs, in the same
+    object as its counts -- the same reason the device is in there.  Before
+    this, ``payload["commit"]`` raised ``KeyError: 'commit'``.
+    """
+
+    pytest.importorskip("torch")
+    probe = _write_synthetic(tmp_path)
+    surface = tmp_path / "surface.json"
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="",
+    )
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+
+    import json
+    import subprocess as sp
+
+    payload = json.loads(surface.read_text())
+    head = sp.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                  capture_output=True, text=True).stdout.strip()
+    assert payload["commit"] == head, payload["commit"]
+    # Not a guess dressed as a fact: an interpreter that cannot answer says so.
+    assert payload["commit"] is None or len(payload["commit"]) == 40

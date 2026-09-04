@@ -356,3 +356,99 @@ def test_a_resumed_row_is_dated_by_the_run_and_never_looks_watched(tmp_path):
     })
     watched = [line for line in ledger.read_text().splitlines() if "| x86 |" in line][0]
     assert watched.rstrip().endswith("| 0 |"), watched
+
+
+def test_each_row_names_the_tree_its_own_arm_ran(tmp_path):
+    """Two arms that ran two commits must not be stamped with one.
+
+    The arms are separate processes on separate boxes and nothing makes them
+    start together.  The real case: the x86 arm ran and published on
+    ``e61974c``; the GPU arm sat in the queue behind a held reservation, and
+    the clone it would run in was fast-forwarded while it waited.  Assembling
+    that receipt reads the checkout ONCE, at assembly time, so both rows would
+    have carried the later commit -- and the x86 row would have been attributed
+    to a tree it never saw.
+
+    That is this branch's own thesis violated by this branch's own tool: a
+    measurement separated from the context that gives it meaning.  Before the
+    fix the second assertion below read
+    ``AssertionError: '| `bbbbbbbbbbbb`' not in '| 2026-... | `aaaaaaaaaaaa` (assumed) | ...'``
+    -- the x86 row wearing the GPU arm's commit.
+    """
+
+    merge_suite = _module()
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [
+            {"arm": "x86", "returncode": 0, "measured_utc": "2026-09-04T07:04:59Z",
+             "surface": {"commit": "b" * 40,
+                         "device": "torch 2.11.0+cpu reports no CUDA device",
+                         "counts": {"passed": 1389, "failed": 0, "skipped": 499},
+                         "not_collected": []}},
+            {"arm": "gpu", "returncode": 0, "measured_utc": "2026-09-04T09:00:00Z",
+             "surface": {"commit": "a" * 40,
+                         "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10",
+                         "counts": {"passed": 1827, "failed": 0, "skipped": 10},
+                         "not_collected": []}},
+        ],
+    })
+    text = ledger.read_text()
+    x86 = [line for line in text.splitlines() if "| x86 |" in line][0]
+    gpu = [line for line in text.splitlines() if "| gpu |" in line][0]
+
+    assert "`" + "a" * 12 + "`" in gpu, gpu
+    assert "`" + "b" * 12 + "`" in x86, x86
+    assert "a" * 12 not in x86, "the x86 row was stamped with the other arm's tree"
+    # ``master head?`` was answered about the population commit. The x86 arm
+    # did not run that commit, so that answer is not about its row.
+    assert "| unknown |" in x86, x86
+    assert "| yes |" in gpu, gpu
+
+
+def test_a_population_with_no_commit_is_labelled_a_guess(tmp_path):
+    """An unstamped surface leaves the question open; it does not answer it.
+
+    Surfaces written before the field existed cannot say which tree they ran.
+    The receipt's own commit is then the best available guess, and a guess
+    that does not say so is indistinguishable from a measurement.
+    """
+
+    merge_suite = _module()
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "c" * 40, "is_master_head": False},
+        "arms": [{"arm": "x86", "returncode": 1, "surface": {
+            "device": "torch 2.11.0+cpu reports no CUDA device",
+            "counts": {"passed": 1389, "failed": 1, "skipped": 499},
+            "not_collected": []}}],
+    })
+    row = [line for line in ledger.read_text().splitlines() if "| x86 |" in line][0]
+    assert "`" + "c" * 12 + "` (assumed)" in row, row
+    assert "(assumed)" in merge_suite.LEDGER_HEADER
+
+
+def test_the_receipt_says_whether_the_arms_ran_one_tree():
+    """A reader must not have to diff the rows to learn the arms disagreed."""
+
+    merge_suite = _module()
+
+    agree = merge_suite._commits_measured([
+        {"arm": "gpu", "surface": {"commit": "a" * 40}},
+        {"arm": "x86", "surface": {"commit": "a" * 40}}])
+    assert agree["agree"] is True
+    assert agree["unstamped_arms"] == []
+
+    split = merge_suite._commits_measured([
+        {"arm": "gpu", "surface": {"commit": "a" * 40}},
+        {"arm": "x86", "surface": {"commit": "b" * 40}}])
+    assert split["agree"] is False
+    assert split["by_arm"]["x86"] == "b" * 40
+
+    # Nothing stamped: not agreement, and not disagreement either.
+    silent = merge_suite._commits_measured([
+        {"arm": "gpu", "surface": {}}, {"arm": "x86", "surface": None}])
+    assert silent["agree"] is None
+    assert silent["unstamped_arms"] == ["gpu", "x86"]

@@ -333,6 +333,37 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
                             detail, counts, _strict_cuda(config))
 
 
+def _measured_commit():
+    """Which tree did this population come from?
+
+    A population without its commit is half a receipt.  The arms of a merge
+    run are separate processes on separate boxes, and nothing makes them
+    start at the same instant: an x86 arm can finish, a GPU slot can free an
+    hour later, and the clone the pool action runs in can have moved between
+    the two.  A reader that asks the checkout at *read* time gets one commit
+    and stamps it on both -- which is exactly the mistake this whole file
+    exists to stop, one level up.  So the run says which tree it ran, at the
+    moment it ran it, in its own receipt.
+
+    ``None`` when the answer is not knowable (no git, no repository, a source
+    tarball).  An absent commit is honest; a guessed one is not.
+    """
+
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(Path(__file__).resolve().parent),
+             "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if out.returncode != 0:
+        return None
+    commit = out.stdout.strip()
+    return commit or None
+
+
 def _write_surface_json(path, terminalreporter, present, detail, reasons, strict):
     """The same population, as a table rather than as prose.
 
@@ -346,6 +377,7 @@ def _write_surface_json(path, terminalreporter, present, detail, reasons, strict
     stats = terminalreporter.stats
     payload = {
         "schema": "tessera.test_surface.v1",
+        "commit": _measured_commit(),
         "cuda": present,
         "device": detail,
         "strict_cuda": strict,
