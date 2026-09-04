@@ -4,8 +4,8 @@ set -euo pipefail
 
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 STAGE_ROOT=${TS113_STAGE_ROOT:-/mnt/shared/tessera-runs/ts113-fresh-sparklina-aa6-r1}
-PROMOTIONAL_POP_ROOT=/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r4
-PROMOTIONAL_LOCAL_ROOT=/home/rob/tessera-runs/ts113-sparklina-aa6-r4
+PROMOTIONAL_POP_ROOT=/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r5
+PROMOTIONAL_LOCAL_ROOT=/home/rob/tessera-runs/ts113-sparklina-aa6-r5
 POP_ROOT=${TS113_POP_ROOT:-$PROMOTIONAL_POP_ROOT}
 LOCAL_ROOT=${TS113_LOCAL_ROOT:-$PROMOTIONAL_LOCAL_ROOT}
 source "$WT/experiments/runtime_image.sh"
@@ -14,7 +14,7 @@ CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
 BF16=$STAGE_ROOT/inputs/bf16
 ARMA=$STAGE_ROOT/inputs/armA
 ARMB=$STAGE_ROOT/inputs/armB
-PREFIX=qwen_ts113_sparklina_aa6_r4
+PREFIX=qwen_ts113_sparklina_aa6_r5
 MODE=${1:-campaign}
 DECODE_STRIDE=16
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
@@ -316,7 +316,7 @@ PY
 echo "TS113_DERIVED_GATE positions=$DECODE_POSITIONS modules=$ELIGIBLE_MODULES units=$ELIGIBLE_UNITS launches=$EXPECTED_LAUNCHES"
 
 if [ "$MODE" = preflight-stage ]; then
-  if prepare_stage path-expansion ts113-aa6-r4-preflight; then
+  if prepare_stage path-expansion ts113-aa6-r5-preflight; then
     printf 'stage_path=%s\n' "$POP_ROOT/stages/path-expansion" \
       > "$POP_ROOT/stages/path-expansion/no-docker-proof.txt"
     seal_stage path-expansion
@@ -334,10 +334,10 @@ fi
 
 TEACHER_DIR=$POP_ROOT/stages/teacher
 TEACHER=$TEACHER_DIR/teacher_decode.json
-if prepare_stage teacher ts113-aa6-r4-teacher; then
+if prepare_stage teacher ts113-aa6-r5-teacher; then
   if ! env \
       TESSERA_KL_IMAGE="$IMAGE" TESSERA_KL_EAGER=0 TESSERA_KL_REGIME=decode \
-      TESSERA_KL_NAME=ts113-aa6-r4-teacher TESSERA_KL_LOGDIR="$TEACHER_DIR" \
+      TESSERA_KL_NAME=ts113-aa6-r5-teacher TESSERA_KL_LOGDIR="$TEACHER_DIR" \
       TESSERA_KL_VLLM_CACHE="$LOCAL_ROOT/cache-teacher" \
       TESSERA_KL_CORPUS="$CORPUS" TESSERA_GPU_MEM_UTIL=0.45 \
       TESSERA_KL_REQUIRE_IN_LOG='enforce_eager=False' \
@@ -353,7 +353,7 @@ fi
 
 run_arm() {
   local stage=$1 model=$2 lane=$3 profile=$4
-  local dir=$POP_ROOT/stages/$stage name=ts113-aa6-r4-$stage
+  local dir=$POP_ROOT/stages/$stage name=ts113-aa6-r5-$stage
   local cache=$LOCAL_ROOT/cache-$stage extra= profile_dir=
   local dump_decode=$dir/${PREFIX}_${stage}_decode.json
   if ! prepare_stage "$stage" "$name"; then return 0; fi
