@@ -1,0 +1,95 @@
+{
+ "schema": "tessera.ldlq_block_encode_cost/2",
+ "status": "RETRACTED -- v1's 6.15x was not a controlled measurement",
+ "what_v1_claimed": {
+  "ratio_b4_over_b32": 6.15,
+  "s_per_segment": 0.738,
+  "whole_export_hours": {
+   "32": "1.9-2.5",
+   "8": "7.4-8.0",
+   "4": "14.8-15.4"
+  }
+ },
+ "why_it_is_wrong": "v1 called the b32/b4 pair 'matched by construction' because both encoded the same 20 units concurrently on one box.  Concurrent is not matched.  The three arms' first-20-unit windows had different LENGTHS over a background load that moved 30x (load 3 -> 90 -> 14 within ninety minutes), so each arm averaged a different stretch of the load curve.  The longer the arm, the more of the quiet tail it caught.",
+ "the_evidence": {
+  "same_20_units": {
+   "b32": {
+    "segments": 928,
+    "s": 930.0
+   },
+   "b8": {
+    "segments": 3712,
+    "s": 4070.0
+   },
+   "b4": {
+    "segments": 7424,
+    "s": 5721.0
+   }
+  },
+  "piecewise_s_per_segment": {
+   "b32_to_b8": 1.128,
+   "b8_to_b4": 0.445
+  },
+  "reading": "a linear cost model cannot produce slopes 2.5x apart on one curve. The b32/b4 fit predicts b8 at 2985 s; b8 measured 4070 s, 36% high. The three points are not on a line because they are not one experiment.",
+  "windows_local": {
+   "b32": "19:26-19:41 (load ramp)",
+   "b8": "19:40-20:48 (spike, then drain)",
+   "b4": "19:23-20:58 (the whole curve)"
+  }
+ },
+ "what_survives": "nothing quantitative.  The segment-count RATIOS are geometry and stand (8x from b32 to b4, 4x to b8); the seconds do not.  The LUT receipt's 0.694 s/segment remains the only clean per-segment figure and it was measured elsewhere, on a GLM expert and the CHANNEL plane.",
+ "how_it_gets_measured": "the sequential matched pair this run has always planned: b32 -> b4 -> b32 back to back, with the repeat control.  Agreement between the two b32 arms is what certifies the window, and that works under steady load without needing an idle box.  Not yet run.",
+ "lesson": "this is the LUT-plane receipt's retraction repeated in a new dress.  That receipt withdrew 9.2x, 1.72x and 1.34x because each divided two runs taken at different times under different load.  I avoided that trap and fell into its neighbour: two runs taken at the SAME time, over different DURATIONS, under a load that was itself moving.  Simultaneity does not pin conditions; only a repeated control does.",
+ "load_evidence": {
+  "source": "Netdata on gx10-6b77 (sparklina), system.load load1, 5-minute averages",
+  "range_over_run": {
+   "min": 3.3,
+   "max": 82.6,
+   "swing": "25x"
+  },
+  "series_utc": {
+   "23:20": 3.3,
+   "23:25": 16.4,
+   "23:30": 14.7,
+   "23:35": 46.5,
+   "23:40": 82.6,
+   "23:45": 80.2,
+   "23:50": 79.1,
+   "23:55": 57.2,
+   "00:00": 74.0,
+   "00:05": 63.3,
+   "00:10": 28.5,
+   "00:15": 31.1,
+   "00:20": 71.1,
+   "00:25": 62.4,
+   "00:30": 30.2,
+   "00:35": 14.8,
+   "00:40": 9.2,
+   "00:45": 12.3,
+   "00:50": 9.2,
+   "00:55": 7.7,
+   "01:00": 7.5,
+   "01:05": 7.9,
+   "01:10": 8.4,
+   "01:15": 8.4
+  },
+  "windows": {
+   "b32 first 20 units": {
+    "utc": "23:26-23:41",
+    "s": 930,
+    "mean_load1": 40.0
+   },
+   "b8 first 20 units": {
+    "utc": "23:40-00:48",
+    "s": 4070,
+    "mean_load1": 49.7
+   },
+   "b4 first 20 units": {
+    "utc": "23:23-00:58",
+    "s": 5721,
+    "mean_load1": 39.7
+   }
+  },
+  "reading": "this is what makes the three arms incomparable, and it is now a measurement rather than my recollection.  b8's window carried the highest mean load (the spike sat almost entirely inside it) which is exactly why b8 fell above the line the other two define.  No ratio among these three arms is a cost measurement."
+ }
+}
