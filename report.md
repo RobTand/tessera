@@ -46,8 +46,8 @@ table, and nothing raised.
 
 * `choose_ldl_block(..., floor: int)` — **no default**, keyword-only, in the
   shape of `control.assert_plane_promotion`'s `served_bar`.  The docstring
-  names both callers and their floors (stitching: the encoder's scale group and
-  rotation block; `encode_unit(ldl=...)`: 1), says what going wrong looks like
+  names both paths and their floors (stitching: a block the encoder's scale
+  group and rotation block both divide; `encode_unit(ldl=...)`: 1), says what going wrong looks like
   (the 16 that silently deletes every block where the win lives), and notes
   that at `floor=1` the "budget the floor cannot meet" refusal is unreachable
   rather than dead, since `block_penalty(H, 1)` is exactly 1.0.
@@ -105,33 +105,45 @@ input, no plane, no schedule and no `encoder_profile_id` input is touched.
 
 ## Test evidence
 
-Per the coordinator's revised procedure, no full master baseline is computed —
-the one I had started was **killed** when that instruction landed.  The branch
-suite is run once, and only files that fail on the branch get checked against
-pristine master.
+Targeted, per AGENTS.md `1f7836c`: the files this diff touches, the files that
+import what changed, and the pre-fix failure line for the tests added.  No full
+branch suite (one had been started and was killed when that rule landed); no
+master baseline (the one I started was killed for the same reason).
 
-**Decisive files, all three green** (`pytest -q -p no:cacheprovider`,
-sparky, on a scratch copy whose only difference from the committed branch is
-two docstring/comment paragraphs — verified with `diff`, no code differs):
+**Pre-fix line — the branch's tests against master's source**
+(`master_tree` at `82cdf51`, this branch's three test files copied in,
+sparklina via `pbrun --gpu`):
+
+```
+1 failed, 70 passed, 15 warnings in 423.22s
+FAILED tests/test_ldl_block_penalty.py::test_the_floor_has_no_default_because_the_two_callers_disagree_about_it
+E       assert 16 is <class 'inspect._empty'>
+E        +  where 16 = <Parameter "floor: 'int' = 16">.default
+```
+
+That is the whole defect, and it is worth being precise about what the other
+new tests say: they **pass on master too**, because master's chooser already
+honours a floor it is *given*.  What master cannot do is fail to guess one.  So
+the fix is the removed default, and the rest of the new tests are there to keep
+the rule from being restated as a number again.
+
+**Branch**
 
 * `tests/test_ldl_block_penalty.py` + `tests/test_compensate.py` — **33 passed**
-  (25.75 s), including every new floor test and the CUDA stitching-path test.
+  (25.75 s).
 * `tests/test_ldlq_lut_plane.py` — **38 passed** (102.83 s), including the
   identity factor at `ldl_block=4` on both bodies and the chooser-picked
   sub-group block.
-
-**Full branch suite:** running on sparklina at
-`/home/rob/tmp/ts95/after_tree` (`PYTHONPATH=.../after_tree/src`), output at
-`/home/rob/tmp/ts95/after.txt`, exit status appended to
-`/home/rob/tmp/ts95/status2.txt`.  It had not finished at the time of writing:
-sparklina's load average was 66 with the whole fleet on it, and the run was
-still in its first few hundred tests.  **Not reported as green.**  Whoever
-picks this up should read those two files rather than re-running the suite.
-No failure had appeared in its output up to that point.
-
-Box choice: sparky was at 14 GB available of 121 with swap nearly full and
-load 60, so both suites went to sparklina; a pytest suite is neither GPU-heavy
-compute nor a timing run, so it does not take `gpulock.sh`.
+  (Both taken on a scratch copy whose only difference from the committed branch
+  is two docstring/comment paragraphs — `diff`-verified, no code differs.)
+* `tests/test_audit_byte_baseline.py` — **6 passed** (60.30 s) on the branch
+  tree itself.  This is the repo's own no-bytes-move harness.
+* A combined re-run of those three plus the other two files that import
+  `compensate` (`test_ldlq_window.py`, `test_refit_trailing.py`) was queued
+  behind the fleet in the GPU slot and had not been granted it at the time of
+  writing; it lands at `/home/rob/tmp/ts95/after_tree/pbrun_result.txt` on
+  sparklina.  Nothing in it is expected to move: neither file calls
+  `choose_ldl_block`, and the AST diff below bounds what could.
 
 ## Off-task fixes
 
@@ -143,6 +155,6 @@ Nothing else was tripped over.  No issues filed.
 
 ## Consultations
 
-None.  The advisor (in-session reviewer) was consulted twice: once before
+None.  The advisor (in-session reviewer) was consulted three times: once before
 implementing, to check the diagnosis and the test design, and once at the end.
 No `fable-<tier>` agent was needed.
