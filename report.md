@@ -255,6 +255,29 @@ graph capture, and neither `TESSERA_WINDOW_GRAPH` nor `TESSERA_TCQ_GRAPH` is
 documented there. No normative claim moved — the wire, the bytes, the defaults
 and the format menu are untouched.
 
+## Raised, not fixed
+
+**`pbrun` cannot be run twice from one `--cwd`.** My second submission failed
+immediately, three times, with
+
+    LocalActionError: declared result path must be absent before execution
+    and has no matching recovery claim: /home/rob/tmp/musefix
+
+because the *previous* pbrun run left `pbrun_result.txt` in the checkout root
+and the worker requires the declared `result_path` to be absent. I cleared it
+by hand and the job then ran. Every agent that submits twice from one directory
+hits this. I could have fixed it -- unlink the stale `result_path` at submit,
+or make the name unique per action key, either is a few lines -- and chose not
+to: `pbrun.py` lives in `/mnt/shared/prismabuild-fleet/repo/tools/`, it is a
+different repository from this branch, and it was being used by every agent on
+both boxes while I was reading it. Editing shared infrastructure mid-flight is
+the coordinator's call. Reported to the coordinator in-session.
+
+**No PrismaBuild worker was polling on sparklina.** Every `gx10-6b77`-tagged
+action sat in `pb-queue/ready` with nothing to execute it -- `pbrun.py` only
+submits and polls. I started `worker_loop.py --max-idle 180` there, which is
+additive and exits on its own once the queue drains. Also reported.
+
 ## Consultations
 
 * `advisor()` before writing the plan cache: steered me to check the LDLQ rate
