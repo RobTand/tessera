@@ -100,6 +100,44 @@ prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
 the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
 manifest's `serving_gate`).
 
+The census answers "which patterns" in the *runtime's* namespace and a
+producer names modules in the *checkpoint's*, so the two are joined by
+`contract.vllm_module_name` -- the one place this repo computes what vLLM
+would do rather than reading what it did. The algorithm is code
+(`WeightsMapper._map_name_with_shard`), not a table, so it cannot be derived
+from the receipt: the receipt publishes the rename table and vLLM keeps the
+loop. Principle 14 is therefore met by attestation rather than derivation, in
+three parts (issue #108):
+
+* **The replay is faithful and its scope is named.**
+  `contract._MAPPER_FIELDS_REPLAYED` is `orig_to_new_{substr,prefix,suffix}`,
+  applied in vLLM's order with vLLM's semantics -- a substring rule replaces
+  *one* occurrence, and the prefix and suffix loops fall *through*, each rule
+  seeing what the last one rewrote. All three differed before #108, and none
+  can fire on the two committed censuses, which is why it went unseen.
+* **Every other field refuses, by name.** `_require_replayable_mapper` raises
+  on any non-empty field outside that set -- `orig_to_new_renaming` (a list of
+  transformers objects, not replayable from JSON), `orig_to_new_regex`, a
+  populated `orig_to_new_stacked` (which `get_unstacked_mapper` empties, so a
+  populated one says the census fell back to the raw mapper and the receipt's
+  own field name is wrong), and whatever vLLM adds next. The refusal fires at
+  export, where the bytes are decided.
+* **The census admits every field, so the refusal has something to see.**
+  `tools/tessera_construction_census.py::_weights_mapper_table` reads
+  `dataclasses.fields` off the runtime's own mapper instead of a hardcoded
+  four-name roster, which used to drop `orig_to_new_regex` and
+  `orig_to_new_renaming` on the way into the receipt -- so a producer reading
+  that receipt would have mapped the name as though the rule were not there.
+  The receipt shape is unchanged for a mapper using only the replayed fields,
+  so the two committed censuses stand as taken.
+
+The attestation itself is `test_vllm_module_name_agrees_with_the_real_weights_mapper`
+in `tests/test_serving_name_mapping.py`: inside the pinned image it runs the
+committed receipt tables *and* synthetic tables built for the three
+divergences through both the real `WeightsMapper` and `vllm_module_name`, name
+by name, and fails on any disagreement. Receipt:
+`docs/measurements/construction/vllm-module-name-attestation-2026-09-04.md`.
+
 ### 4.4c A LANE inside a route is gated too, and by the rung
 
 `check_recipe` asks whether the *route* publishes a decode for these bytes.

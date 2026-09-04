@@ -987,15 +987,65 @@ def construction_entry(architectures, contract: Mapping[str, Any] | None = None)
     return None
 
 
+#: The ``WeightsMapper`` fields ``vllm_module_name`` replays, in vLLM's own
+#: order (``_map_name_with_shard``, vLLM 0.28 ``model_executor/models/
+#: utils.py``).  Everything else in that dataclass -- ``orig_to_new_renaming``,
+#: ``orig_to_new_regex``, ``orig_to_new_stacked``, and whatever vLLM adds next
+#: -- is REFUSED rather than skipped, because a rule silently not applied is a
+#: wrong module name and a wrong module name is a dead wire.
+_MAPPER_FIELDS_REPLAYED = ("orig_to_new_substr", "orig_to_new_prefix", "orig_to_new_suffix")
+
+
+def _require_replayable_mapper(table: Mapping[str, Any]) -> None:
+    """Refuse a mapper table carrying a rule this producer cannot replay.
+
+    Principle 14 has no exemption for "the algorithm is code, not a table".
+    vLLM publishes the TABLE (the census reads it off the model class); the
+    ALGORITHM that consumes it lives in ``WeightsMapper._map_name_with_shard``
+    and cannot be derived from the table.  So the producer replays the three
+    fields whose semantics are pinned in the pure suite and attested against
+    the real mapper in ``tests/test_serving_name_mapping.py`` -- and refuses,
+    by name, on every other field.
+
+    ``orig_to_new_stacked`` is in the refused set on purpose.  vLLM applies it
+    inside ``_map_name``, and ``get_unstacked_mapper()`` -- the variant
+    ``configure_quant_config`` hands a quant config -- empties it.  A receipt
+    field named ``hf_to_vllm_mapper_unstacked`` carrying a populated stacked
+    map therefore says the census fell back to the raw mapper, which is a
+    contradiction in the receipt rather than a case to implement.
+    """
+    unknown = sorted(field for field, value in table.items()
+                     if value and field not in _MAPPER_FIELDS_REPLAYED)
+    if unknown:
+        raise ValueError(
+            f"the census recorded hf_to_vllm_mapper fields this producer does not replay: "
+            f"{unknown}. vLLM applies them in WeightsMapper._map_name_with_shard, so the "
+            f"vLLM-side module name computed here would be wrong and the wire written to it "
+            f"dead. Extend vllm_module_name AND its attestation in "
+            f"tests/test_serving_name_mapping.py, or export this architecture through a "
+            f"runtime whose mapper uses only {list(_MAPPER_FIELDS_REPLAYED)}.")
+
+
 def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
     """A checkpoint module name in the namespace the runtime builds it under.
 
-    The same three rename kinds vLLM's ``WeightsMapper`` applies, in its order,
-    and only the unstacked ones -- which is exactly what
-    ``configure_quant_config`` hands a quant config, and therefore exactly what
+    A line-for-line replay of vLLM's ``WeightsMapper._map_name_with_shard``
+    over the three fields ``_MAPPER_FIELDS_REPLAYED`` names, in its order and
+    with its semantics: a substring rule replaces ONE occurrence
+    (``key.replace(substr, new_key, 1)``), and the prefix and suffix loops fall
+    THROUGH -- each rule sees the key the previous rule rewrote.  Only the
+    unstacked fields matter, which is exactly what ``configure_quant_config``
+    hands a quant config and therefore exactly what
     ``TesseraConfig.apply_vllm_mapper`` will apply to this name at load.
+
+    The replay is a claim about another runtime, so it is attested rather than
+    asserted: ``tests/test_serving_name_mapping.py`` runs these same names
+    through the real ``WeightsMapper`` inside the serving image and fails on
+    any disagreement, and ``_require_replayable_mapper`` refuses a table
+    carrying a rule the replay does not cover.
     """
     table = entry.get("hf_to_vllm_mapper_unstacked") or {}
+    _require_replayable_mapper(table)
     name = checkpoint_module
 
     def _dropped() -> None:
@@ -1014,19 +1064,17 @@ def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
         if old in name:
             if new is None:
                 _dropped()
-            name = name.replace(old, new)
+            name = name.replace(old, new, 1)
     for old, new in (table.get("orig_to_new_prefix") or {}).items():
         if name.startswith(old):
             if new is None:
                 _dropped()
-            name = new + name[len(old):]
-            break
+            name = name.replace(old, new, 1)
     for old, new in (table.get("orig_to_new_suffix") or {}).items():
         if name.endswith(old):
             if new is None:
                 _dropped()
-            name = name[: -len(old)] + new
-            break
+            name = new.join(name.rsplit(old, 1))
     return name
 
 

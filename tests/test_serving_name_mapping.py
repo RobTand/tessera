@@ -121,3 +121,134 @@ def test_a_mapper_that_changes_nothing_changes_nothing(monkeypatch):
     before = dict(config.target_scheme), tuple(config.ignore)
     config.apply_vllm_mapper(WeightsMapper().get_unstacked_mapper())
     assert (config.target_scheme, config.ignore) == before
+
+
+# --- vllm_module_name vs the real WeightsMapper (#108) ---------------------
+#
+# ``contract.vllm_module_name`` is the producer's replay of
+# ``WeightsMapper._map_name_with_shard``: the one place in this repo that
+# computes what vLLM WOULD do rather than reading what it DID.  The algorithm
+# is code, not a table, so it cannot be derived from the census receipt -- the
+# receipt publishes the table and vLLM keeps the loop.  What principle 14 gets
+# instead is this: the same names through both, inside the pinned image, with
+# any disagreement a failure.  ``tests/test_serving_construction.py`` describes
+# the semantics; this attests them.
+
+import itertools  # noqa: E402
+import json  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from tessera.serving.contract import (  # noqa: E402
+    _MAPPER_FIELDS_REPLAYED, vllm_module_name)
+
+RECEIPTS = sorted(
+    (Path(__file__).resolve().parents[1] / "docs" / "measurements" / "construction")
+    .glob("*.json"))
+
+#: Mapper tables to attest.  The committed receipts are the ones that ship;
+#: the synthetic ones are the shapes the replay was WRONG on before #108 --
+#: a substring twice in a name, prefix rules that chain, suffix rules that
+#: chain -- which no committed receipt exercises and which therefore have to
+#: be constructed to be attested at all.
+SYNTHETIC_TABLES = {
+    "substr_twice": {"orig_to_new_substr": {".block.": ".layer."}},
+    "prefix_chain": {"orig_to_new_prefix": {"model.": "language_model.",
+                                            "language_model.": "lm."}},
+    "suffix_chain": {"orig_to_new_suffix": {".a_proj": ".b_proj", ".b_proj": ".c_proj"}},
+    "substr_then_prefix_then_suffix": {
+        "orig_to_new_substr": {"decoder.": "layers."},
+        "orig_to_new_prefix": {"model.": "language_model.model."},
+        "orig_to_new_suffix": {".gate_up": ".gate_up_proj"}},
+    "a_dropping_prefix": {"orig_to_new_prefix": {"model.visual.": None,
+                                                 "model.": "language_model.model."}},
+    "a_dropping_substr": {"orig_to_new_substr": {".mtp.": None}},
+    "a_dropping_suffix": {"orig_to_new_suffix": {".inv_freq": None}},
+}
+
+#: Leaves a real checkpoint names, so the probe set is not only rule fragments.
+LEAVES = ("self_attn.qkv_proj", "self_attn.o_proj", "mlp.gate_up_proj", "mlp.down_proj",
+          "mlp.experts.3.down_proj", "attn.qkv", "a_proj", "gate_up")
+
+
+def _probe_names(table):
+    """Names that exercise every rule in ``table``, plus ordinary ones.
+
+    Each rule key is placed at the front, at the end and TWICE in the middle,
+    because the three divergences #108 found were exactly a rule firing in a
+    position the replay handled differently from vLLM.
+    """
+    names = {f"model.layers.0.{leaf}" for leaf in LEAVES}
+    names |= {f"model.visual.blocks.1.{leaf}" for leaf in LEAVES}
+    keys = [k for field in _MAPPER_FIELDS_REPLAYED for k in (table.get(field) or {})]
+    for key in keys:
+        names |= {key,
+                  f"{key}layers.0.mlp.down_proj",
+                  f"model.layers.0{key}",
+                  f"model.layers.0.{key}mlp.{key}down_proj",
+                  f"prefix{key}middle{key}suffix"}
+    for a, b in itertools.permutations(keys, 2):
+        names.add(f"{a}model.layers.0{b}")
+    return sorted(names)
+
+
+def _tables():
+    yield from SYNTHETIC_TABLES.items()
+    for path in RECEIPTS:
+        receipt = json.loads(path.read_text())
+        table = receipt.get("hf_to_vllm_mapper_unstacked") or {}
+        yield path.stem, table
+
+
+def _real_mapper(table):
+    """vLLM's own mapper, built from the census table.
+
+    Only the replayed fields are constructible from JSON -- a regex key is a
+    compiled pattern and a renaming is a transformers object -- which is the
+    same boundary ``_require_replayable_mapper`` refuses at.  A table carrying
+    one of those is skipped here and refused there; neither is silently mapped.
+    """
+    kwargs = {field: dict(table[field]) for field in _MAPPER_FIELDS_REPLAYED
+              if table.get(field)}
+    return WeightsMapper(**kwargs).get_unstacked_mapper()
+
+
+@pytest.mark.parametrize("name,table", list(_tables()), ids=lambda v: v if isinstance(v, str) else "")
+def test_vllm_module_name_agrees_with_the_real_weights_mapper(name, table):
+    """The attestation #108 asks for: our replay against vLLM's loop, name by name."""
+    unreplayable = sorted(f for f, v in table.items() if v and f not in _MAPPER_FIELDS_REPLAYED)
+    if unreplayable:
+        pytest.skip(f"{name} uses {unreplayable}, which the producer refuses rather than replays")
+    mapper = _real_mapper(table)
+    entry = {"architecture": name, "hf_to_vllm_mapper_unstacked": table}
+    probes = _probe_names(table)
+    assert probes, "an attestation over no names attests nothing"
+    for probe in probes:
+        expected = mapper._map_name(probe)
+        try:
+            got = vllm_module_name(entry, probe)
+        except ValueError:
+            got = None
+        assert got == expected, (
+            f"{name}: vllm_module_name({probe!r}) = {got!r}, but the real WeightsMapper "
+            f"in this image says {expected!r}. The producer's replay of "
+            f"_map_name_with_shard has diverged from the runtime it claims to describe.")
+
+
+def test_the_producer_refuses_every_mapper_field_it_does_not_replay():
+    """Pin the rule against the runtime's own dataclass, not against a roster.
+
+    If a future vLLM grows a seventh ``orig_to_new_*`` field, this fails --
+    which is the point: the producer must refuse it (already true, the refusal
+    is on the complement) and someone must decide whether to replay it.
+    """
+    import dataclasses
+    declared = {f.name for f in dataclasses.fields(WeightsMapper)}
+    replayed = set(_MAPPER_FIELDS_REPLAYED)
+    assert replayed <= declared, (
+        f"vLLM's WeightsMapper no longer declares {sorted(replayed - declared)}; the "
+        "producer is replaying a field that no longer exists")
+    for field in sorted(declared - replayed):
+        entry = {"architecture": "StubForCausalLM",
+                 "hf_to_vllm_mapper_unstacked": {field: {"a": "b"}}}
+        with pytest.raises(ValueError, match=field):
+            vllm_module_name(entry, "model.layers.0.mlp.down_proj")
