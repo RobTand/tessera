@@ -339,6 +339,10 @@ from what has been *served*.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
+`experiments/ts5_moe_served.sh` requires success from all three arms: the
+teacher dump, the student comparison, and the route census. Successful KL
+arms cannot turn a failed census into a successful campaign action.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the
 route records come off `named_modules()`, the declared targets come off

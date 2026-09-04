@@ -141,5 +141,5 @@ echo "    teacher  $OUT/teacher_bf16.json"
 echo "    student  $OUT/student_tessera.json"
 echo "    KL       $OUT/kl_tessera_ts5moe.json"
 echo "    census   $OUT/census.json"
-[ "$rc_teacher" = 0 ] && [ "$rc_student" = 0 ] || exit 1
+[ "$rc_teacher" = 0 ] && [ "$rc_student" = 0 ] && [ "$rc_census" = 0 ] || exit 1
 exit 0
