@@ -146,6 +146,11 @@ def test_the_config_names_which_hessian_shaped_the_bytes(tmp_path):
     # agree on the plane one of them used.
     assert block["refit_objective"] == {"channel": "hessian", "lut16": "h^1.0",
                                         "s6b": "plain"}
+    # The trailing leg defaults to the uniform schedule: unset is today's
+    # encode, byte for byte, and the config says so as null, not by omission
+    # (an omitted key would compare vacuous across parts).
+    assert block["refit_objective_trailing"] is None
+    assert block["refit_gauss_seidel"] is False
 
 
 # --------------------------------------------------------------------------
@@ -171,7 +176,9 @@ def plain_config(tmp_path_factory):
     ("activation_aware.ldlq_sigma", 3.0),
     ("activation_aware.ldlq_block", 128),
     ("activation_aware.refit_objective", "plain"),
+    ("activation_aware.refit_objective_trailing", "hessian"),
     ("activation_aware.refit_reach_floor", True),
+    ("activation_aware.refit_gauss_seidel", True),
     ("activation_aware.hessian.text_sha256", "c" * 64),
     ("activation_aware.hessian.fit_tokens", 65536),
     ("activation_aware.hessian.fit_ids_sha256", "d" * 64),
@@ -420,3 +427,198 @@ def test_a_weights_only_config_still_replays(plain_config):
     settings = encode_settings_from_config(plain_config, q256=Q256)
     assert "ldl" not in settings and "refit_metric" not in settings
     assert settings["scale_refit"] > 0
+
+
+# --------------------------------------------------------------------------
+# Tessera#103: the trailing refit leg as an exportable setting.
+#
+# CPU-only by construction: everything here stops at the kwargs and the
+# config, so it runs where the encoder cannot.  The GPU half -- that a set
+# trailing leg reaches the bytes -- is the encoder's own contract
+# (``test_refit_trailing.py``); the exporter half is that the leg is named,
+# recorded and compared.
+# --------------------------------------------------------------------------
+
+
+def _trailing_hessians(cols=32, seed=0):
+    g = torch.Generator().manual_seed(seed)
+    x = torch.randn(4 * cols, cols, generator=g)
+    return {"u": (x.T @ x) / (4 * cols)}
+
+
+def test_the_trailing_leg_round_trips_through_config_block():
+    """What the exporter records is what the guard compares, verbatim."""
+    source = ActivationSource(
+        hessians=_trailing_hessians(), provenance=_provenance(),
+        refit_objective_trailing={"channel": "hessian", "lut16": "h^1.0",
+                                  "s6b": "plain"},
+        refit_gauss_seidel=True)
+    block = source.config_block()
+    assert block["refit_objective_trailing"] == {"channel": "hessian",
+                                                "lut16": "h^1.0",
+                                                "s6b": "plain"}
+    assert block["refit_gauss_seidel"] is True
+    # Serialisable as written: a ``MappingProxyType`` left unconverted would
+    # fail the config write, not the guard.
+    json.loads(json.dumps(block))
+
+
+def test_the_trailing_leg_defaults_to_the_encode_that_was_there():
+    """Unset is the uniform schedule: null on the config, nothing new for the
+    encoder but the sweep flag at its own default."""
+    from tessera.manifest import ScalePlaneKind
+
+    source = ActivationSource(hessians=_trailing_hessians(),
+                              provenance=_provenance())
+    assert source.refit_objective_trailing is None
+    assert source.trailing_objective_for(ScalePlaneKind.CHANNEL) is None
+    assert source.config_block()["refit_objective_trailing"] is None
+    assert source.config_block()["refit_gauss_seidel"] is False
+    kwargs = source.for_unit("u.weight", 32,
+                             scale_plane=ScalePlaneKind.CHANNEL)
+    assert kwargs.get("refit_metric_trailing") is None
+    assert kwargs["refit_gauss_seidel"] is False
+
+
+def test_a_set_trailing_leg_reaches_the_encoder_kwargs():
+    """The exporter half of the bytes claim: the leg ``for_unit`` hands over
+    is the one the config records."""
+    from tessera.manifest import ScalePlaneKind
+
+    H = _trailing_hessians()["u"]
+    source = ActivationSource(
+        hessians={"u": H}, provenance=_provenance(),
+        refit_objective_trailing="hessian", refit_gauss_seidel=True)
+    kwargs = source.for_unit("u.weight", 32,
+                             scale_plane=ScalePlaneKind.CHANNEL)
+    assert torch.equal(kwargs["refit_metric_trailing"], H)
+    assert kwargs["refit_gauss_seidel"] is True
+    # A diagonal trailing power is the same spelling as the base leg's.
+    diagonal = ActivationSource(
+        hessians={"u": H}, provenance=_provenance(),
+        refit_objective_trailing={"channel": "h^2.0"})
+    kw = diagonal.for_unit("u.weight", 32,
+                           scale_plane=ScalePlaneKind.CHANNEL)
+    h = H.diagonal()
+    assert torch.equal(kw["refit_metric_trailing"], (h / h.mean()).pow(2.0))
+
+
+def test_a_bad_trailing_leg_is_refused_by_name():
+    """The trailing leg is checked like the base one, and the refusal says
+    which leg it is."""
+    with pytest.raises(GrammarError, match="unknown refit objective"):
+        ActivationSource(hessians={}, provenance=_provenance(),
+                         refit_objective_trailing="output_mse")
+    with pytest.raises(GrammarError, match="refit_objective_trailing"):
+        ActivationSource(hessians={}, provenance=_provenance(),
+                         refit_objective_trailing={"nope": "hessian"})
+    with pytest.raises(GrammarError, match="refit_objective_trailing"):
+        ActivationSource(hessians={}, provenance=_provenance(),
+                         refit_objective_trailing={})
+    from tessera.manifest import ScalePlaneKind
+
+    partial = ActivationSource(hessians={}, provenance=_provenance(),
+                               refit_objective_trailing={"channel": "hessian"})
+    with pytest.raises(GrammarError, match="lut16"):
+        partial.trailing_objective_for(ScalePlaneKind.LUT)
+
+
+def _guard_template():
+    """A config carrying every dotted path the guard compares, activation
+    block included, so a refusal below names a compared field and never a
+    missing one."""
+    return {
+        "quant_method": "tessera", "container_version": 1,
+        "blob_suffix": ".tessera",
+        "grid": {"digest": "d", "name": "n", "base": "E4M3",
+                 "partition": "coset", "arity": 1, "size": 1, "rate_cap": 1},
+        "conv_memory": 6, "conv_generators": ["0o17"],
+        "trellis": {"span": 1, "weighting": "scale"},
+        "body": {"kind": "window", "window_bits": 14, "seed": 0,
+                 "sigma": None},
+        "scale": {"group": 32, "half": 16, "refit": 4,
+                  "schedule": "trailing-refit", "plane": "channel"},
+        "rotation": "NONE", "with_diagonals": False, "tp_size": 1,
+        "source_model": "m", "prismaquant_plan": "p",
+        "route_status": "unbacked", "requires_serve_flags": [],
+        "inherits": {},
+        "activation_aware": {
+            "ldlq_sigma": 1.0, "ldlq_block": 32,
+            "refit_objective": {"channel": "hessian", "lut16": "h^1.0",
+                                "s6b": "plain"},
+            "refit_objective_trailing": None,
+            "refit_reach_floor": False, "refit_gauss_seidel": False,
+            "hessian": {"text_sha256": "a" * 64, "fit_tokens": 1,
+                        "fit_ids_sha256": "b" * 64},
+        },
+    }
+
+
+@pytest.mark.parametrize("field,other", [
+    ("activation_aware.refit_objective_trailing", "hessian"),
+    ("activation_aware.refit_objective_trailing",
+     {"channel": "hessian", "lut16": "hessian", "s6b": "plain"}),
+    ("activation_aware.refit_gauss_seidel", True),
+])
+def test_the_guard_refuses_a_trailing_leg_it_did_not_compare_before(field,
+                                                                     other):
+    """Two parts encoded under different trailing schedules are two
+    artifacts: the guard compares the leg, it does not pass over it."""
+    a = _guard_template()
+    b = _guard_template()
+    assert merge.dotted(b, field) != other
+    _set(b, field, other)
+    with pytest.raises(SystemExit, match=field):
+        merge.check_configs([("partA", a), ("partB", b)])
+    merge.check_configs([("partA", a), ("partB", _guard_template())])
+
+
+def test_a_plain_trailing_leg_over_a_weighted_base_is_refused():
+    """#103: the config must not be able to describe bytes that never existed.
+
+    ``encode_unit`` reads ``refit_metric_trailing=None`` as "use the base
+    leg's metric", so there is no way to ask for an *un-weighted* last pass
+    over a weighted base.  Before this refusal, ``for_unit`` passed no kwarg
+    for a trailing objective of ``"plain"`` and the encode weighted every pass
+    -- while ``config_block`` recorded ``refit_objective_trailing="plain"``.
+    """
+    import torch
+
+    from tessera.export import ActivationSource, GrammarError
+    from tessera.manifest import ScalePlaneKind
+
+    source = ActivationSource(
+        hessians={"unit": torch.eye(4)},
+        provenance={"text_sha256": "a", "fit_tokens": 1, "fit_ids_sha256": "b"},
+        refit_objective="hessian",
+        refit_objective_trailing="plain",
+        ldlq_sigma=None,           # a 4-column fixture, no LDL block to fit
+    )
+    with pytest.raises(GrammarError) as caught:
+        source.for_unit("unit.weight", 4, scale_plane=ScalePlaneKind.CHANNEL)
+    message = str(caught.value)
+    assert "'plain'" in message and "hessian" in message
+
+
+def test_a_plain_trailing_leg_over_a_plain_base_is_legal():
+    """The S6B row of the measured default: both legs plain is one encode.
+
+    Nothing is un-weighted here, so the config and the bytes agree by both
+    readings -- and refusing it would refuse the shipped default.
+    """
+    import torch
+
+    from tessera.export import ActivationSource, DEFAULT_REFIT_OBJECTIVE
+    from tessera.manifest import ScalePlaneKind
+
+    assert DEFAULT_REFIT_OBJECTIVE["s6b"] == "plain"
+    source = ActivationSource(
+        hessians={"unit": torch.eye(4)},
+        provenance={"text_sha256": "a", "fit_tokens": 1, "fit_ids_sha256": "b"},
+        refit_objective=DEFAULT_REFIT_OBJECTIVE,
+        refit_objective_trailing={"s6b": "plain"},
+        ldlq_sigma=None,
+    )
+    kwargs = source.for_unit("unit.weight", 4, scale_plane=ScalePlaneKind.S6B)
+    assert "refit_metric" not in kwargs
+    assert "refit_metric_trailing" not in kwargs

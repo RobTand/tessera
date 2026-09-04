@@ -61,10 +61,16 @@ would have proved nothing about the branch that moved.
 
 It is refused where it would be the parallel step under another name: with no
 `refit_metric`, under a 1-D one (the blocks decouple exactly, so a sequential
-sweep computes the parallel numbers), and off the LUT plane. It is **not**
-offered through `export.ActivationSource`, so no exporter can set it and no
-`tessera_config.json` can record a refit the merge guard has no field to
-compare. Promoting it past a serve means adding both, in one change.
+sweep computes the parallel numbers), and off the LUT plane.
+
+> **Superseded 2026-09-04 (#103).** This paragraph used to end "it is **not**
+> offered through `export.ActivationSource`, so no exporter can set it and no
+> `tessera_config.json` can record a refit the merge guard has no field to
+> compare." `refit_gauss_seidel` is now a field on `ActivationSource`, rides
+> into the exported config, and the merge guard compares it -- the "adding
+> both, in one change" this asked for. Default off, and off is byte for byte
+> the encode that was already there. What has **not** changed is the evidence:
+> this is still a weight-space screen with no serve behind it.
 
 ## The drift control
 

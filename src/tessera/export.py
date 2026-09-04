@@ -236,6 +236,41 @@ def _check_refit_objective(obj: str) -> None:
             raise GrammarError(f"{obj!r} is not a diagonal power h^ALPHA") from None
 
 
+def _coerce_refit_objective(obj, field: str):
+    """One refit-objective attribute, checked where every path can reach it.
+
+    ``field`` names the ``ActivationSource`` attribute being set, so a refusal
+    says which leg it is.  A plain string means every plane; a map is keyed by
+    the config's own plane spelling, because what the refit can solve exactly
+    is a property of the plane (see ``DEFAULT_REFIT_OBJECTIVE``).  The base
+    leg and the trailing leg share this one home (tessera#103): two copies of
+    the check would drift, and the merge guard compares the two legs it wrote
+    from here.
+    """
+    if isinstance(obj, str):
+        _check_refit_objective(obj)
+        return obj
+    try:
+        items = dict(obj)
+    except TypeError:
+        raise GrammarError(
+            f"{field} must be an objective or a plane -> objective "
+            f"mapping, got {obj!r}") from None
+    if not items:
+        raise GrammarError(
+            f"an empty {field} map names no plane, so every export "
+            "through it would refuse; pass an objective string instead")
+    unknown = sorted(set(items) - set(_PLANE_NAMES.values()))
+    if unknown:
+        raise GrammarError(
+            f"{unknown} are not scale planes: the {field} map is keyed by the "
+            f"config's own plane spelling, one of "
+            f"{sorted(_PLANE_NAMES.values())}")
+    for value in items.values():
+        _check_refit_objective(value)
+    return MappingProxyType(items)
+
+
 @dataclass(frozen=True)
 class ActivationSource:
     """The input Hessians an export encodes against, and what to do with them.
@@ -268,6 +303,20 @@ class ActivationSource:
     those, meaning every plane, or a ``{plane: objective}`` map, because the
     two planes that have a metric-aware refit were measured to want different
     ones.
+
+    ``refit_objective_trailing`` is the same spelling for the trailing refit's
+    leg only (issue #75's fair pair): inner passes minimise
+    ``refit_objective``, the last refit minimises this instead, at the same
+    pass count.  ``None`` is the uniform schedule -- the encode that was
+    already there, byte for byte.  A trailing leg of ``"plain"`` over a
+    *weighted* base leg is refused rather than encoded: the encoder reads an
+    unset trailing metric as "use the base leg's", so there is no way to spell
+    an un-weighted last pass, and encoding it anyway would write bytes the
+    config misdescribes.  ``refit_gauss_seidel`` sweeps the LUT
+    plane's block scales sequentially instead of stepping every block from one
+    residual (issue #35); off is the encode that was already there.  Both ride
+    into the exported config and the merge guard compares them, in the same
+    change that added them (tessera#103).
     """
 
     hessians: "Mapping[str, torch.Tensor]"
@@ -276,6 +325,8 @@ class ActivationSource:
     ldlq_block: int = DEFAULT_LDLQ_BLOCK
     refit_objective: str = DEFAULT_REFIT_OBJECTIVE
     refit_reach_floor: bool = False
+    refit_objective_trailing: "str | Mapping | None" = None
+    refit_gauss_seidel: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.provenance, dict):
@@ -298,45 +349,30 @@ class ActivationSource:
         if self.ldlq_block < 1:
             raise GrammarError(f"the LDLQ block must be at least one column, got "
                                f"{self.ldlq_block}")
-        obj = self.refit_objective
-        if isinstance(obj, str):
-            _check_refit_objective(obj)
-        else:
-            try:
-                items = dict(obj)
-            except TypeError:
-                raise GrammarError(
-                    f"refit_objective must be an objective or a plane -> objective "
-                    f"mapping, got {obj!r}") from None
-            if not items:
-                raise GrammarError(
-                    "an empty refit-objective map names no plane, so every export "
-                    "through it would refuse; pass an objective string instead")
-            unknown = sorted(set(items) - set(_PLANE_NAMES.values()))
-            if unknown:
-                raise GrammarError(
-                    f"{unknown} are not scale planes: the map is keyed by the "
-                    f"config's own plane spelling, one of "
-                    f"{sorted(_PLANE_NAMES.values())}")
-            for value in items.values():
-                _check_refit_objective(value)
-            object.__setattr__(self, "refit_objective", MappingProxyType(items))
+        object.__setattr__(self, "refit_objective",
+                           _coerce_refit_objective(self.refit_objective,
+                                                   "refit_objective"))
+        if self.refit_objective_trailing is not None:
+            object.__setattr__(
+                self, "refit_objective_trailing",
+                _coerce_refit_objective(self.refit_objective_trailing,
+                                        "refit_objective_trailing"))
 
     @staticmethod
     def unit_name(tensor_name: str) -> str:
         """The Hessian key for a tensor name: one trailing ``.weight`` removed."""
         return tensor_name.removesuffix(".weight")
 
-    def objective_for(self, scale_plane: "ScalePlaneKind | None") -> str:
-        """The refit objective this unit's **scale plane** was measured with.
+    @staticmethod
+    def _objective_for_plane(obj, scale_plane: "ScalePlaneKind | None") -> str:
+        """One leg's objective on ``scale_plane``: the lookup both legs share.
 
-        A plain ``refit_objective`` string applies everywhere.  A map is keyed
-        by the plane, because what the refit can solve exactly is a property of
-        the plane (see ``DEFAULT_REFIT_OBJECTIVE``) -- and then a caller that
-        does not say which plane it is encoding on cannot be served a default,
-        because the two measured answers disagree.
+        A plain string applies everywhere.  A map is keyed by the plane,
+        because what the refit can solve exactly is a property of the plane
+        (see ``DEFAULT_REFIT_OBJECTIVE``) -- and then a caller that does not
+        say which plane it is encoding on cannot be served a default, because
+        the two measured answers disagree.
         """
-        obj = self.refit_objective
         if isinstance(obj, str):
             return obj
         if scale_plane is None:
@@ -358,6 +394,23 @@ class ActivationSource:
             )
         return obj[key]
 
+    def objective_for(self, scale_plane: "ScalePlaneKind | None") -> str:
+        """The refit objective this unit's **scale plane** was measured with."""
+        return self._objective_for_plane(self.refit_objective, scale_plane)
+
+    def trailing_objective_for(
+            self, scale_plane: "ScalePlaneKind | None") -> "str | None":
+        """The trailing refit's objective on ``scale_plane``, or ``None``.
+
+        ``None`` is the unset field, and it means the uniform schedule: every
+        pass, trailing included, minimises ``objective_for`` -- the encode
+        that was already there, byte for byte.
+        """
+        obj = self.refit_objective_trailing
+        if obj is None:
+            return None
+        return self._objective_for_plane(obj, scale_plane)
+
     def for_unit(self, tensor_name: str, in_features: int,
                  device: "str | torch.device" = "cpu",
                  scale_plane: "ScalePlaneKind | None" = None) -> dict:
@@ -368,7 +421,8 @@ class ActivationSource:
         wrong width would either broadcast or fail somewhere far from here.
 
         ``scale_plane`` is the plane the unit is encoded on, and it selects the
-        refit objective when this source carries the per-plane map.
+        refit objective when this source carries the per-plane map -- and the
+        trailing objective likewise.
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -400,6 +454,34 @@ class ActivationSource:
             alpha = float(objective.removeprefix("h^"))
             h = H.diagonal()
             kwargs["refit_metric"] = (h / h.mean()).pow(alpha)
+        trailing = self.trailing_objective_for(scale_plane)
+        # ``encode_unit`` has no sentinel for "the trailing leg is plain":
+        # ``refit_metric_trailing=None`` there means *inherit the base leg*,
+        # so a plain trailing objective over a weighted base leg cannot be
+        # expressed -- the encode would weight the last pass exactly like the
+        # inner ones while the config recorded ``"plain"``.  That is the
+        # config-lying-about-the-bytes failure #103 exists to prevent, and
+        # ``encode_unit``'s own contract says refuse rather than ignore.  A
+        # plain trailing leg over a plain base leg is the same encode by both
+        # readings and is legal -- which is the S6B row of
+        # ``DEFAULT_REFIT_OBJECTIVE``.
+        if trailing == "plain" and objective != "plain":
+            raise GrammarError(
+                f"refit_objective_trailing='plain' on the "
+                f"{_PLANE_NAMES.get(scale_plane, scale_plane)} plane, whose "
+                f"base objective is {objective!r}: the encoder has no way to "
+                "un-weight one leg -- an unset trailing metric there means "
+                "'use the base leg's', so the bytes would carry "
+                f"{objective!r} on every pass while the config recorded "
+                "'plain'. Set the base leg to 'plain' too, or name the "
+                "trailing weight you want.")
+        if trailing == "hessian":
+            kwargs["refit_metric_trailing"] = H
+        elif trailing is not None and trailing != "plain":
+            alpha = float(trailing.removeprefix("h^"))
+            h = H.diagonal()
+            kwargs["refit_metric_trailing"] = (h / h.mean()).pow(alpha)
+        kwargs["refit_gauss_seidel"] = bool(self.refit_gauss_seidel)
         return kwargs
 
     @classmethod
@@ -460,7 +542,13 @@ class ActivationSource:
             "refit_objective": (self.refit_objective
                                 if isinstance(self.refit_objective, str)
                                 else dict(self.refit_objective)),
+            "refit_objective_trailing": (
+                None if self.refit_objective_trailing is None
+                else self.refit_objective_trailing
+                if isinstance(self.refit_objective_trailing, str)
+                else dict(self.refit_objective_trailing)),
             "refit_reach_floor": bool(self.refit_reach_floor),
+            "refit_gauss_seidel": bool(self.refit_gauss_seidel),
             "hessian": dict(self.provenance),
             "note": "encoder-side only: the wire, the decoder and the lane are "
                     "unchanged, but this encode is not reproducible from the "
@@ -1046,10 +1134,9 @@ def encode_linear_planes(
 
     ``refit_gauss_seidel`` orders the LUT plane's metric-aware block-scale
     refit as a sequential sweep instead of a parallel step (issue #35).  It is
-    a measurement option and is reachable only from here, deliberately: it has
-    no ``ActivationSource`` field, so no ``export_checkpoint`` run can set it
-    and no ``tessera_config.json`` can be written that a merge guard has no
-    field to compare.  Promoting it means adding both, in one change.
+    a measurement option, encoder-side and opt-in: ``ActivationSource``
+    carries it (tessera#103) and the merge guard compares it, and with it off
+    the encode is byte for byte what it was.
 
     ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
     activation-aware encoder settings (``encode_unit``): the input Hessian's
@@ -1061,8 +1148,9 @@ def encode_linear_planes(
 
     ``refit_metric_trailing`` swaps the trailing refit's objective at the same
     pass count (issue #75's fair pair); ``None`` is the uniform schedule.
-    Measurement-only like ``refit_gauss_seidel``: no ``ActivationSource``
-    field, no config entry.
+    ``ActivationSource.refit_objective_trailing`` carries it (tessera#103):
+    ``None`` there is this same uniform schedule, and the merge guard compares
+    the leg it records.
 
     ``verify`` reads the bytes back and compares to the encoder's own
     reconstruction.  It is on by default and costs one decode: the guarantee

@@ -8,10 +8,15 @@ same corpus and teacher, 220,301,312 wire bytes either way
 it: `DEFAULT_REFIT_OBJECTIVE["lut16"]` is still `h^1.0`, the objective that was
 served, and `git log b877c7f..HEAD -- src/tessera/encode.py src/tessera/export.py`
 is empty. The #35 Gauss-Seidel arm improves both roles in weight space
-(`q_proj` 0.9819x, `k_proj` 0.9320x) but it is a screen with no export path:
-`refit_gauss_seidel` is a keyword on `encode_linear`/`encode_linear_planes` and
-is **not** a field on `export.ActivationSource`, so no exporter can set it and
-`tessera_config.json` has no field for the merge guard to compare.
+(`q_proj` 0.9819x, `k_proj` 0.9320x) but it is a screen with no serve behind
+it.
+
+> **Superseded in part 2026-09-04 (#103).** The clause that used to follow --
+> "`refit_gauss_seidel` ... is **not** a field on `export.ActivationSource`,
+> so no exporter can set it and `tessera_config.json` has no field for the
+> merge guard to compare" -- is no longer true: it is a field, it rides into
+> the config, and the merge guard compares it. The *screen* half of the
+> sentence stands; only the export path moved.
 
 What this document adds is the mechanism the issue asked for. It is not the one
 the thread expected, and two of the natural hypotheses are measured down rather

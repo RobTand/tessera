@@ -1625,10 +1625,10 @@ def _refit_scales_lut_metric(
     this and is what issue #35 asks to be measured.  It is **encoder-side and
     opt-in**: no byte of the wire's grammar moves, the same decoder reads the
     result, and with the flag off this function computes what it always
-    computed.  It is deliberately not offered through ``export.ActivationSource``
-    -- an exporter cannot set it, so no checkpoint config can be written that
-    records a refit the merge guard has no field for.  Promoting it means
-    adding the field there and to the guard's list, in the same change.
+    computed.  It is offered through ``export.ActivationSource`` as
+    ``refit_gauss_seidel`` (tessera#103) -- the field and the guard's entry
+    for it arrived in the same change, so no checkpoint config can record a
+    sweep the merge guard has no field to compare.
     (b) ``_fit_lut`` chooses the sixteen table
     entries under the separable second-order model ``sum_b A_b (c_b - s*_b)^2``,
     i.e. the expansion around the current plane with cross-block terms dropped.
@@ -1958,11 +1958,17 @@ def encode_unit(
     fair pair ``T R_h T R_h T R_h T R_H`` against ``T R_h T R_h T R_h T R_h``,
     which one ``refit_metric`` on every pass cannot express.  ``None`` -- the
     state every encode runs in -- is the uniform schedule, byte for byte.
-    Either leg may be ``None`` (that pass's refit is then plain); at
+    The two legs are **not** symmetric, and the asymmetry is load-bearing:
+    ``refit_metric=None`` makes the inner passes plain, but
+    ``refit_metric_trailing=None`` means *inherit the base leg* -- the
+    selection below is ``refit_metric_trailing if last and it is not None else
+    refit_metric`` -- so a plain trailing pass over a weighted base leg has no
+    spelling here.  ``ActivationSource.for_unit`` refuses that combination
+    rather than encoding one thing and recording another (#103).  At
     ``scale_refit=1`` the single refit IS the trailing one and runs under the
-    trailing leg.  Encoder-side and opt-in like ``refit_gauss_seidel``: no
-    ``ActivationSource`` field reads it, so no checkpoint config can record a
-    schedule the merge guard has no field to compare.
+    trailing leg.  Encoder-side and opt-in like ``refit_gauss_seidel``:
+    ``ActivationSource.refit_objective_trailing`` reads it (tessera#103), the
+    checkpoint config records the schedule, and the merge guard compares it.
 
     ``refit_gauss_seidel`` sweeps the LUT plane's block scales sequentially
     instead of stepping every block from one residual (issue #35).  It is
