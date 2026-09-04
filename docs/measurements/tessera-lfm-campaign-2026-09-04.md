@@ -206,3 +206,83 @@ The driver was also syntax-checked through CPU-only PB action
 `b93997d6bb8dd237457f3a49464899ceb04944447bbb6496964f01c7f85c9e0d`,
 return code zero; this is a syntax check, not a test-suite population.
 The second encoder is still active at this point; no MoE cell is promoted.
+
+## 5. Second half and checked assembly
+
+The second frozen-source encoder completed successfully through PB action
+`80fcb8d1cddb6059c795f5205860c430375728365ee3b11e24b7ea4a5d833817`:
+the original worker returned zero in 2,454 seconds, with 2,367 seconds reported
+by the exporter. It wrote 1,056 projection containers over 11 routed stacks
+and 1,144 total tensors. Its actual source snapshot was
+`524d56f4827769265a109145103805d5af9e99f9`; receipt CAS:
+`db72e797fd3b8fcdef35aa71014c45483a467214a1c803e10908bcee55b3d891`.
+No encoder source or plan changed between halves.
+
+Checked assembly used the newer merger/plan-coverage gates at `c2e7227`,
+without re-encoding any container. PB action
+`0214babe365657ee7034e0a0e912f65bf77a314e1f431869d1bb0082970d9897`
+returned zero in 69 seconds on dl380g10, CPU-only, using two CPUs and 8 GiB.
+Its snapshot was `a971a4a678ab481d105e55c59abf9b5bdd19f9c2`; receipt CAS:
+`137368784e974ad6f2c0ee6ea2446a1c78ebf4b3c4e17cac742203a8b67e971d`.
+The resulting artifact has 22 routed stacks, 2,112 projection containers and
+2,302 tensors. The explicit common-plan check passed; both copied destination
+shards were independently hashed against their source parts.
+
+The assembly seal is `merge-action-r1/artifact-seal.json`, SHA256
+`b14af9c0a6dea5c146a30142eef59c7830338296959c2afd7caa94970081ca81`.
+It records 7,751,073,792 quantized parameters, 3,918,069,760 wire bytes,
+3,919,643,180 container bytes, 7,766,933,504 prepared resident expert bytes,
+1,433,567,488 passthrough bytes and 5,353,487,052 safetensors checkpoint bytes.
+These are distinct accounting surfaces, not interchangeable footprint claims.
+The two shard SHA256 values are
+`f3504c20e11188b0705556e5daee473788db66b02bd86083f0631fe6b16f9f82`
+and `978056b050593faa8310022c111f87dc1bac31844d3fc081c2c085c7b570f1fa`.
+
+## 6. Preserved failed full-model census attempts
+
+Attempt one, PB
+`cf2f43fe23de44de16e41350e783ceba5365eb6565bb4b6c485ad6cd2d30e2ca`,
+failed before loading model weights: the copied safetensors shards retained
+mode 0600, inaccessible to the root-squashed container identity. The failure
+and producer correction are recorded in
+`merged-shard-read-permissions-2026-09-04.md`. Operational correction action
+`ecfd18aa9565944cb8e4a7c10af7971b2970158087ed4f601e750815b8253bb1`
+added read bits only to the two exact assembled shards, yielding mode 0644;
+full artifact content identity was unchanged. A CPU-only exact-image probe,
+`8e26fc31d1a44137cbb4528d1cd84594d673fd4fa0e32ab82c93f64e595086e4`,
+then read both headers successfully as container UID zero. The private
+original encoder-part files retain their modes.
+
+Attempt two, PB
+`270b382c9fe6b23c9ef20fa7a16ae1d5dc483f4d3c77581e0184ec863569610d`,
+passed that boundary but failed closed during construction: the producer
+named LFM's dense `w1/w3` passthrough leaves, whereas the runtime constructs
+one `w13` Linear. Neither attempt generated route or quality evidence. Each
+retains its own `census-bound-rN` directory and a cleanup receipt with the
+exact container absent, no GPU compute processes and `safe_to_release=true`.
+
+The naming fix is recorded in `lfm-dense-passthrough-alias-2026-09-04.md`.
+Its operational correction preserves `full-model` and the original seal,
+creating `full-model-r3` with unchanged files hard-linked and a separate config.
+PB action `96ea5542bfac99e8472ed37d5d44a840bd5aeae3ddc80c12c09a864efbfcd9af`
+returned zero; receipt CAS:
+`0b0dd13e3cb074f678b6759e69ce75c13cb4d13d290851ed886e13eaaaea24d1`.
+Only four explicit dense leaf names become two fused names; unrelated
+declarations, including the tied `lm_head`, are retained. Config length changes
+from 29,553 to 29,476 bytes; its SHA256 changes from
+`24d512c46d7fd631ebbb31a4bd84f6a8200da12d035082d606f5468da08f069b` to
+`cbc35c8148399ce2c84e49016077a749d11ac3999110039a1d2024814ec0c795`.
+Every weight/index/other auxiliary hash remains unchanged, and the original
+artifact is rechecked unchanged after correction. The new seal at
+`passthrough-correction-r3/artifact-seal.json` links the original seal and
+actual correction snapshot `5a9f5f6ed6bba2fd22de29fcddfb33e18cbc571d`.
+The same explicit-plan sidecar gate still finds all 22 stacks and 2,112 roles.
+
+Two earlier correction-controller attempts refused before creating a model
+directory because reconstructing the whole ignore set would drop the tied
+head, which has no separate tensor. Their `passthrough-correction-r1/r2`
+namespaces are retained. The final correction replaces only the observed
+dense pair declarations. No original config or seal was overwritten.
+
+At this section's completion, census attempt three is in flight against the
+corrected model and its explicit new seal. No positive MoE cell is yet claimed.
