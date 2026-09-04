@@ -98,6 +98,8 @@ from typing import Any, Mapping
 
 __all__ = [
     "CENSUS_PHASE_REGIMES",
+    "CELL_PREDICATE_FACTS",
+    "CELL_PREDICATE_OPS",
     "EXECUTION_MODES",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
@@ -114,6 +116,7 @@ __all__ = [
     "REQUIRES_PLUGIN",
     "contract_path",
     "cell_executes",
+    "cell_predicates",
     "cell_residency_modes",
     "cell_runtime_scope",
     "cell_runtime_id_suffix",
@@ -158,6 +161,23 @@ CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
 
 _ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked"})
 _QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
+
+#: The closed grammar of a cell's ``predicates`` (#134).  A predicate narrows
+#: the cell to units for which ``fact op value`` holds, and it is a
+#: ``{fact, op, value}`` object over the STRUCTURAL facts a producer's unit
+#: carries before it is encoded -- never a wire predicate (that is
+#: ``native_extensions[].lane.requires``, decidable from a plan, and a
+#: different table).  The set is closed on both axes because a consumer that
+#: could not resolve a predicate must refuse the cell, not skip the rule: an
+#: unknown predicate that no-ops would let a narrower cell read as
+#: unconditionally eligible.  The vocabulary is the one
+#: ``docs/measurements/tessera-lane-eligibility-executes-2026-09-04.md``
+#: records and PrismaQuant's ``lane_eligibility._PREDICABLE_FACTS`` /
+#: ``_PREDICATE_OPS`` resolve; it is owned here so the publisher refuses what
+#: the reader could not read.  Every cell published today carries ``[]``.
+CELL_PREDICATE_FACTS = ("payload_family", "k", "n_sub", "rate_q256", "role_split",
+                        "in_features", "out_features")
+CELL_PREDICATE_OPS = ("equals", "in", "multiple_of", "at_least", "at_most")
 
 
 def contract_path():
@@ -702,6 +722,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             raise ValueError(
                 f"{where}: every route is reached through a declared residency, so a cell names "
                 "the serve flag that selects one")
+        cell_predicates(cell, where)
         expected = contracts_by_family[cell["family"]]
         if cell["activation_contract"] != expected:
             raise ValueError(
@@ -961,6 +982,70 @@ def _all_modes() -> tuple:
 def cell_executes(cell: Mapping[str, Any]) -> set:
     """``{(symbol, decoder)}`` a cell publishes -- the census's own shape."""
     return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def cell_predicates(cell: Mapping[str, Any],
+                    where: str = "lane_eligibility cell") -> tuple[tuple[str, str, Any], ...]:
+    """The ``(fact, op, value)`` triples a cell's ``predicates`` states, or raise.
+
+    The field was required on every cell and read by no line of this package
+    (#134): a cell could carry ``["anything"]`` and validate, so the first
+    gate to start reading it would have inherited unvalidated content.  This
+    is the grammar, refused where the bytes are decided: a JSON array of
+    closed ``{fact, op, value}`` objects, ``fact`` from
+    :data:`CELL_PREDICATE_FACTS`, ``op`` from :data:`CELL_PREDICATE_OPS`, and
+    ``value`` typed by the op -- ``in`` takes a non-empty list of scalars,
+    ``multiple_of`` a positive integer (a consumer evaluates ``actual % value``
+    and treats 0 as false), ``at_least``/``at_most`` an integer, ``equals`` a
+    scalar.  One ``(fact, op)`` pair at most once: two ``at_least`` rows on one
+    fact are one bound written twice, or two bounds disagreeing.
+    """
+    payload = cell.get("predicates")
+    at = f"{where}.predicates"
+    if not isinstance(payload, list):
+        raise ValueError(
+            f"{at} must be a JSON array of {{fact, op, value}} objects, got {payload!r}")
+    out: list[tuple[str, str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for i, item in enumerate(payload):
+        spot = f"{at}[{i}]"
+        _require_keys(item, spot, required={"fact", "op", "value"})
+        fact, op, value = item["fact"], item["op"], item["value"]
+        if fact not in CELL_PREDICATE_FACTS:
+            raise ValueError(
+                f"{spot}.fact {fact!r} is not a structural fact a cell may predicate on; the "
+                f"closed set is {list(CELL_PREDICATE_FACTS)}. A predicate a consumer cannot "
+                "resolve is a cell it must refuse, never a rule it may skip.")
+        if op not in CELL_PREDICATE_OPS:
+            raise ValueError(
+                f"{spot}.op {op!r} is not one of {list(CELL_PREDICATE_OPS)}")
+        scalar = (str, int, float)
+        if op == "in":
+            if (not isinstance(value, list) or not value
+                    or any(not isinstance(v, scalar) or isinstance(v, bool) for v in value)):
+                raise ValueError(
+                    f"{spot}: 'in' takes a non-empty list of scalars, got {value!r}")
+        elif op == "multiple_of":
+            if not _is_int(value) or value <= 0:
+                raise ValueError(
+                    f"{spot}: 'multiple_of' takes a positive integer, got {value!r}; a consumer "
+                    "evaluates actual % value and a zero modulus holds for nothing")
+        elif op in ("at_least", "at_most"):
+            if not _is_int(value):
+                raise ValueError(f"{spot}: {op!r} takes an integer, got {value!r}")
+        elif not isinstance(value, scalar) or isinstance(value, bool):
+            raise ValueError(f"{spot}: 'equals' takes a scalar, got {value!r}")
+        if (fact, op) in seen:
+            raise ValueError(
+                f"{spot} repeats ({fact!r}, {op!r}); one bound per fact and op, or two bounds "
+                "disagree about one cell")
+        seen.add((fact, op))
+        out.append((str(fact), str(op), value))
+    return tuple(out)
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],

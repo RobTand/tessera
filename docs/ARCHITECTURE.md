@@ -680,6 +680,16 @@ those older census files did not each record a digest. Existing cell IDs stay
 stable, with an optional hash of canonical runtime scope to distinguish
 disjoint variants; IDs must be unique, and explicit fields decide eligibility.
 
+A cell's `predicates` list narrows the cell to units for which every
+`{fact, op, value}` row holds, and the validator refuses anything outside the
+closed grammar (`contract.CELL_PREDICATE_FACTS`: `payload_family`, `k`,
+`n_sub`, `rate_q256`, `role_split`, `in_features`, `out_features`;
+`CELL_PREDICATE_OPS`: `equals`, `in`, `multiple_of`, `at_least`, `at_most`;
+values typed per op; one row per `(fact, op)`). Until #134 the field was
+required and never read, so `["anything"]` validated. Every published cell
+carries `[]`: each is unconditional over its scope. A consumer that cannot
+resolve a predicate refuses the cell, never skips the rule.
+
 The census requires `--runtime-image` as an exact digest reference, checked
 before loading vLLM, and since #132 that flag is a CROSS-CHECK rather than the
 source of the scope: the launcher resolves the image through docker's
