@@ -60,6 +60,56 @@ def test_the_gpu_arm_carries_the_gate_and_the_cpu_arm_does_not():
         assert command[0].startswith("/")
 
 
+
+def test_the_declared_cores_are_the_cores_the_command_uses():
+    """A reservation the command does not spend is an over-declaration.
+
+    ``--cpus`` reserves that many cores on the chosen box for the life of the
+    action.  Submitting a serial pytest under ``--cpus 8`` idles seven of them
+    -- the pool's ledger says the box is busy while it is not, which is the
+    accounting failure the pool exists to prevent.  One number now feeds both
+    the reservation and pytest's ``-n``, so they cannot drift apart.
+
+    Serial stays the default on purpose: ``-n`` needs pytest-xdist in the
+    TARGET venv, and sparky's CUDA venv inherits a system interpreter that has
+    pytest 9.0.3 and no xdist, so a hardcoded ``-n`` would abort that arm.
+    """
+
+    merge_suite = _module()
+    surface = Path("/dev/null")
+    for name in ("gpu", "x86"):
+        serial = merge_suite._command(merge_suite.ARMS[name], surface, [], 1)
+        assert "-n" not in serial, "one declared core must not fan out"
+
+        parallel = merge_suite._command(merge_suite.ARMS[name], surface, [], 6)
+        assert parallel[parallel.index("-n") + 1] == "6"
+        # A module's tests share fixtures, and on the GPU arm device state.
+        assert parallel[parallel.index("--dist") + 1] == "loadfile"
+        # The gate survives the fan-out: it is asserted on the controller,
+        # which is the process that has -- or has not -- the device.
+        assert ("--strict-cuda" in parallel) == merge_suite.ARMS[name]["strict_cuda"]
+
+
+def test_the_default_submission_declares_one_core(tmp_path):
+    """The default is honest with no operator knowledge of the target box.
+
+    Whoever submits this may not know whether the target venv has xdist. The
+    default must therefore be the one that is true everywhere -- and it must
+    be the SUBMITTED line that says so, not just the composed command, since
+    the reservation is what the pool acts on.
+    """
+
+    out = tmp_path / "receipt.json"
+    subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
+         "--checkout", str(ROOT), "--out", str(out)],
+        capture_output=True, text=True, timeout=120, check=False,
+    )
+    pbrun = json.loads(out.read_text())["arms"][0]["pbrun"]
+    assert "--cpus 1" in pbrun, pbrun
+    assert " -n " not in pbrun, pbrun
+
+
 def test_a_missing_surface_is_reported_as_absent_not_as_a_pass():
     """An arm that was never placed is not a green arm."""
 

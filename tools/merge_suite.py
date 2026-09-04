@@ -101,10 +101,36 @@ def _population_of(checkout: Path) -> dict:
     }
 
 
-def _command(arm: dict, surface_json: Path, extra: list[str]) -> list[str]:
+def _command(arm: dict, surface_json: Path, extra: list[str],
+             cpus: int = 1) -> list[str]:
+    """The command, with the core count it is submitted under actually used.
+
+    ``--cpus`` is a reservation: the pool holds that many cores on the chosen
+    box for the life of the action.  A serial pytest submitted under ``--cpus
+    8`` idles seven of them, which is the over-declaration the pool exists to
+    prevent -- it is how a box ends up oversubscribed on paper and idle in
+    fact, and the mirror of the under-declaration that swapped sparklina on
+    2026-09-03.  So the declaration and the command are derived from one
+    number rather than chosen separately.
+
+    Serial is the default because parallelism is not free here and not always
+    available.  ``-n`` needs ``pytest-xdist`` in the TARGET venv, which is a
+    fact about another box: the CUDA venv on sparky inherits the system
+    interpreter, which has pytest 9.0.3 and no xdist, so a hardcoded ``-n``
+    would abort that arm on an unrecognised argument.  And on the GPU arm the
+    workers share one device, so fanning out is a memory risk, not a speedup.
+    An operator who knows the target venv passes ``--cpus N`` and gets both
+    halves at once.
+    """
+
     command = [arm["python"], "-m", "pytest", "tests", "-q",
                "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
+    if cpus > 1:
+        # loadfile, not the default: a module's tests share fixtures and, on
+        # the GPU arm, device state, and splitting one across workers is how a
+        # suite goes flaky in a way no population report would explain.
+        command += ["-n", str(cpus), "--dist", "loadfile"]
     if arm["strict_cuda"]:
         command.append("--strict-cuda")
     return command + extra
@@ -112,7 +138,7 @@ def _command(arm: dict, surface_json: Path, extra: list[str]) -> list[str]:
 
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
-    command = _command(arm, surface_json, args.pytest_arg)
+    command = _command(arm, surface_json, args.pytest_arg, args.cpus)
     invocation = [
         sys.executable, str(PBRUN),
         *arm["pbrun_flags"],
@@ -226,8 +252,13 @@ def main() -> int:
                     help="tree to test; the x86 arm needs it under /mnt/shared")
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
-    ap.add_argument("--cpus", type=int, default=8,
-                    help="cores the run will actually use, declared to the pool")
+    ap.add_argument("--cpus", type=int, default=1,
+                    help="cores this run will ACTUALLY use: declared to the "
+                         "pool and, above 1, passed to pytest as -n so the "
+                         "reservation and the command cannot disagree. Above 1 "
+                         "needs pytest-xdist in the target venv, which is a "
+                         "fact about that box -- the CUDA venv on sparky has "
+                         "none. Default 1, which is honest everywhere")
     ap.add_argument("--mem-gb", type=int, default=16)
     ap.add_argument("--timeout-s", type=float, default=3600.0)
     ap.add_argument("--wait-s", type=float, default=5400.0)
