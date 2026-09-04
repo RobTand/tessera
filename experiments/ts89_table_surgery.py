@@ -70,6 +70,12 @@ def run(w_cols: torch.Tensor, scale: torch.Tensor, values: torch.Tensor) -> floa
     position, so the path this picks is the path production's first pass
     picks; the SSE returned is recomputed in w-space from the codes, so it is
     the true error of that path whatever the objective was.
+
+    One deliberate infidelity: ``scale`` here is production's *effective* fp32
+    row scale, where the artifact carries an fp16 word times a global.  The
+    reduction still agreed with production's ``scale_refit=0`` arm to four
+    decimals (1.0369 against 1.0367), which is itself a small finding -- the
+    fp16 landing is inert before the refit runs.
     """
     scale_col = scale.view(-1, 1)
     targets = (w_cols / scale_col).contiguous()

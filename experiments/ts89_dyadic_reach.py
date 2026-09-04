@@ -461,87 +461,147 @@ def stage_refit(a) -> None:
     ``ldl``, ``metric=None``) -- then this is basin sensitivity in a non-convex
     coordinate descent, no smooth objective in the residue exists, and
     "re-derive the constant" is the wrong shape of fix.
+
+    Three diagnostics were added after the walk read 1.0367 -> 1.3667, to
+    turn "the refit is the amplifier" from a shape into a mechanism.
+
+    * ``rows_moved``: how many rows' recovered scale the refit actually moved,
+      against the same unit's ``scale_refit=0`` scales.  "The refit is a null
+      lever at ``m=0.75``" has two very different readings, and this separates
+      them: the refit ran and its per-row least squares landed back where it
+      started (the start is already the optimum there), or the refit proposed
+      moves and the accept-only-if-lower test rejected them row by row.
+    * ``top_h``: the h-weighted squared error of the six columns that carry
+      99.9% of this unit's h, per arm.  The claim under test is that the 32%
+      is bought on those columns and nowhere else; six numbers per arm say so
+      or refute it.
+    * ``--units all``: the same walk at refits {0, max} on all eight units of
+      the #80/#89 sweep.  #89 says the effect is this unit's alone (the other
+      seven move 0.1-5.7%), and the mechanism as stated predicts *why*: the
+      refit is h-blind, so it can only be a large h lever where h is
+      concentrated on a few columns.  A unit with flat h should show the refit
+      buying the same h at both sigmas.  That is a prediction on units the
+      mechanism was not fitted to, which is the only kind of check available
+      without a serve.
     """
     base = default_channel_sigma(E4M3_GRID)
-    w, h = load(UNIT)
+    units = a.units if a.units != ["all"] else ALL_UNITS
     b = Bench(a.out)
-    b.doc = {"stage": "refit", "unit": UNIT, "base_channel_sigma": base,
-             "shape": list(w.shape), "arms": {}}
-    gv = grid_vector_table(E4M3_GRID, w.device).squeeze(-1).float()
-    for q in a.rungs:
-        b.log(f"\n== {UNIT} {tuple(w.shape)}  R={q}  ({q // 256} b/wt)")
-        b.log(f"    {'refit':>6}{'m':>7}{'sigma':>10}{'reach':>8}"
-              f"{'wt':>10}{'h':>10}{'h ratio':>9}{'rows@clip':>11}{'s':>7}")
-        for nref in a.refits:
-            per_sigma = {}
-            for m in (1.0, 0.75):
-                cs = m * base
-                facts = table_facts(cs)
-                hat, meta, unit = encode_arm(
-                    w, q, UNIT, window_sigma=None, channel_sigma=cs,
-                    want_unit=True, scale_refit=nref)
-                # Recover the effective row scale from the artifact the reader
-                # sees: hat = row_scale * table_value, so the ratio is constant
-                # down a row wherever the table value is nonzero.
-                val = gv[unit.codes]
-                rs = torch.where(val.abs() > 0, hat / val,
-                                 torch.full_like(hat, float("nan"))).nanmedian(dim=1).values
-                # A row is AT THE CLIP when its loudest weight needs more than
-                # the table's outermost entry at the scale the refit landed on.
-                clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
-                r = {**meta, "channel_sigma": cs, "table_sigma": cs, "refits": nref,
-                     **facts, **score(w, hat, h), "rows_at_clip": clipped,
-                     "rows": int(w.shape[0]),
-                     "n_released": int(unit.release_index.numel())}
-                per_sigma[m] = r
-                b.doc["arms"][f"R{q}/refit{nref}/m{m:g}"] = r
-                del hat, unit, val, rs
-                torch.cuda.empty_cache()
-            ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
-            for m in (1.0, 0.75):
-                r = per_sigma[m]
-                shown = ratio if m == 0.75 else 1.0
-                b.log(f"    {nref:>6}{m:>7.2f}{r['channel_sigma']:>10.4f}"
-                      f"{r['reach']:>8.1f}{r['wt']:>10.5f}{r['h']:>10.5f}"
-                      f"{shown:>9.4f}{r['rows_at_clip']:>11d}{r['secs']:>7.0f}")
-            b.doc["arms"][f"R{q}/refit{nref}/ratio"] = ratio
-            b.save()
+    b.doc = {"stage": "refit", "units": units, "base_channel_sigma": base,
+             "arms": {}}
+    for uname in units:
+        w, h = load(uname)
+        gv = grid_vector_table(E4M3_GRID, w.device).squeeze(-1).float()
+        # Which columns h actually cares about, and how concentrated it is.
+        order = h.argsort(descending=True)
+        top_cols = order[:6]
+        conc = {"h_top6_share": float(h[top_cols].sum() / h.sum()),
+                "h_max_over_median": float(h.max() / h.median()),
+                "h_top1_share": float(h[order[0]] / h.sum())}
+        b.doc["arms"][f"{uname}/h_concentration"] = conc
 
-        # ---- the 2x2: does an h-aware refit, or a reach floor, remove it? ---
-        deep = max(a.refits)
-        b.log(f"\n    at scale_refit={deep}, the two refit knobs, both sigmas")
-        b.log(f"    {'refit arm':<22}{'m':>6}{'wt':>10}{'h':>10}"
-              f"{'h ratio':>9}{'rows@clip':>11}{'s':>7}")
-        for arm_name, kw in (("metric=h", {"refit_metric": h}),
-                             ("reach_floor", {"refit_reach_floor": True}),
-                             ("metric=h+floor", {"refit_metric": h,
-                                                 "refit_reach_floor": True})):
-            per_sigma = {}
-            for m in (1.0, 0.75):
-                cs = m * base
-                facts = table_facts(cs)
-                hat, meta, unit = encode_arm(
-                    w, q, UNIT, window_sigma=None, channel_sigma=cs,
-                    want_unit=True, scale_refit=deep, **kw)
-                val = gv[unit.codes]
-                rs = torch.where(val.abs() > 0, hat / val,
-                                 torch.full_like(hat, float("nan"))).nanmedian(dim=1).values
-                clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
-                r = {**meta, "channel_sigma": cs, "refits": deep, "refit_arm": arm_name,
-                     **facts, **score(w, hat, h), "rows_at_clip": clipped,
-                     "n_released": int(unit.release_index.numel())}
-                per_sigma[m] = r
-                b.doc["arms"][f"R{q}/{arm_name}/m{m:g}"] = r
-                del hat, unit, val, rs
-                torch.cuda.empty_cache()
-            ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
-            for m in (1.0, 0.75):
-                r = per_sigma[m]
-                b.log(f"    {arm_name:<22}{m:>6.2f}{r['wt']:>10.5f}{r['h']:>10.5f}"
-                      f"{(ratio if m == 0.75 else 1.0):>9.4f}"
-                      f"{r['rows_at_clip']:>11d}{r['secs']:>7.0f}")
-            b.doc["arms"][f"R{q}/{arm_name}/ratio"] = ratio
-            b.save()
+        def arm(cs, nref, kw, rs0=None):
+            facts = table_facts(cs)
+            hat, meta, unit = encode_arm(
+                w, q, uname, window_sigma=None, channel_sigma=cs,
+                want_unit=True, scale_refit=nref, **kw)
+            # Recover the effective row scale from the artifact the reader
+            # sees: hat = row_scale * table_value, so the ratio is constant
+            # down a row wherever the table value is nonzero.
+            val = gv[unit.codes]
+            rs = torch.where(val.abs() > 0, hat / val,
+                             torch.full_like(hat, float("nan"))).nanmedian(dim=1).values
+            # A row is AT THE CLIP when its loudest weight needs more than the
+            # table's outermost entry at the scale the refit landed on.
+            clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
+            e = hat - w
+            colsse = (e * e).sum(0)
+            denom = float(((w * w).sum(0) * h).sum())
+            r = {**meta, "channel_sigma": cs, "table_sigma": cs, "refits": nref,
+                 **facts, **score(w, hat, h), "rows_at_clip": clipped,
+                 "rows": int(w.shape[0]),
+                 # Requested vs realised, per #84: the requested reach is what
+                 # sigma asks for; the realised one is what the row scale the
+                 # encoder LANDED on can actually emit, in that row's own rms
+                 # units.  They part company exactly on the rows the
+                 # reach-aware start (and then the refit) moved.
+                 "reach_rms_requested": facts["reach"] / cs,
+                 "reach_rms": float(
+                     (facts["reach"] * rs
+                      / w.pow(2).mean(dim=1).sqrt()).median()),
+                 "top_h_cols": top_cols.tolist(),
+                 "top_h_energy": [float(h[c] * colsse[c] / denom) for c in top_cols],
+                 "top_h_share": float((h[top_cols] * colsse[top_cols]).sum()
+                                      / (h * colsse).sum()),
+                 "n_released": int(unit.release_index.numel())}
+            if rs0 is not None:
+                moved = (rs - rs0).abs() > 1e-3 * rs0.abs()
+                r["rows_moved"] = int(moved.sum())
+                r["rs_max_rel_move"] = float(
+                    ((rs - rs0).abs() / rs0.abs()).max())
+            out_rs = rs.clone()
+            del hat, unit, val, rs, e, colsse
+            torch.cuda.empty_cache()
+            return r, out_rs
+
+        for q in a.rungs:
+            b.log(f"\n== {uname} {tuple(w.shape)}  R={q}  ({q // 256} b/wt)"
+                  f"   h top-6 share {conc['h_top6_share']:.4f}"
+                  f"  h_max/med {conc['h_max_over_median']:.3g}")
+            b.log(f"    {'refit':>6}{'m':>7}{'sigma':>10}{'reach':>8}"
+                  f"{'reach_rms':>10}{'wt':>10}{'h':>10}{'h ratio':>9}"
+                  f"{'rows@clip':>11}{'moved':>7}{'top6%':>7}{'s':>7}")
+            rs_base = {}
+            for nref in a.refits:
+                per_sigma = {}
+                for m in (1.0, 0.75):
+                    r, rs = arm(m * base, nref, {}, rs_base.get(m))
+                    if nref == min(a.refits):
+                        rs_base[m] = rs
+                    per_sigma[m] = r
+                    b.doc["arms"][f"{uname}/R{q}/refit{nref}/m{m:g}"] = r
+                ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
+                for m in (1.0, 0.75):
+                    r = per_sigma[m]
+                    shown = ratio if m == 0.75 else 1.0
+                    b.log(f"    {nref:>6}{m:>7.2f}{r['channel_sigma']:>10.4f}"
+                          f"{r['reach']:>8.1f}{r['reach_rms']:>10.4f}"
+                          f"{r['wt']:>10.5f}{r['h']:>10.5f}"
+                          f"{shown:>9.4f}{r['rows_at_clip']:>11d}"
+                          f"{r.get('rows_moved', 0):>7d}"
+                          f"{100 * r['top_h_share']:>7.2f}{r['secs']:>7.0f}")
+                b.doc["arms"][f"{uname}/R{q}/refit{nref}/ratio"] = ratio
+                b.save()
+
+            if a.skip_2x2:
+                continue
+            # ---- the 2x2: does an h-aware refit, or a reach floor, remove it?
+            deep = max(a.refits)
+            b.log(f"\n    at scale_refit={deep}, the two refit knobs, both sigmas")
+            b.log(f"    {'refit arm':<22}{'m':>6}{'wt':>10}{'h':>10}"
+                  f"{'h ratio':>9}{'rows@clip':>11}{'moved':>7}{'top6%':>7}{'s':>7}")
+            for arm_name, kw in (("metric=h", {"refit_metric": h}),
+                                 ("reach_floor", {"refit_reach_floor": True}),
+                                 ("metric=h+floor", {"refit_metric": h,
+                                                     "refit_reach_floor": True})):
+                per_sigma = {}
+                for m in (1.0, 0.75):
+                    r, _rs = arm(m * base, deep, kw, rs_base.get(m))
+                    r["refit_arm"] = arm_name
+                    per_sigma[m] = r
+                    b.doc["arms"][f"{uname}/R{q}/{arm_name}/m{m:g}"] = r
+                ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
+                for m in (1.0, 0.75):
+                    r = per_sigma[m]
+                    b.log(f"    {arm_name:<22}{m:>6.2f}{r['wt']:>10.5f}"
+                          f"{r['h']:>10.5f}"
+                          f"{(ratio if m == 0.75 else 1.0):>9.4f}"
+                          f"{r['rows_at_clip']:>11d}{r.get('rows_moved', 0):>7d}"
+                          f"{100 * r['top_h_share']:>7.2f}{r['secs']:>7.0f}")
+                b.doc["arms"][f"{uname}/R{q}/{arm_name}/ratio"] = ratio
+                b.save()
+        del w, h, gv
+        torch.cuda.empty_cache()
     b.save()
     b.log(f"\nwrote {a.out}")
 
@@ -558,6 +618,10 @@ def main() -> None:
     p.add_argument("--rungs", type=int, nargs="+", default=[2048])
     p.add_argument("--sigmas", type=float, nargs="*", default=None)
     p.add_argument("--refits", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    p.add_argument("--units", nargs="+", default=[UNIT],
+                   help="unit names, or the single word all")
+    p.add_argument("--skip-2x2", action="store_true",
+                   help="walk only; for the multi-unit generality run")
     a = p.parse_args()
     torch.manual_seed(0)
     STAGES[a.stage](a)

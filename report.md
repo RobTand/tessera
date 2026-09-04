@@ -11,6 +11,37 @@ the rung is R2048 (8 b/wt). Nothing here is a served number.
 
 ---
 
+## 0. Defect or cost — the question, and what decides it
+
+The coordinator's question is whether the non-dyadic sigma is *a defect to fix*
+or *a cost to record*. The walk in §4 has already moved it off sigma: the
+sensitivity lives in `scale_refit`, not in the table. That relocates the
+question rather than answering it, so the answer is registered here **before
+the deciding arms ran**, against the 2×2 in `stage_refit`'s docstring
+(`refit_metric=h`, `refit_reach_floor=True`, and both):
+
+* **If `refit_metric=h` collapses the ratio toward 1.04** — the refit is a
+  **defect**, and a nameable one. #89's whole table was measured with an
+  h-blind per-row least squares and then scored on h; `refit_channel_scale`
+  already takes a `metric`, and the encoder already has the diagonal Hessian
+  in hand wherever a Hessian is supplied. The proposal is then on the refit,
+  not on `default_channel_sigma`, and it is still a weight-space screen: served
+  evidence remains owed in full (§8).
+* **If neither knob moves the ratio**, and each arm's own h falls monotonically
+  in the refit count while the *ratio between arms* grows — the documented
+  behaviour of this alternation under `trellis_weighting="scale"`, no `ldl`,
+  `metric=None` — then it is **basin sensitivity in a non-convex coordinate
+  descent**. There is no smooth objective in the residue for a constant to be
+  re-derived against, and the honest disposition is **a cost to record**: the
+  refit's gain is residue-dependent, the default happens to sit on a residue
+  where it gains 32%, and that is a fact about this unit to write down, not a
+  defect to repair.
+
+Either way `default_channel_sigma` does not move on this evidence. The two
+branches differ in whether a *different* knob acquires a proposal.
+
+---
+
 ## 1. Reproduction — exact, both rungs
 
 `experiments/ts89_dyadic_reach.py --stage repro`, results in
@@ -50,9 +81,9 @@ Hessian-weighted error on six of 3072 columns.
 
 **The sigma axis is a gauge up to powers of two.** `table(2σ) = 2·table(σ)`
 exactly but for about 2 of 16384 entries — the innermost quantiles, where the
-E4M3 subnormal floor breaks the grid's ×2 closure (12 entries differ by
-σ=17.66, 2 by σ=94.18; no entry of any unclamped table is below the smallest
-normal). So sigma's only free parameter is its **dyadic residue**
+E4M3 grid's smallest-magnitude floor breaks its ×2 closure (12 entries differ
+at σ=17.66, 2 at σ=94.18; no entry of any unclamped table lands below that
+floor, so this is quantiles snapping onto the floor, not halving through it). So sigma's only free parameter is its **dyadic residue**
 `log2(σ) mod 1`, and the issue's parameterisation is right. m=0.5 and m=1 share
 residue 0.55735 and measure identically; m=0.75 and m=1.5 share 0.14232.
 
@@ -62,6 +93,13 @@ sigmas are exactly proportional and the two normalised tables differ only in
 where the snap lands. Snapped-against-ideal relative energy is `6.976e-4` at
 the default and `7.031e-4` at m=0.75 — **a predicted h ratio of 1.004 against a
 measured 1.367.** The table's own snapping error is not what sets the h error.
+
+**And no part of the table carries it.** `ts89_table_surgery.py` grafts the
+default table's outermost N entries (rescaled by 0.75, matched by trellis
+state) into the m=0.75 table and sweeps N: 1, 2, 4, 8, 16, 32, 64, 128 entries
+all read 1.0369 → 1.0368. Replacing the whole outer eighth-of-a-percent of the
+alphabet with the default's own moves the reduced model by 1e-4. Whatever
+distinguishes the two sigmas is not localised in the table's tail.
 
 ## 4. The mechanism: the scale refit, not the table
 
@@ -143,6 +181,15 @@ after the reach stops moving. This also corrects #84's own claim that a
 clamp-blind sweep reads a flat error curve — the curve is not flat, and the
 quantity that shows why is `saturated`: 4 / 36 / 358 / 4120 of 16384 entries on
 the peak at ratios 1.25 / 1.5 / 2.0 / 4.0.
+
+That last row also corrects #89's own parenthesis. The issue flags `m=2` as the
+one clamping arm ("358 of 16384 entries pile on 448") and treats `m=1.25` and
+`m=1.5` as clean; they are not — they clamp 4 and 36 entries. #87's agent
+reached the same two counts independently. It does not change #89's conclusion
+(the two 70.64 arms are genuinely clamp-free and are the ones carrying the
+1.367), but it does mean that of the eight arms in the issue's table only four
+are clean gauges: `m=0.5`, `m=1`, `m=0.75` and `rho=0.5`. Any reading of the
+`m>=1.25` rows is a reading of the residue *and* the clamp together.
 
 **Landed on this branch** (commit `b85e233`, closes #84's reporting half):
 `window_table_reach()` returns requested vs realised reach, `delivered`,
