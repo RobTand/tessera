@@ -45,7 +45,14 @@ export IMG=$IMAGE TESSERA_KL_IMAGE=$IMAGE
 export TESSERA_KL_PORT=${TESSERA_KL_PORT:-8137}
 export TESSERA_KL_LOGDIR=$OUT
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}
-export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.35}
+# 0.15 of 121 GB is ~18 GB, against a 7.07 GiB teacher and four decoder
+# layers of KV at 4096 x 8.  The number has to be small AND has to match
+# what the pool granted: vLLM compares its fraction of the box's TOTAL
+# memory against what is FREE, and a serve that asks for more than the
+# box has left does not run slowly, it refuses to start ("Free memory ...
+# is less than desired GPU memory utilization").  Declare mem_gb=20 on
+# the pool action that runs this.
+export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.15}
 MODE=${TESSERA_SERVE_MODE:-resident}
 
 rc_teacher=skipped rc_student=skipped rc_census=skipped
