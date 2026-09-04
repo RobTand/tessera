@@ -484,3 +484,55 @@ and never exercised by a caller is a rule nobody has run.
 The container half is not ours to fix. Reported upward as a pool defect: a
 withdraw that releases an action's tokens must also reap the containers the
 action started, or the release is a lie.
+
+## What the bytes reconstruct, since the model cannot grade the route
+
+The KL above is not a quality number, and nothing downstream of the loader can
+be graded by it on this cut. What *can* be graded is the bytes.
+`experiments/moe_wire_weight_error.py` opens the served checkpoint, decodes the
+routed expert wires through the reader the plugin's own expert route calls
+(`moe_route.prepare_tessera_moe_experts`), and compares the result to the BF16
+rows the encoder was given, on the same shards the serve loaded.
+
+**It is a weight-space screen and it promotes nothing** (principle 3). What it
+buys is that the round trip — encode, write, index, read back, decode — is
+graded on real GLM expert weights against controls rather than against nothing,
+so a role-order or scale-plane defect in the exporter's MoE half would show as
+a number rather than as a serve that looks fine.
+
+Two RTN controls on the same rows, because one alone is a treatment and not a
+control:
+
+* **NVFP4 RTN** — E2M1 values, one E4M3 scale per 16 inputs, **4.5 bpp**. The
+  4-bit format this box serves natively, at *more* bytes than the wire, so the
+  comparison is not flattered by residency. It is RTN: no GPTQ, no JSO, so it
+  is the format's floor and not what the production recipe ships.
+* **FP8 RTN** — E4M3 values, one fp32 scale per output channel, **8 bpp**.
+  Twice the wire, so it brackets the answer from above rather than matching it.
+
+The wire's own residency is measured from the container lengths rather than
+assumed from the grid name, and printed beside both controls.
+
+**What it says.** 144 rows — three stacks × 16 experts × three roles, every
+routed expert in the checkpoint:
+
+| | geomean rel. error | residency |
+|---|---|---|
+| **Tessera wire, as served** | **0.06967** | **4.020–4.024 b/wt** (measured) |
+| NVFP4 RTN | 0.10763 | 4.5 bpp |
+| FP8 RTN | 0.02321 | 8 bpp |
+
+The wire is **0.647×** the NVFP4-RTN error at **0.89×** its bytes, and the
+ratio is tight across all 144 rows (0.634–0.668) rather than an average over a
+mix of good and broken ones. FP8 RTN at twice the residency is 3.00× better,
+which is the bracket it was chosen to be and not a loss.
+
+**What it does not say.** Nothing about served quality: this is weight space,
+and the NVFP4 control is RTN, so the production NVFP4 recipe (GPTQ + JSO) would
+sit somewhere below its floor and is not what was compared. Its value is
+narrower and real: no row exceeded a relative error of 0.5, which is the
+signature a swapped `w13`/`w2` role order or a mis-indexed scale plane would
+have left, so the exporter's MoE half writes what the reader reads. Receipt:
+`experiments/results/moe_wire_weight_error.cpu.json` (CPU arm, pool action
+`263d23d60564`); the 3-row GPU smoke that preceded it agrees to the third digit
+(0.0696 / 0.1057 / 0.658).
