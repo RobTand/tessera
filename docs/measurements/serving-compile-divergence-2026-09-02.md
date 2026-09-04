@@ -205,7 +205,7 @@ It is now measured: **61% of the autotuned kernels under one key changed.**
 > all 120 does not.  Second, "Three other workers were loading this box" is not
 > what makes this reproduce: across two runs of that probe the same record
 > diverged on an **idle** box (5.46 W of a ~140 W envelope) and *agreed* on a
-> loaded one (74.24 W), so load is neither necessary nor reliably sufficient.
+> loaded one (74.24 W), so load is neither necessary nor sufficient.
 
 **(c) The dumped graph also differs, and this one is not yet explained.** The
 same key's `computation_graph.py` records 42 of 56 `fused_add_rms_norm` calls at

@@ -128,6 +128,24 @@ their claim.
 
 ## 4. The determinism knob: wired, off, unmeasured
 
+> **Correction from `inductor-determinism-knob-2026-09-04.md` (#16).** The knob
+> has since been measured on GPU in the pinned serving image, and it does less
+> than this section assumes. Two builds *with the flag set as this wrapper sets
+> it* — an env var — still chose different `R0_BLOCK`/`num_warps` on a second
+> `torch.compile` entry in the same process, because the flag does not reach that
+> second entry: the first entry's kernels transcribe `'deterministic': True` and
+> the second's transcribe `False`. So "two otherwise identical arms that differ
+> on the flag get different fingerprints" is still true and still useful, but the
+> flag being *on* in a fingerprint does not mean the whole build was compiled
+> under it. Two consequences for what is written below: `deterministic_effective`
+> certifies on `fresh_compiles > 0`, and a build with more than one entry is
+> certified on the strength of its first; and the third bullet's "not measured:
+> whether two builds under the flag actually agree" now has a partial answer —
+> on a two-graph probe they did not. Whether a *serve* is affected turns on
+> whether vLLM's backbone compiles its submodules inside one Dynamo entry, which
+> that receipt states as open with the experiment that settles it.
+
+
 `TESSERA_SERVE_DETERMINISTIC=1` forwards `-e TORCHINDUCTOR_DETERMINISTIC=1`
 into the serve and stamps the flag into the identity, so a campaign cannot
 silently mix arms built with it and without: two otherwise identical arms that

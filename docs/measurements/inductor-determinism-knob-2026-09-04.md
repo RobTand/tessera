@@ -1,4 +1,4 @@
-# The inductor determinism knob, measured: as a serve would set it, it does not survive the first compile
+# The inductor determinism knob, measured: set as a serve sets it, it does not reach a second compile entry
 
 **Date** 2026-09-04 · **Box** sparky (GB10, sm121, driver 595.84) · **Image**
 `vllm/vllm-openai@sha256:61fc8a896b0a…` · **torch** 2.13.0+cu130 ·
@@ -64,10 +64,11 @@ compile's — and the flip is the same flip:
 `configs_hash` is identical throughout (`8a75395a…`), so the candidate set never
 changed and only the pick did.  Two things follow.
 
-**Box contention is sufficient, not necessary.**  The off arm diverged on an
-**idle** box (run 1) and agreed on a loaded one (run 2).  §3b of the earlier
-receipt explained the 120/196 by "three other workers were loading this box";
-that explanation is not needed and is not what makes this reproduce.
+**Box contention is neither necessary nor sufficient.**  The `off` arm — the
+like-for-like pair — diverged on an **idle** box (run 1, 5.46 W) and *agreed* on
+a loaded one (run 2, 74.24 W).  §3b of the earlier receipt explained the 120/196
+by "three other workers were loading this box"; that explanation is not needed,
+does not predict either of these two runs, and is not what makes this reproduce.
 
 **A scope correction the earlier receipt should carry.**  §3b reasons "a
 different `XBLOCK`/`num_warps` is a different reduction tree, so it is different
@@ -77,7 +78,7 @@ every arm of both runs — the fp32 reduction differences vanished under the bf1
 store.  The 0.017117 is measured; its attribution to those 120 records is
 inferred.  120 is an upper bound on how many moved a logit, not a count of them.
 
-## 3. The finding: the flag does not survive the first compile
+## 3. The finding: the flag governs the compile it reaches, and not the next one
 
 The flag plainly governs the compile it reaches.  In the `on` arm the **first**
 compile's kernels carry `'deterministic': True` and `has_loadstore_with_contiguous_rdim`
@@ -130,11 +131,31 @@ device-timed record in both builds (0 and 0) and makes both phases transcribe
 anyway": it would have, if the flag had still been set.  **The flag stopped
 applying.**
 
-**Therefore: `TORCHINDUCTOR_DETERMINISTIC=1`, set as an environment variable the
-way `TESSERA_SERVE_DETERMINISTIC=1` sets it, governs the first inductor compile
-in the process and not the ones after it.**  A serve that compiles N graphs from
-an empty cache gets a deterministic graph 1 and N−1 benchmarked ones, and run 2
-shows one of those N−1 flipping.
+**Therefore, exactly what was measured: `TORCHINDUCTOR_DETERMINISTIC=1`, set as
+an environment variable the way `TESSERA_SERVE_DETERMINISTIC=1` sets it, does not
+survive to a second `torch.compile` entry in the same process.**  The second
+entry benchmarks, and in run 2 its choice flipped between two flag-on builds.
+
+**What that costs a *serve* depends on a layer this probe cannot see.**  The two
+compiles here are two `torch.compile` wrappers — two Dynamo entries, one inductor
+compile under each.  A vLLM backbone is the other shape: **one** Dynamo entry
+whose `VllmBackend` splits the graph and runs several inductor compiles beneath
+it, which is the shape the compile-dispatch serve log reports when it says
+`num_submods=29 num_artifacts=3`
+(`/home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_compiled.log:29`;
+that line describes a build it then *loaded* from AOT at `:30`, so read it for
+the graph's shape, not as a count of fresh compiles).  Two hypotheses fit every
+observable above and they differ in what a serve gets:
+
+* the reset fires **per Dynamo entry** — then a backbone's submodule compiles all
+  sit inside the first entry, all get the flag, and a serve that makes one Dynamo
+  entry is covered;
+* the reset fires **per inductor compile**, or at first codegen (which the
+  first-compile `True` transcript is equally consistent with) — then a backbone
+  gets submodule 1 deterministic and the rest benchmarked.
+
+This probe does not discriminate them: it changed both layers at once.  The
+discriminator is small and named in section 5.
 
 ## 4. What this does to a gate we already have
 
@@ -143,14 +164,20 @@ a build on `inductor_deterministic and fresh_compiles > 0`.  Under section 3, a
 record with `fresh_compiles > 1` is certified on the strength of its first
 compile alone.
 
-The gate is **not changed here**, because changing it needs a number that does
-not exist yet: how many fresh inductor compiles a vLLM backbone build actually
-performs in one process.  The one compile-dispatch serve log that says anything
-(`/home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_compiled.log:29`)
-reports `num_artifacts=3 num_submods=29` — and it *loaded* that AOT artifact
-("Directly load AOT compilation from path …", `:30`) rather than building it, so
-it counts what was replayed, not fresh compiles.  Named here and in #16 rather
-than acted on.
+The gate is **not changed here**, and the reason is the open question at the end
+of section 3, not a missing count.  `fresh_compiles` counts lines matching
+`"Dynamo bytecode transform time"` in the serve log
+(`build_identity.py:113,157`) — that is a count of **Dynamo entries**, which is
+exactly the layer whose relationship to the reset is unresolved.  So:
+
+* if the reset fires per Dynamo entry, `fresh_compiles > 1` is precisely the
+  right refusal and this gate is one measurement away from correct;
+* if it fires per inductor compile, `fresh_compiles == 1` certifies a backbone
+  whose submodules after the first were benchmarked, and the count the gate would
+  need is one the serve log does not print at all.
+
+Picking a threshold before knowing which is true is guessing.  Named here and in
+#16 rather than acted on.
 
 ## 5. What was not measured
 
@@ -169,14 +196,55 @@ than acted on.
   An arm that agrees on a toy is not evidence a real build is reproducible, and
   outputs here were bitwise equal in every arm of both runs — so this probe
   cannot say what a tiling flip costs in KL.
+- **Which layer resets, and therefore what a serve gets.**  Section 3's two
+  hypotheses are not separated here.  The experiment that separates them is
+  small and needs no serve: compile two submodules through
+  `torch._inductor.compile_fx.compile_fx` inside **one** Dynamo entry (or with
+  no Dynamo entry at all) in one process with the flag set, and read the
+  `deterministic` key out of each one's `triton_heuristics` metadata.  Both `True`
+  means the reset is per Dynamo entry and a one-entry serve is covered; the
+  second `False` means every backbone submodule after the first is benchmarked.
+  Until that runs, `deterministic_effective()` stays as it is (section 4).
 - **The reset's mechanism.**  *Which* line clears the flag is not located.  A
-  grep of the pinned build finds **no assignment to `config.deterministic`
-  anywhere in `torch/_inductor`** (top level plus one directory down) — all
-  fourteen sites are reads.  So it is not a plain write; it is the config
-  module's own state machinery, and this receipt states the behaviour, not its
-  cause.
+  two-level grep of the pinned build (`torch/_inductor/*.py` and
+  `torch/_inductor/*/*.py`) finds **twelve direct reads of `config.deterministic`
+  and no assignment to it**.  That grep cannot see an indirect write —
+  `config.patch(deterministic=…)`, a `setattr`, a `load_config` dict — and did not
+  look for one, and it did not descend past one directory.  So: not a plain write
+  at those twelve sites; the rest is the config module's own state machinery, and
+  this receipt states the behaviour, not its cause.
 
-## 6. Provenance
+## 6. So what does #16's third bullet actually get?
+
+#16 asks, third bullet, for "a pinned inductor cache for measurement runs so a
+build is reproducible."  The determinism knob was a *proposed* way to get that
+without pinning anything; as wired it is now measured not to be one.  The
+mechanism that **is** measured to work is the pinned cache itself, and it already
+ships:
+
+* **Replay from one cache root is bit-identical.**  `historical-compiled vs
+  compiled` reads KL 0.000000 / 100.00% top-1 with the cache root present for
+  both builds (`serving-compile-dispatch-2026-09-03.md` §3, "What this does not
+  settle"), and the eager control `historical-eager vs eager` is 0.000000 as
+  well.
+* **Which build served an arm is stamped, not assumed.**
+  `tessera.serving.build_identity` digests the *contents* of the compile-cache
+  slot beside every KL dump, because the AOT key does not distinguish the two
+  builds the divergence receipt was written from
+  (`serve-build-identity-2026-09-02.md` §1).
+* **A campaign that rebuilt anyway is refused, not silently compared.**
+  `require_same_build()` (`build_identity.py:421`) fails a pair whose compiled
+  builds differ, `require_same_dispatch()` (`:433`) fails a pair that resolved
+  vLLM's dispatch pair differently, and since this branch a shell can reach both
+  through `build_identity compare --require {same,distinct,same-dispatch}`.
+
+So the operational answer is: pin the cache root for the length of a campaign,
+never empty it mid-campaign, and let the stamp refuse the pair when it happened
+anyway.  What is **not** available is a compiled build that reproduces *from an
+empty cache*, and this receipt is the reason the flag named for that job does not
+deliver it.
+
+## 7. Provenance
 
 Two runs, both on sparky, both inside the image resolved by `PYTHONPATH=src
 python3 -m tessera.serving.runtime_image pin`
