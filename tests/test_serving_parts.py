@@ -1,5 +1,6 @@
 """A serving part is incomplete by construction; only its checked union loads."""
 import json
+import stat
 import struct
 from pathlib import Path
 
@@ -87,6 +88,26 @@ def test_checked_union_writes_one_complete_checkpoint_without_reencoding(tmp_pat
     assert not (paths[0] / "config.json").exists()
     for rank, path in enumerate(paths):
         assert (out / f"part-{rank:05d}-model.safetensors").read_bytes() == (path / "model.safetensors").read_bytes()
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o400, 0o640])
+def test_merged_shards_add_read_bits_without_changing_private_parts(tmp_path, mode):
+    source, paths = _fixture(tmp_path)
+    originals = {}
+    for path in paths:
+        shard = path / "model.safetensors"
+        shard.chmod(mode)
+        originals[shard] = shard.read_bytes()
+    out = tmp_path / "merged"
+    parts.merge_serving_parts(paths, out, source)
+    read_bits = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH
+    for rank, path in enumerate(paths):
+        shard = path / "model.safetensors"
+        served = out / f"part-{rank:05d}-model.safetensors"
+        assert stat.S_IMODE(served.stat().st_mode) == mode | read_bits
+        assert served.read_bytes() == originals[shard]
+        assert shard.read_bytes() == originals[shard]
+        assert stat.S_IMODE(shard.stat().st_mode) == mode
 
 
 @pytest.mark.parametrize("field", ["code_sha256", "runtime_image", "options", "source"])

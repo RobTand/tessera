@@ -69,7 +69,10 @@ source/config/tokenizer hashes, encoder source and behavior fixture hashes, full
 dispatch-pinned runtime digest, and an index matching the hashed output files.
 It copies the containers unchanged under unique shard names, unions the schemes
 and ignores, derives totals from the combined module records, and writes the
-final `config.json` last. The runtime digest here names what the dispatch was
+final `config.json` last. Each assembled weight shard gains owner/group/other
+read bits so a root-squashed serving container can read it; no write or execute
+bits are added. Default copy assembly leaves the private source-part modes and
+all payload bytes unchanged. The runtime digest here names what the dispatch was
 asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
 
 Source coverage alone does not prove that a plan was fulfilled: an omitted
