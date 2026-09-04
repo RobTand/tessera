@@ -25,6 +25,16 @@
 > trace.
 > Nothing in this document is a placeholder standing in for a measurement that was
 > taken and disliked.
+>
+> **Since this was written, the KL gap and the latency deferral have owners,
+> and the KL gap has a number.** The GEMV's own served KL was taken by the
+> follow-up campaign filed as #102, which gave `kl_tool.py` a decode regime and
+> re-ran these two arms on this inode at M = 1: mutual `KL >= 0.012111` at
+> 91.02% top-1 over 256 scored forwards, receipt at
+> `docs/measurements/tessera-decode-regime-kl-2026-09-03.md`, with the arms'
+> disagreement filed as #110. The latency A/B §4 defers is tracked by #109.
+> Neither is restated here as this campaign's result; the pointers are here so a
+> reader who lands on this receipt is not left at its gaps.
 
 **What this is.** Issue #10 wired `fp8_gemv.streamed_apply` into the streamed
 `TESSERA_FP8` route and proved it bit-exact against the torch decoder at load.
@@ -327,6 +337,22 @@ comparison is against a differently-produced reference. That needs a serve, a
 teacher rebuild and a change to `kl_tool.py` (which lives outside this repo), so
 it is filed rather than fixed here.
 
+**And that is what closed it, filed as #102 and measured the same night.**
+`kl_tool.py` grew an opt-in `--regime decode` in which every scored position is
+an M = 1 forward, verified per request from
+`usage.prompt_tokens_details.cached_tokens` rather than asserted, with the
+teacher re-dumped in the same regime and cross-regime `compare` refused
+outright. Re-run over these two arms on this inode, the decode regime reads
+mutual `KL >= 0.012111` at 91.02% top-1 over 256 positions where the prefill
+regime above reads `0.000000` at 100.00%, and the route trace shows why: 28 672
+`tessera_window_gemv::gemv` launches on the decode dump's scored forwards and
+zero on the prefill dump's. Against the BF16 teacher in that regime, arm A reads
+`KL >= 0.436065` and arm B `KL >= 0.432477` — **two arms, two KLs**, which is
+what #83 asked for. That receipt declines to say which arm is closer to BF16 at
+256 positions, and files the arms' M = 1 disagreement as #110; read it there,
+not here. The receipt is
+`docs/measurements/tessera-decode-regime-kl-2026-09-03.md`.
+
 ### Method
 
 Method: `kl_tool.py dump` against each served arm, then `compare`
@@ -344,7 +370,11 @@ the interesting result rather than the mean.
 campaign.** Two arms were taken before the box degraded; both are reported below,
 both are labelled contended, and **no A-vs-B ratio is computed from them.** This
 is the honest outcome rather than a missing one: the numbers exist, they are
-recorded, and they are not evidence about the lane.
+recorded, and they are not evidence about the lane. **The ratio this section
+does not compute is tracked as #109**, which carries the discipline it needs:
+an idle-power trace recorded before the run starts, both arms in one process and
+one session, and power read against the ~140 W envelope rather than
+`gpu_utilization`.
 
 ### What was measured, and why it is not a result
 
