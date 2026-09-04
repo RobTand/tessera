@@ -351,20 +351,18 @@ def test_fused_replay_equals_the_eager_path_bit_for_bit(memory):
     inductor was available -- which is the same class of bug as a producer and
     consumer disagreeing about the wire.
     """
-    from tessera.decode import _fused_replay, replay_body
+    from tessera.decode import replay_body
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     code = ConvCode(memory=memory)
     for rate in (1, 2, 3):
         forest = build_forest(rate)
         bits = torch.randint(0, 1 << rate, (129, 96), device=device, dtype=torch.uint8)
+        # No ``cache_clear()`` around the toggle: the env var is read per call.
         with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "0"}):
-            _fused_replay.cache_clear()
             eager = replay_body(bits, forest, code)
-        _fused_replay.cache_clear()
         fused = replay_body(bits, forest, code)
         assert torch.equal(eager, fused)
-    _fused_replay.cache_clear()
 
 
 def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
@@ -446,3 +444,23 @@ def test_the_diagonal_planes_are_little_endian_by_the_format_not_by_the_host():
     # stream, so the swap has to change the answer.
     swapped = struct.pack(">5e", *(float(v) for v in values))
     assert not torch.equal(unpack_fp16(swapped, len(values)), values)
+
+
+def test_the_fusion_switch_is_read_on_every_call_not_once_per_process():
+    """``TESSERA_FUSED_REPLAY`` was read *inside* an ``lru_cache(maxsize=1)``,
+    so the first caller in a process decided for every later one: a serve or a
+    test that set the variable afterwards silently got the earlier decision.
+    Both existing togglers only passed because they called ``cache_clear()``
+    by hand around the toggle, which is a workaround for this and not a
+    property of the knob -- so this test deliberately does not clear anything.
+    """
+    from tessera import decode
+
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "1"}):
+        first = decode._fused_replay()
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "0"}):
+        assert decode._fused_replay() is None
+        assert decode._fused_decode() is None
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "1"}):
+        # And back: the compile is cached, the decision is not.
+        assert decode._fused_replay() is first

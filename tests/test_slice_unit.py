@@ -517,16 +517,12 @@ def test_fused_and_eager_replay_agree_on_a_shard(units, monkeypatch, fused):
     unit, forests, grid, blob = units["e2m1-tcq-lut-release"]
     parsed = parse_unit_artifact(blob, device=DEVICE)
     shard = slice_unit(parsed, rows=(16, 32))
+    # The env var is read per call, so setting it is enough; the compile
+    # cache holds compiled functions and never the decision to use them.
     monkeypatch.setenv("TESSERA_FUSED_REPLAY", fused)
-    decode._fused_replay.cache_clear()
-    decode._fused_decode.cache_clear()
-    try:
-        codes = decode_codes_mixed(shard, parsed.forests, parsed.code)
-        full = decode_codes_mixed(parsed.unit, parsed.forests, parsed.code)
-        assert torch.equal(codes, full[16:32])
-    finally:
-        decode._fused_replay.cache_clear()
-        decode._fused_decode.cache_clear()
+    codes = decode_codes_mixed(shard, parsed.forests, parsed.code)
+    full = decode_codes_mixed(parsed.unit, parsed.forests, parsed.code)
+    assert torch.equal(codes, full[16:32])
 
 
 # ------------------------------------------------------------- the RELEASE plane

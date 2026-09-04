@@ -194,32 +194,49 @@ def _decode_core(
     return reach_flat[anchor.int() * width + completion.int()]
 
 
-@functools.lru_cache(maxsize=1)
+#: Set to "0" to force the eager decode chains.  Read per call, not once per
+#: process: the read used to sit inside the ``lru_cache`` below, so the first
+#: caller in a process decided for every later one and anybody who set the
+#: variable afterwards silently got the earlier answer.  The two tests that
+#: toggle it only ever passed because they call ``cache_clear()`` by hand
+#: around the toggle, which is a workaround for this defect rather than a
+#: property of the knob.
+_FUSED_REPLAY_ENV = "TESSERA_FUSED_REPLAY"
+
+
+def _fusion_enabled() -> bool:
+    """Whether the compiled decode chains may be used, as the environment
+    says *now*.  One dict lookup; the compile itself is still cached."""
+    return os.environ.get(_FUSED_REPLAY_ENV, "1") != "0"
+
+
+@functools.lru_cache(maxsize=2)
+def _compiled(function):
+    """``function`` under inductor, or ``None`` if that is refused.
+
+    ``dynamic=True`` because a model presents hundreds of Linear shapes and a
+    recompile for each would cost more than the fusion saves.  Cached on the
+    function, which is what is expensive; whether to *use* it is
+    ``_fusion_enabled``'s question and is asked every call.
+    """
+    try:
+        return torch.compile(function, dynamic=True)
+    except Exception:  # pragma: no cover - no inductor, no fusion, still correct
+        return None
+
+
 def _fused_decode():
     """``_decode_core`` fused, or ``None``.  See ``_fused_replay``."""
-    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
-        return None
-    try:
-        return torch.compile(_decode_core, dynamic=True)
-    except Exception:  # pragma: no cover
-        return None
+    return _compiled(_decode_core) if _fusion_enabled() else None
 
 
-@functools.lru_cache(maxsize=1)
 def _fused_replay():
     """``_replay_core`` fused into one kernel, or ``None`` if that is refused.
 
-    ``dynamic=True`` because a model presents hundreds of Linear shapes and a
-    recompile for each would cost more than the fusion saves.  Set
-    ``TESSERA_FUSED_REPLAY=0`` to force the eager path: the two must agree
+    ``TESSERA_FUSED_REPLAY=0`` forces the eager path: the two must agree
     bit-for-bit, and a test asserts they do.
     """
-    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
-        return None
-    try:
-        return torch.compile(_replay_core, dynamic=True)
-    except Exception:  # pragma: no cover - no inductor, no fusion, still correct
-        return None
+    return _compiled(_replay_core) if _fusion_enabled() else None
 
 
 @functools.lru_cache(maxsize=32)
