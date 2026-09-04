@@ -51,6 +51,11 @@ non-inert change; an unresolved loader reaching a conftest forces the full
 population. The selector reports those unresolved importers in its receipt.
 One-directory conftest globs resolve to ordinary edges; recursive, escaping or
 otherwise unresolved path expressions retain the conservative fallback.
+Parameter, return and annotated-assignment expressions retain potential loader
+dependencies even when annotation evaluation is deferred. Function annotations
+use the defining scope (including a method's class scope), not value-parameter
+locals; generic type-parameter names remain unknown in a separate annotation
+scope instead of borrowing an outer file path.
 A conftest change reaches its entire test population; a delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.

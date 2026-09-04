@@ -52,6 +52,7 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node):
         self.scope.bind(node.target, node.value)
+        self.visit(node.annotation)
         if node.value:
             self.visit(node.value)
 
@@ -116,6 +117,21 @@ class _Scanner(ast.NodeVisitor):
             for expression in node.args.defaults + node.args.kw_defaults:
                 if expression:
                     self.visit(expression)
+            # Annotations are potential dependencies even when evaluation is
+            # deferred. Value parameters do not bind in their annotation's
+            # defining scope; generic type parameters may shadow outer names.
+            annotation_scope = _Scope(prior)
+            for parameter in getattr(node, "type_params", []):
+                annotation_scope.bindings[parameter.name].append(None)
+            self.scope = annotation_scope
+            parameters = (node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+                          + [node.args.vararg, node.args.kwarg])
+            for parameter in parameters:
+                if parameter is not None and parameter.annotation is not None:
+                    self.visit(parameter.annotation)
+            if getattr(node, "returns", None) is not None:
+                self.visit(node.returns)
+            self.scope = prior
         for expression in getattr(node, "bases", []):
             self.visit(expression)
         for keyword in getattr(node, "keywords", []):
