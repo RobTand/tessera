@@ -137,13 +137,13 @@ exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8
 for i in $(seq 1 240); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
   if ! docker ps -q -f name="$NAME" | grep -q .; then
-    docker logs "$NAME" > "$LOG" 2>&1 || true
-    echo "serve died; log at $LOG"; tail -40 "$LOG"; docker rm -f "$NAME" >/dev/null 2>&1; exit 1
+    reap
+    echo "serve died; log at $LOG"; tail -40 "$LOG"; exit 1
   fi
   sleep 10
 done
 if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
-  echo "REFUSED: spec-decode active"; docker rm -f "$NAME" >/dev/null; exit 2
+  echo "REFUSED: spec-decode active"; reap; exit 2
 fi
 
 snap() {  # stage-name
