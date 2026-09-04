@@ -31,6 +31,22 @@ EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--t
 # serve lock: a refusal must not make the rest of the box queue behind it.
 source "$(dirname "$0")/runtime_image.sh"
 runtime_image_require "$IMAGE" || exit 2
+
+# TESSERA_KL_VLLM_EXTRA passes further vLLM arguments through, word-split on
+# spaces -- so write JSON compactly, with no spaces inside it.  It exists
+# because eager and compiled are not two ways of running one program on this
+# runtime: vLLM 0.28 picks a different RMSNorm and a different SiluAndMul when
+# it compiles (config/vllm.py:1392-1399, platforms/cuda.py:690-700), and an arm
+# that pins the dispatch is the only way to measure that switch rather than
+# inherit it.  See docs/measurements/serving-compile-dispatch-2026-09-03.md.
+#
+# TESSERA_KL_REQUIRE_IN_LOG is an ERE the serve's own startup log must match
+# before a single position is dumped.  A knob passed is not a knob in force --
+# vLLM resolves defaults over what the operator asked for -- so an arm that
+# means to pin something states the resolved line it expects and refuses on
+# anything else, rather than recording a mislabelled dump.
+
+# Which compiled build served this dump, recorded beside it (issue #30).
 source "$(dirname "$0")/build_identity.sh"
 # This wrapper does NOT pin a compile-cache root by default -- every arm gets
 # the container's own ephemeral ~/.cache/vllm, which is what the eager arms it
@@ -55,6 +71,11 @@ trap serve_lock_release EXIT
 # Only after the lock: removing a stale container of our own name is fine,
 # doing it before the lock would race another worker holding the serve.
 docker rm -f "$NAME" >/dev/null 2>&1 || true
+# The unquoted expansions below are word-split on purpose (that is how
+# --kernel-config and its JSON arrive as two argv entries).  Globbing is not
+# wanted with them: JSON carries [ and ], and a file in cwd that happened to
+# match would silently rewrite a serve's configuration.
+set -f
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
@@ -69,7 +90,9 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
   $EAGER_FLAG --trust-remote-code \
+  ${TESSERA_KL_VLLM_EXTRA:-} \
   >/dev/null
+set +f
 
 # The serve is the long pole; give it room but fail rather than hang forever.
 for i in $(seq 1 240); do
@@ -92,6 +115,25 @@ done
 if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   echo "REFUSED: serve has spec-decode active; the logprobs would be the draft model's"
   docker rm -f "$NAME" >/dev/null; exit 2
+fi
+
+# What the runtime resolved, checked against what this arm asked for, while
+# the container is still up and before anything is measured on it.
+if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
+  # Grep the FILE, never a pipe.  Under `set -o pipefail` (line 11) a
+  # `docker logs | grep -Eq` that MATCHES returns NON-zero: grep -q exits at the
+  # first hit and SIGPIPEs the producer, whose 141 is what pipefail propagates.
+  # So the piped form refused exactly the arms it should have passed, and did,
+  # on every arm that reached this gate on 2026-09-03.
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  if ! grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"; then
+    docker rm -f "$NAME" >/dev/null 2>&1
+    echo "REFUSED: the serve's own log does not match TESSERA_KL_REQUIRE_IN_LOG"
+    echo "  pattern: $TESSERA_KL_REQUIRE_IN_LOG"
+    echo "  log:     $LOG"
+    exit 4
+  fi
+  echo "  resolved config matches the arm's requirement"
 fi
 
 ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"

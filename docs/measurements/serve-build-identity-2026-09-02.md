@@ -172,3 +172,35 @@ records -- the CPU path has no Triton autotuning, so whether the flag
 suppresses device benchmarking is still unanswered. The campaign decision
 stands: the flag stays off until two K2 resident builds from empty caches with
 the flag are served and compared at 0.000000.
+
+---
+
+## Addendum, 2026-09-03: the identity gained a field, so the numbers above moved
+
+`docs/measurements/serving-compile-dispatch-2026-09-03.md` established that
+vLLM 0.28 flips two dispatch defaults together on "is inductor going to run"
+-- `custom_ops` and `ir_op_priority` -- and that pinning both makes a compiled
+serve bit-identical to an eager one (KL 0.000000, top-1 100.00%, 4088
+positions), while pinning either alone does nothing at all. A build identity
+that did not record which of those a serve resolved was blind to a difference
+worth 30% of the top-1 predictions, so the resolved dispatch is now part of
+both the identity and the fingerprint, and `require_same_dispatch` refuses a
+pair that differs on it.
+
+Three things in this receipt are therefore superseded rather than wrong:
+
+* **The field list** (§1) does not include the dispatch block. It should be
+  read as the field list of the identity *before* this addendum.
+* **The two quoted fingerprints** (`a4ddc1e047c8411c`, `3a4060ad47d0c89f`) no
+  longer reproduce: the fingerprint hashes one more field now. The *relation*
+  they were quoted to demonstrate -- that the two arms served different
+  compiled builds and that `compare --require same` refuses them -- is
+  unchanged, and that is what the example is for.
+* **The test count** (18) is now higher; `tests/test_serve_build_identity.py`
+  is the authority, not this line.
+
+Everything in §1 about why the naive stamp would have been worse than nothing
+stands unchanged, and the reason this addendum exists rather than an edit is
+that the numbers above were really produced, on the bytes named, at the time
+named. A receipt that is quietly rewritten to stay true is no longer a
+receipt.

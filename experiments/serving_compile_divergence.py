@@ -158,6 +158,7 @@ def _build_check(label: str, teacher: str, student: str,
                 note + f" -- this row claims the two arms are a '{expect}' build pair "
                 "and nothing on disk supports that")
         return {"status": "unstamped", "expected": expect,
+                "same_dispatch": None, "dispatch_known": False,
                 "fingerprints": {teacher: a and a["build_fingerprint"],
                                  student: b and b["build_fingerprint"]}}
     verdict = bid.compare(a, b)
@@ -173,11 +174,24 @@ def _build_check(label: str, teacher: str, student: str,
     return {
         "status": status,
         "expected": expect,
+        # Which implementations each arm ran (#16): on this runtime an eager
+        # arm and a compiled arm do not run the same program unless the
+        # dispatch was pinned, so a row that crosses regimes says so here
+        # rather than leaving the reader to infer it from the family name.
+        "same_dispatch": verdict["same_dispatch"],
+        "dispatch_known": verdict["dispatch_known"],
         "differs": verdict["differs"],
         "incomplete": verdict["incomplete"],
         "fingerprints": {teacher: a["build_fingerprint"],
                          student: b["build_fingerprint"]},
     }
+
+
+def _dispatch_mark(build: dict) -> str:
+    """One column for both questions: which build, and which implementations."""
+    if not build.get("dispatch_known"):
+        return build["status"] + " ?"
+    return build["status"] + (" =ops" if build["same_dispatch"] else " !ops")
 
 
 def _identity(meta: dict) -> dict:
@@ -274,11 +288,11 @@ def main() -> int:
             continue
         print(f"\n== {family} ==")
         print(f"  {'comparison':<{width}}  {'KL >=':>9}  {'top-1':>7}  {'p99':>8}  "
-              f"{'build':<15}  note")
+              f"{'build/dispatch':<15}  note")
         for r in sel:
             print(f"  {r['label']:<{width}}  {r['kl_lower_mean']:9.6f}  "
                   f"{r['top1_agree_pct']:6.2f}%  {r['kl_lower_p99']:8.4f}  "
-                  f"{r['build']['status']:<15}  {r['note']}")
+                  f"{_dispatch_mark(r['build']):<15}  {r['note']}")
     if problems:
         print("\n== problems ==")
         for p in problems:

@@ -34,6 +34,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -48,6 +49,7 @@ from tessera.serving.build_identity import (
     require_deterministic_build,
     require_distinct_build,
     require_same_build,
+    require_same_dispatch,
 )
 from tessera.serving.runtime_image import pinned_reference
 
@@ -449,3 +451,180 @@ def test_an_unstamped_row_is_still_compared_but_never_silently(tmp_path, monkeyp
     assert scd._build_check("plugin K2 resident", "old_a", "old_b",
                             problems)["status"] == "unstamped"
     assert problems == []
+
+
+# ------------------------------------------------ which program ran (#16) ---
+#
+# The eager-vs-compiled gap this repo measured (0.0269 on the FP8 route, 0.2445
+# on the NVFP4 route) is not the compiler reassociating a sum: vLLM 0.28 runs
+# different implementations of the same math depending on whether it compiles,
+# and prints which ones it resolved in its own startup line.  These fixtures are
+# that line, abridged from the two serves that produced the receipt's stock-twin
+# row: /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12 (eager)
+# and serve_qwen_stock_tessera-k2-graph.log:12 (compiled).
+
+_CFG = ("INFO 09-02 08:01:13 [core.py:122] Initializing a V1 LLM engine (v0.28.0) "
+        "with config: model='/home/rob/tessera-runs/stock/qwen3-0.6b-tessera-k2-q896-nvfp4', "
+        "quantization=compressed-tensors, enforce_eager={eager}, "
+        "compilation_config={{'mode': <CompilationMode.{mode}: {lvl}>, "
+        "'custom_ops': [{ops}], 'pass_config': {{'fuse_norm_quant': False}}}}, "
+        "kernel_config=KernelConfig(ir_op_priority=IrOpPriorityConfig("
+        "rms_norm=[{ir}], fused_add_rms_norm=[{ir}]), enable_flashinfer_autotune=True)\n")
+
+EAGER_DISPATCH_LOG = _CFG.format(eager="True", mode="NONE", lvl=0, ops="'all'",
+                                 ir="'vllm_c', 'native'")
+COMPILED_DISPATCH_LOG = _CFG.format(
+    eager="False", mode="VLLM_COMPILE", lvl=3, ops="'none'", ir="'native'") + (
+    "INFO 09-02 08:01:33 [decorators.py:708] saved AOT compiled function to "
+    f"/root/.cache/vllm/torch_compile_cache/torch_aot_compile/{AOT_KEY}/rank_0_0/model\n")
+# The arm this issue's fix makes possible: compiled, with the dispatch pinned
+# back to the kernels the eager arm ran (--kernel-config ir_op_priority,
+# --compilation-config custom_ops).
+PINNED_DISPATCH_LOG = _CFG.format(
+    eager="False", mode="VLLM_COMPILE", lvl=3, ops="'all'",
+    ir="'vllm_c', 'native'") + (
+    "INFO 09-02 08:01:33 [decorators.py:708] saved AOT compiled function to "
+    f"/root/.cache/vllm/torch_compile_cache/torch_aot_compile/{AOT_KEY}/rank_0_0/model\n")
+
+
+def test_the_log_says_which_implementations_the_runtime_resolved():
+    eager = read_serve_log(EAGER_DISPATCH_LOG)["dispatch"]
+    compiled = read_serve_log(COMPILED_DISPATCH_LOG)["dispatch"]
+    assert eager == {"custom_ops": ["all"],
+                     "ir_op_priority": {"rms_norm": ["vllm_c", "native"],
+                                        "fused_add_rms_norm": ["vllm_c", "native"]}}
+    assert compiled == {"custom_ops": ["none"],
+                        "ir_op_priority": {"rms_norm": ["native"],
+                                           "fused_add_rms_norm": ["native"]}}
+
+
+def test_an_eager_arm_and_a_compiled_arm_did_not_run_the_same_program(tmp_path):
+    """The refusal the 2026-09-02 pair should have hit before it was compared."""
+    root = _cache(tmp_path, "one", xblock=8, time_ms=1.0)
+    a = _stamp(EAGER_DISPATCH_LOG, tmp_path, "eager", cache_root=root, eager=True)
+    b = _stamp(COMPILED_DISPATCH_LOG, tmp_path, "compiled", cache_root=root, eager=False)
+    verdict = compare(a, b)
+    assert verdict["dispatch_known"] is True
+    assert verdict["same_dispatch"] is False
+    assert "dispatch" in verdict["differs"]
+    with pytest.raises(BuildIdentityError, match="different implementations"):
+        require_same_dispatch(a, b, why="eager vs compiled KL")
+
+
+def test_pinning_the_dispatch_makes_a_compiled_arm_comparable_to_an_eager_one(tmp_path):
+    """Same implementations, still different builds -- the two checks are orthogonal."""
+    root = _cache(tmp_path, "one", xblock=8, time_ms=1.0)
+    eager = _stamp(EAGER_DISPATCH_LOG, tmp_path, "eager", cache_root=root, eager=True)
+    pinned = _stamp(PINNED_DISPATCH_LOG, tmp_path, "pinned", cache_root=root, eager=False)
+    require_same_dispatch(eager, pinned, why="pinned-dispatch A/B")
+    assert compare(eager, pinned)["same_build"] is False
+
+
+def test_a_log_that_does_not_record_the_dispatch_certifies_nothing(tmp_path):
+    """Absence of the field is not agreement -- an old log must refuse, not pass."""
+    root = _cache(tmp_path, "one", xblock=8, time_ms=1.0)
+    a = _stamp(BUILD_LOG, tmp_path, "old_a", cache_root=root, eager=False)
+    b = _stamp(EAGER_DISPATCH_LOG, tmp_path, "new_b", cache_root=root, eager=True)
+    assert a["identity"]["dispatch"] is None
+    assert compare(a, b)["same_dispatch"] is False
+    with pytest.raises(BuildIdentityError, match="does not record the dispatch"):
+        require_same_dispatch(a, b, why="mixed-vintage A/B")
+
+
+def test_the_dispatch_is_part_of_the_build_identity(tmp_path):
+    """It decides the arithmetic, so it belongs in the fingerprint, not beside it."""
+    root = _cache(tmp_path, "one", xblock=8, time_ms=1.0)
+    a = _stamp(COMPILED_DISPATCH_LOG, tmp_path, "default", cache_root=root, eager=False)
+    b = _stamp(PINNED_DISPATCH_LOG, tmp_path, "pinned", cache_root=root, eager=False)
+    assert a["build_fingerprint"] != b["build_fingerprint"]
+
+
+@pytest.mark.parametrize("log,expected", [
+    ("/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log",
+     {"custom_ops": ["all"],
+      "ir_op_priority": {"rms_norm": ["vllm_c", "native"],
+                         "fused_add_rms_norm": ["vllm_c", "native"]}}),
+    ("/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log",
+     {"custom_ops": ["none"],
+      "ir_op_priority": {"rms_norm": ["native"],
+                         "fused_add_rms_norm": ["native"]}}),
+])
+def test_the_real_serve_logs_of_the_measured_pair(log, expected):
+    """Against the two logs the 0.2473 stock-twin row was measured from."""
+    path = Path(log)
+    if not path.is_file():
+        pytest.skip(f"{log} is not on this box")
+    assert read_serve_log(path.read_text(errors="replace"))["dispatch"] == expected
+
+
+# ---------------------------------------------------------------- the gate --
+# A gate that refuses on a match (#16)
+
+_WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
+
+
+def test_a_matching_pattern_returns_zero_only_when_the_producer_is_not_piped():
+    """``producer | grep -q`` returns NON-zero on a match under ``pipefail``.
+
+    grep -q exits at the first hit, the producer takes SIGPIPE and dies 141, and
+    that is the status ``set -o pipefail`` propagates.  This is not a hypothesis:
+    it is what ``serve_and_dump_kl.sh`` did to every arm of the dispatch ladder
+    on 2026-09-03, refusing each serve whose log said exactly what the arm had
+    asked for.  ``yes`` is used as the producer because it is guaranteed to
+    still be writing when grep leaves; a short producer may finish first and
+    hide the bug, which is how it survived review.
+    """
+    piped = subprocess.run(
+        ["bash", "-c", "set -euo pipefail; yes match 2>/dev/null | grep -Eq match"],
+        capture_output=True)
+    assert piped.returncode != 0, (
+        "the piped form is expected to FAIL on a match; if it now succeeds the "
+        "premise of the fix below has changed and the fix should be re-argued")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "serve.log"
+        log.write_text("match\n" * 100000)
+        filed = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; grep -Eq match {log}"],
+            capture_output=True)
+    assert filed.returncode == 0
+
+
+def test_the_serve_wrapper_greps_its_log_file_rather_than_a_pipe():
+    """The wrapper's own gate must use the form that survives a match."""
+    body = _WRAPPER.read_text()
+    assert "TESSERA_KL_REQUIRE_IN_LOG" in body
+    assert 'docker logs "$NAME" 2>&1 | grep' not in body, (
+        "the require gate is piping docker logs into grep again; under pipefail "
+        "that refuses precisely the arms whose log matches")
+    assert 'grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"' in body
+
+
+def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
+    """Absence must not read as agreement -- the thing the field exists for.
+
+    `custom_ops` and `ir_op_priority` are printed on the same startup line, and
+    vLLM 0.28 flips them together.  Returning a record when only one of them
+    matched left the other key `None` while `dispatch` itself was no longer
+    `None`, so the record claimed the dispatch was *known* and two half-parsed
+    arms compared equal on the half that was missing.  When the halves really
+    differ that is worth 30% of the top-1 predictions
+    (`docs/measurements/serving-compile-dispatch-2026-09-03.md` section 3).
+    """
+
+    ops_only = "... enforce_eager=False, 'custom_ops': ['all'], other=1)"
+    ir_only = ("... ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c'], "
+               "fused_add_rms_norm=['vllm_c']))")
+    both = ("... 'custom_ops': ['all'], "
+            "ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c'], "
+            "fused_add_rms_norm=['vllm_c']))")
+
+    from tessera.serving import build_identity as module
+
+    assert module._read_dispatch(ops_only) is None
+    assert module._read_dispatch(ir_only) is None
+
+    read = module._read_dispatch(both)
+    assert read is not None
+    assert read["custom_ops"] == ["all"]
+    assert read["ir_op_priority"]["rms_norm"] == ["vllm_c"]
