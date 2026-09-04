@@ -647,6 +647,15 @@ So `L` is not a resolution knob with a reach knob beside it: **`L` buys
 resolution *and* reach at once, and only `L` costs bytes.** Two axes that
 move the same physical quantity cannot be searched one at a time.
 
+That also names the one comparison this grid cannot make.  `L=16` at ratio 1
+has reach 4.312, which is the reach `L=14` would have at ratio 1.078 -- a
+value the grid does not contain (its ratios are 1.0, 1.25, sqrt(2), 1.75).
+So every `L` comparison here moves resolution *and* reach together, and the
+grid cannot say which of the two the winning cell is buying.  A matched-reach
+arm (`L=16 r=1`, vs `L=14 r=1.078`) would separate them; it is a follow-up,
+not a correction, because the shipped path is ratio 1 and the verdict below
+is about the pair as it would actually be spelled.
+
 The second thing the diagnostic says is that **rows-over-reach is not the
 objective**. At the shipped pair, 37-52% of GLM expert rows exceed the window
 table's reach; ratio 1.25 takes that to 0.2-0.9% -- and at R=4 it makes the
@@ -690,6 +699,23 @@ Two reasons, both measurable and both in the tables above:
   **0.374-0.515** across the six experts, and the dense spread is the point:
   one recipe is serving units whose reach demand differs by 5x.
 
+### The gate held, and the axis disqualified in advance came back agreeing
+
+`wt` was ruled out as a gate before the run because it is monotone in `L` --
+a wider table can only fit the weights better.  **Byte matching retired that
+premise.**  At matched bytes a wider table is paid for out of the rung, and
+`wt` is no longer monotone: on dense Qwen at R=4 it *rises* with `L`
+(0.9333 / 1.0000 / 1.1724 at L = 12 / 14 / 16), on GLM experts at R=8 it
+*falls* (1.1015 / 1.0000 / 0.9290).  Opposite directions on the same axis is
+not something a monotone quantity does.
+
+And with the premise gone, all three axes agree on direction at every rung on
+both populations -- dense R=4 picks `L=12` on `wt` (0.9333) and on the gate
+`h` (0.8916); GLM R=8 picks `L=16 r=1.25` on `wt` (0.8997) and on the gate
+`out` (0.8964).  Three metrics that disagree about magnitude and agree about
+sign is a stronger reading than one gate alone, and it means the verdict below
+does not rest on the choice of gate.
+
 ### The reading, against the criteria registered before the run
 
 * **ADOPT-WORTHY** required a strict majority of per-unit wins **and** a
@@ -724,10 +750,18 @@ has the rate in hand (`max(14, R)`) if Rob ever wants to spend it.
   BF16 lane, so nothing here is promotable and nothing is proposed.
 * **Three rungs, not five.** R = 4, 6, 8. R = 5 and 7 (q256 1280, 1792) are
   the obvious fill-in and would say whether the R=4 optimum walks or jumps.
-* **The expert-index widening was still running** when this was written:
-  `pair_glm_experts.json` covers experts 1 and 2 at layer 5 so far, and
-  reproduces the expert-0 pattern exactly (R=4 shipped best; R=8
-  `L=16 r=1.25` 2/2 at 0.8965x). Layers 20 and 42 are in flight.
+* **The expert-index widening is still running**, and what has landed
+  reproduces the expert-0 pattern exactly. `pair_glm_experts.json`
+  (`--experts 1 2`, layers 5/20/42, `gate_proj`, R = 4 and 8) has **3 of 6**
+  units complete -- `L5.e1`, `L5.e2`, `L20.e1` -- each with 12 of 12 cells at
+  both rungs and 6 of 6 controls byte- and tensor-identical. On those three:
+  **R=4, the shipped `(14, 1.0)` is best of all twelve cells, 0/3 wins for
+  every other arm**; R=8, `L=16 r=1.25` wins **3/3** at 0.8964x (the six
+  expert-0 units gave 0.8965x). So the R=4 CONFIRMED reading now stands on
+  nine expert units drawn from three layers and three expert indices, and the
+  R=8 result on nine as well. `L20.e2`, `L42.e1`, `L42.e2` are in flight; the
+  re-read is
+  `PYTHONPATH=experiments python experiments/pair_report.py /mnt/shared/tessera-runs/reach/pair_glm_experts.json`.
 * **Wall times in these runs are not a measurement.** Three sweeps shared two
   boxes with a dozen other agents' jobs; the controls are byte- and
   tensor-identity, which is unaffected, and the seconds column is not a claim.
