@@ -559,6 +559,23 @@ def _verdict(arms: list[dict]) -> str:
             return f"red on one of: {names}"
         if record.get("returncode") not in (0, None):
             return f"red on one of: {names}"
+    # A population in which nothing ran is not a green population.  Every
+    # check above is satisfied by an arm that collected the suite and skipped
+    # all of it -- no failures, exit 0, a surface on disk -- which is the shape
+    # this tool would take if the fix for tessera#114 were "make the x86 arm
+    # skip whatever it cannot import".  That is the green lie the refusal above
+    # exists to prevent, arriving through the other door.  A verdict is allowed
+    # to say green only about tests that were actually executed.
+    for record in arms:
+        counts = (record.get("surface") or {}).get("counts")
+        if counts is None:
+            continue
+        if counts.get("passed"):
+            continue
+        skipped = counts.get("skipped") or 0
+        return ("incomplete: the " + record["arm"] + " arm published a "
+                "population in which nothing ran (0 passed, "
+                + str(skipped) + " skipped)")
     # Second leg, and the reason it exists: everything above is satisfied by a
     # run that skipped the entire surface it was submitted to cover.  The GPU
     # arm's whole claim rests on ``--strict-cuda`` having refused a device-less
