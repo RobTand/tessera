@@ -88,6 +88,16 @@ were additionally run on their own against the same tree.
 
 ## Measurement
 
+**Trees, pinned.** The decisive arms are `--levers 0,auto,1` in ONE process on
+ONE checkout — branch `muse/ts-94-window`, and `0` there is the pre-change
+machine (per-call plan, eager step loop) reproduced by the branch's own code
+rather than by a second tree. That is deliberate: a lever sweep whose arms
+differ only in the lever cannot be split across builds without reintroducing
+the confound the interleaving removes. The separate master leg is a *control*
+on the pristine snapshot of `82cdf51` (`ts-94-before`), and it answers one
+question only — that the lever does nothing on the tree that has no plan cache.
+Nothing was rebased between legs.
+
 FILLED IN BELOW.
 
 ## Review corrections (this branch's own code — not separable)
