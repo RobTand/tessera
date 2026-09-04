@@ -526,7 +526,7 @@
     }
    }
   ],
-  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for both families because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
+  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for every declared family because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
  },
  "expert_parallel": {
   "axis": "vllm_expert_parallel_size",
