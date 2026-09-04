@@ -44,10 +44,34 @@ has cannot be attested by an artifact.
 
 ## Result
 
-| arm | `tests/test_serving_name_mapping.py` |
+**In the pinned image:** `tests/test_serving_name_mapping.py` — **15 passed**,
+vLLM 0.28.0, sparky, pbrun action `4e6a943d0559`, 16 s. The replay and the
+real `WeightsMapper` agree on every probe name of every table.
+
+**How far master was from the runtime.** The in-image arm establishes
+`vllm_module_name(this branch) == WeightsMapper`, so master's distance from
+the runtime is master's distance from this branch, which needs no image to
+measure. Over the same probe set:
+
+| table | names where master ≠ the attested replay |
 |---|---|
-| master `766033c` (unfixed replay, same tests, same image) | see below |
-| this branch | **15 passed** |
+| `substr_twice` | 2 |
+| `prefix_chain` | **22** |
+| `suffix_chain` | 4 |
+| `substr_then_prefix_then_suffix` | 2 |
+| the three dropping tables | 0 |
+| `glm53-flash-4layer.json` (committed) | **0** |
+| `qwen3-0.6b.json` (committed) | **0** |
+
+Reproduce with `experiments/vllm_module_name_distance.py master` (no image,
+no GPU; it execs the named revision's function out of `git show`).
+
+e.g. `model.` under `{"model.": "language_model.", "language_model.": "lm."}`
+→ master `language_model.`, runtime `lm.`; and
+`model.layers.0..block.mlp..block.down_proj` under a single substring rule →
+master rewrites both occurrences, the runtime rewrites one. The two zeros on
+the committed receipts are the issue's "it fails closed today", measured
+rather than argued.
 
 The pure-suite half, which needs no image, is
 `tests/test_serving_construction.py`. On master `766033c` it fails 7 of its 9

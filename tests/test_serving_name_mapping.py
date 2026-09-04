@@ -212,7 +212,8 @@ def _real_mapper(table):
     return WeightsMapper(**kwargs).get_unstacked_mapper()
 
 
-@pytest.mark.parametrize("name,table", list(_tables()), ids=lambda v: v if isinstance(v, str) else "")
+@pytest.mark.parametrize("name,table", list(_tables()),
+                         ids=lambda v: v if isinstance(v, str) else "")
 def test_vllm_module_name_agrees_with_the_real_weights_mapper(name, table):
     """The attestation #108 asks for: our replay against vLLM's loop, name by name."""
     unreplayable = sorted(f for f, v in table.items() if v and f not in _MAPPER_FIELDS_REPLAYED)
