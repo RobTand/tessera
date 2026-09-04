@@ -129,16 +129,20 @@ lane.
    so the day someone attests a reachable BF16 rung, the test says so. Not fixed
    here: choosing that family's rung is a wire decision, not this issue's.
 2. **The E4M3 `lane_eligibility` cells declare `scaled_mm_w8a8` for both regimes
-   and there is no cell for the GEMV lane.** The census below is the observation
-   someone could attest one from; writing the cell is a contract change with its
-   own gate, out of scope here.
+   and there is no cell for the GEMV lane.** That was accidentally true while the
+   lane was unreachable and is false on this artifact: the census below records
+   `tessera_window_gemv::gemv` in the decode regime. The census is the observation
+   someone could attest a cell from; writing it is a contract change with its own
+   gate. Filed as tessera#111, not fixed here.
 
 ### What the served pair is, and what it is not
 
 The served KL below prices the **wire** at q256 1024 against the untouched
 q256 1006 baseline. It is **not** a lane measurement: `kl_tool dump` echoes
 512-token prompts, so every forward is M = 512, far past the GEMV's
-`GEMV_MAX_M = 8`, and both arms decode through `torch_window`. The lane's own
+`GEMV_MAX_M = 8`, so **both arms execute `torch._scaled_mm`, not the GEMV
+kernel** -- on R1024 off the lane's own repack, on R1006 off the materialised
+path, but the same arithmetic either way. The lane's own
 numerics are a separate, already-measured fact (bit-exactness and throughput:
 `docs/measurements/tessera-window-kernel-2026-09-02.md`); this pair answers
 (g) -- what the rate constraint costs at matched-ish bytes on a served metric --
@@ -411,6 +415,12 @@ Impacted set (`tools/impacted_tests.py --ref master...HEAD`, verdict `narrowed`,
 ```
 1634 passed, 8 skipped, 14 warnings in 579.89s (0:09:39)
 ```
+
+That run is PrismaBuild action **`8fa87816b794`** (`experiments/ts104_chain.sh`,
+returncode 0); the number above is quoted from its stdout, under the leg
+`=== impacted tests (tools/impacted_tests.py --ref master...HEAD)`. Every other
+number in this receipt comes from that same action's log or from the receipts it
+wrote under `/home/rob/tessera-runs/ts104/`.
 
 ## Reproduce
 
