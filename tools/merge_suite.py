@@ -94,10 +94,33 @@ ARMS = {
 }
 
 
-def _git(checkout: Path, *args: str) -> str:
-    out = subprocess.run(["git", "-C", str(checkout), *args],
-                         capture_output=True, text=True, timeout=30)
-    return out.stdout.strip() if out.returncode == 0 else ""
+# A checkout on /mnt/shared is on NFS, and `git status --porcelain` there
+# while a suite is running in it took longer than the 30 s this used to allow.
+GIT_PROBE_TIMEOUT_S = 180
+
+
+def _git(checkout: Path, *args: str) -> str | None:
+    """Git's answer, or ``None`` when git did not give one.
+
+    ``None`` is not ``""``.  An empty ``git status --porcelain`` means the tree
+    is clean; a probe that timed out or errored means nothing was established,
+    and the two used to collapse into ``working_tree_dirty: false`` -- a
+    receipt claiming a clean tree it never looked at.
+
+    The timeout also used to propagate.  ``--resume`` of a real population died
+    on ``TimeoutExpired`` from this call, on a checkout that had a suite
+    running in it, and wrote no receipt and no ledger row: a measurement lost
+    to a probe that was never load-bearing.  A receipt is worth more than one
+    of its provenance fields.
+    """
+
+    try:
+        out = subprocess.run(["git", "-C", str(checkout), *args],
+                             capture_output=True, text=True,
+                             timeout=GIT_PROBE_TIMEOUT_S)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return out.stdout.strip() if out.returncode == 0 else None
 
 
 def _population_of(checkout: Path) -> dict:
@@ -120,6 +143,7 @@ def _population_of(checkout: Path) -> dict:
         if master:
             master_ref = ref
             break
+    dirty = _git(checkout, "status", "--porcelain")
     return {
         "checkout": str(checkout),
         "commit": head,
@@ -127,7 +151,8 @@ def _population_of(checkout: Path) -> dict:
         "master_ref_used": master_ref or "none resolved",
         "master_head_at_submit": master or None,
         "is_master_head": (head == master) if (head and master) else None,
-        "working_tree_dirty": bool(_git(checkout, "status", "--porcelain")),
+        # None where the probe did not answer: "not established", never "clean".
+        "working_tree_dirty": (None if dirty is None else bool(dirty)),
     }
 
 

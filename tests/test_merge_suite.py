@@ -981,3 +981,45 @@ def test_no_test_here_can_write_into_the_receipt_store_the_real_runs_use():
         )
     # A guard that matched nothing would pass forever.
     assert checked >= 4, checked
+
+
+def test_a_probe_that_did_not_answer_is_not_a_clean_tree(tmp_path):
+    """``working_tree_dirty`` has three states, and ``false`` is not the default.
+
+    ``_git`` returned ``""`` for "git said nothing" and for "git failed", and
+    ``bool("")`` made both of them ``working_tree_dirty: false`` -- a receipt
+    asserting a clean tree it had not established.  Worse, the 30 s timeout
+    propagated: a ``--resume`` of a real x86 population died on
+    ``TimeoutExpired`` from ``git status --porcelain`` against a /mnt/shared
+    checkout that had a suite running in it, and wrote neither receipt nor
+    ledger row.  A provenance field nothing gates on must not be able to
+    destroy the measurement it annotates.
+
+    Both legs are exercised: a directory that is not a repository (git exits
+    non-zero) and a timeout short enough to be certain (the except branch).
+
+    Before this test::
+
+        >       assert population["working_tree_dirty"] is None, population
+        E       AssertionError: {'checkout': '.../plain', 'commit': '',
+        E       'describe': '', 'is_master_head': None, ...}
+        E       assert False is None
+    """
+
+    merge_suite = _module()
+
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+    population = merge_suite._population_of(not_a_repo)
+    assert population["working_tree_dirty"] is None, population
+    assert population["commit"] is None, population
+
+    original = merge_suite.GIT_PROBE_TIMEOUT_S
+    try:
+        merge_suite.GIT_PROBE_TIMEOUT_S = 0.000001
+        # ROOT is a real repository, so this can only end in the timeout.
+        timed_out = merge_suite._population_of(ROOT)
+    finally:
+        merge_suite.GIT_PROBE_TIMEOUT_S = original
+    assert timed_out["working_tree_dirty"] is None, timed_out
+    assert timed_out["commit"] is None, timed_out
