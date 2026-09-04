@@ -23,7 +23,17 @@ PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 RUNS=${RUNS:-/mnt/shared/tessera-runs/ldlq-block-serve}
 KLDIR=/mnt/shared/tessera-kl
 # The teacher the incumbent was read against, on the box it was dumped on.
-TEACHER=$KLDIR/qwen_rot_teacher_lina.json.npz
+# Overridable, because the bracket is not tied to one box: the two BF16
+# teacher dumps on disk -- one from gx10-6b77, one from sparky, twelve hours
+# apart -- agree at KL 0.000000 with 100% top-1 over all 4088 positions
+# (experiments/results/kl_teacher_cross_box.json), so this teacher may be read
+# from either box without a cross-box term entering the comparison.
+TEACHER=${TESSERA_KL_TEACHER:-$KLDIR/qwen_rot_teacher_lina.json.npz}
+# Optional second teacher.  Every arm is scored against it too, into a
+# separate kl_<label>.x.json, so the box-invariance above is re-checked per
+# ARM rather than only once at the teacher level.  Comparing is CPU work; a
+# second reading of an already-dumped student costs no serve.
+TEACHER_X=${TESSERA_KL_TEACHER_X:-}
 
 export PYTHONPATH=$REPO/src
 export TMPDIR=/home/rob/tmp
@@ -48,6 +58,10 @@ run () {   # dump-label, twin-name
   fi
   $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$out.npz" \
       --out "$RUNS/kl_$label.json" 2>&1 | tee "$RUNS/kl_$label.log" | tail -8
+  [ -n "$TEACHER_X" ] || return 0
+  echo "-- cross-check teacher $(basename "$TEACHER_X")"
+  $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER_X" "$out.npz" \
+      --out "$RUNS/kl_$label.x.json" 2>&1 | tee "$RUNS/kl_$label.x.log" | tail -4
 }
 
 # usage: ldlq_block_serve_ab.sh <candidate-arm> [more candidates...]
