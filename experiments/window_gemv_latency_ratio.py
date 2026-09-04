@@ -196,8 +196,24 @@ def lane_by_frames(events, t0: float, t1: float, base_s: float,
     by_tid: dict = {}
     for f in frames:
         by_tid.setdefault(f.get("tid"), []).append(f)
-    for v in by_tid.values():
+    # ONE INDEX PER TID, BUILT ONCE.  The predicate wanted below is only ever
+    # read as a boolean -- "does SOME frame starting at or before this launch
+    # still cover it" -- so a running maximum of the frame end times answers it
+    # exactly, and not as an approximation: a frame later in the sorted order
+    # cannot start before this launch, and one earlier is already folded into
+    # the maximum.  Asked per kernel instead, as a rebuilt timestamp list plus
+    # a backward walk, it is O(kernels x frames): on this issue's own trace
+    # pair (175 MB + 268 MB gzipped) that spent 3323 s of CPU without finishing
+    # while holding sparky's whole GPU offer at 5.2 W.
+    covers: dict = {}
+    for tid, v in by_tid.items():
         v.sort(key=lambda e: e["ts"])
+        starts, ends, running = [], [], float("-inf")
+        for f in v:
+            starts.append(f["ts"])
+            running = max(running, f["ts"] + f.get("dur", 0))
+            ends.append(running)
+        covers[tid] = (starts, ends)
     us, n, unattributed = 0.0, 0, 0
     for c, ks in kernels.items():
         inside_window = [k for k in ks
@@ -208,16 +224,9 @@ def lane_by_frames(events, t0: float, t1: float, base_s: float,
         if launch is None:
             unattributed += len(inside_window)
             continue
-        cands = by_tid.get(launch.get("tid")) or []
-        i = bisect.bisect_right([f["ts"] for f in cands], launch["ts"]) - 1
-        hit = False
-        while i >= 0:
-            f = cands[i]
-            if f["ts"] + f.get("dur", 0) >= launch["ts"]:
-                hit = True
-                break
-            i -= 1
-        if hit:
+        starts, ends = covers.get(launch.get("tid")) or ((), ())
+        i = bisect.bisect_right(starts, launch["ts"]) - 1
+        if i >= 0 and ends[i] >= launch["ts"]:
             n += len(inside_window)
             us += sum(float(k.get("dur", 0.0)) for k in inside_window)
     return {"attributable": True, "lane_frames_ms": round(us / 1000, 3),
