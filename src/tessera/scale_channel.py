@@ -186,9 +186,14 @@ def initial_channel_scale(
     every CHANNEL artifact with rows past the reach, and that is a re-cut of the
     E4M3 wire under an unchanged ``encoder_profile_id``.
 
-    The BF16 wire has no shortfall at all, and not by luck: its reach is exactly
-    4.0 and its source words are bf16, so ``amax / 4`` over a power-of-two
-    global is exact in fp16.  0 of 100575 raised rows landed short.
+    A **bf16-valued source** has no shortfall at all, and not by luck: the BF16
+    reach is exactly 4.0 and the global is a power of two, so
+    ``amax / 4 / global`` is exact in fp16.  0 of 100575 raised rows landed
+    short over the same 196 Linears.  That is a fact about the source and not
+    about the wire -- fed fp32 weights the same plane lands short, which is why
+    two of ``audit_byte_baseline``'s BF16 shape cases (``torch.randn``, fp32)
+    would move under a landing change while the identical fixtures snapped to
+    bf16 would not.  Every shipped BF16 artifact has a bf16 source.
 
     ``refit_channel_scale``'s ``floor`` lands the *same* bound with
     ``land_at_least``, which rounds **up**.  The two halves of one rule
