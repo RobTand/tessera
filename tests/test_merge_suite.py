@@ -139,16 +139,27 @@ def test_a_green_verdict_names_the_populations_it_is_green_on():
     assert "x86" not in one
 
 
-def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see():
-    """pbrun pins a local checkout to the submitting box; say so, do not route around it."""
+def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see(tmp_path):
+    """pbrun pins a local checkout to the submitting box; say so, do not route around it.
 
-    result = subprocess.run(
-        [sys.executable, str(TOOL), "--arm", "x86", "--dry-run",
-         "--checkout", str(ROOT)],
-        capture_output=True, text=True, timeout=120,
-    )
+    The skip is decided BEFORE the tool runs, not after.  Deciding it after
+    still ran a dry run, and a dry run with no ``--out`` writes its receipt
+    under ``DEFAULT_RECEIPT_ROOT`` -- so every full suite run on a shared
+    checkout left a directory in the store that holds the real ones.  Sixteen
+    of them were there when this was found, fourteen written by pool runs on
+    dl380g10, each holding one arm with ``"status": "not submitted
+    (--dry-run)"``.  Nothing read them, but a reader of the store cannot tell
+    a run that measured nothing from one that has not finished, which is the
+    reading tessera#112 is about.
+    """
+
     if str(ROOT).startswith("/mnt/shared"):
         pytest.skip("this checkout IS shared, so the refusal cannot fire here")
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "x86", "--dry-run",
+         "--checkout", str(ROOT), "--out", str(tmp_path / "receipt.json")],
+        capture_output=True, text=True, timeout=120,
+    )
     assert result.returncode == 2, result.stdout + result.stderr
     assert "/mnt/shared" in result.stderr
 
@@ -913,3 +924,50 @@ def test_a_resume_keeps_the_receipt_the_original_run_wrote(tmp_path):
     # ...and the plain name is the newest, so nothing that reads it changes.
     assert json.loads((receipt_dir / "receipt.json").read_text())["arms"][0]["arm"] == "gpu"
     assert "kept at" in rc.stdout, rc.stdout
+
+
+def test_no_test_here_can_write_into_the_receipt_store_the_real_runs_use():
+    """Every invocation in this file names its own ``--out``.
+
+    ``--out`` defaults to a timestamped directory under
+    ``DEFAULT_RECEIPT_ROOT`` -- the shared store the real receipts live in.  A
+    test that omits it publishes into that store from every box that runs the
+    suite, which is how sixteen one-arm ``not run`` directories came to sit
+    beside the four real ones.  Read statically rather than by watching the
+    store: watching it would be a race against every other run on the fleet,
+    and the property being pinned is about this file, not about a placement.
+
+    Before this test, run over ``1cdeee0~1:tests/test_merge_suite.py``::
+
+        invocations checked: 5
+        would fail at lines: [146]
+
+    which is ``test_the_x86_arm_refuses_a_checkout_only_one_box_can_see``,
+    the one this commit also fixes.
+    """
+
+    import ast
+
+    source = Path(__file__).read_text()
+    tree = ast.parse(source)
+    checked = 0
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.List):
+            continue
+        flags = [e.value for e in node.elts
+                 if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+        names_tool = any(
+            isinstance(e, ast.Call)
+            and isinstance(e.func, ast.Name) and e.func.id == "str"
+            and e.args and isinstance(e.args[0], ast.Name) and e.args[0].id == "TOOL"
+            for e in node.elts)
+        if not names_tool:
+            continue
+        checked += 1
+        # ``--resume`` writes into the directory it was handed, never into the
+        # default store, so it is the other honest way to name a destination.
+        assert "--out" in flags or "--resume" in flags, (
+            f"{Path(__file__).name}:{node.lineno} runs merge_suite.py with no --out"
+        )
+    # A guard that matched nothing would pass forever.
+    assert checked >= 4, checked
