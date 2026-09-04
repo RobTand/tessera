@@ -134,12 +134,13 @@ def score(w, hat, h) -> dict:
 
 
 def encode_arm(w, q256, name, *, window_sigma, channel_sigma, want_unit=False,
-               scale_refit=None):
+               scale_refit=None, refit_metric=None, refit_reach_floor=False):
     t0 = time.time()
     exported, unit, _f = encode_linear_planes(
         w, grid=E4M3_GRID, q256=q256, name=name, window_bits=WINDOW_BITS,
         window_sigma=window_sigma, channel_sigma=channel_sigma, verify=True,
         **({} if scale_refit is None else {"scale_refit": scale_refit}),
+        refit_metric=refit_metric, refit_reach_floor=refit_reach_floor,
     )
     hat = read_unit_artifact(exported.blob, device=w.device)
     out = {"bpp": float(exported.bpp), "sha": sha(exported.blob),
@@ -421,6 +422,45 @@ def stage_refit(a) -> None:
     story; a ratio that is ~1.0 at 0 refits and 1.367 at 4 locates the
     mechanism in the alternation, not in the alphabet -- which is a different
     claim from the one the issue's title makes, and changes what a fix is.
+
+    **Registered before the arms ran.**
+
+    * ``refit=0`` reads ~1.04.  The reduced model is faithful and the refit is
+      the amplifier.  Sigma is then not the mechanism; the refit's response to
+      a 0.8% table change is.
+    * ``refit=0`` reads ~1.37.  Something else in production carries it, and
+      the next place to look is the post-trellis release
+      (``encode.py`` ``release_index``/``release_code``), which overrides codes
+      after the Viterbi and is where an amax effect would hide.  ``n_released``
+      is recorded on every arm for exactly this.
+
+    Then the 2x2 at the deepest refit, both sigmas, since a mechanism is only
+    useful if it names a knob.  Neither arm is a wire change; both are
+    parameters ``encode_linear_planes`` already takes.
+
+    * ``refit_metric=h``.  The whole of #89's table was measured with an
+      **h-blind refit and then scored on h**: ``encode_arm`` never passed a
+      metric.  The refit's per-row least squares is dominated by the 3066
+      columns h does not care about, so it lands the row scale for the bulk and
+      the six columns that ARE h take whatever reach that scale leaves them.  A
+      0.8% table change nudging that scale is then a large h change on six
+      columns.  If the metric collapses the ratio toward 1.04, that is the
+      mechanism.  (An h-aware refit scored on h is teaching to the test in
+      weight space: a mechanism probe, never a ship claim.)
+    * ``refit_reach_floor=True``.  ``floor`` is ``None`` by default, so the
+      refit may re-inflate an over-row's scale past ``amax / reach`` and
+      re-clip the weight the reach-aware start was protecting.  ``rows_at_clip``
+      says whether it does, and whether it does so differentially.
+
+    If either arm removes the sensitivity, the answer to "defect or cost" is
+    that neither is about sigma: ``default_channel_sigma`` stays and the
+    proposal is a refit change, with served evidence still owed.  If neither
+    does, and the walk shows the ratio growing with refit count while each
+    arm's own error falls monotonically -- which the alternation is documented
+    to do under exactly this configuration (``trellis_weighting="scale"``, no
+    ``ldl``, ``metric=None``) -- then this is basin sensitivity in a non-convex
+    coordinate descent, no smooth objective in the residue exists, and
+    "re-derive the constant" is the wrong shape of fix.
     """
     base = default_channel_sigma(E4M3_GRID)
     w, h = load(UNIT)
@@ -451,7 +491,8 @@ def stage_refit(a) -> None:
                 clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
                 r = {**meta, "channel_sigma": cs, "table_sigma": cs, "refits": nref,
                      **facts, **score(w, hat, h), "rows_at_clip": clipped,
-                     "rows": int(w.shape[0])}
+                     "rows": int(w.shape[0]),
+                     "n_released": int(unit.release_index.numel())}
                 per_sigma[m] = r
                 b.doc["arms"][f"R{q}/refit{nref}/m{m:g}"] = r
                 del hat, unit, val, rs
@@ -464,6 +505,42 @@ def stage_refit(a) -> None:
                       f"{r['reach']:>8.1f}{r['wt']:>10.5f}{r['h']:>10.5f}"
                       f"{shown:>9.4f}{r['rows_at_clip']:>11d}{r['secs']:>7.0f}")
             b.doc["arms"][f"R{q}/refit{nref}/ratio"] = ratio
+            b.save()
+
+        # ---- the 2x2: does an h-aware refit, or a reach floor, remove it? ---
+        deep = max(a.refits)
+        b.log(f"\n    at scale_refit={deep}, the two refit knobs, both sigmas")
+        b.log(f"    {'refit arm':<22}{'m':>6}{'wt':>10}{'h':>10}"
+              f"{'h ratio':>9}{'rows@clip':>11}{'s':>7}")
+        for arm_name, kw in (("metric=h", {"refit_metric": h}),
+                             ("reach_floor", {"refit_reach_floor": True}),
+                             ("metric=h+floor", {"refit_metric": h,
+                                                 "refit_reach_floor": True})):
+            per_sigma = {}
+            for m in (1.0, 0.75):
+                cs = m * base
+                facts = table_facts(cs)
+                hat, meta, unit = encode_arm(
+                    w, q, UNIT, window_sigma=None, channel_sigma=cs,
+                    want_unit=True, scale_refit=deep, **kw)
+                val = gv[unit.codes]
+                rs = torch.where(val.abs() > 0, hat / val,
+                                 torch.full_like(hat, float("nan"))).nanmedian(dim=1).values
+                clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
+                r = {**meta, "channel_sigma": cs, "refits": deep, "refit_arm": arm_name,
+                     **facts, **score(w, hat, h), "rows_at_clip": clipped,
+                     "n_released": int(unit.release_index.numel())}
+                per_sigma[m] = r
+                b.doc["arms"][f"R{q}/{arm_name}/m{m:g}"] = r
+                del hat, unit, val, rs
+                torch.cuda.empty_cache()
+            ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
+            for m in (1.0, 0.75):
+                r = per_sigma[m]
+                b.log(f"    {arm_name:<22}{m:>6.2f}{r['wt']:>10.5f}{r['h']:>10.5f}"
+                      f"{(ratio if m == 0.75 else 1.0):>9.4f}"
+                      f"{r['rows_at_clip']:>11d}{r['secs']:>7.0f}")
+            b.doc["arms"][f"R{q}/{arm_name}/ratio"] = ratio
             b.save()
     b.save()
     b.log(f"\nwrote {a.out}")
