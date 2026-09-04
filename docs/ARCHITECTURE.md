@@ -629,6 +629,13 @@ complete profiler-file roster and stream-scans every excluded trace, refusing
 if one contains `window_gemv`; an API-process trace is excluded by evidence,
 not by filename alone. Parsing before reap drove the shared UMA pool to 3.6 GiB
 available in #113 r4 even though the parser itself peaked at 20.1 GiB RSS. The
+extension inventory hashes the module directory named by
+`ext.WINDOW_GEMV_MODULE_NAME`, not unrelated private temporary directories under
+the same container TMPDIR. A postprocessing continuation preserves the original
+campaign identity and records each stage's actual source; its gate allows only
+controller/test/documentation changes and refuses any serving, plugin, encoder
+or wire difference. Its late completion power sample is labelled recovery-time.
+The
 first arm taken for #113 read: compiled, the
 same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --

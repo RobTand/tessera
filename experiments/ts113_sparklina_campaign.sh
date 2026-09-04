@@ -144,6 +144,7 @@ freeze_cache_choice() {
   rm "$list"
 }
 
+if [ "${TS113_FUNCTIONS_ONLY:-0}" != 1 ]; then
 shopt -s nullglob
 closure_stamps=("$WT"/.pbrun-closure.*.json)
 [ "${#closure_stamps[@]}" = 1 ] || {
@@ -351,12 +352,19 @@ if prepare_stage teacher ts113-aa6-r6-teacher; then
   freeze_cache_choice "$LOCAL_ROOT/cache-teacher" "$TEACHER_DIR/compile-cache-evidence.tar"
   seal_stage teacher
 fi
+fi
 
 run_arm() {
   local stage=$1 model=$2 lane=$3 profile=$4
+  local operation=${5:-serve}
   local dir=$POP_ROOT/stages/$stage name=ts113-aa6-r6-$stage
   local cache=$LOCAL_ROOT/cache-$stage extra= profile_dir=
   local dump_decode=$dir/${PREFIX}_${stage}_decode.json
+  if [ "$operation" = postprocess ]; then
+    [ -f "$dir/driver.log" ] && grep -q '^=== done ' "$dir/driver.log"
+    [ -s "$dump_decode.npz" ] && [ -s "$dir/${PREFIX}_${stage}_prefill.json.npz" ]
+  else
+  [ "$operation" = serve ]
   if ! prepare_stage "$stage" "$name"; then return 0; fi
   if [ "$lane" = fallback ]; then
     extra="-v $EXT_FALLBACK:/ext-ro:ro -e TORCH_EXTENSIONS_DIR=/ext-ro"
@@ -374,6 +382,7 @@ run_arm() {
       2>&1 | tee "$dir/driver.log"; then
     echo "$stage failed; evidence preserved at $dir" >&2
     exit 3
+  fi
   fi
   validate_build "${dump_decode%.json}.build.json" "$model"
   refusals=$(grep -c 'the window GEMV lane did not prepare' "$dir/serve_$stage.log" || true)
@@ -413,18 +422,27 @@ print(
 )
 PY
   fi
-  freeze_cache_choice "$cache" "$dir/compile-cache-evidence.tar"
+  if [ "$operation" != postprocess ] || [ ! -s "$dir/compile-cache-evidence.tar" ]; then
+    freeze_cache_choice "$cache" "$dir/compile-cache-evidence.tar"
+  fi
   (
     cd "$EXT_LANE"
-    find . -type f -print0 | sort -z | xargs -0 sha256sum
+    module_name=$(PYTHONPATH="$WT/src" "$PY" -c \
+      'from tessera.serving.ext import WINDOW_GEMV_MODULE_NAME; print(WINDOW_GEMV_MODULE_NAME)')
+    find "$module_name" -type f -print0 | sort -z | xargs -0 sha256sum
   ) > "$dir/extension-files.sha256"
   [ -s "$dir/extension-files.sha256" ] || {
     echo "REFUSED: lane extension evidence is empty" >&2
     exit 2
   }
+  if [ "$operation" = postprocess ]; then
+    printf 'scope=recovery-time after the completed serve, not serve end\n' \
+      > "$dir/recovery-power-scope.txt"
+  fi
   seal_stage "$stage"
 }
 
+[ "${TS113_FUNCTIONS_ONLY:-0}" != 1 ] || return 0
 run_arm A1 "$ARMA" lane yes
 run_arm A2 "$ARMA" lane yes
 run_arm B1 "$ARMB" fallback yes

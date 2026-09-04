@@ -955,6 +955,33 @@ def test_ts113_preflight_defaults_to_the_campaign_population():
         campaign, "PROMOTIONAL_LOCAL_ROOT")
 
 
+def test_ts113_extension_hashes_ignore_unrelated_private_tempdirs(tmp_path):
+    from tessera.serving.ext import WINDOW_GEMV_MODULE_NAME
+
+    body = _TS113_CAMPAIGN.read_text()
+    start = body.index('  (\n    cd "$EXT_LANE"')
+    end = body.index('  [ -s "$dir/extension-files.sha256" ]', start)
+    root, out = tmp_path / "ext", tmp_path / "out"
+    module = root / WINDOW_GEMV_MODULE_NAME
+    module.mkdir(parents=True)
+    (module / (WINDOW_GEMV_MODULE_NAME + ".so")).write_bytes(b"served extension")
+    private = root / "private-vllm-temp"
+    private.mkdir()
+    private.chmod(0)
+    out.mkdir()
+    env = dict(os.environ, EXT_LANE=str(root), WT=str(ROOT), PY=sys.executable,
+               dir=str(out))
+    try:
+        result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + body[start:end]],
+                                env=env, capture_output=True, text=True)
+    finally:
+        private.chmod(0o700)
+    assert result.returncode == 0, result.stderr
+    manifest = (out / "extension-files.sha256").read_text()
+    assert WINDOW_GEMV_MODULE_NAME + ".so" in manifest
+    assert "private-vllm-temp" not in manifest
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 
