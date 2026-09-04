@@ -22,9 +22,11 @@ CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
 NAME="${TESSERA_KL_NAME:-tessera-kl-serve}"
 LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json).log"
 
-# TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  The repeated
-# store_true flag is a no-op stand-in so the argv shape does not change.
-EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
+# TESSERA_KL_EAGER=0 serves in graph mode (vLLM's default).  An inactive
+# optional flag contributes no argv entry; a real store_true flag is not a
+# placeholder, because the unconditional copy below must appear exactly once.
+EAGER_FLAGS=()
+[ "${TESSERA_KL_EAGER:-1}" = "0" ] || EAGER_FLAGS=(--enforce-eager)
 
 # TESSERA_KL_REGIME=decode dumps in the DECODE regime (issue #102): every
 # scored position comes from an M=1 forward instead of one 512-row prefill.
@@ -34,8 +36,8 @@ EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--t
 # than assert it.  A teacher must be re-dumped in the student's regime; that
 # is what this knob is for.
 REGIME="${TESSERA_KL_REGIME:-prefill}"
-DETAILS_FLAG=--trust-remote-code
-[ "$REGIME" = "prefill" ] || DETAILS_FLAG=--enable-prompt-tokens-details
+DETAILS_FLAGS=()
+[ "$REGIME" = "prefill" ] || DETAILS_FLAGS=(--enable-prompt-tokens-details)
 
 # Which image, and which compiled build, served this dump -- both recorded
 # beside it (issues #100 and #30).  The image gate runs first and BEFORE the
@@ -105,7 +107,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --max-model-len 4096 --max-num-seqs 8 \
   --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
-  $EAGER_FLAG $DETAILS_FLAG --trust-remote-code \
+  "${EAGER_FLAGS[@]}" "${DETAILS_FLAGS[@]}" --trust-remote-code \
   ${TESSERA_KL_VLLM_EXTRA:-} \
   >/dev/null
 set +f

@@ -728,6 +728,13 @@ def test_the_serve_wrapper_keeps_entrypoint_and_image_command_distinct():
         "such as --entrypoint belong before it and cannot spell `vllm serve`")
 
 
+def test_the_serve_wrapper_does_not_repeat_trust_remote_code_as_a_noop():
+    """Inactive optional flags are empty; a real flag is never a placeholder."""
+    body = _WRAPPER.read_text()
+    assert "EAGER_FLAG=--trust-remote-code" not in body
+    assert "DETAILS_FLAG=--trust-remote-code" not in body
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 
