@@ -1,8 +1,9 @@
 """The Tessera routed-MoE expert route: per-expert E4M3 wires as the stock FP8 stack.
 
-WHAT IT SERVES.  One ``tessera.fused`` container per expert per GROUP -- ``w13``
-(gate then up, the row order ``RoutedExperts._load_w13`` narrows to) and ``w2``
--- decoded at load into exactly the parameters vLLM's own fused-MoE kernels
+WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
+assembled into ``w13`` (gate then up, the row order
+``RoutedExperts._load_w13`` narrows to) and ``w2`` (down), then decoded at
+load into exactly the parameters vLLM's own fused-MoE kernels
 read for a per-channel FP8 checkpoint: ``w13_weight [E, 2N, K]`` and
 ``w2_weight [E, K, N]`` in ``float8_e4m3fn``, with ``w13_weight_scale
 [E, 2N, 1]`` and ``w2_weight_scale [E, K, 1]`` in fp32.  From
@@ -61,9 +62,11 @@ contract, and not claimed as served.  That measurement
 (``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
 once on the pin, once on the build that registers ``Glm5Next`` -- and every
 recorded field, backend selection and error number is identical, so the route
-does not depend on which of the two loads it.  What it still does not cover:
-the model-level ``load_weights`` hop above ``RoutedExperts``, the compiled
-forward, and any expert count past four.
+does not depend on which of the two loads it. Later served GLM census
+receipts cover 16-expert stacks, and the exact EUGR LFM construction receipt
+(``docs/measurements/tessera-lfm-construction-2026-09-04.md``) covers model-level
+wire delegation into a 32-expert stack without a forward. These receipts do
+not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
@@ -118,7 +121,7 @@ def census_expected(*, compiled: bool = False) -> dict:
     below carries the entry point alone and a census compares
     :func:`census_symbol_base`, keeping the exact string in its histogram.
     Enumerating the backends we would accept would be a claim about vLLM's
-    kernel roster written in our own prose, which is what principle 14 forbids;
+    kernel roster written in our own prose, which the runtime-attestation rule forbids;
     pinning one would refuse a box whose runtime picked another.
 
     NOT PUBLISHED, DELIBERATELY.  Unlike the dense routes' sets this one is not

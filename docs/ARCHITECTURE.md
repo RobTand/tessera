@@ -329,14 +329,13 @@ encoding. Old schemes default to `unpacked_per_expert`, the only source layout
 their writer supported.
 
 **What is NOT claimed.** There is no `routed_moe` cell in
-`runtime_contract.json`. Half of what would justify one now exists and half
-cannot: a served census covers the three stacks (§4.5), and a KL does not,
-because the only routed-MoE checkpoint this box can encode and serve is a
-16-expert cut whose reference has zero confident positions -- the instrument
-refuses a verdict on it, and a cut that changes the routing could not carry one
-anyway. So the cell waits on a routed-MoE artifact a KL can grade, not on more
-census work. This is the `loader_axes` precedent: what the loader *does* is a
-different published fact from what has been *served*.
+`runtime_contract.json`. A served GLM census covers three 16-expert stacks
+(§4.5), but that cut's reference has zero confident positions and changes
+routing, so it cannot support a quality verdict. The full LFM2.5 source now
+has construction and source-layout evidence; its encoded full-model served
+KL remains outstanding. The cell waits on that measurement. This is the
+`loader_axes` precedent: what the loader *does* is a different published fact
+from what has been *served*.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
