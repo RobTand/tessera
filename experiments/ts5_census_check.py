@@ -29,7 +29,7 @@ from tessera.serving.scheme import (
 from tessera.serving_parts import sha256_file
 from tools.tessera_route_census import (
     CHECKPOINT_SIDECAR_NAMES, all_structure_agreement, checkpoint_sidecar_hashes,
-    declared_rung, join_records_to_declared, phase_shape_problems)
+    declared_rung, join_records_to_declared, parse_eager_shape, phase_shape_problems)
 
 
 def read_json(path):
@@ -190,7 +190,13 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
         owners[phase] = owner
         owner_records[phase] = {owner[name]: record for name, record in observed.items()}
         for name, record in observed.items():
-            family = runtime_schemes[owner[name]]["family"]
+            scheme = runtime_schemes[owner[name]]
+            family = scheme["family"]
+            _, rows, columns = parse_eager_shape(record.get("shape"))
+            # create_weights stamps the w13 tile rows and model hidden size
+            # into route_shape; derive both from the validated owner scheme.
+            _require((rows, columns) == (scheme["groups"]["w13"]["rows"], scheme["hidden_size"]),
+                     f"{phase}: {name} shape N/K disagrees with declared expert tile")
             _require(record.get("kind") == "moe" and record.get("state") == "served" and
                      record.get("policy") == f"{family}:resident" and
                      record.get("contract") == ROUTES[family]["activation_contract"],

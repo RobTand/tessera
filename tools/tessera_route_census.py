@@ -82,6 +82,7 @@ import collections
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -212,6 +213,14 @@ def declared_rung(scheme):
     return next(iter(distinct)) if len(distinct) == 1 else None
 
 
+def parse_eager_shape(value):
+    """Read telemetry.route_shape's canonical concrete M:N:K spelling."""
+    match = re.fullmatch(r"M([1-9][0-9]*):N([1-9][0-9]*):K([1-9][0-9]*)", value) if isinstance(value, str) else None
+    if match is None:
+        raise ValueError(f"eager shape must be canonical M<n>:N<n>:K<n>, got {value!r}")
+    return tuple(int(dimension) for dimension in match.groups())
+
+
 def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
                          require_each_owner=False):
     """The two driven shapes, optionally required for every campaign owner.
@@ -235,11 +244,23 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
         return ([f"compiled records must be shape-polymorphic (M*); got {bad[:3]}"]
                 if bad else [])
     if require_each_owner:
+        from tessera.serving.scheme import regime_of_m
         missing = sorted(set(batch) ^ set(decode))
         bad = [name for name, p, d in shapes
                if not isinstance(p, str) or not p or not isinstance(d, str) or not d or p == d]
-        return ([f"each owner needs distinct nonempty eager shapes in both driven phases; "
-                 f"missing={missing}, unchanged/missing shape={bad}"] if missing or bad else [])
+        problems = ([f"each owner needs distinct nonempty eager shapes in both driven phases; "
+                     f"missing={missing}, unchanged/missing shape={bad}"] if missing or bad else [])
+        for phase, records in records_by_phase.items():
+            for owner, record in records.items():
+                try:
+                    m, _, _ = parse_eager_shape(record.get("shape"))
+                except ValueError as exc:
+                    problems.append(f"{phase} {owner}: {exc}")
+                    continue
+                if regime_of_m(m) != phase_regimes[phase]:
+                    problems.append(f"{phase} {owner}: shape M{m} does not exercise "
+                                    f"declared regime {phase_regimes[phase]}")
+        return problems
     if all(p == d for _, p, d in shapes):
         return [f"{batch_phase} and {decode_phase} records carry the same shape; only one "
                 "shape was exercised"]

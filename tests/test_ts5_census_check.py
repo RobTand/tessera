@@ -171,6 +171,18 @@ def test_host_container_alias_and_encoder_image_do_not_change_serving_context():
     assert _check(case)["verdict"] == "passed"
 
 
+@pytest.mark.parametrize("phase,shape", [
+    ("decode", "arbitrary"), ("decode", "M2:N128:K128"),
+    ("decode", "M*:N128:K128"), ("decode", "M01:N128:K128"),
+    ("decode", "M1:N0:K128"), ("decode", "M1:N256:K128"),
+    ("prefill", "M64:N128:K256")])
+def test_eager_shapes_prove_actual_regime_and_declared_geometry(phase, shape):
+    case = _fixture()
+    next(iter(case[3]["records"][phase].values()))["shape"] = shape
+    with pytest.raises(ValueError, match="shape"):
+        _check(case)
+
+
 @pytest.mark.parametrize("defect", ["empty_plan", "different_plan", "extra_target", "duplicate_target",
     "missing_target", "manifest_target", "role_missing", "role_duplicate", "role_extra",
     "role_rung", "role_shape", "rung", "grid", "experts", "units", "stack_summary"])

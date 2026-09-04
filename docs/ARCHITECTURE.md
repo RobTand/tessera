@@ -590,6 +590,10 @@ under the explicit serving-image digest, eager execution and resident mode.
 The checker replays construction mapping and ownership, validates launch pairs
 and activation contracts even when no cell exists, and requires distinct,
 nonempty eager shapes at every owner using the census's shared shape check.
+Shapes use telemetry's canonical `M<n>:N<n>:K<n>` spelling; `scheme.regime_of_m`
+must map each observed M to the phase it claims. The campaign also compares
+N/K with that owner's validated expert tile geometry, so arbitrary strings or
+two batch-shaped observations cannot claim decode/prefill coverage.
 It preserves actual backend suffixes. Host/container checkpoint paths may
 differ: the raw census records `checkpoint_sidecars`, SHA256s of the exact
 `config.json` and `tessera_serving_manifest.json` bytes read inside its process,
