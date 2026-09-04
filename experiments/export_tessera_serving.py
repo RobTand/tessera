@@ -64,7 +64,10 @@ convention); a Linear whose rows are not a whole number of tuples, or a
 fused module not all of whose roles are quantizable, is passed through as
 BF16 and named in ``ignore``.  Naming it there is not bookkeeping: the plugin
 REFUSES a Linear that is neither declared nor ignored, so one mistyped target
-is a refusal rather than a silently BF16 artifact.
+is a refusal rather than a silently BF16 artifact.  The naming follows the
+tensors WRITTEN, not the tensors the body pattern matched
+(``ignored_modules``), so a Linear outside the decoder body -- a vision tower,
+an MTP sidecar -- is named too.
 
 THE ARTIFACT IS TENSOR-PARALLELISM-AGNOSTIC, and this exporter never encodes
 per rank.  One whole unit per role is written once; a serve with tp_size > 1
@@ -141,8 +144,10 @@ FUSED = (
 #: under a sub-model (GLM-5.3-Flash is ``model.language_model.layers.N.``), and
 #: the prefix test silently found NOTHING there -- an "export" that quantized
 #: zero Linears and reported success.  The vision tower is ``model.visual.
-#: blocks.N.``, which this does not match, so it stays BF16 by the same rule
-#: rather than by a second exclusion list.
+#: blocks.N.``, which this does not match, so it stays BF16 -- and is named in
+#: ``ignore`` by ``ignored_modules``, which runs over the tensors WRITTEN rather
+#: than over the ones this pattern matched.  Staying BF16 and being named are
+#: different facts and the plugin reads the second one (#86).
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
 
 #: A ROUTED expert leaf in the unpacked (per-expert 2-D) source layout.  The
@@ -182,6 +187,26 @@ MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
 #: where it sits, not because it has three axes.
 PACKED_EXPERT_ND = re.compile(
     r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
+
+#: A module vLLM builds under a SECOND name, beside the checkpoint's spelling.
+#: Not a taste and not a guess: CONSTRUCTED on the pinned build
+#: ``prismaquant/glm53-mia-sm121:487ecf187`` with a recording quant config, the
+#: GLM vision tower offers ``visual.blocks.N.attn.qkv_proj`` -- because
+#: ``Glm5NextVisionAttention`` builds its projection at
+#: ``f"{prefix}.qkv_proj" if quant_config else f"{prefix}.qkv"``
+#: (``models/glm5next/nvidia/multimodal.py:167``) -- while the tensor on disk is
+#: ``...attn.qkv.weight`` and the module ATTRIBUTE path is ``...attn.qkv``.  The
+#: run, its script and its verbatim output are
+#: ``docs/measurements/glm53-vision-tower-prefixes-2026-09-03.md``.
+#: Which name exists depends on whether that runtime
+#: passes a quant config, which the producer cannot know; an ignore entry is
+#: only ever LOOKED UP or prefix-mapped -- never silently dropped, since
+#: ``TesseraConfig.apply_vllm_mapper`` refuses a name the mapper maps away --
+#: so carrying both spellings costs nothing and carrying
+#: one is a load-time refusal in whichever world the runtime turns out to be
+#: in.  Body attention never reaches here: its q/k/v arrive unmerged and the
+#: FUSED table already names ``qkv_proj``.
+MERGED_ALIASES = ((re.compile(r"^(.*\.)qkv\.weight$"), "qkv_proj"),)
 
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
@@ -305,6 +330,69 @@ def fused_module(tensor_name: str):
         if match:
             return match.group(1) + fused, tuple(match.group(1) + m + ".weight" for m in members)
     return None
+
+
+def ignored_modules(tensor_name: str, shape) -> tuple[str, ...]:
+    """The vLLM module names ``ignore`` must carry for a tensor written at source precision.
+
+    Empty when the tensor is not a Linear weight the plugin can be asked
+    about.  This is a RULE over the tensors the export actually writes, not a
+    roster beside them: a roster is a second place to remember, and it goes
+    stale in silence -- which is how the vision tower came to be passed
+    through and never named.  The plugin refuses a ``LinearBase`` that is
+    neither declared nor ignored, so the completeness has to follow the bytes.
+
+    Three cases, and the two expert ones are why this is not simply
+    ``module_of``:
+
+    * a FUSED role names its fused parent, because vLLM builds one method per
+      fused module.  Ignoring ``q_proj``/``k_proj``/``v_proj`` leaves
+      ``qkv_proj`` neither declared nor ignored, which is the refusal again.
+      The rule reaches outside the body too: ``Glm5NextVisionMLP`` builds one
+      ``MergedColumnParallelLinear`` at ``{prefix}.gate_up_proj``
+      (pinned build ``prismaquant/glm53-mia-sm121:487ecf187``,
+      ``models/glm5next/nvidia/multimodal.py:102-107``), exactly as the body's
+      MLP does.
+    * a ROUTED expert leaf names the FusedMoE's OWN prefix, not one of its
+      2592 checkpoint leaves.  Attested against the same build, three hops:
+      ``models/glm5next/nvidia/model.py:239`` ``FusedMoEFactory(prefix=
+      f"{prefix}.experts")``; ``layers/fused_moe/layer.py:221`` ``layer_name =
+      prefix``; ``layers/fused_moe/routed_experts.py:122,:201``
+      ``quant_config.get_quant_method(self, self.layer_name)``.  So the string
+      the plugin tests is ``<layer>.mlp.experts`` and no leaf name is ever
+      offered to it.  Naming the parent cannot reach the shared experts beside
+      it: ``shared_experts`` is a SIBLING of ``experts``, and both the plugin's
+      test and compressed-tensors' are exact/fnmatch, not prefix subsumption.
+    * a PACKED expert stack (rank 3 or more) names the same FusedMoE prefix.
+      Rank alone does not identify one -- GLM-5.3-Flash's attention carries
+      ``k_conv1d.weight [8192, 1, 4]`` and a conv is not a Linear the plugin
+      is ever asked about -- so the test is where the tensor sits.
+
+    Over-naming is cheap here and under-naming is a load-time refusal: an
+    ignore entry for a module the runtime never builds is never looked up,
+    which is why a 2-D weight that is not a Linear at all (an embedding table)
+    is named rather than second-guessed.
+    """
+    # A packed expert stack may carry NO ``.weight`` suffix -- transformers-5
+    # stores it as a parameter on the experts module -- so the patterns are
+    # matched against the name in its ``.weight`` spelling and the suffix is
+    # not what decides whether a rank-3 tensor is a stack.
+    probe = tensor_name if tensor_name.endswith(".weight") else tensor_name + ".weight"
+    if len(shape) >= 3:
+        packed = PACKED_EXPERT_ND.match(probe)
+        return (packed.group("moe") + ".experts",) if packed else ()
+    if not tensor_name.endswith(".weight") or len(shape) != 2:
+        return ()
+    routed = ROUTED_EXPERT_2D.match(probe)
+    if routed:
+        return (routed.group("moe") + ".experts",)
+    fused = fused_module(probe)
+    if fused:
+        return (fused[0],)
+    names = [module_of(probe)]
+    names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
+                 if (match := pattern.match(probe)))
+    return tuple(names)
 
 
 def git_hash() -> str:
@@ -609,6 +697,20 @@ def main():
                     passthrough.append(m)
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
+    if not plan and args.layers is None:
+        # An export that quantized NOTHING used to report success and write a
+        # checkpoint with an empty ``config_groups``, which the plugin refuses
+        # at load ("a Tessera checkpoint declares its wires in
+        # config_groups").  Same shape of fault as #86: silent here, expensive
+        # there.  ``--layers 0`` is how a passthrough copy is asked for on
+        # purpose, so it stays legal.
+        raise SystemExit(
+            f"nothing was planned: all {len(shapes)} dense body weights were passed through. A "
+            "Linear is planned only when its rows are a whole number of tuples (grid.arity * 32) "
+            "and its columns a multiple of 16; a plan naming PASSTHROUGH, or a menu whose grid "
+            "no tensor here fits, leaves nothing to encode. The checkpoint would carry an empty "
+            "config_groups and the plugin refuses that at load. Pass --layers 0 to write a "
+            "passthrough copy deliberately.")
 
     input_scales = {}
     if args.input_scales:
@@ -652,15 +754,14 @@ def main():
                     shard_payload[name] = tensor
                     twin_payload[name] = tensor
                     passthrough_bytes += tensor.numel() * tensor.element_size()
-                    if name in passthrough:
-                        # ``ignore`` is read against vLLM's OWN Linear names, and
-                        # vLLM builds one Linear per FUSED module: ignoring
-                        # q_proj/k_proj/v_proj leaves ``qkv_proj`` neither
-                        # declared nor ignored, and the plugin refuses that
-                        # checkpoint at load.  A passed-through role therefore
-                        # ignores the fused module it belongs to.
-                        fused_here = fused_module(name)
-                        ignore.append(fused_here[0] if fused_here else module_of(name))
+                    # EVERY tensor written at source precision is named here,
+                    # body or not.  ``ignore`` used to be assembled from three
+                    # BODY_LAYER-gated sources, so a Linear outside the decoder
+                    # body -- a vision tower, an MTP sidecar -- was passed
+                    # through and never named, and the plugin refuses exactly
+                    # that (#86).  Deriving the name from the tensor just
+                    # written is what keeps the two facts one fact.
+                    ignore.extend(ignored_modules(name, tensor.shape))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
@@ -784,24 +885,19 @@ def main():
     if pending_modules:
         raise SystemExit(f"modules never completed: {sorted(pending_modules)}")
 
-    # A packed expert stack stays BF16; naming its MODULE in ``ignore`` is what
-    # lets the plugin serve that MoE layer unquantized instead of refusing it.
-    for name in expert_shapes:
-        ignore.append(module_of(name).rsplit(".", 1)[0])
-    # An UNPACKED routed expert is ignored at the FusedMoE's OWN prefix, not at
-    # its 2592 checkpoint leaves.  Attested against the pinned build
-    # ``prismaquant/glm53-mia-sm121:487ecf187``, three hops:
-    #   models/glm5next/nvidia/model.py:239  FusedMoEFactory(prefix=f"{prefix}.experts")
-    #   layers/fused_moe/layer.py:221        layer_name = prefix
-    #   layers/fused_moe/routed_experts.py:122,:201
-    #                                        quant_config.get_quant_method(self, self.layer_name)
-    # So the string the plugin tests is ``<layer>.mlp.experts`` and no leaf name
-    # is ever offered to it.  Naming the parent cannot reach the shared experts
-    # beside it: ``shared_experts`` is a SIBLING of ``experts``, and both the
-    # plugin's test and compressed-tensors' are exact/fnmatch, not prefix
-    # subsumption.
-    for name in routed_shapes:
-        ignore.append(ROUTED_EXPERT_2D.match(name).group("moe") + ".experts")
+    # The expert stacks and the routed leaves were named by the same rule as
+    # they were written (``ignored_modules``), which is the point: one mechanism
+    # decides what is passed through and what is declared BF16.  What is worth
+    # asserting is that the two agree -- a plan-time passthrough the write loop
+    # somehow did not name would be a load-time refusal, so it is a refusal
+    # here instead.
+    unnamed = sorted(n for n in passthrough
+                     if not set(ignored_modules(n, shapes[n])) <= set(ignore))
+    if unnamed:
+        raise SystemExit(
+            f"{len(unnamed)} tensor(s) were planned as passthrough but never named in ignore, "
+            f"e.g. {unnamed[:3]}. The plugin refuses a Linear it is neither told to decode nor "
+            "told to leave alone, so this checkpoint would fail at load.")
     ignore = sorted(set(ignore))
     config = src_config
     config["quantization_config"] = {
