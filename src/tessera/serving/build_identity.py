@@ -58,9 +58,10 @@ digests from the bytes vLLM wrote into the pinned cache root the wrapper
 mounted.  Nothing here is a prose claim about the runtime, and nothing here
 imports vLLM or torch -- it runs on the host after the container is gone.
 
-WHAT IT DOES NOT CLAIM.  A stamp read from the log alone -- no cache root, as
-``serve_and_dump_kl.sh`` runs today -- is marked ``complete: false`` and refuses
-to certify either sameness or difference.  And a build identity says two arms
+WHAT IT DOES NOT CLAIM.  A stamp read from the log alone, without the serve's
+cache root, is marked ``complete: false`` and refuses to certify either
+sameness or difference. The teacher wrapper now pins and reads that cache root.
+And a build identity says two arms
 ran the same compiled code; it does not say the compiled code is correct, and
 it is not a substitute for serving both arms.
 """
