@@ -145,7 +145,9 @@ replacement token.  Release first matches that exact target.  A dead token is
 reaped only after the PID/start pair no longer names its publisher and Docker
 reports no running container.  During the rolling transition, the same
 pathname also excludes legacy directory-lock clients; old directories retain
-their stricter hour-old, dead-owner, no-container recovery rule.
+their stricter hour-old, dead-owner, no-container recovery rule. Publication
+treats the pathname as the exact destination (`ln -T`), so an existing legacy
+directory cannot turn acquisition into successful creation of a link inside it.
 
 `serve_and_dump_kl.sh` reaps its named container on every exit, including an
 unexpected shell failure. Successful removal is remembered so normal exit

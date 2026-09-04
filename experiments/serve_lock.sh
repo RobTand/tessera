@@ -124,7 +124,7 @@ serve_lock_acquire() {
     acquired=0
     reaped=0
     refused=0
-    if ln -s -- "$token" "$SERVE_LOCK" 2>/dev/null; then
+    if ln -sT -- "$token" "$SERVE_LOCK" 2>/dev/null; then
       acquired=1
     else
       if [ -L "$SERVE_LOCK" ]; then
@@ -148,7 +148,7 @@ serve_lock_acquire() {
       # Keep the guard across stale-token removal AND replacement publication.
       # Otherwise a second reaper can validate the old token, pause, then
       # unlink the new owner after the first reaper publishes it.
-      if [ "$reaped" = 1 ] && ln -s -- "$token" "$SERVE_LOCK" 2>/dev/null; then
+      if [ "$reaped" = 1 ] && ln -sT -- "$token" "$SERVE_LOCK" 2>/dev/null; then
         acquired=1
       fi
     fi
