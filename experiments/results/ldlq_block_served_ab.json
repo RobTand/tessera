@@ -1,0 +1,59 @@
+{
+  "schema": "tessera.ts60.served_ab.v1",
+  "issue": "tessera#60, served leg",
+  "question_as_set": "Does the dense weight-space win from a smaller LDLQ block carry to served KL at all, at byte-identical bytes?",
+  "answer": "Partially. About a third of it carries on all-position KL, and none of it carries on confident positions.",
+  "arm_served": "b8 (ldlq_block=8), NOT b4. b4 was still encoding; b8 was authorised as a substitute and is the arm these numbers describe.",
+  "design": {
+    "shape": "A/B/A matched pair: the default is served FIRST and LAST with the candidate between, one box, one image, one corpus, one teacher, eager.",
+    "why_not_one_session": "vLLM serves one model per engine and every wrapper here is start-serve-dump-reap, so two checkpoints are two containers. The one-session guarantee was replaced, not faked.",
+    "box": "sparky, uncontended (load 2.3-3.0, 14 W of a ~140 W envelope, no other container). sparklina was excluded because it is running the b4 encode.",
+    "placement": "submitted through the PrismaBuild pool (pbrun --gpu --here). Nothing was launched bare."
+  },
+  "served": {
+    "metric": "KL-vs-BF16, kl_lower_mean, top-1024 support, teacher-student intersection, prefill, 4088 positions",
+    "teacher": "qwen_rot_teacher_lina.json.npz (and cross-checked against qwen_teacher_bf16_v028.json.npz)",
+    "arms": {
+      "b32_first_the_bar": {"all": 0.5200805955, "confident": 0.4282823138},
+      "b8_candidate":      {"all": 0.5099719526, "confident": 0.4284178346},
+      "b32_last_drift_control": {"all": 0.5200805955, "confident": 0.4282823138}
+    },
+    "drift_b32_last_minus_first": {"all": 0.0, "confident": 0.0},
+    "cross_teacher_identical": true,
+    "candidate_over_bar": {"all": 0.9806, "all_pct": -1.94, "confident": 1.0003, "confident_pct": 0.03}
+  },
+  "the_result": {
+    "weight_space_predicted": {"ratio": 0.9373, "pct": -6.27, "unit_wins": "6/6"},
+    "served_realised_all_kl": {"ratio": 0.9806, "pct": -1.94},
+    "carry_fraction": 0.31,
+    "served_realised_confident_kl": {"ratio": 1.0003, "pct": 0.03},
+    "reading": "The weight-space win is real and it does reach the served artifact, but it arrives at about one third of its size on all-position KL and it does not arrive at all on confident positions. Weight-space output error is therefore a directionally correct but substantially over-optimistic predictor of served KL for this lever."
+  },
+  "why_the_delta_is_exact_rather_than_noisy": "The two default readings are identical to the last digit, so the bracket's own error bar is 0.000e+00. That is consistent with the three-way control (published / sparklina re-serve / sparky re-serve of the ldlqH1 bytes, all 0.5310275686796917): KL on this eager lane is deterministic given the bytes. The 1.94% is a difference between two exactly reproducible numbers, not a difference between two draws.",
+  "the_re_run_was_necessary_and_here_is_what_it_was_worth": {
+    "incumbent_if_quoted_from_2026_09_02": 0.5310275686796917,
+    "incumbent_re_run_on_current_exporter": 0.5200805955,
+    "difference_pct": -2.06,
+    "reading": "Quoting the old default would have understated the incumbent by 2.06% and so overstated the candidate's win by roughly the size of the win itself: b8 would have looked 3.96% better instead of 1.94%. The instruction to re-run rather than quote was load-bearing, and the 161-of-784 differing tensors between the two exporter states is why."
+  },
+  "gate": {
+    "function": "tessera.control.assert_plane_promotion",
+    "GLM_GATE": 1.0, "LUT_LANDING_WIRE": "table",
+    "call_1_the_input_this_campaign_has": {
+      "glm_ratio": null,
+      "verbatim": "TypeError: float() argument must be a string or a real number, not 'NoneType'",
+      "reading": "The gate has no default for a missing GLM leg. It refuses by failing rather than by passing, which is the correct direction to fail in."
+    },
+    "call_2_with_a_substituted_glm_point": {
+      "glm_ratio": 0.9993,
+      "glm_ratio_provenance": "GLM block 16 vs 32. This is NOT the candidate's block; no GLM leg exists at block 8 or 4.",
+      "verbatim": "PlanePromotion(candidate='ldlq_block=8', served_arm='ldlq_block=8', unit_ratios=(0.9316, 0.8773, 0.9668, 0.9397, 0.9393, 0.9724), geomean=0.9373291536531269, wins=6, glm_ratio=0.9993, glm_bar=1.0, served_kl=0.5099719526, served_bar=0.5200805955, landing='table', where='the per-plane promotion')",
+      "reading": "With the missing leg filled by a neighbouring block's number, all five legs pass. This is recorded to show WHICH leg is actually blocking -- only the GLM one -- and it is explicitly NOT a promotion, because the input that makes it pass is not a measurement of the candidate."
+    },
+    "verdict": "NOT PROMOTED. The gate cannot be run on this candidate's own evidence. I am not filling the missing leg and I am not concluding 'promoted' on my own reading."
+  },
+  "what_the_gate_does_not_look_at": [
+    "Encode cost. The gate has no cost leg, so it cannot price a quality-for-encode-time trade, and this lever is exactly that trade.",
+    "The confident-position reading. The gate reads all-position kl_lower_mean, which improves 1.94%; the confident subset is flat at +0.03%. A gate pass here would rest entirely on the metric that moved."
+  ]
+}

@@ -36,6 +36,34 @@ KL_TOOL_DIR = Path(os.environ.get("KL_TOOL_DIR", "/home/rob/dq-runs"))
 if not (KL_TOOL_DIR / "kl_tool.py").exists():
     pytest.skip(f"no kl_tool.py under {KL_TOOL_DIR}", allow_module_level=True)
 
+# The instrument is untracked and per-box, so the fleet can hold two versions
+# of it at once and did: sparklina's copy predated the decode regime while
+# sparky's carried it.  It is also not one file -- ``kl_tool`` is a front end
+# over ``kl_estimator``, they move together, and a half-copied pair is its own
+# failure.  Both halves being stale gave ten ``unrecognized arguments:
+# --regime`` failures and one ``KeyError: 'regime'``; copying only the front
+# end then gave a collection ``ImportError`` on ``DEFAULT_REGIME``.  Twelve
+# symptoms, one fact, and none of them named it.
+#
+# Deliberately a refusal and not a skip: a box whose instrument cannot tell a
+# decode dump from a prefill one still writes receipts under the same metric
+# name, so skipping would let it look green while producing them.
+_STALE = (
+    "the kl instrument under {dir} is stale: {why}.\n"
+    "It is untracked and lives outside every checkout, one copy per box, and "
+    "it is a set -- kl_tool.py and kl_estimator.py move together, so copying "
+    "one of them leaves the pair inconsistent in a new way.  Copy the current "
+    "set from a box that has it rather than editing this guard: a served-KL "
+    "receipt taken with either version is labelled the same way, which is "
+    "what makes the drift dangerous rather than merely inconvenient."
+)
+
+if '"--regime"' not in (KL_TOOL_DIR / "kl_tool.py").read_text():
+    raise RuntimeError(_STALE.format(
+        dir=KL_TOOL_DIR,
+        why="kl_tool.py has no --regime flag, so every test below would fail "
+            "in argparse rather than in the behaviour it is checking (#102)"))
+
 
 def _load(name):
     spec = importlib.util.spec_from_file_location(
@@ -46,7 +74,12 @@ def _load(name):
     return module
 
 
-kl_tool = _load("kl_tool")
+try:
+    kl_tool = _load("kl_tool")
+except ImportError as exc:                                  # a half-copied set
+    raise RuntimeError(_STALE.format(
+        dir=KL_TOOL_DIR, why=f"kl_tool.py imports a name its own dependency "
+                             f"does not provide ({exc})")) from exc
 
 
 # --------------------------------------------------------------------------

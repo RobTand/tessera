@@ -92,6 +92,23 @@ the two serves that produced the measured pair rather than asserted:
                                     fused_add_rms_norm=['native'])
 ```
 
+**A pinned arm prints that line twice, and only the second one ran.** An arm
+that overrides the dispatch on the CLI logs the config it *asked* for and then
+the config vLLM *resolved*; on `compiled-both` the first reads
+`ir_op_priority=IrOpPriorityConfig(rms_norm=['vllm_c'], ...)` and the second
+reads `['vllm_c', 'native']`, identical to the eager arm's single line. The
+unpinned arms (`eager`, `compiled`, `compiled-ops`) log one line and have no
+second value to disagree with. This matters because `build_identity`'s
+`require_same_dispatch` gate reads the line and answers "did these two arms run
+the same program": reading the *first* match made it compare a request against
+a resolution, and it then refused `compiled-both`, `compiled-both-noauto` and
+`compiled-eagerbackend` against `eager` -- the three pairs whose served KL in
+section 3 is exactly 0.000000 at 100.00% top-1. Reading the last match, the
+gate reproduces all six measured pairs: those three pass and `compiled`,
+`compiled-ir` and `compiled-ops` refuse. The request survives on the stamp as
+provenance (`dispatch_requested`), never as identity -- a request that lost
+decides nothing about the arithmetic.
+
 **What it is not.** Issue #16 and the earlier receipt both reach for fusion
 ("fusion changing accumulation order"). The compiled arm's own config line says
 `'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False,

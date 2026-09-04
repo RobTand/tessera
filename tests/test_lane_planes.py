@@ -5,7 +5,9 @@ the bytes on disk are the planes the *encoder* derives from its own unit, byte
 for byte.  That is what lets a serving runtime decode the artifact it
 verified instead of a copy the exporter kept.
 """
+import os
 import sys
+from pathlib import Path
 
 import pytest
 import torch
@@ -23,15 +25,30 @@ from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 K2 = tuple_grid(E2M1_GRID, 2)
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_lane_planes_never_imports_triton():
     """In a fresh interpreter: importing the packers must not pull Triton in
-    (a serving runtime that forbids Triton imports exactly this module)."""
+    (a serving runtime that forbids Triton imports exactly this module).
+
+    The child is told where ``tessera`` is, the same way every other
+    subprocess test here is.  Left to its own devices it resolves the name
+    against whatever the venv has installed, and on this fleet that is an
+    editable pin to one particular checkout: the test then reports on that
+    tree no matter which one pytest is running from, and passes green on a
+    box where the checkout under test has the regression.  On a box with no
+    install at all it fails with ``ModuleNotFoundError``, which is the same
+    bug arriving loudly.  ``CUDA_VISIBLE_DEVICES`` is deliberately *not*
+    cleared -- a module that imports the kernel only when it sees a GPU is
+    exactly the failure this asserts against.
+    """
     import subprocess
     code = ("import sys; import tessera.lane_planes, tessera.fused, tessera.unit_artifact; "
             "print('triton' in sys.modules, 'tessera.kernel' in sys.modules)")
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    env = dict(os.environ, TMPDIR="/home/rob/tmp", PYTHONPATH=str(ROOT / "src"))
+    out = subprocess.run([sys.executable, "-c", code], env=env,
+                         capture_output=True, text=True, check=True)
     assert out.stdout.split() == ["False", "False"], out.stdout
 
 
