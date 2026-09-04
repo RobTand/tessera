@@ -14,9 +14,9 @@ plane puts on the wire. It does not:
   Qwen3-0.6B Linear at its shipped width, with its real Hessian, hashes
   identically across all four arms, LDLQ off and LDLQ at its default alike.
 * **The decision never fires.** Mirroring every accept decision twice inside
-  the real swap loop: **38,192 trials on x86 and 10,368 on GB10, 0 that the
+  the real swap loop: **38,192 trials, run on both architectures, 0 that the
   two tests decide differently.** The closest any trial came to the boundary
-  was a relative improvement of **9.298e-06** -- about **78x** the float32
+  was a relative improvement of **9.218e-06** -- about **77x** the float32
   epsilon the test compares against.
 
 Zero differing decisions is a stronger statement than an equal hash. The
@@ -59,8 +59,8 @@ Two consequences the issue's framing implies neither of:
 * On float32 the change can only ever **reject**. It cannot introduce a swap.
 * On float64 costs (`eps = 2.2e-16`) it is a *tightening* and would accept
   swaps the literal refused. **No production path reaches that regime**:
-  every one of the 38,296 `_lut_cost` calls in the x86 corpus accumulated in
-  float32, which is the issue's premise turned from a reading of the code into
+  every one of the 38,296 `_lut_cost` calls in the corpus accumulated in
+  float32, on both boxes, which is the issue's premise turned from a reading of the code into
   a count.
 
 ## The E4M3 grid does not reach `_fit_lut` at all
@@ -102,34 +102,46 @@ something (`encode.py:1512-1535`: `if not improved: break`), so
 
 always. A trial misread as a pass start would push the count up; an invocation
 that returned before the swap loop would push it down. Both effects are bounded
-by this and neither run leaves the band, the two audit-matrix runs sitting on
-its upper edge because every accepting pass there accepted exactly once.
+by this, and neither run leaves the band.
 
-| | x86 (dl380g10) | GB10 (sparky) | x86 + 2 real units |
-|---|---|---|---|
-| `_fit_lut` invocations | 72 | 60 | 82 |
-| swap pass starts | 80 | 67 | 104 |
-| accepted swaps | 8 | 7 | 79 |
-| bound `[inv, inv+acc]` | [72, **80**] | [60, **67**] | [82, 161] |
-| swap trials | 11,040 | 10,368 | 38,192 |
-| `_lut_cost` calls in float32 | 11,120 (all) | 10,435 (all) | 38,296 (all) |
-| **decisions the two tests differ on** | **0** | **0** | **0** |
-| closest trial to the boundary | 8.288e-05 (695x eps) | 8.296e-05 (696x eps) | 9.298e-06 (**78x** eps) |
+The same corpus -- the harness's encode matrix, its release rows, and two whole
+Qwen3-0.6B Linears with their real H -- run on both architectures:
+
+| | x86 (dl380g10) | GB10 (sparky) |
+|---|---|---|
+| `_fit_lut` invocations | 82 | 82 |
+| swap pass starts | 104 | 104 |
+| accepted swaps | 79 | 79 |
+| bound `[inv, inv+acc]` | [82, 161] | [82, 161] |
+| swap trials | 38,192 | 38,192 |
+| `_lut_cost` calls in float32 | 38,296 (all) | 38,296 (all) |
+| **decisions the two tests differ on** | **0** | **0** |
+| closest trial to the boundary | 9.298e-06 (78.0x eps) | 9.218e-06 (**77.3x** eps) |
+| `k_proj` digest | `56f5636a...b742641` | `56f5636a...b742641` |
+| `down_proj` digest | `7feaffb1...23d7df5a` | `7feaffb1...23d7df5a` |
 
 Two architectures matter here because `_lut_cost` is a float32 `sum()`: a
 different reduction order is a different last bit, and therefore an independent
-chance for a one-ulp event. Neither box produced one. (The GB10 column is the
-encode matrix only; the x86 columns add the release rows, which is why their
-counts are higher.)
+chance for a one-ulp event. The two boxes *do* differ in the last bits -- the
+closest trial is not the same number on both -- and land on the same trial
+counts, the same accepts and the same bytes anyway. Neither produced a one-ulp
+event.
 
-The real units are what tighten the margin, from 695x to 78x, and they are the
-reason the receipt is not taken on the audit slice alone: `_fit_lut`'s
-near-ties are a property of how many halves a unit has, and the harness's value
-cases cut the committed slice to 16x128.
+An earlier pass over the encode matrix alone, before the real units were added,
+found the same zero on both boxes (11,040 trials x86 with the release rows,
+10,368 GB10 without) at a much looser margin: 695x eps. Those two files are
+kept for the trail rather than relied on; the GB10 one was written by the
+tracer before its band predicate was renamed (`all_differences_are_one_ulp`, a
+key the committed script no longer writes), which is why the table above is the
+like-for-like re-run instead. The real units are what tighten the margin to
+77x, and they are the reason the receipt is not taken on the audit slice
+alone -- `_fit_lut`'s near-ties are a property of how many halves
+it is fitting sixteen entries to, and the harness's value cases cut the
+committed slice to 16x128.
 
-Trials by case, x86 (the two real Linears from the `--full-unit` leg, the
-rest from the harness's own cases) -- the LUT-plane rows are the whole
-exposure:
+Trials by case, identical on both boxes (the two real Linears from the
+`--full-unit` leg, the rest from the harness's own cases) -- the LUT-plane rows
+are the whole exposure:
 
 | case | swap trials |
 |---|---|
@@ -173,7 +185,7 @@ fitting sixteen entries to, so the receipt is also taken on a whole
 capture's real H, encoded at the E2M1x2 sub-cap rung (`q256=512`), which
 `wire_recipe` puts on the LUT plane. 299,654 bytes, hashed whole:
 
-| arm | LDLQ off (`ldlq_sigma=None`) | LDLQ at its default (sigma 1, block 32) |
+| arm | LDLQ off (`ldlq_sigma=None`) | LDLQ at `ActivationSource`'s defaults |
 |---|---|---|
 | master (`766033c`) | `56f5636a...b742641` | `8e8f8b97...517e69f` |
 | master + `step = 1e-9` | `56f5636a...b742641` | `8e8f8b97...517e69f` |
@@ -183,13 +195,21 @@ capture's real H, encoded at the E2M1x2 sub-cap rung (`q256=512`), which
 Both columns are one digest across all four arms. The two columns differ from
 each other, which is the point of running both: `ActivationSource`'s default is
 `DEFAULT_LDLQ_SIGMA = 1.0` (`export.py:174`), so an exporter handed an H runs
-LDLQ, and LDLQ moves the residual the refit's targets are drawn from -- a
-*different* set of `_fit_lut` trials, not the same one measured twice. The eps
-test moves neither.
+LDLQ. Asked what it actually hands the encoder for this unit on this plane,
+`for_unit` returns `ldl` (a [1024, 1024] factor), `ldl_block=32`,
+`refit_metric`, `refit_reach_floor=False`, `refit_gauss_seidel=False` -- so the
+right column is a real LDLQ leg, and LDLQ moves the residual the refit's
+targets are drawn from, which is a *different* set of `_fit_lut` trials rather
+than the same one measured twice. The eps test moves neither.
 
 The tracer, run in the master arm on the same unit, reproduces master's
-LDLQ-off digest exactly, so wrapping `_lut_cost` does not perturb the encode
-and the trial counts above are counts of the encode that produced these bytes.
+LDLQ-off digest exactly on both boxes, so wrapping `_lut_cost` does not perturb
+the encode and the trial counts above are counts of the encode that produced
+these bytes. Incidentally, the LDLQ-off digests are also identical *across*
+architectures -- `56f5636a...` and `7feaffb1...` on x86 and GB10 alike, from
+float32 reductions that demonstrably differ in their last bits. That is not
+what this receipt claims and not what it needed (every arm is compared within
+one box), but it is what the two runs say.
 
 
 ## Scope -- what this does not prove
@@ -198,9 +218,9 @@ and the trial counts above are counts of the encode that produced these bytes.
   release rows plus two real Linears at their shipped width. A LUT unit whose
   targets put a swap within one ulp of the running cost would still change
   hands, and no corpus of this size rules that out. What it bounds is how close
-  real encodes come: the nearest of 48,560 trials across two architectures was
-  78x the threshold away.
-* **The trial-level mirror is the LDLQ-off leg.** The 48,560 mirrored decisions
+  real encodes come: the nearest of 38,192 trials, mirrored twice over on two
+  architectures, was 77x the threshold away.
+* **The trial-level mirror is the LDLQ-off leg.** The mirrored decisions
   are all `ldlq_sigma=None`. The LDLQ-default leg -- which is what an exporter
   handed an H actually runs -- is covered by byte identity across four arms, not
   by a decision-by-decision count. A one-ulp event there would be invisible to
@@ -219,7 +239,7 @@ and the trial counts above are counts of the encode that produced these bytes.
 | | |
 |---|---|
 | x86 arm | dl380g10, `/home/rob/venvs/pb-cpu`, torch 2.11.0+cpu, 4 threads, `CUDA_VISIBLE_DEVICES=` |
-| GB10 arm | sparky (aarch64, sm121), system python, torch 2.10.0+cpu, 1 thread, `CUDA_VISIBLE_DEVICES=` |
+| GB10 arm | sparky (aarch64, sm121), system python, torch 2.10.0+cpu, 4 threads, `CUDA_VISIBLE_DEVICES=` |
 | arms | `git archive` of `2f6a15a^`, `2f6a15a`, `766033c` (master), and master with `step = 1e-9` |
 | corpus | `experiments/audit_byte_baseline.py` encode + release rows; `tests/data/audit_value_slice.pt`; two whole Qwen3-0.6B Linears with the real `h_full_qwen06b.pt` H |
 
@@ -231,5 +251,7 @@ byte-identical file). Tracer: `experiments/lut_stop_ulp_trace.py`. Tests:
 `tests/test_lut_stop_ulp_band.py` (31 pass), with
 `tests/test_lut_stop_dtype.py`, `tests/test_encoder_fit_caps.py` and
 `tests/test_lut_exact_fit.py` (53 pass together). Data:
-`/mnt/shared/ts106-arms/` (`audit_*.json`, `realunit_*.json`, `trace_*.json`,
-the four arm checkouts, and the real-unit fixture).
+`/mnt/shared/ts106-arms/` (`audit_*.json`, `realunit_*.json`,
+`realunit_ldlq_*.json`, `trace_realunits_{x86,gb10}.json` and the two
+matrix-only `trace_master_*.json`, the four arm checkouts, and the real-unit
+fixture).
