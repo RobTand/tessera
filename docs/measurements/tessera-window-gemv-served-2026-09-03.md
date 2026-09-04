@@ -406,8 +406,19 @@ trace:
 |---|---|---|
 | `window_gemv_kernel<14, 16, 1, unsigned short, false, false, false>` | **9,016** | 149.86 ms |
 | `window_decode_kernel<14, 4, unsigned char>` | 784 | 237.74 ms |
-| `scaled_mm`/CUTLASS | 3,136 | 46.74 ms |
 | per-token FP8 quant | 9,800 | 44.42 ms |
+| `scaled_mm`/CUTLASS GEMM | **448** | 29.83 ms |
+| flash attention | 4,088 | 19.86 ms |
+
+**The GEMM row was first published as 3,136, and that was my summariser's bug,
+not the serve's.** `window_gemv_trace_summary.py` tested its `cutlass|scaled_mm|
+gemm` pattern *before* its attention pattern, and flash-attention kernels are
+templated on CUTLASS types -- `cutlass::bfloat16_t` is inside their own mangled
+name -- so 2,688 attention launches were counted as GEMMs. The number mattered:
+3,136 GEMMs against 9,016 GEMV launches reads as *the compiled forward is partly
+falling back at M=1*, which is precisely the question this trace was taken to
+settle. Fixed in the tool (bucket order, with the reason in the source) and the
+summary regenerated.
 
 **This closes the gap §2 point 4 names.** The compiled census proves dispatch;
 these are kernel names in a chrome trace, which is launch. The window GEMV
@@ -416,6 +427,34 @@ these are kernel names in a chrome trace, which is launch. The window GEMV
 The eager arm never needed this -- its census record carries the
 `tessera_window_gemv::gemv` symbol at M1 shapes directly -- so with this trace the
 launch question is answered in **both** regimes.
+
+**And there is no fallback at M=1 -- the time axis says so, not the total.** A
+total cannot separate "these GEMMs are the prefill" from "the compiled forward
+falls back to a GEMM at M=1"; the two readings of one number are opposite
+conclusions about the lane. Splitting the 1.446 s of kernel activity into 24 bins
+(`--phases 24`) separates them, because the GEMV only exists at M=1, so any bin
+holding GEMV launches is a decode bin:
+
+| bins | window_gemv | window_decode | scaled_mm/CUTLASS | attention |
+|---|---|---|---|---|
+| with GEMV activity (decode) | 9,016 | 71 | **41** | 3,884 |
+| without it (prefill / materialisation) | 0 | 713 | **407** | 204 |
+
+The 41 are not steady-state decode: they fall in bins 2, 8 and 11 only, which are
+the bins that *also* hold `window_decode` launches -- boundary bins straddling a
+prefill and the decode that follows it. In every bin that is purely decode (3-7,
+12-17) the CUTLASS GEMM count is **exactly 0** while the GEMV runs 784 times per
+bin. Under a compiled forward, at the shape the kernel exists for, nothing else
+is doing that work.
+
+*An observation the trace volunteers, recorded rather than chased:* the largest
+single device-time kernel in the run is not in any of these buckets. It is a
+cuBLAS bf16 GEMV (`internal::gemvx::kernel<int, int, __nv_bfloat16, ...>`), 50
+launches for **263.9 ms** -- more device time than the entire window-GEMV bucket.
+An unquantised bf16 Linear at M=1 has that shape, but the trace does not name the
+module and this document does not attribute it. It is flagged because it bears on
+what a decode-latency comparison of this lane could ever show: if that kernel is
+on the decode path, the lane is not what dominates it.
 
 Summary regenerated with `experiments/window_gemv_trace_summary.py`; the JSON is
 `trace-armA-streamed-compiled.json`.
@@ -442,9 +481,11 @@ guessed, and an empty trace directory is now said out loud at the end of a run.
 around it.** A compiled route record stamps the combined `(symbol, decoder)` pair
 from the trace whatever runs underneath it, so the compiled census proves
 **dispatch, not launch**. A kernel name in a chrome trace is the only thing that
-proves the GEMV kernel actually ran under a compiled forward, and this campaign
-has none. Section 2's compiled verdicts should be read with that limit attached.
-The deferred quiet-box run carries the fix and will produce the trace.
+proves the GEMV kernel actually ran under a compiled forward. The original
+campaign captured none; the re-run above captured one, for `armA/streamed/
+compiled`. Section 2's compiled verdict for **that** arm is now backed by
+launches; the compiled verdict for `armB/streamed/compiled` still rests on
+dispatch alone.
 
 ### Scope, stated
 
