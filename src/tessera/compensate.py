@@ -221,15 +221,15 @@ def choose_ldl_block(
     where a constant hides it.
 
     ``floor`` is the smallest block **the caller's own path** allows, and it
-    has no default on purpose.  The two callers of this factorisation have
+    has no default on purpose.  The two paths that consume an LDL block have
     different floors, and the one that has a floor is not the one production
     takes:
 
     * :func:`compensated_targets` stitches independently-encoded slices, so a
       block must be aligned to the encoder's scale group *and* its rotation
       block or the slices stop equalling the spans of a whole-matrix encode.
-      Its floor is the larger of those two, read off the encoder the caller
-      holds -- a narrower slice is refused by the encoder itself.
+      Its floor is a block both of those divide, read off the encoder the
+      caller holds -- a narrower slice is refused by the encoder itself.
     * ``encode.encode_unit(ldl=..., ldl_block=...)`` -- the path every LDLQ arm
       in this repo is measured on -- has no such floor.  The scale plane is
       read once per pass *before* the block loop and refit once *after* it, so
