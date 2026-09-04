@@ -16,13 +16,13 @@ jobs:
   pure:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # merge_suite records whether the tested commit is master.  A PR's
           # default depth-1 synthetic-merge checkout contains neither master
           # nor origin/master, so absence would masquerade as no population.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - run: pip install pytest
@@ -119,8 +119,17 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The ancestry check below reads reachability out of git, and a
+          # shallow clone cannot answer that from the history it holds.
+          fetch-depth: 0
+      # A `v*` tag is not a review gate -- anyone who can push one can push it
+      # at any commit.  This is the gate, and it runs first: a commit that
+      # will not be published is not built either.
+      - name: the tagged commit must be on master
+        run: bash .github/scripts/require_tag_on_master.sh "$GITHUB_SHA"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: the tag must match the packaged version
@@ -132,4 +141,4 @@ jobs:
       - run: python -m build
       # The same proof the pure job ran, on the bytes about to be published.
       - run: python tools/check_wheel.py dist/*.whl
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
