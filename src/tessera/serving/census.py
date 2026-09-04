@@ -291,11 +291,9 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
 def _cell_modes(cell):
     """The residencies a cell's serve flags name.
 
-    A local parse rather than an import of ``contract.cell_residency_modes``
-    because this module is imported inside a serving container from a tool that
-    must not need the validator's import graph; the shape is one flag,
-    ``TESSERA_SERVE_MODE=a|b``, and a cell that does not carry one covers
-    nothing here rather than covering everything.
+    The published contract validates the flag strictly. This observation
+    reader treats a missing ``TESSERA_SERVE_MODE=a|b`` flag as covering
+    nothing rather than covering every residency.
     """
     head = "TESSERA_SERVE_MODE="
     for flag in cell.get("requires_serve_flags", ()):
