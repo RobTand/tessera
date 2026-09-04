@@ -1243,3 +1243,46 @@ def test_a_probe_that_did_not_answer_is_not_a_clean_tree(tmp_path):
         merge_suite.GIT_PROBE_TIMEOUT_S = original
     assert timed_out["working_tree_dirty"] is None, timed_out
     assert timed_out["commit"] is None, timed_out
+
+
+def test_an_arm_that_ran_nothing_is_not_a_green_population():
+    """The other door onto the green lie tessera#114 is about.
+
+    #114's x86 arm published no population, and the merger refused.  The
+    cheapest way to make that refusal stop firing is to give the arm a
+    population it can always produce: collect the suite, skip all of it, exit
+    0.  Nothing above this check would object -- no failures, a clean exit, a
+    surface on disk with its skip reasons -- and the receipt would read green
+    on a population that executed not one test.
+
+    So a population is only evidence for green when something in it ran.  The
+    check is on ``passed`` rather than on the skip *reasons*, because a reason
+    is prose and this is a gate: an arm that legitimately cannot run part of
+    the surface still has to run the rest of it.
+    """
+
+    merge_suite = _module()
+    all_skipped = merge_suite._verdict([
+        {"arm": "gpu", "returncode": 0, "requires_cuda": True,
+         "surface": {"cuda": True, "strict_cuda": True,
+                     "counts": {"passed": 2059, "failed": 0, "skipped": 13}}},
+        {"arm": "x86", "returncode": 0, "requires_cuda": False,
+         "surface": {"cuda": False,
+                     "counts": {"passed": 0, "failed": 0, "skipped": 2072},
+                     "skip_reasons": {"no CUDA device on this box": 2072}}},
+    ])
+    assert all_skipped.startswith("incomplete: the x86 arm"), all_skipped
+    assert "0 passed" in all_skipped and "2072 skipped" in all_skipped
+
+    # And the same two arms, with the x86 one having actually executed the
+    # device-less surface, is the verdict this issue is trying to reach.
+    ran = merge_suite._verdict([
+        {"arm": "gpu", "returncode": 0, "requires_cuda": True,
+         "surface": {"cuda": True, "strict_cuda": True,
+                     "counts": {"passed": 2059, "failed": 0, "skipped": 13}}},
+        {"arm": "x86", "returncode": 0, "requires_cuda": False,
+         "surface": {"cuda": False,
+                     "counts": {"passed": 1600, "failed": 0, "skipped": 472},
+                     "skip_reasons": {"no CUDA device on this box": 467}}},
+    ])
+    assert ran == "green on 2 population(s): gpu, x86", ran
