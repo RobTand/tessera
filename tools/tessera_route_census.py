@@ -93,6 +93,26 @@ import time
 #: regime declared there and absent here is a refusal below rather than a
 #: silently unobserved cell.
 DRIVEN_REGIMES = ("batch", "decode")
+CHECKPOINT_SIDECAR_NAMES = ("config.json", "tessera_serving_manifest.json")
+
+
+def checkpoint_sidecar_hashes(checkpoint, *, expected=None):
+    """Exact sidecar bytes observed by this process, independent of mount names.
+
+    Config is required by every census. A generic census may legitimately have
+    no serving manifest; publish that absence rather than inventing a digest.
+    Campaign orchestration holds the assembled artifact unchanged through the
+    serve. These hashes do not replace the assembly's tensor/wire audit.
+    """
+    from pathlib import Path
+    from tessera.serving_parts import sha256_file
+    checkpoint = Path(checkpoint)
+    config, manifest = (checkpoint / name for name in CHECKPOINT_SIDECAR_NAMES)
+    observed = {config.name: sha256_file(config),
+                manifest.name: sha256_file(manifest) if manifest.is_file() else None}
+    if expected is not None and observed != expected:
+        raise ValueError("checkpoint sidecars changed during census; no served receipt is valid")
+    return observed
 
 
 def census(model):
@@ -456,6 +476,7 @@ def main() -> int:
     # types the census command.
     required_lanes = list(args.require_lane or ())
     manifest_lanes = []
+    sidecars = checkpoint_sidecar_hashes(args.model)
     manifest_path = os.path.join(args.model, "tessera_serving_manifest.json")
     if not args.no_manifest_lanes and os.path.isfile(manifest_path):
         with open(manifest_path) as fh:
@@ -641,6 +662,9 @@ def main() -> int:
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode)
     problems.extend(agreement_problems)
+    # The controller holds the checked artifact immutable; verify that seal
+    # again after both forwards, before publishing any served receipt.
+    checkpoint_sidecar_hashes(args.model, expected=sidecars)
 
     receipt = {
         "schema": "tessera.serving.route_census/2",
@@ -648,6 +672,7 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
+        "checkpoint_sidecars": sidecars,
         "tessera_config_groups": len(tessera_groups),
         "declared_names_mapped_to_module_space": name_map is not None,
         "declared_name_mapping": name_map,

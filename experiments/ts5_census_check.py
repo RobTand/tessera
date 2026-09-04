@@ -3,8 +3,8 @@
 
 This is a receipt/sidecar gate, not a wire audit or a quality measurement. Run
 under PrismaBuild against the same merged checkpoint mounted by the census.
-Host and container checkpoint names may differ; the common export plan joins
-the supplied config/manifest, and runtime owner evidence joins their schemes.
+Host and container checkpoint names may differ; exact sidecar hashes bind
+the supplied config/manifest to the serve, and owner evidence joins schemes.
 """
 from __future__ import annotations
 
@@ -22,12 +22,14 @@ sys.path.insert(0, str(ROOT / "src"))
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, construction_entry,
     load_serving_contract, require_runtime_image, vllm_module_name)
-from tessera.serving.moe_route import census_symbol_base
 from tessera.serving.scheme import (
     ROUTES, STRUCTURE_ROUTED_MOE, expert_role_declarations, launch_pairs,
+    moe_census_symbol_base as census_symbol_base,
     validate_tessera_moe_scheme)
+from tessera.serving_parts import sha256_file
 from tools.tessera_route_census import (
-    all_structure_agreement, declared_rung, join_records_to_declared, phase_shape_problems)
+    CHECKPOINT_SIDECAR_NAMES, all_structure_agreement, checkpoint_sidecar_hashes,
+    declared_rung, join_records_to_declared, phase_shape_problems)
 
 
 def read_json(path):
@@ -135,13 +137,19 @@ def _population(plan, config, manifest):
     return planned, schemes, units
 
 
-def check_census(plan, config, manifest, census, *, runtime_image, checkpoint,
+def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, checkpoint_sidecars,
                  contract=None, require_attested=False):
     """Validate the complete raw population and replay the current contract."""
     runtime_image = require_runtime_image(runtime_image)
     contract = load_serving_contract() if contract is None else contract
     for value, name in ((config, "config"), (manifest, "manifest"), (census, "census")):
         _mapping(value, name)
+    _mapping(checkpoint_sidecars, "supplied checkpoint sidecars")
+    _require(set(checkpoint_sidecars) == set(CHECKPOINT_SIDECAR_NAMES) and
+             all(isinstance(value, str) and value for value in checkpoint_sidecars.values()),
+             "campaign requires both supplied checkpoint sidecar file hashes")
+    _require(census.get("checkpoint_sidecars") == checkpoint_sidecars,
+             "raw census checkpoint sidecar hashes differ from supplied files")
     planned, schemes, units = _population(plan, config, manifest)
     _require(census.get("schema") == "tessera.serving.route_census/2", "raw census schema must be v2")
     runtime = {"image": runtime_image, "execution_mode": "eager"}
@@ -214,6 +222,7 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint,
     return {"schema": "tessera.ts5-census-check/1", "verdict": "passed",
             "require_attested": require_attested, "runtime": runtime, "residency": "resident",
             "checkpoint": str(checkpoint), "census_checkpoint": census.get("checkpoint"),
+            "checkpoint_sidecars": dict(checkpoint_sidecars),
             "expected_owners": expected_owners, "expected_projection_units": units,
             "declared_name_mapping": mapping, "record_owner": owners, "symbols": symbols,
             "owner_shapes": {p: {n: r["shape"] for n, r in rs.items()} for p, rs in owner_records.items()},
@@ -234,8 +243,9 @@ def main(argv=None):
     try:
         data = {name: read_json(path) for name, path in paths.items()}
         result = check_census(**data, runtime_image=args.runtime_image, checkpoint=args.checkpoint,
+                              checkpoint_sidecars=checkpoint_sidecar_hashes(args.checkpoint),
                               require_attested=args.require_attested)
-        result["inputs"] = {name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+        result["inputs"] = {name: {"path": str(path), "sha256": sha256_file(path)}
                             for name, path in paths.items()}
     except (ValueError, KeyError, TypeError, OSError) as exc:
         result = {"schema": "tessera.ts5-census-check/1", "verdict": "REFUSED", "problems": [str(exc)]}

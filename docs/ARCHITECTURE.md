@@ -582,7 +582,16 @@ The checker replays construction mapping and ownership, validates launch pairs
 and activation contracts even when no cell exists, and requires distinct,
 nonempty eager shapes at every owner using the census's shared shape check.
 It preserves actual backend suffixes. Host/container checkpoint paths may
-differ; exporter image provenance is not a serving-image eligibility rule.
+differ: the raw census records `checkpoint_sidecars`, SHA256s of the exact
+`config.json` and `tessera_serving_manifest.json` bytes read inside its process,
+and the campaign checker requires equality with both supplied file hashes.
+The census verifies those sidecar hashes again after both forwards and refuses
+to publish a served receipt if either changed.
+The generic census permits a missing manifest and records it as null; this
+merged-artifact campaign does not. The assembled artifact is held unchanged
+through serving; these sidecar hashes do not replace the checked assembly's
+tensor/wire validation. Exporter image provenance is not a serving-image
+eligibility rule.
 The initial check permits genuinely unattested owners. `--require-attested`
 replays the same raw records against the **current** packaged contract and
 requires every planned owner covered in both phases, ignoring stale embedded
