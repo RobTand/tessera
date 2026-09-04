@@ -108,6 +108,7 @@ fi
 curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/json' \
   -d '{"model":"kl-target","prompt":"The capital of France is","max_tokens":16,"temperature":0}' | $PY -c "import json,sys; print('completion:', repr(json.load(sys.stdin)['choices'][0]['text']))"
 if ! $PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url "http://127.0.0.1:${PORT}/v1/completions" \
+  --top-k "${TESSERA_KL_TOPK:-1024}" \
   --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL"; then
   docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1
   echo "dump FAILED; serve log at $LOG"; exit 3

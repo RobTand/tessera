@@ -167,6 +167,7 @@ if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
 fi
 
 ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"
+      --top-k "${TESSERA_KL_TOPK:-1024}"
       --corpus-contract "$CORPUS" --role "$ROLE" --artifact-path "$MODEL")
 # The regime flags are added only when the regime is NOT the default, so a
 # prefill dump taken through this wrapper today records the same argv it

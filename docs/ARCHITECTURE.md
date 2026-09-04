@@ -468,6 +468,9 @@ compare every merged shard and sidecar with the checked assembly seal before
 and after execution, mount the exact model directory read-only, and preserve
 the raw census or matched teacher/student comparison alongside their hashes.
 Each stage owns one exclusive GPU reservation through verified cleanup.
+The teacher and plugin-student wrappers pass `TESSERA_KL_TOPK` to both the
+server's logprob limit and the dump request's explicit `--top-k`; a nondefault
+support request must not silently fall back to the dump tool's default.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
