@@ -156,13 +156,22 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
 
 
 def _verdict(arms: list[dict]) -> str:
+    """Green is never stated without naming the populations it is green on.
+
+    "green on both populations" was the first spelling here and it lies the
+    moment somebody passes ``--arm gpu``: one arm, and a verdict claiming two.
+    That is the same sentence shape as the one #112 is about -- a result quoted
+    without the population it was measured on -- so the arms are named.
+    """
+
+    names = ", ".join(record["arm"] for record in arms) or "no arms"
     if any(record.get("status") for record in arms):
         return "not run"
     if any(record.get("surface") is None for record in arms):
         return "incomplete: an arm published no population"
     if any(record.get("returncode") != 0 for record in arms):
-        return "red"
-    return "green on both populations"
+        return f"red on one of: {names}"
+    return f"green on {len(arms)} population(s): {names}"
 
 
 LEDGER_HEADER = """# Suite populations
@@ -293,7 +302,7 @@ def main() -> int:
               f"skipped={counts.get('skipped', '?')} "
               f"not_collected={len(surface.get('not_collected', []))}")
     print(f"merge_suite: receipt {out}")
-    return 0 if receipt["verdict"] == "green on both populations" else 1
+    return 0 if receipt["verdict"].startswith("green on") else 1
 
 
 if __name__ == "__main__":

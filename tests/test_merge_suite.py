@@ -53,13 +53,27 @@ def test_a_missing_surface_is_reported_as_absent_not_as_a_pass():
     """An arm that was never placed is not a green arm."""
 
     merge_suite = _module()
-    assert merge_suite._verdict([{"surface": None, "returncode": 0}]) == (
-        "incomplete: an arm published no population")
     assert merge_suite._verdict(
-        [{"surface": {}, "returncode": 0}, {"surface": {}, "returncode": 1}]
-    ) == "red"
-    assert merge_suite._verdict(
-        [{"surface": {}, "returncode": 0}]) == "green on both populations"
+        [{"arm": "gpu", "surface": None, "returncode": 0}]
+    ) == "incomplete: an arm published no population"
+    assert merge_suite._verdict([
+        {"arm": "gpu", "surface": {}, "returncode": 0},
+        {"arm": "x86", "surface": {}, "returncode": 1},
+    ]) == "red on one of: gpu, x86"
+
+
+def test_a_green_verdict_names_the_populations_it_is_green_on():
+    """One arm run must never report a verdict about two."""
+
+    merge_suite = _module()
+    one = merge_suite._verdict([{"arm": "gpu", "surface": {}, "returncode": 0}])
+    two = merge_suite._verdict([
+        {"arm": "gpu", "surface": {}, "returncode": 0},
+        {"arm": "x86", "surface": {}, "returncode": 0},
+    ])
+    assert one == "green on 1 population(s): gpu"
+    assert two == "green on 2 population(s): gpu, x86"
+    assert "x86" not in one
 
 
 def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see():
