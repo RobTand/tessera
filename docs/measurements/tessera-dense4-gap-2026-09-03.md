@@ -375,6 +375,41 @@ hours, and the *preceding* range shows what a real encoder change looks like
 here (69 of 112 wire blobs moving), so this is not a check with no power to
 fail. It is stated as layer 0's wire, not as the checkpoint's.
 
+## The tests, and what each of them would fail without
+
+`tests/test_ldlq_block_budget.py`, 20 cases, all on the PrismaBuild pool
+(`20 passed in 0.83s`, sparky). They split into two halves on purpose.
+
+**Five are regression guards** and pass on the pre-change tree as well -- that
+is what they are for: `the_default_is_still_the_measured_constant`,
+`a_stated_block_writes_the_int_it_always_wrote`,
+`for_unit_at_a_stated_block_is_bit_identical_to_the_old_expression`,
+`a_stated_block_below_one_is_still_refused`, and
+`the_segment_count_a_budget_implies_is_what_the_encode_time_tracks` (pure
+`block_penalty` arithmetic, which the change does not touch). A guard that
+went red on the old tree would be describing a behaviour change the branch is
+claiming not to make.
+
+**The rest exercise machinery that does not exist without the change** --
+`block_for`, a mapping-valued `ldlq_block`, the `floor=1` derivation, the
+refusals for a budget with LDLQ off or a malformed spec, the frozen budget and
+the guarded config field. On the pre-change tree `ActivationSource.ldlq_block`
+is a bare `int` and `block_for` is absent, so they fail on `AttributeError`
+and on `TypeError: '<' not supported between instances of 'dict' and 'int'`
+from the old `if self.ldlq_block < 1` -- the refusal tests fail *on the type
+error* rather than on their expected `GrammarError`, which is a real failure
+and worth naming precisely rather than reporting as "would fail".
+
+The counterfactual run itself is recorded below under its own heading, because
+the obvious way to take it does not work in this suite.
+
+**No regressions in the neighbourhood.** The ten test files that touch the
+changed code -- `test_compensate`, `test_export`,
+`test_export_ignore_completeness`, `test_export_moe_layouts`,
+`test_export_plan_cache`, `test_ldlq_block_budget`, `test_ldlq_lut_plane`,
+`test_ldlq_window`, `test_merge_guard`, `test_serving_export_gate` -- run
+**181 passed, 1 skipped** on the branch (sparky, 173.77 s).
+
 ## What remains unmeasured
 
 * **GLM.** Every number above is dense Qwen3-0.6B. The E2M1 route's wins are
