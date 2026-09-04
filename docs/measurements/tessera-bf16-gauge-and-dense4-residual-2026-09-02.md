@@ -979,7 +979,15 @@ the six dense cells come back opposite-signed: fewer entries wins at matched
 bytes (0.8916x at R=4) while *less reach* alone loses (1.0091x), and more
 entries loses (1.1655x at R=8) while *more reach* alone wins (0.9606x, 7/8).
 There is no fraction of one recoverable from the other, and the report says
-so rather than filing a negative fraction in the "entry count" band.  The one
+so rather than filing a negative fraction in the "entry count" band.  One
+disclosure belongs with that sentence: the registration named this case in a
+single orientation (`B > 1 > A`) and the code implemented only that one, so
+the mirror -- an L arm that hurts while the spread alone helps -- would have
+been filed in the `f <= 0.15` band.  It was generalised to the sign itself
+(`f8047f7`) after the first arms had landed and before any verdict was read.
+The fix relabels three dense cells from a band they were never in to the sign
+they are; it moves no number, and it is disclosed here rather than left to
+the commit log.  The one
 readable dense cell, R=4 `L=16`, is +0.003: that loss is entry count, whole.
 
 Two consequences worth separating from the decomposition itself:
@@ -988,9 +996,12 @@ Two consequences worth separating from the decomposition itself:
   `[1.0, 1.25, 1.41, 1.75]`, whose realised reaches are 4.0 then **5.0**.  At
   GLM R=4 that grid saw 1.0000x then 1.0135x (0/6) and concluded no spread
   helps; the matched reach of 4.3125, which lies between its first two rungs,
-  is **0.9915x on 6 of 6 experts at zero bytes**.  At R=8 the coarse grid's
-  own 5.0 (0.9375x, 6/6) is still the better free point, so this is a gap in
-  the earlier grid's resolution at low rate, not a new optimum everywhere.
+  is **0.9915x on 6 of 6 experts at zero bytes** -- though at 0.85% geomean
+  only 3 of those 6 clear 1% individually, which the sweep's own `win@1%`
+  column reports and this receipt repeats rather than rounding away (R=6 is
+  6/6 with 4 at 1%; R=8 is 6/6 with 6).  At R=8 the coarse grid's own 5.0
+  (0.9375x, 6/6) is still the better free point, so this is a gap in the
+  earlier grid's resolution at low rate, not a new optimum everywhere.
 * **The one-sidedness cost nothing.**  `r=0.91596` is the first spread below
   the shipped one ever measured on this grid, and it is worse in all six
   populations x rungs (1.0094x to 1.0678x).  The axis really is monotone
@@ -1015,6 +1026,15 @@ submitted to the pool after the two above landed -- `87cf849b` (`glm-16`),
 38 minutes of GPU for the expert `L=16` row and 11 for `L=12` -- and write
 beside these two, where `experiments/matched_reach_report.py` takes any
 combination of them on one command line.  Removing their `pb-queue/ready`
-records cancels them.  Nothing here moves a default in any case --
+records cancels them.  Two pool observations from these submissions, recorded
+because they are PrismaBuild's to fix and not this repo's: both completed
+rows re-entered `pb-queue/ready` after publishing their results, so their
+records were removed by hand and the landed JSON copied to
+`mr_*_L14.landed.json` beside it; and during a runtime rollout sparky's offer
+file oscillated between two worker generations' capacity shapes (28 of 60
+samples carrying `cpu: 10` and a `runtime_commit`, 32 carrying neither), which
+refuses any submission declaring cores about half the time.  The oscillation
+was gone afterwards -- 40 of 40 samples consistent -- so it is a rollout-window
+shape, not a standing one.  Nothing here moves a default in any case --
 both axes change `encoder_profile_id`, there is no BF16 serving lane, and both
 gates are weight-space or H-weighted columns.  House principle 3: a screen.
