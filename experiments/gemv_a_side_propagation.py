@@ -28,8 +28,17 @@ import os
 import torch
 
 
-def kl_and_top1(clean: torch.Tensor, noisy: torch.Tensor):
-    """Full-vocab KL(clean || noisy) per position, and top-1 agreement."""
+def kl_and_top1(clean: torch.Tensor, noisy: torch.Tensor, keep=None):
+    """Full-vocab KL(clean || noisy) per position, and top-1 agreement.
+
+    ``keep`` restricts the scored positions.  The served decode regime scores a
+    STRIDED subset (prefix lengths 1, 17, 33, ...), not every position, and that
+    subset is deliberately weighted towards short prefixes where the next token
+    is barely determined -- so the position set is part of the metric, not a
+    sampling convenience.
+    """
+    if keep is not None:
+        clean, noisy = clean[keep], noisy[keep]
     lp_c = torch.log_softmax(clean.double(), dim=-1)
     lp_n = torch.log_softmax(noisy.double(), dim=-1)
     kl = (lp_c.exp() * (lp_c - lp_n)).sum(-1)
@@ -53,6 +62,11 @@ def main() -> int:
                     help="RTN the target weights to this many bits per output row first, so "
                          "the sensitivity is measured at a QUANTISED operating point rather "
                          "than on the BF16 teacher (0 = no degradation)")
+    ap.add_argument("--stride", type=int, default=0,
+                    help="score only the served decode regime's positions: prefix lengths "
+                         "1, 1+stride, 1+2*stride, ... (stride 16 = the serve's KV block "
+                         "size, the set `decode_regime_kl.sh` scores).  0 = every position, "
+                         "which is what a prefill dump scores.")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
     torch.set_num_threads(a.threads)
@@ -64,6 +78,13 @@ def main() -> int:
         corpus = json.load(fh)
     chunks = corpus["chunks"] if isinstance(corpus, dict) and "chunks" in corpus else corpus
     ids = [c["ids"] if isinstance(c, dict) else c for c in chunks[:a.chunks]]
+
+    # A prefix of length L is scored on logits row L-1 (row i predicts token i+1).
+    keep = (torch.arange(0, 511, a.stride) if a.stride else None)
+    if keep is not None:
+        print(f"scoring {len(keep)} strided positions per chunk (prefix lengths "
+              f"{1}, {1 + a.stride}, ... {1 + a.stride * (len(keep) - 1)}), "
+              f"the served decode regime's set")
 
     # Every Linear the Tessera FP8 route serves: the decoder blocks' projections.
     # lm_head is excluded -- it is not on the route (`vllm-lm-head-embed-legality`).
@@ -93,7 +114,7 @@ def main() -> int:
         for seq, ref in zip(ids, clean_ref):
             x = torch.tensor([seq[:512]], dtype=torch.long)
             with torch.no_grad():
-                gaps.append(kl_and_top1(ref, model(x).logits[0, :-1].float())[0])
+                gaps.append(kl_and_top1(ref, model(x).logits[0, :-1].float(), keep)[0])
         teacher_gap = sum(gaps) / len(gaps)
         print(f"degraded to {a.degrade_bits} bits per row: KL from the BF16 teacher "
               f"{teacher_gap:.6f}")
@@ -126,13 +147,15 @@ def main() -> int:
         noise_on["v"] = True
         with torch.no_grad():
             noisy = model(x).logits[0, :-1].float()
-        mean, med, top1 = kl_and_top1(clean, noisy)
-        rows.append({"chunk": i, "positions": int(clean.shape[0]),
+        mean, med, top1 = kl_and_top1(clean, noisy, keep)
+        n_scored = int(clean.shape[0]) if keep is None else int(len(keep))
+        rows.append({"chunk": i, "positions": n_scored,
                      "kl_mean": mean, "kl_median": med, "top1_agree": top1})
-        print(f"chunk {i}: positions={clean.shape[0]}  KL mean={mean:.6f} "
+        print(f"chunk {i}: positions={n_scored}  KL mean={mean:.6f} "
               f"median={med:.6f}  top-1 {top1:.2%}")
 
-    agg = {"rel": a.rel, "model": a.model, "where": a.where, "chunks": rows,
+    agg = {"rel": a.rel, "model": a.model, "where": a.where, "stride": a.stride,
+           "chunks": rows,
            "degrade_bits": a.degrade_bits, "degraded_teacher_kl": teacher_gap,
            "kl_mean": sum(r["kl_mean"] for r in rows) / len(rows),
            "top1_agree": sum(r["top1_agree"] for r in rows) / len(rows)}

@@ -5,17 +5,24 @@
 > unambiguous: the lane's accumulation order is worth **1.6e-07** and does not
 > move a single bf16 output word, the fold this document names was worth
 > **1.4e-03**, and with it gone the lane's bf16 output matches
-> `torch._scaled_mm`'s on **99.90-100%** of elements. But a calibrated
-> propagation screen puts the fold at **KL 0.94e-04 on the teacher and 1.45e-04
-> at an operating point worse than the served arms**, one part in eighty-four to
-> one in a hundred and thirty of the `0.012111` #110 measured, and the sharper reading is worse than that:
-> arms agreeing on 99.9% of their bf16 words cannot disagree by 0.012, so if
-> the served re-run still reads 0.012 the cause is not this Linear's
-> arithmetic at all. **The served re-run did not happen** -- sparky's two GPU
-> slots were held for the whole session, latterly by one exclusive `gpu=2`
-> action from another worktree, and the campaign is committed and queued
-> (`6c90ba1b`). Nothing below is a placeholder for a number that was taken and
-> disliked.
+> `torch._scaled_mm`'s on **99.90-100%** of elements. Every other way the two
+> served arms could have differed is closed by an artefact rather than an
+> assumption (§2b): same inode for the weights, prefill KL exactly `0.000000`
+> over 4088 positions, and serve logs identical but for the intended 112
+> refusals -- same attention backend, autotuner `Saved 0 configs` in both, the
+> same single JIT compile in both. That leaves the `M <= 8` branch as the only
+> place a difference can live, and inside it the fold is the only term above
+> 1.6e-07. **Against that, a screen on the served model at the served position
+> set puts the fold at KL 3.2e-04 / 98.44% top-1, against the measured 0.012111
+> / 91.02% -- a factor of ~40.** One of those two readings is wrong and this
+> session cannot say which: the screen still models a correlated bf16 rounding
+> as independent Gaussian noise, and the code reading is only as good as the
+> code I found. **The served re-run, which decides it in one measurement, did
+> not happen** -- both of sparky's GPU tokens were held all session, latterly
+> by an action from another worktree that had already *failed* and was still
+> sitting in `claimed/` while the GPU idled at 13.89 W. The campaign is
+> committed and queued (`6c90ba1b`). Nothing below is a placeholder for a
+> number that was taken and disliked.
 
 **What #110 asked.** Two serves of one checkpoint through one inode, differing
 only in whether `prepare_fp8_gemv` could build, disagreed in the decode regime:
@@ -121,6 +128,40 @@ Three of them looked at the right objects, and none of them looked at this one.
   requires the two arms' bf16 outputs to be bit-identical on all but 1% of
   elements.
 
+## 2b. Everything else about the two arms is the same, checked
+
+The fold is only the leading suspect if it is the only difference. #102's two
+arms were audited from the artefacts on disk, and every other candidate is
+closed by a fact rather than by an assumption:
+
+* **The bytes are the same file.** `ts83/armA` and `ts83/armB` are not two
+  copies; `model.safetensors` is inode `11665664` in both, as are `config.json`
+  and `tessera_gridbook_manifest.json`. A weight difference is not merely
+  unlikely, it is impossible.
+* **The prefill regime read exactly `0.000000` over 4088 positions.** Prefill
+  is M = 512, where both arms take `_materialised_path`. So attention, the
+  norms, the embeddings, `lm_head`, the wire decode and `torch._scaled_mm`
+  itself are bit-identical across arms. Whatever separates them acts **only on
+  M <= 8 forwards** -- and inside this route the only thing that changes at
+  M <= 8 is the branch in `streamed_apply`.
+* **The serve logs differ in nothing but the intended refusal.** Normalised
+  (digits and timestamps stripped, deduplicated), `serve_ts102-armA.log` and
+  `serve_ts102-armB.log` differ only in the model path, the run-scoped hashes,
+  and arm B's 112 `window GEMV lane did not prepare` warnings. Both chose
+  `FLASH_ATTN` "out of potential backends: ['FLASH_ATTN', 'FLASHINFER',
+  'TRITON_ATTN', 'FLEX_ATTENTION']", both report FlashAttention version 2, both
+  ran the FlashInfer autotuner to `Saved 0 configs ... (0 new, 0 from previous
+  config)`, and both emit the same single `jit_monitor` warning for
+  `_topk_log_softmax_kernel`. Two hypotheses die here: the autotuner did not
+  pick different kernels for the two arms, and the read-only
+  `TORCH_EXTENSIONS_DIR` did **not** silently refuse some *other* JIT build in
+  arm B -- the only JIT compilation either serve reports happened in both.
+
+That leaves the `M <= GEMV_MAX_M` branch as the sole remaining candidate, and
+the branch contains exactly two differences from the fallback: the fold, and
+fp32 summation order. Summation order is measured at 1.6e-07 and changes no
+bf16 word. So the fold is the only term of any size anywhere in the arm.
+
 ## 3. What that term is worth as a KL -- and why it is not enough
 
 A per-Linear relative error is not a KL. `experiments/gemv_a_side_propagation.py`
@@ -149,19 +190,45 @@ KL goes as the square of the perturbation, as it should (the output-side sweep
 spans 1.6e-03 to 2.5e-02 and holds the square law across it). The control row
 is the harness proving it reads exactly zero when nothing changes.
 
-**#110 measured `KL >= 0.012111` at 91.02% top-1. The fold reads 0.000094 on
-the teacher and 0.000145 at an operating point worse than the served arms --
-between one part in eighty-four and one part in a hundred and thirty. The size
-that reproduces the measurement is ~1.5e-02, nine times the fold in amplitude,
-and at the degraded operating point it lands on KL 0.012323 against the
-measured 0.012111.** Degradation is worth 1.5x, not 100x. So what #110 saw has
-the size and the shape of a broad-band per-Linear difference of about one and a
-half percent. The fold is real; it is not that.
+**The scored position set is itself part of the metric, and it costs a factor
+of 3.4.** The served decode regime does not score every position: it scores
+prefix lengths 1, 17, 33, ... 497 -- 32 per chunk, the stride pinned to the
+serve's KV block size -- which deliberately over-weights short prefixes where
+the next token is barely determined (`topk_coverage_min = 0.458`,
+`teacher_tail_mass_max = 0.547` in `mutual_decode.json`). Re-scoring the same
+two chunks, the same seed and the same perturbation on exactly that set
+(`--stride 16`) moves the fold's reading up and the agreement down:
 
-**This is a screen, not a result.** It uses a noise model of the term, on a
-model that is not the served one, at prefill positions. It is offered as a
-magnitude argument and as a reason not to close #110, never as the lane's
-number.
+| position set | KL, teacher | top-1 | KL, int4 point | top-1 |
+|---|---:|---:|---:|---:|
+| all 511 positions | 0.000094 | 99.22% | 0.000145 | 99.12% |
+| **the served set (stride 16)** | **0.000318** | **98.44%** | **0.000155** | **98.44%** |
+
+That is a real amplifier and the earlier all-positions row understated the fold
+by 3.4x on the teacher. It is not the missing factor: the served set still
+reads 0.000318 against a measured 0.012111, and 98.44% top-1 against a measured
+91.02%.
+
+**#110 measured `KL >= 0.012111` at 91.02% top-1. On the served position set
+the fold reads 0.000318 on the teacher and 0.000155 at an operating point worse
+than the served arms -- one part in thirty-eight to one part in seventy-eight.
+The size that reproduces the measurement is ~1.5e-02, nine times the fold in
+amplitude.** Degradation is worth 1.5x and the position set 3.4x; neither is
+the missing factor, and together they are not.
+
+**This is a screen, not a result, and §2b says it is now the weaker of the two
+arguments.** The model is the served one (Qwen3-0.6B, 28 layers; the served
+checkpoint's 112 fused modules are these 196 unfused Linears) and the positions
+are now the served ones, but the *term* is still a noise MODEL -- independent
+Gaussians standing in for a deterministic, input-correlated bf16 rounding. Set
+against it is a direct reading of the code and the artefacts: §2b closes every
+path but one, and down that path the fold is the only term larger than 1.6e-07.
+
+So the two lines of evidence disagree by a factor of ~40, and the honest
+statement is that **one of them is wrong and this session cannot say which**:
+either the Gaussian model understates how far a correlated per-element rounding
+travels, or the branch carries a third difference that reading it has not
+found. What must not be written down is that either one has been established.
 
 There is a sharper argument that does not need the screen at all. After the fix
 the two arms' bf16 outputs are **bit-identical on 99.90-100%** of elements per
@@ -179,12 +246,14 @@ separates #102's two arms **is not this Linear's arithmetic**.
    arms` reruns #102's exact pair off this tree (~6 min per arm). Arm B's code
    path is untouched by the fix, so armB-new vs #102's armB is a free control
    that should read 0.000000.
-2. **If it does not collapse, look outside the GEMM.** A read-only
-   `TORCH_EXTENSIONS_DIR` refuses *every* torch JIT build in that container,
-   not only this lane's, and nothing in #102 establishes that the window GEMV
-   was the only extension affected. That is the next hypothesis and it is
-   cheap: census both arms for which extensions resolved, not only for which
-   symbol the Tessera route stamped.
+2. **The obvious "look outside the GEMM" hypothesis is already dead.** The
+   candidate was that a read-only `TORCH_EXTENSIONS_DIR` refuses *every* torch
+   JIT build in that container, not only this lane's. It does not: §2b's log
+   diff shows the one JIT compilation either serve performed
+   (`_topk_log_softmax_kernel`) happened in **both** arms, and the attention
+   backend and autotune outcome are identical. Recorded here because a
+   falsified hypothesis is worth as much as an open one, and the next reader
+   should not spend the GPU slot on it.
 3. **More positions** (#110's item 1) is a corpus question, not a budget one:
    the decode stride is pinned to the serve's KV block size and the contract is
    8 x 512, so more positions means a new corpus contract and a re-dumped
@@ -195,8 +264,16 @@ waited 35 minutes as the oldest of fifteen GPU-needing items, then ran. The
 served campaign (`6c90ba1b`) reached a worker once, died in its first seconds
 on an unrelated permission fault -- `ts83/ext-A` holds root-owned JIT lock files
 written by the serve container, so a host-side extension load there gets EACCES
--- was fixed, and was `ready` again, behind an exclusive `gpu=2` action from
-another worktree, when the session ended. It has never served. A CPU-only
+-- was fixed, and was `ready` again when the session ended. It has never served.
+For the last 40 minutes of the session it could not be: both of sparky's GPU
+tokens (`reservations/sparky/held/66266919.../gpu-0000`, `gpu-0001`) were held
+by an action from another worktree that had **already failed** -- its queue
+record carries `detail.status: "failed"`, `returncode: 1` -- and that was still
+sitting in `pb-queue/claimed/` rather than being moved to `failed/` and having
+its tokens released. Zero GPU tokens were free while `nvidia-smi` read 13.89 W
+and 0% on an idle GPU. That is the inverse of the failure mode the pool was
+built for and it is reported, not worked around; releasing another agent's
+reservation is not this session's to do. A CPU-only
 submission from this
 checkout was refused outright -- `no live worker can run this action`, because
 sparky's current offer carries no `cpu` capacity at all -- which is why the

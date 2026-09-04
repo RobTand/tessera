@@ -33,12 +33,17 @@ input differs by 1.6e-07 relative and changes no bf16 output word at any M
 (``experiments/gemv_a_side_precision.py``).
 
 THIS DOES NOT CLOSE #110.  The lane and its published fallback disagreed as
-served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes --
-and a calibrated propagation screen puts the fold at KL 0.9e-04 (1.5e-04 at
-an operating point worse than the served arms), under 1/80 of that.
-A second term is outstanding; ``docs/measurements/tessera-gemv-a-side-2026-09-
-04.md`` says what would find it.  Do not read the fix below as an explanation
-of the served number.
+served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes (one
+inode).  Reading the artefacts, this branch is the ONLY place that difference
+can live: prefill, where both arms take ``_materialised_path``, read exactly
+0.000000 over 4088 positions, and the two serve logs differ in nothing but the
+112 intended refusals.  Reading a propagation screen, the fold is only ~1/40 of
+what was measured (KL 3.2e-04 at the served position set).  Those two readings
+disagree by a factor of forty and this session could not run the one
+measurement that decides it -- the served re-run after the fix.  Do not read
+the fix below as an explanation of the served number, and do not read the
+screen as proof that a second term exists;
+``docs/measurements/tessera-gemv-a-side-2026-09-04.md`` holds both.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is
 symbolic under vLLM's compiled forward, so a Python branch on it would
