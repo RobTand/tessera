@@ -382,6 +382,12 @@ def _worker_id(config):
     population of ``82f0047`` (1536 passed / 5 failed / 503 skipped,
     dl380g10), and passed when the same commit ran serially.  The fix that
     stopped a share being read as a population had introduced the converse.
+
+    Bracketed on the same box, same ``-n 8``: ``dee1aa9`` -- before this
+    function existed -- was 1406 / 0 / 499; ``d11dc01`` and ``82f0047``, with
+    the environment fallback, are 1406 / **5** / 499 and 1536 / **5** / 503;
+    and with it gone the two files that hold all five are 36 passed / 0 failed
+    under ``-n 8`` and under ``-n 4``.
     """
 
     workerinput = getattr(config, "workerinput", None)
