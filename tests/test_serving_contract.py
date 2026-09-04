@@ -535,8 +535,85 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         route = by_family[cell["family"]]
         admissible = set()
         for mode in cell_residency_modes(cell):
-            admissible |= launch_pairs(route, regime=cell["regime"], mode=mode)
+            admissible |= launch_pairs(route, structure=cell["structure"],
+                                       regime=cell["regime"], mode=mode)
         assert cell_executes(cell) <= admissible, cell["id"]
+
+
+def test_launch_table_structures_follow_the_dispatch_builders():
+    from tessera.serving.scheme import (
+        MOE_BUILDERS, ROUTE_LAUNCHES, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
+        STRUCTURES)
+
+    actual = {(route, structure) for route, launches in ROUTE_LAUNCHES.items()
+              for launch in launches for structure in launch["structures"]}
+    expected = ({(route, STRUCTURE_DENSE) for route in ROUTES}
+                | {(route, STRUCTURE_ROUTED_MOE) for route in MOE_BUILDERS})
+    assert actual == expected
+    for launches in ROUTE_LAUNCHES.values():
+        for launch in launches:
+            assert launch["structures"]
+            assert set(launch["structures"]) <= set(STRUCTURES)
+
+
+@pytest.mark.parametrize("regime", sorted(set(CENSUS_PHASE_REGIMES.values())))
+def test_moe_launches_are_structure_specific_and_resident_only(regime):
+    pytest.importorskip("torch")
+    from tessera.serving import fp8_gemv, moe_route
+    from tessera.serving.scheme import (
+        MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
+        TESSERA_FP8, launch_pairs)
+
+    # Existing callers keep their dense meaning. A requested expert structure
+    # cannot borrow a dense launch, even at the same family and rate.
+    dense = launch_pairs(TESSERA_FP8, regime=regime)
+    assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE, regime=regime)
+    assert dense == fp8_gemv.census_expected(compiled=False)[regime]
+    moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                       regime=regime, mode="resident", lanes=())
+    assert moe == moe_route.census_expected(compiled=False)[regime]
+    assert moe and moe.isdisjoint(dense)
+    assert not launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                            regime=regime, mode="streamed")
+    for unsupported in set(ROUTES) - set(MOE_BUILDERS):
+        assert not launch_pairs(unsupported, structure=STRUCTURE_ROUTED_MOE,
+                                regime=regime, mode="resident")
+
+
+def test_moe_census_expectation_is_derived_from_the_shared_launch_table(monkeypatch):
+    pytest.importorskip("torch")
+    from tessera.serving import moe_route, scheme
+
+    # Perturb the shared value rather than restating its current symbol. A
+    # route-owned duplicate would keep returning its private spelling.
+    pair = ("test.changed_moe_launch", "torch_materialize_stock")
+    regimes = tuple(CENSUS_PHASE_REGIMES.values())
+    monkeypatch.setitem(scheme.ROUTE_LAUNCHES, scheme.TESSERA_FP8, (
+        {"symbol": pair[0], "decoder": pair[1], "regimes": regimes,
+         "modes": ("resident",), "lane": None, "when_lane_absent": True,
+         "structures": (scheme.STRUCTURE_ROUTED_MOE,)},))
+    for compiled in (False, True):
+        assert moe_route.census_expected(compiled=compiled) == {
+            regime: {pair} for regime in regimes}
+
+
+@pytest.mark.parametrize("regime", sorted(set(CENSUS_PHASE_REGIMES.values())))
+def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
+    from tessera.serving.contract import _validate_cell_executes
+
+    entry = next(row for row in contract["formats"]
+                 if row["family"] == "TESSERA_E4M3_K1")
+    synthetic = {
+        "structure": "routed_moe", "regime": regime, "rungs_q256": [1024],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "executes": [{"symbol": "vllm.fused_moe.modular_kernel",
+                      "decoder": "torch_materialize_stock"}]}
+    # A synthetic execution claim checks the derivation without publishing
+    # a receipt-bearing cell in the packaged contract.
+    _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
+    synthetic["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
 
 
 def test_a_cell_that_names_a_launch_its_route_cannot_make_is_refused(contract):
