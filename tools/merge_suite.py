@@ -79,15 +79,25 @@ def _population_of(checkout: Path) -> dict:
     """
 
     head = _git(checkout, "rev-parse", "HEAD")
-    master = _git(checkout, "rev-parse", "master")
-    dirty = bool(_git(checkout, "status", "--porcelain"))
+    # A clone made for a pool run has no local ``master`` -- only
+    # ``origin/master`` -- and a bare ``rev-parse master`` there returns
+    # nothing, which would silently make ``is_master_head`` false for the very
+    # commit that IS master.  Say which ref answered, so a null comparison
+    # reads as "not established" and never as "not master".
+    master, master_ref = "", ""
+    for ref in ("master", "origin/master", "refs/remotes/origin/master"):
+        master = _git(checkout, "rev-parse", ref)
+        if master:
+            master_ref = ref
+            break
     return {
         "checkout": str(checkout),
         "commit": head,
         "describe": _git(checkout, "log", "-1", "--pretty=%s"),
-        "master_head_at_submit": master,
-        "is_master_head": bool(head) and head == master,
-        "working_tree_dirty": dirty,
+        "master_ref_used": master_ref or "none resolved",
+        "master_head_at_submit": master or None,
+        "is_master_head": (head == master) if (head and master) else None,
+        "working_tree_dirty": bool(_git(checkout, "status", "--porcelain")),
     }
 
 

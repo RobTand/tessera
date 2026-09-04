@@ -90,6 +90,11 @@ def test_the_receipt_states_which_tree_it_is_about(tmp_path):
     population = receipt["population"]
     assert population["commit"]
     assert "is_master_head" in population
+    # A clone made for a pool run carries only ``origin/master``; the ref that
+    # actually answered is recorded so an unresolved comparison reads as
+    # "not established" rather than as "not master".
+    assert population["master_ref_used"] != "none resolved"
+    assert population["is_master_head"] is not None
     assert receipt["verdict"] == "not run"
     # Both arms' numbers live under one key, so quoting one without its device
     # means quoting it out of this object rather than out of a scrollback.
