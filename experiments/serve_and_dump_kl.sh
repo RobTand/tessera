@@ -79,8 +79,18 @@ echo "serving $MODEL  ($IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved})"
 # cannot see is not reported as a missing file, it is reported as a malformed
 # HuggingFace repo id, which sends you looking in entirely the wrong place.
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
+SERVE_REAPED=1
+reap() {
+  [ "$SERVE_REAPED" = 0 ] || return 0
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  if docker rm -f "$NAME" >/dev/null 2>&1; then
+    SERVE_REAPED=1
+  else
+    return 1
+  fi
+}
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
-trap serve_lock_release EXIT
+trap 'reap || true; if [ "$SERVE_REAPED" = 1 ]; then serve_lock_release; else echo "REFUSED: live serve cleanup unverified; retaining $SERVE_LOCK" >&2; fi' EXIT
 # Only after the lock: removing a stale container of our own name is fine,
 # doing it before the lock would race another worker holding the serve.
 docker rm -f "$NAME" >/dev/null 2>&1 || true
@@ -89,6 +99,7 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # wanted with them: JSON carries [ and ], and a file in cwd that happened to
 # match would silently rewrite a serve's configuration.
 set -f
+SERVE_REAPED=0
 docker run -d --name "$NAME" --gpus all --ipc=host \
   -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared \
@@ -115,9 +126,9 @@ for i in $(seq 1 240); do
   if ! docker ps -q -f name="$NAME" | grep -q .; then
     # Not --rm: a container that dies during startup takes its logs with it,
     # and the startup failures are exactly the ones worth reading.
-    docker logs "$NAME" > "$LOG" 2>&1 || true
     echo "serve died (exit $(docker inspect -f '{{.State.ExitCode}}' "$NAME" 2>/dev/null)); log at $LOG"
-    tail -30 "$LOG"; docker rm -f "$NAME" >/dev/null 2>&1; exit 1
+    reap || true
+    tail -30 "$LOG"; exit 1
   fi
   sleep 10
 done
@@ -127,7 +138,7 @@ done
 # than record a number that silently belongs to another model.
 if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   echo "REFUSED: serve has spec-decode active; the logprobs would be the draft model's"
-  docker rm -f "$NAME" >/dev/null; exit 2
+  reap || true; exit 2
 fi
 
 # What the runtime resolved, checked against what this arm asked for, while
@@ -140,7 +151,7 @@ if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
   # on every arm that reached this gate on 2026-09-03.
   docker logs "$NAME" > "$LOG" 2>&1 || true
   if ! grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"; then
-    docker rm -f "$NAME" >/dev/null 2>&1
+    reap || true
     echo "REFUSED: the serve's own log does not match TESSERA_KL_REQUIRE_IN_LOG"
     echo "  pattern: $TESSERA_KL_REQUIRE_IN_LOG"
     echo "  log:     $LOG"
@@ -162,13 +173,11 @@ ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/com
 # reserved by a headless serve and recording nothing (2026-09-02, the cuDNN
 # floor arm: one 400 on chunk 7, no log, container still up).
 if ! /home/rob/dq-runs/venvs/prismaquant-cu130/bin/python /home/rob/dq-runs/kl_tool.py "${ARGS[@]}"; then
-  docker logs "$NAME" > "$LOG" 2>&1 || true
-  docker rm -f "$NAME" >/dev/null 2>&1
+  reap || true
   echo "dump FAILED for $MODEL; serve log at $LOG"; exit 3
 fi
 
-docker logs "$NAME" > "$LOG" 2>&1 || true
-docker rm -f "$NAME" >/dev/null
+reap
 # Stamp AFTER the container is down: a stamp that failed before the reap would
 # leave a headless serve holding the GPU, which is the 2026-09-02 bug above.
 build_identity_stamp "$LOG" "${OUT%.json}.build.json" "${TESSERA_KL_VLLM_CACHE:-}" \

@@ -147,6 +147,11 @@ reports no running container.  During the rolling transition, the same
 pathname also excludes legacy directory-lock clients; old directories retain
 their stricter hour-old, dead-owner, no-container recovery rule.
 
+`serve_and_dump_kl.sh` reaps its named container on every exit, including an
+unexpected shell failure. Successful removal is remembered so normal exit
+preserves the collected log. The wrapper releases its serve lock only after
+removal succeeds; failed cleanup retains ownership and refuses certification.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and
