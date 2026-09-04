@@ -698,6 +698,16 @@ def test_a_new_dispatch_structure_is_not_attested_without_a_served_cell(
         validate_serving_contract(bad)
 
 
+def test_the_attested_structure_axis_is_a_canonical_list(contract):
+    """Set-equivalent spellings are not equivalent published contracts."""
+    bad = _mutated(
+        contract, lambda c: c["lane_eligibility"].__setitem__(
+            "structures", ["dense", "dense"]))
+
+    with pytest.raises(ValueError, match="non-empty list of distinct strings"):
+        validate_serving_contract(bad)
+
+
 def test_an_expert_parallel_claim_is_refused(contract):
     bad = _mutated(contract, lambda c: c["expert_parallel"]["units"].append(
         {"unit": "TESSERA_E2M1_K2", "kind": "tessera_wire_family", "max_world_size": 2}))

@@ -592,13 +592,20 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             "a phase the census drives under a name this document does not declare cannot be "
             "joined to a cell at all -- which is how a per-(family, regime) expectation goes "
             "vacuously true on half the matrix. Add the regime to BOTH sides, in this table.")
+    declared_structures = block["structures"]
+    if (not isinstance(declared_structures, list) or not declared_structures
+            or any(not isinstance(s, str) for s in declared_structures)
+            or len(set(declared_structures)) != len(declared_structures)):
+        raise ValueError(
+            "runtime_contract.lane_eligibility.structures must be a non-empty list of "
+            f"distinct strings, got {declared_structures!r}")
     # ``scheme.STRUCTURES`` is the DISPATCH-capability bound, not an
     # attestation source.  A new dispatch structure must not become eligible
     # here merely because nobody remembered to add it to an ``unserved``
     # denylist: only a cell below is the published authority that a served
     # receipt exists.  First refuse anything the build cannot execute; after
     # validating the cells, derive the positive attested set from them.
-    refused = sorted(set(block["structures"]) - set(STRUCTURES))
+    refused = sorted(set(declared_structures) - set(STRUCTURES))
     if refused:
         raise ValueError(
             f"runtime_contract.lane_eligibility.structures names {refused}, which "
@@ -610,7 +617,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
     _cell_scope: dict = {}
-    cell_structures: set[str] = set()
+    cell_structures: list[str] = []
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
         _require_keys(cell, where,
@@ -624,7 +631,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             raise ValueError(f"{where}.regime {cell['regime']!r} is not declared")
         if cell["structure"] not in block["structures"]:
             raise ValueError(f"{where}.structure {cell['structure']!r} is not declared")
-        cell_structures.add(cell["structure"])
+        if cell["structure"] not in cell_structures:
+            cell_structures.append(cell["structure"])
         if cell["family"] not in families:
             raise ValueError(f"{where}.family {cell['family']!r} is not published in formats[]")
         if cell["route_status"] not in _ROUTE_STATUSES:
@@ -703,14 +711,19 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     # a future structure enters ``scheme.STRUCTURES`` it remains unattested
     # until a cell is published for an actual serve, without requiring a
     # second hand-maintained list of every runnable-but-unserved structure.
-    without_cells = sorted(set(block["structures"]) - cell_structures)
-    if without_cells:
+    if declared_structures != cell_structures:
+        without_cells = sorted(set(declared_structures) - set(cell_structures))
         raise ValueError(
             "runtime_contract.lane_eligibility.structures names "
-            f"{without_cells}, but no receipt-bearing cell names "
-            f"{'it' if len(without_cells) == 1 else 'them'}. lane_eligibility is where served "
-            "facts go, so dispatch capability alone cannot attest a structure; publish the "
-            "served cell only after its census, artifact, and quality receipt exist.")
+            f"{declared_structures}, but its receipt-bearing cells project exactly to "
+            f"{cell_structures}. "
+            + (f"no receipt-bearing cell names {without_cells}; lane_eligibility is where "
+               "served facts go, so dispatch capability alone cannot attest a structure. "
+               if without_cells else
+               "The structure axis is ordered by first occurrence in the cells, so a second "
+               "spelling cannot describe the same published contract. ")
+            + "Publish the served cell only after its census, artifact, and quality receipt "
+              "exist, then derive this axis from those cells.")
 
     _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
                   required={"axis", "semantics", "units"},

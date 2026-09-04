@@ -387,7 +387,9 @@ every dense cell is. The validator derives the positive
 `scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
 adding a future dispatch structure cannot attest it by omission from a
 hand-maintained "unserved" denylist: without a served cell, naming it in the
-structure axis is refused.
+structure axis is refused. The axis is a non-empty, duplicate-free string list
+and equals the cells' first-occurrence projection exactly; set-equivalent
+duplicate or reordered spellings are not a second form of the same contract.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
