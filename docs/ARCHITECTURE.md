@@ -5,8 +5,9 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** current as of `b83fd17` (2026-09-04), the last code change
-before `v0.1.0`; contract v16, lane-eligibility schema v5. Re-stamp this
+**Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
+`b83fd17`, CI at `94e8289`, packaging metadata at `54cd1df`, release
+documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -818,10 +819,12 @@ rung is attested the same derivation produces its GEMV cell.
 
 Schema v4 is **not** additive: a v3 reader must not read a v4 cell, both
 because `executes` is a key it does not know and because the E4M3 decode
-answer it would have read off one cell is now two. PrismaQuant's
-`lane_eligibility` parser pins `tessera.lane-eligibility.v3` exactly and
-refuses unknown cell keys, so it fails closed (loudly, not silently) until it
-is widened.
+answer it would have read off one cell is now two. As read on 2026-09-04,
+PrismaQuant's parser pinned `tessera.lane-eligibility.v3` exactly
+(`prismaquant/tessera_runtime_contract.py:120` at its `1eb88c4e`) and refuses
+unknown cell keys, so it fails closed (loudly, not silently) against v4 and
+the v5 this tree publishes until that repository widens it
+(RobTand/prismaquant#189 carries the v5 reader).
 
 ### 4.5a A served KL names which FORWARD it scored
 
@@ -1208,8 +1211,8 @@ and would never notice one missing:
 |---|---|---|
 | `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
 | `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
-| `tessera/serving/csrc/window_gemv.cu` | the streamed FP8 route's JIT build | the window-body GEMV as the serving lane builds it |
-| `tessera/csrc/window_gemv.cu` | `tessera.kernel_window_gemv` | the same source, built by the library; the duplicate is an open issue, not a design |
+| `tessera/csrc/window_gemv.cu` | `tessera.kernel_window_gemv`, which `serving/fp8_gemv.py` and `bf16_route.py` load through | the window-body GEMV; this copy is the one the serving lane actually builds |
+| `tessera/serving/csrc/window_gemv.cu` | published as the extension's `source` in `ext.py`'s native-extension table | byte-identical to the copy above (`cmp` clean at `b83fd17`) but not the file the JIT compiles; the mismatch between the published path and the built path is filed as #134, not a design |
 
 `tests/test_packaging.py` refuses either half of that table on its own: a
 glob that matches no file, and a runtime data file no glob covers.

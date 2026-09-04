@@ -108,9 +108,11 @@ at 7.129 bpp), each bit-identical between residencies. Receipts:
 [tessera-serving-plugin-2026-09-02.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-serving-plugin-2026-09-02.md)
 and
 [tessera-bf16-route-served-2026-09-02.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-bf16-route-served-2026-09-02.md).
-At equal residency the 4.0-bpp Tessera wire serves at parity with PrismaQuant's
-NVFP4 GPTQ+JSO artifact (0.9988×; a 0.12% margin on one 4,088-position corpus
-is not a lead).
+Those are the encoder of 2026-09-02. On 2026-09-03, with the LDLQ block
+lever that is now the default, the same 4.0-bpp wire served 0.5100 against
+PrismaQuant's NVFP4 GPTQ+JSO artifact at 0.5106 at equal residency (0.9988×;
+a 0.12% margin on one 4,088-position corpus is parity, not a lead). Receipt:
+[tessera-dense4-gap-2026-09-03.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-dense4-gap-2026-09-03.md).
 
 **Routed MoE** — one model only: LFM2.5-8B-A1B, E4M3 at q256 1024,
 resident and eager only, sm_121, on a different image
