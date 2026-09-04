@@ -163,21 +163,47 @@ def test_trace_clock_is_base_plus_ts(tmp_path):
     assert w["trace_span_utc"][0] == pytest.approx(base_s)
 
 
-def test_the_ceiling_is_amdahl_on_the_lane_share():
-    """A free lane is worth 1/(1 - share), and that is the ratio's ceiling.
+def test_headroom_belongs_to_the_arm_it_is_read_from():
+    """``1/(1 - s)`` is that arm's own headroom, and only the FALLBACK arm's is
+    the A/B's ceiling.
 
     0.2979 is the window-GEMV bucket's share of decode device time on the #83
-    arms -- 149.9 of 503.1 ms, against 242.0 ms for the bf16 cuBLAS GEMV under
-    ``logits_processor._apply_head``.  1.424x is therefore the most any served
-    TPOT ratio on those arms can read, and the number belongs in the reader's
-    hand before the ratio rather than after it.
+    engaged arm -- 149.9 of 503.1 ms, against 242.0 ms for the bf16 cuBLAS GEMV
+    under ``logits_processor._apply_head``.  An earlier spelling of this test
+    asserted 1.424x was "the most any served ratio on those arms can read",
+    which is the inversion this test now pins against: with
+    ``T_f/T_e = (R + L_f)/(R + L_e)``, nothing bounds ``L_f``.
     """
-    assert RATIO.ceiling_if_lane_were_free(0.2979) == pytest.approx(1.4242, abs=5e-4)
-    assert RATIO.ceiling_if_lane_were_free(0.5) == pytest.approx(2.0)
+    assert RATIO.headroom_if_lane_were_free(0.2979) == pytest.approx(1.4242, abs=5e-4)
+    assert RATIO.headroom_if_lane_were_free(0.5) == pytest.approx(2.0)
     # Not a number: no lane in the window, or a share arithmetic cannot produce.
-    assert RATIO.ceiling_if_lane_were_free(0.0) is None
-    assert RATIO.ceiling_if_lane_were_free(None) is None
-    assert RATIO.ceiling_if_lane_were_free(1.0) is None
+    assert RATIO.headroom_if_lane_were_free(0.0) is None
+    assert RATIO.headroom_if_lane_were_free(None) is None
+    assert RATIO.headroom_if_lane_were_free(1.0) is None
+
+
+def test_a_served_ratio_is_unbounded_by_the_engaged_arms_share():
+    """The arithmetic the inverted claim would have forbidden.
+
+    A fallback lane 24.6x slower than the built one produces a served 8.024x on
+    a step whose engaged lane share is 0.2979 -- far above the engaged arm's
+    1.424x headroom, which is exactly why that headroom is not a ceiling.
+    """
+    R, Le = 353.2, 149.9                       # #83 decode step, ms
+    for k in (1.5, 2.0, 24.574):
+        served = (R + k * Le) / (R + Le)
+        assert RATIO.lane_speedup_implied_by(served, Le / (R + Le)) == pytest.approx(
+            k, rel=1e-3)
+    assert (R + 24.574 * Le) / (R + Le) == pytest.approx(8.024, abs=5e-3)
+
+
+def test_the_exchange_rate_is_what_the_engaged_arm_can_say():
+    """A served X implies the lane bucket moved 1 + (X-1)/s_e."""
+    assert RATIO.lane_speedup_implied_by(1.15, 0.2979) == pytest.approx(1.5035, abs=5e-4)
+    assert RATIO.lane_speedup_implied_by(8.024, 0.2979) == pytest.approx(24.5766, abs=5e-3)
+    assert RATIO.lane_speedup_implied_by(1.0, 0.2979) == pytest.approx(1.0)
+    assert RATIO.lane_speedup_implied_by(1.15, None) is None
+    assert RATIO.lane_speedup_implied_by(None, 0.2979) is None
 
 
 def test_the_cublas_gemv_is_bucketed_rather_than_left_in_other():

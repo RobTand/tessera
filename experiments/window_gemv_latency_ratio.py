@@ -185,25 +185,45 @@ def trace_window(path: str, t0: float, t1: float) -> dict:
                             for n, v in per_kernel_us.most_common(8)]}
 
 
-def ceiling_if_lane_were_free(lane_share: float | None) -> float | None:
-    """The most a perfect lane can be worth on a whole decode step.
+def headroom_if_lane_were_free(lane_share: float | None) -> float | None:
+    """How much faster THIS arm would be with a free lane: ``1/(1 - s)``.
 
-    Amdahl, and the reason it is reported beside the served ratio rather than
-    offered afterwards as an excuse: the served TPOT ratio prices an entire
-    decode step and the lane owns only part of it.  If the lane is share ``s``
-    of the step's device time, driving its cost to zero leaves ``1 - s`` and
-    the ratio cannot exceed ``1/(1 - s)``.  On the #83 arms ``s = 0.2979``
-    (``lm_head`` alone is 0.481), so the ceiling is 1.424x -- a served 1.15x
-    there would mean the kernel took most of what there was to take.
+    READ THE ARM THIS COMES FROM.  A decode step is ``T = R + L``: work the
+    lane cannot touch, plus the lane bucket.  Applied to the **fallback** arm
+    this is the A/B's Amdahl ceiling, because ``T_f/T_e < T_f/R = 1/(1 - s_f)``
+    -- driving the engaged lane to zero is the best the ratio can do.  Applied
+    to the **engaged** arm it is only that arm's own remaining headroom and
+    bounds nothing about the other arm: ``T_f/T_e = (R + L_f)/(R + L_e)`` is
+    unbounded in ``L_f``.
 
-    The same expression inverted says what a ratio would REQUIRE of the lane:
-    an observed step ratio ``R`` needs ``1 + (R - 1)/s`` on the lane bucket
-    alone, which is how the 2026-09-03 pair's 8.024x resolves to a demand for
-    a 24.6x lane difference and is refused.
+    An earlier spelling of this function called the engaged arm's value "the
+    ceiling the ratio can reach", which is that inversion.  On the #83 engaged
+    trace it is 1.424x; the A/B ceiling is not knowable from that trace at all,
+    because no fallback trace exists (those receipts carry a 404 where the
+    profile should be).  ``lane_speedup_implied_by`` is what the engaged arm
+    CAN say.
     """
     if not lane_share or not 0 < lane_share < 1:
         return None
     return round(1.0 / (1.0 - lane_share), 4)
+
+
+def lane_speedup_implied_by(served_ratio: float | None,
+                            engaged_lane_share: float | None) -> float | None:
+    """What a served step ratio demands of the lane bucket: ``1 + (X-1)/s_e``.
+
+    This is the exchange rate between the number #109 asks for and the kernel's
+    own worth, and it is knowable from the engaged arm alone.  On the #83 arms
+    (``s_e = 0.2979``) a served 1.15x means the built kernel beat the torch
+    fallback 1.50x on the work it owns -- not that it underperformed -- and the
+    2026-09-03 pair's 8.024x would demand 24.6x, which is why that pair is
+    refused as a lane result.
+    """
+    if not served_ratio or not engaged_lane_share:
+        return None
+    if not 0 < engaged_lane_share < 1:
+        return None
+    return round(1.0 + (served_ratio - 1.0) / engaged_lane_share, 4)
 
 
 def _decode_steps(receipt: dict) -> int | None:
@@ -278,8 +298,26 @@ def main() -> int:
             share = (lane / w["device_ms_in_window"]
                      if w["device_ms_in_window"] else None)
             w["lane_share_of_window"] = round(share, 4) if share else None
-            w["ceiling_if_lane_were_free"] = ceiling_if_lane_were_free(share)
+            w["headroom_if_lane_were_free"] = headroom_if_lane_were_free(share)
+            if name == "fallback":
+                # Only from THIS arm is it the A/B's ceiling; see the docstring.
+                w["ab_ceiling_from_this_arm"] = w["headroom_if_lane_were_free"]
         traces[name] = w
+
+    # THE EXCHANGE RATE, beside the ratio rather than after it.  A served X on
+    # a step whose lane is share s_e implies the lane itself moved
+    # 1 + (X-1)/s_e.  Reported for every served ratio taken in the decode
+    # window, because "1.15x served" and "1.50x on the kernel's own work" are
+    # the same measurement and a reader should not have to do the algebra to
+    # see it -- nor discover it only once the served number disappoints.
+    implied = {}
+    s_e = (traces.get("engaged") or {}).get("lane_share_of_window")
+    for k, v in ratios.items():
+        if not k.startswith("decode."):
+            continue
+        got = lane_speedup_implied_by(v["ratio_fallback_over_engaged"], s_e)
+        if got is not None:
+            implied[k] = got
 
     lane_ratio = None
     ea, fb = traces.get("engaged", {}), traces.get("fallback", {})
@@ -304,6 +342,9 @@ def main() -> int:
            "ratio_is_evidence": evidence,
            "not_evidence_because": reasons,
            "traces": traces,
+           "engaged_lane_share_of_decode_window": s_e,
+           "lane_speedup_implied_by_served_ratio": implied,
+           "ab_ceiling": (traces.get("fallback") or {}).get("ab_ceiling_from_this_arm"),
            "lane_device_time_ratio": lane_ratio}
 
     print(f"== window GEMV latency A/B  {A.get('serve_mode')}/{A.get('forward')}")
@@ -314,6 +355,13 @@ def main() -> int:
         print(f"   {k:16s} engaged {v['engaged_ms']:>10.3f} ms   fallback "
               f"{v['fallback_ms']:>10.3f} ms   x{v['ratio_fallback_over_engaged']:.3f}"
               f"   (n {v['n_engaged']}/{v['n_fallback']}, {v['source']})")
+    if implied:
+        print(f"   -- what that demands of the lane, at s_e = {s_e} --")
+        for k, v in implied.items():
+            print(f"   {k:16s} implies the lane bucket moved x{v:.3f}")
+    if out["ab_ceiling"]:
+        print(f"   -- the A/B's Amdahl ceiling, from the FALLBACK arm's lane "
+              f"share: x{out['ab_ceiling']:.3f}")
     if lane_ratio:
         print("   -- lane device time in the profiled decode window, per step --")
         print(f"   {'lane buckets':16s} engaged {lane_ratio['engaged_lane_ms_per_step']:>10.5f} ms"

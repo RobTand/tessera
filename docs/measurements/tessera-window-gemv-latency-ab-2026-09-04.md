@@ -8,10 +8,11 @@
 > box-state readings that decided against taking the measurement tonight,
 > (c) a re-reading of the 2026-09-03 arms that produces, for the first time,
 > a *measured* control for why their 8x is not a lane result, and (d) the
-> **ceiling** the ratio can reach at all, read off that pair's own trace:
-> **1.424x**, because the lane owns 29.8% of a decode step's device time on
-> this model and `lm_head` owns 48.1% of it. Nothing here is a placeholder
-> standing in for a number that was taken and disliked.
+> **exchange rate** between the served ratio and the lane, read off that pair's
+> own trace: the lane owns 29.8% of a decode step's device time and `lm_head`
+> owns 48.1%, so a served **X** implies a lane-bucket speedup of
+> **1 + (X-1)/0.298**. Nothing here is a placeholder standing in for a number
+> that was taken and disliked.
 
 ## 1. What #109 owes, and what is missing
 
@@ -273,7 +274,7 @@ carries the `tessera_window_gemv::gemv` symbol at M1 shapes directly, so the
 lane's engagement in the eager arm needs no trace to establish, while a compiled
 record stamps a combined pair and proves dispatch rather than launch.
 
-## 6. The ceiling, measured before the ratio: **1.424x**
+## 6. What the served ratio is made of, measured before it is taken
 
 The 2026-09-03 document flagged a cuBLAS bf16 GEMV in armA's compiled trace --
 263.9 ms over 50 launches, more device time than the entire window-GEMV bucket
@@ -307,34 +308,55 @@ composition:
 `lm_head` -- which is the same fact from the other side: `GEMV_MAX_M = 8`
 refuses prefill, so the lane's *decode* kernel does not appear there at all.)
 
-Two numbers follow, and both should be in the reader's hand before the served
-ratio is:
+### The exchange rate, and the ceiling this is *not*
 
-- **A free lane is worth 1.424x.** If `window_gemv_kernel` cost zero, a decode
-  step's device time would fall from 503.1 ms to 353.2 ms. `1/(1 - 0.2979) =
-  1.424`. **No served TPOT ratio on this model can exceed that**, however good
-  the kernel is, and a measured 1.15x would mean the kernel had taken most of
-  what there is to take rather than that it had underperformed.
-- **The 2026-09-03 pair's 8.024x would require the fallback lane to be 24.6x
-  slower than the built one** (`1 + (8.024-1)/0.2979`). That is the §3 control
-  restated as arithmetic instead of as a null-window observation, and the two
-  agree.
+Write a decode step as `T = R + L`: `R = 353.2 ms` of work the lane cannot
+touch (`lm_head`'s 242.0 ms and 111.2 ms of everything else) and `L` the lane
+bucket, `L_e = 149.9 ms` in the engaged arm. The A/B is
+`T_f/T_e = (R + L_f)/(R + L_e)`, and **it has no upper bound**: nothing stops
+the fallback's `L_f` from being arbitrarily large. An earlier draft of this
+section called `1/(1 - s_e) = T_e/R = 1.424x` "the ceiling the ratio can
+reach", which is wrong and inverted -- that quantity is the *engaged* arm's own
+remaining headroom, what armA would gain if its lane cost nothing, and it
+bounds nothing about armB. The A/B's actual Amdahl ceiling is `1/(1 - s_f)`,
+read off the **fallback** arm's lane share, and **no fallback decode trace
+exists**: the 2026-09-03 latency receipts carry
+`profiled_load: {"error": "HTTPError: HTTP Error 404: Not Found"}`. It will
+exist when the pair runs, and the tool reports it from that arm.
 
-The honest reading of the first number is that **Qwen3-0.6B is a poor ruler for
-this lane**: a 151936-row `lm_head` against 28 layers of 1024-wide Linears puts
-nearly half the decode step in one bf16 kernel the lane will never touch. The
-ratio taken on these arms is still the right thing to take -- it is the number
-#109 asks for, on the arms whose KL and census are already published, and a
-lane that cannot move a real serve is not worth its complexity -- but it prices
-the lane *as deployed on this model*, and the per-bucket device time is what
-transfers to a model whose `lm_head` is a smaller share. That is why
+What the engaged trace *does* give, and it is the useful thing, is the exchange
+rate between the two numbers #109 asks about. With `s_e = 0.2979`, a served
+ratio `X` implies a lane-bucket speedup of `k = 1 + (X - 1)/s_e`:
+
+| served `X` | implied lane `k` | fallback step | the A/B ceiling that `k` implies |
+|---|---|---|---|
+| 1.15x | 1.50x | 578.6 ms | 1.638x |
+| 1.30x | 2.01x | 654.0 ms | 1.852x |
+| 1.50x | 2.68x | 754.7 ms | 2.137x |
+| **8.024x** (the 09-03 pair) | **24.6x** | 4036.9 ms | 11.43x |
+
+The last row is §3's control restated as arithmetic instead of as a
+null-window observation, and the two agree: for that pair to be a lane result
+the torch fallback would have to be **24.6x** slower than a hand-written CUDA
+kernel on the same work. It is not; the box moved.
+
+The first row is the one to carry into reading the real ratio. A served 1.15x
+is not a disappointing kernel -- it is a kernel that beat the torch fallback
+**1.50x** on the work it owns, on a step where `lm_head` alone is 48.1%. The
+honest framing is that **Qwen3-0.6B is a poor ruler for this lane**: a
+151936-row `lm_head` against 28 layers of 1024-wide Linears puts nearly half
+the decode step in one bf16 kernel the lane will never touch. The ratio taken
+on these arms is still the right thing to take -- it is the number #109 asks
+for, on the arms whose KL and census are already published, and a lane that
+cannot move a real serve is not worth its complexity -- but it prices the lane
+*as deployed on this model*, and the per-bucket device time is what transfers
+to a model whose `lm_head` is a smaller share. That is why
 `window_gemv_latency_ratio.py` reports two things and calls neither the other's
 headline: the served ratio, and the device time inside the profiled decode
-window by bucket (`lane_share_of_window`, and `ceiling_if_lane_were_free`
-beside it), cut from both arms' traces by one wall-clock rule. The cuBLAS GEMV
-now has a bucket of its own in the shared summariser rather than sitting in
-`other`, which is where a dilution hides: on this trace `other` falls from
-297.3 ms to 33.4 ms once it is named.
+window by bucket (`lane_share_of_window`), cut from both arms' traces by one
+wall-clock rule. The cuBLAS GEMV now has a bucket of its own in the shared
+summariser rather than sitting in `other`, which is where a dilution hides: on
+this trace `other` falls from 297.3 ms to 33.4 ms once it is named.
 
 This section was computed from `prof-armA-streamed-compiled/rank0.*.pt.trace.json.gz`
 -- the #83 campaign's own compiled trace, which is whole-serve rather than cut
