@@ -172,14 +172,13 @@ person or agent — changing the code.
   `tests/test_cuda_surface.py` and caused by `-n`, not by the device. That red
   is the point: it is the first regression on this branch that any signal
   caught, and only the population caught it -- the same files run serially, and
-  as a targeted subset on the same box, were green. `--surface-json PATH` writes the same
-  population as a table, which is what a receipt should read; under `-n` each
+  as a targeted subset on the same box, were green.
+  `--surface-json PATH` writes the same population as a table, which is what a receipt should read; under `-n` each
   worker writes its own `surface.<arm>.<workerid>.json` share and only the
   controller writes the population, so a shard can never be read as a run.
   `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
-  one under `--strict-cuda`, the device-less x86 one (torch, no CUDA
-  device) -- and writes **one**
-  receipt holding both side by side, so neither can be quoted without the
+  one under `--strict-cuda`, the device-less x86 one (torch, no CUDA device)
+  -- and writes **one** receipt holding both side by side, so neither can be quoted without the
   other, appending a row per arm to `docs/status/suite-populations.md` under
   `--record`. That ledger is where a suite result is recorded; read the two
   adjacent rows, not one of them -- an arm a run did not submit is written as
@@ -191,9 +190,12 @@ person or agent — changing the code.
   wrote that population, found by the `--surface-json` path in the action's
   own command and shown as `0 (pool)` so a status nobody here watched is not
   mistaken for one this process saw. When no single finished action wrote the
-  path -- still in flight, or two of them did -- the row stays `not observed`
-  and no status is borrowed, because published failures prove red while their
-  absence does not prove green. Each row names the commit **that arm** reported measuring, not
+  path -- still in flight, requeued, or two of them did -- the row stays `not
+  observed` and no status is borrowed, because published failures prove red
+  while their absence does not prove green. **The pool requeues on any
+  non-zero exit**, so a red arm reads `not observed` for as long as its
+  retries last; the `failed` column is what carries the verdict there, and
+  both red rows on `d11dc01` and `82f0047` are exactly that case. Each row names the commit **that arm** reported measuring, not
   the one the receipt was assembled against: the arms are separate processes
   on separate boxes, and a GPU arm queued behind a held reservation can place
   after the checkout has moved. Two commits in one run's rows are two
