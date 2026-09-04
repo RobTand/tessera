@@ -89,33 +89,47 @@ def lane_engagement(records_by_phase: Mapping[str, Mapping[str, Mapping[str, Any
     problems: "list[str]" = []
     phases: "dict[str, dict]" = {}
     engaged_anywhere = {lane: 0 for lane in required}
+    all_refusals: "collections.Counter[str]" = collections.Counter()
+    modules_seen = 0
     for phase in sorted(records_by_phase):
         records = records_by_phase[phase]
         hist = decoder_histogram(records)
         engaged = {lane: int(hist.get(decoders[lane], 0)) for lane in required}
         for lane, n in engaged.items():
             engaged_anywhere[lane] = max(engaged_anywhere[lane], n)
-        unengaged = [lane for lane, n in engaged.items() if n == 0]
         refusals = dict(sorted(collections.Counter(
             str(v) for v in (refusals_by_phase or {}).get(phase, {}).values()).items()))
+        all_refusals.update(refusals)
+        modules_seen = max(modules_seen, len(records))
         phases[phase] = {
             "tessera_modules": len(records),
             "decoders": hist,
             "engaged_modules": engaged,
-            "unengaged_required_lanes": unengaged,
+            "unengaged_required_lanes": [lane for lane, n in engaged.items() if n == 0],
             "lane_refusals": refusals,
         }
-        for lane in unengaged:
-            reason = ""
-            if refusals:
-                worst = max(refusals.items(), key=lambda kv: kv[1])
-                reason = (f" {worst[1]} of {len(records)} module(s) recorded a load-time "
-                          f"refusal, most commonly: {worst[0]}")
-            problems.append(
-                f"{phase}: lane {lane!r} was REQUIRED and took 0 of {len(records)} Tessera "
-                f"modules (decoder {decoders[lane]!r}; observed {hist}). An arm that requested "
-                f"a route and got zero units on it measured the fallback, not the lane."
-                + reason)
+
+    # THE VERDICT IS OVER THE CENSUS, NOT OVER EACH PHASE.  A lane is one
+    # launch inside a route and it owns a REGIME, not a serve: the window GEMV
+    # decodes M <= 8 (``kernel_window_gemv.GEMV_MAX_M``), so a prefill that
+    # takes the torch decode is the lane working as specified, not a hole.
+    # Refusing per phase would have made every correct serve a failed census
+    # and taught the next reader to ignore the field.  What cannot happen is
+    # zero modules in EVERY phase: that arm measured the fallback throughout.
+    for lane in required:
+        if engaged_anywhere[lane]:
+            continue
+        reason = ""
+        if all_refusals:
+            worst = max(all_refusals.items(), key=lambda kv: kv[1])
+            reason = (f" {worst[1]} of {modules_seen} module(s) recorded a load-time "
+                      f"refusal, most commonly: {worst[0]}")
+        per_phase = {phase: phases[phase]["decoders"] for phase in phases}
+        problems.append(
+            f"lane {lane!r} was REQUIRED and took 0 of {modules_seen} Tessera modules in "
+            f"any phase (decoder {decoders[lane]!r}; observed {per_phase}). An arm that "
+            "requested a route and got zero units on it measured the fallback, not the lane."
+            + reason)
 
     block = {
         "schema": LANE_ENGAGEMENT_SCHEMA,

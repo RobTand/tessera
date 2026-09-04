@@ -22,6 +22,7 @@ every test below fails at import or at the missing refusal.
 """
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 from fractions import Fraction
@@ -84,18 +85,47 @@ def test_the_packaged_json_publishes_the_lane_block():
     assert int(payload["contract_version"]) >= 11
 
 
-def test_an_empty_requires_block_is_refused():
+def _mutated_lane(monkeypatch, mutate):
+    """A contract whose lane block is edited, with ``ext`` edited to match.
+
+    The validator's FIRST check is authority -- the block must equal
+    ``ext.NATIVE_EXTENSIONS`` -- so a bare mutation only ever exercises that
+    check.  Patching ``ext`` to the same mutated list gets the payload past
+    authority so the field checks below it are the ones under test.
+    """
+    payload = copy.deepcopy(load_serving_contract())
+    entry = next(e for e in payload["native_extensions"]
+                 if e["module_name_prefix"] == LANE)
+    mutate(entry)
+    monkeypatch.setattr(ext, "NATIVE_EXTENSIONS", payload["native_extensions"])
+    return payload
+
+
+def test_an_empty_requires_block_is_refused(monkeypatch):
     """"No constraint" and "nobody wrote the constraint down" must not read alike."""
-    payload = load_serving_contract()
-    payload["native_extensions"][1]["lane"]["requires"] = {}
+    def _empty(entry):
+        entry["lane"]["requires"] = {}
+
+    payload = _mutated_lane(monkeypatch, _empty)
     with pytest.raises(ValueError, match="omits the block"):
         validate_serving_contract(payload)
 
 
-def test_a_lane_predicate_a_gate_cannot_resolve_is_refused():
-    payload = load_serving_contract()
-    payload["native_extensions"][1]["lane"]["requires"]["body"] = "trellis"
+def test_a_lane_predicate_a_gate_cannot_resolve_is_refused(monkeypatch):
+    def _bad_body(entry):
+        entry["lane"]["requires"]["body"] = "trellis"
+
+    payload = _mutated_lane(monkeypatch, _bad_body)
     with pytest.raises(ValueError, match="not a body this package names"):
+        validate_serving_contract(payload)
+
+
+def test_the_authority_check_still_comes_first(monkeypatch):
+    """Without the patch above, an edited block is refused as NOT WHAT THIS
+    BUILD LOADS -- pinned so the helper is never mistaken for a loosening."""
+    payload = copy.deepcopy(load_serving_contract())
+    payload["native_extensions"][-1]["lane"]["requires"] = {}
+    with pytest.raises(ValueError, match="not what this build loads"):
         validate_serving_contract(payload)
 
 
@@ -225,7 +255,10 @@ def test_the_exporter_accepts_the_plan_at_a_rung_the_lane_reads(tmp_path, monkey
         raise SystemExit("reached the checkpoint read")
 
     monkeypatch.setattr(export, "quantizable", _mark)
-    monkeypatch.setattr(export.Path, "read_text", lambda self: "{}", raising=False)
+    # A real (empty) config.json rather than a patched ``Path.read_text``: the
+    # gate itself reads the packaged contract through that same method.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "config.json").write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["export_tessera_serving.py", str(tmp_path / "src"), str(tmp_path / "out"),

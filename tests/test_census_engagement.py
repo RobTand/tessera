@@ -57,9 +57,13 @@ def test_the_void_census_of_issue_104_is_now_a_refusal():
         assert block["phases"][phase]["engaged_modules"] == {LANE: 0}
         assert block["phases"][phase]["decoders"] == {"torch_window": 112}
         assert block["phases"][phase]["unengaged_required_lanes"] == [LANE]
-    assert len(problems) == 2
-    assert all("0 of 112" in p and LANE in p for p in problems)
-    assert all("measured the fallback, not the lane" in p for p in problems)
+    # ONE problem, over the census -- see the decode-only test below for why it
+    # is not one per phase.
+    assert len(problems) == 1
+    assert "0 of 112" in problems[0] and LANE in problems[0]
+    assert "in any phase" in problems[0]
+    assert "prefill" in problems[0] and "decode" in problems[0]
+    assert "measured the fallback, not the lane" in problems[0]
 
 
 def test_the_refusal_carries_the_load_time_reason():
@@ -71,6 +75,7 @@ def test_the_refusal_carries_the_load_time_reason():
     block, problems = lane_engagement(phases, required_lanes=[LANE], lane_decoders=DECODERS,
                                       refusals_by_phase=refusals)
     assert block["phases"]["decode"]["lane_refusals"] == {refusal: 112}
+    assert len(problems) == 1
     assert "rates [3] have no lane here" in problems[0]
     assert "112 of 112 module(s) recorded a load-time refusal" in problems[0]
 
@@ -83,6 +88,24 @@ def test_an_engaged_arm_passes():
     assert problems == []
     assert block["all_required_engaged"] is True
     assert block["engaged_modules_max"] == {LANE: 112}
+
+
+def test_a_decode_only_lane_is_engaged_and_not_a_failed_census():
+    """THE SHAPE OF EVERY CORRECT SERVE OF THIS LANE.  The window GEMV decodes
+    M <= 8 (``kernel_window_gemv.GEMV_MAX_M``), so the census's prefill forward
+    takes the torch decode BY DESIGN.  A per-phase verdict would refuse the one
+    arm that works, which is the fastest way to teach a reader to ignore the
+    field -- so the verdict is over the census and the per-phase counts are
+    still in the block."""
+    phases = {"prefill": _records(112, "torch_window"),
+              "decode": _records(112, "window_gemv", symbol="tessera_window_gemv::gemv")}
+    block, problems = lane_engagement(phases, required_lanes=[LANE], lane_decoders=DECODERS)
+    assert problems == []
+    assert block["all_required_engaged"] is True
+    assert block["engaged_modules_max"] == {LANE: 112}
+    assert block["phases"]["prefill"]["engaged_modules"] == {LANE: 0}
+    assert block["phases"]["prefill"]["unengaged_required_lanes"] == [LANE]
+    assert block["phases"]["decode"]["engaged_modules"] == {LANE: 112}
 
 
 def test_a_partly_engaged_arm_passes_because_the_fallback_is_legitimate():
