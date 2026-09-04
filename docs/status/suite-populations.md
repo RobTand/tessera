@@ -9,6 +9,13 @@ other (tessera#112).
 time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
 master ref resolved in that checkout and the question was not answered.
 
+`commit` is the tree that arm's own run reported measuring, which is not
+always the tree the receipt was assembled against: the arms are separate
+processes on separate boxes, and a queued arm can place after the checkout has
+moved. `(assumed)` marks a row whose run predates that field, where the
+receipt's own commit is the best available guess. Rows of one run with two
+commits are two measurements, not one merge receipt.
+
 `exit` is the status the submitting process observed. `not observed` means the
 receipt was assembled after the fact from what the run published (`--resume`):
 the failure count in that row is still a fact, but a zero in it does not make
@@ -16,5 +23,5 @@ the row green, because a suite can exit non-zero after a clean summary.
 
 | measured (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected | exit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-09-04T07:14:07Z | `e61974c0c40c` | no | gpu | no population published | -- | -- | -- | 0 | not observed |
-| 2026-09-04T07:04:59Z | `e61974c0c40c` | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1389 | 1 | 499 | 0 | not observed |
+| 2026-09-04T07:14:07Z | `e61974c0c40c` (assumed) | no | gpu | no population published | -- | -- | -- | 0 | not observed |
+| 2026-09-04T07:04:59Z | `e61974c0c40c` (assumed) | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1389 | 1 | 499 | 0 | not observed |

@@ -452,3 +452,32 @@ def test_the_receipt_says_whether_the_arms_ran_one_tree():
         {"arm": "gpu", "surface": {}}, {"arm": "x86", "surface": None}])
     assert silent["agree"] is None
     assert silent["unstamped_arms"] == ["gpu", "x86"]
+
+
+def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
+    """The ledger in the repo must be readable by its own header.
+
+    `_record_markdown` writes the header only when the file does not exist, so
+    a ledger created once keeps whatever header it was born with while the
+    tool's columns and their meanings move on.  That is how the committed
+    ledger came to render two *assumed* commit attributions as established
+    ones -- under a header that had no word for the difference.
+
+    Before this test the last assertion read
+    ``AssertionError: assert False`` on
+    ``ledger.startswith(merge_suite.LEDGER_HEADER)``.
+    """
+
+    merge_suite = _module()
+    ledger = Path(__file__).resolve().parents[1] / "docs/status/suite-populations.md"
+    if not ledger.exists():                      # no run has recorded one yet
+        pytest.skip("no ledger recorded in this checkout")
+    text = ledger.read_text()
+    assert text.startswith(merge_suite.LEDGER_HEADER), (
+        "docs/status/suite-populations.md was written by an older dialect of "
+        "tools/merge_suite.py; its rows may not mean what its header says")
+    # Every row is a row of the table the header declares.
+    columns = merge_suite.LEDGER_HEADER.strip().splitlines()[-2].count("|")
+    for line in text.splitlines():
+        if line.startswith("| 2026-") or line.startswith("| 20"):
+            assert line.count("|") == columns, line
