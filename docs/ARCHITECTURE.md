@@ -83,6 +83,23 @@ rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
 Images outside the pinned repository (Mia's GLM image) are resolved and
 stamped, not refused.
 
+### 4.4b The export writes only where the runtime routes it
+
+A wire is only worth writing on a Linear the runtime hands to this plugin, and
+on GLM most attention is not one: `LinearBase.__init__` takes
+`UnquantizedLinearMethod()` in the `quant_config is None` branch **without**
+calling `get_quant_method`, so a projection built with `quant_config=None` is
+invisible to every quantization plugin — it cannot refuse, warn, or see the
+prefix (issue #99). `runtime_contract.json`'s `construction` block (contract
+v11) publishes, per architecture, which Linear patterns the runtime offers a
+quant config; the rows are generated from the census receipts under
+`docs/measurements/construction/`, which `tools/tessera_construction_census.py`
+observes by building the model the way the loader does with a probe quant
+config. The export refuses a planned module that is not `offered`, names the
+prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
+the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
+manifest's `serving_gate`).
+
 ### 4.5 The census attests the route, not the quality
 
 `tools/tessera_route_census.py` records, per residency mode, that every
