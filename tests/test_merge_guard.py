@@ -246,6 +246,38 @@ def test_a_part_from_an_older_exporter_is_refused(aware_config):
         merge.check_configs([("partA", old), ("partB", copy.deepcopy(aware_config))])
 
 
+def test_parts_cut_by_different_encoders_are_refused(aware_config):
+    """The field tessera#101 added: same settings, same profile ids, different
+    encoder.  Nothing else in the config can tell these two apart, which is
+    exactly the merge that went through once already (tessera#78)."""
+    a = copy.deepcopy(aware_config)
+    b = copy.deepcopy(aware_config)
+    assert len(a["encoder_fixture_id"]) == 64
+    b["encoder_fixture_id"] = "f" * 64
+    with pytest.raises(SystemExit, match="encoder_fixture_id"):
+        merge.check_configs([("partA", a), ("partB", b)])
+    merge.check_configs([("partA", a), ("partB", copy.deepcopy(aware_config))])
+
+
+def test_one_part_predating_the_encoder_identity_is_refused(aware_config):
+    """Written by some parts and not others means two exporters, and the older
+    one cannot say which encoder cut it."""
+    old = copy.deepcopy(aware_config)
+    del old["encoder_fixture_id"]
+    with pytest.raises(SystemExit, match="different exporters"):
+        merge.check_configs([("partA", copy.deepcopy(aware_config)), ("partB", old)])
+
+
+def test_no_part_carrying_the_encoder_identity_is_noted(aware_config, capsys):
+    """Parts that both predate the field merge, and the note says what went
+    unchecked rather than reading as a clean comparison."""
+    a = copy.deepcopy(aware_config)
+    b = copy.deepcopy(aware_config)
+    del a["encoder_fixture_id"], b["encoder_fixture_id"]
+    merge.check_configs([("partA", a), ("partB", b)])
+    assert "whether one encoder cut both parts is unrecorded" in capsys.readouterr().out
+
+
 def test_no_part_carrying_the_key_is_noted_not_refused(plain_config, capsys):
     """Pre-2026-09-02 parts predate the field; they merge, and say so."""
     old = copy.deepcopy(plain_config)

@@ -638,6 +638,20 @@ class Manifest:
     # id.  A default build carries None and writes at the minor it always
     # did, byte for byte.
     reach: "ReachParams | None" = None
+    # Schema minor 6 (2026-09-04).  ``encoder_fixture_id`` is which *encoder*
+    # cut the bytes, derived from what it does rather than declared: an
+    # encoder change moves bytes at unchanged arguments and an unchanged
+    # ``encoder_profile_id``, and nothing else on the artifact can tell two
+    # such builds apart (tessera#101).  It is a sibling of the profile id and
+    # never an input to it -- the profile id stays input-only, which is the
+    # one thing it is for -- so a reader recomputes the profile id exactly as
+    # before and reads this alongside it.  ``None`` means
+    # ``encoder_identity.UNTAGGED_ENCODER_ID``, the encoder as it stood when
+    # the field was added, so every artifact already on disk keeps its bytes
+    # and its minor.  This module does not import ``encoder_identity`` (that
+    # module encodes, and encoding imports this one); the exporter supplies
+    # the value and a test pins the two together.
+    encoder_fixture_id: "bytes | None" = None
 
     @property
     def plane_order(self) -> "tuple[PlaneKind, ...]":
@@ -655,8 +669,13 @@ class Manifest:
         below row 0 also changes the plane order, so an earlier reader must
         not try.  Minor 5 (2026-09-03) appends the reach record, which an
         earlier reader cannot recompute the profile id without, so a
-        manifest carrying one declares the minor that can.
+        manifest carrying one declares the minor that can.  Minor 6
+        (2026-09-04) appends the encoder identity, which an earlier reader
+        cannot compare across parts or against its own encoder, so a manifest
+        carrying one declares the minor that can.
         """
+        if self.encoder_fixture_id is not None:
+            return 6
         if self.reach is not None:
             return 5
         if self.shard is not None:
@@ -671,6 +690,10 @@ class Manifest:
     def __post_init__(self) -> None:
         if len(self.encoder_profile_id) != DIGEST_BYTES:
             raise ManifestError("malformed encoder_profile_id")
+        if self.encoder_fixture_id is not None and (
+            len(self.encoder_fixture_id) != DIGEST_BYTES
+        ):
+            raise ManifestError("malformed encoder_fixture_id")
         if self.span < 1:
             raise ManifestError(f"span must be positive, got {self.span}")
         if self.body is BodyKind.WINDOW:
@@ -954,6 +977,14 @@ class Manifest:
             writer.uint(1 if self.reach is not None else 0)
             if self.reach is not None:
                 self.reach.encode(writer)
+        if minor >= 6:
+            # Presence-flagged like the reach record, and for the same
+            # forward reason: a later minor may write its own field while
+            # this one is absent, and a reader at that minor still has to
+            # know how many bytes to step over.
+            writer.uint(1 if self.encoder_fixture_id is not None else 0)
+            if self.encoder_fixture_id is not None:
+                writer.digest32(self.encoder_fixture_id)
         return writer.bytes
 
     @classmethod
@@ -1013,6 +1044,12 @@ class Manifest:
         if schema_minor >= 5:
             if reader.uint():
                 reach = ReachParams.decode(reader)
+        # Absent means the encoder as it stood when the field was added: every
+        # artifact written before minor 6 was cut by it, by construction.
+        encoder_fixture_id = None
+        if schema_minor >= 6:
+            if reader.uint():
+                encoder_fixture_id = reader.digest32()
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -1029,6 +1066,7 @@ class Manifest:
             window_bits=window_bits,
             shard=shard,
             reach=reach,
+            encoder_fixture_id=encoder_fixture_id,
         )
 
     def manifest_digest(self) -> bytes:

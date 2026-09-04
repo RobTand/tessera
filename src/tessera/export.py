@@ -52,6 +52,7 @@ from .errors import GrammarError
 from .grammar import Q256_UNIT, bresenham_rate_schedule
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import ConvCode
+from .encoder_identity import encoder_fixture_id, stamped_fixture_id
 from .unit_artifact import build_unit_artifact, read_unit_artifact
 
 __all__ = [
@@ -1171,6 +1172,14 @@ def encode_linear_planes(
     """
     if weight.ndim != 2:
         raise ValueError(f"{name}: expected a 2-D weight, got {tuple(weight.shape)}")
+    # Compute the encoder identity here, before any encode and on the calling
+    # thread, rather than leaving ``build_unit_artifact`` to trigger it from
+    # wherever the last unit happens to finish.  The fixture encodes are torch
+    # work, the graph-capture contract forbids surprise device work from a
+    # worker thread while a capture may be running, and this call is memoised
+    # so every unit after the first pays nothing.  Inside the fixture build
+    # itself it answers ``None`` and does no work.
+    stamped_fixture_id()
     rows, columns = weight.shape
     if rows % grid.arity:
         raise GrammarError(
@@ -1434,6 +1443,13 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
     config = {
         "quant_method": "tessera",
         "container_version": CONTAINER_VERSION,
+        # Which *encoder* cut the bytes, derived from what it does rather than
+        # declared by anyone (``encoder_identity``, tessera#101).  Written by
+        # every part one exporter produces, which is what keeps the merge
+        # guard from comparing a missing key against a missing key and
+        # passing; the guard compares this stamped string and computes
+        # nothing, so only a process that is about to encode ever pays for it.
+        "encoder_fixture_id": encoder_fixture_id().hex(),
         "blob_suffix": BLOB_SUFFIX,
         "grid": {
             # The digest is the wire identity and the only field a reader may

@@ -64,8 +64,14 @@ SHARED = (
 #: q256 range) -- the flat ``body``/``scale.plane``/``trellis.span`` keys are
 #: its projection and read ``per-rung`` when it varies, so two parts that
 #: agree on the flat keys can still have been encoded differently below the
-#: cap, and only the table can say.
-SHARED_WHEN_WRITTEN = ("wire.recipes",)
+#: cap, and only the table can say.  ``encoder_fixture_id`` is which *encoder*
+#: cut the bytes (``tessera.encoder_identity``, tessera#101): an encoder change
+#: moves bytes at unchanged arguments and an unchanged profile id, so parts
+#: built either side of one are two artifacts, not one, and nothing else in
+#: this config can tell them apart.  The guard compares the stamped strings and
+#: never computes an identity of its own -- only a process that is about to
+#: encode pays for that.
+SHARED_WHEN_WRITTEN = ("wire.recipes", "encoder_fixture_id")
 
 #: The flat projections of the recipe table.  They describe the rungs a
 #: part *used*, so two parts of one checkpoint may legitimately differ on
@@ -167,8 +173,14 @@ def check_configs(parts):
                 f"{field!r} is written by some parts and not others -- they were "
                 f"built by different exporters; rebuild the older parts")
         else:
-            print(f"note: no part carries {field!r} (written by later exporters); "
-                  f"the recipe is compared through its flat projection only")
+            unchecked = {
+                "wire.recipes":
+                    "the recipe is compared through its flat projection only",
+                "encoder_fixture_id":
+                    "whether one encoder cut both parts is unrecorded",
+            }[field]
+            print(f"note: no part carries {field!r} (written by later "
+                  f"exporters); {unchecked}")
 
     # --- the activation-aware block ---------------------------------------
     written = [dotted(config, "activation_aware") for _, config in parts]
