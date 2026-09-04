@@ -85,8 +85,11 @@ differs, because the coupled landing runs in the trailing refit and no trellis
 pass follows it. Nothing but the scale plane's assignment can be responsible
 for the 1.0055x. The C pair's codes *do* differ (`codes_sha256` unequal on all
 six), which is the effect #50's frozen-codes oracle structurally could not
-see; C-GS -> C-GS+CL is 1.0001x on `out`, i.e. the every-pass spelling is
-worth nothing here either.
+see. That arm says the same thing more starkly: C-GS -> C-GS+CL is
+**1.00005x** on `out` -- exactly nothing, three units either side of zero --
+while `hfit` improves 0.9845x on all six. Letting the re-assignment feed the
+next trellis pass neither rescues the held-out number nor costs more; the
+objective just gets minimised better for free, and free is what it is worth.
 
 The run's own drift control passes on every unit: arm A run first and again
 last in one process is the **identical reconstruction**, `out` and `hfit`
