@@ -58,10 +58,15 @@ runtime_image_require "$IMAGE" || exit 2
 PORT=${PORT:-8000}
 NAME=${NAME:-tessera-ts83-lat-$ARM-$MODE-$REGIME}
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
-TAG=$ARM-$MODE-$REGIME
-PROF=$RUNS/prof-$TAG
-LOG=$RUNS/lat-$TAG.log
-OUT=$RUNS/latency-$TAG.json
+TAG=${TAG:-$ARM-$MODE-$REGIME}
+# Overridable so a caller taking the SAME arm more than once in a session --
+# the crossover in ``window_gemv_latency_ab.sh`` does -- gets its own trace
+# directory and receipt per repeat.  A shared ``prof-`` directory would leave
+# two runs' chrome traces side by side and any reader picking "the trace" would
+# be picking one of them at random.
+PROF=${PROF:-$RUNS/prof-$TAG}
+LOG=${LOG:-$RUNS/lat-$TAG.log}
+OUT=${OUT:-$RUNS/latency-$TAG.json}
 EAGER_FLAG=--enforce-eager; [ "$REGIME" = compiled ] && EAGER_FLAG=--trust-remote-code
 
 source "$(dirname "$0")/build_identity.sh"
