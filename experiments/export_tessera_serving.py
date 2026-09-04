@@ -206,8 +206,12 @@ EXPERT_SOURCE_PROJECTIONS = tuple(
 #: from ``mlp.shared_experts.gate_proj``, which is an ordinary dense Linear and
 #: is quantized as one.  The owner is named ``mlp`` by GLM and ``feed_forward``
 #: by LFM; its source projections are respectively gate/up/down and w1/w3/w2.
+#: The MoE owner's two spellings, in ONE place: every MoE pattern below
+#: interpolates this, so a third spelling is one edit rather than three.
+MOE_OWNER = r"(?:mlp|feed_forward)"
+
 ROUTED_EXPERT_2D = re.compile(
-    r"^(?P<moe>.*\.(?:mlp|feed_forward))\.experts\.(?P<expert>\d+)\."
+    rf"^(?P<moe>.*\.{MOE_OWNER})\.experts\.(?P<expert>\d+)\."
     rf"(?P<proj>{'|'.join(map(re.escape, EXPERT_SOURCE_PROJECTIONS))})\.weight$")
 
 #: The MoE ROUTER.  ``mlp.gate`` is not a projection (a dense MLP has
@@ -234,7 +238,7 @@ ROUTED_EXPERT_2D = re.compile(
 #: ``ReplicatedLinear`` at ``<feed_forward>.gate`` and the expert factory at
 #: its sibling ``.experts`` (PrismaBuild action ``e3f322afb4ab...``).
 MOE_ROUTER = re.compile(
-    r"^(?P<moe>.*\.(?:mlp|feed_forward))\.(?:gate|router)\.weight$")
+    rf"^(?P<moe>.*\.{MOE_OWNER})\.(?:gate|router)\.weight$")
 
 #: A PACKED expert stack: one rank-3 tensor holding every expert of a layer.
 #: Rank alone does NOT identify one -- GLM-5.3-Flash's attention carries
@@ -256,7 +260,7 @@ MOE_ROUTER = re.compile(
 #: the same probe (#86).  ``packed_expert_orientation`` already read both
 #: spellings, which is how far the inconsistency reached before it was found.
 PACKED_EXPERT_ND = re.compile(
-    r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
+    rf"^(?P<moe>.*\.{MOE_OWNER})\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
 
 #: A module vLLM builds under a SECOND name, beside the checkpoint's spelling.
 #: Not a taste and not a guess: CONSTRUCTED on the pinned build

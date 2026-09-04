@@ -710,3 +710,23 @@ def test_a_rank_2_bare_packed_name_is_refused_not_guessed(tmp_path):
     message = str(caught.value)
     assert bare in message, message
     assert "rank 2" in message, message
+
+
+@pytest.mark.parametrize("suffix", [".weight", ""])
+def test_a_packed_stack_is_found_under_a_feed_forward_owner(tmp_path, suffix):
+    """The owner is ``mlp`` on GLM and ``feed_forward`` on LFM -- the file says
+    so beside ``ROUTED_EXPERT_2D`` and ``MOE_ROUTER``, both of which accept
+    either.  ``PACKED_EXPERT_ND`` accepted only ``mlp``, so a transformers-5
+    packed stack under ``feed_forward`` landed in no bucket at all and could not
+    be refused by name at plan time."""
+    tensors = {name.replace(".mlp.experts.", ".feed_forward.experts."): value
+               for name, value in _packed_checkpoint(suffix).items()}
+    src = _write(tmp_path, tensors, _config(inter=PACKED_INTER))
+
+    _shards, shapes, packed, routed = export.quantizable(src)
+
+    assert sorted(packed) == [
+        f"model.language_model.layers.1.feed_forward.experts.down_proj{suffix}",
+        f"model.language_model.layers.1.feed_forward.experts.gate_up_proj{suffix}"], sorted(packed)
+    assert routed == {}, sorted(routed)
+    assert not any(".feed_forward.experts." in n for n in shapes), sorted(shapes)
