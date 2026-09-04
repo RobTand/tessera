@@ -143,17 +143,29 @@ def test_the_census_carries_the_mechanism_that_attested_its_scope():
     assert args.runtime_image_attestation["image"] == IMAGE
 
 
-def test_every_shell_census_invocation_passes_the_verified_wrapper_image():
+def test_every_census_invocation_passes_the_verified_wrapper_image():
+    """A driver that spells the digest itself reads its own mind, not the run.
+
+    Since #132 a reconstructed image is a refusal rather than a silent
+    rescope -- but a driver that learns at census time what its own text says
+    has burned two model loads to find out. Both suffixes: the .sh-only scan
+    was blind to ``experiments/ts5_lfm_served_bound.py``, the one census
+    caller that interpolated the digest from a host-side constant.
+    """
     invocations = []
-    for path in sorted((ROOT / "experiments").rglob("*.sh")):
+    for path in sorted(p for p in (ROOT / "experiments").rglob("*")
+                       if p.suffix in {".sh", ".py"}):
         text = path.read_text()
         for match in re.finditer(r"python3 (?:/work/)?tools/tessera_route_census\.py", text):
-            command = text[match.start():].split('" \\', 1)[0]
+            # One invocation's worth of text: the shell form ends at a line
+            # continuation, the python form is an adjacent-string block, and
+            # neither spans a blank line.
+            command = text[match.start():match.start() + 500].split("\n\n", 1)[0]
             invocations.append((path.relative_to(ROOT), command))
     assert invocations
     for path, command in invocations:
         assert "--runtime-image" in command, str(path)
-        assert r"\$TESSERA_CENSUS_RUNTIME_IMAGE" in command, str(path)
+        assert f"${CENSUS_IMAGE_ENV}" in command, str(path)
 
 
 @pytest.mark.parametrize("compiled", [False, True])
