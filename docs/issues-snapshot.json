@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T09:02:28Z",
+ "generated": "2026-09-04T15:55:43Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -240,8 +240,12 @@
     "title": "Same-directory packed appends with different fit calibs merge silently for new pairs"
    },
    "174": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A pool job that holds no GPU slot can still see and use CUDA"
+   },
+   "175": {
+    "state": "OPEN",
+    "title": "CI cannot install the now-required private Tessera package"
    },
    "19": {
     "state": "CLOSED",
@@ -322,7 +326,7 @@
     "title": "The \"pinned\" vLLM is a floating tag, and the two boxes hold different images under it"
    },
    "101": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
    },
    "102": {
@@ -342,19 +346,19 @@
     "title": "The LUT landing's loss is in the assignment: rescue the coupled landing and measure it in the encoder"
    },
    "106": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "_fit_lut's eps stop test moved wire bytes on master, undeclared"
    },
    "107": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "refit_gauss_seidel is per-source where refit_objective is per-plane, so it refuses every mixed-plane export"
    },
    "108": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "contract.vllm_module_name reimplements vLLM's WeightsMapper and diverges from it in three places"
    },
    "109": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The window-GEMV served latency A/B has no owner and no issue"
    },
    "11": {
@@ -366,19 +370,31 @@
     "title": "The window GEMV and its torch fallback disagree as served at M=1: mutual KL 0.012, top-1 91%"
    },
    "111": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The E4M3 lane_eligibility cells name no route for the window-GEMV lane, so the contract cannot attest what the census observed"
    },
    "112": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The CUDA-gated test surface is covered by no automatic signal: master was red on 766033c while CI, the x86 suite and a CPU run all read green"
    },
    "113": {
     "state": "OPEN",
     "title": "The window-GEMV lane has no served KL under a compiled forward, which is the configuration vLLM serves by default"
    },
-   "12": {
+   "114": {
+    "state": "CLOSED",
+    "title": "The x86 arm of the merged suite exits 1 and publishes no population, so every cross-arch receipt is 'incomplete'"
+   },
+   "115": {
+    "state": "CLOSED",
+    "title": "Unraised CHANNEL rows can still land one fp16 ulp below the body reach"
+   },
+   "116": {
     "state": "OPEN",
+    "title": "Encoder identity fixture misses unraised fp16 reach-boundary landing"
+   },
+   "12": {
+    "state": "CLOSED",
     "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.039x, in q_proj and k_proj)"
    },
    "13": {
@@ -394,7 +410,7 @@
     "title": "mink (per-member) rates have no converter path: refuse or round"
    },
    "16": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Eager vs compiled KL divergence is unexplained, and compiled builds are not reproducible"
    },
    "17": {
@@ -402,7 +418,7 @@
     "title": "Release mechanics: push, tag v0.1.0, and resolve PrismaQuant's pin"
    },
    "18": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "BF16 route: (L, sigma) unsearched, and the GLM expert evidence is one tensor"
    },
    "19": {
@@ -590,7 +606,7 @@
     "title": "NVFP4 MoE is refused on the pinned build by swiglu_limit clamp filtering"
    },
    "60": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "LDLQ block size is unsearched: 16 beats the default 32 by 5-7% on dense q/k, and 128 matches it on GLM at 4x less encode"
    },
    "61": {
@@ -654,7 +670,7 @@
     "title": "formats[].residency_modes is required but never checked against lane.MODES, so a wrong residency list validates"
    },
    "75": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The full-H refit earns its keep on the trailing pass: h^1.0 codes + one coupled full-H refit match the GS alternation (screen)"
    },
    "76": {
@@ -690,7 +706,7 @@
     "title": "CI has never been green: the bytes-only job cannot import conftest, and the release tag is gated on it"
    },
    "83": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Serve the window-GEMV lane: census, two-arm KL and latency, none of which #10 measured"
    },
    "84": {
@@ -706,7 +722,7 @@
     "title": "A Linear outside the decoder body is passed through but never named in ignore, and the plugin refuses exactly that"
    },
    "87": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "initial_channel_scale lands its reach bound with round-to-nearest, so 16% of the rows it raised clip anyway"
    },
    "88": {
