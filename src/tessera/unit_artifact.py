@@ -800,12 +800,19 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         # §9's placement is *derived*, not stored: decode without release,
         # rank by descending decoded magnitude per superblock, and the RELEASE
         # plane's codes land on those positions in that order.
+        #
+        # The ranking is over the *resolved grid's* values, which is what the
+        # encoder ranks by (``encode.encode_unit``).  The E2M1 table is the
+        # 16-code case of it, and reaching for it directly made the ordering a
+        # restatement of one grid's roster: on any wider grid the pre-release
+        # codes run past 15 and the gather is an ``IndexError`` in a reader
+        # that has already accepted the artifact.
         from .decode import decode_codes_mixed, unit_scale_field
-        from .encode import e2m1_value_table
+        from .encode import grid_value_table
 
         pre = decode_codes_mixed(unit, forests, code, apply_release=False)
         scale = unit_scale_field(unit, rows, cols)
-        decoded = e2m1_value_table(device)[pre.int()] * scale
+        decoded = grid_value_table(grid, device)[pre.int()] * scale
         unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
@@ -1062,12 +1069,13 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     if n_released and grid.arity > 1:
         raise GrammarError("release is not defined at arity > 1")
     if n_released:
+        # The grid's own value table, for the reason the TCQ reader gives.
         from .decode import decode_codes_mixed, unit_scale_field
-        from .encode import e2m1_value_table
+        from .encode import grid_value_table
 
         pre = decode_codes_mixed(unit, grid, None, apply_release=False)
         scale = unit_scale_field(unit, rows, cols)
-        decoded = e2m1_value_table(device)[pre.int()] * scale
+        decoded = grid_value_table(grid, device)[pre.int()] * scale
         unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
             chunks[PlaneKind.RELEASE], n_released, 4, device
