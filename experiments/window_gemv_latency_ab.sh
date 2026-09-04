@@ -163,9 +163,21 @@ import json, subprocess, sys
 receipt, out, tool, py = sys.argv[1:5]
 d = json.load(open(receipt))
 m = d["marks_utc"]
-subprocess.run([py, tool, "--label", f"{d['arm']}-{d['serve_mode']}-{d['forward']}",
-                f"--window={m['decode_start']}:{m['prefill_end']}", "--out", out],
-               check=False)
+done = subprocess.run([py, tool, "--label", f"{d['arm']}-{d['serve_mode']}-{d['forward']}",
+                       f"--window={m['decode_start']}:{m['prefill_end']}", "--out", out],
+                      check=False)
+# NOT ``check=False`` AND SILENT.  This is principle 15's second instrument, and
+# for the whole 2026-09-04 campaign it wrote nothing: the tool split its
+# ``--window`` on the first colon, so a pair of ISO stamps was unreadable, the
+# process exited 1, and this line discarded it.  Four latency receipts, four
+# traces, and no box-side reading of a single timed window -- with no line
+# anywhere saying so.  The arm is not thrown away for it (the latency receipt
+# is written and carries its own load and swap fields), but the run says it
+# loudly, exactly the way a missing trace does above.
+if done.returncode != 0:
+    print(f"!!! NO BOX-SIDE POWER RECEIPT for {receipt}: the tool exited "
+          f"{done.returncode}.  This arm has its in-process numbers and its "
+          f"trace, and NO reading of what the box was doing while it was timed.")
 PYEOF
 }
 

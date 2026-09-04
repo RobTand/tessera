@@ -73,6 +73,55 @@ def _parse_instant(text: str, now: float) -> float:
     raise ValueError(f"cannot read {text!r} as a UTC instant or an offset in seconds")
 
 
+def split_window(text: str, now: float) -> tuple[float, float]:
+    """``AFTER:BEFORE`` -> the two instants, when AFTER itself contains colons.
+
+    ``--window`` accepts an ISO-8601 UTC stamp on either side, and an ISO-8601
+    stamp contains two colons of its own.  Splitting on the FIRST colon --
+    which is what this did -- turns
+    ``2026-09-04T09:16:12Z:2026-09-04T09:17:26Z`` into ``2026-09-04T09`` and
+    refuses the tool's own documented usage line.  Splitting on the last one
+    fails the same way from the other end.
+
+    So the separator is found rather than assumed: every colon is tried as the
+    split, and the one where BOTH halves parse is the separator.  On
+    ``-1800:0`` there is one colon and one answer; on a pair of stamps only the
+    middle colon leaves two readable halves, because ``2026-09-04T09`` and
+    ``26Z`` are not instants.  An ambiguous string is refused rather than
+    guessed at -- an A/B whose box-side window is silently the wrong minute is
+    worse than one that stops.
+
+    THIS WAS NOT A COSMETIC BUG.  ``window_gemv_latency_ab.sh`` calls this tool
+    with each arm's own ``decode_start:prefill_end`` marks and runs it under
+    ``subprocess.run(..., check=False)``, so the ValueError went nowhere: the
+    2026-09-04 campaign wrote four latency receipts and four traces and **no**
+    ``power-arm*.json`` at all.  Principle 15 wants two instruments; the box-
+    side one was absent from every timed window in the run, and nothing said so.
+    """
+
+    positions = [i for i, ch in enumerate(text) if ch == ":"]
+    if not positions:
+        raise SystemExit(
+            f"--window {text!r} has no ':' -- it is AFTER:BEFORE, e.g. -1800:0 "
+            f"or 2026-09-04T06:10:00Z:2026-09-04T06:12:30Z")
+    found = []
+    for i in positions:
+        try:
+            found.append((_parse_instant(text[:i], now), _parse_instant(text[i + 1:], now)))
+        except ValueError:
+            continue
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        raise SystemExit(
+            f"--window {text!r} is not AFTER:BEFORE with readable instants; each "
+            f"side is an offset in seconds (-1800, 0) or an ISO-8601 UTC stamp "
+            f"(2026-09-04T06:10:00Z)")
+    raise SystemExit(
+        f"--window {text!r} splits into a readable pair {len(found)} ways; "
+        f"write both sides as ISO-8601 UTC stamps so the separator is unambiguous")
+
+
 def _fetch(host: str, context: str, dims, after: int, before: int, points: int) -> dict:
     q = urllib.parse.urlencode({
         "contexts": context, "after": after, "before": before, "points": points,
@@ -144,8 +193,8 @@ def main() -> int:
     args = ap.parse_args()
 
     now = time.time()
-    a_txt, _, b_txt = args.window.partition(":")
-    after, before = int(_parse_instant(a_txt, now)), int(_parse_instant(b_txt, now))
+    after_f, before_f = split_window(args.window, now)
+    after, before = int(after_f), int(before_f)
     if before <= after:
         raise SystemExit(f"window BEFORE ({before}) must be after AFTER ({after})")
     points = args.points or max(4, min(600, (before - after) // 10))

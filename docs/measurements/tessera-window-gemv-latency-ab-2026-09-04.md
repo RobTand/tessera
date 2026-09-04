@@ -12,7 +12,12 @@
 > own trace: the lane owns 29.8% of a decode step's device time and `lm_head`
 > owns 48.1%, so a served **X** implies a lane-bucket speedup of
 > **1 + (X-1)/0.298**. Nothing here is a placeholder standing in for a number
-> that was taken and disliked.
+> that was taken and disliked. **Section 7, added later on 2026-09-04**,
+> records three things found while asking which box this can run on: the
+> box-side instrument wrote nothing for the whole campaign and the driver
+> discarded the reason (fixed, with the four windows recovered from
+> Netdata); the quiet box is reachable from a `/mnt/shared` clone without
+> cloning to it; and a loaded box stops being addressable at all.
 
 ## 1. What #109 owes, and what is missing
 
@@ -238,36 +243,51 @@ landed. The claim path is safe (it reads the reservation ledger, which keeps its
 a `--cpus N` submission to sparky will fail intermittently until one of the two
 worker loops is retired.
 
-## 5. What remains
+## 5. What remains, and on which box
 
-The A/B itself, which is one command once a box is genuinely free:
-
-```
-bash experiments/ts109_submit.sh          # REGIME=eager REPS=2 CWD=<worktree>
-```
-
-which is one `pbrun` call plus a retry loop for the offer flake described in
-§4:
+The A/B itself, which is one command once a box is genuinely free -- and the
+box is now an argument rather than a constant:
 
 ```
-python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --exclusive --here --demand mem_gb=48 --timeout-s 7200 --wait-s 7200 \
-  --priority 5 --cwd <worktree> --tag sparky \
-  --env TESSERA_LAT_OTHER_BOXES=sparklina --env SETTLE_S=420 --env IDLE_S=360 \
-  -- bash experiments/window_gemv_latency_ab.sh eager 2
+BOX=gx10-6b77 CWD=/mnt/shared/tessera-ts109 bash experiments/ts109_submit.sh
 ```
 
-Two flags are worth their explanation. `--wait-s 7200` is the wait for an
-*outcome*, not for a placement: an earlier draft used `--wait-s 900` and would
-have abandoned a 45-minute A/B fifteen minutes in. And no `--cpus` is declared,
-deliberately: the A/B is one serve at a time and the flickering offer in §4
-rejects any `cpu`-naming demand outright about a third of the time.
+`BOX` names the tag the action requires; `CWD` is what makes naming it
+possible at all. **Which box an action can run on is a fact about its
+checkout's path, not a flag.** `pbrun`'s own rule: "Every box mounts
+`/mnt/shared` at the same path, so a checkout underneath it is visible to all
+of them and an action that runs there can run anywhere. A checkout outside it
+exists on exactly one box." A worktree under `/home/rob/tmp` is therefore
+pinned to the box that holds it, and `pbrun` says so on every submission from
+one. So the answer to "must the branch be cloned onto the quiet box" is **no**:
+one clone under `/mnt/shared` plus `--tag` reaches either GB10. It has to be a
+`git clone`, not a `git worktree` -- a worktree writes a `.git` *file* pointing
+into `/home/rob/tessera/.git`, which the other box cannot see, and the worker's
+closure check refuses it.
+
+What travels with the checkout is the code. What does not, and must already be
+on the box named:
+
+| | sparky | sparklina (`gx10-6b77`) |
+|---|---|---|
+| pinned serve image by digest (`61fc8a89…`) | yes | yes, as `vllm/vllm-openai:latest`'s `RepoDigest` |
+| `/home/rob/dq-runs/venvs/prismaquant-cu130` | yes | yes |
+| `$SRC/{armA,armB}`, one inode | yes | **no** -- 846 MB to copy, then `cp -al armA armB` |
+| `$SRC/ext-A` | prebuilt | absent, and it does not matter |
+
+`ext-A` does not matter because `kernel_window_gemv._ext()` builds at load
+(`kernel_window_gemv.py:485`: "built (or found) at load, never on the first
+call"), so an nvcc build on a cold box lands inside the 40-minute startup wait
+and not inside a timed window. That is also what makes arm B's mechanism work
+at all, so the two facts are the same fact.
 
 `--exclusive` rather than `--gpu` is the point: a latency A/B needs the whole
-box, not one of sparky's two slots, and the ledger turns a full-capacity demand
-into exclusion -- which is also why it waits behind everything, as §4 shows. `SETTLE_S` holds the claim doing nothing so the idle window that
+box, not one of two slots, and the ledger turns a full-capacity demand into
+exclusion. `SETTLE_S` holds the claim doing nothing so the idle window that
 follows describes a box with nothing on it -- which is not queueing, because
-that reading is itself one of #109's deliverables.
+that reading is itself one of #109's deliverables. `--timeout-s` is now 10800:
+two eager reps ran 06:53Z -> 09:34Z with the *fixed* parser in the second half,
+and 7200 was already a near miss.
 
 Then `compiled` as a second pass. Eager first deliberately: the eager census
 carries the `tessera_window_gemv::gemv` symbol at M1 shapes directly, so the
@@ -390,3 +410,99 @@ receipts carry `profiled_load: {"error": "HTTPError: HTTP Error 404: Not Found"}
 and no trace of their own; the `/2` receipts written by the new driver carry
 `profile_decode_start`/`profile_decode_end` marks so the same cut can be made
 directly and identically in both arms.
+
+## 7. Three things found while asking where this can run (2026-09-04, later)
+
+### 7.1 The box-side instrument wrote nothing for the entire campaign, and the driver threw the reason away
+
+Principle 15 asks for two instruments and names why: the in-process profiler
+says where time went, the box series says whether the box was loaded, and no
+in-process tool can see the second. The 2026-09-04 campaign produced four
+latency receipts and four chrome traces and **zero `power-arm*.json`**. Not one
+of its eight timed windows has a box-side reading.
+
+The cause is one line. `box_power_window.py` split `--window` on the **first**
+colon, while `window_gemv_latency_ab.sh` passes each arm's own marks:
+
+```
+--window=2026-09-04T09:16:12Z:2026-09-04T09:17:26Z
+```
+
+An ISO-8601 stamp carries two colons of its own, so the first split yields
+`2026-09-04T09` and `16:12Z:2026-09-04T09:17:26Z`, neither of which is an
+instant. The tool refused **its own docstring's usage line** (line 32) and
+exited 1 -- and the driver ran it under `subprocess.run(..., check=False)` and
+said nothing. A gate whose refusal nothing reads is the confession log
+principle 9 names, and this one refused every arm of a two-rep campaign in
+silence.
+
+Both halves are fixed here. The separator is now *found* rather than assumed --
+every colon is tried and the one where both halves parse is the separator, with
+an ambiguous window refused rather than guessed at, because a box-side window
+silently off by a minute describes a different box state than the arm was timed
+in. And the driver now prints `!!! NO BOX-SIDE POWER RECEIPT` the way it already
+prints `!!! NO TRACE`. `tests/test_box_power_window.py` (6 passed) pins the
+driver's exact argument, the unmoved `-1800:0` form used by the idle windows,
+the two refusals, and the first-colon split itself as the regression that must
+not come back.
+
+**The four windows are recoverable, and were recovered**, because Netdata's
+10 s tier still holds the morning. Re-read with the fixed tool:
+
+| arm | timed window | GPU power median | of the 140 W envelope | swap-in median |
+|---|---|---|---|---|
+| armA rep 1 | 55 s | 14.0 W | 10.0% | 0.36 KiB/s |
+| armB rep 1 | 439 s | 43.0 W | 30.7% | 0.40 KiB/s |
+| armB rep 2 | 445 s | 43.0 W | 30.7% | 2.40 KiB/s |
+| armA rep 2 | 74 s | 72.1 W | 51.5% | 17.82 KiB/s |
+
+Receipts: `/home/rob/tessera-runs/ts109/power-arm{A,B}-streamed-eager-rep{1,2}.json`,
+labelled `*-decode-window-recovered` so nobody mistakes them for readings the
+campaign took at the time.
+
+Read them for what they can carry. Box power is the **whole box**, this arm's
+own serve included, so no row here is the lane's power. What the table does
+separate is the *same arm against itself*: armA's decode window is 55 s at
+14 W in rep 1 and 74 s at 72.1 W in rep 2 -- identical work, 1.35x the wall
+clock and 5x the box power -- while armB's is 439 s against 445 s, 1.4% apart.
+That is the box moving under the campaign, seen from outside, and it agrees
+with `max_load1_per_cpu` 0.059 against 0.463 seen from inside. It also says
+which arm the contention lands on: the engaged arm is short and launch-bound,
+so host load inflates it, which pushes the fallback-over-engaged ratio
+**down**. A contended pair understates this lane rather than flattering it.
+
+### 7.2 The box is a property of the checkout's path, so the quiet box is reachable without cloning to it
+
+Covered in §5, recorded here as the answer to the question that was asked:
+**no, the branch does not need to be cloned onto sparklina.** One `git clone`
+under `/mnt/shared` plus `--tag gx10-6b77` places the same action on either
+GB10; only the arms (846 MB, then `cp -al`) have to be staged.
+
+**But sparklina could not take this action at 2026-09-04T10:30Z, for a reason
+that reads as "stuck" and is not.** Its reservation ledger holds exactly **one**
+GPU token, and `held/out-of-pool-ts60-encode-sparklina/gpu-0000` has held it
+since 2026-09-03T20:10 local (pid 2003068, `tessera_window_wire.py --grids
+E2M1x2 … glm_v2_b4.json`, ~2 h in at the time of reading). The offer file says
+`capacity.gpu: 2`, and `--exclusive` reads *that* number, not
+`observed_capacity.gpu: 1`. `pool.claim` skips an item whose demand exceeds the
+ledger's total for a kind **without recording a pass** -- "never fits this box;
+not this box's to hold" -- so an `--exclusive` item tagged `gx10-6b77` sits in
+`ready` at **0 passes** and does not age until that encode exits and
+`ensure_capacity` mints `gpu-0001`. Zero passes there is the queue being
+correct, not the queue being broken.
+
+### 7.3 A loaded box becomes unaddressable, which is why the submit script retries
+
+`pbrun` refuses a submission outright, before queueing anything, when no *live*
+offer carries the tag it names; an offer is live for `OFFER_TIMEOUT_S = 120`
+seconds. Sampled every 12 s from 10:24:48Z, sparky's offer age climbed
+monotonically to **260.5 s** before resetting to 3.6 s -- one announce every
+~264 s at `load1 19.56`. So sparky publishes a stale offer for roughly 55% of
+each cycle, and a submission naming it during that stretch is told "no live
+worker can run this action" while four of its own actions are running.
+
+This is a second, independent cause of the refusal §4 attributed to the
+two-runtime shape flicker, and it bites hardest exactly when a box is busy
+enough to be worth queueing behind. `experiments/ts109_submit.sh` retries the
+submission for both; neither is routed around, and a refusal that survives the
+whole loop is reported rather than worked past.
