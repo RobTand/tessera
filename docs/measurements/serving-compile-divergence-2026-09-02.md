@@ -194,6 +194,18 @@ floating-point arithmetic, so it is a different logit — which is the observed
 The plugin receipt called this "the likely mechanism and it is not proven here".
 It is now measured: **61% of the autotuned kernels under one key changed.**
 
+> **Two corrections from `inductor-determinism-knob-2026-09-04.md` (#16).**
+> First, the sentence above ("a different reduction tree … which is the observed
+> 0.017117") joins a measured count to a measured KL by an inference nobody
+> checked.  On the pinned torch, two fresh builds on an idle box produced a
+> record differing in `R0_BLOCK` 1024 → 4096 and `num_warps` 8 → 16 whose
+> **outputs were bitwise equal** — the fp32 reduction difference vanished under
+> the bf16 store.  So 120 is an upper bound on how many of the differing records
+> moved a logit, not a count of them; the 0.017117 stands, its attribution to
+> all 120 does not.  Second, "Three other workers were loading this box" is
+> sufficient but not necessary: the divergence reproduces at 5.46 W of a ~140 W
+> envelope with nothing else on the GPU.
+
 **(c) The dumped graph also differs, and this one is not yet explained.** The
 same key's `computation_graph.py` records 42 of 56 `fused_add_rms_norm` calls at
 the `maybe_inplace` overload in the chain build and 0 in the fresh build. In the
