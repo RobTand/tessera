@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T04:24:53Z",
+ "generated": "2026-09-04T04:56:35Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -326,7 +326,7 @@
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
    },
    "102": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The served-KL harness cannot reach any decode-only kernel (M=1); #83's two-arm KL measured the prefill path instead"
    },
    "103": {
@@ -334,7 +334,7 @@
     "title": "ActivationSource cannot record a trailing refit objective, so no exportable artifact can carry one"
    },
    "104": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "No allocated checkpoint can serve the window-GEMV lane: every one carries a rate outside SUPPORTED_RATES"
    },
    "105": {
