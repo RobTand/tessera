@@ -38,6 +38,7 @@ import pytest
 from tessera.serving.census import cell_launch_agreement
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
+from tessera.serving.runtime_image import pinned_reference
 
 #: Two modules of the R1024 census, both phases, verbatim -- including
 #: ``kind``, which the first trim of this fixture dropped and the source
@@ -75,7 +76,8 @@ def _agree(cells, records=None, rungs=None):
         records if records is not None else _SERVED,
         cells=cells, phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         rungs_by_module=rungs if rungs is not None else _RUNGS,
-        families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
+        families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        runtime_image=pinned_reference(), execution_mode="eager")
 
 
 @pytest.fixture(scope="module")

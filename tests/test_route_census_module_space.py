@@ -181,17 +181,20 @@ def test_moe_cell_rung_requires_agreement_of_every_group_role():
 
 
 def _moe_agreement_fixture(symbol="vllm.fused_moe.modular_kernel:TRITON"):
+    image = "example/runtime@sha256:" + "1" * 64
     child = f"{STACK}.routed_experts"
     records = {"decode": {child: {"kind": "moe", "policy": "TESSERA_FP8:resident",
         "symbol": symbol, "decoder": "torch_materialize_stock"}}}
     cell = {"id": "synthetic_moe_cell", "platform": "sm_121", "structure": "routed_moe",
         "family": "E4M3", "regime": "decode", "rungs_q256": [1024],
+        "runtime": {"image": image, "execution_modes": ["eager"]},
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "executes": [{"symbol": "vllm.fused_moe.modular_kernel",
                       "decoder": "torch_materialize_stock"}]}
     kwargs = {"phase_regimes": {"decode": "decode"}, "platform": "sm_121",
         "declared_rungs": {STACK: 1024}, "record_owners": {"decode": {child: STACK}},
-        "families_by_route": {"TESSERA_FP8": "E4M3"}}
+        "families_by_route": {"TESSERA_FP8": "E4M3"},
+        "runtime_image": image, "execution_mode": "eager"}
     return records, cell, kwargs
 
 
