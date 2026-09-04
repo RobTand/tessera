@@ -410,12 +410,17 @@ def stage_refit(a) -> None:
     h, so the reduction is not throwing the metric away; what it throws away is
     ``scale_refit=4``.
 
-    The table cannot be carrying it on its own, either.  For every unclamped
-    sigma the table's reach is exactly ``4.0773 * sigma``, so the two arms'
-    reach-aware row scales are exactly proportional and the two normalised
-    tables differ only by where the E4M3 snap lands: relative snapped-vs-ideal
-    energy 6.976e-4 at the default against 7.031e-4 at ``m=0.75``, a predicted
-    ratio of **1.004** against a measured 1.367.
+    The table cannot be carrying it on its own, either.  Careful about *why*:
+    the snapped reach is a **step function** of sigma (the ladder measures the
+    steps), so ``reach = 4.0773 * sigma`` is false in general.  What is exactly
+    true is ``reach(2^k * sigma) = 2^k * reach(sigma)`` on a floating-point
+    grid away from the floor and the peak -- and this particular pair happens
+    to be exact for the same reason: ``reach(0.75 * s0) = 288 = 0.75 * 384``,
+    because 288 is itself an E4M3 value.  So on *these two arms* the reach-aware
+    row scales are exactly proportional and the two normalised tables differ
+    only by where the E4M3 snap lands: relative snapped-vs-ideal energy
+    6.976e-4 at the default against 7.031e-4 at ``m=0.75``, a predicted ratio
+    of **1.004** against a measured 1.367.
 
     So this stage walks ``scale_refit`` from 0 to 4 at both sigmas and reports
     the ratio at each.  Flat at ~1.0 across the walk would refute the refit
