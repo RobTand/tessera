@@ -27,11 +27,15 @@ and bf16 keeps eight.  Folding it in cost 1.6e-03 relative rms on EVERY
 activation element -- some 800x the fp32 accumulation floor -- where
 ``_scaled_mm`` multiplies the codes and scales in its epilogue.  Applying
 ``a_scale`` on the fp32 output leaves fp32 summation order as the only
-difference this module can name, which is what the docstring always claimed.
+difference this module can name, which is what the docstring always claimed --
+and that order is MEASURED, not asserted: the lane run twice on identical
+input differs by 1.6e-07 relative and changes no bf16 output word at any M
+(``experiments/gemv_a_side_precision.py``).
 
 THIS DOES NOT CLOSE #110.  The lane and its published fallback disagreed as
 served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes --
-and a calibrated propagation screen puts the fold at KL 1.4e-04, 1/86 of that.
+and a calibrated propagation screen puts the fold at KL 0.9e-04 (1.5e-04 at
+an operating point worse than the served arms), under 1/80 of that.
 A second term is outstanding; ``docs/measurements/tessera-gemv-a-side-2026-09-
 04.md`` says what would find it.  Do not read the fix below as an explanation
 of the served number.

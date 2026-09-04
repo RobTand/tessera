@@ -6,8 +6,9 @@
 > move a single bf16 output word, the fold this document names was worth
 > **1.4e-03**, and with it gone the lane's bf16 output matches
 > `torch._scaled_mm`'s on **99.90-100%** of elements. But a calibrated
-> propagation screen puts the fold at **KL 1.4e-04**, one part in eighty-six of
-> the `0.012111` #110 measured, and the sharper reading is worse than that:
+> propagation screen puts the fold at **KL 0.94e-04 on the teacher and 1.45e-04
+> at an operating point worse than the served arms**, one part in eighty-four to
+> one in a hundred and thirty of the `0.012111` #110 measured, and the sharper reading is worse than that:
 > arms agreeing on 99.9% of their bf16 words cannot disagree by 0.012, so if
 > the served re-run still reads 0.012 the cause is not this Linear's
 > arithmetic at all. **The served re-run did not happen** -- sparky's two GPU
@@ -123,45 +124,44 @@ Three of them looked at the right objects, and none of them looked at this one.
 ## 3. What that term is worth as a KL -- and why it is not enough
 
 A per-Linear relative error is not a KL. `experiments/gemv_a_side_propagation.py`
-turns one into the other: it runs the BF16 Qwen3-0.6B teacher twice over the
-same corpus chunks, once with independent Gaussian noise of a chosen relative
-rms injected at the output of all 196 served Linears, and reports full-vocab
-KL and top-1 agreement over 1022 positions.
+turns one into the other: it runs Qwen3-0.6B twice over the same corpus chunks,
+once with independent Gaussian noise of a chosen relative rms injected at the
+**input** of all 196 served Linears -- the fold's own injection point, since
+what it rounds is every activation element -- and reports full-vocab KL and
+top-1 agreement over 1022 positions. `--where output` is available as a coarser
+cross-check and reads about 1.5x higher; the input-side numbers are quoted
+because they are the faithful ones.
 
-| per-Linear rel rms | KL (mean) | top-1 agree |
-|---:|---:|---:|
-| 0 (control) | **0.000000** | **100.00%** |
-| **1.612e-03  (the fold)** | **0.000141** | 99.32% |
-| 5.0e-03 | 0.001363 | 97.55% |
-| 1.0e-02 | 0.005511 | 95.01% |
-| 1.5e-02 | 0.012609 | 93.54% |
-| 2.5e-02 | 0.035659 | 89.92% |
+The obvious objection is that a screen calibrated on the *teacher* says nothing
+about arms that sit 0.436 nats from it, so every row is taken twice: on the
+BF16 teacher, and after RTN'ing every target weight to 4 bits per output row --
+an operating point **worse** than the served arms (KL 0.719061 from the
+teacher).
 
-KL goes as the square of the perturbation, as it should. **#110 measured
-`KL >= 0.012111` at 91.02% top-1. The fold reads 0.000141 -- 1/86 of it. The
-size that reproduces it is ~1.5e-02, nine times the fold in amplitude.**
+| per-Linear rel rms | KL, BF16 teacher | top-1 | KL, int4 operating point | top-1 |
+|---:|---:|---:|---:|---:|
+| 0 (control) | **0.000000** | **100.00%** | | |
+| **1.612e-03  (the fold)** | **0.000094** | 99.22% | **0.000145** | 99.12% |
+| 5.0e-03 | 0.000899 | 98.04% | | |
+| 1.5e-02 | 0.008032 | 95.21% | 0.012323 | 93.54% |
 
-The obvious objection is that this screen calibrates on the *teacher*, while
-the served arms are a quantised model sitting 0.436 nats from it, and a
-degraded model might amplify. It does not amplify anywhere near enough. Re-run
-with every target weight RTN'd to 4 bits per output row first -- an operating
-point **worse** than the served arms (KL 0.719061 from the teacher, against
-their 0.436):
+KL goes as the square of the perturbation, as it should (the output-side sweep
+spans 1.6e-03 to 2.5e-02 and holds the square law across it). The control row
+is the harness proving it reads exactly zero when nothing changes.
 
-| per-Linear rel rms | KL at the int4 operating point | top-1 agree |
-|---:|---:|---:|
-| 1.612e-03 (the fold) | 0.000246 | 98.73% |
-| 1.5e-02 | 0.021203 | 91.29% |
-
-Degradation buys a factor of 1.7 in KL (1.3 in amplitude), not 86. And note
-the second row: at 1.5e-02 the screen lands on **91.29%** top-1 against the
-measured **91.02%** -- so what #110 saw has the *shape* of a broad-band random
-per-Linear difference of about one and a half percent, not of a rare
-catastrophic one. The fold is real; it is not that.
+**#110 measured `KL >= 0.012111` at 91.02% top-1. The fold reads 0.000094 on
+the teacher and 0.000145 at an operating point worse than the served arms --
+between one part in eighty-four and one part in a hundred and thirty. The size
+that reproduces the measurement is ~1.5e-02, nine times the fold in amplitude,
+and at the degraded operating point it lands on KL 0.012323 against the
+measured 0.012111.** Degradation is worth 1.5x, not 100x. So what #110 saw has
+the size and the shape of a broad-band per-Linear difference of about one and a
+half percent. The fold is real; it is not that.
 
 **This is a screen, not a result.** It uses a noise model of the term, on a
-different model, at prefill positions. It is offered as a magnitude argument
-and as a reason not to close #110, never as the lane's number.
+model that is not the served one, at prefill positions. It is offered as a
+magnitude argument and as a reason not to close #110, never as the lane's
+number.
 
 There is a sharper argument that does not need the screen at all. After the fix
 the two arms' bf16 outputs are **bit-identical on 99.90-100%** of elements per
@@ -192,7 +192,12 @@ separates #102's two arms **is not this Linear's arithmetic**.
 
 Both GPU legs went to the PrismaBuild pool. The precision leg (`084553c5`)
 waited 35 minutes as the oldest of fifteen GPU-needing items, then ran. The
-served campaign (`6c90ba1b`) __SERVEDSTATE__. A CPU-only submission from this
+served campaign (`6c90ba1b`) reached a worker once, died in its first seconds
+on an unrelated permission fault -- `ts83/ext-A` holds root-owned JIT lock files
+written by the serve container, so a host-side extension load there gets EACCES
+-- was fixed, and was `ready` again, behind an exclusive `gpu=2` action from
+another worktree, when the session ended. It has never served. A CPU-only
+submission from this
 checkout was refused outright -- `no live worker can run this action`, because
 sparky's current offer carries no `cpu` capacity at all -- which is why the
 propagation screen ran locally on four threads rather than through the pool.

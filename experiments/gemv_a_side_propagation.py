@@ -46,6 +46,9 @@ def main() -> int:
                     help="relative rms perturbation per Linear output (the measured fold)")
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--where", choices=("input", "output"), default="input",
+                    help="the fold rounds the Linear's INPUT (every activation element), so "
+                         "that is the faithful injection point; 'output' is the coarser proxy")
     ap.add_argument("--degrade-bits", type=int, default=0,
                     help="RTN the target weights to this many bits per output row first, so "
                          "the sensitivity is measured at a QUANTISED operating point rather "
@@ -98,14 +101,21 @@ def main() -> int:
     gen = torch.Generator().manual_seed(a.seed)
     noise_on = {"v": False}
 
-    def hook(_mod, _inp, out):
-        if not noise_on["v"]:
-            return out
-        rms = out.pow(2).mean(dim=-1, keepdim=True).sqrt()
-        return out + torch.randn(out.shape, generator=gen) * (a.rel * rms)
+    def perturb(t):
+        rms = t.pow(2).mean(dim=-1, keepdim=True).sqrt()
+        return t + torch.randn(t.shape, generator=gen) * (a.rel * rms)
+
+    def post_hook(_mod, _inp, out):
+        return out if not noise_on["v"] else perturb(out)
+
+    def pre_hook(_mod, inp):
+        return inp if not noise_on["v"] else (perturb(inp[0]),) + tuple(inp[1:])
 
     for _n, m in targets:
-        m.register_forward_hook(hook)
+        if a.where == "output":
+            m.register_forward_hook(post_hook)
+        else:
+            m.register_forward_pre_hook(pre_hook)
 
     rows = []
     for i, seq in enumerate(ids):
@@ -122,12 +132,12 @@ def main() -> int:
         print(f"chunk {i}: positions={clean.shape[0]}  KL mean={mean:.6f} "
               f"median={med:.6f}  top-1 {top1:.2%}")
 
-    agg = {"rel": a.rel, "model": a.model, "chunks": rows,
+    agg = {"rel": a.rel, "model": a.model, "where": a.where, "chunks": rows,
            "degrade_bits": a.degrade_bits, "degraded_teacher_kl": teacher_gap,
            "kl_mean": sum(r["kl_mean"] for r in rows) / len(rows),
            "top1_agree": sum(r["top1_agree"] for r in rows) / len(rows)}
     print(f"ALL: KL mean {agg['kl_mean']:.6f}  top-1 {agg['top1_agree']:.2%}  "
-          f"at rel={a.rel:.3e} per Linear")
+          f"at rel={a.rel:.3e} per Linear {a.where}")
     if a.out:
         with open(a.out, "w") as fh:
             json.dump(agg, fh, indent=2)

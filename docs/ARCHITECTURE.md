@@ -208,9 +208,10 @@ in bf16; the code times an fp32 scale is not, so the fold cost 1.6e-03 relative
 rms per Linear output against an fp32 accumulation floor ~800x below it. The
 lane now applies `a_scale` to the fp32 output, which is the rule `bf16_route`
 already held for the weight side. But a calibrated propagation screen puts that
-term at KL 1.4e-04 (2.5e-04 at a quantised operating point), **1/86 of what was
-measured** -- the size that reproduces 0.012111 at 91% top-1 is ~1.5e-02, nine
-times larger -- so a second term is outstanding and #110 stays open.
+term at KL 0.9e-04 (1.5e-04 at an operating point worse than the served arms),
+**under 1/80 of what was measured** -- the size that reproduces 0.012111 is
+~1.5e-02, nine times larger -- so a second term is outstanding and #110 stays
+open.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
 which of its legs did not get a GPU. Until it closes, treat the lane's
 "bit-exact" receipts as claims about the **decoded tile** only, never about the
