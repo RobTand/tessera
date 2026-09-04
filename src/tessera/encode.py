@@ -1652,8 +1652,18 @@ def _refit_scales_lut_metric(
         #                           assignment into sixteen table entries.
         #
         # ``reverted`` counts the blocks the middle leg held back.
+        # ``gauss_seidel`` records the optimiser that RAN, not the argument
+        # that was passed.  The sweep is read only on the coupled branch: under
+        # a 1-D metric the blocks are separable and the separable step is taken
+        # whatever the flag says.  ``encode_unit`` refuses the flag when no leg
+        # of the schedule couples, so this used to be unreachable -- the
+        # trailing schedule (issue #75) reaches it, because a coupled trailing
+        # leg legitimately carries the flag past three separable inner passes.
+        # A record that said a sweep ran there would misdescribe the refit to
+        # the one consumer this dict has, a measurement.
         _REFIT_DIAG.append({
-            "gauss_seidel": bool(gauss_seidel),
+            "gauss_seidel": bool(gauss_seidel) and metric.ndim != 1,
+            "gauss_seidel_requested": bool(gauss_seidel),
             "metric_ndim": int(metric.ndim),
             "rows": int(rows), "blocks": int(nb),
             "before": before,

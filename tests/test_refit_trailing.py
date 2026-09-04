@@ -143,3 +143,45 @@ def test_gauss_seidel_reads_coupling_from_either_schedule_leg():
         encode_linear(w, grid=K2, q256=CAP, name="x", verify=False,
                       scale_refit=2, refit_metric=h, refit_metric_trailing=h2,
                       refit_gauss_seidel=True)
+
+
+def test_the_diagnostic_records_the_optimiser_that_ran():
+    """``refit_gauss_seidel`` rides the whole schedule, and on the inner passes
+    the metric is 1-D, where the sweep is provably the parallel step -- the
+    encoder reads the flag only on the coupled branch.  The record must say
+    what the refit DID, or a measurement reads three sweeps that never ran.
+
+    The numbers prove it: the inner refits of a swept trailing schedule are
+    identical, field for field, to the un-swept control's.
+    """
+    from tessera.compensate import block_ldl, regularize_hessian
+    from tessera.encode import refit_diagnostics
+
+    g = torch.Generator(device="cpu").manual_seed(21)
+    w = (torch.randn(64, 256, generator=g) * 0.02).to(dtype=torch.float32)
+    gh = torch.Generator(device="cpu").manual_seed(22)
+    x = torch.randn(4 * 256, 256, generator=gh)
+    H = ((x.T @ x) / x.shape[0]).to(dtype=torch.float32)
+    h = H.diagonal() / H.diagonal().mean()
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    kw = dict(grid=K2, q256=CAP, name="x", verify=False, scale_refit=4,
+              ldl=L, ldl_block=32)
+
+    def records(**extra):
+        with refit_diagnostics() as diag:
+            encode_linear(w, **kw, **extra)
+        return [dict(d) for d in diag]
+
+    control = records(refit_metric=h)
+    swept = records(refit_metric=h, refit_metric_trailing=H,
+                    refit_gauss_seidel=True)
+    assert len(control) == len(swept) == 4
+    # What ran: three separable steps, then one sweep.
+    assert [d["gauss_seidel"] for d in swept] == [False, False, False, True]
+    # What was asked for, kept so the arm is still identifiable.
+    assert all(d["gauss_seidel_requested"] for d in swept)
+    assert not any(d["gauss_seidel_requested"] for d in control)
+    # And the claim the record makes is true of the numbers.
+    for i in range(3):
+        for k in ("before", "stepped", "continuous", "landed", "reverted"):
+            assert control[i][k] == swept[i][k], (i, k)

@@ -1,0 +1,3579 @@
+{
+ "args": {
+  "population": "qwen",
+  "grid": "E2M1x2",
+  "q256": 896,
+  "refit": 4,
+  "sigma": 1.0,
+  "block": 32,
+  "alpha": 1.0,
+  "landings": [
+   "table"
+  ],
+  "model": "/home/rob/models/Qwen3-0.6B",
+  "h": "/mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt",
+  "acts": "/mnt/shared/tessera-runs/ldlq/x_eval_qwen06b.pt",
+  "units": null,
+  "layers": [
+   5,
+   20,
+   42
+  ],
+  "projs": [
+   "gate_proj",
+   "up_proj"
+  ],
+  "eval_rows": 1024,
+  "out": "experiments/results/refit_trailing_pair_qwen.json"
+ },
+ "units": {
+  "model.layers.0.self_attn.q_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "88c39461a956c3a4cbe77846abb3cf84f8cb5ab8388ce394677f3258edbd461a",
+    "out": 0.04381775110960007,
+    "plain": 0.10151481628417969,
+    "hweighted": 0.09878472057845071,
+    "hfit": 0.042862066921049394,
+    "secs": 9.653625965118408,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2081.77734375,
+      "stepped": -2089.83837890625,
+      "continuous": -2089.83837890625,
+      "landed": -2084.038330078125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.224609375,
+      "stepped": -2090.54541015625,
+      "continuous": -2090.54541015625,
+      "landed": -2086.44287109375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.413818359375,
+      "stepped": -2090.569091796875,
+      "continuous": -2090.569091796875,
+      "landed": -2086.515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.4794921875,
+      "stepped": -2090.601806640625,
+      "continuous": -2090.601806640625,
+      "landed": -2086.555419921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "9226be99d8a4ed8f51415dbfc36517f4008eff2b33278eaceb36cabc6124414c",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "88c39461a956c3a4cbe77846abb3cf84f8cb5ab8388ce394677f3258edbd461a",
+    "out": 0.04316052794456482,
+    "plain": 0.10150400549173355,
+    "hweighted": 0.09906724694189581,
+    "hfit": 0.04218957889505509,
+    "secs": 7.816528081893921,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2081.77734375,
+      "stepped": -2089.83837890625,
+      "continuous": -2089.83837890625,
+      "landed": -2084.038330078125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.224609375,
+      "stepped": -2090.54541015625,
+      "continuous": -2090.54541015625,
+      "landed": -2086.44287109375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.413818359375,
+      "stepped": -2090.569091796875,
+      "continuous": -2090.569091796875,
+      "landed": -2086.515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.5036816596984863,
+      "stepped": 0.3481287956237793,
+      "continuous": 0.3481287956237793,
+      "landed": 0.49135494232177734,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "d45326f7cc98ac71448d7835df3bdd035a4b3c4704d5ab57bc3bca846970d6ab",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "88c39461a956c3a4cbe77846abb3cf84f8cb5ab8388ce394677f3258edbd461a",
+    "out": 0.041634537279605865,
+    "plain": 0.10413453727960587,
+    "hweighted": 0.10236474563630688,
+    "hfit": 0.04059629544156284,
+    "secs": 7.642052173614502,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2081.77734375,
+      "stepped": -2089.83837890625,
+      "continuous": -2089.83837890625,
+      "landed": -2084.038330078125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.224609375,
+      "stepped": -2090.54541015625,
+      "continuous": -2090.54541015625,
+      "landed": -2086.44287109375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.413818359375,
+      "stepped": -2090.569091796875,
+      "continuous": -2090.569091796875,
+      "landed": -2086.515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.5036816596984863,
+      "stepped": 0.2949933409690857,
+      "continuous": 0.2949933409690857,
+      "landed": 0.45494380593299866,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "3da830e44e9d35735d5151c9ecce258a2edbae39a5cb02bec4a9a008720bae05",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "b5dc9783c3f196b2f685e072440d95f9faae61b9920732ec179535c130757fa1",
+    "out": 0.04822450503706932,
+    "plain": 0.10273738205432892,
+    "hweighted": 0.1109383132506558,
+    "hfit": 0.04699393509058382,
+    "secs": 7.932814836502075,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.7006665468215942,
+      "stepped": 0.38905975222587585,
+      "continuous": 0.38905975222587585,
+      "landed": 0.5801392197608948,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.6958403587341309,
+      "stepped": 0.3914774954319,
+      "continuous": 0.3914774954319,
+      "landed": 0.5958330631256104,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.6568930149078369,
+      "stepped": 0.3925586938858032,
+      "continuous": 0.3925586938858032,
+      "landed": 0.5925127267837524,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.6435770392417908,
+      "stepped": 0.39235225319862366,
+      "continuous": 0.39235225319862366,
+      "landed": 0.6096331477165222,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "1f27b36a17af7f6f9d2f8e36b82d2eafaf8d3cadae241f2948934bb191aacac1"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "c0944180a731c63700d3701fdba9946f757fd07e2313cbdc0d0e015a7836b5d2",
+    "out": 0.043006300926208496,
+    "plain": 0.10507767647504807,
+    "hweighted": 0.10710363112987746,
+    "hfit": 0.04194222064140409,
+    "secs": 7.365289688110352,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.7006665468215942,
+      "stepped": 0.30232617259025574,
+      "continuous": 0.30232617259025574,
+      "landed": 0.5120541453361511,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.5492450594902039,
+      "stepped": 0.30790042877197266,
+      "continuous": 0.30790042877197266,
+      "landed": 0.496054470539093,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.5151280760765076,
+      "stepped": 0.30927014350891113,
+      "continuous": 0.30927014350891113,
+      "landed": 0.48854705691337585,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 2048,
+      "blocks": 64,
+      "before": 0.5113438963890076,
+      "stepped": 0.3099173307418823,
+      "continuous": 0.3099173307418823,
+      "landed": 0.4856101870536804,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "b5345184f5ddf6ea7aa3869ece2a1cb3398d5151f0224c6e7c2e4278cf99bef1"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049765,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "88c39461a956c3a4cbe77846abb3cf84f8cb5ab8388ce394677f3258edbd461a",
+    "out": 0.04381775110960007,
+    "plain": 0.10151481628417969,
+    "hweighted": 0.09878472057845071,
+    "hfit": 0.042862066921049394,
+    "secs": 7.784792900085449,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2081.77734375,
+      "stepped": -2089.83837890625,
+      "continuous": -2089.83837890625,
+      "landed": -2084.038330078125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.224609375,
+      "stepped": -2090.54541015625,
+      "continuous": -2090.54541015625,
+      "landed": -2086.44287109375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.413818359375,
+      "stepped": -2090.569091796875,
+      "continuous": -2090.569091796875,
+      "landed": -2086.515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 2048,
+      "blocks": 64,
+      "before": -2086.4794921875,
+      "stepped": -2090.601806640625,
+      "continuous": -2090.601806640625,
+      "landed": -2086.555419921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "9226be99d8a4ed8f51415dbfc36517f4008eff2b33278eaceb36cabc6124414c"
+   }
+  },
+  "model.layers.1.self_attn.k_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f1abf374ca5a0c9897e9c04d5118cff3beff43f06c713ccd44b8a7f66b0cdc29",
+    "out": 0.04551882669329643,
+    "plain": 0.09841644018888474,
+    "hweighted": 0.08851753879308398,
+    "hfit": 0.04463759152711253,
+    "secs": 4.191105365753174,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -948.98828125,
+      "stepped": -952.0479736328125,
+      "continuous": -952.0479736328125,
+      "landed": -950.7030029296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.07666015625,
+      "stepped": -952.4698486328125,
+      "continuous": -952.4698486328125,
+      "landed": -951.20751953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.25439453125,
+      "stepped": -952.5560302734375,
+      "continuous": -952.5560302734375,
+      "landed": -951.318359375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.2528076171875,
+      "stepped": -952.5457763671875,
+      "continuous": -952.5457763671875,
+      "landed": -951.3077392578125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "c07b309d57e8be2b256561c5085987e1f92fd55a3d12fa62c72270505bea981f",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f1abf374ca5a0c9897e9c04d5118cff3beff43f06c713ccd44b8a7f66b0cdc29",
+    "out": 0.043308574706315994,
+    "plain": 0.09955565631389618,
+    "hweighted": 0.08964201936872591,
+    "hfit": 0.042238765310397705,
+    "secs": 3.7130041122436523,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -948.98828125,
+      "stepped": -952.0479736328125,
+      "continuous": -952.0479736328125,
+      "landed": -950.7030029296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.07666015625,
+      "stepped": -952.4698486328125,
+      "continuous": -952.4698486328125,
+      "landed": -951.20751953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.25439453125,
+      "stepped": -952.5560302734375,
+      "continuous": -952.5560302734375,
+      "landed": -951.318359375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.07610735297203064,
+      "stepped": 0.05171242356300354,
+      "continuous": 0.05171242356300354,
+      "landed": 0.06846427917480469,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "23ced9db9f04b37923efa753c1eef486fc9c2018ac054b150810e94bb1a2a07a",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f1abf374ca5a0c9897e9c04d5118cff3beff43f06c713ccd44b8a7f66b0cdc29",
+    "out": 0.04194072633981705,
+    "plain": 0.10140649974346161,
+    "hweighted": 0.09330420858739374,
+    "hfit": 0.040786592976237816,
+    "secs": 3.561184883117676,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -948.98828125,
+      "stepped": -952.0479736328125,
+      "continuous": -952.0479736328125,
+      "landed": -950.7030029296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.07666015625,
+      "stepped": -952.4698486328125,
+      "continuous": -952.4698486328125,
+      "landed": -951.20751953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.25439453125,
+      "stepped": -952.5560302734375,
+      "continuous": -952.5560302734375,
+      "landed": -951.318359375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.07610735297203064,
+      "stepped": 0.047622766345739365,
+      "continuous": 0.047622766345739365,
+      "landed": 0.06383758783340454,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "b15868043061fd2ca39c6791b455ef81650c8916e5e9df61b8c5a5db3ccb3ee2",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a6e8c649167093605c328f3ea59903d2e01246cc6dda5ceee22d453d09324121",
+    "out": 0.045424122363328934,
+    "plain": 0.10246703773736954,
+    "hweighted": 0.10216356892545013,
+    "hfit": 0.04432464235537337,
+    "secs": 3.6962220668792725,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.08711780607700348,
+      "stepped": 0.05467381700873375,
+      "continuous": 0.05467381700873375,
+      "landed": 0.07425547391176224,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.08454224467277527,
+      "stepped": 0.05480853468179703,
+      "continuous": 0.05480853468179703,
+      "landed": 0.07482900470495224,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.08319869637489319,
+      "stepped": 0.054669834673404694,
+      "continuous": 0.054669834673404694,
+      "landed": 0.07436081767082214,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.08260490000247955,
+      "stepped": 0.055318258702754974,
+      "continuous": 0.055318258702754974,
+      "landed": 0.0753931850194931,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "2251f067718178337e34472aa436257c14d2529b61dc5afe8b6201179395f492"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "53934313f1708aaae83fc2ec2468aa788c2ba98603201293486e5ab82c710d34",
+    "out": 0.042561378329992294,
+    "plain": 0.10340665280818939,
+    "hweighted": 0.10377956914733168,
+    "hfit": 0.041365120173262764,
+    "secs": 3.6480166912078857,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.08711780607700348,
+      "stepped": 0.04959670826792717,
+      "continuous": 0.04959670826792717,
+      "landed": 0.06667543947696686,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.0775451809167862,
+      "stepped": 0.0497925691306591,
+      "continuous": 0.0497925691306591,
+      "landed": 0.06632634997367859,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.07540976256132126,
+      "stepped": 0.05005202442407608,
+      "continuous": 0.05005202442407608,
+      "landed": 0.06663978099822998,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 64,
+      "before": 0.07573744654655457,
+      "stepped": 0.05028599873185158,
+      "continuous": 0.05028599873185158,
+      "landed": 0.06566140800714493,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "20e322fb94022c020b238f21f1bcf24be060f5fdc2b2b4b371e19fbd821fafa2"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 525475,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f1abf374ca5a0c9897e9c04d5118cff3beff43f06c713ccd44b8a7f66b0cdc29",
+    "out": 0.04551882669329643,
+    "plain": 0.09841644018888474,
+    "hweighted": 0.08851753879308398,
+    "hfit": 0.04463759152711253,
+    "secs": 3.562967300415039,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -948.98828125,
+      "stepped": -952.0479736328125,
+      "continuous": -952.0479736328125,
+      "landed": -950.7030029296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.07666015625,
+      "stepped": -952.4698486328125,
+      "continuous": -952.4698486328125,
+      "landed": -951.20751953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.25439453125,
+      "stepped": -952.5560302734375,
+      "continuous": -952.5560302734375,
+      "landed": -951.318359375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 64,
+      "before": -951.2528076171875,
+      "stepped": -952.5457763671875,
+      "continuous": -952.5457763671875,
+      "landed": -951.3077392578125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "c07b309d57e8be2b256561c5085987e1f92fd55a3d12fa62c72270505bea981f"
+   }
+  },
+  "model.layers.13.mlp.down_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a521045c81c2f6744849a5b6b90b27e42bd59357d9038a2f707663d9c620ccb6",
+    "out": 0.08347945660352707,
+    "plain": 0.09787861257791519,
+    "hweighted": 0.10062674409214363,
+    "hfit": 0.07793356493900781,
+    "secs": 13.659653663635254,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1405.736572265625,
+      "stepped": -1408.1358642578125,
+      "continuous": -1408.1358642578125,
+      "landed": -1406.408447265625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1406.92138671875,
+      "stepped": -1408.600830078125,
+      "continuous": -1408.600830078125,
+      "landed": -1407.052978515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.1260986328125,
+      "stepped": -1408.73828125,
+      "continuous": -1408.73828125,
+      "landed": -1407.203857421875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.2489013671875,
+      "stepped": -1408.798583984375,
+      "continuous": -1408.798583984375,
+      "landed": -1407.289306640625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "eac691f0e696947d706cb3aa12576f0e6a263b151cead202da0d91170286a382",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a521045c81c2f6744849a5b6b90b27e42bd59357d9038a2f707663d9c620ccb6",
+    "out": 0.08312240242958069,
+    "plain": 0.09798521548509598,
+    "hweighted": 0.10085112741080078,
+    "hfit": 0.07740896432446798,
+    "secs": 12.184585332870483,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1405.736572265625,
+      "stepped": -1408.1358642578125,
+      "continuous": -1408.1358642578125,
+      "landed": -1406.408447265625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1406.92138671875,
+      "stepped": -1408.600830078125,
+      "continuous": -1408.600830078125,
+      "landed": -1407.052978515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.1260986328125,
+      "stepped": -1408.73828125,
+      "continuous": -1408.73828125,
+      "landed": -1407.203857421875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8009359836578369,
+      "stepped": 0.7192818522453308,
+      "continuous": 0.7192818522453308,
+      "landed": 0.7967078685760498,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "16f9ae105eff7012e40f4ec2c020eaa36c2beb257cc71fdb6eaced2e15264b6a",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a521045c81c2f6744849a5b6b90b27e42bd59357d9038a2f707663d9c620ccb6",
+    "out": 0.08301885426044464,
+    "plain": 0.09932629764080048,
+    "hweighted": 0.10166985935917554,
+    "hfit": 0.07692617411090298,
+    "secs": 11.228214979171753,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1405.736572265625,
+      "stepped": -1408.1358642578125,
+      "continuous": -1408.1358642578125,
+      "landed": -1406.408447265625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1406.92138671875,
+      "stepped": -1408.600830078125,
+      "continuous": -1408.600830078125,
+      "landed": -1407.052978515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.1260986328125,
+      "stepped": -1408.73828125,
+      "continuous": -1408.73828125,
+      "landed": -1407.203857421875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8009359836578369,
+      "stepped": 0.6646969318389893,
+      "continuous": 0.6646969318389893,
+      "landed": 0.7868009209632874,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "872bb5b819ba3f4ec67d4bf3240b51464262db401dcbb033ded2efd5fb33bc7b",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "060956c6f3a8c494968bf68575746d3af4b5828be7b71049dafe4077baf240eb",
+    "out": 0.08595644682645798,
+    "plain": 0.0996556207537651,
+    "hweighted": 0.10547062140683255,
+    "hfit": 0.0799188477894805,
+    "secs": 10.857512950897217,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8642075657844543,
+      "stepped": 0.7645395398139954,
+      "continuous": 0.7645395398139954,
+      "landed": 0.8550571799278259,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.860672116279602,
+      "stepped": 0.7657371759414673,
+      "continuous": 0.7657371759414673,
+      "landed": 0.8543639183044434,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.856896162033081,
+      "stepped": 0.7644399404525757,
+      "continuous": 0.7644399404525757,
+      "landed": 0.8508778810501099,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8546088933944702,
+      "stepped": 0.7613286972045898,
+      "continuous": 0.7613286972045898,
+      "landed": 0.8492098450660706,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "2b6d9a53f5c54b0ce26b612f672717575f5e0667055f2025a606eb36dc660893"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "20b938e0554bcaa3fecbcb75c9bfcba944d30a2626ff1c0d6206a6cf59a57abf",
+    "out": 0.08403735607862473,
+    "plain": 0.10064548254013062,
+    "hweighted": 0.10394322369537787,
+    "hfit": 0.07757570013829582,
+    "secs": 11.256576299667358,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8642075657844543,
+      "stepped": 0.6999545097351074,
+      "continuous": 0.6999545097351074,
+      "landed": 0.8337138891220093,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8286644220352173,
+      "stepped": 0.6912979483604431,
+      "continuous": 0.6912979483604431,
+      "landed": 0.8147004842758179,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8161989450454712,
+      "stepped": 0.6872531175613403,
+      "continuous": 0.6872531175613403,
+      "landed": 0.8059850931167603,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 0.8087149858474731,
+      "stepped": 0.6851290464401245,
+      "continuous": 0.6851290464401245,
+      "landed": 0.8001437187194824,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "9b6383b61c094bfc0041886acf6dc6a758f289d8792df5795de568ced015b903"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574122,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a521045c81c2f6744849a5b6b90b27e42bd59357d9038a2f707663d9c620ccb6",
+    "out": 0.08347945660352707,
+    "plain": 0.09787861257791519,
+    "hweighted": 0.10062674409214363,
+    "hfit": 0.07793356493900781,
+    "secs": 12.42172122001648,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1405.736572265625,
+      "stepped": -1408.1358642578125,
+      "continuous": -1408.1358642578125,
+      "landed": -1406.408447265625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1406.92138671875,
+      "stepped": -1408.600830078125,
+      "continuous": -1408.600830078125,
+      "landed": -1407.052978515625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.1260986328125,
+      "stepped": -1408.73828125,
+      "continuous": -1408.73828125,
+      "landed": -1407.203857421875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1407.2489013671875,
+      "stepped": -1408.798583984375,
+      "continuous": -1408.798583984375,
+      "landed": -1407.289306640625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "eac691f0e696947d706cb3aa12576f0e6a263b151cead202da0d91170286a382"
+   }
+  },
+  "model.layers.14.mlp.gate_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "36df61f60ada33c6deab25f86bd9eb30ec5d5772196ee7769f9dda48056dc5cc",
+    "out": 0.053043097257614136,
+    "plain": 0.09862005710601807,
+    "hweighted": 0.09010297475232272,
+    "hfit": 0.05092764769476494,
+    "secs": 13.416940689086914,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2084.547607421875,
+      "stepped": -2093.470703125,
+      "continuous": -2093.470703125,
+      "landed": -2090.37890625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2091.78369140625,
+      "stepped": -2095.266845703125,
+      "continuous": -2095.266845703125,
+      "landed": -2092.336669921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.38330078125,
+      "stepped": -2095.4580078125,
+      "continuous": -2095.4580078125,
+      "landed": -2092.576904296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.512939453125,
+      "stepped": -2095.5078125,
+      "continuous": -2095.5078125,
+      "landed": -2092.630126953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "c8ba322d3dc0fa49c9df4db765d677bfc01c5dc007058961e0697a3b4c28a282",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "36df61f60ada33c6deab25f86bd9eb30ec5d5772196ee7769f9dda48056dc5cc",
+    "out": 0.0518672838807106,
+    "plain": 0.09891853481531143,
+    "hweighted": 0.09064658257695692,
+    "hfit": 0.049628378402229195,
+    "secs": 11.410590887069702,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2084.547607421875,
+      "stepped": -2093.470703125,
+      "continuous": -2093.470703125,
+      "landed": -2090.37890625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2091.78369140625,
+      "stepped": -2095.266845703125,
+      "continuous": -2095.266845703125,
+      "landed": -2092.336669921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.38330078125,
+      "stepped": -2095.4580078125,
+      "continuous": -2095.4580078125,
+      "landed": -2092.576904296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 10.514394760131836,
+      "stepped": 7.907525062561035,
+      "continuous": 7.907525062561035,
+      "landed": 10.012107849121094,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "8fb209a9146bb53fbb7310fe8c75feecebd1d30647cd5eee1f55e901820770ba",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "36df61f60ada33c6deab25f86bd9eb30ec5d5772196ee7769f9dda48056dc5cc",
+    "out": 0.050455935299396515,
+    "plain": 0.10073636472225189,
+    "hweighted": 0.09340856747208139,
+    "hfit": 0.04797889157553893,
+    "secs": 12.273149251937866,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2084.547607421875,
+      "stepped": -2093.470703125,
+      "continuous": -2093.470703125,
+      "landed": -2090.37890625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2091.78369140625,
+      "stepped": -2095.266845703125,
+      "continuous": -2095.266845703125,
+      "landed": -2092.336669921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.38330078125,
+      "stepped": -2095.4580078125,
+      "continuous": -2095.4580078125,
+      "landed": -2092.576904296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 10.514394760131836,
+      "stepped": 7.137470722198486,
+      "continuous": 7.137470722198486,
+      "landed": 9.357627868652344,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "0908266ea44add3e9957a5beed6aeb97cb589c0bb8901faba547767ecd27a650",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "7e0f5d3e62b328a18fbc47021139fad858e324fddc0315e398214a6acf01dacb",
+    "out": 0.054728806018829346,
+    "plain": 0.101089246571064,
+    "hweighted": 0.10931821402654429,
+    "hfit": 0.05239416937283298,
+    "secs": 13.175209045410156,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 12.11981201171875,
+      "stepped": 8.448307037353516,
+      "continuous": 8.448307037353516,
+      "landed": 11.044544219970703,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 11.894655227661133,
+      "stepped": 8.451077461242676,
+      "continuous": 8.451077461242676,
+      "landed": 11.107229232788086,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 11.87117862701416,
+      "stepped": 8.470141410827637,
+      "continuous": 8.470141410827637,
+      "landed": 11.119345664978027,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 11.79268741607666,
+      "stepped": 8.477842330932617,
+      "continuous": 8.477842330932617,
+      "landed": 11.159153938293457,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "f02cbe610608c7830d37749157848ce246ff324a9b4f2af5b73afded62882802"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "9fc191afd75309f9a46adff1ab6f6ae33d9b6d6fb32ce81ff39280e062ceb1b4",
+    "out": 0.051225997507572174,
+    "plain": 0.10217012465000153,
+    "hweighted": 0.1096306088505632,
+    "hfit": 0.048679139199749796,
+    "secs": 13.890737771987915,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 12.11981201171875,
+      "stepped": 7.534792423248291,
+      "continuous": 7.534792423248291,
+      "landed": 10.022586822509766,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 10.886575698852539,
+      "stepped": 7.501102447509766,
+      "continuous": 7.501102447509766,
+      "landed": 9.727335929870605,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 10.568798065185547,
+      "stepped": 7.495677947998047,
+      "continuous": 7.495677947998047,
+      "landed": 9.636449813842773,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 3072,
+      "blocks": 64,
+      "before": 10.501721382141113,
+      "stepped": 7.533679008483887,
+      "continuous": 7.533679008483887,
+      "landed": 9.632768630981445,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "743ef9310d8dd4f6312af91a5a98900796ed114d1882b5b43f27715ac9915804"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574056,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "36df61f60ada33c6deab25f86bd9eb30ec5d5772196ee7769f9dda48056dc5cc",
+    "out": 0.053043097257614136,
+    "plain": 0.09862005710601807,
+    "hweighted": 0.09010297475232272,
+    "hfit": 0.05092764769476494,
+    "secs": 12.138015508651733,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2084.547607421875,
+      "stepped": -2093.470703125,
+      "continuous": -2093.470703125,
+      "landed": -2090.37890625,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2091.78369140625,
+      "stepped": -2095.266845703125,
+      "continuous": -2095.266845703125,
+      "landed": -2092.336669921875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.38330078125,
+      "stepped": -2095.4580078125,
+      "continuous": -2095.4580078125,
+      "landed": -2092.576904296875,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 3072,
+      "blocks": 64,
+      "before": -2092.512939453125,
+      "stepped": -2095.5078125,
+      "continuous": -2095.5078125,
+      "landed": -2092.630126953125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "c8ba322d3dc0fa49c9df4db765d677bfc01c5dc007058961e0697a3b4c28a282"
+   }
+  },
+  "model.layers.2.mlp.down_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "7536155bd50a5dd3eba33bd81e2bc9fcb3177bebdfe302daabacde4a97b2a988",
+    "out": 0.02686460316181183,
+    "plain": 0.10642804205417633,
+    "hweighted": 0.045341726640423984,
+    "hfit": 0.02677495346776827,
+    "secs": 14.554005861282349,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1039.5660400390625,
+      "stepped": -1041.306884765625,
+      "continuous": -1041.2403564453125,
+      "landed": -1040.521484375,
+      "landing": "table",
+      "reverted": 16,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.43505859375,
+      "stepped": -1041.429931640625,
+      "continuous": -1041.4141845703125,
+      "landed": -1040.687255859375,
+      "landing": "table",
+      "reverted": 22,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.5897216796875,
+      "stepped": -1041.4381103515625,
+      "continuous": -1041.42236328125,
+      "landed": -1040.69091796875,
+      "landing": "table",
+      "reverted": 28,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.6395263671875,
+      "stepped": -1041.4366455078125,
+      "continuous": -1041.4208984375,
+      "landed": -1040.686767578125,
+      "landing": "table",
+      "reverted": 33,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "5fb5123346b57125f07be41018d559bae0599e275160761e583882853583a008",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "7536155bd50a5dd3eba33bd81e2bc9fcb3177bebdfe302daabacde4a97b2a988",
+    "out": 0.017890771850943565,
+    "plain": 0.22288836538791656,
+    "hweighted": 0.04753970763411073,
+    "hfit": 0.016873981286644836,
+    "secs": 13.153148889541626,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1039.5660400390625,
+      "stepped": -1041.306884765625,
+      "continuous": -1041.2403564453125,
+      "landed": -1040.521484375,
+      "landing": "table",
+      "reverted": 16,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.43505859375,
+      "stepped": -1041.429931640625,
+      "continuous": -1041.4141845703125,
+      "landed": -1040.687255859375,
+      "landing": "table",
+      "reverted": 22,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.5897216796875,
+      "stepped": -1041.4381103515625,
+      "continuous": -1041.42236328125,
+      "landed": -1040.69091796875,
+      "landing": "table",
+      "reverted": 28,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 61.5150146484375,
+      "stepped": 2.983292579650879,
+      "continuous": 4.072101593017578,
+      "landed": 25.26036834716797,
+      "landing": "table",
+      "reverted": 715,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "fb04dda7235cd57051416778bdfac962a59108435dc363673296be2b1269b753",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "7536155bd50a5dd3eba33bd81e2bc9fcb3177bebdfe302daabacde4a97b2a988",
+    "out": 0.01578941009938717,
+    "plain": 0.2424553781747818,
+    "hweighted": 0.05370828496307425,
+    "hfit": 0.015824675400415884,
+    "secs": 13.705955743789673,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1039.5660400390625,
+      "stepped": -1041.306884765625,
+      "continuous": -1041.2403564453125,
+      "landed": -1040.521484375,
+      "landing": "table",
+      "reverted": 16,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.43505859375,
+      "stepped": -1041.429931640625,
+      "continuous": -1041.4141845703125,
+      "landed": -1040.687255859375,
+      "landing": "table",
+      "reverted": 22,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.5897216796875,
+      "stepped": -1041.4381103515625,
+      "continuous": -1041.42236328125,
+      "landed": -1040.69091796875,
+      "landing": "table",
+      "reverted": 28,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 61.5150146484375,
+      "stepped": 6.572378635406494,
+      "continuous": 9.587425231933594,
+      "landed": 22.2164249420166,
+      "landing": "table",
+      "reverted": 710,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "1b9346856c05e3923c66ea25d5fb5bb8c97efc1aeabbef7a79ce8ea9edb36cb7",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "a06e371c6b87f01f508daee21d10e561f3f887386925eb0401959fc2660591fb",
+    "out": 0.020716356113553047,
+    "plain": 0.22229358553886414,
+    "hweighted": 0.055036766190940466,
+    "hfit": 0.020381318946727525,
+    "secs": 14.161790609359741,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 64.50639343261719,
+      "stepped": 3.4409499168395996,
+      "continuous": 4.5077714920043945,
+      "landed": 23.59659194946289,
+      "landing": "table",
+      "reverted": 879,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 49.18236541748047,
+      "stepped": 3.1751151084899902,
+      "continuous": 4.233392715454102,
+      "landed": 23.150196075439453,
+      "landing": "table",
+      "reverted": 1037,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 48.14830017089844,
+      "stepped": 3.1877377033233643,
+      "continuous": 4.384825706481934,
+      "landed": 26.605627059936523,
+      "landing": "table",
+      "reverted": 1433,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 48.202362060546875,
+      "stepped": 3.3172407150268555,
+      "continuous": 4.767751693725586,
+      "landed": 36.852684020996094,
+      "landing": "table",
+      "reverted": 1896,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "54e568dfdc3884e0395634f3de12509ba99687aa1b54f27788e4ac5901209695"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "3aed3ee13a9bb0d96bca34ef7394ec7ddbaed480c41982efe9d2813b3b025372",
+    "out": 0.02386556938290596,
+    "plain": 0.2331208437681198,
+    "hweighted": 0.05630549118296727,
+    "hfit": 0.023431268370406353,
+    "secs": 14.858067989349365,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 64.50639343261719,
+      "stepped": 7.726454257965088,
+      "continuous": 10.566237449645996,
+      "landed": 23.983760833740234,
+      "landing": "table",
+      "reverted": 934,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 57.147193908691406,
+      "stepped": 7.666934967041016,
+      "continuous": 10.579116821289062,
+      "landed": 44.639591217041016,
+      "landing": "table",
+      "reverted": 1006,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 57.52812194824219,
+      "stepped": 7.728046417236328,
+      "continuous": 11.47688102722168,
+      "landed": 45.36610794067383,
+      "landing": "table",
+      "reverted": 1297,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 192,
+      "before": 57.934715270996094,
+      "stepped": 7.722585678100586,
+      "continuous": 12.006550788879395,
+      "landed": 48.70753479003906,
+      "landing": "table",
+      "reverted": 1518,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "04788bcb0be918d4d013c2de322ee462b336cfd2391ddc533914d80be6441f33"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1574121,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "7536155bd50a5dd3eba33bd81e2bc9fcb3177bebdfe302daabacde4a97b2a988",
+    "out": 0.02686460316181183,
+    "plain": 0.10642804205417633,
+    "hweighted": 0.045341726640423984,
+    "hfit": 0.02677495346776827,
+    "secs": 13.868950366973877,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1039.5660400390625,
+      "stepped": -1041.306884765625,
+      "continuous": -1041.2403564453125,
+      "landed": -1040.521484375,
+      "landing": "table",
+      "reverted": 16,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.43505859375,
+      "stepped": -1041.429931640625,
+      "continuous": -1041.4141845703125,
+      "landed": -1040.687255859375,
+      "landing": "table",
+      "reverted": 22,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.5897216796875,
+      "stepped": -1041.4381103515625,
+      "continuous": -1041.42236328125,
+      "landed": -1040.69091796875,
+      "landing": "table",
+      "reverted": 28,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 192,
+      "before": -1040.6395263671875,
+      "stepped": -1041.4366455078125,
+      "continuous": -1041.4208984375,
+      "landed": -1040.686767578125,
+      "landing": "table",
+      "reverted": 33,
+      "candidate": "new-table"
+     }
+    ],
+    "sha256": "5fb5123346b57125f07be41018d559bae0599e275160761e583882853583a008"
+   }
+  },
+  "model.layers.27.self_attn.o_proj": {
+   "A drift control FIRST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f47420ccd70b5483f81da01e3d17d6dfbdb90f338503d8361cb2393653b3880b",
+    "out": 0.07511810213327408,
+    "plain": 0.09730683267116547,
+    "hweighted": 0.09801557040951003,
+    "hfit": 0.06423881791153067,
+    "secs": 7.346845865249634,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1463.24853515625,
+      "stepped": -1465.32666015625,
+      "continuous": -1465.32666015625,
+      "landed": -1464.15380859375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.5638427734375,
+      "stepped": -1465.830810546875,
+      "continuous": -1465.830810546875,
+      "landed": -1464.8175048828125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.87109375,
+      "stepped": -1465.9801025390625,
+      "continuous": -1465.9801025390625,
+      "landed": -1465.005615234375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1465.01220703125,
+      "stepped": -1466.05126953125,
+      "continuous": -1466.05126953125,
+      "landed": -1465.0986328125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "96f34d9e3a55235170b713b04aac99297ca717a54300f09a9621defd98f72c93",
+    "drift_control_identical": true
+   },
+   "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f47420ccd70b5483f81da01e3d17d6dfbdb90f338503d8361cb2393653b3880b",
+    "out": 0.07449918985366821,
+    "plain": 0.0980556458234787,
+    "hweighted": 0.09840617917355084,
+    "hfit": 0.06323805840209475,
+    "secs": 7.375134229660034,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1463.24853515625,
+      "stepped": -1465.32666015625,
+      "continuous": -1465.32666015625,
+      "landed": -1464.15380859375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.5638427734375,
+      "stepped": -1465.830810546875,
+      "continuous": -1465.830810546875,
+      "landed": -1464.8175048828125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.87109375,
+      "stepped": -1465.9801025390625,
+      "continuous": -1465.9801025390625,
+      "landed": -1465.005615234375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 21.947101593017578,
+      "stepped": 20.497968673706055,
+      "continuous": 20.497968673706055,
+      "landed": 21.79165267944336,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "2017cdcfb09a050709becc69cbce7d035c1f68241eda0aa89db1f4fdc20dc5ba",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f47420ccd70b5483f81da01e3d17d6dfbdb90f338503d8361cb2393653b3880b",
+    "out": 0.07418235391378403,
+    "plain": 0.10276348143815994,
+    "hweighted": 0.0998597209059707,
+    "hfit": 0.06221491527069146,
+    "secs": 7.235349416732788,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1463.24853515625,
+      "stepped": -1465.32666015625,
+      "continuous": -1465.32666015625,
+      "landed": -1464.15380859375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.5638427734375,
+      "stepped": -1465.830810546875,
+      "continuous": -1465.830810546875,
+      "landed": -1464.8175048828125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.87109375,
+      "stepped": -1465.9801025390625,
+      "continuous": -1465.9801025390625,
+      "landed": -1465.005615234375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 21.947101593017578,
+      "stepped": 18.71102523803711,
+      "continuous": 18.71102523803711,
+      "landed": 21.092212677001953,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "821c4e6d7d2ba0caf76dbe986e99b9888a25bb22e1a9cd36c353e9cd0b70a84c",
+    "matched_pair": {
+     "codes_identical": true,
+     "bytes_equal": true,
+     "plane_moved": true,
+     "inner_objectives_equal": true,
+     "inner_refits_identical": true
+    }
+   },
+   "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "50a1f949425ce2bd3f10a2e47ef9db9d78d2e247047a2b7e3245e3cbac550528",
+    "out": 0.07708847522735596,
+    "plain": 0.10246668756008148,
+    "hweighted": 0.10422742408968584,
+    "hfit": 0.06532209674984417,
+    "secs": 7.059493064880371,
+    "schedule": [
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ],
+     [
+      2,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 23.568382263183594,
+      "stepped": 21.843952178955078,
+      "continuous": 21.843952178955078,
+      "landed": 23.346881866455078,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 23.496604919433594,
+      "stepped": 21.785507202148438,
+      "continuous": 21.785507202148438,
+      "landed": 23.28825569152832,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 23.448488235473633,
+      "stepped": 21.765893936157227,
+      "continuous": 21.765893936157227,
+      "landed": 23.26226234436035,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 23.41737937927246,
+      "stepped": 21.75078010559082,
+      "continuous": 21.75078010559082,
+      "landed": 23.25162696838379,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "4c58aee4dfb93221663503495e2fd85dc0ed6f82df1cbcee210eb7cff7ff5dcc"
+   },
+   "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "085284ce6b439eec3f41080821b5a468e3c8500c812728b70af5b1b12dd9c75b",
+    "out": 0.07584039121866226,
+    "plain": 0.10834258049726486,
+    "hweighted": 0.10454432101216132,
+    "hfit": 0.06350850740931376,
+    "secs": 7.468721389770508,
+    "schedule": [
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ],
+     [
+      2,
+      true
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 23.568382263183594,
+      "stepped": 19.681007385253906,
+      "continuous": 19.681007385253906,
+      "landed": 22.39383316040039,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 22.77668571472168,
+      "stepped": 19.52847671508789,
+      "continuous": 19.52847671508789,
+      "landed": 22.117158889770508,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 22.523632049560547,
+      "stepped": 19.521678924560547,
+      "continuous": 19.521678924560547,
+      "landed": 22.005653381347656,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": true,
+      "gauss_seidel_requested": true,
+      "metric_ndim": 2,
+      "rows": 1024,
+      "blocks": 128,
+      "before": 22.42413330078125,
+      "stepped": 19.512670516967773,
+      "continuous": 19.512670516967773,
+      "landed": 21.978443145751953,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "141a09a516ad1b282708a9d167a1eeb538a82f7281864c8d2e501215ee086f80"
+   },
+   "A drift control LAST [refit h^1.0 x4]": {
+    "landing": "table",
+    "serialisable": true,
+    "bytes": 1049801,
+    "sink_vs_wire_bit_identical": true,
+    "sink_vs_wire_rel": 0.0,
+    "codes_sha256": "f47420ccd70b5483f81da01e3d17d6dfbdb90f338503d8361cb2393653b3880b",
+    "out": 0.07511810213327408,
+    "plain": 0.09730683267116547,
+    "hweighted": 0.09801557040951003,
+    "hfit": 0.06423881791153067,
+    "secs": 7.199984550476074,
+    "schedule": [
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ],
+     [
+      1,
+      false
+     ]
+    ],
+    "refit": [
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1463.24853515625,
+      "stepped": -1465.32666015625,
+      "continuous": -1465.32666015625,
+      "landed": -1464.15380859375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.5638427734375,
+      "stepped": -1465.830810546875,
+      "continuous": -1465.830810546875,
+      "landed": -1464.8175048828125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "new-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1464.87109375,
+      "stepped": -1465.9801025390625,
+      "continuous": -1465.9801025390625,
+      "landed": -1465.005615234375,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     },
+     {
+      "gauss_seidel": false,
+      "gauss_seidel_requested": false,
+      "metric_ndim": 1,
+      "rows": 1024,
+      "blocks": 128,
+      "before": -1465.01220703125,
+      "stepped": -1466.05126953125,
+      "continuous": -1466.05126953125,
+      "landed": -1465.0986328125,
+      "landing": "table",
+      "reverted": 0,
+      "candidate": "old-table"
+     }
+    ],
+    "sha256": "96f34d9e3a55235170b713b04aac99297ca717a54300f09a9621defd98f72c93"
+   }
+  }
+ },
+ "provenance": {
+  "source": "wikitext-2-raw-v1/train (local datasets cache)",
+  "text_sha256": "a5c5fd091a3486361e71eae1132fff141aeadd0ae51ebf688da4661752f853d3",
+  "text_chars": 295562,
+  "model": "/home/rob/models/Qwen3-0.6B",
+  "seqlen": 512,
+  "fit_tokens": 16384,
+  "fit_ids_sha256": "229c6f72307f70502d4b7f77c388fe54561f48489301a917a30c151599c3e38b",
+  "eval_tokens": 8192,
+  "eval_ids_sha256": "30ec7255e69341724ede7745a07aed8892e8867e36995a2c9ae85814671b25c3",
+  "kl_corpus_split": "wikitext-2 TEST -- disjoint from this TRAIN capture",
+  "dtype": "fp32 accumulation of x^T x, divided by the token count"
+ },
+ "geomeans": {
+  "A drift control FIRST [refit h^1.0 x4]": {
+   "out": 0.051108811053460546,
+   "plain": 0.09997887787617227,
+   "hweighted": 0.08404156484370619,
+   "hfit": 0.0485284456775994
+  },
+  "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+   "out": 0.046972334327617354,
+   "plain": 0.11352492538833313,
+   "hweighted": 0.0850991977338517,
+   "hfit": 0.04404929610997337
+  },
+  "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+   "out": 0.04523495891277002,
+   "plain": 0.11750696865142927,
+   "hweighted": 0.08868367914234533,
+   "hfit": 0.042647435100875465
+  },
+  "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+   "out": 0.0504342146679343,
+   "plain": 0.1158345663328829,
+   "hweighted": 0.09531021003390605,
+   "hfit": 0.04758666522110242
+  },
+  "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+   "out": 0.04924519072425266,
+   "plain": 0.11887565023073614,
+   "hweighted": 0.09522461175709696,
+   "hfit": 0.04622004189846225
+  },
+  "A drift control LAST [refit h^1.0 x4]": {
+   "out": 0.051108811053460546,
+   "plain": 0.09997887787617227,
+   "hweighted": 0.08404156484370619,
+   "hfit": 0.0485284456775994
+  }
+ },
+ "ratios_vs_control": {
+  "A drift control FIRST [refit h^1.0 x4]": {
+   "out": 1.0,
+   "hfit": 1.0
+  },
+  "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+   "out": 0.9190652914716334,
+   "hfit": 0.9077005351174149
+  },
+  "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+   "out": 0.8850716340369101,
+   "hfit": 0.878813127133833
+  },
+  "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+   "out": 0.9868007810860517,
+   "hfit": 0.9805932285003783
+  },
+  "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+   "out": 0.9635362222130639,
+   "hfit": 0.9524319448747006
+  },
+  "A drift control LAST [refit h^1.0 x4]": {
+   "out": 1.0,
+   "hfit": 1.0
+  }
+ },
+ "unit_ratios_wire": {
+  "A drift control FIRST [refit h^1.0 x4]": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": [
+   0.9850009836563416,
+   0.95144312480036,
+   0.9957228498067237,
+   0.9778328672778482,
+   0.6659607716214245,
+   0.9917608104833666
+  ],
+  "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": [
+   0.9501751282366502,
+   0.9213929573011966,
+   0.994482446798019,
+   0.9512252848725525,
+   0.5877403066140168,
+   0.9875429730928258
+  ],
+  "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": [
+   1.100570061581818,
+   0.9979194470322003,
+   1.0296718536956344,
+   1.031779983605185,
+   0.7711394800352552,
+   1.0262303364718408
+  ],
+  "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": [
+   0.9814812453208309,
+   0.9350280185552392,
+   1.0066830750677656,
+   0.9657429553704818,
+   0.8883648583661563,
+   1.0096153798468803
+  ],
+  "A drift control LAST [refit h^1.0 x4]": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ]
+ },
+ "log": [
+  "wire: E2M1x2 q256=896 -> body TCQ plane LUT span 2 L=0",
+  "schedule: scale_refit=4, LDLQ sigma=1.0 block=32, landings=['table'] (wire = 'table')",
+  "provenance: {\"source\": \"wikitext-2-raw-v1/train (local datasets cache)\", \"text_sha256\": \"a5c5fd091a3486361e71eae1132fff141aeadd0ae51ebf688da4661752f853d3\", \"text_chars\": 295562, \"model\": \"/home/rob/models/Qwen3-0.6B\", \"seqlen\": 512, \"fit_tokens\": 16384, \"fit_ids_sha256\": \"229c6f72307f70502d4b7f77c388fe54561f48489301a917a30c151599c3e38b\", \"eval_tokens\": 8192, \"eval_ids_sha256\": \"30ec7255e69341724ede7745a07aed8",
+  "\n== model.layers.0.self_attn.q_proj (2048, 1024)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.04382   0.10151   0.09878   0.04286   1049765    9.7  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.04316   0.10150   0.09907   0.04219   1049765    7.8  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.04163   0.10413   0.10236   0.04060   1049765    7.6  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.04822   0.10274   0.11094   0.04699   1049765    7.9  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.04301   0.10508   0.10710   0.04194   1049765    7.4  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.04382   0.10151   0.09878   0.04286   1049765    7.8  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== model.layers.1.self_attn.k_proj (1024, 1024)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.04552   0.09842   0.08852   0.04464    525475    4.2  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.04331   0.09956   0.08964   0.04224    525475    3.7  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.04194   0.10141   0.09330   0.04079    525475    3.6  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.04542   0.10247   0.10216   0.04432    525475    3.7  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.04256   0.10341   0.10378   0.04137    525475    3.6  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.04552   0.09842   0.08852   0.04464    525475    3.6  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== model.layers.13.mlp.down_proj (1024, 3072)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.08348   0.09788   0.10063   0.07793   1574122   13.7  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.08312   0.09799   0.10085   0.07741   1574122   12.2  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.08302   0.09933   0.10167   0.07693   1574122   11.2  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.08596   0.09966   0.10547   0.07992   1574122   10.9  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.08404   0.10065   0.10394   0.07758   1574122   11.3  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.08348   0.09788   0.10063   0.07793   1574122   12.4  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== model.layers.14.mlp.gate_proj (3072, 1024)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.05304   0.09862   0.09010   0.05093   1574056   13.4  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.05187   0.09892   0.09065   0.04963   1574056   11.4  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.05046   0.10074   0.09341   0.04798   1574056   12.3  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.05473   0.10109   0.10932   0.05239   1574056   13.2  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.05123   0.10217   0.10963   0.04868   1574056   13.9  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.05304   0.09862   0.09010   0.05093   1574056   12.1  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== model.layers.2.mlp.down_proj (1024, 3072)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.02686   0.10643   0.04534   0.02677   1574121   14.6  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.01789   0.22289   0.04754   0.01687   1574121   13.2  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.01579   0.24246   0.05371   0.01582   1574121   13.7  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.02072   0.22229   0.05504   0.02038   1574121   14.2  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.02387   0.23312   0.05631   0.02343   1574121   14.9  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.02686   0.10643   0.04534   0.02677   1574121   13.9  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== model.layers.27.self_attn.o_proj (1024, 2048)  eval rows 8192",
+  "    arm                                                        out     plain       hwt      hfit     bytes      s",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.07512   0.09731   0.09802   0.06424   1049801    7.3  sched 1111",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.07450   0.09806   0.09841   0.06324   1049801    7.4  sched 1112",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.07418   0.10276   0.09986   0.06221   1049801    7.2  sched 1112g",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.07709   0.10247   0.10423   0.06532   1049801    7.1  sched 2222",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.07584   0.10834   0.10454   0.06351   1049801    7.5  sched 2g2g2g2g",
+  "    A drift control LAST [refit h^1.0 x4]                  0.07512   0.09731   0.09802   0.06424   1049801    7.2  sched 1111",
+  "    -- drift control [table]: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%",
+  "    -- matched pair B-Jac : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "    -- matched pair B-GS  : codes_identical=True  bytes_equal=True  plane_moved=True  inner_objectives_equal=True  inner_refits_identical=True",
+  "\n== geomeans over 6 units  [qwen]",
+  "    arm                                                        out      hfit     out/A    hfit/A",
+  "    A drift control FIRST [refit h^1.0 x4]                 0.05111   0.04853    1.0000    1.0000",
+  "    B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)   0.04697   0.04405    0.9191    0.9077",
+  "    B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)   0.04523   0.04265    0.8851    0.8788",
+  "    C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)   0.05043   0.04759    0.9868    0.9806",
+  "    C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)   0.04925   0.04622    0.9635    0.9524",
+  "    A drift control LAST [refit h^1.0 x4]                  0.05111   0.04853    1.0000    1.0000"
+ ]
+}
