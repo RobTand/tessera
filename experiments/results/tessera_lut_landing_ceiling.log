@@ -1,0 +1,101 @@
+wire: E2M1x2 q256=896 -> body TCQ plane LUT span 2 L=0
+H from wikitext-2-raw-v1/train (local datasets cache)  fit 16384 tok  eval 8192 tok (sha 30ec7255e693)
+
+== model.layers.0.self_attn.q_proj (2048, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.04382   0.10151   0.09878   0.04286  119.9
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.03897   0.09582   0.08827   0.03805   61.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.03662   0.09141   0.08325   0.03571   69.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.04301   0.10508   0.10710   0.04194   93.3
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.03695   0.10400   0.10212   0.03567   68.2   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.03357   0.10052   0.09872   0.03215   65.6   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.04822   0.10274   0.11094   0.04699   84.3
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.04285   0.10345   0.11089   0.04183   59.0   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.03631   0.10113   0.10292   0.03522   63.8   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.04382   0.10151   0.09878   0.04286  125.1
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.1.self_attn.k_proj (1024, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.04552   0.09842   0.08852   0.04464   67.2
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.04243   0.09543   0.08228   0.04146   35.6   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.03938   0.09097   0.07727   0.03850   32.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.04256   0.10341   0.10378   0.04137   53.0
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.04013   0.10238   0.10155   0.03872   36.0   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.03635   0.09864   0.09657   0.03486   34.2   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.04542   0.10247   0.10216   0.04432   57.4
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.04279   0.10249   0.10122   0.04156   38.1   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.03749   0.09920   0.09646   0.03610   37.3   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.04552   0.09842   0.08852   0.04464   73.3
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.13.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.08348   0.09788   0.10063   0.07793  131.2
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.08006   0.09527   0.09559   0.07461   92.5   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.07629   0.09159   0.09095   0.07115   96.0   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.08404   0.10065   0.10394   0.07758  121.9
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.08067   0.09970   0.10068   0.07388   97.4   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.07592   0.09687   0.09635   0.06882   93.4   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.08596   0.09966   0.10547   0.07992  119.7
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.08419   0.09917   0.10373   0.07785   83.7   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.07824   0.09601   0.09779   0.07167   79.7   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.08348   0.09788   0.10063   0.07793  121.4
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.14.mlp.gate_proj (3072, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.05304   0.09862   0.09010   0.05093  121.4
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.05033   0.09532   0.08349   0.04825  101.0   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.04729   0.09088   0.07803   0.04523   85.4   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.05123   0.10217   0.10963   0.04868  113.0
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.04804   0.10066   0.10714   0.04524   72.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.04413   0.09683   0.10080   0.04109   71.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.05473   0.10109   0.10932   0.05239   92.6
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.05252   0.10160   0.10889   0.04992   75.2   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.04642   0.09853   0.10357   0.04368   77.6   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.05304   0.09862   0.09010   0.05093  106.3
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.2.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.02686   0.10643   0.04534   0.02677  198.0
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.02653   0.09920   0.04500   0.02646   65.1   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.01121   0.09526   0.03675   0.01115   67.1   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.02387   0.23312   0.05631   0.02343  210.6
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.02330   0.22696   0.05555   0.02272   65.3   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.00916   0.24189   0.06141   0.00877   59.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.02072   0.22229   0.05504   0.02038  183.5
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.02065   0.22337   0.05481   0.02031   59.2   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.00613   0.21966   0.04965   0.00592   58.9   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.02686   0.10643   0.04534   0.02677  165.9
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.27.self_attn.o_proj (1024, 2048)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.07512   0.09731   0.09802   0.06424   57.5
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.07439   0.09638   0.09676   0.06380   45.9   [NOT A WIRE]
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.07124   0.09228   0.09194   0.06101   47.2   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.07584   0.10834   0.10454   0.06351   72.6
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.07509   0.10826   0.10392   0.06267   50.1   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.07067   0.10406   0.09942   0.05800   48.8   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H                         0.07709   0.10247   0.10423   0.06532   56.5
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.07679   0.10251   0.10429   0.06512   52.5   [NOT A WIRE]
+    LDLQ 1.0/32 + refit full-H | landing=none          0.07284   0.09953   0.10064   0.06123   45.5   [NOT A WIRE]
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.07512   0.09731   0.09802   0.06424   67.0
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== geomeans over 6 units
+    arm                                                    out      hfit   out/ctl  hfit/ctl
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.05111   0.04853    1.0000    1.0000
+    LDLQ 1.0/32 + refit h^1.0 | landing=grid           0.04858   0.04609    0.9506    0.9498
+    LDLQ 1.0/32 + refit h^1.0 | landing=none           0.04010   0.03800    0.7846    0.7830
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel)          0.04925   0.04622    0.9635    0.9524
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=grid   0.04646   0.04328    0.9090    0.8918
+    LDLQ 1.0/32 + refit full-H (Gauss-Seidel) | landing=none   0.03719   0.03424    0.7277    0.7056
+    LDLQ 1.0/32 + refit full-H                         0.05043   0.04759    0.9868    0.9806
+    LDLQ 1.0/32 + refit full-H | landing=grid          0.04840   0.04555    0.9470    0.9387
+    LDLQ 1.0/32 + refit full-H | landing=none          0.03608   0.03362    0.7060    0.6928
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.05111   0.04853    1.0000    1.0000
+
+wrote experiments/results/tessera_lut_landing_ceiling.json

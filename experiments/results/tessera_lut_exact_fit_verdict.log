@@ -1,0 +1,9 @@
+
+== issue #50 stop rule, taken after the fact
+    arm JSON      experiments/results/tessera_lut_exact_fit.json
+    ceiling JSON  experiments/results/tessera_lut_landing_ceiling.json
+    six-unit out geomean ratio  1.00515x
+    step-1 ceiling (table -> grid, h^1.0) 4.9418%   half of it 2.4709%
+    VERDICT: STOP -- under half the ceiling
+
+wrote experiments/results/tessera_lut_exact_fit_verdict.json

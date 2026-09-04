@@ -35,3 +35,28 @@ unit                                        control        arm   removed
     model.layers.2.mlp.down_proj               0.7189     0.7189    0.00%
     model.layers.27.self_attn.o_proj           1.1729     1.1729    0.00%
     TOTAL                                     13.8560    13.8560    0.00%
+
+    first pass whose tables differ, per unit (reported only while both arms still share ``continuous``)
+
+unit                                      pass    control        arm   removed
+  LDLQ 1.0/32 + refit h^1.0 [triplicate MID]
+    model.layers.0.self_attn.q_proj           --   tables identical in every pass
+    model.layers.1.self_attn.k_proj           --   tables identical in every pass
+    model.layers.13.mlp.down_proj             --   tables identical in every pass
+    model.layers.14.mlp.gate_proj             --   tables identical in every pass
+    model.layers.2.mlp.down_proj              --   tables identical in every pass
+    model.layers.27.self_attn.o_proj          --   tables identical in every pass
+  LDLQ 1.0/32 + refit h^1.0 + exact-16 fit
+    model.layers.0.self_attn.q_proj            1     5.8000     5.3809    7.23%
+    model.layers.1.self_attn.k_proj           --   tables identical in every pass
+    model.layers.13.mlp.down_proj             --   tables identical in every pass
+    model.layers.14.mlp.gate_proj             --   tables identical in every pass
+    model.layers.2.mlp.down_proj               2     0.7269     0.7268    0.02%
+    model.layers.27.self_attn.o_proj          --   tables identical in every pass
+  drift control LAST [LDLQ 1.0/32 + refit h^1.0]
+    model.layers.0.self_attn.q_proj           --   tables identical in every pass
+    model.layers.1.self_attn.k_proj           --   tables identical in every pass
+    model.layers.13.mlp.down_proj             --   tables identical in every pass
+    model.layers.14.mlp.gate_proj             --   tables identical in every pass
+    model.layers.2.mlp.down_proj              --   tables identical in every pass
+    model.layers.27.self_attn.o_proj          --   tables identical in every pass
