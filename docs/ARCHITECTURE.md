@@ -42,6 +42,15 @@ tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
+Explicit Python file loaders also contribute dependency edges: the non-executing
+`tessera.source_dependencies` resolver follows finite `Path` expressions,
+lexical bindings, loader aliases and repository globs, using the file path rather
+than the loader's arbitrary module label. An unresolved recognized loader
+conservatively seeds its importing module and downstream tests for every
+non-inert change; an unresolved loader reaching a conftest forces the full
+population. The selector reports those unresolved importers in its receipt.
+One-directory conftest globs resolve to ordinary edges; recursive, escaping or
+otherwise unresolved path expressions retain the conservative fallback.
 A conftest change reaches its entire test population; a delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.

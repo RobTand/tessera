@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import textwrap
 
 import pytest
 
@@ -172,3 +173,287 @@ def test_no_test_reason_names_why_the_path_selected_nothing(
 
     assert result["verdict"] == "none"
     assert result["reason"] == reason
+
+
+def _dynamic_repo(tmp_path: Path, source: str, extra=None) -> tuple[Path, str]:
+    repo, _ = _repo(tmp_path)
+    files = {
+        "tools/driver.py": "VALUE = 1\n",
+        "tools/other.py": "VALUE = 2\n",
+        "tests/test_dynamic.py": textwrap.dedent(source),
+        **(extra or {}),
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "dynamic import fixture")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_real_route_census_path_import_is_an_edge():
+    _, importers = impacted.build_graph(ROOT)
+    target = impacted._module_name(ROOT / "tools/tessera_route_census.py", ROOT)
+    consumer = impacted._module_name(ROOT / "tests/test_route_census_module_space.py", ROOT)
+    assert consumer in importers.get(target, set()), (
+        "loading the census by its file path must select its module-space regression"
+    )
+
+
+@pytest.mark.parametrize("source", [
+    pytest.param('''
+        import importlib.util as iu
+        from pathlib import Path as P
+        ROOT = P(__file__).resolve().parents[1]
+        TOOL = ROOT / "tools" / "driver.py"
+        def _load():
+            return iu.spec_from_file_location("tools.other", TOOL)
+    ''', id="global-path-and-module-aliases"),
+    pytest.param('''
+        from importlib.util import spec_from_file_location as load
+        import pathlib as pl
+        def _load():
+            path = pl.Path(__file__).resolve().parent.parent / "tools" / "driver.py"
+            return load(name="tools.other", location=path)
+    ''', id="local-path-keyword-location-and-direct-alias"),
+    pytest.param('''
+        import importlib.util
+        from pathlib import Path
+        load = importlib.util.spec_from_file_location
+        ROOT = Path(__file__).parents[1]
+        def _load():
+            return load("tools.other", ROOT / "tools" / "driver.py")
+    ''', id="assigned-loader-alias-and-file-parent"),
+])
+def test_dynamic_import_edges_follow_the_path_not_the_module_label(tmp_path, source):
+    repo, _ = _dynamic_repo(tmp_path, source)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("tools.driver", set())
+    assert "tests.test_dynamic" not in importers.get("tools.other", set()), (
+        "spec's arbitrary module label is not the file that executes"
+    )
+    assert "tests.test_dynamic" not in importers.get("*", set())
+
+
+def test_a_loader_parameter_shadows_a_resolvable_global_path(tmp_path):
+    repo, _ = _dynamic_repo(tmp_path, '''
+        import importlib.util
+        from pathlib import Path
+        TOOL = Path(__file__).resolve().parents[1] / "tools" / "other.py"
+        def _load(TOOL):
+            return importlib.util.spec_from_file_location("loaded", TOOL)
+    ''')
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("*", set()), (
+        "an unknown argument cannot borrow the global's unrelated file path"
+    )
+
+
+def test_conditional_path_reassignment_keeps_every_possible_import(tmp_path):
+    repo, _ = _dynamic_repo(tmp_path, '''
+        import importlib.util
+        from pathlib import Path
+        ROOT = Path(__file__).resolve().parents[1]
+        def _load(toggle):
+            path = ROOT / "tools" / "driver.py"
+            if toggle:
+                path = ROOT / "tools" / "other.py"
+            return importlib.util.spec_from_file_location("loaded", path)
+    ''')
+    _, importers = impacted.build_graph(repo)
+    for target in ("tools.driver", "tools.other"):
+        assert "tests.test_dynamic" in (
+            importers.get(target, set()) | importers.get("*", set())
+        ), "a conditional assignment must not erase a possible import edge"
+
+
+def test_local_path_bindings_do_not_leak_between_loader_functions(tmp_path):
+    repo, _ = _dynamic_repo(tmp_path, '''
+        import importlib.util
+        from pathlib import Path
+        ROOT = Path(__file__).resolve().parents[1]
+        path = ROOT / "tools" / "driver.py"
+        def _unrelated():
+            path = ROOT / "tools" / "other.py"
+            return path
+        def _load():
+            return importlib.util.spec_from_file_location("loaded", path)
+    ''')
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in (
+        importers.get("tools.driver", set()) | importers.get("*", set())
+    ), "a different function's local must not replace the loader's global"
+
+
+@pytest.mark.parametrize("changed_path", ["tools/driver.py", "settings.yaml"])
+def test_unknown_loader_selects_its_static_downstream_test(tmp_path, changed_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/dynamic.py": '''
+            from importlib.util import spec_from_file_location as load_spec
+            def load(location):
+                return load_spec("runtime_selected", location)
+        ''',
+        "tests/test_consumer.py": '''
+            from support.dynamic import load
+            def test_consumer():
+                assert callable(load)
+        ''',
+        "settings.yaml": "value: before\n",
+    })
+    (repo / changed_path).write_text("# changed\n", encoding="utf-8")
+    _git(repo, "add", changed_path)
+    _git(repo, "commit", "-qm", "non-inert source change")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert "tests/test_consumer.py" in result["tests"]
+    assert "tests/test_dynamic.py" not in result["tests"]
+
+    inert_base = _git(repo, "rev-parse", "HEAD")
+    (repo / "seed.txt").write_text("notes only\n", encoding="utf-8")
+    _git(repo, "add", "seed.txt")
+    _git(repo, "commit", "-qm", "inert change")
+    assert _selector(repo, f"{inert_base}...HEAD")["verdict"] == "none"
+
+
+@pytest.mark.parametrize("indirect", [False, True], ids=["direct", "through-helper"])
+def test_unknown_conftest_loader_forces_the_full_population(tmp_path, indirect):
+    loader = '''
+        import importlib.util
+        def load(location):
+            return importlib.util.spec_from_file_location("unknown", location)
+    '''
+    extra = {
+        "tests/conftest.py": "from support.dynamic import load\n" if indirect else loader,
+    }
+    if indirect:
+        extra["support/dynamic.py"] = loader
+    repo, base = _dynamic_repo(tmp_path, "def test_example(): pass\n", extra)
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change")
+    assert _selector(repo, f"{base}...HEAD")["verdict"] == "full"
+
+
+def test_finite_test_glob_imports_preserve_narrowed_selection(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, '''
+        from tools.driver import VALUE
+        def test_example():
+            assert VALUE
+    ''', {
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+        "tests/conftest.py": '''
+            import importlib.util
+            from pathlib import Path
+            def collect_modules():
+                here = Path(__file__).resolve().parent
+                for path in sorted(here.glob("test_*.py")):
+                    spec = importlib.util.spec_from_file_location(path.stem, path)
+        ''',
+    })
+    _, importers = impacted.build_graph(repo)
+    assert "tests.conftest" not in importers.get("*", set())
+    for test_path in (repo / "tests").glob("test_*.py"):
+        target = impacted._module_name(test_path, repo)
+        assert "tests.conftest" in importers.get(target, set())
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "one test's source changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert result["tests"] == ["tests/test_dynamic.py"]
+
+
+@pytest.mark.parametrize("definition", [
+    pytest.param('''
+        def _load(TOOL=load_spec("loaded", TOOL)):
+            return TOOL
+    ''', id="default-evaluated-in-enclosing-scope"),
+    pytest.param('''
+        def decorate(value):
+            return lambda function: function
+        @decorate(load_spec("loaded", TOOL))
+        def _load(TOOL):
+            return TOOL
+    ''', id="decorator-evaluated-in-enclosing-scope"),
+])
+def test_function_headers_keep_their_dynamic_import_edges(tmp_path, definition):
+    source = '''\
+from importlib.util import spec_from_file_location as load_spec
+from pathlib import Path
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
+''' + textwrap.dedent(definition)
+    repo, _ = _dynamic_repo(tmp_path, source)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("tools.driver", set()), (
+        "executable defaults and decorators are not part of the function's local scope"
+    )
+
+
+@pytest.mark.parametrize("definition", [
+    pytest.param('''
+        def _load(runtime_paths):
+            return [load_spec("loaded", location) for location in runtime_paths]
+    ''', id="comprehension-target"),
+    pytest.param('''
+        def _load(data):
+            match data:
+                case {"path": location}:
+                    return load_spec("loaded", location)
+    ''', id="match-pattern-target"),
+])
+def test_runtime_bindings_cannot_borrow_a_global_loader_path(tmp_path, definition):
+    source = '''\
+from importlib.util import spec_from_file_location as load_spec
+from pathlib import Path
+location = Path(__file__).resolve().parents[1] / "tools" / "other.py"
+''' + textwrap.dedent(definition)
+    repo, _ = _dynamic_repo(tmp_path, source)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("*", set()), (
+        "a runtime binding must remain unknown, not resolve to the shadowed global"
+    )
+
+
+def test_shadowed_loader_callable_is_not_a_proven_import_api(tmp_path):
+    repo, _ = _dynamic_repo(tmp_path, '''
+        from importlib.util import spec_from_file_location as load
+        from pathlib import Path
+        TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
+        def _load(load):
+            return load("loaded", TOOL)
+    ''')
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("*", set()), (
+        "a known path argument does not establish an unknown callable's dependencies"
+    )
+
+
+@pytest.mark.parametrize(("base", "pattern"), [
+    pytest.param('ROOT / ".."', "test_external_*.py", id="escaping-base"),
+    pytest.param("ROOT", "../test_external_*.py", id="escaping-pattern"),
+])
+def test_escaping_glob_is_unknown_without_enumerating_outside_source(
+    tmp_path, monkeypatch, base, pattern,
+):
+    source = '''\
+import importlib.util
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+''' + f'''
+def _load():
+    outside = {base}
+    for path in outside.glob({pattern!r}):
+        importlib.util.spec_from_file_location("loaded", path)
+'''
+    repo, _ = _dynamic_repo(tmp_path, source)
+    original_glob = Path.glob
+
+    def refuse_external_glob(path, pattern, *args, **kwargs):
+        if "test_external_" in str(pattern):
+            pytest.fail("dependency discovery tried to enumerate outside its source root")
+        return original_glob(path, pattern, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "glob", refuse_external_glob)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get("*", set())
