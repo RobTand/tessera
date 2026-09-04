@@ -553,14 +553,10 @@ def resumable(manifest) -> bool:
     match what this process computes.  A cache entry that fails this was
     written by a different encoder and re-encoding it is the only safe move.
 
-    **Nothing calls this yet, and saying so is the point.**  The wire shard a
-    campaign caches is written unconditionally
-    (``prismaquant/tessera_campaign.py`` writes ``wire_path`` at :288-291 with
-    no skip-if-exists), and no path in this repository reuses a cached unit
-    either, so there is no resume for this to gate.  It is the rule stated
-    where the identity lives rather than restated inside whichever consumer
-    reaches a resume first; today its only caller is its test.  Wiring it is
-    that consumer's commit, not this one's.
+    ``cached_unit`` calls this before accepting an exact campaign blob. Its
+    receipt additionally binds the source, actual calibration Hessian, complete
+    activation settings and producer source seal; numerical compatibility alone
+    does not identify the inputs that produced a cached unit.
     """
     stamped = getattr(manifest, "encoder_fixture_id", None)
     return (stamped or UNTAGGED_ENCODER_ID) == encoder_fixture_id()
