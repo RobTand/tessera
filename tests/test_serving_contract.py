@@ -410,6 +410,13 @@ def _mutated(contract, mutate):
 
 
 def _set_routed_moe_structure(c):
+    """The structure the build EXECUTES but has not SERVED.
+
+    ``routed_moe`` entered ``scheme.STRUCTURES`` when the expert route landed,
+    so this is no longer "a structure no route executes" -- it is a structure
+    with no served receipt, and ``lane_eligibility`` is where served facts go.
+    The refusal must therefore still fire, and for that reason.
+    """
     c["lane_eligibility"]["structures"] = ["dense", "routed_moe"]
 
 
@@ -434,7 +441,7 @@ def _unpublished_rung(c):
 
 
 @pytest.mark.parametrize("mutate, match", [
-    (_set_routed_moe_structure, "routed-MoE"),
+    (_set_routed_moe_structure, "where served facts go"),
     (_empty_serve_flags, "declared residency"),
     (_wrong_activation_contract, "route executes"),
     (_drop_requires_plugin, r"missing \['requires_plugin'\]"),
