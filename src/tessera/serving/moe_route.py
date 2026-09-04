@@ -236,8 +236,8 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
     for group in MOE_GROUPS:
         if len(blobs[group]) != experts:
             raise ValueError(
-                f"{target}: group {group!r} carries {len(blobs[group])} wire(s) for "
-                f"{experts} experts; every expert of a stack has one container per group")
+                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
+                f"{experts} experts; every expert must have its own row of projection containers")
     w13, w13_scale = _decode_group(blobs["w13"], declared["groups"]["w13"], f"{target} w13", device)
     w2, w2_scale = _decode_group(blobs["w2"], declared["groups"]["w2"], f"{target} w2", device)
     return PreparedTesseraMoeExperts(
