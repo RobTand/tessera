@@ -390,7 +390,8 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
     ledger = tmp_path / "ledger.md"
     result = subprocess.run(
         [sys.executable, str(TOOL), "--resume", str(surfaces),
-         "--checkout", str(ROOT), "--out", str(out), "--record", str(ledger)],
+         "--checkout", str(ROOT), "--out", str(out), "--record", str(ledger),
+         "--pool-root", str(tmp_path / "pool")],
         capture_output=True, text=True, timeout=120,
     )
     # Not green: nobody watched either exit status.
@@ -403,6 +404,63 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
     # whole reason to assemble a receipt at all.
     text = ledger.read_text()
     assert "NVIDIA GB10" in text and "no CUDA device" in text
+
+
+def test_a_resume_reads_the_pool_it_is_pointed_at_not_the_live_one(tmp_path):
+    """A test must not read the fleet's live queue, and could not help it.
+
+    `_pool_actions_that_wrote` opens every outcome record in `pb-queue/done`
+    and `pb-queue/failed` and the CAS request beside each, over NFS. That is
+    fine for a real resume -- it is how the exit status is derived from a
+    table the pool publishes -- and it is not fine inside a test: the cost is
+    one NFS read per finished action, it grows with the fleet's history, and
+    nothing about the test's verdict depends on what the live pool happens to
+    hold.
+
+    It stopped being theoretical. With 547 finished actions in the queue, the
+    two resume tests that run this tool as a subprocess went past their own
+    timeouts on sparky under load. Before `--pool-root`::
+
+        E       subprocess.TimeoutExpired: Command '[... merge_suite.py
+                --resume ... --record ...]' timed out after 120 seconds
+
+    So the tool names the pool it reads, defaulting to the live one, and the
+    tests point it at a queue they built. The default is asserted here too: a
+    flag that quietly changed where a real resume looks would be worse than
+    the slow scan.
+    """
+
+    merge_suite = _module()
+    assert merge_suite.POOL_QUEUE == merge_suite.SHARED_ROOT / \
+        "prismabuild-fleet" / "pb-queue"
+    assert merge_suite.POOL_CAS_REQUESTS == merge_suite.SHARED_ROOT / \
+        "prismabuild-fleet" / "cas" / "requests"
+
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    _gpu_population(surface)
+    _fake_pool(tmp_path / "pool", surface,
+               [("cafe" + "0" * 60, "done", 0, "sparky")])
+
+    out = tmp_path / "receipt.json"
+    started = time.monotonic()
+    rc = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--resume",
+         str(receipt_dir), "--checkout", str(ROOT), "--out", str(out),
+         "--pool-root", str(tmp_path / "pool")],
+        capture_output=True, text=True, timeout=120)
+    elapsed = time.monotonic() - started
+    assert rc.returncode in (0, 1), rc.stdout + rc.stderr
+
+    record = json.loads(out.read_text())["arms"][0]
+    # The status came from the fake pool, which is the proof the flag is read.
+    assert record["returncode"] == 0, record
+    assert record["exit_status_source"] == "pool", record
+    assert record["pool_action"]["action_key"].startswith("cafe"), record
+    # And it did not walk the live queue on the way: a scan of that took the
+    # same call past 120 s on this box.
+    assert elapsed < 60, elapsed
 
 
 def test_a_resumed_row_is_dated_by_the_run_and_never_looks_watched(tmp_path):
@@ -1081,7 +1139,8 @@ def test_a_resume_keeps_the_receipt_the_original_run_wrote(tmp_path):
 
     rc = subprocess.run(
         [sys.executable, str(TOOL), "--arm", "gpu",
-         "--resume", str(receipt_dir), "--checkout", str(ROOT)],
+         "--resume", str(receipt_dir), "--checkout", str(ROOT),
+         "--pool-root", str(tmp_path / "pool")],
         capture_output=True, text=True, timeout=300)
     assert rc.returncode in (0, 1), rc.stdout + rc.stderr
 

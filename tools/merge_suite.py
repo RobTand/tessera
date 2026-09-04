@@ -89,8 +89,9 @@ DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 #: carries the command that action ran.  Reading those two is how a resumed
 #: receipt can state an exit status instead of declining to -- derived from a
 #: table PrismaBuild publishes, never inferred from the population's contents.
-POOL_QUEUE = SHARED_ROOT / "prismabuild-fleet" / "pb-queue"
-POOL_CAS_REQUESTS = SHARED_ROOT / "prismabuild-fleet" / "cas" / "requests"
+POOL_ROOT = SHARED_ROOT / "prismabuild-fleet"
+POOL_QUEUE = POOL_ROOT / "pb-queue"
+POOL_CAS_REQUESTS = POOL_ROOT / "cas" / "requests"
 
 #: The two arms, and why each is spelled the way it is.  The interpreter is
 #: named rather than inherited: a pool action runs in a sealed environment, so
@@ -837,9 +838,27 @@ def main() -> int:
                          "For a run whose submitting process died while the "
                          "pool kept going -- the exit status is recorded as "
                          "unobserved rather than guessed")
+    ap.add_argument("--pool-root", default=str(POOL_ROOT),
+                    help="where PrismaBuild publishes what it did: "
+                         "<root>/pb-queue holds the outcome records a resumed "
+                         "receipt reads its exit status from, and "
+                         "<root>/cas/requests the commands that identify which "
+                         "action wrote which population. Naming it is what "
+                         "lets a test read a pool it built rather than the "
+                         "live one -- a scan of the real queue is an NFS read "
+                         "per finished action and grows with the fleet's "
+                         "history, which took two tests past their timeout "
+                         "here")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the pbrun invocations and submit nothing")
     args = ap.parse_args()
+
+    # Module-level because that is where the readers look, and because a test
+    # that monkeypatches them is doing the same thing this flag does.
+    global POOL_QUEUE, POOL_CAS_REQUESTS
+    pool_root = Path(args.pool_root).resolve()
+    POOL_QUEUE = pool_root / "pb-queue"
+    POOL_CAS_REQUESTS = pool_root / "cas" / "requests"
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
