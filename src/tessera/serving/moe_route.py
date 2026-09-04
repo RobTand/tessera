@@ -57,7 +57,13 @@ WHAT IS NOT ATTESTED.  There is no ``routed_moe`` cell in this package's
 ``runtime_contract.json`` and there will not be one until a served census and
 KL cover it on a real artifact.  This module is what the loader DOES, on the
 ``loader_axes`` precedent: attempted, measured on the load-and-execute
-contract, and not claimed as served.
+contract, and not claimed as served.  That measurement
+(``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
+once on the pin, once on the build that registers ``Glm5Next`` -- and every
+recorded field, backend selection and error number is identical, so the route
+does not depend on which of the two loads it.  What it still does not cover:
+the model-level ``load_weights`` hop above ``RoutedExperts``, the compiled
+forward, and any expert count past four.
 """
 from __future__ import annotations
 

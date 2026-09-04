@@ -158,7 +158,7 @@ def _looks_like_moe_layer(layer: torch.nn.Module) -> bool:
 
 
 class TesseraConfig(QuantizationConfig):
-    """``quant_method: "tessera"`` -- the two dense Tessera routes."""
+    """``quant_method: "tessera"`` -- the dense routes and the expert route."""
 
     def __init__(self, config_groups: Mapping[str, Any], ignore: tuple[str, ...],
                  full_config: Mapping[str, Any]):

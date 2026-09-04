@@ -1096,7 +1096,24 @@ loader would have dropped silently.
    two 45 GB serves.
 4. **Expert parallelism, tensor parallelism inside an expert, and `streamed`**
    are refused by name in the route, not measured.
-5. **Memory at scale.** The route holds the wires *and* the decoded tile until
-   `process_weights_after_loading` returns. At GLM's 288 experts that is
-   roughly 11 GB per MoE layer of transient peak; the probe ran at 4 experts
-   and says nothing about it.
+5. **Memory at scale, and it sums across layers.** The route holds the wires
+   *and* the decoded tile until `process_weights_after_loading` returns — and
+   vLLM runs that hook only after *every* weight has loaded, so every MoE layer
+   holds both at once. At GLM's 288 experts that is roughly 11 GB per MoE layer,
+   i.e. **~33 GB transient for the 4-layer cut** and not fitting at all for full
+   GLM. The probe ran at 4 experts and says nothing about it. The fix is a
+   design one — decode per layer as it loads, or stream — not arithmetic.
+6. **The model-level load hop.** The probe drives
+   `RoutedExperts.load_weights` directly. In a serve
+   `Glm5NextForConditionalGeneration.load_weights` runs first and decides what
+   is delegated; §9.6 measured the *expert-params mapping* as suffix-agnostic,
+   not the model loader above it. Whether a `.wire`-suffixed expert tensor
+   survives that hop is unmeasured, and it is the first thing a served attempt
+   would find out.
+7. **The compiled forward.** Everything here is eager. The dense lanes broke
+   under vLLM's compiled forward once already
+   (`vllm-compiled-forward-breaks-lane-hot-paths`), and the MoE route has the
+   same shapes of hazard in it.
+8. **`resident` becomes process-wide.** MoE refuses `streamed` and
+   `TESSERA_SERVE_MODE` is one process-level setting, so a mixed artifact is
+   resident everywhere, dense modules included, until (4) lands.

@@ -1,10 +1,18 @@
 # The Tessera routed-MoE route loads and executes on the pinned runtime
 
-**Date** 2026-09-04 · **Box** sparky (GB10, sm_121) · **Image**
-`vllm/vllm-openai@sha256:61fc8a89...` (the pin in
-`src/tessera/serving/runtime_contract.json`, vLLM 0.28.0, torch 2.13.0+cu130)
-· **Probe** `experiments/moe_route_load_probe.py` · **Result**
-`experiments/results/moe_route_load_probe.json`
+**Date** 2026-09-04 · **Box** sparky (GB10, sm_121) · **Probe**
+`experiments/moe_route_load_probe.py` · run on **two** runtimes:
+
+| Image | vLLM | Result |
+|---|---|---|
+| `vllm/vllm-openai@sha256:61fc8a89...` — the pin in `src/tessera/serving/runtime_contract.json` | 0.28.0 | `experiments/results/moe_route_load_probe.json` |
+| `prismaquant/glm53-mia-sm121:487ecf187` — the build that registers `Glm5Next`, i.e. the one that could serve the target model | `0.1.dev20051+g487ecf187` | `experiments/results/moe_route_load_probe_mia.json` |
+
+Both on torch 2.13.0+cu130. **Every recorded field is identical between them**,
+to the last digit of every error number, including the backend the runtime's
+own oracle selected. The pin is where the route's claims are attested; the Mia
+build is where a GLM would actually be served, and the receipt says the route
+does not depend on which of the two it is loaded under.
 
 ## 1. What was measured, and what was not
 
@@ -91,9 +99,35 @@ describes. It fired on real bytes.
 ## 5. Scope, and what is still owed
 
 - **One shape, one rung, one box.** 4 experts at 512x256, q256 1024, sm_121.
-  Nothing here says a 288-expert GLM layer loads; the memory arithmetic alone
-  (wires and tile both resident until `process_weights_after_loading`) is
-  untested at that size and is called out in the issue report.
+  Nothing here says a 288-expert GLM layer loads, and the memory arithmetic is
+  worse than per-layer: `process_weights_after_loading` runs after *every*
+  weight has loaded, so **every** MoE layer holds its wires *and* its decoded
+  tile at once. ~11 GB of that pair per GLM-5.3-Flash MoE layer is ~33 GB
+  transient for the 4-layer cut and does not fit at all for full GLM. Untested
+  at any size past four experts, and a design item, not an arithmetic one.
+- **The model-level load hop is untested.** The probe calls
+  `RoutedExperts.load_weights` directly. In a serve,
+  `Glm5NextForConditionalGeneration.load_weights` runs first and decides what
+  reaches the expert stack; model-level loaders commonly filter on a `.weight`
+  suffix or on `params_dict` membership. §9.6 of the contract doc measured the
+  *expert-params mapping* as suffix-agnostic; nothing has measured whether the
+  model's own loader hands a `.wire`-suffixed tensor down to it.
+- **Eager only.** `method.apply` was called directly. vLLM's compiled forward
+  is not exercised here, and the dense lanes have broken under compile before
+  (`vllm-compiled-forward-breaks-lane-hot-paths`: `int()` on the token dim,
+  `data_ptr` fingerprints, a mutating op on an aliased pool).
+- **`resident` is a process-wide knob.** MoE refuses `streamed`, and
+  `TESSERA_SERVE_MODE` is one setting for the whole process, so an artifact
+  with both dense and expert Tessera modules can only be served resident —
+  the dense modules included. That is a consequence of the refusal, not a
+  separate limitation, and it is why `streamed` for experts is on the list.
+- **The byte-identical tile is checked after the kernel's own format
+  conversion.** `convert_to_fp8_moe_kernel_format` is the identity for
+  per-channel FP8 under `TRITON`, which is why the comparison against
+  `materialize_stock` is exact. On a shape or box where the oracle picks
+  `MARLIN`, that check would fail for a *probe* reason — the kernel repacking
+  the tile — not a route reason, and the probe would need to compare before
+  the conversion instead.
 - **No exporter writes these bytes.** The wires in this probe were built by
   `tessera.export.encode_linear_planes` and `tessera.fused.pack_fused` — the
   same calls an exporter would make — but
