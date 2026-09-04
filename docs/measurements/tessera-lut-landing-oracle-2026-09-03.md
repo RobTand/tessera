@@ -1,4 +1,4 @@
-# The LUT landing's loss is in the assignment, not the table fit; landing the blocks against each other takes the GS arm to 0.84x at frozen codes (2026-09-03)
+# The LUT landing's loss is in the assignment, not the table fit; landing the blocks against each other takes the GS arm to 0.84x at frozen codes and 0.91x in the encoder (2026-09-03)
 
 **Claim, weight space and held-out activation space (measured; a screen and
 not a result).** Issue #50 read `tessera-lut-refit-gauss-seidel-2026-09-03`'s
@@ -48,7 +48,37 @@ below the third. What it is worth, GS arm, six units:
   / 0.9548x (hfit), which still clears the bar, and no unit regresses (worst
   0.9964x on `L13.down_proj`, 0.9958x on `L27.o_proj`).
 - **In the encoder** (the coupled landing inside the four-pass alternation,
-  where it also changes the codes the next trellis pass sees): TBD_E_PROSE
+  where it also changes the codes the next trellis pass sees), same six units,
+  `experiments/refit_trailing_pair.py --population qwen`: the trailing arm
+  `B-GS+CL` lands `out` geomean **0.04523 -> 0.04108 (0.9081x)** against the
+  same arm without it, and **0.8037x** against the served `h^1.0` control
+  (`hfit` 0.8719x / 0.7662x). That is within 0.4% of what the oracle predicted
+  at frozen codes (0.8065x vs the same control), so re-assignment inside the
+  alternation neither compounds nor unwinds -- it does the one thing, and the
+  next trellis pass keeps it. No unit regresses on `out` (worst 0.9965x on
+  `L13.down_proj`); `L2.down_proj` again carries most of it (0.6762x), and
+  **without it the five-unit lever geomean is 0.9633x** -- the oracle's
+  five-unit figure to four digits. **Running it on every pass is worse**:
+  `C-GS+CL` is 0.9239x vs control against `B-GS+CL`'s 0.8037x, and the lever
+  itself is worth only 0.9589x inside the loop against 0.9081x on the trailing
+  pass. Re-assigning early changes the codes the next trellis pass sees, and
+  that costs more than the assignment gains; #35's "the full-H refit earns its
+  keep on the trailing pass" holds for the landing too, and `"trailing"` is
+  the arm to promote if any is.
+- **The wire does not move, and the arms are scored on it.** All seven arms
+  emit the same `len(blob)` on every unit, and every arm carries
+  `sink_vs_wire_bit_identical=True` with `sink_vs_wire_rel=0.0` -- the scored
+  reconstruction *is* `stock_dequant(materialize_stock(...))`, not a sink the
+  wire cannot reproduce. Same 16 E4M3 table bytes, same 4-bit indices, same
+  byte count.
+- **Weight space pays for it, and should be read that way.** `plain` (the
+  unweighted `||E||`) *worsens* under the coupled landing on all six units --
+  geomean 0.09998 -> 0.12708 (1.27x), and 0.10643 -> 0.32181 on `L2.down_proj`
+  alone. That is the mechanism working, not a bug: a Hessian-weighted landing
+  buys output-space error with weight-space error. Both `out` (held out) and
+  `hfit` improve together, so there is no screen-inverts-on-held-out signature
+  here -- but any future reading of this lever on a weight-space number will
+  see a regression, and that number is the wrong one.
 - **Of the landing loss itself** (`landed - continuous`, pooled over passes,
   cost-weighted): the coupled landing recovers **102%** of it on the GS arm
   (it lands below the one-step continuous point, which is a step and not a
@@ -59,6 +89,15 @@ below the third. What it is worth, GS arm, six units:
   o_proj 20%. The rest of the distance is the sixteen-entry budget: `free-e4m3`
   (any E4M3 value per block, 8 bits) reaches 0.03803 against `free` 0.03219,
   so what the wire cannot have is mostly entry *count*, not grid.
+
+**With the flag off the merge is byte-identical.** The rescue of this
+mechanism onto master resolved nine conflicts across `encode.py` and
+`export.py`, so "the default encode did not move" is a claim that has to be
+re-encoded rather than read off a diff. `experiments/gs_refit_byte_baseline.py`
+run at master `d3ff7c2` in one worktree and on the merged branch in another, on
+the same device, same session, hashing every arm that touches
+`_refit_scales_lut_metric` including the full-H branch the change edits:
+**0 changed of 15**.
 
 **Nothing here is served.** Six units, one wire, weight-space `hfit` and a
 held-out activation-space `out` screen. No KL, no GLM arm. The lever stays
@@ -75,8 +114,12 @@ last refit only), `src/tessera/export.py`
 (`experiments/lut_landing_oracle.py`) and
 `/mnt/shared/tessera-runs/ldlq-lut/qwen_lut_coupled.json`
 (`experiments/ldlq_window_sweep.py --coupled-landing --gauss-seidel
---drift-control`), read together by `experiments/lut_landing_oracle_report.py`.
-Box: sparklina, out of `/mnt/shared`, both runs concurrent.
+--drift-control`), read together by `experiments/lut_landing_oracle_report.py`;
+the in-encoder arms at
+`experiments/results/refit_trailing_pair_qwen_cl.json`
+(`experiments/refit_trailing_pair.py --population qwen`).
+Boxes: the oracle on sparklina out of `/mnt/shared`, both runs concurrent; the
+in-encoder pair on sparky through the PrismaBuild pool.
 
 ## What "separable by construction" is true of, and why it does not matter
 
