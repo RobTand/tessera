@@ -355,6 +355,14 @@ box. What is still open here
    correct measurement hygiene and should stay in the protocol; it was never
    the fix, and it is not what makes the two arms comparable now.
 
+   **Where the protocol stands, 2026-09-04.** "Two arms, two KLs" is satisfied
+   **eager** and only eager: #83's campaign took the census in all four mode x
+   regime combinations, and #102 took the two-arm KL in the decode regime with
+   both arms under `--enforce-eager`. The compiled half of "eager **and**
+   compiled" has no informative KL -- its only one is #83's prefill-regime
+   null, which cannot reach a lane capped at `GEMV_MAX_M = 8` -- and that is
+   filed as **#113**. "Two latencies" is unmeasured and filed as **#109**.
+
 **#10 specifically (the FP8 route / E4M3 wire):**
 
 * The A/B is runnable at the **already-attested rung**: `TESSERA_E4M3_K1`

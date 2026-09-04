@@ -341,11 +341,19 @@ whole point is that every launch is attributable.
   allocated checkpoint we hold carries a column rate outside
   `SUPPORTED_RATES = (1, 2, 4)`, so the lane cannot prepare on one. This
   receipt validates the harness and the lane on a uniform-rate checkpoint.
-* **The compiled forward.** The route trace is eager-only by construction:
-  under `torch.compile` the dispatch's Python body runs at trace time, so a
-  count would describe compilation, not launches (`route_shape` yields `M*`
-  there and the trace's own `note` says so). A decode-regime dump under a
-  compiled serve is not blocked; its trace would not attest the shapes.
+* **The compiled forward, now filed as #113.** Both arms here served with
+  `--enforce-eager`, so every served KL this lane has is eager, while vLLM
+  compiles by default. The route trace is eager-only by construction: under
+  `torch.compile` the dispatch's Python body runs at trace time, so a count
+  would describe compilation, not launches (`route_shape` yields `M*` there and
+  the trace's own `note` says so). A decode-regime dump under a compiled serve
+  is not blocked -- `experiments/decode_regime_kl.sh` takes `TESSERA_LANE_EAGER=0`
+  for it -- but its trace would not attest the shapes, so the attestation there
+  is `compile_identity.note_traced_dispatch` (which op each module traced, and
+  in the compile-cache key, #91) plus the fact that `streamed_apply` is a
+  `custom_op(mutates_args=())` whose `M <= GEMV_MAX_M` branch runs at runtime
+  inside an opaque node, with the mutual KL itself as the served
+  discriminator.
 * **The NVFP4 and BF16 routes**, and MoE. Not touched here.
 * **Which arm is right.** §5's closing note, filed as **#110**. 256 positions
   on one 0.6B checkpoint is a signal to chase, not a verdict.

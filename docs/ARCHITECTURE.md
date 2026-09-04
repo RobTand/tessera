@@ -342,7 +342,11 @@ measures the gap: over byte-identical bytes with the GEMV lane on in one arm
 and refused in the other, the prefill regime reads `KL >= 0.000000` at 100.00%
 top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
-decode dump's scored forwards, zero on the prefill dump's.
+decode dump's scored forwards, zero on the prefill dump's. Both arms of that
+receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
+a compiled serve, where the trace cannot attest shapes and the attestation is
+`compile_identity` plus the mutual KL itself. No compiled decode-regime KL has
+been taken for this lane (#113).
 
 ### 4.6 The stock twin isolates the wire from the kernel
 

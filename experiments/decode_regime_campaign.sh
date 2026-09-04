@@ -27,6 +27,14 @@ RUNS=${RUNS:-/home/rob/tessera-runs/ts102}
 ARMS=${ARMS:-/home/rob/tessera-runs/ts83}
 KLDIR=/mnt/shared/tessera-kl
 STAGE=${1:-all}
+# The campaign tag that names this run's arms and dumps.  Default = #102's own,
+# so nothing here changes.  The compiled re-take #113 asks for, over the same
+# two hardlinked arms, is
+#   ARMTAG=compiled TESSERA_LANE_EAGER=0 TESSERA_KL_DUMP_PREFIX=qwen_ts113 \
+#   RUNS=/home/rob/tessera-runs/ts113 decode_regime_campaign.sh arms
+ARMTAG=${ARMTAG:-ts102}
+export TESSERA_KL_DUMP_PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
+DP=$TESSERA_KL_DUMP_PREFIX
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 export TS=$WT RUNS
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
@@ -60,21 +68,21 @@ if [ "$STAGE" = arms ] || [ "$STAGE" = all ]; then
   EXT_B_RO=$ARMS/ext-B-readonly
   mkdir -p "$EXT_B_RO"; chmod a-w "$EXT_B_RO"
   for ARM in armA armB; do
-    if [ -f "$KLDIR/qwen_ts102_ts102-${ARM}_decode.json.npz" ]; then
+    if [ -f "$KLDIR/${DP}_${ARMTAG}-${ARM}_decode.json.npz" ]; then
       echo "=== $ARM already dumped"; continue
     fi
     EXTRA=""
     [ "$ARM" = armB ] && EXTRA="-v $EXT_B_RO:/ext-ro:ro -e TORCH_EXTENSIONS_DIR=/ext-ro"
     echo "=== $ARM  $(date -Is)"
     EXT=$ARMS/ext-A TESSERA_LANE_DOCKER_EXTRA="$EXTRA" \
-      experiments/decode_regime_kl.sh "$ARMS/$ARM" "ts102-$ARM" streamed \
+      experiments/decode_regime_kl.sh "$ARMS/$ARM" "$ARMTAG-$ARM" streamed \
       2>&1 | tee "$RUNS/$ARM.log"
   done
 
   echo "=== mutual KL between the two arms, per regime  $(date -Is)"
   for REG in decode prefill; do
-    A=$KLDIR/qwen_ts102_ts102-armA_$REG.json.npz
-    B=$KLDIR/qwen_ts102_ts102-armB_$REG.json.npz
+    A=$KLDIR/${DP}_${ARMTAG}-armA_$REG.json.npz
+    B=$KLDIR/${DP}_${ARMTAG}-armB_$REG.json.npz
     [ -f "$A" ] && [ -f "$B" ] || { echo "  $REG: missing an arm"; continue; }
     echo "--- $REG: armB against armA, byte-identical bytes ---"
     $PY /home/rob/dq-runs/kl_tool.py compare "$A" "$B" \

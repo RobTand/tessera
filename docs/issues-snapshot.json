@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T04:56:35Z",
+ "generated": "2026-09-04T09:02:28Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -338,7 +338,7 @@
     "title": "No allocated checkpoint can serve the window-GEMV lane: every one carries a rate outside SUPPORTED_RATES"
    },
    "105": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The LUT landing's loss is in the assignment: rescue the coupled landing and measure it in the encoder"
    },
    "106": {
@@ -368,6 +368,14 @@
    "111": {
     "state": "OPEN",
     "title": "The E4M3 lane_eligibility cells name no route for the window-GEMV lane, so the contract cannot attest what the census observed"
+   },
+   "112": {
+    "state": "OPEN",
+    "title": "The CUDA-gated test surface is covered by no automatic signal: master was red on 766033c while CI, the x86 suite and a CPU run all read green"
+   },
+   "113": {
+    "state": "OPEN",
+    "title": "The window-GEMV lane has no served KL under a compiled forward, which is the configuration vLLM serves by default"
    },
    "12": {
     "state": "OPEN",
