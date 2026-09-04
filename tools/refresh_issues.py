@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ``docs/issues-snapshot.json`` from the GitHub trackers.
+"""Regenerate ``docs/issues-snapshot.json`` from GitHub issues and pull requests.
 
 The snapshot exists so that ``tests/test_issue_refs.py`` can check every issue
 reference in the docs **offline**.  A test that needs the network is a test that
@@ -9,7 +9,9 @@ missing -- which is the whole problem this pair of files is here to solve.
     python tools/refresh_issues.py           # both repos
     python tools/refresh_issues.py --check   # exit 1 if the snapshot is stale
 
-Run it after filing or closing anything.  It is not run by the test suite.
+Issues and pull requests share a numbered namespace, and documentation may
+reference either. Run it after filing, opening, merging or closing anything.
+It is not run by the test suite.
 """
 from __future__ import annotations
 
@@ -26,13 +28,13 @@ SNAPSHOT = Path(__file__).resolve().parent.parent / "docs" / "issues-snapshot.js
 
 def fetch(repo: str) -> dict[str, dict]:
     out = subprocess.run(
-        ["gh", "issue", "list", "--repo", repo, "--state", "all", "--limit", "500",
-         "--json", "number,title,state"],
+        ["gh", "api", "--paginate", "--slurp",
+         f"repos/{repo}/issues?state=all&per_page=100"],
         capture_output=True, text=True, check=True,
     ).stdout
     return {
-        str(row["number"]): {"title": row["title"], "state": row["state"]}
-        for row in json.loads(out)
+        str(row["number"]): {"title": row["title"], "state": row["state"].upper()}
+        for page in json.loads(out) for row in page
     }
 
 
