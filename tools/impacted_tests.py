@@ -21,6 +21,13 @@ coupling that an ``import`` statement expresses.  Three kinds here do not:
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
+PrismaBuild snapshots add one generated source-closure member named exactly
+``.pbrun-closure.<16 lowercase hex>.json``. It describes the checkout rather
+than changing it, so it is removed before classification; lookalike basenames
+remain ordinary changes. A snapshot commit is intentionally parentless. When
+both endpoints of ``BASE...HEAD`` exist but have no merge base, the selector
+records and uses the equivalent direct ``BASE..HEAD`` tree comparison.
+
 One thing this deliberately does **not** do is certify serving behaviour.
 ``tessera.serving`` is loaded by vLLM through an entry point, so nothing here
 imports it the way the runtime does -- but tests that import it are still
@@ -38,6 +45,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 import subprocess
 import sys
 from collections import defaultdict, deque
@@ -55,6 +63,13 @@ SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
              "muse-out", "worktrees", "__pycache__"}
 # Extensions that cannot change behaviour and never force a full run.
 INERT = {".md", ".txt", ".rst"}
+
+# PrismaBuild seals this generated closure member into its parentless checkout
+# snapshot.  It describes the snapshot; it is not a project change.  Match the
+# complete basename because a broad prefix would hide a caller-owned file.
+PBRUN_CLOSURE_BASENAME = re.compile(
+    r"\.pbrun-closure\.[0-9a-f]{16}\.json\Z"
+)
 
 
 def _module_name(path: Path, root: Path) -> str | None:
@@ -128,28 +143,122 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
     return by_name, importers
 
 
-def changed_files(ref: str, root: Path) -> list[str]:
+def _resolved_commit(ref: str, root: Path) -> str | None:
+    out = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.strip() if out.returncode == 0 else None
+
+
+def _parentless_direct_diff(ref: str, root: Path) -> tuple[list[str], str] | None:
+    """Compare both trees directly when a valid three-dot pair has no base."""
+
+    if ref.count("...") != 1:
+        return None
+    left, right = ref.split("...", 1)
+    if not left or not right:
+        return None
+    merge_base = subprocess.run(
+        ["git", "-C", str(root), "merge-base", left, right],
+        capture_output=True,
+        text=True,
+    )
+    # ``merge-base`` returns one for two valid, unrelated histories. Bad refs
+    # return a different failure and must retain the original refusal.
+    if merge_base.returncode != 1 or merge_base.stdout.strip():
+        return None
+    left_commit = _resolved_commit(left, root)
+    right_commit = _resolved_commit(right, root)
+    if left_commit is None or right_commit is None:
+        return None
+    out = subprocess.run(
+        ["git", "-C", str(root), "diff", "--name-only", left_commit, right_commit],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        return None
+    comparison = (
+        f"direct {left_commit}..{right_commit} "
+        f"(no merge base; requested {left}...{right})"
+    )
+    return out.stdout.splitlines(), comparison
+
+
+def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
     out = subprocess.run(
         ["git", "-C", str(root), "diff", "--name-only", ref],
         capture_output=True, text=True,
     )
     if out.returncode != 0:
-        raise SystemExit(f"git diff {ref} failed: {out.stderr.strip()}")
-    return [line for line in out.stdout.splitlines() if line.strip()]
+        fallback = _parentless_direct_diff(ref, root)
+        if fallback is None:
+            raise SystemExit(f"git diff {ref} failed: {out.stderr.strip()}")
+        lines, comparison = fallback
+    else:
+        lines, comparison = out.stdout.splitlines(), ref
+    changed = [
+        line
+        for line in lines
+        if line.strip() and not PBRUN_CLOSURE_BASENAME.fullmatch(Path(line).name)
+    ]
+    return sorted(changed), comparison
+
+
+def _selection_reason(
+    changed: list[str],
+    *,
+    missing: list[str],
+    forced: list[str],
+    tests: list[str],
+    text_matched: set[str],
+) -> str:
+    if missing:
+        return (
+            "run this in the branch's own worktree: changed files absent from "
+            "this checkout have unreadable edges"
+        )
+    if forced:
+        return "changed paths the import graph cannot reason about; run everything"
+
+    python_paths = {path for path in changed if Path(path).suffix == ".py"}
+    inert_paths = {path for path in changed if Path(path).suffix in INERT}
+    non_python = set(changed) - python_paths - inert_paths
+    parts: list[str] = []
+    if python_paths:
+        parts.append(
+            "Python import graph selected reverse-reachable tests"
+            if tests
+            else "Python import graph found no reverse-reachable tests"
+        )
+    if text_matched:
+        parts.append("text matches selected tests for non-Python changed paths")
+    if non_python - text_matched:
+        parts.append("non-Python changed paths have no text-matched tests")
+    if inert_paths:
+        parts.append("inert changed paths require no tests")
+    return "; ".join(parts) or "no changed path requires a test"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Tests reverse-reachable from a change, or a full-run verdict."
     )
-    ap.add_argument("--ref", default="master...HEAD",
-                    help="git diff spec naming the change (default master...HEAD)")
+    ap.add_argument(
+        "--ref",
+        default="master...HEAD",
+        help=("git diff spec naming the change (default master...HEAD); a "
+              "parentless snapshot with valid endpoints falls back from "
+              "BASE...HEAD to a direct BASE..HEAD tree comparison"),
+    )
     ap.add_argument("--root", default=".")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
-    changed = changed_files(args.ref, root)
+    changed, comparison = changed_files(args.ref, root)
     if not changed:
         print("no changes", file=sys.stderr)
         return 0
@@ -203,12 +312,17 @@ def main() -> int:
     # names the file is coupled to it, and one that never mentions it is not.
     opaque_py = {f for f in changed
                  if Path(f).suffix not in INERT and Path(f).suffix != ".py"}
+    text_matched: set[str] = set()
     if opaque_py:
         all_tests = [p for p in (root / "tests").rglob("test_*.py")]
         for path in all_tests:
             body = path.read_text(encoding="utf-8", errors="replace")
-            if any(f in body or Path(f).name in body for f in opaque_py):
+            matches = {
+                f for f in opaque_py if f in body or Path(f).name in body
+            }
+            if matches:
                 tests.append(str(path.relative_to(root)))
+                text_matched.update(matches)
         tests = sorted(set(tests))
 
     # A changed conftest is imported by pytest, not by the tests it serves.
@@ -229,20 +343,22 @@ def main() -> int:
     result = {
         "verdict": verdict,
         "changed": len(changed),
+        "comparison": comparison,
         "tests": tests,
         "forces_full": forced,
-        "reason": (
-            "run this in the branch's own worktree: changed files absent from "
-            "this checkout have unreadable edges" if missing else
-            "changed paths the import graph cannot reason about; run everything"
-            if forced else
-            "every changed path is a Python module the graph covers"
+        "reason": _selection_reason(
+            changed,
+            missing=missing,
+            forced=forced,
+            tests=tests,
+            text_matched=text_matched,
         ),
     }
     if args.json:
         print(json.dumps(result, indent=1))
     else:
         print(f"verdict: {verdict}  ({len(changed)} changed, {len(tests)} tests)")
+        print(f"comparison: {comparison}")
         if forced:
             print("forces full run:")
             for f in forced:
