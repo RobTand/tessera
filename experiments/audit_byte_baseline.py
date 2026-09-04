@@ -43,8 +43,8 @@ real slice produces, and ``shared_lut_global``'s subnormal range check lives in
 the fused lane, which ``encode_linear`` never calls.  Both are pinned by unit
 tests instead.
 
-``release`` is the third half, and it exists because the first two are blind to
-the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
+``release`` is the third matrix, and it exists because the first two are blind
+to the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
 keyword at all, so no ``encode`` row can carry a release and no artifact on this
 box carries one either (issue #27, 2026-09-03 -- one of 642 ``.tessera`` files
 has a RELEASE plane, at 512 columns).  A change to the release quota therefore
@@ -52,7 +52,26 @@ reported "0 changed" through a harness that could not see it.  These rows go
 through ``encode_unit``/``build_unit_artifact`` directly, at both a complete and
 a partial trailing superblock, and hash the placement as well as the bytes.
 
+``layout`` is the fourth (issue #143), and it is the same failure one more
+time.  The first three matrices encode only what ``wire_recipe`` selects and
+only whole units, so three of the ten planes a reader will read were written by
+no row at all: **SCALE_BASE** (the S6b plane, which ``export.py``'s
+``scale_plane=`` override still writes and ``unit_artifact._read_scale_planes``
+still accepts, though no recipe selects it), **DIAG_SU**/**DIAG_SV as segment
+2a** (``with_diagonals=``, refused under a CHANNEL plane and therefore reachable
+only on a block plane), and **INITIAL_STATE** (the shard plane schema minor 4
+added, together with ``planes.SHARD_PLANE_ORDER``, a tenth ``plane_elements``
+entry and a ``PER_SUPERBLOCK`` RELEASE descriptor -- all layout, and all of it
+proved by nothing here).  A shard row hashes the parent bytes, the shard bytes
+and the start state separately, so a move localises to the encoder, the cutter
+or the state replay.  ``tests/test_audit_byte_baseline.py`` derives the
+coverage claim from ``planes.SHARD_PLANE_ORDER`` and ``ScalePlaneKind`` rather
+than restating it, so the next plane is noisy rather than silent.
+
 CPU only, by construction -- it runs while a GPU measurement is in flight.
+That is not incidental for the shard rows: ``tests/test_slice_unit.py`` gates
+the whole slicing surface on ``torch.cuda.is_available()`` ("the encoder is a
+CUDA path", ``:161-163``), which these rows disprove by running.
 """
 
 from __future__ import annotations
@@ -85,6 +104,7 @@ from tessera.export import (
     encode_linear,
     wire_recipe,
 )
+from tessera.manifest import ScalePlaneKind
 
 ARTIFACT_GLOBS = (
     "/home/rob/tessera-runs/*/*/cache/wire/*.tessera",
@@ -264,15 +284,150 @@ def encode_hashes() -> dict:
     return out
 
 
-#: ``(label, grid factory, q256, rows, cols, released)`` for the RELEASE plane.
-#: 512 columns is a whole number of superblocks and 640 and 320 are not, which
-#: is the only distinction the release quota draws.
+class LayoutCase(NamedTuple):
+    """One encode whose *layout* is the condition, not its arithmetic.
+
+    The shape and value matrices both encode what ``wire_recipe`` selects, on
+    whole units.  That leaves three planes a reader accepts and this harness
+    never wrote, and each is reached by one keyword or one cut rather than by a
+    different rung:
+
+    ``encode``
+        extra ``encode_linear`` keywords.  ``scale_plane=S6B`` is the plane no
+        recipe selects and every reader still decodes; ``with_diagonals=True``
+        is segment 2a, which a CHANNEL plane refuses (its row scale *is* the
+        DIAG_SV field), so it is spelled on a block-plane grid.
+    ``cut``
+        ``((r0, r1), (c0, c1))``: parse the encoded unit and cut a shard out of
+        it with ``slicing.slice_unit``, the way a rank does at load.  A row cut
+        is what puts the INITIAL_STATE plane on the wire, and the column cut
+        alongside it makes the block scale planes restrict too.
+
+    Columns are chosen to share ``_plan_for``'s memo with an existing row (512
+    for the E2M1 rows, 256 for the E4M3 one), so the matrix grows by encodes
+    and not by forest and window-table builds.
+    """
+
+    label: str
+    grid: PayloadGrid
+    q256: int
+    rows: int
+    cols: int
+    # Read, never mutated -- see ValueCase.encode.
+    encode: "MappingProxyType" = MappingProxyType({})
+    cut: "tuple[tuple[int, int], tuple[int, int]] | None" = None
+
+
+def _layout_cases():
+    return [
+        # SCALE_BASE.  ``export.encode_linear_planes``'s ``scale_plane``
+        # override is caller-facing and ``_read_scale_planes`` accepts what it
+        # writes, so an S6b artifact is a thing that exists; before this row a
+        # change to ``encode._refit_scales`` or to the E8M0 base packing moved
+        # its bytes and the harness reported "0 changed".
+        LayoutCase("s6b-e2m1-256-512c", E2M1_GRID, 256, 32, 512,
+                   MappingProxyType({"scale_plane": ScalePlaneKind.S6B})),
+        # DIAG_SU and DIAG_SV as segment 2a: the rank-1 channel diagonals, fitted
+        # and packed.  The CHANNEL rows above fill DIAG_SV with a row scale,
+        # which is a different producer of the same plane and does not cover
+        # ``diagonals.fit_diagonals`` at all.
+        LayoutCase("diag-e2m1-256-512c", E2M1_GRID, 256, 32, 512,
+                   MappingProxyType({"with_diagonals": True})),
+        # INITIAL_STATE under the TCQ body, where its width is the convolutional
+        # code's memory; the column cut restricts the LUT block plane with it.
+        LayoutCase("shard-e2m1-256-512c/tcq", E2M1_GRID, 256, 32, 512,
+                   cut=((16, 32), (256, 512))),
+        # INITIAL_STATE under the WINDOW body, where its width is ``window_bits``
+        # instead -- a different element width in the same plane, and the wire
+        # the shipping E4M3 recipe writes.
+        LayoutCase("shard-e4m3-1024-256c/window", E4M3_GRID, 1024, 32, 256,
+                   cut=((16, 32), (0, 256))),
+    ]
+
+
+def written_planes(blob: bytes) -> "frozenset":
+    """The plane kinds this artifact actually carries, off its own manifest.
+
+    Read from ``manifest.plane_order`` zipped against the terminal's
+    ``plane_elements`` -- the pair every reader indexes -- so "the matrix writes
+    this plane" is measured on the bytes rather than declared beside them.
+    """
+    from tessera.container import parse
+
+    art = parse(blob)
+    return frozenset(
+        kind
+        for kind, count in zip(art.manifest.plane_order, art.terminal.plane_elements)
+        if count
+    )
+
+
+def encode_layout_case(case: LayoutCase) -> "dict[str, bytes]":
+    """The byte strings one layout case pins.  The CLI and the tests share it.
+
+    A whole-unit case pins its bytes.  A cut case pins three things, because a
+    shard has three ways to move: ``parent`` (the encoder), ``bytes`` (the
+    cutter and the shard's own layout) and ``state`` (the replay that produces
+    the start state).  A digest that moves on ``bytes`` alone is not a digest
+    that moves on all three.
+    """
+    from tessera.slicing import slice_unit
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    torch.manual_seed(zlib.crc32(case.label.encode()) & 0xFFFF)
+    weight = torch.randn(case.rows, case.cols)
+    parent = encode_linear(
+        weight, grid=case.grid, q256=case.q256,
+        trellis_weighting="scale", **case.encode,
+    )
+    if case.cut is None:
+        return {"bytes": parent.blob}
+    # From bytes alone, exactly as a rank loading the artifact does: the cut is
+    # a property of the wire, not of the encoder object that happens to be in
+    # this process.
+    parsed = parse_unit_artifact(parent.blob)
+    shard = slice_unit(parsed, rows=case.cut[0], cols=case.cut[1])
+    _m, _r, blob = build_unit_artifact(
+        shard, case.label, parsed.forests,
+        case.q256 * case.grid.arity, parsed.code,
+    )
+    return {
+        "parent": parent.blob,
+        "bytes": blob,
+        "state": shard.initial_state.cpu().numpy().tobytes(),
+    }
+
+
+def layout_hashes() -> dict:
+    out = {}
+    for case in _layout_cases():
+        keys = ("parent", "bytes", "state") if case.cut else ("bytes",)
+        try:
+            for key, payload in encode_layout_case(case).items():
+                out[f"{case.label}/{key}"] = hashlib.sha256(payload).hexdigest()
+        except Exception as exc:        # a refusal is part of the baseline
+            for key in keys:
+                out[f"{case.label}/{key}"] = f"REFUSED {type(exc).__name__}: {exc}"
+    return out
+
+
+#: ``(label, grid factory, q256, rows, cols, released, cut)`` for the RELEASE
+#: plane.  512 columns is a whole number of superblocks and 640 and 320 are not,
+#: which is the only distinction the release quota draws.  ``cut`` is the shard
+#: extent for the one row that is also cut: a released unit's shard is the only
+#: artifact that carries a ``PER_SUPERBLOCK`` RELEASE descriptor, because its
+#: counts are its parent's restricted and no quota reproduces them
+#: (``unit_artifact._release_placement``).
 def _release_cases():
     return [
-        ("e2m1-cap-512c-rel3000",  E2M1_GRID, None, 32, 512, 3000),
-        ("e2m1-cap-640c-rel3000",  E2M1_GRID, None, 32, 640, 3000),
-        ("e2m1-cap-320c-rel96",    E2M1_GRID, None, 32, 320,   96),
-        ("e2m1-cap-640c-rel4000",  E2M1_GRID, None,  8, 640, 4000),
+        ("e2m1-cap-512c-rel3000",  E2M1_GRID, None, 32, 512, 3000, None),
+        ("e2m1-cap-640c-rel3000",  E2M1_GRID, None, 32, 640, 3000, None),
+        ("e2m1-cap-320c-rel96",    E2M1_GRID, None, 32, 320,   96, None),
+        ("e2m1-cap-640c-rel4000",  E2M1_GRID, None,  8, 640, 4000, None),
+        # A released unit's shard: 256 columns is the superblock, and a release
+        # forces the column granularity to it.
+        ("e2m1-cap-512c-rel3000-shard", E2M1_GRID, None, 32, 512, 3000,
+         ((16, 32), (256, 512))),
     ]
 
 
@@ -285,7 +440,10 @@ def release_hashes() -> dict:
 
     code = ConvCode(memory=6)
     out = {}
-    for label, grid, q256, rows, cols, released in _release_cases():
+    for label, grid, q256, rows, cols, released, cut in _release_cases():
+        keys = ["bytes", "placement"]
+        if cut is not None:
+            keys += ["shard-bytes", "shard-placement"]
         if q256 is None:
             q256 = tcq_cap_q256(grid)
         recipe = wire_recipe(grid, q256)
@@ -309,9 +467,12 @@ def release_hashes() -> dict:
             _m, _r, blob = build_unit_artifact(
                 unit, label, forests, q256 * grid.arity, code
             )
+            shard = None
+            if cut is not None:
+                shard = _release_shard(blob, label, cut, q256 * grid.arity)
         except Exception as exc:        # a refusal is part of the baseline
-            out[f"{label}/bytes"] = f"REFUSED {type(exc).__name__}: {exc}"
-            out[f"{label}/placement"] = f"REFUSED {type(exc).__name__}: {exc}"
+            for key in keys:
+                out[f"{label}/{key}"] = f"REFUSED {type(exc).__name__}: {exc}"
             continue
         out[f"{label}/bytes"] = hashlib.sha256(blob).hexdigest()
         # The placement, hashed separately: the bytes would also move if the
@@ -319,7 +480,34 @@ def release_hashes() -> dict:
         out[f"{label}/placement"] = hashlib.sha256(
             unit.release_index.cpu().numpy().tobytes()
         ).hexdigest()
+        if shard is not None:
+            for key, payload in shard.items():
+                out[f"{label}/shard-{key}"] = hashlib.sha256(payload).hexdigest()
     return out
+
+
+def _release_shard(blob: bytes, label: str, cut, q256: int) -> "dict[str, bytes]":
+    """The shard of a released unit: the one artifact with per-superblock counts.
+
+    A whole unit's released set is ``grammar.release_quota`` of its total and a
+    reader regenerates it; a shard's is the restriction of its parent's, so the
+    counts travel on the wire as the RELEASE descriptor's ``PER_SUPERBLOCK``
+    counts (``unit_artifact._release_placement``).  That descriptor is written
+    by no other row in any matrix here.  The placement is hashed beside the
+    bytes for the same reason the whole unit's is.
+    """
+    from tessera.slicing import slice_unit
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parsed = parse_unit_artifact(blob)
+    shard = slice_unit(parsed, rows=cut[0], cols=cut[1])
+    _m, _r, shard_blob = build_unit_artifact(
+        shard, f"{label}.shard", parsed.forests, q256, parsed.code
+    )
+    return {
+        "bytes": shard_blob,
+        "placement": shard.release_index.cpu().numpy().tobytes(),
+    }
 
 
 def decode_hashes() -> dict:
@@ -352,17 +540,26 @@ def main() -> int:
         before = json.load(open(a.diff[0]))
         after = json.load(open(a.diff[1]))
         changed = 0
-        for section in ("encode", "release", "decode"):
+        # Over the sections the two files actually hold, never a roster of the
+        # sections this file knew about when it was written: a matrix added
+        # later and left out of such a roster is a matrix ``--diff`` silently
+        # reports "0 changed" for, which is the failure the whole harness is
+        # against.  ``layout`` (issue #143) would have been exactly that.
+        for section in sorted(set(before) | set(after)):
             b, c = before.get(section, {}), after.get(section, {})
             for key in sorted(set(b) | set(c)):
                 if b.get(key) != c.get(key):
                     changed += 1
                     print(f"{section} CHANGED {key}\n    before {b.get(key)}\n    after  {c.get(key)}")
         print(f"{changed} changed of "
-              f"{sum(len(before.get(s, {})) for s in ('encode', 'release', 'decode'))}")
+              f"{sum(len(rows) for rows in before.values())}")
         return 1 if changed else 0
 
-    report = {"encode": encode_hashes(), "release": release_hashes()}
+    report = {
+        "encode": encode_hashes(),
+        "layout": layout_hashes(),
+        "release": release_hashes(),
+    }
     if not a.encode_only:
         report["decode"] = decode_hashes()
     text = json.dumps(report, indent=2, sort_keys=True)
@@ -373,9 +570,11 @@ def main() -> int:
         # needs to know how much of it was shape arithmetic, since that is the
         # half that answered zero to the CHANNEL fixes (issue #39), and how
         # much was the release rows, which the encode matrix structurally
-        # cannot carry (issue #27).
+        # cannot carry (issue #27), or the layout rows, which carry the three
+        # planes neither of the first two writes (issue #143).
         print(f"wrote {a.path}: {len(report['encode'])} encodes "
               f"({len(report['encode']) - value} shape, {value} value), "
+              f"{len(report['layout'])} layout rows, "
               f"{len(report['release'])} release rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
