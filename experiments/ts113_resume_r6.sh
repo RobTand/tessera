@@ -19,7 +19,8 @@ git -C "$WT" diff --exit-code "$ORIGINAL" HEAD -- . \
   ':!experiments/ts113_sparklina_campaign.sh' \
   ':!experiments/ts113_resume_r6.sh' \
   ':!tests/test_serve_build_identity.py' \
-  ':!docs/ARCHITECTURE.md'
+  ':!docs/ARCHITECTURE.md' \
+  ':!.pbrun-closure.*.json'
 
 "$PY" - "$WT" "$POP_ROOT" "$ORIGINAL" "$INITIAL_ACTION" "${1:-resume}" <<'PY'
 import hashlib
@@ -46,7 +47,7 @@ changed = subprocess.check_output(
     ["git", "diff", "--name-only", original, "HEAD"], cwd=root, text=True
 ).splitlines()
 allowed = {"experiments/ts113_sparklina_campaign.sh", "experiments/ts113_resume_r6.sh",
-           "tests/test_serve_build_identity.py", "docs/ARCHITECTURE.md"}
+           "tests/test_serve_build_identity.py", "docs/ARCHITECTURE.md", stamps[0].name}
 assert set(changed) <= allowed, changed
 record = {
     "schema": "tessera.ts113.controller-continuation.v1",
