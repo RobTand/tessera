@@ -56,7 +56,8 @@ from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate_tessera_scheme
 from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
-from .telemetry import DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route, route_shape
+from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
+                        note_lane_refusal, route_shape)
 from .window import PreparedWindow, prepare_window
 
 __all__ = [
@@ -303,6 +304,11 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 # modes substitute the torch decode, so the gate below is what
                 # the serve does rather than a mode comparison of its own.
                 holder = None
+                # Cleared on every load so a re-prepared module cannot carry a
+                # stale refusal, then set below if the lane refuses: the census
+                # reads it as a value, which is the half a stderr warning
+                # cannot give it (issue #104).
+                note_lane_refusal(layer, fp8_gemv.GEMV_MODULE_NAME, None)
                 try:
                     holder = fp8_gemv.prepare_fp8_gemv(
                         roles, device=device,
@@ -315,6 +321,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                           f"did not prepare ({type(exc).__name__}: {exc}); serving streamed "
                           "through the torch window decode instead",
                           file=_sys.stderr, flush=True)
+                    note_lane_refusal(layer, fp8_gemv.GEMV_MODULE_NAME, f"{type(exc).__name__}: {exc}")
                 layer.tessera_gemv = holder
                 if holder is not None:
                     # The torch planes' job is done: the dispatch decodes

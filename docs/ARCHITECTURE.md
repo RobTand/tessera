@@ -92,6 +92,14 @@ The predicate is therefore published (`runtime_contract.json` v11,
   shape -- reachability is a function of the rung alone (`grammar.rate_set`)
   -- so it refuses before a unit is encoded and names the offending rates.
   The flag is stamped into the manifest as `requires_lanes`.
+- **Serve time.** `tools/tessera_route_census.py --require-lane` (or the
+  artifact's own `requires_lanes`) makes a phase in which the lane took zero
+  modules a REFUSAL, and writes a `lane_engagement` block
+  (`tessera.serving.census`) whose `all_required_engaged` is `true`, `false`
+  or `null` -- the third meaning nobody said what to require. A load-time
+  lane refusal is a value on the layer (`telemetry.note_lane_refusal`), so
+  the receipt says *why* the lane took nothing instead of leaving it on
+  stderr.
 - **After the fact.** `tools/tessera_lane_preflight.py` answers the same
   question from the bytes of a checkpoint somebody else built, over every
   unit, and exits non-zero.
@@ -123,11 +131,17 @@ rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
 Images outside the pinned repository (Mia's GLM image) are resolved and
 stamped, not refused.
 
-### 4.5 The census attests the route, not the quality
+### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. A clean census with exact bytes is
-necessary and, by tessera#1, not sufficient.
+necessary and, by tessera#1, not sufficient. It is also not sufficient
+*within* a route: the per-module check is a check on agreement, and the
+streamed FP8 route's decode regime legitimately admits both the GEMV pair
+and the materialised one, so a serve in which the lane prepared for nothing
+passes it module by module (§4.4b). Hence `lane_engagement`: an arm that
+requested a route and got zero units on it is a failed census, in a field a
+gate reads.
 
 ### 4.6 The stock twin isolates the wire from the kernel
 

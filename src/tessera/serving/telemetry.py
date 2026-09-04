@@ -38,6 +38,9 @@ __all__ = [
     "BF16_ACTIVATION_CONTRACT",
     "emit_route",
     "read_route",
+    "note_lane_refusal",
+    "read_lane_refusal",
+    "LANE_REFUSAL_ATTR",
     "route_shape",
 ]
 
@@ -88,6 +91,44 @@ ROUTE_FIELDS = (
     "reason",     # exact refusal reason; None when served
     "decoder",    # from DECODERS: which decoder produced the weight tile
 )
+
+
+#: Where a load-time lane refusal is parked on a layer.  A SEPARATE attribute
+#: from the route record, and not a thirteenth ``ROUTE_FIELDS`` entry, for one
+#: reason: the record is written from ``apply()`` on every forward, and that is
+#: the exact surface a compiled forward has broken before (a Python branch on
+#: the token dim, an ``lru_cache``d build on the call path -- issue #52).  A
+#: refusal is a LOAD fact, written once, so it is read once by a census and
+#: never touched inside a traced graph.
+LANE_REFUSAL_ATTR = f"{ATTR_PREFIX}lane_refusal"
+
+
+def note_lane_refusal(layer, lane: str, refusal) -> None:
+    """Record, at LOAD, that ``lane`` could not prepare for this module.
+
+    The route still serves -- the fallback produces the same bytes -- so the
+    route record says ``served`` and says so honestly.  What the record cannot
+    say is that the lane the artifact was built to exercise took nothing, and
+    a stderr warning is not a value a gate reads: 112 of those scrolled past
+    under four censuses that each reported ``problems: []`` (issue #104).
+    ``None`` clears the note, so a module whose lane prepared carries no stale
+    refusal from an earlier load in the same process.
+    """
+    try:
+        setattr(layer, LANE_REFUSAL_ATTR,
+                None if refusal is None else f"{lane}: {refusal}")
+    except Exception:  # noqa: BLE001 -- telemetry must never break a load
+        pass
+
+
+def read_lane_refusal(layer):
+    """The load-time lane refusal on ``layer``, or ``None``.
+
+    ``None`` covers both "the lane prepared" and "no lane was ever asked
+    for"; the two are told apart by the route record's decoder, which is the
+    field that says what actually ran.
+    """
+    return getattr(layer, LANE_REFUSAL_ATTR, None)
 
 
 def route_shape(x2, rows, cols) -> str:
