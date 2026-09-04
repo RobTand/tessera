@@ -91,6 +91,7 @@ __all__ = [
     "LAUNCH_FIELDS",
     "WINDOW_GEMV_SYMBOL",
     "MOE_GEMM_SYMBOL",
+    "moe_census_symbol_base",
     "regime_of_m",
     "route_launches",
     "launch_pairs",
@@ -489,6 +490,17 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
 def launch_pairs(route: str, **narrow) -> set:
     """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
     return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
+
+def moe_census_symbol_base(symbol: str) -> str:
+    """A routed launch entry point without the runtime-selected backend suffix.
+
+    Keep exact symbols in receipts. Only comparison removes the suffix; its
+    dependency-free home lets receipt replay run without importing torch or
+    the runtime route implementation.
+    """
+    return str(symbol).split(":", 1)[0]
+
 
 _BODIES = ("TCQ", "WINDOW")
 _REQUIRED = ("family", "grid", "body", "plane", "q256", "rows", "columns", "wire_bytes", "roles")

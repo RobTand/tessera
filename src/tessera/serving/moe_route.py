@@ -78,6 +78,7 @@ from ..moe_layout import W13_PROJECTIONS, MoePacked, unpack_moe_wires
 from .lane import MODE_RESIDENT, MODES
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_FP8, launch_pairs, route_launches,
+                     moe_census_symbol_base as census_symbol_base,
                      expert_role_declarations, parse_tessera_expert_blob,
                      validate_tessera_moe_scheme)
 from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
@@ -139,15 +140,6 @@ def census_expected(*, compiled: bool = False) -> dict:
                                  regime=regime, mode=MODE_RESIDENT)
             for regime in regimes}
 
-
-def census_symbol_base(symbol: str) -> str:
-    """The entry point in a record's ``symbol``, without the runtime's backend pick.
-
-    ``"vllm.fused_moe.modular_kernel:TRITON" -> "vllm.fused_moe.modular_kernel"``.
-    A symbol with no suffix comes back unchanged, so a record that named some
-    other entry point still fails the comparison it is fed to.
-    """
-    return str(symbol).split(":", 1)[0]
 
 #: The runtime's shard name -> (group, row block).  DERIVED from
 #: ``MOE_GROUP_SHARDS``, so the loader's dispatch and the sidecar's group

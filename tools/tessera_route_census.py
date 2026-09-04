@@ -203,7 +203,7 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
     """
     from tessera.serving.census import (
         CELL_AGREEMENT_SCHEMA, STRUCTURE_BY_RECORD_KIND, cell_launch_agreement)
-    from tessera.serving.moe_route import census_symbol_base
+    from tessera.serving.scheme import moe_census_symbol_base as census_symbol_base
 
     structures = sorted({STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind")), "unknown")
                          for records in records_by_phase.values()

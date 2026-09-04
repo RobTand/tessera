@@ -535,6 +535,10 @@ structure to the same lookup. Its symbol is compared without the backend suffix
 the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is
 vLLM's predicate over the kernels on the box, so which backend ran is kept in
 the receipt's histogram and is never pinned by an expectation of ours.
+The suffix comparison lives in dependency-free
+`scheme.moe_census_symbol_base`; the runtime route re-exports that helper.
+Receipt agreement therefore needs neither torch nor a vLLM import, including
+when comparing routed-MoE records in the pure CI population.
 
 And the stack stays **unattested** in the cell-agreement block.
 `census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
