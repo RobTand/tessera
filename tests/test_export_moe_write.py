@@ -376,6 +376,15 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
     assert record["structure"] == "routed_moe"
     assert len(record["roles"]) == EXPERTS * 3
     assert record["wire_stride"]["w13"] == w13_stride
+    # The record names the routed_moe cells that attest its rung (#135): the
+    # same cells the plan-time gate read, so the artifact says in its own
+    # bytes which attestation it rides.
+    from tessera.serving.contract import load_serving_contract
+    assert record["attested_by"] == [
+        cell["id"] for cell in load_serving_contract()["lane_eligibility"]["cells"]
+        if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "routed_moe"
+        and 1024 in cell["rungs_q256"]]
+    assert record["attested_by"], "the packaged contract attests E4M3 q1024 routed_moe"
 
 
 @cuda
@@ -441,3 +450,30 @@ def test_the_written_wires_decode_to_the_stock_expert_tile(tmp_path, monkeypatch
     assert prepared.w13_weight_scale.dtype == torch.float32
     assert torch.isfinite(prepared.w13_weight_scale).all()
     assert (prepared.w13_weight_scale > 0).all()
+
+
+# --------------------------------------------------------------------------
+# The stack's rung is gated against the cells that attest ITS structure (#135)
+# --------------------------------------------------------------------------
+
+
+def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_encode(
+        tmp_path, monkeypatch):
+    """q256 1536 is inside the E4M3 format row's ``reader_rate_range_q256`` --
+    the DENSE reader's -- and outside every ``routed_moe`` cell's
+    ``rungs_q256``.  The stack must be refused at plan time, by the cells'
+    names, before the first expert is encoded (this test never needs a GPU
+    for that reason).
+    """
+    from tessera.serving.contract import load_serving_contract
+
+    routed = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
+              if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "routed_moe"]
+    assert routed and all(1536 not in cell["rungs_q256"] for cell in routed)
+    with pytest.raises(SystemExit) as caught:
+        _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 1536}})
+    message = str(caught.value)
+    assert STACK in message, message
+    for cell in routed:
+        assert cell["id"] in message, message
+    assert not (tmp_path / "out").exists()
