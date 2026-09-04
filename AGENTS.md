@@ -140,6 +140,9 @@ person or agent — changing the code.
   `tools/impacted_tests.py --ref master...HEAD` computes which tests those
   are rather than leaving it to judgement: it walks the import graph, inverts
   the edges, and returns everything reverse-reachable from what you changed.
+  A PrismaBuild snapshot is parentless, so give it the exact fetched base as
+  the left endpoint; when no merge base exists the selector records and uses a
+  direct `BASE..HEAD` tree comparison instead.
   Run it **in your own worktree** -- it reads the tree it is standing in, and
   a branch analysed from elsewhere has unreadable edges, which it says. Trust
   its `verdict`: `narrowed` means run the listed files, `full` means it found
