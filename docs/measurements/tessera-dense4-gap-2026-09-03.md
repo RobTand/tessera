@@ -475,6 +475,35 @@ changed code -- `test_compensate`, `test_export`,
 `test_ldlq_window`, `test_merge_guard`, `test_serving_export_gate` -- run
 **181 passed, 1 skipped** on the branch (sparky, 173.77 s).
 
+## What this licenses, and what it does not
+
+**It does not license flipping `DEFAULT_LDLQ_BLOCK` to 8.** The measurement is
+one model -- dense Qwen3-0.6B -- and the E2M1 route's shipped wins are on GLM's
+experts, where `block_penalty` says the same block is worth 0.14% rather than
+14.7%. A global 8 would also cost 4x the segments, on a loop that is
+launch-bound (below). The promotion gate for a default change to the LUT plane
+includes a six-expert GLM geomean no worse than 1.00x, and no GLM arm was run
+here.
+
+**What it does license** is the mode this branch adds: `ldlq_block` may be a
+budget, the budget is resolved per unit from that unit's own Hessian at
+`floor=1`, and it stays opt-in with the default untouched. The dense-attention
+units that this serve says carry the win are exactly the ones a budget gives a
+small block to, and the GLM experts it must not hurt are exactly the ones it
+leaves coarse -- which is an argument from the price table, not from a serve,
+and is labelled that way below.
+
+**The next measurement, in order of value:**
+
+1. `b4`, already encoding on the same driver (`[100/196]` at 19,272 s when this
+   was written, log `ldlq-block-serve/export_b4.log`), which will say whether
+   the served curve keeps improving below 8 or turns over as the weight-space
+   sweep says it does at `b2`/`b1`.
+2. A GLM six-expert arm at the budget, which is the promotion gate.
+3. The launch-bound segment cost, which decides whether any of this is
+   affordable at scale.
+
+
 ## What remains unmeasured
 
 * **GLM.** Every number above is dense Qwen3-0.6B. The E2M1 route's wins are
@@ -533,7 +562,8 @@ counterfactual quoted above is the one run with the test file under
 | the mechanism, the role table and the `comp/gptq` ordering | `docs/measurements/tessera-dense4-residual-mechanism-2026-09-03.md` |
 | the below-16 sweep | `/mnt/shared/tessera-runs/ldlq-block/dense4_below16.json` (tessera#60) |
 | the 49-unit b8/b32 censuses | `/mnt/shared/tessera-runs/ldlq-block/census_block_{8,32}.json` (tessera#60) |
-| the served arms | `/mnt/shared/tessera-runs/ldlq-block-serve/` (`muse/ts-60-serve`, exported at `82cdf513`) |
+| the served arms and the bracket | `/mnt/shared/tessera-runs/ldlq-block-serve/` (`muse/ts-60-serve`, exported at `82cdf513`); compares `kl_b32a_b8.json`, `kl_b8.json`, `kl_b32b_b8.json` and their `.x` second-teacher scorings |
+| the serve driver and its bracket order | `/home/rob/tmp/ts60_drive.sh`, `experiments/ldlq_block_serve_ab.sh` (`b32a -> candidates -> b32b`) |
 | the derived-block price table | `experiments/dense4_block_budget_price.py` |
 | the byte-identity check, and the two pairs it produced | `experiments/dense4_block_byte_identity.py`; `experiments/dense4_block_byte_identity_pair.sh`; results `/mnt/shared/tessera-runs/ldlq-block/ts12_byte_identity{,_pair}.json` |
 | the wire drift between the 2026-09-02 artifact and `82cdf513` | `/mnt/shared/tessera-runs/ldlq-block/ts12_wire_0902_vs_82cdf51.json` (69 of 112 `wire_bytes` blobs) |
