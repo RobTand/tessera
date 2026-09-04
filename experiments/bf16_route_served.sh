@@ -133,7 +133,7 @@ for Q in "${@:-1792}"; do
       echo "=== census R=$R $MODE/$REGIME  $(date -Is)"
       TESSERA_SERVE_MODE=$MODE experiments/tessera_plugin_run.sh \
         -e TESSERA_SERVE_MODE="$MODE" -v /mnt/shared:/mnt/shared -v "$RUNS":"$RUNS" -- \
-        "python3 tools/tessera_route_census.py '$PLUG' '$RUNS/census-$ARM-$MODE-$REGIME.json' --tessera-commit $HEAD_COMMIT $FLAG" \
+        "python3 tools/tessera_route_census.py '$PLUG' '$RUNS/census-$ARM-$MODE-$REGIME.json' --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" --tessera-commit $HEAD_COMMIT $FLAG" \
         || { echo "census FAILED for $ARM/$MODE/$REGIME"; exit 3; }
     done
   done

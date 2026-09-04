@@ -20,7 +20,10 @@ was filed on refuse it, once per module.
 
 The rung per module is the one fact a route record does not carry, so it is
 read from the checkpoint's own ``config_groups`` -- the same place the census
-tool reads it from during a serve.  Nothing here imports torch or vLLM.
+tool reads it from during a serve. Lane schema v5 also requires the receipt's
+explicit image and execution mode: historical receipts without that context
+remain unattested, including under the negative control. Nothing here imports
+torch or vLLM.
 """
 from __future__ import annotations
 
@@ -33,7 +36,25 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.serving.census import cell_launch_agreement          # noqa: E402
 from tessera.serving.contract import (                            # noqa: E402
-    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
+    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract,
+    require_runtime_image, EXECUTION_MODES)
+
+
+def replay_runtime_context(receipt: dict) -> dict:
+    """Read measured scope without inventing context for historical receipts."""
+    runtime = receipt.get("runtime")
+    if runtime is None:
+        return {"runtime_image": None, "execution_mode": None}
+    if not isinstance(runtime, dict) or set(runtime) != {"image", "execution_mode"}:
+        raise ValueError("receipt.runtime must name image and execution_mode")
+    image = require_runtime_image(runtime["image"], "receipt.runtime.image")
+    execution_mode = runtime["execution_mode"]
+    if execution_mode not in EXECUTION_MODES:
+        raise ValueError("receipt.runtime.execution_mode is unsupported")
+    compiled = receipt.get("compiled")
+    if not isinstance(compiled, bool) or compiled != (execution_mode == "compiled"):
+        raise ValueError("receipt.runtime.execution_mode disagrees with receipt.compiled")
+    return {"runtime_image": image, "execution_mode": execution_mode}
 
 
 def rungs_by_module(checkpoint: pathlib.Path) -> dict:
@@ -60,17 +81,13 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--census", required=True, type=pathlib.Path,
-                    help="a tessera.serving.route_census/1 receipt")
+                    help="a recorded Tessera route census, including its runtime scope")
     ap.add_argument("--checkpoint", required=True, type=pathlib.Path,
                     help="the checkpoint it was served from (read for its rungs)")
     args = ap.parse_args()
 
     receipt = json.loads(args.census.read_text())
-    if receipt.get("compiled"):
-        print("this receipt is COMPILED: one graph serves every M and stamps both "
-              "launches as one `a+b` pair, which no cell publishes. The join is "
-              "eager-only and there is nothing here to replay.")
-        return 2
+    runtime = replay_runtime_context(receipt)
     records = receipt["records"]
     cells = load_serving_contract()["lane_eligibility"]["cells"]
     platform = "sm_{}{}".format(*receipt["device"]["capability"])
@@ -86,7 +103,7 @@ def main() -> int:
     print("\n=== the shipped table ===")
     block, problems = cell_launch_agreement(
         records, cells=cells, phase_regimes=CENSUS_PHASE_REGIMES, platform=platform,
-        rungs_by_module=rungs, families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
+        rungs_by_module=rungs, families_by_route=PAYLOAD_FAMILY_BY_ROUTE, **runtime)
     print(json.dumps(block, indent=1))
     print(f"problems: {problems}")
 
@@ -103,10 +120,13 @@ def main() -> int:
     print("\n=== the pre-#111 claim (decode = the materialised pair), same records ===")
     stale_block, stale_problems = cell_launch_agreement(
         records, cells=stale, phase_regimes=CENSUS_PHASE_REGIMES, platform=platform,
-        rungs_by_module=rungs, families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
+        rungs_by_module=rungs, families_by_route=PAYLOAD_FAMILY_BY_ROUTE, **runtime)
     print(f"agrees: {stale_block['agrees']}  problems: {len(stale_problems)}")
-    print(f"first : {stale_problems[0] if stale_problems else '(none -- the control failed)'}")
+    print(f"first : {stale_problems[0] if stale_problems else '(none)'}")
 
+    if block["agrees"] is None:
+        print("\nVERDICT: UNATTESTED (runtime scope or observation is not covered)")
+        return 2
     ok = block["agrees"] is True and not problems and stale_problems
     print(f"\nVERDICT: {'ok' if ok else 'FAILED'}")
     return 0 if ok else 1

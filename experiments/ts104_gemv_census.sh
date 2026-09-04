@@ -35,6 +35,7 @@ run_one() {  # name checkpoint extra...
     -e TESSERA_SERVE_MODE=streamed \
     -v "$RUNS":"$RUNS" -v /mnt/shared:/mnt/shared:ro -- \
     "python3 tools/tessera_route_census.py '$model' '$out' --expect-modules 112 \
+       --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" \
        --require-lane $LANE --tessera-commit $COMMIT $*" 2>&1 | tee "$log"
   echo "census $name exit: ${PIPESTATUS[0]}  receipt: $([ -f "$out" ] && echo present || echo absent)"
 }

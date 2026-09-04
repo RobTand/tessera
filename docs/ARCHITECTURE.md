@@ -465,6 +465,16 @@ those older census files did not each record a digest. Existing cell IDs stay
 stable, with an optional hash of canonical runtime scope to distinguish
 disjoint variants; IDs must be unique, and explicit fields decide eligibility.
 
+The census requires `--runtime-image` as an exact digest reference, checked
+before loading vLLM. Its existing `--compiled` flag determines both the
+recorded execution mode and `LLM(enforce_eager=...)`. The plugin wrapper
+injects its selected image after caller-supplied Docker environment arguments;
+shell census callers pass that container value instead of reconstructing an
+image from the global pin. Historical tag callers must supply an exact digest
+for new censuses. Offline replay reads only the receipt's explicit runtime
+context: missing context remains unattested, and a mode contradicting the
+receipt's `compiled` field is refused.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the
 route records come off `named_modules()`, the declared targets come off
@@ -594,10 +604,11 @@ The following are rules rather than measured values:
   that context with the block. Compiled dense agreement remains unsupported
   because its trace combines launches as `a+b`; a compiled routed single-launch
   observation may be compared with its explicitly scoped cell.
-  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline, so
-  the R1024 evidence is reproducible without a GPU
-  (`/home/rob/tessera-runs/ts111/replay-R1024.txt`: 112 of 112 in both phases,
-  and 112 refusals when the pre-#111 value is put back).
+  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline under
+  its recorded runtime context. The historical R1024 replay at
+  `/home/rob/tessera-runs/ts111/replay-R1024.txt` recorded 112 of 112 in both
+  phases and 112 refusals under the pre-#111 negative control; a source receipt
+  missing explicit runtime context now remains unattested under v5.
 
 `TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
 1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch

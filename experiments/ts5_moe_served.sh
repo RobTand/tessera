@@ -131,6 +131,7 @@ mkdir -p "$CENSUS_LOCAL"
   -e TESSERA_SERVE_MODE="$MODE" \
   -v /mnt/shared:/mnt/shared -v "$CENSUS_LOCAL":/census -- \
   "python3 tools/tessera_route_census.py '$WIRE' /census/census.json \
+     --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" \
      --tessera-commit $COMMIT --gpu-memory-utilization ${CENSUS_MEM_UTIL} \
      --max-model-len 1024" 2>&1 | tee -a "$OUT/census.log"
 rc_census=${PIPESTATUS[0]}
