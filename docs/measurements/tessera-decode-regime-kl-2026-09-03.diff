@@ -1,0 +1,676 @@
+The change issue #102 made to the served-KL instrument, vendored for provenance.
+
+kl_tool.py and kl_estimator.py live at /home/rob/dq-runs/ -- ONE shared,
+unversioned instrument used by PrismaQuant and by every Tessera serving
+receipt, deliberately not vendored into either repository so that a metric
+cannot fork per project.  Nothing there is under version control, so this diff
+is the only record of what changed, and the receipt beside it
+(tessera-decode-regime-kl-2026-09-03.md) is the only record of why.
+
+Apply/inspect against the live files:
+    diff -u <this file's before-state> /home/rob/dq-runs/kl_tool.py
+The pre-change files hash to
+    kl_tool.py      8e2d660045249a3279c14184fecb6b8209bae96a92da3e829ef931c68d18d15e
+    kl_estimator.py 7a56151b2d7d880dc14dfd25271cca0216f87080287c67c03893dbcc0d7eb323
+and the post-change files to
+    kl_tool.py      a35550cf0e695f6657ddfee9358f24d72200c1f0f5a3186e62433fdbf66b3bd1
+    kl_estimator.py 0014175ff71e311f7d2c388f26548b6e391c2a196135cff3761631c0c5fede40
+
+tests/test_kl_tool_decode_regime.py in this repo is what checks it; point
+KL_TOOL_DIR at a pre-change copy and every test in that file fails.
+
+--- a/kl_estimator.py
++++ b/kl_estimator.py
+@@ -86,6 +86,52 @@
+ #: "top-20" is never again a bare literal buried in a request body.
+ LEGACY_TOP_K = 20
+ 
++# --------------------------------------------------------------------------
++# Regime: WHICH FORWARD produced a scored position (issue tessera#102).
++# --------------------------------------------------------------------------
++#: ``prefill``  -- every scored position comes from one many-row forward over
++#:                 the whole chunk (``prompt_logprobs`` over a 512-token
++#:                 prompt).  This is what the tool has always measured.
++#: ``decode``   -- every scored position comes from a ONE-ROW forward: the
++#:                 chunk's prefix is fed incrementally with prefix caching on,
++#:                 so the scored token's logits are produced by an M=1 forward,
++#:                 which is the only regime in which a decode-only kernel runs
++#:                 at all.
++#:
++#: The two are DIFFERENT METRICS over the same corpus: same weights, same
++#: tokens, different executed kernels, and in decode a coarser position set.
++#: They must never be compared to each other, which is why the regime rides
++#: inside ``metric_identity`` rather than beside it, and why ``kl_tool compare``
++#: refuses a cross-regime pair outright.
++REGIME_PREFILL = "prefill"
++REGIME_DECODE = "decode"
++REGIMES = (REGIME_PREFILL, REGIME_DECODE)
++#: A dump written before the regime field existed was necessarily a prefill
++#: dump -- the tool had no other mode -- so a missing field reads as prefill
++#: and every frozen payload on disk stays comparable with a fresh one.
++DEFAULT_REGIME = REGIME_PREFILL
++
++
++def payload_regime(meta: Mapping[str, Any]) -> str:
++    """The regime a dump payload declares; ``prefill`` when it declares none.
++
++    One reader for every consumer (``compare``, ``fingerprint``, a receipt
++    script), so "missing means prefill" is stated once and cannot drift into
++    two spellings that disagree about a legacy payload.
++    """
++    regime = (meta or {}).get("regime")
++    if regime is None:
++        return DEFAULT_REGIME
++    if isinstance(regime, str):
++        name = regime
++    else:
++        name = regime.get("name", DEFAULT_REGIME)
++    if name not in REGIMES:
++        raise ValueError(
++            f"payload declares regime {name!r}, which is not one of {REGIMES}; "
++            "refusing to guess which forward produced its positions")
++    return name
++
+ #: Declared floor on a student's per-token probability, used ONLY for the
+ #: upper end of the reported interval.  Justification: a served fp32 softmax
+ #: over a ~1.5e5 vocabulary with logits inside the fp16/bf16 representable
+@@ -291,7 +337,10 @@
+ def metric_identity(*, teacher_label: str, top_k: int | None, full_vocab: bool,
+                     partition: str, positions: int, corpus_sha256: str,
+                     corpus_tokens: int, tokenizer_sha256: str,
+-                    unchecked_alignment: bool = False) -> dict[str, Any]:
++                    unchecked_alignment: bool = False,
++                    regime: str = DEFAULT_REGIME) -> dict[str, Any]:
++    if regime not in REGIMES:
++        raise ValueError(f"regime must be one of {REGIMES}, got {regime!r}")
+     if full_vocab:
+         support = "full-vocab"
+     else:
+@@ -306,6 +355,11 @@
+         "corpus_sha256": corpus_sha256,
+         "corpus_tokens": corpus_tokens,
+         "tokenizer_sha256": tokenizer_sha256,
++        # WHICH FORWARD produced these positions.  Inside the identity for the
++        # same reason the support is: a decode-regime number and a
++        # prefill-regime number over one corpus look identical on a page and
++        # are not the same measurement.
++        "regime": regime,
+         # Rides INSIDE the identity, not beside it: the identity record is the
+         # part that gets pasted into a doc, and a caveat that does not travel
+         # with the number is a caveat that will be dropped.
+@@ -319,6 +373,7 @@
+     return (prefix
+             + f"metric={identity['name']}  support={identity['support']}  "
+             f"partition={identity['partition']}  bound={identity['bound']}  "
++            f"regime={identity.get('regime', DEFAULT_REGIME)}  "
+             f"positions={identity['positions']}  "
+             f"corpus={identity['corpus_sha256'][:12]}"
+             f"({identity['corpus_tokens']} tok)  "
+@@ -332,4 +387,6 @@
+     "sha256_bytes", "sha256_file", "canonical_sha256", "tokenizer_identity",
+     "tokenizer_identities_agree", "lumped_kl", "legacy_floor_substituted_kl",
+     "exact_kl_full", "metric_identity", "metric_line",
++    "REGIMES", "REGIME_PREFILL", "REGIME_DECODE", "DEFAULT_REGIME",
++    "payload_regime",
+ ]
+--- a/kl_tool.py
++++ b/kl_tool.py
+@@ -36,6 +36,41 @@
+ convention; the tool will print whatever the dump recorded, and a dump with no
+ label refuses to be compared.
+ 
++REGIME: WHICH FORWARD PRODUCED THE POSITION (2026-09-03, tessera#102)
++---------------------------------------------------------------------
++``dump`` has always scored **prompt positions**: ``max_tokens: 1`` with
++``prompt_logprobs: K`` over a 512-token prompt, so every scored position comes
++out of one 512-row prefill forward.  Any serving lane that only runs at small
++M is therefore invisible to the number: a GEMV kernel with a max batch of 8
++never executes on a scored forward, and a two-arm A/B over such a kernel
++returns a *bit-identical* null -- clean, precise, and evidence about the
++prefill path only.  That is worse than no instrument, because a null reads
++like a strong positive result.
++
++``--regime decode`` is the second, opt-in mode.  It feeds each chunk's prefix
++incrementally with vLLM's prefix cache on, so every scored position is an
++**M = 1** forward:
++
++* one warm-up request per chunk over the whole chunk fills the prefix cache
++  (that request IS a prefill, and is the only prefill the regime performs);
++* then one request per scored position, ``prompt = chunk[:L]`` with
++  ``(L - 1) % stride == 0``, ``max_tokens: 1`` and ``logprobs: K``, so the
++  serve computes exactly ONE new row and samples from it;
++* ``stride`` must equal the serve's KV block size (16 by default), because the
++  prefix cache hits on whole blocks only;
++* the M = 1 claim is ENFORCED, not asserted: the serve's own
++  ``usage.prompt_tokens_details.cached_tokens`` must account for every prompt
++  token but one, on every scored request, or the dump refuses.  That field
++  requires ``--enable-prompt-tokens-details`` on the serve, so a serve without
++  it produces no dump rather than an unverified one.
++
++It is a **NEW METRIC**, not a better one: the same corpus and the same
++conditioning, a stride-subsample of the prefill regime's positions, and a
++different executed kernel.  Prefill-regime and decode-regime numbers are
++therefore not comparable, ``compare`` refuses a cross-regime pair outright
++(no ``--allow-mismatch`` escape), and the regime rides inside the metric
++identity that gets pasted next to the number.
++
+ SERVING SURFACES
+ ----------------
+ ``--runtime vllm`` uses vLLM's ``prompt_logprobs`` extension.  ``--runtime
+@@ -53,10 +88,12 @@
+ 
+ import argparse
+ from datetime import datetime, timezone
++import hashlib
+ import json
+ import math
+ import os
+ from pathlib import Path
++import re
+ import socket
+ import sys
+ import time
+@@ -72,16 +109,21 @@
+     CONTRACT_SEQLEN,
+     CONTRACT_TOKENS,
+     CORPUS_SCHEMA,
++    DEFAULT_REGIME,
+     DEFAULT_STUDENT_PROB_FLOOR,
+     DUMP_SCHEMA,
+     LEGACY_DUMP_SCHEMA,
+     LEGACY_TOP_K,
++    REGIME_DECODE,
++    REGIME_PREFILL,
++    REGIMES,
+     canonical_sha256,
+     exact_kl_full,
+     legacy_floor_substituted_kl,
+     lumped_kl,
+     metric_identity,
+     metric_line,
++    payload_regime,
+     sha256_file,
+     tokenizer_identities_agree,
+     tokenizer_identity,
+@@ -95,6 +137,22 @@
+ 
+ PAD_ID = -1
+ 
++#: vLLM's prefix cache hits on WHOLE KV blocks, so a request whose prefix is
++#: not block-aligned recomputes the tail of its last block -- up to
++#: ``block_size`` rows, which is exactly the regime the decode mode exists to
++#: avoid.  The stride is therefore the serve's KV block size, not a taste:
++#: 16 is vLLM's default and the minimum FlashAttention accepts.  A wrong value
++#: is caught per request by the cached-token check, not carried silently.
++DECODE_STRIDE_DEFAULT = 16
++
++#: A generation-logprobs response keys its ``top_logprobs`` dict by token TEXT
++#: unless the request asks for ids (``return_tokens_as_token_ids``), and token
++#: text is lossy: two ids can decode to one string and non-UTF8 byte pieces
++#: come back as replacement characters.  The decode regime therefore requires
++#: id keys and refuses anything else, rather than building a plausible wrong
++#: distribution out of text.
++DECODE_TOKEN_ID_KEY = re.compile(r"^token_id:(\d+)$")
++
+ 
+ # ==========================================================================
+ # corpus contract
+@@ -300,9 +358,210 @@
+     return out
+ 
+ 
++def _decode_warmup_body(model: str, prompt: list[int]) -> dict:
++    """The prefix-cache fill: one many-row forward, nothing scored off it.
++
++    No logprobs are requested, so this request cannot contribute a position to
++    the dump even by accident; it exists only so the NEXT requests hit whole
++    cached blocks.  It is also the one prefill forward the decode regime
++    performs per chunk, which is what makes the served prefill count
++    explainable (issue tessera#102 acceptance (a)).
++    """
++    return {"model": model, "prompt": prompt, "max_tokens": 1,
++            "temperature": 0.0, "add_special_tokens": False}
++
++
++def _decode_request_body(model: str, prompt: list[int], top_k: int) -> dict:
++    """One scored position: the distribution the serve samples the next token
++    from, over a prefix whose every token but the last is already cached."""
++    return {"model": model, "prompt": prompt, "max_tokens": 1,
++            "temperature": 0.0, "logprobs": top_k,
++            "return_tokens_as_token_ids": True,
++            "add_special_tokens": False}
++
++
++def _decode_rows_computed(payload: dict, *, prompt_len: int, stride: int,
++                          index: int) -> int:
++    """Rows the serve actually forwarded for this request, from ITS accounting.
++
++    ``usage.prompt_tokens_details.cached_tokens`` is the serve's own count of
++    prompt tokens served from the prefix cache; ``prompt_tokens - cached`` is
++    the number of rows the model ran.  Reading it is the difference between a
++    decode regime that is measured and one that is hoped for -- and the
++    failure it catches (a stride that is not the KV block size) is silent
++    otherwise: the dump would still be full of numbers, produced by up to
++    ``block_size``-row forwards.
++    """
++    usage = payload.get("usage") or {}
++    details = usage.get("prompt_tokens_details") or {}
++    cached = details.get("cached_tokens")
++    prompt_tokens = usage.get("prompt_tokens")
++    if prompt_tokens is None:
++        raise SystemExit(
++            "the serve returned no `usage.prompt_tokens` for a decode-regime "
++            "request; the regime cannot be verified and this dump would be an "
++            "assertion, not a measurement")
++    if cached is None:
++        raise SystemExit(
++            "the serve returned no `usage.prompt_tokens_details.cached_tokens`.\n"
++            "  * vLLM only fills that field when the serve was started with "
++            "`--enable-prompt-tokens-details`.\n"
++            "  * without it the M=1 claim of --regime decode cannot be checked "
++            "against the serve's own accounting, and an unchecked decode "
++            "regime is exactly the silent, directional failure this mode "
++            "exists to remove. Restart the serve with the flag.")
++    if int(prompt_tokens) != prompt_len:
++        raise SystemExit(
++            f"position {index}: the serve counted {prompt_tokens} prompt "
++            f"tokens, the request sent {prompt_len}. Check "
++            "`add_special_tokens`: a serve that prepends its own token is "
++            "scoring a different context than the corpus contract names")
++    rows = int(prompt_tokens) - int(cached)
++    if rows != 1:
++        raise SystemExit(
++            f"position {index}: the serve forwarded {rows} rows, not 1 "
++            f"({prompt_tokens} prompt tokens, {cached} from the prefix cache).\n"
++            f"  * --decode-stride is {stride}; it must equal the serve's KV "
++            "block size, because the prefix cache hits on whole blocks only.\n"
++            "  * or prefix caching is off on this serve (vLLM: "
++            "`--no-enable-prefix-caching` disables it), in which case every "
++            "request recomputes its whole prefix.\n"
++            "Refusing: a dump taken at M>1 is a prefill-regime dump wearing a "
++            "decode-regime label.")
++    return rows
++
++
++def _decode_scored_position(payload: dict, *, index: int) -> dict[int, float]:
++    """The scored distribution off a generation-logprobs response, by token id."""
++    choice = payload["choices"][0]
++    lp = choice.get("logprobs")
++    if not lp:
++        raise SystemExit(
++            f"position {index}: the serve returned no `logprobs` on the "
++            "generated token. --regime decode scores the SAMPLED position "
++            "(the only position an M=1 forward produces); the request asked "
++            "for `logprobs: K` and got nothing back.")
++    tops = lp.get("top_logprobs")
++    if not tops or not tops[0]:
++        raise SystemExit(
++            f"position {index}: the serve returned `logprobs` with no "
++            "`top_logprobs`; there is no distribution to score")
++    out: dict[int, float] = {}
++    for key, value in tops[0].items():
++        match = DECODE_TOKEN_ID_KEY.match(str(key))
++        if match is None:
++            raise SystemExit(
++                f"position {index}: the serve keyed its top_logprobs by token "
++                f"TEXT ({key!r}), not by token id.\n"
++                "  * the request sends `return_tokens_as_token_ids: true`; a "
++                "serve that ignores it is too old for this mode (vLLM also "
++                "accepts the server flag --return-tokens-as-token-ids).\n"
++                "  * refusing rather than decoding text back to ids: that map "
++                "is not injective, so the result would be a plausible wrong "
++                "distribution with no error anywhere.")
++        out[int(match.group(1))] = float(value)
++    return out
++
++
++def _decode_sweep(args: argparse.Namespace, chunks: list[list[int]],
++                  bos: int | None, top_k: int, requests_mod) -> tuple[
++                      list[dict[int, float]], dict[str, object]]:
++    """The decode-regime sweep: warm the prefix cache, then score at M=1.
++
++    Returns the scored rows and the regime record that travels in the dump's
++    metadata.  Requests are issued STRICTLY SEQUENTIALLY and that is part of
++    the regime's definition: two in flight at once would be batched into one
++    many-row forward by the serve's scheduler, which is the very thing being
++    avoided.
++    """
++    stride = int(args.decode_stride)
++    if stride < 1:
++        raise SystemExit("--decode-stride must be >= 1")
++    rows: list[dict[int, float]] = []
++    indices: list[list[int]] = []
++    cached_seen: list[int] = []
++    warmups = 0
++    t0 = time.time()
++    for ci, ch in enumerate(chunks):
++        full = ([bos] + list(ch)) if bos is not None else list(ch)
++        # (1) the prefix-cache fill.  One prefill forward per chunk.
++        resp = requests_mod.post(args.url,
++                                 json=_decode_warmup_body(args.model, full),
++                                 timeout=args.timeout)
++        if resp.status_code != 200:
++            raise SystemExit(f"chunk {ci} warm-up: HTTP {resp.status_code}: "
++                             f"{resp.text[:400]}")
++        warmups += 1
++        # (2) the scored positions.  L is the prefix length; the scored
++        # distribution predicts token L, so L < len(full) keeps every decode
++        # position a position the prefill regime also scores -- the two regimes
++        # then differ in the FORWARD, not in the conditioning.
++        chunk_idx: list[int] = []
++        for L in range(1, len(full), stride):
++            body = _decode_request_body(args.model, full[:L], top_k)
++            r = requests_mod.post(args.url, json=body, timeout=args.timeout)
++            if r.status_code != 200:
++                raise SystemExit(f"chunk {ci} prefix {L}: HTTP "
++                                 f"{r.status_code}: {r.text[:400]}")
++            payload = r.json()
++            _decode_rows_computed(payload, prompt_len=L, stride=stride,
++                                  index=len(rows))
++            usage = payload.get("usage") or {}
++            cached_seen.append(int((usage.get("prompt_tokens_details")
++                                    or {}).get("cached_tokens")))
++            rows.append(_decode_scored_position(payload, index=len(rows)))
++            chunk_idx.append(L)
++        indices.append(chunk_idx)
++        print(f"[dump] chunk {ci+1}/{len(chunks)} decode positions="
++              f"{len(chunk_idx)} k={len(rows[-1])} "
++              f"{time.time()-t0:.1f}s", flush=True)
++    per_chunk = sorted({len(i) for i in indices})
++    regime = {
++        "name": REGIME_DECODE,
++        "definition": (
++            "every scored position is an M=1 forward: the chunk's prefix is "
++            "fed incrementally with the serve's prefix cache on, and the "
++            "scored distribution is the one the serve sampled the next token "
++            "from"),
++        "request": ("max_tokens=1, logprobs=K, temperature=0, "
++                    "return_tokens_as_token_ids=true, sequential"),
++        "stride": stride,
++        "stride_note": ("must equal the serve's KV block size; the prefix "
++                        "cache hits on whole blocks only"),
++        "prefix_lengths": indices,
++        "positions_per_chunk": per_chunk,
++        "scored_positions": len(rows),
++        "warmup_prefills": warmups,
++        "warmup_note": ("one many-row prefill per chunk, scoring nothing: the "
++                        "only prefill forward this regime performs"),
++        "rows_per_scored_forward": 1,
++        "rows_verified_by": ("usage.prompt_tokens_details.cached_tokens on "
++                             "every scored request"),
++        "cached_tokens_min": min(cached_seen) if cached_seen else None,
++        "cached_tokens_max": max(cached_seen) if cached_seen else None,
++        "positions_are_subset_of_prefill": True,
++        "comparability": ("NOT comparable to a prefill-regime dump: same "
++                          "corpus and conditioning, different executed "
++                          "kernels and a coarser position set"),
++    }
++    return rows, regime
++
++
+ def cmd_dump(args: argparse.Namespace) -> int:
+     import requests
+ 
++    if args.regime not in REGIMES:
++        raise SystemExit(f"--regime must be one of {REGIMES}")
++    if args.regime == REGIME_DECODE:
++        if args.legacy_top20:
++            raise SystemExit(
++                "--legacy-top20 reproduces the v1 PREFILL instrument byte for "
++                "byte; there is no legacy decode-regime dump to reproduce")
++        if args.runtime != "vllm":
++            raise SystemExit(
++                f"--regime decode is implemented for the vLLM surface only "
++                f"(got --runtime {args.runtime}): it depends on vLLM's prefix "
++                "cache and on its cached-token accounting to prove M=1")
+     if args.role == "teacher" and not args.teacher_label:
+         raise SystemExit(
+             "a teacher dump must carry --teacher-label (e.g. FP8-source, "
+@@ -391,29 +650,44 @@
+     # --- the sweep ----------------------------------------------------------
+     rows: list[dict[int, float]] = []
+     t0 = time.time()
+-    for ci, ch in enumerate(chunks):
+-        prompt = ([bos] + list(ch)) if bos is not None else list(ch)
+-        body = _request_body(args.runtime, args.model, prompt, top_k)
+-        resp = requests.post(args.url, json=body, timeout=args.timeout)
+-        if resp.status_code != 200:
+-            raise SystemExit(f"chunk {ci}: HTTP {resp.status_code}: "
+-                             f"{resp.text[:400]}")
+-        positions = _extract_positions(args.runtime, resp.json())
+-        got = [p for p in positions if p]
+-        if not got:
+-            raise SystemExit(f"chunk {ci}: serve returned zero scored positions")
+-        rows.extend(positions)
+-        print(f"[dump] chunk {ci+1}/{len(chunks)} "
+-              f"positions={len(got)} k={len(next(iter(got)))} "
+-              f"{time.time()-t0:.1f}s", flush=True)
++    if args.regime == REGIME_DECODE:
++        rows, regime_meta = _decode_sweep(args, chunks, bos, top_k, requests)
++    else:
++        for ci, ch in enumerate(chunks):
++            prompt = ([bos] + list(ch)) if bos is not None else list(ch)
++            body = _request_body(args.runtime, args.model, prompt, top_k)
++            resp = requests.post(args.url, json=body, timeout=args.timeout)
++            if resp.status_code != 200:
++                raise SystemExit(f"chunk {ci}: HTTP {resp.status_code}: "
++                                 f"{resp.text[:400]}")
++            positions = _extract_positions(args.runtime, resp.json())
++            got = [p for p in positions if p]
++            if not got:
++                raise SystemExit(f"chunk {ci}: serve returned zero scored positions")
++            rows.extend(positions)
++            print(f"[dump] chunk {ci+1}/{len(chunks)} "
++                  f"positions={len(got)} k={len(next(iter(got)))} "
++                  f"{time.time()-t0:.1f}s", flush=True)
++        regime_meta = {
++            "name": REGIME_PREFILL,
++            "definition": ("every scored position comes from ONE many-row "
++                           "forward over the whole chunk"),
++            "request": "max_tokens=1, prompt_logprobs=K over the full chunk",
++            "rows_per_scored_forward": "the chunk length",
++            "comparability": ("the regime every dump before 2026-09-03 was "
++                              "taken in; a payload carrying no regime field "
++                              "is one of these"),
++        }
+ 
+     scored = [r for r in rows if r]
+-    if corpus_meta.get("scored_positions") is not None:
+-        if len(scored) != corpus_meta["scored_positions"]:
+-            raise SystemExit(
+-                f"contract declares {corpus_meta['scored_positions']} scored "
+-                f"positions, serve produced {len(scored)}"
+-            )
++    declared = (regime_meta.get("scored_positions")
++                if args.regime == REGIME_DECODE
++                else corpus_meta.get("scored_positions"))
++    if declared is not None and len(scored) != declared:
++        raise SystemExit(
++            f"the {args.regime} regime declares {declared} scored "
++            f"positions, serve produced {len(scored)}"
++        )
+ 
+     if args.legacy_top20 and args.out.endswith(".json"):
+         # v1 wire shape, byte-comparable with the frozen dumps.
+@@ -438,6 +712,12 @@
+         "schema": DUMP_SCHEMA,
+         "role": args.role,
+         "teacher_label": args.teacher_label,
++        # WHICH FORWARD produced these positions.  Stamped on both regimes,
++        # including the historical one: "no regime field" has to keep meaning
++        # prefill for the payloads already frozen on disk, and a field that
++        # only appears on the new mode would make that an implicit rule
++        # instead of a declared one.
++        "regime": regime_meta,
+         "metric": {
+             "requested_top_k": top_k,
+             "returned_k_max": int(k_max),
+@@ -462,7 +742,8 @@
+         "elapsed_s": time.time() - t0,
+     }
+     write_payload(args.out, meta, ids_a, lps_a)
+-    print(f"dumped {len(scored)} positions x k<={k_max} -> {args.out}")
++    print(f"dumped {len(scored)} positions x k<={k_max} "
++          f"({args.regime} regime) -> {args.out}")
+     print(f"  top-K coverage: min={cov.min():.4f} mean={cov.mean():.4f}"
+           f"   (1 - coverage is the teacher/student mass this K cannot see)")
+     return 0
+@@ -486,6 +767,30 @@
+     else:
+         teacher_meta, t_ids, t_lps = read_payload(args.teacher)
+ 
++    # ---- the regime gate: UNCONDITIONAL -----------------------------------
++    # Not an entry in `problems`, and deliberately not reachable by
++    # --allow-mismatch.  Everything in `problems` is an alignment doubt the
++    # caller may accept and stamp; a cross-regime pair is not a doubt, it is
++    # two different metrics.  The prefill regime scores a 512-row forward and
++    # the decode regime an M=1 forward: the executed kernels differ, so the
++    # difference between the two dumps is not the difference between the two
++    # artifacts.  This refusal is the deliverable of tessera#102 -- the bug it
++    # replaces was a silent, confident, directional null.
++    teacher_regime = payload_regime(teacher_meta)
++    student_regime = payload_regime(student_meta)
++    if teacher_regime != student_regime:
++        raise SystemExit(
++            "REFUSED: cross-regime compare.\n"
++            f"    teacher {Path(args.teacher).name} regime={teacher_regime}\n"
++            f"    student {Path(args.student).name} regime={student_regime}\n"
++            "  A regime says WHICH FORWARD produced each scored position "
++            "(prefill: one many-row forward over the chunk; decode: one M=1 "
++            "forward per position). Two regimes run different kernels over "
++            "different position sets, so their difference is not a property "
++            "of the two artifacts. Re-dump the reference in the student's "
++            "regime -- there is no flag to override this, because a number "
++            "produced by overriding it would not mean anything.")
++
+     # ---- identity gates ----------------------------------------------------
+     problems: list[str] = []
+     t_tok = teacher_meta.get("tokenizer") or {}
+@@ -609,11 +914,15 @@
+         corpus_tokens=(s_corpus.get("tokens") or 0),
+         tokenizer_sha256=(s_tok.get("identity_sha256") or "unknown"),
+         unchecked_alignment=bool(problems),
++        regime=student_regime,
+     )
+ 
+     result = {
+         "schema": COMPARE_SCHEMA,
+         "metric_identity": ident,
++        "regime": student_regime,
++        "teacher_regime_record": teacher_meta.get("regime"),
++        "student_regime_record": student_meta.get("regime"),
+         "teacher_payload": str(Path(args.teacher).resolve()),
+         "student_payload": str(Path(args.student).resolve()),
+         "teacher_meta": {k: teacher_meta.get(k) for k in
+@@ -678,8 +987,16 @@
+               f"(<= {c['kl_upper_mean']:.6f})")
+     if "legacy_floor_substituted" in result:
+         lg = result["legacy_floor_substituted"]
++        # `confident_mean` is None whenever no position had a teacher top-1
++        # above 0.5 -- a small corpus, or a genuinely flat reference.  It used
++        # to be formatted unconditionally, so the tool computed the whole
++        # comparison and then died in its own last print statement
++        # (TypeError: unsupported format string passed to NoneType.__format__).
++        conf_text = ("n/a (no confident position)"
++                     if lg["confident_mean"] is None
++                     else f"{lg['confident_mean']:.6f}")
+         print(f"  legacy (v1)    all={lg['all_mean']:.6f}  "
+-              f"confident={lg['confident_mean']:.6f}   "
++              f"confident={conf_text}   "
+               f"-- floor-substituted, no tail term, NOT a bound")
+     if args.out:
+         Path(args.out).write_text(json.dumps(result, indent=1) + "\n")
+@@ -688,6 +1005,62 @@
+ 
+ 
+ # ==========================================================================
++# fingerprint
++# ==========================================================================
++#: Metadata that differs between two runs of the SAME measurement and is not
++#: part of it.  Named, so "the dumps are identical" is a checkable statement
++#: about the numbers rather than a claim nobody can test (no two dumps have
++#: ever been byte-identical: the wall clock is in the file).
++VOLATILE_META_KEYS = ("produced_at_utc", "elapsed_s", "argv", "host",
++                      "model")
++
++
++def payload_fingerprint(path: str | Path) -> dict[str, object]:
++    """The content hash of a dump: the numbers plus the metric's identity.
++
++    Two dumps of the same corpus off the same served bytes in the same regime
++    have the same fingerprint, and any change to the scored values, the
++    support, the corpus, the tokenizer or the regime changes it.  A legacy
++    payload carrying no regime field fingerprints as ``prefill``, which is
++    what it is, so a dump taken before the regime field existed and one taken
++    after it are comparable by this digest.
++    """
++    meta, ids, lps = read_payload(path)
++    corpus = meta.get("corpus") or {}
++    tok = meta.get("tokenizer") or {}
++    metric = meta.get("metric") or {}
++    ids_sha = hashlib.sha256(np.ascontiguousarray(ids).tobytes()).hexdigest()
++    lps_sha = hashlib.sha256(np.ascontiguousarray(lps).tobytes()).hexdigest()
++    identity = {
++        "schema": meta.get("schema"),
++        "regime": payload_regime(meta),
++        "role": meta.get("role"),
++        "teacher_label": meta.get("teacher_label"),
++        "requested_top_k": metric.get("requested_top_k"),
++        "positions": int(ids.shape[0]),
++        "k_max": int(ids.shape[1]),
++        "corpus_contract_sha256": corpus.get("contract_sha256"),
++        "corpus_source_sha256": corpus.get("source_sha256"),
++        "tokenizer_identity_sha256": tok.get("identity_sha256"),
++        "ids_sha256": ids_sha,
++        "logprobs_sha256": lps_sha,
++    }
++    return {"fingerprint": canonical_sha256(identity), **identity}
++
++
++def cmd_fingerprint(args: argparse.Namespace) -> int:
++    fp = payload_fingerprint(args.payload)
++    if args.json:
++        print(json.dumps(fp, indent=1))
++    else:
++        print(f"fingerprint {fp['fingerprint']}")
++        for key, value in fp.items():
++            if key != "fingerprint":
++                print(f"  {key} = {value}")
++    return 0
++
++
++# ==========================================================================
+ # selfcheck
+ # ==========================================================================
+ def cmd_selfcheck(args: argparse.Namespace) -> int:
+@@ -779,6 +1152,16 @@
+     d.add_argument("--corpus-contract", help="a kl_corpus_contract/1 json")
+     d.add_argument("--corpus-text", help="legacy free-length text corpus")
+     d.add_argument("--tokenizer", help="required with --corpus-text")
++    d.add_argument("--regime", choices=REGIMES, default=DEFAULT_REGIME,
++                   help="prefill (default, unchanged): score prompt positions "
++                        "off one many-row forward per chunk. decode: score "
++                        "each position off an M=1 forward, which is the only "
++                        "regime a decode-only kernel runs in. The two are "
++                        "different metrics and cannot be compared.")
++    d.add_argument("--decode-stride", type=int, default=DECODE_STRIDE_DEFAULT,
++                   help="--regime decode only: the prefix-length stride, which "
++                        f"must equal the serve's KV block size (default "
++                        f"{DECODE_STRIDE_DEFAULT}, vLLM's default block size)")
+     d.add_argument("--role", choices=("teacher", "student"), default="student")
+     d.add_argument("--teacher-label",
+                    help="what the reference actually is, e.g. FP8-source")
+@@ -802,6 +1185,13 @@
+     m.add_argument("--out")
+     m.set_defaults(func=cmd_compare)
+ 
++    f = sub.add_parser("fingerprint",
++                       help="content hash of a dump: the numbers plus the "
++                            "metric identity, minus the wall clock")
++    f.add_argument("payload")
++    f.add_argument("--json", action="store_true")
++    f.set_defaults(func=cmd_fingerprint)
++
+     s = sub.add_parser("selfcheck", help="grade the estimator against exact KL")
+     s.add_argument("--trials", type=int, default=20)
+     s.set_defaults(func=cmd_selfcheck)

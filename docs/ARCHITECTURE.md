@@ -106,6 +106,39 @@ manifest's `serving_gate`).
 module serves on its declared family. A clean census with exact bytes is
 necessary and, by tessera#1, not sufficient.
 
+### 4.5a A served KL names which FORWARD it scored
+
+`kl_tool.py dump` has two regimes and they are two metrics. `--regime
+prefill` is the default and is every served number this repo quoted before
+2026-09-03: it scores prompt positions, so each one comes out of one
+many-row forward over the chunk. A lane that serves only small M --
+`fp8_gemv` routes `M > GEMV_MAX_M` to the materialised path -- therefore
+never executes on a scored forward, and a two-arm A/B over such a kernel
+returns a *bit-identical* null in both arms, which reads exactly like a
+strong positive result (tessera#83's served leg, tessera#102).
+
+`--regime decode` feeds each chunk's prefix incrementally with the serve's
+prefix cache on, so every scored position is an M = 1 forward; the claim is
+checked against the serve's own `usage.prompt_tokens_details.cached_tokens`
+(hence `--enable-prompt-tokens-details`) and refused when it does not hold.
+The teacher must be re-dumped in the same regime, and `compare` refuses a
+cross-regime pair outright -- there is no override, because the two regimes
+run different kernels over different position sets.
+
+`TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only) makes the
+serve write a launch histogram keyed by route **and problem shape**, which is
+what lets a receipt show that its scored forwards were the shapes it claims:
+the fallback arm reports `torch._scaled_mm` in both regimes, so the shape is
+the discriminator and a symbol-only record cannot tell two lane states from
+one wearing two names. `experiments/decode_regime_kl.sh` takes both regimes
+off one serve with a trace snapshot per stage;
+`docs/measurements/tessera-decode-regime-kl-2026-09-03.md` is the receipt. It
+measures the gap: over byte-identical bytes with the GEMV lane on in one arm
+and refused in the other, the prefill regime reads `KL >= 0.000000` at 100.00%
+top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
+the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
+decode dump's scored forwards, zero on the prefill dump's.
+
 ### 4.6 The stock twin isolates the wire from the kernel
 
 `--stock-twin` writes the same wires materialised for vanilla vLLM, so a

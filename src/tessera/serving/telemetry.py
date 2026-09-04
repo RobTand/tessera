@@ -11,6 +11,12 @@ log line someone parsed.
 Twelve ``setattr``s of Python scalars -- no tensor is touched, so this sits on
 the hot path without a synchronisation and cannot perturb what executed.
 
+``TESSERA_ROUTE_TRACE=<abs path>`` additionally keeps a counting histogram of
+what the serve executed, keyed by route AND problem shape -- the question a
+per-module "latest record" cannot answer, and the one a served KL needs
+answered before it can claim to have measured a decode-path kernel
+(tessera#102, ``_RouteTrace``).  It is off by default and eager-only.
+
 This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the
 Tessera routes and owned here.  The attribute prefix is ``_tessera_route_``
 (Gridbook's is ``_cb_route_``): the two records must never be mistaken for one
@@ -18,8 +24,17 @@ another if both plugins are ever installed in one process.
 """
 from __future__ import annotations
 
+import atexit
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import threading
+import time
+
 import torch
 
+from .flags import latched_path
 from .scheme import (
     BF16_ACTIVATION_CONTRACT, FP8_ACTIVATION_CONTRACT, NVFP4_ACTIVATION_CONTRACT, ROUTES)
 
@@ -33,6 +48,12 @@ __all__ = [
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
     "ATTR_PREFIX",
+    "ROUTE_TRACE_ENV",
+    "ROUTE_TRACE_SCHEMA",
+    "start_route_trace",
+    "stop_route_trace",
+    "route_trace",
+    "route_trace_snapshot",
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
@@ -76,6 +97,13 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
 
 ATTR_PREFIX = "_tessera_route_"
 
+#: Absolute path to a JSON file the serve keeps a per-(route, shape) launch
+#: histogram in.  Unset (the default) means the histogram does not exist:
+#: ``emit_route`` writes the same record it always did and counts nothing.
+#: Read once, at import, which is what latches it for the process.
+ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
+ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
+
 #: The record's field names, in report order.  The census reads exactly these.
 ROUTE_FIELDS = (
     "kind",       # "dense" | "moe"
@@ -116,6 +144,10 @@ def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
     rewrite ``state="served"`` after it returns; then "raised mid-launch" is
     distinguishable from "never launched", and ``symbol`` stays an honest
     record of what was INVOKED even when it threw.
+
+    The record is the LATEST dispatch, which answers "what does this module
+    serve on" and not "what did this serve run".  ``TESSERA_ROUTE_TRACE``
+    answers the second question by counting; see ``_RouteTrace``.
     """
     try:
         values = {
@@ -126,8 +158,179 @@ def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
         }
         for field in ROUTE_FIELDS:
             setattr(layer, f"{ATTR_PREFIX}{field}", values[field])
+        trace = _TRACE
+        if trace is not None:
+            trace.count(layer, values)
     except Exception:  # noqa: BLE001 -- telemetry must never break a request
         pass
+
+
+class _RouteTrace:
+    """Counts of what a serve ACTUALLY executed, keyed by route and shape.
+
+    ``read_route`` answers "what does this module serve on": the latest
+    record, which is what a census asserts against.  It cannot answer "what
+    did this SERVE run", and that is the question a served KL needs answered.
+    A prefill-regime KL dump scores 512-row forwards, so a decode-only kernel
+    never executes on a scored forward and a two-arm A/B over it returns a
+    bit-identical null -- clean, precise, and about the wrong path
+    (tessera#102).  The fix on the instrument side is a decode-regime dump;
+    the fix on THIS side is being able to show, from the serve's own
+    telemetry, which shapes the scored forwards actually took.
+
+    So: one counter per ``(policy, shape, symbol, decoder, contract, kind)``,
+    incremented on every served dispatch, plus the number of distinct modules
+    that reported it.  ``shape`` carries the M of the call
+    (``route_shape``), which is the discriminator that matters: the streamed
+    FP8 route's fallback arm reports ``torch._scaled_mm`` in BOTH regimes, so
+    a symbol alone cannot tell a prefill launch from a decode launch, and a
+    trace that could not tell them apart would be one lane wearing two names.
+
+    OFF BY DEFAULT, and absent means absent: with no ``TESSERA_ROUTE_TRACE``
+    the counter object does not exist and ``emit_route`` does the same twelve
+    ``setattr``s it always did.  Enabled, it costs one dict lookup and one set
+    insert per module per forward, under a lock -- no tensor is touched and no
+    synchronisation happens, so it cannot perturb what executed.
+
+    EAGER ONLY, and the file says so.  Under vLLM's compiled forward the
+    dispatch's Python body runs at TRACE time, not per launch, so the counts
+    would describe compilation rather than serving; ``route_shape`` already
+    degrades to ``M*`` there, which is what marks such an entry in the file.
+    """
+
+    #: How often the flusher thread writes, when anything changed.  A
+    #: time-throttled write inside ``emit_route`` would never flush the LAST
+    #: forward of a run, which is exactly the one a caller wants to read.
+    FLUSH_SECONDS = 1.0
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.started_utc = datetime.now(timezone.utc).isoformat()
+        self.flushes = 0
+        self._lock = threading.Lock()
+        self._counts: dict[tuple, list] = {}
+        self._dirty = False
+        # Write NOW: the point of failure for a mis-set path must be the
+        # serve's startup, loudly, and not a silent no-op discovered when the
+        # receipt is being written.  ``emit_route`` swallows exceptions by
+        # contract, so nothing later in the run could report this.
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.flush()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="tessera-route-trace")
+        self._thread.start()
+
+    # -- hot path ----------------------------------------------------------
+    def count(self, layer, values) -> None:
+        if values.get("state") != "served":
+            return
+        key = (values["policy"], values["shape"], values["symbol"],
+               values["decoder"], values["contract"], values["kind"])
+        module = getattr(layer, "prefix", "") or hex(id(layer))
+        with self._lock:
+            entry = self._counts.get(key)
+            if entry is None:
+                entry = self._counts[key] = [0, set()]
+            entry[0] += 1
+            entry[1].add(module)
+            self._dirty = True
+
+    # -- readout -----------------------------------------------------------
+    def snapshot(self) -> dict:
+        with self._lock:
+            entries = [
+                {"policy": policy, "shape": shape, "symbol": symbol,
+                 "decoder": decoder, "contract": contract, "kind": kind,
+                 "launches": count, "modules": len(modules)}
+                for (policy, shape, symbol, decoder, contract, kind),
+                    (count, modules) in sorted(self._counts.items())
+            ]
+        return {
+            "schema": ROUTE_TRACE_SCHEMA,
+            "pid": os.getpid(),
+            "started_utc": self.started_utc,
+            "flushed_utc": datetime.now(timezone.utc).isoformat(),
+            "flushes": self.flushes,
+            "note": ("launches counted per module per served dispatch; a "
+                     "shape of M* means the record was written while "
+                     "torch.compile was tracing, where one graph serves every "
+                     "M and a count is not a launch count"),
+            "entries": entries,
+        }
+
+    def flush(self) -> None:
+        # vLLM runs the API server and the engine core as SEPARATE processes,
+        # and a general plugin is loaded by both.  Only the process holding
+        # the model ever counts anything, so an empty histogram here is the
+        # other process: it must still prove it can write the path -- that is
+        # what the startup write is for -- but it must never overwrite a
+        # populated file.  Without this guard the histogram a census reads is
+        # whichever process wrote last, and the failure mode is a file full of
+        # zeros that looks exactly like a lane that never ran.
+        if not self._counts and self.path.exists():
+            return
+        payload = self.snapshot()
+        self.flushes += 1
+        tmp = Path(f"{self.path}.tmp")
+        tmp.write_text(json.dumps(payload, indent=1) + "\n")
+        os.replace(tmp, self.path)
+
+    def _loop(self) -> None:
+        while True:
+            time.sleep(self.FLUSH_SECONDS)
+            with self._lock:
+                dirty, self._dirty = self._dirty, False
+            if dirty:
+                try:
+                    self.flush()
+                except Exception:  # noqa: BLE001 -- a trace never breaks a serve
+                    pass
+
+
+def start_route_trace(path) -> "_RouteTrace":
+    """Install the route trace at ``path``.  Raises if it cannot be written."""
+    global _TRACE
+    _TRACE = _RouteTrace(path)
+    return _TRACE
+
+
+def stop_route_trace() -> None:
+    """Uninstall the trace (tests only; the flusher thread is a daemon)."""
+    global _TRACE
+    _TRACE = None
+
+
+def route_trace():
+    """The installed trace, or ``None``."""
+    return _TRACE
+
+
+def route_trace_snapshot():
+    """The installed trace's counts, or ``None`` when tracing is off."""
+    return None if _TRACE is None else _TRACE.snapshot()
+
+
+def _route_trace_from_env():
+    """Read the flag ONCE, at import, which is what latches it for the run."""
+    path = latched_path(ROUTE_TRACE_ENV, meaning="the route-trace JSON")
+    if path is None:
+        return None
+    trace = start_route_trace(path)
+    atexit.register(_flush_at_exit)
+    return trace
+
+
+def _flush_at_exit() -> None:
+    trace = _TRACE
+    if trace is not None:
+        try:
+            trace.flush()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+_TRACE = None
+_route_trace_from_env()
 
 
 def read_route(layer):

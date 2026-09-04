@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["latched_bool", "latched_mode", "reset_for_tests"]
+__all__ = ["latched_bool", "latched_mode", "latched_path", "reset_for_tests"]
 
 #: flag name -> the raw string this process latched.  One dict rather than a
 #: module-level variable per flag, so ``reset_for_tests`` cannot miss one.
@@ -64,6 +64,24 @@ def latched_bool(flag: str, *, default: bool = False, meaning: str = "this behav
     if value == "":
         return default
     return value in _TRUE
+
+
+def latched_path(flag: str, *, meaning: str = "this file") -> str | None:
+    """A strictly parsed, process-stable filesystem path; ``None`` when unset.
+
+    Absolute only.  A relative path is refused rather than resolved against
+    whatever directory the serving process happens to start in -- inside a
+    container that is ``/``, so the file lands somewhere nobody looks and the
+    flag reads as "on" while producing nothing observable.
+    """
+    current = os.environ.get(flag, "").strip()
+    if current and not os.path.isabs(current):
+        raise ValueError(
+            f"{flag}={current!r} must be an ABSOLUTE path to {meaning}; a "
+            "relative one resolves against the serving process's working "
+            "directory, which is not a place anyone will find it")
+    value = _latch(flag, current)
+    return value or None
 
 
 def latched_mode(flag: str, *, modes: tuple[str, ...], meaning: str, unset_help: str) -> str:
