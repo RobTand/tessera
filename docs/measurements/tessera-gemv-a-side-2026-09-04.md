@@ -745,3 +745,66 @@ K run **99.85-100.00%** for the fixed lane against the fallback and
 section 6b turns on, and the reason section 1's "changes no bf16 output word"
 had to be corrected: at K = 1024 alone it read 100.00% four times out of four,
 and a wider sweep says that was luck, not a property.
+
+### 6e. Immutable-checkout repeat: the conclusion survives trustworthy provenance
+
+Sections 6a and 6d report real serves, but their original PrismaBuild receipts
+sealed a stamp rather than the source tree that the worker later read.  They
+therefore do not prove their own code identity.  PrismaBuild #20 fixed the
+identity rule and PrismaBuild #5 replaced path execution with immutable CAS
+materialisation.  This section repeats the complete A/B plus unchanged-A
+control after both fixes and is the promotional receipt for #110.
+
+Pool action
+`8d009b808b7ba94bb28e1ae18062b54854d164637c2d4910e6ddda798198ba72`
+finished on Sparky in one attempt (rc 0, 583.94 s) with one exclusive physical
+GB10 (`GPU-e76c7efc-c157-b1f4-1348-83e4eb5092f4`).  PrismaBuild materialised
+immutable snapshot commit
+`4bb3fbbace036975edacf883c7b09532edef167d` from input
+`edbcd81e24c1b290489f26903a38454dc6282f3ed84581ef8a6295a6d5d4cf5b`;
+the source-closure stamp inside it names Tessera
+`c86eda39be8dfa35637084310d4bd5f8f0ec2d2a` plus dirty-tree identity
+`3c4d1d0ff860720fa48aa14e9796eb13d255800ac67ff22e89f56c85a954d28d`.
+The terminal CAS receipt is
+SHA-256 `18d3df8fe4f49e7ed965ea4a58e37529527add76464a11f494ac25c42f5482f5`
+and its action result is
+`ebee75ec692da966814393e4c6ff18d33edf46a9c2ebcb546be945cb061787f1`.
+All three serves used the exact image
+`vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14`.
+The two arms were the same inode (`11665664`) and the same bytes
+(`ff17a8c64a2d95d23f44b8cc14585b8e942d1b19531a9a419233f52aa904c6ad`).
+
+| pair | regime | positions | KL >= | top-1 |
+|---|---|---:|---:|---:|
+| arm A (fixed GEMV) vs arm B (fallback) | decode | 256 | **0.006996** | **95.70%** |
+| unchanged arm A vs arm A replicate | decode | 256 | **0.005494** | **94.92%** |
+| arm A vs arm B | prefill | 4088 | **0.000000** | **100.00%** |
+| arm A vs arm A replicate | prefill | 4088 | **0.000000** | **100.00%** |
+
+These are matched dumps: all rows name corpus `076d33efc447...` and tokenizer
+`76f13c8e6e55...`.  The route validator counted exactly 28,672 M=1
+`tessera_window_gemv::gemv` launches in each A serve.  Arm B counted zero such
+launches and exactly 28,672 M=1 `torch._scaled_mm` launches.  This is execution
+attestation, not an inference from an enabled flag.
+
+The teacher readings do not rank the arms: decode KL is `0.439959` for the
+first A serve, `0.432477` for B, and `0.436366` for the unchanged A replicate.
+Their movement is larger than a stable arm ordering.  Prefill is identical in
+all three serves (`0.465994`, 63.23% top-1), agreeing with both mutual-KL
+nulls.
+
+**Verdict.**  The re-run independently reproduces section 6d's result under a
+receipt that binds the bytes executed: the arm-vs-arm decode difference
+(`0.006996`) is the same order as, and not resolved from, the unchanged-lane
+serve floor (`0.005494`); both prefill controls are exactly null.  The fold was
+the kernel defect.  After its removal, this instrument sees no residual
+arm-vs-arm defect.  This closes #110's served-measurement condition; it does
+not turn two A serves into a distribution or generalise beyond 256 M=1
+positions, Qwen3-0.6B, and one GB10.
+
+The action's summary and its copied traces/logs are under
+`/mnt/shared/tessera-measurements/ts110-pb5-c86eda3-r4/`.  Earlier failed
+namespaces are retained as diagnostic evidence.  In particular, r3 action
+`a3b9263291c2...` was withdrawn before claim because its wrapper still passed
+the mutable tag `latest`; it is non-promotional and none of its outputs are
+used above.
