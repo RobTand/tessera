@@ -145,3 +145,23 @@ def test_a_pre_launch_record_is_not_a_launch(tracing):
     assert trace.snapshot()["entries"] == []
     _emit(layer, state="served")
     assert [e["launches"] for e in trace.snapshot()["entries"]] == [1]
+
+
+def test_a_second_process_does_not_clobber_the_histogram(tracing):
+    """vLLM loads a general plugin in BOTH the API server and the engine core.
+
+    Only the process holding the model counts anything.  The other one still
+    writes the path at startup -- that write is the writability probe -- and
+    if it were allowed to write again it would replace a full histogram with
+    an empty one.  A census would then read zeros off a lane that ran, which
+    is the exact shape of failure the trace exists to rule out.
+    """
+    trace, path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"), shape="M1:N1024:K2048")
+    trace.flush()
+    assert json.loads(path.read_text())["entries"], "the counting process wrote"
+
+    other = telemetry._RouteTrace(path)          # the API-server process
+    other.flush()
+    entries = json.loads(path.read_text())["entries"]
+    assert [e["launches"] for e in entries] == [1], "the histogram survived"

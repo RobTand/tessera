@@ -259,6 +259,16 @@ class _RouteTrace:
         }
 
     def flush(self) -> None:
+        # vLLM runs the API server and the engine core as SEPARATE processes,
+        # and a general plugin is loaded by both.  Only the process holding
+        # the model ever counts anything, so an empty histogram here is the
+        # other process: it must still prove it can write the path -- that is
+        # what the startup write is for -- but it must never overwrite a
+        # populated file.  Without this guard the histogram a census reads is
+        # whichever process wrote last, and the failure mode is a file full of
+        # zeros that looks exactly like a lane that never ran.
+        if not self._counts and self.path.exists():
+            return
         payload = self.snapshot()
         self.flushes += 1
         tmp = Path(f"{self.path}.tmp")
