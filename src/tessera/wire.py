@@ -301,7 +301,9 @@ def nvfp4_scale_bytes(
     shift = int(biased.min()) - 1
     biased = biased - shift
     span = int(biased.max())
-    if span > 15 or (span == 15 and int(mantissa[biased == 15].max(initial=0)) == 7):
+    # ``e=15, m=7`` is E4M3FN's NaN, so a fifteen-binade span is legal only
+    # when no half at the top binade carries mantissa 7.
+    if span > 15 or bool(((biased == 15) & (mantissa == 7)).any()):
         raise GrammarError(
             f"the unit's scales span {span} E4M3 binades after the global "
             "power-of-two shift, which exceeds what one E4M3 plane holds. "

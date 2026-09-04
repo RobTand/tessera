@@ -396,3 +396,32 @@ def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
         assert f"{field} global scale" in message
         assert "3.7e-05" in message
         assert "denominator" in message
+
+
+# ------------------------------------------------- the E4M3 plane's top binade
+def _scale_plane(scale_base, scale_refine):
+    return (
+        torch.tensor(scale_base, dtype=torch.uint8),
+        torch.tensor(scale_refine, dtype=torch.uint8),
+    )
+
+
+def test_a_fifteen_binade_span_is_legal_unless_the_top_word_is_nan():
+    """E4M3FN holds exponents 1..15, and ``e=15, m=7`` is its NaN.  A unit
+    whose scales span exactly fifteen binades after the power-of-two shift is
+    therefore representable unless a half at the top binade carries mantissa
+    7.  The gate that decides this ran a numpy keyword against a torch tensor
+    and raised ``TypeError`` on every fifteen-binade unit, legal or not."""
+    # Exponents 0 and 14 (base 120 is ``e=0``); halves per group = 2.
+    base = [120, 134]
+    plane, global_scale = nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 0]))
+    assert global_scale == 0.5
+    assert plane.tolist() == [1 << 3, 1 << 3, 15 << 3, 15 << 3]
+
+    # Mantissa 7 below the top binade is a normal E4M3 number.
+    plane, _ = nvfp4_scale_bytes(*_scale_plane(base, [7, 7, 0, 0]))
+    assert plane.tolist() == [(1 << 3) | 7, (1 << 3) | 7, 15 << 3, 15 << 3]
+
+    # Mantissa 7 at the top binade is 0x7F, which E4M3FN reads as NaN.
+    with pytest.raises(GrammarError, match="span 15"):
+        nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 7]))
