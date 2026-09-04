@@ -457,6 +457,15 @@ KL remains outstanding. The cell waits on that measurement. This is the
 `loader_axes` precedent: what the loader *does* is a different published fact
 from what has been *served*.
 
+The full-model LFM teacher campaign uses
+`experiments/ts5_lfm_teacher_bound.py`: the encoder's sealed source identity
+must match hashes of the BF16 source both before and after its read-only
+serve. Its receipt binds those checks to the exact image, corpus, tokenizer,
+eager prefill mode, dump and build sidecars, and reference-usability result.
+The earlier revision-labelled teacher remains historical evidence; checking
+its dump hash now does not retroactively establish loaded-weight identity.
+This is provenance for the quality measurement, not a new quality threshold.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `experiments/ts5_moe_served.sh` requires success from all three arms: the
@@ -579,6 +588,37 @@ hand-maintained "unserved" denylist: without a served cell, naming it in the
 structure axis is refused. The axis is a non-empty, duplicate-free string list
 and equals the cells' first-occurrence projection exactly; set-equivalent
 duplicate or reordered spellings are not a second form of the same contract.
+
+`experiments/ts5_census_check.py` gates the full routed-MoE campaign receipt.
+Its common plan, merged config and serving manifest must describe exactly one
+nonempty expert-stack population, including every expert projection and rung;
+the roster and geometry come from the scheme helpers, not a campaign count.
+Both driven phases must contain exactly one served record per planned owner,
+under the explicit serving-image digest, eager execution and resident mode.
+The checker replays construction mapping and ownership, validates launch pairs
+and activation contracts even when no cell exists, and requires distinct,
+nonempty eager shapes at every owner using the census's shared shape check.
+Shapes use telemetry's canonical `M<n>:N<n>:K<n>` spelling; `scheme.regime_of_m`
+must map each observed M to the phase it claims. The campaign also compares
+N/K with that owner's validated expert tile geometry, so arbitrary strings or
+two batch-shaped observations cannot claim decode/prefill coverage.
+It preserves actual backend suffixes. Host/container checkpoint paths may
+differ: the raw census records `checkpoint_sidecars`, SHA256s of the exact
+`config.json` and `tessera_serving_manifest.json` bytes read inside its process,
+and the campaign checker requires equality with both supplied file hashes.
+The census verifies those sidecar hashes again after both forwards and refuses
+to publish a served receipt if either changed.
+The generic census permits a missing manifest and records it as null; this
+merged-artifact campaign does not. The assembled artifact is held unchanged
+through serving; these sidecar hashes do not replace the checked assembly's
+tensor/wire validation. Exporter image provenance is not a serving-image
+eligibility rule.
+The initial check permits genuinely unattested owners. `--require-attested`
+replays the same raw records against the **current** packaged contract and
+requires every planned owner covered in both phases, ignoring stale embedded
+agreement. The result fingerprints its inputs and current contract. This is a
+population/dispatch receipt gate, not a wire audit or the separate served-KL
+quality gate, and publishes no cells itself.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 

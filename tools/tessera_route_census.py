@@ -82,6 +82,7 @@ import collections
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -93,6 +94,26 @@ import time
 #: regime declared there and absent here is a refusal below rather than a
 #: silently unobserved cell.
 DRIVEN_REGIMES = ("batch", "decode")
+CHECKPOINT_SIDECAR_NAMES = ("config.json", "tessera_serving_manifest.json")
+
+
+def checkpoint_sidecar_hashes(checkpoint, *, expected=None):
+    """Exact sidecar bytes observed by this process, independent of mount names.
+
+    Config is required by every census. A generic census may legitimately have
+    no serving manifest; publish that absence rather than inventing a digest.
+    Campaign orchestration holds the assembled artifact unchanged through the
+    serve. These hashes do not replace the assembly's tensor/wire audit.
+    """
+    from pathlib import Path
+    from tessera.serving_parts import sha256_file
+    checkpoint = Path(checkpoint)
+    config, manifest = (checkpoint / name for name in CHECKPOINT_SIDECAR_NAMES)
+    observed = {config.name: sha256_file(config),
+                manifest.name: sha256_file(manifest) if manifest.is_file() else None}
+    if expected is not None and observed != expected:
+        raise ValueError("checkpoint sidecars changed during census; no served receipt is valid")
+    return observed
 
 
 def census(model):
@@ -190,6 +211,60 @@ def declared_rung(scheme):
         rates.extend(int(v) for v in values)
     distinct = set(rates)
     return next(iter(distinct)) if len(distinct) == 1 else None
+
+
+def parse_eager_shape(value):
+    """Read telemetry.route_shape's canonical concrete M:N:K spelling."""
+    match = re.fullmatch(r"M([1-9][0-9]*):N([1-9][0-9]*):K([1-9][0-9]*)", value) if isinstance(value, str) else None
+    if match is None:
+        raise ValueError(f"eager shape must be canonical M<n>:N<n>:K<n>, got {value!r}")
+    return tuple(int(dimension) for dimension in match.groups())
+
+
+def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
+                         require_each_owner=False):
+    """The two driven shapes, optionally required for every campaign owner.
+
+    Callers requiring owner coverage first join records into owner space. The
+    generic census retains its aggregate eager check; a complete-population
+    gate additionally refuses missing/equal eager shapes at any owner.
+    """
+    batch_phase = next(p for p, regime in phase_regimes.items() if regime == "batch")
+    decode_phase = next(p for p, regime in phase_regimes.items() if regime == "decode")
+    batch, decode = records_by_phase[batch_phase], records_by_phase[decode_phase]
+    if not batch or not decode:
+        return ["both driven phases need shape evidence"] if require_each_owner else []
+    shapes = [(name, batch[name].get("shape", ""), decode[name].get("shape", ""))
+              for name in batch if name in decode]
+    if compiled:
+        # Trace-time M is symbolic, so this proves polymorphic dispatch, not
+        # two concrete shapes. Campaign eager coverage never uses this arm.
+        bad = [p for _, p, d in shapes
+               if not (str(p).startswith("M*:") and str(d).startswith("M*:"))]
+        return ([f"compiled records must be shape-polymorphic (M*); got {bad[:3]}"]
+                if bad else [])
+    if require_each_owner:
+        from tessera.serving.scheme import regime_of_m
+        missing = sorted(set(batch) ^ set(decode))
+        bad = [name for name, p, d in shapes
+               if not isinstance(p, str) or not p or not isinstance(d, str) or not d or p == d]
+        problems = ([f"each owner needs distinct nonempty eager shapes in both driven phases; "
+                     f"missing={missing}, unchanged/missing shape={bad}"] if missing or bad else [])
+        for phase, records in records_by_phase.items():
+            for owner, record in records.items():
+                try:
+                    m, _, _ = parse_eager_shape(record.get("shape"))
+                except ValueError as exc:
+                    problems.append(f"{phase} {owner}: {exc}")
+                    continue
+                if regime_of_m(m) != phase_regimes[phase]:
+                    problems.append(f"{phase} {owner}: shape M{m} does not exercise "
+                                    f"declared regime {phase_regimes[phase]}")
+        return problems
+    if all(p == d for _, p, d in shapes):
+        return [f"{batch_phase} and {decode_phase} records carry the same shape; only one "
+                "shape was exercised"]
+    return []
 
 
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
@@ -422,6 +497,7 @@ def main() -> int:
     # types the census command.
     required_lanes = list(args.require_lane or ())
     manifest_lanes = []
+    sidecars = checkpoint_sidecar_hashes(args.model)
     manifest_path = os.path.join(args.model, "tessera_serving_manifest.json")
     if not args.no_manifest_lanes and os.path.isfile(manifest_path):
         with open(manifest_path) as fh:
@@ -571,23 +647,8 @@ def main() -> int:
         if args.expect_modules is not None and len(tess) != args.expect_modules:
             problems.append(
                 f"{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
-    if phases[batch_phase] and phases[decode_phase]:
-        shapes = [(phases[batch_phase][n].get("shape", ""), phases[decode_phase][n].get("shape", ""))
-                  for n in phases[batch_phase] if n in phases[decode_phase]]
-        if args.compiled:
-            # A compiled forward writes the record from the trace, where the
-            # token dimension is symbolic: ``route_shape`` spells it ``M*`` and
-            # the record cannot tell the regimes apart.  What the census can
-            # attest here is dispatch (every module reached its route in both
-            # steps) and the polymorphic form itself; a concrete M in a compiled
-            # record would mean the route specialised the batch.
-            bad = [p for p, d in shapes if not (p.startswith("M*:") and d.startswith("M*:"))]
-            if bad:
-                problems.append(f"compiled records must be shape-polymorphic (M*); got {bad[:3]}")
-        elif all(p == d for p, d in shapes):
-            problems.append(
-                f"{batch_phase} and {decode_phase} records carry the same shape; only one "
-                "shape was exercised")
+    problems.extend(phase_shape_problems(
+        phases, phase_regimes=CENSUS_PHASE_REGIMES, compiled=args.compiled))
 
     # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
     # the decode regime legitimately admits both the GEMV pair and the
@@ -622,6 +683,9 @@ def main() -> int:
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode)
     problems.extend(agreement_problems)
+    # The controller holds the checked artifact immutable; verify that seal
+    # again after both forwards, before publishing any served receipt.
+    checkpoint_sidecar_hashes(args.model, expected=sidecars)
 
     receipt = {
         "schema": "tessera.serving.route_census/2",
@@ -629,6 +693,7 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
+        "checkpoint_sidecars": sidecars,
         "tessera_config_groups": len(tessera_groups),
         "declared_names_mapped_to_module_space": name_map is not None,
         "declared_name_mapping": name_map,
