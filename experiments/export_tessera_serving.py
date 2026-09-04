@@ -77,19 +77,52 @@ re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.
 
-ROUTED-MoE EXPERTS ARE NOT EXPORTED YET, and are refused by name rather than
-skipped.  A transformers-5 checkpoint packs a layer's experts into 3-D tensors
-(``mlp.experts.gate_up_proj`` ``[E, K, 2N]``, ``...down_proj`` ``[E, N, K]``);
-``quantizable`` separates them from the 2-D body and ``main`` either passes
-them through as BF16 (named in ``ignore``, so the plugin serves the MoE layer
-unquantized instead of refusing it) or, if a plan names one, refuses with the
-tensor and its shape.  When the expert route lands, the work is: encode one
-unit per expert per role, frame them into one container per vLLM MoE module
-(the fused rule below already groups by module name and is rank-agnostic),
-declare ``structure: "routed_moe"`` on the scheme, and decode to the stock
-PACKED expert layouts vLLM's fused-MoE kernels read.  The grouping rule that a
-fused module's roles must share ONE family holds for experts exactly as it does
-for q/k/v: vLLM builds one method per module.
+ROUTED-MoE EXPERTS ARE EXPORTED FROM THE UNPACKED SOURCE LAYOUT, and the
+plannable unit is the STACK.  A ``--plan-json`` entry keyed ``<moe>.experts``
+(not one of its 864 leaves) gives every expert of that stack one rung; the
+exporter writes ONE ``tessera.fused`` container per expert per PROJECTION under
+``<moe>.experts.{e}.{proj}.wire`` and declares one ``config_groups`` entry with
+``structure: "routed_moe"``, the two groups ``w13`` (gate then up, the row order
+``RoutedExperts._load_w13`` narrows to) and ``w2``, and a per-group
+``wire_stride``.  The stride is the MAXIMUM over the group's blobs, derived here
+rather than passed in, because the blob length follows the data (the manifest's
+exact-ratio ``global_scale`` rides as a varint whose width follows its value)
+and ``moe_layout.unpack_moe_wires`` refuses a stride that is not what the
+loaded lengths imply.  The consumer is ``tessera.serving.moe_route``, which
+decodes those containers into vLLM's stock per-channel FP8 expert parameters
+and runs the runtime's own fused-MoE kernel.
+
+Everything about a stack is refused BEFORE the first encode
+(``plan_expert_stack``): a family with no expert route
+(``scheme.MOE_BUILDERS``), an expert index set that is not ``0..E-1``, a
+missing projection, geometry that differs across experts, and rows or columns
+the route's mainloop cannot take.  A dense Linear that fails the last of those
+is passed through -- safe, because it is one module; a routed stack cannot be
+half passed through, because vLLM builds ONE method for the whole stack.  The
+construction gate runs on the stack name too: the census receipt's
+``offered_non_linear`` row is what says the runtime asks this plugin about
+``...mlp.experts`` at all.
+
+Not planning a stack leaves it where it was -- source precision, named in
+``ignore`` at the ``FusedMoE`` prefix -- so every checkpoint written before
+this is byte-identical under the same command line.
+
+THE PACKED 3-D SOURCE LAYOUT (``mlp.experts.gate_up_proj``,
+``...down_proj``) STILL HAS NO EXPORT, and the reason is TWO unattested
+conventions rather than one.  (a) Orientation: ``[E, A, B]`` is ambiguous on
+its face; ``packed_expert_orientation`` reads it off
+``hidden_size``/``moe_intermediate_size`` where the dims decide, but
+GLM-5.3-Flash has ``hidden_size == 2 * moe_intermediate_size``, which makes a
+packed ``gate_up_proj`` square and no dim comparison can orient it.  (b) The
+gate/up SPLIT: a packed ``gate_up_proj`` holds both halves on one axis, and
+whether they are chunked or interleaved is the producing library's convention,
+which the tensor does not state.  Getting either wrong transposes or
+interleaves every expert in silence, and no receipt on this box settles (b) --
+so both are refused by name, with the shape and the orientation verdict in the
+message.  ``quantizable`` separates both layouts from the 2-D body, and an
+unplanned stack of either kind passes through as BF16 named in ``ignore``.  The
+grouping rule that a fused module's roles must share ONE family holds for
+experts exactly as it does for q/k/v: vLLM builds one method per module.
 """
 from __future__ import annotations
 
@@ -123,7 +156,9 @@ from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     classify_construction, construction_entry, load_serving_contract)
 from tessera.serving.scheme import (  # noqa: E402
-    refuse_unreachable_lane, refuse_unserveable_wire)
+    MOE_BUILDERS, MOE_GROUP_SHARDS, MOE_GROUPS, STRUCTURE_DENSE,
+    STRUCTURE_ROUTED_MOE, refuse_unreachable_lane, refuse_unserveable_wire,
+    validate_tessera_moe_scheme)
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
@@ -670,6 +705,138 @@ def packed_expert_orientation(name: str, shape, config: dict):
         f"hidden_size={hidden} moe_intermediate_size={inter} (expected out={out_dim}, in={in_dim})")
 
 
+#: The checkpoint's name for each shard the runtime loads into an expert
+#: group.  ``MOE_GROUP_SHARDS`` is the runtime's table -- which shards a group
+#: holds, in the row order ``RoutedExperts._load_w13`` narrows to -- and this
+#: is the only thing the producer adds: what that shard is CALLED on disk.
+#: Two tables, one fact each, so a group's row order is never spelled twice.
+SHARD_PROJECTION = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+MOE_GROUP_PROJECTIONS = {group: tuple(SHARD_PROJECTION[s] for s in shards)
+                         for group, shards in MOE_GROUP_SHARDS.items()}
+EXPERT_PROJECTIONS = tuple(p for g in MOE_GROUPS for p in MOE_GROUP_PROJECTIONS[g])
+#: Which group a projection rides, inverted from the table above.
+PROJECTION_GROUP = {p: g for g, ps in MOE_GROUP_PROJECTIONS.items() for p in ps}
+
+
+def expert_stacks(routed_shapes):
+    """``{<moe>.experts: {expert index: {projection: (tensor name, shape)}}}``.
+
+    THE STACK IS THE PLANNABLE UNIT, not the leaf.  vLLM builds one method per
+    ``RoutedExperts`` module and the sidecar declares one scheme for it
+    (``scheme.validate_tessera_moe_scheme``), so family, grid, body and plane
+    are stack facts and the rung is a stack-and-projection fact -- which is the
+    per-layer expert uniformity this house's allocators already enforce.  A
+    plan naming one expert's ``gate_proj`` is refused for the same reason a
+    plan naming ``q_proj`` alone is: it describes half a module the runtime
+    builds whole.
+    """
+    stacks: dict[str, dict[int, dict[str, tuple]]] = {}
+    for name, shape in routed_shapes.items():
+        match = ROUTED_EXPERT_2D.match(name)
+        stack = match.group("moe") + ".experts"
+        stacks.setdefault(stack, {}).setdefault(int(match.group("expert")), {})[
+            match.group("proj")] = (name, tuple(shape))
+    return stacks
+
+
+def plan_expert_stack(stack: str, experts: dict, grid, q256: int):
+    """Everything about a planned expert stack that must be refused BEFORE the encode.
+
+    A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
+    layer, so every disagreement between what the checkpoint holds and what the
+    plugin's expert route reads is asked here rather than discovered at load.
+    Returns the stack's plan record: the family, the two groups' geometry, and
+    the per-unit work list in the row order the groups stack.
+
+    The refusals, and why each is a refusal rather than a repair:
+
+    * a family with no expert route -- ``scheme.MOE_BUILDERS`` is the one home
+      for that rule, and its absences are measured (the NVFP4 oracle's
+      ``swiglu_limit`` clamp, a 16-bit stack being the passthrough already);
+    * an expert index set that is not ``0..E-1`` -- the parameter is
+      ``[E, ...]`` and the loader indexes it by ``expert_id``, so a gap is a
+      row of zeros served as an expert;
+    * a missing projection -- ``w13`` is the gate/up PAIR, and a stack missing
+      one has no second half for the tile;
+    * geometry that differs across experts -- one stack is one tile, so one
+      shape;
+    * rows or columns the route's mainloop cannot take.  A dense Linear that
+      fails this is passed through, which is safe because it is one module; a
+      routed stack cannot be half passed through, because vLLM builds ONE
+      method for it.
+    """
+    family = family_for(grid)
+    if family not in MOE_BUILDERS:
+        raise SystemExit(
+            f"the plan gives the expert stack {stack} grid {grid.name} ({family}), which has no "
+            f"expert route in this plugin build (scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). "
+            "The absences are measured, not preferred: the fused-MoE oracle resolves an NVFP4 "
+            "expert arm only under a swiglu_limit clamp that changes the arithmetic the experts "
+            "execute (docs/measurements/nvfp4-moe-oracle-2026-09-02.md), and a 16-bit stack is "
+            "the passthrough quantization_config.ignore already gives. Plan this stack on a "
+            "family with a route, or leave it out to pass it through as BF16.")
+    indices = sorted(experts)
+    if indices != list(range(len(indices))):
+        missing = sorted(set(range(max(indices) + 1)) - set(indices))
+        raise SystemExit(
+            f"the expert stack {stack} is missing expert(s) {missing[:8]} of "
+            f"{max(indices) + 1}. The wire parameter is [E, ...] and the loader writes row "
+            "expert_id, so a gap is not a smaller stack -- it is a row of zeros decoded as an "
+            "expert. Refusing rather than renumbering.")
+    geometry: dict[str, tuple] = {}
+    for index in indices:
+        found = experts[index]
+        absent = [p for p in EXPERT_PROJECTIONS if p not in found]
+        if absent:
+            raise SystemExit(
+                f"the expert stack {stack} expert {index} carries {sorted(found)} and is missing "
+                f"{absent}. A group is exactly the shards the runtime loads into it "
+                f"({dict(MOE_GROUP_PROJECTIONS)}, scheme.MOE_GROUP_SHARDS): w13 is the gate/up "
+                "PAIR, so a stack missing one half has no second half for the tile.")
+        for projection, (_name, shape) in found.items():
+            if geometry.setdefault(projection, shape) != shape:
+                raise SystemExit(
+                    f"the expert stack {stack} holds {projection} at {list(geometry[projection])} "
+                    f"and at {list(shape)} on expert {index}. One stack is one tile, so one "
+                    "shape; a stack whose experts disagree cannot be [E, rows, cols].")
+    hidden = geometry["gate_proj"][1]
+    inter = geometry["gate_proj"][0]
+    for projection, shape in geometry.items():
+        want = (hidden, inter) if projection == "down_proj" else (inter, hidden)
+        if shape != want:
+            raise SystemExit(
+                f"the expert stack {stack} holds {projection} at {list(shape)}; with gate_proj "
+                f"[{inter}, {hidden}] the runtime's tile wants {list(want)}. w13 is [2N, K] and "
+                "w2 is [K, N] over the same expert, so the two groups' geometry is one pair of "
+                "numbers and this checkpoint's is not.")
+    groups = {}
+    for group in MOE_GROUPS:
+        projections = MOE_GROUP_PROJECTIONS[group]
+        rows_each = geometry[projections[0]][0]
+        columns = geometry[projections[0]][1]
+        if rows_each % (grid.arity * 32) or columns % 16:
+            raise SystemExit(
+                f"the expert stack {stack} group {group} is {rows_each}x{columns} per "
+                f"projection, which the {grid.name} encoder cannot cut: rows must be a whole "
+                f"number of tuples (grid.arity * 32 = {grid.arity * 32}) and columns a multiple "
+                "of 16. A dense Linear that fails this is passed through; a routed stack cannot "
+                "be half passed through, because vLLM builds ONE method per stack.")
+        groups[group] = {"rows": rows_each * len(projections), "columns": columns,
+                         "roles": [[p, rows_each] for p in projections],
+                         "rows_each": rows_each}
+    units = []
+    for index in indices:
+        for group in MOE_GROUPS:
+            for projection in MOE_GROUP_PROJECTIONS[group]:
+                name, shape = experts[index][projection]
+                units.append({"tensor": name, "wire": name[: -len(".weight")] + ".wire",
+                              "expert": index, "projection": projection, "group": group,
+                              "rows": shape[0], "cols": shape[1]})
+    return {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
+            "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
+            "groups": groups, "units": units}
+
+
 def stock_targets(modules):
     """compressed-tensors targets for member modules plus their fused names (the stock exporter's rule)."""
     found = sorted(set(modules))
@@ -814,9 +981,17 @@ def main():
             f"``model.<...>.layers.<N>.``; this checkpoint's names do not, so there is nothing "
             "to export rather than nothing to do.")
 
-    # A routed expert must be refused HERE -- before a single unit is encoded.
-    # These leaves are 2-D, so the only thing standing between them and being
-    # planned as dense Linears is this check.
+    # THE PLANNABLE ROUTED-MoE UNIT IS THE STACK.  A plan entry naming
+    # ``<moe>.experts`` is an expert-route plan for the whole stack; a plan
+    # entry naming one of its 864 leaves is the mis-plan below.  The split
+    # happens before the ``unknown`` check, which knows only about 2-D dense
+    # body weights.
+    stacks = expert_stacks(routed_shapes)
+    stack_overrides = {name: overrides.pop(name) for name in sorted(set(overrides) & set(stacks))}
+
+    # A routed expert LEAF must be refused HERE -- before a single unit is
+    # encoded.  These leaves are 2-D, so the only thing standing between them
+    # and being planned as dense Linears is this check.
     planned_routed = sorted(set(overrides) & set(routed_shapes))
     if planned_routed:
         first = planned_routed[0]
@@ -825,9 +1000,11 @@ def main():
             f"{list(routed_shapes[first])}. A routed expert is not a dense Linear: vLLM builds "
             "one FusedMoE module per layer, not one Linear per expert, so a checkpoint declaring "
             f"{module_of(first)} in config_groups names a module vLLM never creates and the "
-            "plugin refuses it at load. There is no routed-MoE export yet -- it needs a `moe` "
-            "block this exporter does not write and an expert route the plugin does not have "
-            "(issue #5). Remove them from the plan to pass them through as BF16.")
+            "plugin refuses it at load. The expert route is not what is missing -- name the "
+            f"STACK instead: a plan entry keyed {module_of(first).rsplit('.experts.', 1)[0]}"
+            ".experts gives every expert of that stack one rung, which is what the runtime "
+            "builds one method for and what the sidecar declares one scheme for. Or remove "
+            "these entries to pass the stack through as BF16.")
     planned_routers = sorted(n for n in overrides if MOE_ROUTER.match(n))
     if planned_routers:
         raise SystemExit(
@@ -846,22 +1023,61 @@ def main():
         raise SystemExit(
             f"the plan names {len(planned_experts)} packed expert tensor(s), e.g. {first} "
             f"{list(expert_shapes[first])} (orientation "
-            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): routed-MoE "
-            "expert export is a follow-up. The wires, the container framing and the scheme's "
-            "structure field are all in place; what is missing is the per-expert encode and the "
-            "decode to vLLM's packed expert layouts. Remove them from the plan to pass them "
-            "through as BF16.")
+            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): the packed "
+            "3-D source layout has no export. The route and the write half both exist for the "
+            "UNPACKED layout -- a plan entry keyed <moe>.experts encodes it -- and what is "
+            "missing here is two conventions the tensor does not state: (a) which axis is the "
+            "output, which the dims decide only when hidden_size != 2 * moe_intermediate_size "
+            "(on GLM-5.3-Flash they are equal and a packed gate_up_proj is square), and (b) "
+            "whether a packed gate_up_proj chunks or interleaves its two halves. Either one "
+            "guessed wrong transposes or interleaves every expert in silence, and no receipt on "
+            "this box settles (b). Re-export this checkpoint unpacked, or remove these from the "
+            "plan to pass them through as BF16.")
     unknown = sorted(set(overrides) - set(shapes))
     if unknown:
-        raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}")
+        raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}; "
+                         f"a routed-MoE stack is planned under its own name "
+                         f"({sorted(stacks)[0] if stacks else '<moe>.experts'}), not per leaf")
+
+    # THE EXPERT PLAN, gated before the first encode.  Every check the plugin's
+    # expert route makes at load has a producer-side twin here, because a
+    # refusal that arrives after 864 units is not a refusal; it is a bill.
+    stack_plan: dict[str, dict] = {}
+    for stack in sorted(stack_overrides):
+        spec = stack_overrides[stack]
+        if spec is None:                     # PASSTHROUGH, spelled deliberately
+            continue
+        grid, q256 = spec
+        layer = body_layer(next(iter(stacks[stack].values()))["gate_proj"][0])
+        if args.layers is not None and layer >= args.layers:
+            raise SystemExit(
+                f"the plan gives the expert stack {stack} a rung, but --layers {args.layers} "
+                f"stops before its layer {layer}. One of the two is wrong and guessing which "
+                "would either skip a stack the plan asked for or encode past the smoke bound.")
+        record = plan_expert_stack(stack, stacks[stack], grid, q256)
+        stack_plan[stack] = record
+        print(f"  routed_moe {stack}: {record['experts']} experts x "
+              f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
+              f"({len(record['units'])} units)", flush=True)
+    if stack_plan and args.stock_twin is not None:
+        raise SystemExit(
+            f"--stock-twin was given and {len(stack_plan)} routed-MoE stack(s) are planned. The "
+            "twin is the materialised compressed-tensors comparator, and this exporter writes no "
+            "per-channel FP8 expert twin: the stacks' source tensors are consumed by the encode, "
+            "so the twin would silently be a checkpoint with no experts in it. Export the stacks "
+            "without a twin, or leave them out of the plan.")
+
     if expert_shapes:
         print(f"  {len(expert_shapes)} packed expert tensors stay BF16 and are named in ignore "
-              f"(routed-MoE export is a follow-up); e.g. {sorted(expert_shapes)[0]}", flush=True)
-    if routed_shapes:
-        layers = sorted({body_layer(n) for n in routed_shapes})
-        print(f"  {len(routed_shapes)} routed expert tensors across layers {layers} stay BF16 and "
-              f"are named in ignore (routed-MoE export is a follow-up); "
-              f"e.g. {sorted(routed_shapes)[0]}", flush=True)
+              f"(the packed 3-D source layout has no export -- see the refusal above); "
+              f"e.g. {sorted(expert_shapes)[0]}", flush=True)
+    routed_passthrough = {n: shape for n, shape in routed_shapes.items()
+                          if ROUTED_EXPERT_2D.match(n).group("moe") + ".experts" not in stack_plan}
+    if routed_passthrough:
+        layers = sorted({body_layer(n) for n in routed_passthrough})
+        print(f"  {len(routed_passthrough)} routed expert tensors across layers {layers} stay "
+              f"BF16 and are named in ignore (no plan entry names their stack); "
+              f"e.g. {sorted(routed_passthrough)[0]}", flush=True)
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
@@ -900,7 +1116,7 @@ def main():
                     passthrough.append(m)
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
-    if not plan and args.layers is None:
+    if not plan and not stack_plan and args.layers is None:
         # An export that quantized NOTHING used to report success and write a
         # checkpoint with an empty ``config_groups``, which the plugin refuses
         # at load ("a Tessera checkpoint declares its wires in
@@ -920,7 +1136,7 @@ def main():
     # refusal that arrives after the encode is not a refusal; it is a bill.
     # It runs on the MODULE names, not the tensor names, because the module is
     # what the runtime builds and what ``config_groups`` will declare.
-    unrouted, census = unrouted_modules(src_config, modules)
+    unrouted, census = unrouted_modules(src_config, list(modules) + list(stack_plan))
     unrouted_records = [
         {"module": module, "vllm_module_pattern": pattern, "verdict": verdict}
         for module, (verdict, pattern) in sorted(unrouted.items())]
@@ -929,12 +1145,18 @@ def main():
         if args.passthrough_unrouted:
             print(f"  --passthrough-unrouted: {message}", flush=True)
             for module in unrouted:
+                if module in stack_plan:
+                    # A stack is one module with no members in ``plan``: drop
+                    # the whole stack and its experts pass through as BF16,
+                    # named in ignore by the same rule as any other.
+                    del stack_plan[module]
+                    continue
                 for member in modules.pop(module):
                     del plan[member]
                     passthrough.append(member)
             print(f"  {len(unrouted)} module(s) pass through at source precision; "
                   f"{len(modules)} module(s) remain in the plan", flush=True)
-            if not plan and args.layers is None:
+            if not plan and not stack_plan and args.layers is None:
                 # The same refusal as above, re-asked, because the check above
                 # ran BEFORE this loop and this loop is the other way ``plan``
                 # empties.  Without it, --passthrough-unrouted on a model whose
@@ -994,6 +1216,28 @@ def main():
     done = 0
     total = len(plan)
 
+    # THE EXPERT WORK LIST, keyed by the SOURCE tensor so the encode happens
+    # where the tensor is read: one layer's experts span four shards on
+    # GLM-5.3-Flash, and holding a stack's 864 source tensors until the last
+    # one arrives is 13.8 GB of BF16 for no reason.  The wire tensor is written
+    # into the same shard its source came from; the two GROUP strides are the
+    # maxima over every blob and are therefore known only at the end, which is
+    # exactly when ``config.json`` is written.
+    expert_units = {u["tensor"]: dict(u, stack=stack)
+                    for stack, record in stack_plan.items() for u in record["units"]}
+    moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
+                           "q256": record["q256"], "experts": record["experts"],
+                           "hidden_size": record["hidden_size"],
+                           "intermediate_size": record["intermediate_size"],
+                           "roles": [], "container_bytes": 0, "wire_bytes": 0,
+                           "resident_bytes_resident_mode": 0,
+                           "group_blob_bytes": {g: [] for g in MOE_GROUPS},
+                           "rows": sum(g["rows"] for g in record["groups"].values()),
+                           "cols": record["hidden_size"]}
+                   for stack, record in stack_plan.items()}
+    moe_total = len(expert_units)
+    moe_done = 0
+
     pending_modules = dict(modules)
     for shard, names in sorted(shards.items()):
         shard_payload: dict[str, torch.Tensor] = {}
@@ -1003,6 +1247,47 @@ def main():
                 tensor = handle.get_tensor(name)
                 if name in plan:
                     weights_cache[name] = tensor
+                elif name in expert_units:
+                    unit = expert_units[name]
+                    stack_spec = stack_plan[unit["stack"]]
+                    unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
+                    unit_recipe = wire_recipe(unit_grid, unit_q256)
+                    weight = tensor.to(args.device, torch.float32).contiguous()
+                    # Same call as the dense path: a missing Hessian key renders
+                    # RTN and raises nothing, ``for_unit`` refuses instead.
+                    extra = ({} if activation is None else
+                             activation.for_unit(name, weight.shape[1], args.device,
+                                                 scale_plane=unit_recipe.scale_plane))
+                    exported, unit_artifact_, _forests = encode_linear_planes(
+                        weight, grid=unit_grid, q256=unit_q256, name=name,
+                        verify=not args.no_verify, **extra)
+                    extra.clear()
+                    parse_unit_artifact(exported.blob, device=args.device)
+                    # ONE container per expert PROJECTION -- the granularity of
+                    # the checkpoint's tensors, of the runtime's shard ids, and
+                    # of ``scheme.expert_role_declarations``.  The GROUP is how
+                    # these stack into the tile, not a container of its own.
+                    blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
+                    shard_payload[unit["wire"]] = torch.frombuffer(
+                        bytearray(blob), dtype=torch.uint8).clone()
+                    stack_record = moe_records[unit["stack"]]
+                    stack_record["group_blob_bytes"][unit["group"]].append(len(blob))
+                    stack_record["container_bytes"] += len(blob)
+                    stack_record["wire_bytes"] += exported.exact_bytes
+                    stack_record["resident_bytes_resident_mode"] += (
+                        exported.rows * exported.columns + exported.rows * 4)
+                    stack_record["roles"].append({
+                        "tensor": name, "role": unit["projection"], "expert": unit["expert"],
+                        "group": unit["group"], "rows": exported.rows,
+                        "cols": exported.columns, "grid": unit_grid.name, "q256": unit_q256,
+                        "family": stack_spec["family"], "wire_bytes": exported.exact_bytes,
+                        "blob_bytes": len(blob), "wire_bpp": float(exported.bpp),
+                        "own_global": float(unit_artifact_.scale_global)})
+                    del weight
+                    moe_done += 1
+                    if moe_done % 50 == 0 or moe_done == moe_total:
+                        print(f"  [moe {moe_done}/{moe_total}] {name}  "
+                              f"{time.time() - started:.0f}s", flush=True)
                 else:
                     shard_payload[name] = tensor
                     twin_payload[name] = tensor
@@ -1109,10 +1394,11 @@ def main():
                 twin_records[module] = {"family": family, "members": [module_of(m) for m in members],
                                         "resident_bytes": sum(stock_bytes(stock_tensors[m]) for m in members)}
             scheme = {
-                # ``structure`` names what kind of vLLM layer this is: ``dense``
-                # (a LinearBase, one blob per module) today.  The expert route
-                # will declare ``routed_moe`` here rather than change the schema.
-                "family": family, "structure": "dense",
+                # ``structure`` names what kind of vLLM layer this is.  This
+                # loop writes ``dense`` -- one blob per LinearBase.  The other
+                # value the plugin serves, ``routed_moe``, is declared after
+                # the shard loop, where the expert stacks' strides are known.
+                "family": family, "structure": STRUCTURE_DENSE,
                 "grid": grid.name, "body": recipe.body.name, "plane": recipe.scale_plane.name,
                 # An int when every role took the same rung -- what every
                 # checkpoint before #37 carries -- and one rung per role, in
@@ -1138,6 +1424,49 @@ def main():
     if pending_modules:
         raise SystemExit(f"modules never completed: {sorted(pending_modules)}")
 
+    # THE EXPERT STACKS' SCHEMES, written once every blob's length is known.
+    # ``wire_stride`` is the MAXIMUM over the group's blobs and is derived here
+    # rather than declared: the blob length follows the data (the manifest's
+    # exact-ratio ``global_scale`` rides as a varint whose width follows its
+    # value), so there is no number a caller could pass that the bytes would
+    # not contradict -- and ``moe_layout.unpack_moe_wires`` refuses a stride
+    # that is not what the loaded lengths imply, which is the same check from
+    # the other side.
+    for stack, spec in stack_plan.items():
+        stack_record = moe_records[stack]
+        recipe = wire_recipe(spec["grid"], spec["q256"])
+        groups = {}
+        for group in MOE_GROUPS:
+            lengths = stack_record["group_blob_bytes"][group]
+            want = spec["experts"] * len(MOE_GROUP_PROJECTIONS[group])
+            if len(lengths) != want:
+                raise SystemExit(
+                    f"{stack} group {group}: {len(lengths)} container(s) written for {want} "
+                    "(experts x projections). A group whose rows are not all there would be "
+                    "served with zero rows for the rest.")
+            groups[group] = {
+                "q256": spec["q256"], "rows": spec["groups"][group]["rows"],
+                "columns": spec["groups"][group]["columns"],
+                "roles": spec["groups"][group]["roles"], "wire_stride": max(lengths)}
+        scheme = {
+            "family": spec["family"], "structure": STRUCTURE_ROUTED_MOE,
+            "grid": spec["grid"].name, "body": recipe.body.name,
+            "plane": recipe.scale_plane.name, "experts": spec["experts"], "groups": groups,
+        }
+        # The reader is the gate, so the writer is held to it here rather than
+        # at load: this is the exact function ``TesseraConfig`` calls, on the
+        # exact dict about to be written.
+        validate_tessera_moe_scheme(scheme, stack)
+        config_groups[f"tessera_{stack.replace('.', '_')}"] = {
+            "format": "TESSERA", "targets": [stack], "scheme": scheme}
+        stack_record["structure"] = STRUCTURE_ROUTED_MOE
+        stack_record["wire_stride"] = {g: groups[g]["wire_stride"] for g in MOE_GROUPS}
+        stack_record.pop("group_blob_bytes")
+        stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))
+        module_records[stack] = stack_record
+        for role in stack_record["roles"]:
+            units[role["tensor"]] = role
+
     # The expert stacks and the routed leaves were named by the same rule as
     # they were written (``ignored_modules``), which is the point: one mechanism
     # decides what is passed through and what is declared BF16.  What is worth
@@ -1152,6 +1481,10 @@ def main():
             f"e.g. {unnamed[:3]}. The plugin refuses a Linear it is neither told to decode nor "
             "told to leave alone, so this checkpoint would fail at load.")
     ignore = sorted(set(ignore))
+    moe_passthrough_modules = {m for source in (expert_shapes, routed_shapes)
+                               for name, shape in source.items()
+                               for m in ignored_modules(name, shape)
+                               if m not in stack_plan}
     config = src_config
     config["quantization_config"] = {
         # The field that selects Tessera's own vLLM plugin (entry point
@@ -1254,14 +1587,24 @@ def main():
             # and whose reserved name for this case is the block's own key,
             # ``routed_moe``.  A producer-written free string under that field
             # name is the confusion principle 14 exists to prevent, even though
-            # nothing in ``tessera.serving`` reads this file.
-            "disposition": "passed_through_bf16",
-            "reason": "this exporter writes no routed-MoE wires; the expert route is #5",
+            # nothing in ``tessera.serving`` reads this file.  It is now a
+            # THREE-valued fact, because a stack can be encoded: ``quantized``
+            # when every routed stack got a wire, ``passed_through_bf16`` when
+            # none did, ``mixed`` when the plan named some of them.
+            "disposition": ("quantized" if stack_plan and not moe_passthrough_modules
+                            else "mixed" if stack_plan else "passed_through_bf16"),
+            "reason": ("stacks named in the plan carry routed_moe wires; the rest stay at "
+                       "source precision and are named in ignore"),
             "packed_source_tensors": len(expert_shapes),
             "unpacked_source_tensors": len(routed_shapes),
-            "modules": sorted({m for source in (expert_shapes, routed_shapes)
-                               for name, shape in source.items()
-                               for m in ignored_modules(name, shape)}),
+            "quantized_stacks": sorted(stack_plan),
+            "quantized_source_tensors": len(expert_units),
+            # The ignore entries this block accounts for -- read off
+            # ``ignored_modules``, the same rule that put them there, so it
+            # cannot drift from the list it summarises (#86).  A stack that was
+            # ENCODED is not here: it is in ``config_groups``, and the plugin
+            # refuses a target that is both declared and ignored.
+            "modules": sorted(moe_passthrough_modules),
         },
         # WHICH LANE THIS ARTIFACT WAS BUILT TO EXERCISE, in the bytes.  The
         # census reads it and REFUSES a phase where the lane took zero modules,

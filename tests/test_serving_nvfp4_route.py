@@ -118,7 +118,10 @@ def test_scheme_discriminator_and_normalisation():
     ({"roles": [["q", 100], ["k", 100]]}, "stack to 200"),
     ({"roles": []}, "roles must be"),
     ({"q256": 0}, "must be positive"),
-    ({"structure": "routed_moe"}, "routed_moe"),
+    # ``routed_moe`` is SERVED since 2026-09-04, so a dense-shaped scheme
+    # wearing that value is refused for the shape it is missing (an expert
+    # count and two groups), not for the value.
+    ({"structure": "routed_moe"}, "experts must be an integer"),
 ])
 def test_scheme_refusals_name_the_defect(bad, match):
     with pytest.raises(ValueError, match=match):

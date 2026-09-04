@@ -1,0 +1,301 @@
+{
+ "probe": "moe_route_load_probe",
+ "vllm": "0.1.dev20051+g487ecf187",
+ "torch": "2.13.0+cu130",
+ "device": "NVIDIA GB10",
+ "serve_mode": "resident",
+ "dimensions": {
+  "experts": 4,
+  "hidden": 512,
+  "intermediate": 256,
+  "topk": 2,
+  "q256": 1024,
+  "tokens": 17
+ },
+ "positive": {
+  "method": "TesseraMoEMethod",
+  "backend": "TRITON",
+  "experts_cls": "TritonExperts",
+  "params_before_load": [
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_wire",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_wire"
+  ],
+  "loaded_param_names": [
+   "w13_wire",
+   "w2_wire"
+  ],
+  "load_calls": 12,
+  "params_after_load": [
+   "w13_weight",
+   "w13_weight_scale",
+   "w2_weight",
+   "w2_weight_scale"
+  ],
+  "w13_weight_shape": [
+   4,
+   512,
+   512
+  ],
+  "w2_weight_shape": [
+   4,
+   512,
+   256
+  ],
+  "w13_weight_dtype": "torch.float8_e4m3fn",
+  "w13_weight_scale_shape": [
+   4,
+   512,
+   1
+  ],
+  "w2_weight_scale_shape": [
+   4,
+   512,
+   1
+  ],
+  "tile_is_materialize_stock_byte_for_byte": true,
+  "output_shape": [
+   17,
+   512
+  ],
+  "vs_w8a8_emulated": {
+   "rel_l2": 0.014298978779530125,
+   "max_abs": 0.0022420776076614857,
+   "want_absmax": 0.11979074776172638
+  },
+  "vs_dequantised_reference": {
+   "rel_l2": 0.04492796900910743,
+   "max_abs": 0.0059898048639297485,
+   "want_absmax": 0.11918956786394119
+  },
+  "vs_bf16_source": {
+   "rel_l2": 0.13136748749288407,
+   "max_abs": 0.014794111251831055,
+   "want_absmax": 0.1185760572552681
+  },
+  "resident_bytes": {
+   "w13_weight": 1048576,
+   "w2_weight": 524288,
+   "w13_weight_scale": 8192,
+   "w2_weight_scale": 8192
+  },
+  "wire_bytes_on_disk": 998984,
+  "route_record": {
+   "kind": "moe",
+   "policy": "TESSERA_FP8:resident",
+   "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+   "tile_m": 0,
+   "shape": "M17:N512:K512",
+   "contract": "fp8_per_token_dynamic",
+   "state": "served",
+   "reason": null,
+   "decoder": "torch_materialize_stock"
+  },
+  "scheme": {
+   "family": "TESSERA_FP8",
+   "structure": "routed_moe",
+   "grid": "E4M3",
+   "body": "WINDOW",
+   "plane": "CHANNEL",
+   "experts": 4,
+   "groups": {
+    "w13": {
+     "rows": 512,
+     "columns": 512,
+     "q256": 1024,
+     "wire_stride": 83082,
+     "roles": [
+      [
+       "gate_proj",
+       256
+      ],
+      [
+       "up_proj",
+       256
+      ]
+     ]
+    },
+    "w2": {
+     "rows": 512,
+     "columns": 256,
+     "q256": 1024,
+     "wire_stride": 83586,
+     "roles": [
+      [
+       "down_proj",
+       512
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "positive_exported": {
+  "method": "TesseraMoEMethod",
+  "backend": "TRITON",
+  "experts_cls": "TritonExperts",
+  "params_before_load": [
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_wire",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_wire"
+  ],
+  "loaded_param_names": [
+   "w13_wire",
+   "w2_wire"
+  ],
+  "load_calls": 12,
+  "params_after_load": [
+   "w13_weight",
+   "w13_weight_scale",
+   "w2_weight",
+   "w2_weight_scale"
+  ],
+  "w13_weight_shape": [
+   4,
+   512,
+   512
+  ],
+  "w2_weight_shape": [
+   4,
+   512,
+   256
+  ],
+  "w13_weight_dtype": "torch.float8_e4m3fn",
+  "w13_weight_scale_shape": [
+   4,
+   512,
+   1
+  ],
+  "w2_weight_scale_shape": [
+   4,
+   512,
+   1
+  ],
+  "tile_is_materialize_stock_byte_for_byte": true,
+  "output_shape": [
+   17,
+   512
+  ],
+  "vs_w8a8_emulated": {
+   "rel_l2": 0.014298978779530125,
+   "max_abs": 0.0022420776076614857,
+   "want_absmax": 0.11979074776172638
+  },
+  "vs_dequantised_reference": {
+   "rel_l2": 0.04492796900910743,
+   "max_abs": 0.0059898048639297485,
+   "want_absmax": 0.11918956786394119
+  },
+  "vs_bf16_source": {
+   "rel_l2": 0.13136748749288407,
+   "max_abs": 0.014794111251831055,
+   "want_absmax": 0.1185760572552681
+  },
+  "resident_bytes": {
+   "w13_weight": 1048576,
+   "w2_weight": 524288,
+   "w13_weight_scale": 8192,
+   "w2_weight_scale": 8192
+  },
+  "wire_bytes_on_disk": 999596,
+  "route_record": {
+   "kind": "moe",
+   "policy": "TESSERA_FP8:resident",
+   "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+   "tile_m": 0,
+   "shape": "M17:N512:K512",
+   "contract": "fp8_per_token_dynamic",
+   "state": "served",
+   "reason": null,
+   "decoder": "torch_materialize_stock"
+  },
+  "scheme": {
+   "family": "TESSERA_FP8",
+   "structure": "routed_moe",
+   "grid": "E4M3",
+   "body": "WINDOW",
+   "plane": "CHANNEL",
+   "experts": 4,
+   "groups": {
+    "w13": {
+     "q256": 1024,
+     "rows": 512,
+     "columns": 512,
+     "roles": [
+      [
+       "gate_proj",
+       256
+      ],
+      [
+       "up_proj",
+       256
+      ]
+     ],
+     "wire_stride": 83133
+    },
+    "w2": {
+     "q256": 1024,
+     "rows": 512,
+     "columns": 256,
+     "roles": [
+      [
+       "down_proj",
+       512
+      ]
+     ],
+     "wire_stride": 83637
+    }
+   }
+  },
+  "export_workdir": "/work/run/moe_export_leg_8kvvq6dd"
+ },
+ "negative": [
+  {
+   "leg": "payload_byte_flipped",
+   "expected_substring": "digest",
+   "refused": true,
+   "error_type": "SchemaError",
+   "matched": true,
+   "message": "terminal 't-nvfp4': plane-region bytes do not match the declared payload digest"
+  },
+  {
+   "leg": "stride_understated",
+   "expected_substring": "does not fit the group",
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts' expert 0 w1: a 83082-byte wire does not fit the group's declared wire_stride=83081; the sidecar and the bytes disagree about the row width"
+  },
+  {
+   "leg": "stride_overstated",
+   "expected_substring": "is not what its lengths imply",
+   "refused": true,
+   "error_type": "GrammarError",
+   "matched": true,
+   "message": "moe w13 stride 87178 is not what its lengths imply (83082): the stride is the max over the packed blobs, so a declared stride beside it is a wrong tensor, not room"
+  },
+  {
+   "leg": "expert_count_wrong",
+   "expected_substring": "the sidecar declares",
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts': this rank holds 4 of 4 experts and the sidecar declares 5. The wire stride is the maximum over EVERY expert's blob, so a rank holding a subset cannot check it -- expert parallelism is refused here rather than served on an unverifiable stride."
+  },
+  {
+   "leg": "rung_wrong",
+   "expected_substring": "the sidecar scheme declares",
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts w2 expert 0' role 'down_proj': the wire is {'grid': 'E4M3', 'body': 'WINDOW', 'plane': 'CHANNEL', 'q256': 1024, 'rows': 512, 'columns': 256, 'span': 1} but the sidecar scheme declares {'grid': 'E4M3', 'body': 'WINDOW', 'plane': 'CHANNEL', 'q256': 768, 'rows': 512, 'columns': 256, 'span': 1}; refusing rather than serving bytes no receipt describes"
+  }
+ ],
+ "seconds": 79.8
+}

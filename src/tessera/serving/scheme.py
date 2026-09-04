@@ -32,11 +32,20 @@ to it.  A checkpoint may carry both families, module by module, and one process
 serves them at one declared residency.
 
 STRUCTURE.  ``structure`` names what kind of vLLM layer the target is:
-``dense`` (a ``LinearBase``, one blob per module) today.  Routed-MoE experts
-would be a second value, and it is deliberately not accepted yet -- no served
-measurement covers it, so no ``lane_eligibility`` cell names it and the
-dispatch refuses by name (``config.get_quant_method``).  The field exists so
-that adding the expert route is a value, not a schema change.
+``dense`` (a ``LinearBase``, one blob per module) or ``routed_moe`` (a
+``RoutedExperts`` stack, one blob per expert per projection group).  A dense
+scheme declares one geometry and one exact ``wire_bytes``; a routed-MoE scheme
+declares an expert count and the two GROUPS vLLM's fused-MoE kernel reads --
+``w13`` (gate then up, one matrix) and ``w2`` -- each with its own geometry,
+roles, rungs, and a ``wire_stride`` rather than an exact length, because an
+expert's blob is as long as its own manifest made it.  Both shapes go through
+one ``_validate_group``: a group and a dense module are the same object here,
+and two copies of that check could drift.
+
+``STRUCTURES`` is what this build DISPATCHES, which is a narrower question
+than what this module can PARSE: a value enters it when a route exists to
+serve it, and ``validate_tessera_moe_scheme`` is callable in its own right
+before that, because a parser is not a promise to serve.
 
 FUSED MODULES.  vLLM builds one method per module, so a fused module's roles
 share a family -- and with it the grid, body, scale plane and input width the
@@ -65,7 +74,12 @@ __all__ = [
     "TESSERA_FAMILIES",
     "TESSERA_SCHEME_KEY",
     "STRUCTURE_DENSE",
+    "STRUCTURE_ROUTED_MOE",
     "STRUCTURES",
+    "MOE_GROUPS",
+    "MOE_GROUP_SHARDS",
+    "MOE_GROUP_ROLES",
+    "MOE_BUILDERS",
     "ROUTES",
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
@@ -84,7 +98,10 @@ __all__ = [
     "refuse_unreachable_lane",
     "lane_rate_report",
     "validate_tessera_scheme",
+    "validate_tessera_moe_scheme",
     "parse_tessera_blob_for_scheme",
+    "expert_role_declarations",
+    "parse_tessera_expert_blob",
 ]
 
 #: The A-side contract each route executes, in the vocabulary the packaged
@@ -107,12 +124,49 @@ TESSERA_BF16 = "TESSERA_BF16"
 #: A scheme with ``family`` in ``TESSERA_FAMILIES`` is ours.
 TESSERA_SCHEME_KEY = "family"
 
-#: The only structure any route serves today.  ``routed_moe`` is the name the
-#: expert route will take; it is NOT in this tuple, so a checkpoint declaring
-#: it is refused here with the reason rather than served through a dense
-#: method that would silently read the wrong tensor rank.
+#: What kind of vLLM layer a scheme's target is.  ``dense`` is one blob per
+#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION GROUP on a
+#: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
+#: a structure outside it is refused by name rather than served through a
+#: method that would read the wrong tensor rank.
 STRUCTURE_DENSE = "dense"
-STRUCTURES = (STRUCTURE_DENSE,)
+STRUCTURE_ROUTED_MOE = "routed_moe"
+STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
+
+#: THE TWO EXPERT GROUPS, AND WHY THERE ARE EXACTLY TWO.  vLLM's
+#: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
+#: (gate at rows ``[0:N]``, up at ``[N:2N]`` -- ``RoutedExperts._load_w13``
+#: narrows on ``shard_id``) and its down alone in ``w2``.  A Tessera MoE
+#: checkpoint therefore writes one fused container per group per expert: the
+#: group IS the tile the kernel reads, so the container and the tile have the
+#: same members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
+#: shard vocabulary for each group, in the row order the group stacks; a
+#: producer reads the order off this table instead of restating it.
+MOE_GROUPS = ("w13", "w2")
+MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2",)}
+#: How many roles each group's container holds.  DERIVED from the shard table,
+#: never a second literal: the members of a group are exactly the shards the
+#: runtime loads into it.
+MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+
+#: WHICH FAMILIES HAVE AN EXPERT ROUTE, and the one home for that rule.
+#: FAMILY = ROUTE holds on the expert stack exactly as it does on a Linear,
+#: so this is ``ROUTES``' shape again -- a builder per family -- and a family
+#: absent from it is refused by name rather than served through another
+#: family's decode.
+#:
+#: Only ``TESSERA_FP8`` is here, and the absences are measured rather than
+#: preferred.  ``TESSERA_NVFP4``: the pinned build's fused-MoE oracle resolves
+#: an NVFP4 expert arm only under a ``swiglu_limit`` clamp
+#: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), which changes the
+#: arithmetic the experts execute, so there is no NVFP4 expert tile to decode
+#: to that is the same object the dense NVFP4 route serves.  ``TESSERA_BF16``:
+#: a 16-bit expert stack is the passthrough vLLM already serves through
+#: ``ignore``, and a route that decoded a wire to it would spend the wire's
+#: bytes to arrive where no wire is needed.
+MOE_BUILDERS: dict[str, tuple[str, str]] = {
+    TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
+}
 
 #: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
 #: ``ScalePlaneKind.name``).  NVFP4: grids whose codes are E2M1 nibbles (arity
@@ -736,33 +790,22 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
     return rates
 
 
-def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
-    """Resolve a declared Tessera scheme without parsing the blob.
+def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str) -> dict:
+    """The geometry half of a scheme, for a dense module or one expert group.
 
-    Returns the normalised scheme; raises ``ValueError`` on anything no route
-    can serve, at sidecar-parse time -- before a parameter exists.
+    A dense module and a routed-MoE expert group are the SAME object at this
+    level -- a stack of roles over one input width, at one rung per role,
+    inside one ``tessera.fused`` container -- and the checks are therefore one
+    function rather than two that could drift.  What differs is only the byte
+    field's meaning, which is why the caller names it: a dense module declares
+    ``wire_bytes``, the exact length of its one blob; an expert group declares
+    ``wire_stride``, the width of the parameter row its E blobs are copied
+    into, because their lengths differ per expert (the manifest's exact-ratio
+    ``global_scale`` makes the blob length follow the data -- see
+    ``tessera.moe_layout``) and no single number is every expert's length.
     """
-    family = scheme.get("family")
-    if family not in TESSERA_FAMILIES:
-        raise ValueError(
-            f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
-    missing = [f for f in _REQUIRED if f not in scheme]
-    if missing:
-        raise ValueError(
-            f"tessera target {target!r}: scheme is missing {missing}; a Tessera scheme "
-            "declares its route, grid, body, plane, rate, geometry, byte count and roles")
-    # A checkpoint written before the field existed is dense by construction:
-    # every wire the plugin has ever served is one blob per vLLM Linear.
-    structure = scheme.get("structure", STRUCTURE_DENSE)
-    if structure not in STRUCTURES:
-        raise ValueError(
-            f"tessera target {target!r}: structure {structure!r} is not served; this plugin "
-            f"serves {STRUCTURES} today. Routed-MoE expert stacks decode per-expert wires to "
-            "the stock packed layouts and run vLLM's own fused-MoE kernels; that route is not "
-            "built, carries no lane_eligibility cell and no served measurement, and is refused "
-            "here rather than mis-served through the dense method.")
     route = ROUTES[family]
-    grid = scheme["grid"]
+    grid = group.get("grid")
     if grid not in route["grids"]:
         # The description comes off the route, not off an if-chain here: an
         # if-chain is a second place to remember, and the one that describes
@@ -770,21 +813,21 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
         raise ValueError(
             f"tessera target {target!r}: {family} holds {route['grid_kind']} grid "
             f"{route['grids']}, got {grid!r}")
-    if scheme["plane"] != route["plane"]:
+    if group.get("plane") != route["plane"]:
         raise ValueError(
             f"tessera target {target!r}: {family} decodes the {route['plane']} scale plane to its "
-            f"{route['tile']} tile; plane {scheme['plane']!r} has no {route['short']} tile")
-    body = scheme["body"]
+            f"{route['tile']} tile; plane {group.get('plane')!r} has no {route['short']} tile")
+    body = group.get("body")
     if body not in _BODIES:
         raise ValueError(f"tessera target {target!r}: body must be one of {_BODIES}, got {body!r}")
-    rows = _as_int(scheme, "rows", target)
-    columns = _as_int(scheme, "columns", target)
+    rows = _as_int(group, "rows", target)
+    columns = _as_int(group, "columns", target)
     if columns % route["columns_multiple"]:
         raise ValueError(
             f"tessera target {target!r}: the {family} mainloop needs "
             f"K % {route['columns_multiple']} == 0, got {columns}")
-    wire_bytes = _as_int(scheme, "wire_bytes", target)
-    roles = scheme["roles"]
+    wire = _as_int(group, byte_field, target)
+    roles = group.get("roles")
     if (not isinstance(roles, (list, tuple)) or not roles
             or any(not (isinstance(r, (list, tuple)) and len(r) == 2 and isinstance(r[0], str)
                         and isinstance(r[1], int) and not isinstance(r[1], bool) and r[1] > 0)
@@ -800,32 +843,154 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     # what indexes it.  Every rung is put through the same gate the module-level
     # one used to be: a group is legal only when EVERY member's rate is one this
     # build's decoder publishes a read for.
-    rungs = _rungs_for_roles(scheme, roles, target)
+    rungs = _rungs_for_roles(group, roles, target)
     for (name, _role_rows), rung in zip(roles, rungs):
         _refuse_an_unreadable_rung(family, grid, rung, f"{target} role {name!r}")
     uniform = len(set(rungs)) == 1
     return {
-        "family": family, "structure": structure, "grid": grid, "body": body,
-        "plane": route["plane"],
+        "family": family, "grid": grid, "body": body, "plane": route["plane"],
         # The declared shape, normalised: an int when the module is uniform (as
         # every checkpoint before #37 is), the per-role list when it is not.
         # ``role_q256`` is the monomorphic one a consumer should read.
         "q256": rungs[0] if uniform else list(rungs),
         "role_q256": [int(r) for r in rungs],
         "rows": rows, "columns": columns,
-        "wire_bytes": wire_bytes, "roles": [(str(n), int(r)) for n, r in roles],
+        byte_field: wire, "roles": [(str(n), int(r)) for n, r in roles],
     }
 
 
-def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, device="cpu") -> list:
-    """Parse a module's fused container and refuse it unless it IS what the
-    scheme declared.  Returns ``[(role, ParsedUnit)]`` in stacking order."""
+def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
+    """Resolve a declared Tessera scheme without parsing the blob.
+
+    Returns the normalised scheme; raises ``ValueError`` on anything no route
+    can serve, at sidecar-parse time -- before a parameter exists.
+    """
+    family = scheme.get("family")
+    if family not in TESSERA_FAMILIES:
+        raise ValueError(
+            f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
+    # A checkpoint written before the field existed is dense by construction:
+    # every wire the plugin has ever served is one blob per vLLM Linear.
+    structure = scheme.get("structure", STRUCTURE_DENSE)
+    if structure not in STRUCTURES:
+        raise ValueError(
+            f"tessera target {target!r}: structure {structure!r} is not served; this plugin "
+            f"serves {STRUCTURES} today. Routed-MoE expert stacks decode per-expert wires to "
+            "the stock packed layouts and run vLLM's own fused-MoE kernels; that route is not "
+            "built, carries no lane_eligibility cell and no served measurement, and is refused "
+            "here rather than mis-served through the dense method.")
+    if structure == STRUCTURE_ROUTED_MOE:
+        return validate_tessera_moe_scheme(scheme, target)
+    missing = [f for f in _REQUIRED if f not in scheme]
+    if missing:
+        raise ValueError(
+            f"tessera target {target!r}: scheme is missing {missing}; a Tessera scheme "
+            "declares its route, grid, body, plane, rate, geometry, byte count and roles")
+    declared = _validate_group(scheme, family, target, byte_field="wire_bytes")
+    declared["structure"] = structure
+    return declared
+
+
+def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
+    """Resolve a routed-MoE scheme: E experts, two groups, one route.
+
+    THE SHAPE, AND WHY IT IS NOT THE DENSE ONE.  A dense scheme describes one
+    module: one blob, one exact byte count.  An expert stack is E x 2 blobs --
+    a ``w13`` container (gate then up, the row order
+    ``RoutedExperts._load_w13`` narrows to) and a ``w2`` container -- whose
+    lengths differ expert by expert.  So the sidecar declares the two GROUPS
+    and the expert count, and per group a ``wire_stride`` (the parameter row
+    width every expert's blob is copied into) rather than a ``wire_bytes``.
+    The true length of a blob is the blob's own, carried beside it
+    (``tessera.moe_layout``) and re-checked by ``fused.parse_fused``, which
+    refuses trailing bytes -- so a wrong length is a refusal, not a short read.
+
+    ``family``, ``grid``, ``body`` and ``plane`` are MODULE facts and are
+    declared once at the top; vLLM builds one quant method per expert stack, so
+    the two groups cannot take different routes any more than a fused Linear's
+    members can (``FUSED_MODULE_FIELDS``).  ``rows``, ``columns``, ``roles``
+    and ``q256`` are per group, because the two groups have genuinely different
+    geometry: ``w13`` is ``[2N, K]``, ``w2`` is ``[K, N]``.
+    """
+    family = scheme.get("family")
+    if family not in TESSERA_FAMILIES:
+        raise ValueError(
+            f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
+    experts = _as_int(scheme, "experts", target)
+    groups = scheme.get("groups")
+    if not isinstance(groups, Mapping):
+        raise ValueError(
+            f"tessera target {target!r}: a routed_moe scheme declares its two expert groups "
+            f"under 'groups' ({list(MOE_GROUPS)}), got {type(groups).__name__}")
+    if tuple(sorted(groups)) != tuple(sorted(MOE_GROUPS)):
+        raise ValueError(
+            f"tessera target {target!r}: a routed_moe scheme declares exactly the groups "
+            f"{sorted(MOE_GROUPS)}, got {sorted(groups)}; the groups are the tiles vLLM's "
+            "fused-MoE kernel reads, so a third group names a tile no kernel takes and a "
+            "missing one names a tile with no bytes")
+    shared = {k: scheme.get(k) for k in ("family", "grid", "body", "plane")}
+    declared_groups: dict[str, dict] = {}
+    for name in MOE_GROUPS:
+        group = groups[name]
+        if not isinstance(group, Mapping):
+            raise ValueError(
+                f"tessera target {target!r}: group {name!r} must be a mapping, got "
+                f"{type(group).__name__}")
+        for field, value in shared.items():
+            if field in group and group[field] != value:
+                raise ValueError(
+                    f"tessera target {target!r} group {name!r}: {field}={group[field]!r} "
+                    f"disagrees with the module's {field}={value!r}. vLLM builds ONE quant "
+                    f"method per expert stack, so {field} is a module fact "
+                    "(scheme.FUSED_MODULE_FIELDS), not a per-group one")
+        merged = dict(shared)
+        merged.update(group)
+        declared = _validate_group(merged, family, f"{target} group {name!r}",
+                                   byte_field="wire_stride")
+        if len(declared["roles"]) != MOE_GROUP_ROLES[name]:
+            raise ValueError(
+                f"tessera target {target!r} group {name!r}: {len(declared['roles'])} role(s) "
+                f"{[r[0] for r in declared['roles']]}, expected {MOE_GROUP_ROLES[name]} -- the "
+                f"group's members are exactly the shards the runtime loads into it "
+                f"({MOE_GROUP_SHARDS[name]}, scheme.MOE_GROUP_SHARDS), in that row order")
+        declared_groups[name] = declared
+    if declared_groups["w13"]["rows"] != 2 * declared_groups["w2"]["columns"]:
+        raise ValueError(
+            f"tessera target {target!r}: w13 stacks {declared_groups['w13']['rows']} rows and w2 "
+            f"takes {declared_groups['w2']['columns']} input columns; w13 is [2N, K] and w2 is "
+            "[K, N] over the same expert, so w13's rows are twice w2's columns")
+    if declared_groups["w13"]["columns"] != declared_groups["w2"]["rows"]:
+        raise ValueError(
+            f"tessera target {target!r}: w13 takes {declared_groups['w13']['columns']} input "
+            f"columns and w2 stacks {declared_groups['w2']['rows']} rows; both are the model's "
+            "hidden size, so they are one number")
+    return {
+        "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
+        "plane": declared_groups["w13"]["plane"],
+        "hidden_size": declared_groups["w13"]["columns"],
+        "intermediate_size": declared_groups["w2"]["columns"],
+        "groups": declared_groups,
+    }
+
+
+def _parse_container(blob: bytes, declared: Mapping, target: str, device="cpu",
+                     expect_bytes: "int | None" = None) -> list:
+    """One ``tessera.fused`` container against one normalised group.
+
+    Shared by the dense route (whose container is the module) and the expert
+    route (whose container is one expert's group), because it is one question
+    in both places: are these bytes the roles, geometry, rungs and body the
+    sidecar promised?  ``expect_bytes`` is the dense side's exact-length check;
+    an expert's length is the blob's own and is bounded by the group's stride
+    at the caller, so it passes ``None`` rather than a number it would have to
+    invent.
+    """
     from tessera import fused, unit_artifact
 
-    declared = validate_tessera_scheme(scheme, target)
-    if len(blob) != declared["wire_bytes"]:
+    if expect_bytes is not None and len(blob) != expect_bytes:
         raise ValueError(
-            f"tessera target {target!r}: scheme declares wire_bytes={declared['wire_bytes']} but "
+            f"tessera target {target!r}: scheme declares wire_bytes={expect_bytes} but "
             f"the loaded blob is {len(blob)} bytes")
     members = fused.parse_fused(bytes(blob))
     if [(m.name, m.rows) for m in members] != declared["roles"]:
@@ -869,3 +1034,52 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
                 "receipt describes")
         parsed.append((member.name, unit))
     return parsed
+
+
+def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, device="cpu") -> list:
+    """Parse a module's fused container and refuse it unless it IS what the
+    scheme declared.  Returns ``[(role, ParsedUnit)]`` in stacking order."""
+    declared = validate_tessera_scheme(scheme, target)
+    return _parse_container(blob, declared, target, device, expect_bytes=declared["wire_bytes"])
+
+
+def expert_role_declarations(declared_group: Mapping) -> "list[dict]":
+    """One single-member declaration per projection, in the group's row order.
+
+    A routed-MoE checkpoint stores ONE container per expert PROJECTION.  That
+    is the granularity of the checkpoint's tensors, of ``RoutedExperts``' shard
+    ids (``w1``/``w3``/``w2``, one call each) and of ``tessera.moe_layout``'s
+    cells; the GROUP is how those containers stack into the tile the fused-MoE
+    kernel reads, not a container of its own.  So the group's role list indexes
+    containers, and each is checked as the single-member container it is --
+    same ``_parse_container``, same refusals, one role at a time.
+    """
+    out = []
+    for (name, rows), rung in zip(declared_group["roles"], declared_group["role_q256"]):
+        out.append({
+            "family": declared_group["family"], "grid": declared_group["grid"],
+            "body": declared_group["body"], "plane": declared_group["plane"],
+            "columns": declared_group["columns"], "rows": int(rows),
+            "roles": [(str(name), int(rows))], "role_q256": [int(rung)],
+            "q256": int(rung), "wire_stride": declared_group["wire_stride"],
+        })
+    return out
+
+
+def parse_tessera_expert_blob(blob: bytes, declared_role: Mapping, target: str,
+                              device="cpu") -> list:
+    """One expert projection's container against the role the sidecar declared.
+
+    ``declared_role`` is one entry of :func:`expert_role_declarations`.  The
+    length check is the group's stride rather than an exact byte count -- an
+    expert's blob is as long as its own manifest made it -- and
+    ``fused.parse_fused`` is what refuses a blob that does not END where the
+    caller said it does, which is the check that matters.
+    """
+    stride = int(declared_role["wire_stride"])
+    if len(blob) > stride:
+        raise ValueError(
+            f"tessera target {target!r}: the expert blob is {len(blob)} bytes, longer than the "
+            f"group's declared wire_stride={stride} -- the parameter row it was copied into "
+            "ends before the blob does, so this is truncated data rather than a shorter read")
+    return _parse_container(blob, declared_role, target, device, expect_bytes=None)

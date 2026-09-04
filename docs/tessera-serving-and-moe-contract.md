@@ -1043,3 +1043,170 @@ artifact served so far is Qwen.
 returns `None`, and the exporter treats that as a refusal (`uncensused`) rather
 than as permission — the honest direction, and the fix is to run the census in
 the serving image and commit the receipt.
+
+## 14. The expert route exists, and what that does and does not settle (2026-09-04, #5)
+
+`tessera.serving.moe_route` landed. It has been **loaded and executed on the
+pinned runtime** — vLLM's real `RoutedExperts`, its real `load_weights`, the
+runtime's own fused-MoE modular kernel —
+`docs/measurements/tessera-moe-route-load-2026-09-04.md`,
+`experiments/results/moe_route_load_probe.json`. That receipt is the
+load-and-execute contract and nothing more: no artifact, no served census, no
+KL, and therefore **no `routed_moe` cell in `runtime_contract.json`**.
+
+**The unit is the projection, not the group.** §2 called the MoE cell "the
+per-expert 2-D projection weight" and that is what the wire is: one
+`tessera.fused` container per expert per projection, which is the granularity
+the checkpoint's tensors, the runtime's shard ids (`w1`/`w3`/`w2`) and
+`tessera.moe_layout`'s cells all already have. The **group** (`w13` = gate then
+up, `w2` = down) is how those containers stack into the tile the kernel reads,
+and the sidecar declares the groups, not a container per group.
+
+**Per group the sidecar declares a `wire_stride`, not a `wire_bytes`.** §9.6's
+finding — the blob length follows the data, so `[E, 2, nbytes]` at one stride
+is bytes that fit all but one row — is why. The stride is the parameter row
+width; a blob's true length rides beside it; `moe_layout.unpack_moe_wires`
+refuses a stride that is not the maximum its lengths imply, and that refusal
+fired on real bytes in the probe.
+
+**§9.1 held.** The route is `TESSERA_FP8` only. `scheme.MOE_BUILDERS` is the
+one home for which families have an expert route, and it cites this doc's own
+clamp finding for why NVFP4 is absent.
+
+**§9.6 held, and is now load-bearing.** The wire parameter carries its **own**
+`weight_loader`; twelve loader calls in the probe went through
+`RoutedExperts.load_weights` into `w13_wire`/`w2_wire`, which the stack's own
+loader would have dropped silently.
+
+### What is still owed
+
+1. ~~**The exporter's write half** (2-D unpacked source).~~ **Landed
+   2026-09-04 — see §15.** It was not blocked on a measurement, and it is not
+   any more: contract v11's `construction` block already carried
+   `offered_non_linear` naming `...mlp.experts` / `RoutedExperts` on
+   GLM-5.3-Flash, and `classify_construction` now reads that list as well as
+   `offered`, which is what the stack's construction gate needed.
+2. **The packed 3-D source layout** stays refused, and is blocked on **two**
+   unattested conventions rather than the one this list named. §9.3's
+   orientation ambiguity is the first. The second is the gate/up **split**: a
+   packed `gate_up_proj` carries both halves on one axis, and whether they are
+   chunked or interleaved is the producing library's convention, which the
+   tensor does not state. Getting either wrong transposes or interleaves every
+   expert in silence. The refusal names both.
+3. **A served census and KL.** §0's encode table prices it: the E4M3 whole-expert
+   rate is 1.611 Mparam/s on a held box, so one GLM-5.3-Flash-4layer MoE layer
+   (288 experts x 3 projections) is ~72–75 min and all three are ~3.7 h, before
+   two 45 GB serves.
+4. **Expert parallelism, tensor parallelism inside an expert, and `streamed`**
+   are refused by name in the route, not measured.
+5. **Memory at scale, and it sums across layers.** The route holds the wires
+   *and* the decoded tile until `process_weights_after_loading` returns — and
+   vLLM runs that hook only after *every* weight has loaded, so every MoE layer
+   holds both at once. At GLM's 288 experts that is roughly 11 GB per MoE layer,
+   i.e. **~33 GB transient for the 4-layer cut** and not fitting at all for full
+   GLM. The probe ran at 4 experts and says nothing about it. The fix is a
+   design one — decode per layer as it loads, or stream — not arithmetic.
+6. **The model-level load hop.** The probe drives
+   `RoutedExperts.load_weights` directly. In a serve
+   `Glm5NextForConditionalGeneration.load_weights` runs first and decides what
+   is delegated; §9.6 measured the *expert-params mapping* as suffix-agnostic,
+   not the model loader above it. Whether a `.wire`-suffixed expert tensor
+   survives that hop is unmeasured, and it is the first thing a served attempt
+   would find out.
+7. **The compiled forward.** Everything here is eager. The dense lanes broke
+   under vLLM's compiled forward once already
+   (`vllm-compiled-forward-breaks-lane-hot-paths`), and the MoE route has the
+   same shapes of hazard in it.
+8. **`resident` becomes process-wide.** MoE refuses `streamed` and
+   `TESSERA_SERVE_MODE` is one process-level setting, so a mixed artifact is
+   resident everywhere, dense modules included, until (4) lands.
+
+## 15. The exporter's write half, and what it changed (2026-09-04, #5)
+
+`experiments/export_tessera_serving.py` writes routed-MoE stacks from the
+**unpacked** (per-expert 2-D) source layout. Until this, §14's list item 1 was
+the only thing standing between the route and an artifact, and it stood: no
+Tessera checkpoint could contain a `routed_moe` stack, so nothing could be
+served through the route, the sidecar or the parameter layout. Receipt:
+`docs/measurements/tessera-moe-export-seam-2026-09-04.md`.
+
+**The plannable unit is the stack.** A `--plan-json` entry keyed
+`<moe>.experts` gives every expert of that stack one rung — the same
+per-layer expert uniformity every allocator in this house already enforces, and
+the granularity vLLM builds one method at. Naming a leaf is still refused, now
+with the spelling that works rather than a note that the write half does not
+exist.
+
+**One container per expert per projection**, written as
+`<moe>.experts.{e}.{proj}.wire`. The suffix is what makes
+`RoutedExperts.build_expert_params_mapping` route it to `w13_wire`/`w2_wire`
+(§9.6), and the parameter's own `weight_loader` is what makes the write happen.
+
+**`wire_stride` is derived, not declared.** It is the maximum over the group's
+blobs, computed after the last one is written — which is also when
+`config.json` is written, so nothing waits on it. There is no stride a caller
+could pass that the bytes could not contradict, and `unpack_moe_wires` refuses
+one that is not what the lengths imply.
+
+**The reader is the gate at write time.** The scheme dict goes through
+`scheme.validate_tessera_moe_scheme` — the exact function `TesseraConfig`
+calls — before `config.json` is written.
+
+**The construction gate reads `offered_non_linear` now.** A `RoutedExperts`
+stack is not a `LinearBase`, so the census records it in that list rather than
+in `offered`, and `classify_construction` reading only the first called the one
+module the expert route exists for `absent`. The attestation is the census
+either way (principle 14); the classifier now reads all of what it wrote. On
+GLM-5.3-Flash-4layer all three stacks resolve `offered`.
+
+**Nothing that was written before moves.** `moe_plan_baseline.py`, master
+against this branch: 5 of 72 rows, four of them refusal text and the fifth the
+manifest's `routed_moe` block. Every byte-deciding row — the tensor digest, the
+`quantization_config`, the `ignore` list — is identical, and an unplanned stack
+is untouched.
+
+**It was run and read back, on the CPU.**
+`experiments/moe_write_readback_check.py` (4 experts, 128x64, E4M3 q256=1024)
+writes a stack and then reads it with the plugin's own functions:
+`validate_tessera_moe_scheme` accepts the scheme, all 12 containers parse
+against their declared role, `unpack_moe_wires` round-trips them byte for byte
+off padded rows, and `prepare_tessera_moe_experts` decodes to
+`w13 [4, 128, 128] float8_e4m3fn` / `w2 [4, 128, 64]` with `[4, 128, 1]`
+scales — the stock per-channel FP8 stack, whose worst relative error against
+the source experts is **0.077**, the rung's own quantization error; a
+transposed, interleaved or misrouted tile would sit near `sqrt(2)`, which is
+what makes this a layout check rather than a shape check. The `wire_stride`
+argument stops
+being an argument there: at ONE shape and ONE rung the eight `w13` blobs run
+21293..21297 bytes, a 4-byte spread, and the declared stride is the max. This
+is the plumbing and the reader's acceptance; the CUDA encoder and the fused-MoE
+kernel are not in it.
+
+**And loaded and executed, on the GPU, from those same written bytes.**
+`experiments/moe_route_load_probe.sh` (pool `2be23f3a9e9d`, sparky GB10 sm121,
+the pinned image `prismaquant/glm53-mia-sm121:487ecf187`, `rc=0` in 100.8 s)
+runs two arms in one process differing only in who produced the bytes. The
+EXPORTER's arm loads through `RoutedExperts.load_weights` (12 calls onto
+`w13_wire`/`w2_wire`), materializes `w13_weight [4, 512, 512] float8_e4m3fn`
+byte for byte equal to `materialize_stock`, and executes through vLLM's own
+`TRITON`/`TritonExperts` fused-MoE kernel to `rel_l2` 0.014298978779530125 —
+identical to the probe-encoded arm, while the bytes on disk differ (999596 vs
+998984). What is still NOT measured is a serve: no `routed_moe` cell, no served
+census, no KL.
+
+### What §14's list looks like now
+
+1. ~~The exporter's write half~~ — **done**, unpacked source.
+2. **The packed 3-D source layout** — still refused, on **two** conventions:
+   §9.3's orientation ambiguity, and the gate/up split (chunked or
+   interleaved), which the tensor does not state either. GLM's source is
+   unpacked, so the target model is not blocked by this.
+3. **A served census and KL** — **still open, and it is the whole of what is
+   left.** Costed in §0 and in the receipt: ~75 min of held-box GPU per
+   288-expert stack, ~3.75 h for all three, plus a GLM teacher dump on the
+   pinned image, because no GLM artifact has ever been served in this repo.
+   `experiments/moe_export_glm_4layer.sh` and `experiments/moe_stack_plan.py`
+   are the driver and the plan builder; neither has been run on the real model.
+4-8. Unchanged: expert parallelism, TP inside an expert and `streamed` are
+   refused by name; memory at 288 experts is a design item; the model-level
+   load hop and the compiled forward are unmeasured.

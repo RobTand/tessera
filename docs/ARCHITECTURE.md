@@ -222,6 +222,93 @@ branches its `apply` on the same `layer.tessera_gemv`, so
 unaffected by whether the `.so` mapped -- the exact claim a consumer keys a
 serve fingerprint on.
 
+### 4.4d The expert stack is a STRUCTURE, not a module
+
+A Tessera scheme carries `structure`, and it selects the vLLM method rather
+than decorating it. `dense` is one `tessera.fused` container per `LinearBase`.
+`routed_moe` is a `RoutedExperts` stack: one container per expert per
+PROJECTION -- the granularity the checkpoint's tensors, the runtime's shard
+ids (`w1`/`w3`/`w2`) and `tessera.moe_layout`'s cells all already have -- and
+the sidecar declares the expert count plus the two GROUPS the fused-MoE kernel
+reads (`w13` = gate then up in one matrix, `w2` = down), each with its own
+geometry, roles and rungs. Per group it declares a `wire_stride`, not a
+`wire_bytes`: the manifest writes `global_scale` as an exact varint ratio, so
+a blob's length follows its data and differs expert by expert at one shape and
+rung, and what a rectangular parameter can promise is the row width. The
+blob's true length rides beside it and
+`moe_layout.unpack_moe_wires` refuses a stride that is not the maximum its
+lengths imply -- the one check that catches a sidecar disagreeing with the
+bytes.
+
+`tessera.serving.moe_route` decodes those containers into exactly the
+parameters vLLM's own per-channel FP8 MoE path reads (`w13_weight [E, 2N, K]`
+and `w2_weight [E, K, N]` in `float8_e4m3fn`, `w13_weight_scale [E, 2N, 1]`
+and `w2_weight_scale [E, K, 1]` in fp32) and then IS
+`CompressedTensorsW8A8Fp8MoEMethod` at `strategy: channel`: the same
+`select_fp8_moe_backend`, `convert_to_fp8_moe_kernel_format`,
+`make_fp8_moe_quant_config` (`per_out_ch_quant` and `per_act_token_quant` both
+true) and `make_fp8_moe_kernel`. It writes no kernel. That the runtime's
+fused-MoE kernels *accept* a per-channel weight scale on sm_121 is read off
+the runtime's own `is_supported_config` predicate, never asserted
+(`experiments/results/moe_decode_target_probe.json`: MARLIN, HUMMING, TRITON
+and BATCHED_TRITON accept `(kFp8StaticChannelSym, kFp8DynamicTokenSym)`).
+
+The wire parameter carries its OWN `weight_loader`, because
+`RoutedExperts.weight_loader` dispatches on the substrings `weight`/`scale`
+and would return `False` for `w13_wire` -- writing nothing, silently
+(`docs/measurements/tessera-moe-wire-loader-2026-09-03.md`). What
+`load_weights` calls is `param.weight_loader`, so the parameter is the seam.
+
+Which families have an expert route is `scheme.MOE_BUILDERS`, and the
+absences are measured: the NVFP4 expert arm resolves on this build only under
+a `swiglu_limit` clamp that changes the arithmetic the experts execute
+(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`), and a BF16 expert stack
+is the passthrough `quantization_config.ignore` already gives. The route
+refuses, by name: expert parallelism and tensor parallelism inside an expert
+(the stride invariant needs every expert's blob, and no expert slicer has been
+run), a residency other than `resident`, a non-gated MoE, and any
+expert/hidden/intermediate size that disagrees with the sidecar.
+
+**The exporter writes it.** A `--plan-json` entry keyed `<moe>.experts` -- the
+STACK, not one of its leaves, because vLLM builds one method for the stack --
+gives every expert of it one rung; `export_tessera_serving.py` then writes one
+container per expert per projection under `<moe>.experts.{e}.{proj}.wire`,
+derives each group's `wire_stride` as the maximum over that group's blobs, and
+declares the `routed_moe` scheme through
+`scheme.validate_tessera_moe_scheme` -- the reader is the gate, so the writer
+is held to it before the config is written rather than at load. Everything the
+route would refuse at load has a plan-time twin (`plan_expert_stack`): a family
+with no expert route, an expert index set that is not `0..E-1`, a missing
+projection, geometry that differs across experts, and rows or columns the route
+cannot cut. A dense Linear failing the last of those is passed through; a stack
+cannot be, because vLLM builds one method for the whole of it. The construction
+gate covers the stack too, through the census's `offered_non_linear` row --
+a `RoutedExperts` stack is not a `LinearBase`, so it is recorded there and a
+classifier reading only `offered` called it `absent`. An unplanned stack is
+untouched: source precision, named in `ignore` at the FusedMoE prefix.
+`experiments/moe_write_readback_check.py` writes a stack on the CPU and reads
+it back through the plugin's own functions -- scheme validation, per-container
+parse, `unpack_moe_wires`, `prepare_tessera_moe_experts` -- and it is where the
+stride stops being an argument: at one shape and one rung the blobs of a group
+differ in length, because the manifest's `global_scale` is an exact varint
+ratio whose width follows its value. On the GPU,
+`experiments/moe_route_load_probe.sh` takes the same bytes further: its
+`positive_exported` arm loads what the exporter wrote through
+`RoutedExperts.load_weights` and executes it through vLLM's own fused-MoE
+kernel, matching the arm the probe encoded itself digit for digit while the
+bytes on disk differ.
+
+The PACKED 3-D source layout has no export, and the reason is two conventions
+the tensor does not state: which axis is the output (the dims decide only when
+`hidden_size != 2 * moe_intermediate_size`, and on GLM-5.3-Flash they are
+equal), and whether a packed `gate_up_proj` chunks or interleaves its halves.
+Both are refused by name; neither is guessed.
+
+**What is NOT claimed.** There is no `routed_moe` cell in
+`runtime_contract.json` and there will not be one until a served census and KL
+cover it on a real artifact. This is the `loader_axes` precedent: what the
+loader *does* is a different published fact from what has been *served*.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every

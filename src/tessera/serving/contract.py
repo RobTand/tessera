@@ -478,7 +478,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
-    from .scheme import ROUTES, STRUCTURES
+    from .scheme import ROUTES, STRUCTURE_ROUTED_MOE, STRUCTURES
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
@@ -592,12 +592,29 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             "a phase the census drives under a name this document does not declare cannot be "
             "joined to a cell at all -- which is how a per-(family, regime) expectation goes "
             "vacuously true on half the matrix. Add the regime to BOTH sides, in this table.")
-    unknown_structures = sorted(set(block["structures"]) - set(STRUCTURES))
+    # ``lane_eligibility`` is an ATTESTATION block, so the set it may name is
+    # narrower than the set the dispatch serves -- the same split as
+    # ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
+    # does).  ``routed_moe`` entered ``scheme.STRUCTURES`` on 2026-09-04 and is
+    # executed by ``moe_route``; what covers it is a load-and-execute probe
+    # (docs/measurements/tessera-moe-route-load-2026-09-04.md), which is not a
+    # served receipt, so it does not enter here.  Derived from ``STRUCTURES``
+    # rather than written beside it, minus what has no served receipt, so a
+    # structure cannot appear here by being merely runnable.
+    unserved_structures = (STRUCTURE_ROUTED_MOE,)
+    attested = tuple(s for s in STRUCTURES if s not in unserved_structures)
+    unknown_structures = sorted(set(block["structures"]) - set(attested))
     if unknown_structures:
+        refused = [s for s in unknown_structures if s not in STRUCTURES]
         raise ValueError(
-            f"runtime_contract.lane_eligibility.structures names {unknown_structures}, which "
-            f"the dispatch refuses; this plugin serves {sorted(STRUCTURES)}. A cell may not "
-            "claim a structure no route executes -- routed-MoE experts above all.")
+            f"runtime_contract.lane_eligibility.structures names {unknown_structures}; this "
+            f"block may name {sorted(attested)}. "
+            + (f"{refused} is a structure the dispatch refuses outright. "
+               if refused else
+               "routed-MoE experts ARE executed by this build (scheme.STRUCTURES, "
+               "tessera.serving.moe_route) -- what they have no receipt for is being SERVED: no "
+               "census, no KL, no artifact. lane_eligibility is where served facts go, so the "
+               "cell waits for the serve, exactly as max_world_size waits for a two-rank one."))
     contracts_by_family = {
         # The route's own constant, not a copy: a cell that drifted from the
         # code would attest an activation contract the serve does not run.
@@ -1293,9 +1310,22 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     is not a module the runtime builds at all (a fused role named at its leaf,
     a name from another architecture).  The last two are the same outcome for a
     producer and are told apart only so the refusal can say which it is.
+
+    ``offered`` IS TWO LISTS, because "was this prefix offered a quant config"
+    and "is this prefix a Linear" are different questions and the census
+    records them separately.  ``offered`` holds the ``LinearBase`` rows;
+    ``offered_non_linear`` holds every prefix the probe config WAS asked about
+    that is not one -- the LM head, and the ``RoutedExperts`` stack a routed
+    MoE layer builds.  An expert stack read only the first list resolved
+    ``absent``, which would have refused the one module the expert route
+    exists to serve while the census receipt said, in the same file, that the
+    runtime asks about it.  The census is the attestation either way
+    (principle 14); this reads all of what it wrote.
     """
     pattern = normalise_module(vllm_module_name(entry, checkpoint_module))
     if pattern in set(entry["offered"]):
+        return "offered", pattern
+    if pattern in {row["prefix_pattern"] for row in entry.get("offered_non_linear", ())}:
         return "offered", pattern
     if pattern in {row["prefix_pattern"] for row in entry["never_offered"]}:
         return "never_offered", pattern
