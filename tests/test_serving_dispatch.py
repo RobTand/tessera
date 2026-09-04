@@ -746,3 +746,21 @@ def test_a_grid_the_contract_does_not_describe_refuses(monkeypatch):
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     with pytest.raises(ValueError, match="publishes no decodable rate range"):
         validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1")
+
+
+@pytest.mark.parametrize("helper", [_scheme, _fp8_scheme, _bf16_scheme])
+def test_the_body_is_checked_against_the_route_not_the_vocabulary(monkeypatch, helper):
+    """A wire declaring the OTHER family's body is refused by name at scheme time.
+
+    Grid, plane and span are each checked against the route that will serve
+    the wire; the body was checked only against the global vocabulary, so a
+    TCQ-route wire declared ``WINDOW`` (or the reverse) passed here and was
+    refused later, in someone else's process, as a bare body mismatch.
+    """
+    from tessera.serving.scheme import ROUTES
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    scheme = helper()
+    route = ROUTES[scheme["family"]]
+    other = next(b for b in ("TCQ", "WINDOW") if b != route["body"])
+    with pytest.raises(ValueError, match=f"serves {route['body']} bodies"):
+        validate_tessera_scheme(helper(body=other), "m.otherbody")

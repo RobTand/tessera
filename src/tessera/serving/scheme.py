@@ -887,6 +887,10 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
     body = group.get("body")
     if body not in _BODIES:
         raise ValueError(f"tessera target {target!r}: body must be one of {_BODIES}, got {body!r}")
+    if body != route["body"]:
+        raise ValueError(
+            f"tessera target {target!r}: {family} serves {route['body']} bodies; body {body!r} "
+            f"has no {route['short']} tile")
     rows = _as_int(group, "rows", target)
     columns = _as_int(group, "columns", target)
     if columns % route["columns_multiple"]:
