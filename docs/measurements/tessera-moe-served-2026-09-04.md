@@ -125,31 +125,58 @@ should be made blind: the right time to write a `routed_moe` launch pair is when
 a served census has printed what the launch actually is. The eight dense groups
 are the control that says the mapper fix works and these two are MoE-specific.
 
-## Status of the serve
-
-*Written while the serve was still running; this section is superseded by
-whatever the arms below actually reported.*
+## Status of the serve: three arms, one GPU, one serve lock
 
 `experiments/ts5_moe_served.sh` takes three serves sequentially, because the box
 has one serve lock and the two arms of a KL must not be resident at once:
 
-1. the BF16 cut through the stock GLM image → teacher logprobs;
-2. the Tessera cut through **Tessera's own plugin** → student logprobs + KL;
-3. the Tessera cut a second time, on purpose, for the route census — the route
+1. the BF16 cut through the stock GLM image -> teacher logprobs;
+2. the Tessera cut through **Tessera's own plugin** -> student logprobs + KL;
+3. the Tessera cut a second time, on purpose, for the route census -- the route
    record lives on the layer objects inside the worker and an OpenAI-protocol
    serve cannot hand them out.
 
 The corpus is the GLM-tokenized default `corpus_n8_s512.json` (n=8 x 512, 4088
 scored positions), and the cut and the export both carry the source's
 `tokenizer.json`/`tokenizer_config.json` byte for byte
-(`19e77364…`/`98b12715…`), which is what `kl_tool`'s tokenizer-identity gate
-compares — so it passes without `--allow-tokenizer-mismatch`.
+(`19e77364...`/`98b12715...`), which is what `kl_tool`'s tokenizer-identity gate
+compares -- so it passes without `--allow-tokenizer-mismatch`.
 
-`--gpu-memory-utilization 0.15` (18.24 GiB of 121.63) is not a round number: the
-teacher's own startup accounting says 8.34 GiB of weights plus 4.42 GiB of peak
-activation, so 12.76 GiB is the floor and 0.15 clears it by 5.5 GiB of KV. The
-pool action declares `mem_gb=20` to match. The earlier draft's 0.35 would have
-reserved a third of a shared box for a 7 GiB model.
+**Two memory numbers, because there are two consumers.** The serve arms take
+`--gpu-memory-utilization 0.15` (18.24 GiB of 121.63): the teacher's own startup
+accounting says 8.34 GiB of weights plus 4.42 GiB of peak activation, so 12.76
+GiB is the floor and 0.15 clears it by 5.5 GiB of KV. The census takes
+`TESSERA_CENSUS_MEM_UTIL=0.35`, because it drives `LLM(...)` rather than
+`vllm serve --max-num-seqs 8`, and `LLM()`'s defaults (`max_num_seqs=256`, the
+default chunked-prefill token budget) profile a far larger activation peak --
+which is exactly how the first census attempt died, *after* a successful load,
+on `Available KV cache memory: -2.02 GiB`. One knob was doing two jobs.
+
+### It took four submissions, and three of the failures were mine
+
+Honest accounting, because each cost GPU minutes on a shared box:
+
+- **Attempts 2 and 3 of `0247025c68f2` were corrupted by me.** The pool worker
+  executes the *live working tree*, so editing `ts5_moe_served.sh` while its
+  action was running rewrote the script under a running bash: the published log
+  shows `line 68: AFTER: command not found` and then
+  `line 82: syntax error near unexpected token '('`. Commit before submit, and
+  do not edit while an action runs.
+- **All three attempts also failed for one real reason**, invisible until the
+  action was withdrawn because pbrun buffers an action's stdout until it ends
+  and a retried action never ends: `kl_tool.py dump` refuses
+  `--role teacher` without `--teacher-label`, in 2 seconds, before any request.
+  The driver passed three arguments to `serve_and_dump_kl.sh` where the fourth
+  is the teacher label. Fixed in `6172e1e`; the driver now also tees to
+  `served/driver.log` so an arm is readable while it runs (`99ac7b2`).
+- **The withdraw itself left two orphans**, and they deadlocked the next
+  submission for six minutes: a running `ts5-kl-teacher` container, and
+  `serve.lock` as a directory with **no owner file** -- `serve_lock_release`
+  ran far enough to `rm -f owner` before the TERM landed but not far enough to
+  `rmdir`. `serve_lock_acquire` only sweeps a lock older than 3600 s on an
+  otherwise idle box, so an ownerless lock is not stale by its own test and the
+  next serve waits an hour for a lock nobody holds. Reaped by hand (my own
+  container, my own lock); the loop is fixed in this branch, see below.
 
 ## The load hop is closed: vLLM read the routed-MoE checkpoint back
 
@@ -190,3 +217,123 @@ chunked-prefill budget of 8192 batched tokens, so its profiling peak is several
 times a `--max-num-seqs 8` serve's, and the 18.24 GiB the *serve* needed is not
 enough for the *census*. One number was doing two jobs; the driver now has
 `TESSERA_CENSUS_MEM_UTIL` (0.35) separate from `TESSERA_GPU_MEM_UTIL` (0.15).
+
+## The serve happened. The measurement did not survive the model.
+
+Both dumps completed. The plugin served the routed-MoE checkpoint, generated,
+and answered 4088 logprob requests:
+
+| arm | positions | top-K coverage (mean) | build |
+|---|---:|---:|---|
+| BF16 cut, stock image | 4088 | 0.2259 | eager, `95c38d65cc6d5194` |
+| Tessera cut, **the plugin** | 4088 | 0.2265 | eager, `04250a9921a169e8` |
+
+and `kl_tool` compared them:
+
+```
+metric=KL-vs-BF16  support=top-1024  partition=teacher-student-intersection
+bound=lower bound (data-processing inequality)  regime=prefill  positions=4088
+positions=4088  top1_agree=62.74%
+  ALL   KL >= 0.005826   (<= 78.955220 at the declared floor 3.72e-44)
+        teacher tail mass outside the compared support: mean 0.791350 max 0.838625
+  legacy (v1) all=0.088701  confident=n/a (no confident position)
+```
+
+**None of that is a quality number, and the reason is not Tessera.** The
+bound spans four orders of magnitude, 79% of the teacher's mass sits outside
+the compared support, and there is no position anywhere in 4088 where the
+teacher is confident enough to be worth comparing.
+
+### The control, and it is decisive
+
+The greedy smoke on the Tessera arm is gibberish —
+
+```
+completion: 'imersUnloadimers unload unload unload unload unload unloademyFan unload unloademyemyemy'
+```
+
+— and gibberish out of a quantized model is exactly the shape of a broken
+expert route, so it needs a control rather than an explanation. The control is
+the BF16 arm's own dump, and a third arm that predates tonight: the
+**uncut** GLM-5.3-Flash-4layer, all 128 experts, BF16, dumped 2026-09-01 on the
+same corpus contract (`/mnt/shared/tessera-kl/teacher_bf16.json.npz`). For each
+arm, how often its top-1 is the corpus's actual next token, and where the true
+token ranks in the 1025 returned:
+
+| arm | next-token top-1 | median rank of the true token | mass in top-1025 | median max-prob |
+|---|---:|---:|---:|---:|
+| GLM-5.3-Flash-4layer, **all 128 experts**, BF16 | **0.00%** | 1024 | 0.2716 | 0.0185 |
+| the 16-expert cut, BF16 (the teacher) | **0.00%** | 1024 | 0.2259 | 0.0036 |
+| the 16-expert cut, **Tessera wire** | **0.00%** | 1024 | 0.2265 | 0.0033 |
+
+Not one correct next token in 4088, on any arm, including the one with no
+quantization and every expert. The true token's median rank is 1024 of 1025 —
+the model ranks it below essentially everything it was asked about. The
+alignment is not in doubt: the true token is present in the returned support at
+100% of positions (the serve appends it), while the off-by-one alignment
+appears at 1.69%.
+
+**So the 4-layer base is not a language model, my expert cut is not what broke
+it, and the gibberish is inherited.** That is not a new discovery — it is
+`docs/measurements/tessera-served-kl-2026-09-01.md`'s method note, reproduced:
+*"A 4-layer cut is not a language model; its distribution is nearly flat and no
+top-K comparison on it is informative. That run is retained as a plumbing
+validation only."* The same ruling applies here, and this run is the same
+category of evidence.
+
+Two things tonight's numbers add to that ruling:
+
+- **The cut is strictly worse than the base it came from as a reference.** The
+  uncut base still had 1709 positions the 09-01 run could call confident; the
+  16-expert cut has **none**, and its median max-probability falls 0.0185 →
+  0.0036. Narrowing the expert dimension bought the encode budget by spending
+  the last of the measurability.
+- **`top1_agree` is a trap on a model like this.** 62.74% looks respectable and
+  is higher than the 23% the *uncut* base scored against its own quantization
+  on 09-01 — which is the giveaway, not the reassurance. Two near-uniform
+  distributions collapsed onto the same repeated junk token agree often and
+  mean nothing by it. Agreement is only a quality statistic when the reference
+  has an opinion.
+
+### What this run does establish
+
+Everything on the serving path, and nothing about quality:
+
+1. the exporter's routed-MoE bytes **load** — 11/11 shards, no `KeyError`,
+   `quantization=tessera` chosen by the checkpoint with `quantization_config=None`;
+2. vLLM builds the expert method at the checkpoint's own expert count
+   (`E=16,N=2048,device_name=NVIDIA_GB10,dtype=fp8_w8a8`);
+3. the model **generates** through the plugin's expert route, eager, and again
+   under `LLM(...)` in the census;
+4. it answers 4088 prompt-logprob requests at k=1025 without a failure, and
+   the dump's running clock (10.7 s at chunk 1 to 31.7 s at chunk 8, about
+   3 s per 511-position chunk after the first) lands on top of the BF16 arm's
+   (10.6 s to 32.2 s), so the route is not pathologically slow either. That is
+   a wall-clock observation off the dump log, not a profiled latency claim.
+
+The quality half of item 5 is **not** measured and cannot be measured on this
+model. What would measure it: encode the full 128-expert stacks (21.74 G routed
+parameters, ~3.75 GPU-hours) so the reference is the real GLM-5.3-Flash-4layer,
+which is still a truncation and still flat — or, better, find a genuinely
+trained routed-MoE model small enough to encode. Qwen3-0.6B is what the 09-01
+run reached for when it hit this same wall, and it is dense.
+
+### The census ran and lost its receipt to an NFS permission
+
+The census loaded the checkpoint, generated twice, gathered every route record,
+and then died:
+
+```
+File "/work/tools/tessera_route_census.py", line 526, in main
+  with open(args.out, "w") as fh:
+PermissionError: [Errno 13] Permission denied: '/mnt/shared/tessera-runs/ts5/served/census.json'
+```
+
+`/mnt/shared` is NFSv4 with `sec=sys` and the export squashes root; the census
+runs as root inside the container and the output directory is `drwxrwxr-x
+rob:rob`. Verified rather than inferred — container root gets `Permission
+denied` on that directory and `OK` on a bind mount of `/home/rob/tmp`. The
+wrapper's own default `RUNS` is a local path for exactly this reason; this
+driver was the caller that pointed it at NFS. Fixed by writing to a local mount
+and copying on the host, and the student arm now skips if its dump exists, so
+the re-run costs one load instead of three.
