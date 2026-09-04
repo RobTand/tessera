@@ -970,11 +970,11 @@ class Manifest:
         if minor >= 2:
             writer.uint(int(self.body)).uint(self.window_bits)
         if minor >= 4:
-            writer.uint(1 if self.shard is not None else 0)
+            writer.bool(self.shard is not None)
             if self.shard is not None:
                 self.shard.encode(writer)
         if minor >= 5:
-            writer.uint(1 if self.reach is not None else 0)
+            writer.bool(self.reach is not None)
             if self.reach is not None:
                 self.reach.encode(writer)
         if minor >= 6:
@@ -982,7 +982,7 @@ class Manifest:
             # forward reason: a later minor may write its own field while
             # this one is absent, and a reader at that minor still has to
             # know how many bytes to step over.
-            writer.uint(1 if self.encoder_fixture_id is not None else 0)
+            writer.bool(self.encoder_fixture_id is not None)
             if self.encoder_fixture_id is not None:
                 writer.digest32(self.encoder_fixture_id)
         return writer.bytes
@@ -1038,17 +1038,17 @@ class Manifest:
             window_bits = reader.uint()
         shard = None
         if schema_minor >= 4:
-            if reader.uint():
+            if reader.bool():
                 shard = ShardOrigin.decode(reader)
         reach = None
         if schema_minor >= 5:
-            if reader.uint():
+            if reader.bool():
                 reach = ReachParams.decode(reader)
         # Absent means the encoder as it stood when the field was added: every
         # artifact written before minor 6 was cut by it, by construction.
         encoder_fixture_id = None
         if schema_minor >= 6:
-            if reader.uint():
+            if reader.bool():
                 encoder_fixture_id = reader.digest32()
         reader.finish()
         return cls(
