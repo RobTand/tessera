@@ -381,6 +381,9 @@ PLACEHOLDER_IMPACTED
 * The contract-block generator lived in a scratch file while a committed test
   said "regenerate it". Committed as `tools/tessera_update_construction_block.py`
   with `--check`. Fixed; mine.
+* The load harness lacked an `if __name__ == "__main__"` guard, which vLLM
+  needs because it forces `spawn` once CUDA is initialised. Mine, scratch-only,
+  fixed.
 
 ## 6. Filed, not fixed
 
@@ -406,6 +409,20 @@ PLACEHOLDER_IMPACTED
   negligible but the §3 numbers inherit the caveat.
 * **The exporter's `MOE_ROUTER` comment block is a prose attestation** that the
   census now subsumes. Left alone: #5 is live there.
+* **PrismaBuild replays a cached result when the command string is unchanged,
+  and the replay is indistinguishable from a fresh run.** Two resubmissions of
+  a fixed load script came back with the *first* run's stdout verbatim: same
+  action key (`7fef65a0ea1c`), same `UPTIME-BEFORE: 21:09:00`, same traceback
+  pointing at a line the edited file no longer has. I only caught it because
+  the line number was impossible. The action key is computed from the command
+  and the declared inputs; a script the job reads but does not declare is
+  invisible to it, so an edit does not invalidate the entry. Adding a unique
+  env var to the command produced a new key and a real run. **Not fixed:
+  `pbrun.py` is fleet infrastructure, not this branch's code, and the right fix
+  is a decision about whether undeclared script files should be hashed into the
+  key or whether replay should be opt-in with `--deterministic` rather than
+  default.** Worth acting on quickly: a worker that edits a script and re-runs
+  it will silently believe a stale result.
 
 ## 7. Consultations
 
