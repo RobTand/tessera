@@ -245,7 +245,7 @@ def main() -> int:
 
     import tessera
     import tessera.serving as serving
-    from tessera.serving import bf16_route, fp8_gemv, fp8_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_gemv, fp8_route, moe_route, nvfp4_route
     from tessera.serving.census import cell_launch_agreement, lane_engagement
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
@@ -282,8 +282,20 @@ def main() -> int:
     # second spelling here; every other family reports one pair.
     fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
     bf16_expected = bf16_route.census_expected(compiled=args.compiled)
+    # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
+    # under the same family (``TESSERA_FP8``, same wire, same activation
+    # contract) and a different dispatch: one materialised launch through
+    # vLLM's modular fused-MoE kernel, in both regimes, with no GEMV lane.
+    # Comparing it against the dense pair set reads a correct serve as a
+    # refusal on every stack, so the expectation is taken from the route that
+    # owns the dispatch -- ``moe_route.census_expected``, which also says why
+    # its symbol is compared without the runtime's backend suffix and why no
+    # contract cell publishes it yet.
+    moe_expected = moe_route.census_expected(compiled=args.compiled)
 
-    def _expected(family, regime):
+    def _expected(family, regime, kind):
+        if kind == "moe":
+            return moe_expected[regime]
         if family == TESSERA_FP8:
             return fp8_expected[regime]
         if family == TESSERA_BF16:
@@ -461,8 +473,14 @@ def main() -> int:
             # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
             # comparison would read either half as a refusal on every module
             # that legitimately took the other launch.
-            want = _expected(family, CENSUS_PHASE_REGIMES[phase])
-            if ((r["symbol"], r.get("decoder")) not in want
+            want = _expected(family, CENSUS_PHASE_REGIMES[phase], r.get("kind"))
+            # The expert route's symbol carries the backend the RUNTIME picked
+            # (``...modular_kernel:TRITON``), which no expectation of ours may
+            # pin; the entry point is what this compares and the histogram
+            # above keeps every exact string, backend and all.
+            got_symbol = (moe_route.census_symbol_base(r["symbol"])
+                          if r.get("kind") == "moe" else r["symbol"])
+            if ((got_symbol, r.get("decoder")) not in want
                     and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
                 problems.append(
                     f"{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "

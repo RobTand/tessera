@@ -332,6 +332,43 @@ the field exists to catch. The per-phase counts stay in the block, and
 `all_required_engaged` is three-valued so "nobody said what to require" never
 reads as "everything required was engaged".
 
+**A routed expert stack joins by containment, and is graded by its structure.**
+vLLM builds one quant method for the declared stack prefix and attaches it to
+the `RoutedExperts` child it constructs underneath, so the route record lands
+at `<layer>.mlp.experts.routed_experts` while the checkpoint declares
+`<layer>.mlp.experts`. An exact-name join reads that as two faults at once --
+a served module nothing declared, and a declared module nothing served: six
+problems over three stacks on the first served MoE census, every one of them
+that single cause. So a record whose `kind` is `moe` joins to the one declared
+target that CONTAINS it, and to none if two do -- ambiguity is reported, never
+resolved by picking the longer prefix -- while a dense record still joins only
+to itself (`join_records_to_declared`,
+`tests/test_route_census_module_space.py`).
+
+The structure then decides what that record is graded against. A stack serves
+under `TESSERA_FP8` -- same family, same wire, same activation contract -- and
+a different dispatch: one materialised launch through vLLM's own modular
+fused-MoE kernel, at every M, with no GEMV lane and nothing for a compiled
+forward to combine. Resolving the expectation from the FAMILY alone hands the
+stack the dense route's pair set and refuses a serve that did exactly what the
+route intends, so it comes from the route that owns the dispatch
+(`moe_route.census_expected`, the same ownership rule as
+`fp8_gemv.census_expected`). Its symbol is compared without the backend suffix
+the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is
+vLLM's predicate over the kernels on the box, so which backend ran is kept in
+the receipt's histogram and is never pinned by an expectation of ours.
+
+And the stack stays **unattested** in the cell-agreement block.
+`census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
+`lane_eligibility` structure whose cells could cover it (`moe` ->
+`routed_moe`), and contract v14 publishes `dense` only -- so the block counts
+the stack and covers it with nothing, checked before the rung lookup rather
+than left to the accident that the record's name carries a suffix no
+declaration does. That is the same honest absence §4.4 records for the loader,
+and closing it is a document change: a structure axis in `ROUTE_LAUNCHES` and a
+`routed_moe` cell at the next contract version, derived from that table the way
+every dense cell is.
+
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
 A `lane_eligibility` cell says: on this platform, for this payload family, at
