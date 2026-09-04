@@ -1043,3 +1043,60 @@ artifact served so far is Qwen.
 returns `None`, and the exporter treats that as a refusal (`uncensused`) rather
 than as permission — the honest direction, and the fix is to run the census in
 the serving image and commit the receipt.
+
+## 14. The expert route exists, and what that does and does not settle (2026-09-04, #5)
+
+`tessera.serving.moe_route` landed. It has been **loaded and executed on the
+pinned runtime** — vLLM's real `RoutedExperts`, its real `load_weights`, the
+runtime's own fused-MoE modular kernel —
+`docs/measurements/tessera-moe-route-load-2026-09-04.md`,
+`experiments/results/moe_route_load_probe.json`. That receipt is the
+load-and-execute contract and nothing more: no artifact, no served census, no
+KL, and therefore **no `routed_moe` cell in `runtime_contract.json`**.
+
+**The unit is the projection, not the group.** §2 called the MoE cell "the
+per-expert 2-D projection weight" and that is what the wire is: one
+`tessera.fused` container per expert per projection, which is the granularity
+the checkpoint's tensors, the runtime's shard ids (`w1`/`w3`/`w2`) and
+`tessera.moe_layout`'s cells all already have. The **group** (`w13` = gate then
+up, `w2` = down) is how those containers stack into the tile the kernel reads,
+and the sidecar declares the groups, not a container per group.
+
+**Per group the sidecar declares a `wire_stride`, not a `wire_bytes`.** §9.6's
+finding — the blob length follows the data, so `[E, 2, nbytes]` at one stride
+is bytes that fit all but one row — is why. The stride is the parameter row
+width; a blob's true length rides beside it; `moe_layout.unpack_moe_wires`
+refuses a stride that is not the maximum its lengths imply, and that refusal
+fired on real bytes in the probe.
+
+**§9.1 held.** The route is `TESSERA_FP8` only. `scheme.MOE_BUILDERS` is the
+one home for which families have an expert route, and it cites this doc's own
+clamp finding for why NVFP4 is absent.
+
+**§9.6 held, and is now load-bearing.** The wire parameter carries its **own**
+`weight_loader`; twelve loader calls in the probe went through
+`RoutedExperts.load_weights` into `w13_wire`/`w2_wire`, which the stack's own
+loader would have dropped silently.
+
+### What is still owed
+
+1. **The exporter's write half** (2-D unpacked source). This is the only thing
+   standing between the route and an artifact — and it is *not* blocked on a
+   measurement: contract v11's `construction` block already carries
+   `offered_non_linear` naming `...mlp.experts` / `RoutedExperts` on
+   GLM-5.3-Flash, so the construction gate has a row to read for the MoE
+   module. The refusals in `experiments/export_tessera_serving.py` now say
+   exactly this instead of claiming the plugin has no route.
+2. **The packed 3-D source layout** stays refused, and *is* blocked on a
+   measurement: §9.3's orientation ambiguity is unresolved, and this model is
+   the case where no shape settles it.
+3. **A served census and KL.** §0's encode table prices it: the E4M3 whole-expert
+   rate is 1.611 Mparam/s on a held box, so one GLM-5.3-Flash-4layer MoE layer
+   (288 experts x 3 projections) is ~72–75 min and all three are ~3.7 h, before
+   two 45 GB serves.
+4. **Expert parallelism, tensor parallelism inside an expert, and `streamed`**
+   are refused by name in the route, not measured.
+5. **Memory at scale.** The route holds the wires *and* the decoded tile until
+   `process_weights_after_loading` returns. At GLM's 288 experts that is
+   roughly 11 GB per MoE layer of transient peak; the probe ran at 4 experts
+   and says nothing about it.

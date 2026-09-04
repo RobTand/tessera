@@ -77,19 +77,32 @@ re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.
 
-ROUTED-MoE EXPERTS ARE NOT EXPORTED YET, and are refused by name rather than
-skipped.  A transformers-5 checkpoint packs a layer's experts into 3-D tensors
-(``mlp.experts.gate_up_proj`` ``[E, K, 2N]``, ``...down_proj`` ``[E, N, K]``);
-``quantizable`` separates them from the 2-D body and ``main`` either passes
-them through as BF16 (named in ``ignore``, so the plugin serves the MoE layer
-unquantized instead of refusing it) or, if a plan names one, refuses with the
-tensor and its shape.  When the expert route lands, the work is: encode one
-unit per expert per role, frame them into one container per vLLM MoE module
-(the fused rule below already groups by module name and is rank-agnostic),
-declare ``structure: "routed_moe"`` on the scheme, and decode to the stock
-PACKED expert layouts vLLM's fused-MoE kernels read.  The grouping rule that a
-fused module's roles must share ONE family holds for experts exactly as it does
-for q/k/v: vLLM builds one method per module.
+ROUTED-MoE EXPERTS ARE NOT EXPORTED YET -- and after 2026-09-04 that is a
+statement about THIS FILE alone, which is why the refusals below say so.  The
+consumer side is built and measured: ``tessera.serving.moe_route`` decodes one
+container per expert per PROJECTION into vLLM's stock per-channel FP8 expert
+parameters and runs the runtime's own fused-MoE kernel, loaded and executed on
+the pinned build (``docs/measurements/tessera-moe-route-load-2026-09-04.md``);
+the sidecar shape is ``scheme.validate_tessera_moe_scheme`` and the parameter
+layout is ``tessera.moe_layout``.  What this exporter still owes is the write
+half: group the 2-D routed leaves by ``<moe>.experts``, encode one unit per
+expert per projection, write them as ``<moe>.experts.{e}.{proj}.wire``, and
+declare one ``structure: "routed_moe"`` config group per stack with a per-group
+``wire_stride``.  The construction census already answers whether the runtime
+offers that module a quant config (``offered_non_linear`` names
+``...mlp.experts`` / ``RoutedExperts`` on GLM-5.3-Flash), so the gate has a
+row to read; nothing else is blocked on a measurement.
+
+The PACKED 3-D source layout (``mlp.experts.gate_up_proj`` ``[E, K, 2N]``,
+``...down_proj`` ``[E, N, K]``) is a separate question and is blocked on one:
+slicing it into per-expert 2-D projections needs the orientation, and on
+GLM-5.3-Flash ``hidden_size == 2 * moe_intermediate_size`` makes the gate_up
+tensor square, so no shape settles it.  ``quantizable`` separates both from the
+2-D body and ``main`` either passes them through as BF16 (named in ``ignore``,
+so the plugin serves the MoE layer unquantized instead of refusing it) or, if a
+plan names one, refuses with the tensor and its shape.  The grouping rule that
+a fused module's roles must share ONE family holds for experts exactly as it
+does for q/k/v: vLLM builds one method per module.
 """
 from __future__ import annotations
 
@@ -812,9 +825,15 @@ def main():
             f"{list(routed_shapes[first])}. A routed expert is not a dense Linear: vLLM builds "
             "one FusedMoE module per layer, not one Linear per expert, so a checkpoint declaring "
             f"{module_of(first)} in config_groups names a module vLLM never creates and the "
-            "plugin refuses it at load. There is no routed-MoE export yet -- it needs a `moe` "
-            "block this exporter does not write and an expert route the plugin does not have "
-            "(issue #5). Remove them from the plan to pass them through as BF16.")
+            "plugin refuses it at load. What is missing is THIS EXPORTER's write half, and only "
+            "that: the plugin's expert route exists and has been loaded and executed on the "
+            "pinned runtime (tessera.serving.moe_route, "
+            "docs/measurements/tessera-moe-route-load-2026-09-04.md), the sidecar shape exists "
+            "(scheme.validate_tessera_moe_scheme) and the parameter layout exists "
+            "(tessera.moe_layout). A routed-MoE export writes one container per expert per "
+            "PROJECTION under `<moe>.experts.{e}.{proj}.wire`, groups them w13/w2, and declares "
+            "structure: routed_moe with a per-group wire_stride; none of that is written here "
+            "yet (issue #5). Remove them from the plan to pass them through as BF16.")
     planned_routers = sorted(n for n in overrides if MOE_ROUTER.match(n))
     if planned_routers:
         raise SystemExit(
@@ -833,11 +852,15 @@ def main():
         raise SystemExit(
             f"the plan names {len(planned_experts)} packed expert tensor(s), e.g. {first} "
             f"{list(expert_shapes[first])} (orientation "
-            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): routed-MoE "
-            "expert export is a follow-up. The wires, the container framing and the scheme's "
-            "structure field are all in place; what is missing is the per-expert encode and the "
-            "decode to vLLM's packed expert layouts. Remove them from the plan to pass them "
-            "through as BF16.")
+            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): the packed "
+            "3-D source layout has no export. The decode side is settled -- the plugin's expert "
+            "route loads and executes per-expert wires on the pinned runtime "
+            "(docs/measurements/tessera-moe-route-load-2026-09-04.md) -- but slicing a packed "
+            "[E, ...] tensor into per-expert 2-D projections needs the ORIENTATION, and on this "
+            "model it is genuinely ambiguous (hidden_size == 2 * moe_intermediate_size makes the "
+            "gate_up tensor square; docs/tessera-serving-and-moe-contract.md 9.3). No receipt "
+            "settles it, so it is refused rather than guessed. Remove them from the plan to pass "
+            "them through as BF16.")
     unknown = sorted(set(overrides) - set(shapes))
     if unknown:
         raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}")
@@ -1096,9 +1119,10 @@ def main():
                 twin_records[module] = {"family": family, "members": [module_of(m) for m in members],
                                         "resident_bytes": sum(stock_bytes(stock_tensors[m]) for m in members)}
             scheme = {
-                # ``structure`` names what kind of vLLM layer this is: ``dense``
-                # (a LinearBase, one blob per module) today.  The expert route
-                # will declare ``routed_moe`` here rather than change the schema.
+                # ``structure`` names what kind of vLLM layer this is.  Every
+                # module this exporter writes is ``dense`` -- one blob per
+                # LinearBase.  ``routed_moe`` is the other value the plugin
+                # serves, and it is what the expert write half will declare.
                 "family": family, "structure": "dense",
                 "grid": grid.name, "body": recipe.body.name, "plane": recipe.scale_plane.name,
                 # An int when every role took the same rung -- what every
