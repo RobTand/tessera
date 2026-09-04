@@ -135,6 +135,43 @@ def declared_in_module_space(model, targets):
     return out
 
 
+def join_records_to_declared(records, declared):
+    """Which declared target each route record belongs to, and what is ambiguous.
+
+    A dense module carries its record where the checkpoint names it, so the
+    join is the identity.  A ROUTED EXPERT STACK does not: vLLM builds one
+    quant method for the stack's prefix and attaches it to the
+    ``RoutedExperts`` child it constructs underneath, so the record is read at
+    ``<declared>.routed_experts`` and an exact-name join reports the same
+    served stack TWICE -- once as a route the checkpoint declares nothing for,
+    once as a declaration nothing served.  That is what the first routed-MoE
+    census said: eight dense modules clean, three expert stacks served, and
+    ``REFUSED`` on six problems that were one name.
+
+    The join is by containment and only for an expert record: a record whose
+    ``kind`` is ``moe`` and whose module path lies under exactly one declared
+    target belongs to that target.  ``kind`` is the record's own word for what
+    it served, so the rule reads the runtime's statement rather than matching
+    the child's name; a second Tessera module nested under a declared one would
+    be AMBIGUOUS and is reported, never guessed.
+    """
+    owner, problems = {}, []
+    for name, record in records.items():
+        if name in declared:
+            owner[name] = name
+            continue
+        if record.get("kind") != "moe":
+            continue
+        parents = sorted(d for d in declared if name.startswith(d + "."))
+        if len(parents) == 1:
+            owner[name] = parents[0]
+        elif parents:
+            problems.append(
+                f"{name} is an expert record under {len(parents)} declared targets "
+                f"{parents}; a stack belongs to one declaration or to none")
+    return owner, problems
+
+
 def lane_refusals(model):
     """Runs inside the worker: every module whose LANE refused at load.
 
@@ -380,6 +417,7 @@ def main() -> int:
     mode = os.environ.get(TESSERA_MODE_ENV, "")
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
     histogram = {}
+    record_owner = {}
     for phase, recs in phases.items():
         tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
         other = {n: r for n, r in recs.items() if n not in tess}
@@ -402,8 +440,11 @@ def main() -> int:
         }
         if not tess:
             problems.append(f"{phase}: no module reports a Tessera route")
+        owner, join_problems = join_records_to_declared(tess, declared)
+        record_owner[phase] = owner
+        problems.extend(f"{phase}: {m}" for m in join_problems)
         for name, r in tess.items():
-            family = declared.get(name)
+            family = declared.get(owner.get(name, name))
             if family is None:
                 problems.append(
                     f"{phase}: {name} took a Tessera route but the checkpoint declares none for it")
@@ -427,7 +468,7 @@ def main() -> int:
                     f"{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
                     f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
                     "report a pair its route owns")
-        missing = sorted(set(declared) - set(tess))
+        missing = sorted(set(declared) - set(owner.values()))
         if missing:
             problems.append(
                 f"{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
@@ -520,6 +561,11 @@ def main() -> int:
         "lane_engagement": engagement,
         "lane_refusals": refusals,
         "records": phases,
+        # Which declared target each record was joined to.  For a dense
+        # module that is the identity; for an expert stack it names the
+        # declaration the RoutedExperts child served, so the join is a
+        # value a reader can check rather than a rule they must trust.
+        "record_owner": record_owner,
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }

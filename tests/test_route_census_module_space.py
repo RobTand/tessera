@@ -99,3 +99,71 @@ def test_a_class_name_or_a_regex_target_is_left_alone(target):
     """compressed-tensors' own target shapes: only a dotted path is a path."""
     mapper = _Mapper(_Unstacked({"model.": "lm."}))
     assert _tool().declared_in_module_space(_Model(mapper), [target]) == {target: target}
+
+
+# --- and the second half of the join: which DECLARATION a record belongs to ---
+#
+# Module space alone is not enough for an expert stack.  The checkpoint
+# declares ``<layer>.mlp.experts``; vLLM builds the quant method for that
+# prefix and attaches it to the ``RoutedExperts`` child it constructs
+# underneath, so the record is read at ``<layer>.mlp.experts.routed_experts``.
+# The first routed-MoE census (2026-09-04, `docs/measurements/
+# tessera-moe-served-2026-09-04.md`) refused on six problems that were three
+# names: each stack counted once as a route nothing declared and once as a
+# declaration nothing served, while its record said `state: "served"`.
+
+DENSE = "language_model.model.layers.0.mlp.down_proj"
+STACK = "language_model.model.layers.1.mlp.experts"
+
+
+def test_a_dense_record_joins_to_its_own_name():
+    owner, problems = _tool().join_records_to_declared(
+        {DENSE: {"kind": "dense"}}, {DENSE: "TESSERA_FP8"})
+    assert owner == {DENSE: DENSE} and problems == []
+
+
+def test_an_expert_record_joins_to_the_stack_that_declares_it():
+    child = f"{STACK}.routed_experts"
+    owner, problems = _tool().join_records_to_declared(
+        {child: {"kind": "moe"}, DENSE: {"kind": "dense"}},
+        {STACK: "TESSERA_FP8", DENSE: "TESSERA_FP8"})
+    assert owner == {child: STACK, DENSE: DENSE}
+    assert problems == []
+
+
+def test_the_joined_stack_is_no_longer_missing_and_no_longer_undeclared():
+    """The two halves of the defect, stated as the census states them."""
+    tool = _tool()
+    child = f"{STACK}.routed_experts"
+    records, declared = {child: {"kind": "moe"}}, {STACK: "TESSERA_FP8"}
+    owner, _ = tool.join_records_to_declared(records, declared)
+    assert declared.get(owner.get(child, child)) == "TESSERA_FP8"   # not "declares none"
+    assert sorted(set(declared) - set(owner.values())) == []        # not "reports no route"
+
+
+def test_a_non_expert_record_under_a_declared_target_does_not_join():
+    """The rule is narrow on purpose: ``kind`` is the record's own word.
+
+    Anything else nested under a declared module is a route the checkpoint
+    genuinely declares nothing for, and saying so is the census's job.
+    """
+    child = f"{STACK}.something_else"
+    owner, problems = _tool().join_records_to_declared(
+        {child: {"kind": "dense"}}, {STACK: "TESSERA_FP8"})
+    assert owner == {} and problems == []
+
+
+def test_an_expert_record_under_two_declarations_is_ambiguous_not_guessed():
+    inner = f"{STACK}.inner"
+    child = f"{inner}.routed_experts"
+    owner, problems = _tool().join_records_to_declared(
+        {child: {"kind": "moe"}}, {STACK: "TESSERA_FP8", inner: "TESSERA_FP8"})
+    assert owner == {}
+    assert len(problems) == 1 and "belongs to one declaration" in problems[0]
+
+
+def test_a_record_that_is_its_own_declaration_wins_over_containment():
+    """A stack that carries its own record joins to itself, not to a parent."""
+    owner, problems = _tool().join_records_to_declared(
+        {STACK: {"kind": "moe"}}, {STACK: "TESSERA_FP8"})
+    assert owner == {STACK: STACK} and problems == []
