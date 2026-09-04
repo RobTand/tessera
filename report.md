@@ -186,10 +186,45 @@ census verdict is not the evidence either way — an AOT load skips the trace, s
 
 ## 7. Suite
 
-Per the coordinator's replacement procedure: branch suite once, and only the
-failing files re-run against pristine master.
+The list is computed, not judged: `tools/impacted_tests.py --ref master...HEAD`
+(taken from master; this branch predates it) walks the import graph and returns
+everything reverse-reachable from the diff — **verdict `narrowed`, 15 changed
+files, 12 test files**:
 
-RESULTS_PLACEHOLDER
+    tests/test_fused_member_rungs.py       tests/test_serving_dispatch.py
+    tests/test_serving_bf16_gemv.py        tests/test_serving_fp8_gemv.py
+    tests/test_serving_bf16_route.py       tests/test_serving_fp8_route.py
+    tests/test_serving_compile_identity.py tests/test_serving_loader_gates.py
+    tests/test_serving_contract.py         tests/test_serving_moe_dispatch.py
+    tests/test_serving_name_mapping.py     tests/test_serving_sharding.py
+
+All twelve, one run, on sparklina through the PrismaBuild pool
+(`pbrun.py --gpu`), so the GPU tests actually executed rather than skipping:
+
+    242 passed, 3 skipped, 14 warnings in 140.73s     exit code 0
+
+No failures, so nothing needed re-running against master. (Two earlier runs of
+subsets — 187 passed / 3 skipped CPU-only, 147 passed / 2 skipped on GPU — are
+superseded by this one.)
+
+**Pre-fix failure lines**, each measured against the `82cdf51` tree with the
+branch's test file copied into it:
+
+* `tests/test_serving_compile_identity.py` (7 added tests) — collection fails:
+  `ImportError: cannot import name 'DISPATCH_FACT' from
+  'tessera.serving.compile_identity'`.
+* `test_serving_fp8_gemv.py::test_the_two_streamed_lanes_declare_two_compile_identities`
+  and
+  `test_serving_bf16_gemv.py::test_a_per_unit_refusal_changes_the_compile_identity`
+  — `2 failed in 1.45s`, both on
+  `AttributeError: module 'tessera.serving.compile_identity' has no attribute
+  'reset_for_tests'`.
+
+Those three lines say the *fact* is new, which is honest but weak: an API error
+is not proof a test catches a defect. The behavioural pre-fix line is the
+measurement in §2 — the same question the tests ask (do two lane states key
+apart?), put to master's own source through vLLM's own hash function, answered
+**one key for four states**.
 
 ## 8. Rebase
 
