@@ -220,3 +220,26 @@ Nothing in this report is a ship claim, and the gap is large:
   E4M3 artifact **without moving `encoder_profile_id`** (§5). Before such a
   change could ship, that normalisation would have to bind the constant, or the
   constant would have to be written into the profile explicitly.
+* If the 2×2 gives the refit a proposal (§0), it would need the same ladder:
+  a rung sweep on more than one unit, then a served A/B at matched bytes. A
+  refit change moves no wire — `refit_metric` is an encoder argument, not a
+  plane — so it is far cheaper to ship than a per-grid constant, but it is
+  still a default and still owes served evidence.
+
+---
+
+## 9. Off-task fixes landed on this branch
+
+Each is a separate commit so it can be taken or dropped independently.
+
+| commit | what |
+|---|---|
+| `b85e233` | #84's reporting half: `window_table_reach()` returns requested vs realised reach, `delivered`, `saturated`, `saturated_fraction`; `EncodedUnit.table_reach` records it per encode (diagnostic, never wire); `bf16_l_sigma_sweep.py` reports it. Two new tests in `tests/test_window_body.py`. |
+| `14880cd` | `scale_channel._default_sigma`'s docstring said the ladder was dyadic. It is a **quarter-binade** ladder (`peak · 2^(-k/4)`, forty rungs) minimising scalar-RTN nearest-value error — which is neither dyadic nor the objective #89 is about. Prose only. |
+| `14880cd` | Prose in `export.py`, `tests/test_bf16_route.py`, `experiments/tessera16_alphabet_floor.py`. |
+
+## 10. Consultations
+
+None. No `fable-*` agent was spawned. Every open question on this ticket was a
+four-encode experiment or a two-line diagnostic, and the one reduced model I
+built (`ts89_table_surgery.py`) was cheaper to write than to delegate.
