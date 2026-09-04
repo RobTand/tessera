@@ -508,10 +508,17 @@ and is labelled that way below.
 
 **The next measurement, in order of value:**
 
-1. `b4`, already encoding on the same driver (`[100/196]` at 19,272 s when this
-   was written, log `ldlq-block-serve/export_b4.log`), which will say whether
-   the served curve keeps improving below 8 or turns over as the weight-space
-   sweep says it does at `b2`/`b1`.
+1. `b4`, which **landed at 02:59 UTC on 2026-09-04**, 27,348 s of encode, and is
+   **exported but not served**: `ldlq-block-serve/b4-stock-twin/model.safetensors`
+   is 870,290,032 bytes, the same residency as the three arms above, and its
+   manifest differs from theirs in the single field this bracket varies --
+   `ldlq_block` 32 / 8 / **4** at one `ldlq_sigma 1.0`, one `refit_objective
+   h^1.0`, one Hessian `229c6f72307f`. No `kl_b4*.json` exists yet. It will say
+   whether the served curve keeps improving below 8 or turns over as the
+   weight-space sweep says it does at `b2`/`b1`. The serve belongs to the #60
+   driver that built it, not to this branch: one serve per box, and taking the
+   lock mid-bracket would break the control ordering that makes these numbers
+   readable.
 2. A GLM six-expert arm at the budget, which is the promotion gate.
 3. The launch-bound segment cost, which decides whether any of this is
    affordable at scale.
