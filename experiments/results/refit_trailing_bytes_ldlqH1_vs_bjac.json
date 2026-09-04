@@ -1,0 +1,61 @@
+{
+ "a": "/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin",
+ "b": "/mnt/shared/tessera-runs/refit-trailing/bjac-stock-twin",
+ "tensors_only_in_a": [],
+ "tensors_only_in_b": [],
+ "by_suffix": {
+  ".input_global_scale": {
+   "same": 196,
+   "different": 0,
+   "names_different": []
+  },
+  ".weight": {
+   "same": 115,
+   "different": 0,
+   "names_different": []
+  },
+  ".weight_global_scale": {
+   "same": 196,
+   "different": 0,
+   "names_different": []
+  },
+  ".weight_packed": {
+   "same": 115,
+   "different": 81,
+   "names_different": [
+    "model.layers.0.mlp.down_proj.weight_packed",
+    "model.layers.0.mlp.up_proj.weight_packed",
+    "model.layers.0.self_attn.o_proj.weight_packed",
+    "model.layers.0.self_attn.q_proj.weight_packed"
+   ]
+  },
+  ".weight_scale": {
+   "same": 0,
+   "different": 196,
+   "names_different": [
+    "model.layers.0.mlp.down_proj.weight_scale",
+    "model.layers.0.mlp.gate_proj.weight_scale",
+    "model.layers.0.mlp.up_proj.weight_scale",
+    "model.layers.0.self_attn.k_proj.weight_scale"
+   ]
+  }
+ },
+ "wire": {
+  "a": {
+   "wire_bytes": 220301312,
+   "on_disk_bytes": 220443566,
+   "units": 196,
+   "modules": 112
+  },
+  "b": {
+   "wire_bytes": 220301312,
+   "on_disk_bytes": 220443566,
+   "units": 196,
+   "modules": 112
+  },
+  "wire_bytes_equal": true
+ },
+ "codes_identical_on_every_unit": false,
+ "the_plane_moved": true,
+ "verdict": "NOT the matched pair"
+}
