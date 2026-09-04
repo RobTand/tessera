@@ -298,32 +298,21 @@ AssertionError: the pin digest is copied into ['src/tessera/stock.py']; it
 lives in runtime_contract.json and is read from there
 ```
 
-**It fails identically on a pristine master checkout** (`1 failed, 11 passed`
-both places), so master is red on it today and this branch does not touch it.
-Someone put the pin digest back into `src/tessera/stock.py` after #100's test
-landed. Not mine to fix — it is #100's invariant and #92's file.
-
 That sweep: `1 failed, 126 passed, 14 warnings in 174.01s`, `PYTEST_EXIT=1`.
+**It failed identically on a pristine master checkout** (`1 failed, 11 passed`
+both places), so it was master that was red, not this branch. It has since been
+fixed on master (`ec0409a`): #92's attestation carried a second copy of the pin
+digest, and `stock.py` now reads it from the pin.
 
-New tests and the pre-fix failure line each one asserts:
+This branch is rebased onto `ec0409a`, and the final evidence is the impacted
+set computed from the import graph rather than a hand-picked list:
 
-* `tests/test_serving_construction.py` (11) — the contract block is exactly
-  re-derived from the committed receipts; receipts are stamped with an image id;
-  normalisation collapses every repeat index; GLM attention classifies
-  `never_offered`/`absent` and GLM MLP `offered`; Qwen is the 4-of-4 control; an
-  uncensused architecture returns `None`; the validator refuses
-  `offered ∩ never_offered`, a duplicate architecture row, and an unstamped
-  `image_id`. Before the fix: the module, the block and the receipts did not
-  exist — every one is a collection error.
-* `tests/test_export_construction_gate.py` (5) — on a synthetic GLM-architecture
-  checkpoint: the census answers *before* encoding; an uncensused architecture
-  refuses; the export refuses naming `self_attn.o_proj`, `never_offered` and
-  `quant_config=None`, and writes nothing; `--passthrough-unrouted` keeps only
-  `mlp.down_proj` and preserves `self_attn.o_proj.weight`; `--allow-unrouted`
-  reproduces the defect (weight gone, `self_attn.o_proj.wire_bytes` present) and
-  stamps it. Before the fix, `unrouted_modules` does not exist in the exporter,
-  so all five are import/collection errors on master — that is the pre-fix
-  failure line, and re-running the file against master is not informative.
+```
+$ tools/impacted_tests.py --ref master...HEAD
+verdict: narrowed  (13 changed, 41 tests)
+```
+
+PLACEHOLDER_IMPACTED
 
 ## 5. Off-task fixes (one line each)
 
