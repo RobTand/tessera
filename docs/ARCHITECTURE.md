@@ -484,3 +484,55 @@ against full-H (Jacobi, Gauss-Seidel). The diagnostics give the *size* of the
 landing leg within one arm; the ordering across arms costs one extra
 `lut_landing("none")` encode per arm (`experiments/lut_landing_ceiling.py`,
 no serve and no KL). `tests/test_landing_ordering.py` pins both halves.
+
+### 4.12 The LDLQ block is derived from the unit, and the default is a floor nobody has to defend
+
+`ldlq_block` sets LDLQ's error-feedback granularity, and until tessera#60 it
+was one round number (`export.DEFAULT_LDLQ_BLOCK = 32`) applied to every unit
+of every model. It is measurably the wrong shape of knob:
+`compensate.block_penalty(H_reg, block)` prices what a block costs against
+full feedback in closed form, and at `b=32` that is **14.7%** of full feedback
+on dense Qwen attention against **0.14%** on GLM experts -- a factor of 70
+between two populations one constant has to serve.
+
+`ActivationSource.ldlq_block` therefore takes either the width it always took
+or a **budget**, `{"max_penalty": ratio}`, and `ActivationSource.block_for`
+derives each unit's block from that unit's own Hessian through
+`compensate.choose_ldl_block` at `floor=1` (the `encode_unit(ldl=...)` path's
+floor, per tessera#95; the 16 that `choose_ldl_block` used to inherit is
+`compensate.compensated_targets`' constraint, not this path's). At budget 1.02
+one export gives `q`/`k` b4-b8, `down_proj` **b64** -- coarser than today's
+default -- and GLM experts **b256 or coarser**, eight times cheaper than the
+constant they run today. That is the thing a global flip cannot do.
+
+**The default does not move, and the reason is a serve, not a preference.**
+The weight-space case for a smaller constant was strong -- 6 of 6 units, a
+geomean crossing parity -- and it mostly did not carry. Bracket `b32 -> b8 ->
+b32`, one session, one teacher, byte-identical files, drift control
+`0.000e+00` on both metrics (tessera#60,
+`docs/reports/ldlq-block-served-ab-2026-09-04.md`): weight space predicted
+0.9373x, served all-position realised **0.9806x** -- a carry fraction of
+**0.31** -- and on confident positions **1.0003x**, no carry at all. A
+weight-space geomean on this axis is over-optimistic by about 3x.
+
+The budget is opt-in for the same reason: it is priced, not promoted. Nothing
+in the default path calls it, `DEFAULT_LDLQ_BLOCK` is untouched, and the wire
+is unchanged -- proved by two exports at a served arm's verbatim arguments
+hashed on raw safetensors byte ranges (`HEAD~1` vs `HEAD`, and `HEAD` vs the
+bracket's arm at `82cdf513`), both byte-identical, both `--layers 1`.
+`tests/test_ldlq_block_budget.py` splits 4 regression guards (which pass on
+the pre-change tree, as guards must) from 16 that fail there.
+
+**What the same bracket settles about the dense 4-bit route** (tessera#12,
+`docs/measurements/tessera-dense4-gap-2026-09-03.md`): at equal residency --
+three files of 870,290,032 bytes, one corpus, one teacher -- the 4.0-bpp
+Tessera wire serves at 0.5099719526 against PrismaQuant NVFP4 GPTQ+JSO's
+0.5105764372, **0.9988x, parity**. The 1.254x deficit the route was measured
+at is gone; a 0.12% margin on one 4,088-position corpus is not a lead and this
+doc does not read it as one. Attribution matters more than the endpoint: the
+2026-09-02 LDLQ + `h^1.0` refit work closed most of it, the merges between
+that artifact and `82cdf513` closed a further 2.1% with no recipe change, and
+the block is worth 1.94% against its own session's control. Quoting the
+published incumbent instead of re-running it would have credited the block
+with twice its size.
+
