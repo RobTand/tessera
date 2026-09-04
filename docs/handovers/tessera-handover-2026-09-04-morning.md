@@ -126,6 +126,10 @@ action say what it needs. **379 passed, 1 skipped.**
 happily admit eight of them. The brief template needs `--cpus`, or the fix is a
 facility nobody uses. Worth a lint on the submit path.
 
+Not dead code, though: at 01:20 the #101 agent had a GPU action claimed on
+sparky through `pbrun` declaring `{'cpu': 4, 'gpu': 1, 'mem_gb': 16}`. A live
+agent is using the dimension within the hour it existed.
+
 ### 3.4 Also proved end-to-end on a real worker
 
 - CPU-slot action → `CVD='' cuda=False` in 1 s.
