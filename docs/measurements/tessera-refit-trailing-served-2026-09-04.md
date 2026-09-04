@@ -105,7 +105,11 @@ source (`/home/rob/models/Qwen3-0.6B`), the same Hessian capture
 scales, the same teacher payload
 (`/mnt/shared/tessera-kl/qwen_rot_teacher_lina.json.npz`), the same corpus
 contract (`corpus_qwen_n8_s512.json`, the Qwen tokenizer's), the same pinned
-image (`vllm/vllm-openai@sha256:61fc8a89…`), eager, one box, one day.
+image (`vllm/vllm-openai@sha256:61fc8a89…`), the same
+`gpu_memory_utilization` (0.15, ~18 GB of 121 — the twin is 0.84 GB and the
+rest is KV cache for 8x512 tokens), eager, one box, one day. The 2026-09-02
+incumbent was served at 0.30; that is one more reason its 0.5310 is a drift
+reading here and not this pair's bar, which is A's own KL.
 
 ## The matched pair, on the artifacts
 

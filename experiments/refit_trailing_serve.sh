@@ -107,7 +107,18 @@ serve)
   esac
   [ -f "$twin/model.safetensors" ] || { echo "no export for $ARM"; exit 1; }
   export TESSERA_KL_PORT="${TESSERA_KL_PORT:-8005}"
-  export TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.30}"
+  # 0.15 of 121 GB is ~18 GB, and the twin is a 0.6B model whose whole
+  # checkpoint is 0.84 GB: the rest is KV cache for eight sequences of 512
+  # tokens, which is orders of magnitude more than they need.  It was 0.30,
+  # and the number is not free -- it is what the pool action has to declare.
+  # At mem_gb=40 this action starved: sparky offers 48, so it only fits when
+  # the box is nearly empty, and small GPU items refilled the box faster than
+  # 40 GB ever came free (1507 denied passes in three hours, past the
+  # 900 s withhold ceiling, so it had lost its veto and kept only its place).
+  # At 24 -- the demand the bjac export actually ran under -- it fits beside
+  # one other item.  Both arms serve at the same utilization, so the A/B is
+  # matched whatever the value; what changes is only how long the pair waits.
+  export TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.15}"
   export TESSERA_KL_NAME="${TESSERA_KL_NAME:-tessera-kl-ts75}"
   source "$(dirname "$0")/runtime_image.sh"
   export TESSERA_KL_IMAGE=$(runtime_image_pin)
