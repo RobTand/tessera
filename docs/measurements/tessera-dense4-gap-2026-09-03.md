@@ -297,8 +297,18 @@ What is settled without them, and does not change when they arrive:
   encoding on `muse/ts-60-serve` when this branch opened -- b32 landed at
   23:00 UTC, b4 and b8 were mid-flight -- and re-running either would have cost
   a second 4-15 hour core for a number already being produced. The bytes are
-  read, not rebuilt. What licenses reading them at *this* commit is the
-  byte-identity check below, not the merge messages.
+  read, not rebuilt.
+
+  What that costs in scope is stated rather than waved at. The bracket was
+  encoded at `82cdf513`, and `82cdf513..HEAD~1` moves bytes -- the same recipe
+  at the same block already differs from the 2026-09-02 artifact in 161 of 784
+  tensors, so it is not safe to assume it would reproduce here either. The
+  bracket is therefore read as an *internally matched* pair: control and
+  candidates from one tree, one session, one teacher, so the delta between them
+  is a fact about the block. Its absolute values describe `82cdf513`'s encoder,
+  not this branch's, and the byte-identity check below says only that this
+  branch's own commit changes nothing at a stated block -- it does not carry
+  the bracket across the intervening merges, and is not offered as doing so.
 * **Rotation.** Off the lever list by decision: 2.5-2.8x worse served on this
   model (`rotation-hurts-block-scaled-formats`).
 * **A learned codebook.** Kernel-lane only under the FP4-native constraint.
