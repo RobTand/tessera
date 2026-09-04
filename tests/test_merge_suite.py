@@ -492,7 +492,7 @@ def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
             assert line.count("|") == columns, line
 
 
-def test_an_arm_that_measured_nothing_carries_no_measurement_time():
+def test_an_arm_that_measured_nothing_carries_no_measurement_time(tmp_path):
     """No population means no measurement, so no date for one.
 
     The cell fell through to the receipt's own clock, which put a plausible
@@ -500,12 +500,15 @@ def test_an_arm_that_measured_nothing_carries_no_measurement_time():
     nothing, wearing the time something was measured. Before this the last
     assertion read
     ``AssertionError: assert '2026-09-04T09:00:00Z' == '--'``.
+
+    ``tmp_path``, not ``tempfile.mkdtemp(dir="/home/rob/tmp")``: the hardcoded
+    path is a fact about this fleet, and a test whose verdict depends on its
+    box is the blindness tessera#112 is about. Commit 05777a8 on this branch
+    fixed one of those in this same file; this was the other.
     """
 
-    import tempfile
-
     merge_suite = _module()
-    ledger = Path(tempfile.mkdtemp(dir="/home/rob/tmp")) / "l.md"
+    ledger = tmp_path / "l.md"
     merge_suite._record_markdown(ledger, {
         "generated_utc": "2026-09-04T09:00:00Z",
         "population": {"commit": "e" * 40, "is_master_head": False},
