@@ -826,3 +826,57 @@ has the rate in hand (`max(14, R)`) if Rob ever wants to spend it.
 * **Wall times in these runs are not a measurement.** Three sweeps shared two
   boxes with a dozen other agents' jobs; the controls are byte- and
   tensor-identity, which is unaffected, and the seconds column is not a claim.
+
+## #18, part 1: the bundle split -- entries and reach, priced apart
+
+The joint grid above ends by naming the comparison it cannot make.  At ratio
+1 a wider window table has more entries **and** its outermost entry sits
+further out, so `L=16 r=1` is not "the shipped recipe with more resolution":
+it is the shipped recipe with more resolution *and* a reach of 4.3125 where
+the shipped one reaches 4.0.  Every `L` number above prices that bundle.  It
+matters which half is being bought, because the two halves have different
+prices: **entries cost bytes** (the table is `2^L x 2` on the ALPHABET plane,
+and the sweep byte-matches it against the shipped pair built at the rung that
+spends the same bytes), while **reach costs nothing at all** -- a spread is a
+constant in the recipe and the artifact is the same size at every value of
+it.
+
+`experiments/matched_reach.py` builds the arms that split them.  For a target
+reach it searches for the spread at which a given width realises *exactly*
+that reach, and asserts the realised value before returning it.  A search,
+not a division: a table's entries are grid values, so its reach is the
+**snapped** outermost quantile and therefore a step function of the spread.
+On the shipped BF16 grid the naive `target / own_reach` lands on the wrong
+step -- at `L=14`, asking for `L=12`'s reach of 3.671875 by that route
+delivers 3.6875 -- and a receipt computed that way would report a 0.4% miss
+as an exact match.  The three widths' own reaches, from the code:
+
+| L | own reach (row-RMS at the shipped `channel_sigma = 1.0`) |
+|---|---|
+| 12 | 3.671875 |
+| 14 | **4.0** |
+| 16 | 4.3125 |
+
+The rows of `experiments/bf16_matched_reach_run.sh` each encode one width at
+all three of those reaches, which turns the one-dimensional `L` axis into a
+factorial whose **rows are entry counts** (byte-matched by the sweep) and
+whose **columns are realised reaches** (free).  The `L=14` row is the cheap
+and decisive one: it is the shipped table at another width's reach, at zero
+byte cost and no change to the table's size.
+
+**The reading was registered in the run script's header before any number
+existed.**  For a (population, rung), `A` is the landed byte-matched effect
+of the L-arm on its gate and `B` the effect of the `L=14` arm at that width's
+reach; `recovered = log B / log A`.  At or above 0.5 the majority of the L
+win is reach and is free; at or below 0.15 it is entry count and costs bytes;
+between, both halves are real.  `B > 1 > A` would say the spread move alone
+*hurts* and the win exists only as the bundle.
+
+The physical check comes free and is reported: at a matched reach the same
+rows are clipped, so `rows_over_reach` at `(14, r*)` must equal it at
+`(L, 1.0)` on every unit.  The controls are the sweep's own in-process repeat
+plus a **cross-run** one these separate processes make possible and the
+in-process repeat cannot give: the shipped `(L=14, r=1)` baseline is
+re-encoded in every row and must be byte- *and* tensor-identical to the same
+arm in the landed `pair_glm.json` / `pair_dense.json`.
+`experiments/matched_reach_report.py` refuses to summarise without it.
