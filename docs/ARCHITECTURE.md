@@ -476,6 +476,13 @@ The separate census/student stages in `ts5_lfm_served_bound.py` likewise
 compare every merged shard and sidecar with the checked assembly seal before
 and after execution, mount the exact model directory read-only, and preserve
 the raw census or matched teacher/student comparison alongside their hashes.
+The default artifact and seal remain `full-model` and
+`merge-action-r1/artifact-seal.json` under the campaign directory. Explicit
+`--model` and `--seal` overrides must be supplied together; the seal's
+`checkpoint` must exactly name the selected model before its bytes are read
+or its container is launched. The receipt records both selected paths and the
+seal hash, and the existing pre/post checkpoint-identity equality still binds
+every shard and sidecar. Selecting a new pair never edits the original pair.
 Each stage owns one exclusive GPU reservation through verified cleanup.
 The teacher and plugin-student wrappers pass `TESSERA_KL_TOPK` to both the
 server's logprob limit and the dump request's explicit `--top-k`; a nondefault

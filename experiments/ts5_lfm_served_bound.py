@@ -1,8 +1,9 @@
 """One-shot PB-only LFM census/student stages against a sealed merged artifact.
 
 Run `census` and `student` as separate exclusive-GPU PrismaBuild actions, each
-under an outer timeout with cleanup grace. Fixed paths identify this campaign;
-an existing stage directory is a refusal, never permission to overwrite it.
+under an outer timeout with cleanup grace. Campaign paths are defaults; an
+artifact override supplies both its model and assembly seal. An existing stage
+directory is a refusal, never permission to overwrite it.
 """
 import argparse
 import datetime
@@ -29,13 +30,32 @@ def campaign_stage_paths(stage, attempt):
             Path(f"/home/rob/tmp/ts5-lfm-r2-final-{stage}-output-r{attempt}"))
 
 
+def campaign_artifact_paths(model, seal):
+    """A different artifact must bring its own explicit assembly receipt."""
+    if (model is None) != (seal is None):
+        raise ValueError("--model and --seal must be supplied together")
+    if model is None:
+        return CAMPAIGN / "full-model", CAMPAIGN / "merge-action-r1/artifact-seal.json"
+    return model, seal
+
+
+def read_artifact_seal(model, seal_path):
+    """Bind the selected path before hashing or launching the model."""
+    seal = json.loads(seal_path.read_text())
+    if seal.get("checkpoint") != str(model):
+        raise ValueError("seal checkpoint does not match selected model")
+    return seal
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("stage", choices=("census", "student"))
 parser.add_argument("--attempt", type=int, default=1)
+parser.add_argument("--model", type=Path)
+parser.add_argument("--seal", type=Path)
 args = parser.parse_args()
 stage = args.stage
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
-MODEL = CAMPAIGN / "full-model"
+MODEL, SEAL = campaign_artifact_paths(args.model, args.seal)
 OUT, NAME, LOCAL_OUTPUT = campaign_stage_paths(stage, args.attempt)
 TEACHER = CAMPAIGN / "teacher-bound-r1"
 CORPUS = Path("/mnt/shared/tessera-runs/ts5/lfm25/teacher-gate/corpus_n8_s512.json")
@@ -81,13 +101,14 @@ launched = False
 try:
     assert not capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"]), "unique container exists"
     assert not gpu_processes(), "previous GPU stage has not finished cleanup"
-    seal_path = CAMPAIGN / "merge-action-r1/artifact-seal.json"
-    seal = json.loads(seal_path.read_text())
+    seal_path = SEAL
+    seal = read_artifact_seal(MODEL, seal_path)
     pre = source_identity(MODEL)
     assert pre == seal["checkpoint_identity"], "merged checkpoint differs from checked assembly"
     assert sha256_file(CORPUS) == "2fdd48eeab69109c6222ef2f857815d2b35d5422747815c495e0467712751d44"
     commit = capture(["git", "rev-parse", "HEAD"])
     evidence = {"schema": "tessera.lfm-served-artifact-binding/1", "stage": stage,
+                "checkpoint": str(MODEL), "assembly_seal": str(seal_path),
                 "checkpoint_pre": pre, "assembly_seal_sha256": sha256_file(seal_path),
                 "runtime_image": IMAGE, "execution_mode": "eager", "residency": "resident",
                 "source_snapshot": commit, "corpus_sha256": sha256_file(CORPUS),
