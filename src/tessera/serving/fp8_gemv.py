@@ -34,21 +34,27 @@ and that order is MEASURED, not asserted: the lane run twice on identical
 input differs by 1.6e-07 relative and changes no bf16 output word at any M
 (``experiments/gemv_a_side_precision.py``).
 
-THIS DOES NOT YET CLOSE #110.  The lane and its published fallback disagreed
-as served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes
-(one inode).  Reading the artefacts, this branch is the ONLY place that
-difference can live: prefill, where both arms take ``_materialised_path``, read
-exactly 0.000000 over 4088 positions, and the two serve logs differ in nothing
-but the 112 intended refusals.  Pricing the fold as the deterministic rounding
-it is -- on the served position set, in the served decode regime, through the
-served estimator -- reads KL >= 0.007160 at 95.70% top-1
-(``experiments/gemv_a_side_exact_fold.py``): the same size as what was served,
-within 1.69x, on a CPU emulation whose substitutions all make it quieter than
-the serve.  An earlier GAUSSIAN screen read 1/38 of it; that gap was the screen
-pricing a W8A8 term on a trajectory with no per-token FP8 activation quantiser,
-and is reproduced on demand with ``--act-quant off``.  So the fix below is the
-leading explanation of the served number rather than a proven one, and the
-served re-run is what settles whether it is the whole of it;
+THIS FIXES MOST OF #110, NOT ALL OF IT, AND THE SPLIT IS SERVED.  The lane and
+its published fallback disagreed as served at M = 1 -- mutual KL 0.012111,
+top-1 91.02%, byte-identical bytes (one inode).  Re-served off this tree with
+the fold gone, on the same two arms through the same inode and the same
+container digest, they read **KL >= 0.005947 at 96.88% top-1**: 2.04x on the
+bound, 2.88x on the top-1 flips.  Three controls hold that up -- the arm whose
+code path is untouched reproduces its own earlier serve at KL >= 0.000000 /
+100.00%, and so does the prefill regime this branch does not touch, over 4088
+positions -- and against the BF16 teacher the fixed arm moves from 0.436065
+onto the fallback's 0.432477, reading 0.432401.  So the fallback was the
+accurate arm and this lane has joined it.
+
+THE RESIDUAL 0.005947 IS NOT YET ATTRIBUTED.  Its leading explanation is
+measured rather than asserted, and it is not a second defect: at all three
+served K the fixed lane matches ``torch._scaled_mm`` on 99.85-100.00% of bf16
+output words, while matching ITSELF on a rerun on 99.90-100.00% -- the same
+size.  The residual may therefore be this kernel's own ``atomicAdd`` order
+rather than any difference between the arms, which no arm-vs-arm compare can
+separate because each arm was served once.  One serve decides it
+(``experiments/ts110_replicate_armA.sh``).  Until then, do not read
+"bit-exact" on this lane as a claim about the GEMM.
 ``docs/measurements/tessera-gemv-a-side-2026-09-04.md`` holds every leg.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is

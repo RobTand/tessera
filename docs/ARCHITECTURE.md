@@ -344,8 +344,9 @@ top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's.
 
-**That decode-regime gap is not yet explained, and it is not accumulation
-order** (#110). One real term was found and fixed: the streamed lane handed the
+**That decode-regime gap is now half explained, and the explained half was a
+defect rather than accumulation order** (#110). One real term was found, fixed,
+and re-served: the streamed lane handed the
 kernel `(a_q.float() * a_scale).to(bfloat16)`, folding the per-token fp32
 activation scale into a bf16 operand, where `torch._scaled_mm` multiplies the
 fp8 codes and applies both scales in its fp32 epilogue. An E4M3 code is exact
@@ -372,11 +373,26 @@ operating point: degrading the weights toward the served arms' distance from
 BF16 (`--weight-bits 4`, same regime, arm and chunks) reads `KL >= 0.012073`
 against 0.012111 served, a factor of 1.48 in the right direction. The emulation
 is still CPU, HF rather than vLLM, with an fp32 residual stream, so the served
-re-run after the fix is what closes the issue. #110 stays open.
-`docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
-which of its legs did not get a GPU. Until it closes, treat the lane's
-"bit-exact" receipts as claims about the **decoded tile** only, never about the
-GEMM over it.
+re-run after the fix is what decides.
+
+**That re-run has landed** (pool action `6c90ba1b`, 2026-09-04; same two arms
+through one inode, same corpus, and `vllm/vllm-openai@sha256:61fc8a896b0a...`,
+the digest #102 served on). The arms now read `KL >= 0.005947` at 96.88% top-1
+where they read `KL >= 0.012111` at 91.02%: **2.04x on the bound, 2.88x on the
+top-1 flips.** Three controls hold it up -- the untouched arm B reproduces #102
+at `KL >= 0.000000` / 100.00%, and so does the prefill regime the fix does not
+touch, over 4088 positions -- and against the BF16 teacher the fixed arm A moves
+from `0.436065` onto arm B's `0.432477` (reading `0.432401`), so the fallback
+was the accurate arm and the lane has joined it. **#110 stays open on the
+residual `0.005947`, which is unattributed.** The leading hypothesis is
+measured, not asserted: at all three served K the fixed lane matches
+`torch._scaled_mm` on 99.85-100.00% of bf16 output words while matching
+*itself on a rerun* on 99.90-100.00%, so the residual may be the lane's own
+`atomicAdd` nondeterminism rather than a difference between the arms. One
+serve decides it (`experiments/ts110_replicate_armA.sh`).
+`docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt. Until the
+residual is attributed, treat the lane's "bit-exact" receipts as claims about
+the **decoded tile** only, never about the GEMM over it.
 
 ### 4.6 The stock twin isolates the wire from the kernel
 

@@ -1,57 +1,45 @@
 # The window GEMV folded the activation scale into bf16, and that fold is the size of #110 (2026-09-04)
 
-> **STATUS: the arithmetic is settled, one real defect is fixed, and the
-> "factor of forty" is explained -- it was a screen priced off the operating
-> point, not evidence of a second term. #110 still needs its served re-run to
-> close, and that run has not had a GPU.** The in-process leg is unambiguous:
-> the lane's accumulation order is worth **1.6e-07** and does not move a single
-> bf16 output word, the fold this document names was worth **1.4e-03**, and
-> with it gone the lane's bf16 output matches `torch._scaled_mm`'s on
-> **99.90-100%** of elements. Every other way the two served arms could have
-> differed is closed by an artefact rather than an assumption (section 2b):
-> same inode for the weights, prefill KL exactly `0.000000` over 4088
-> positions, and serve logs identical but for the intended 112 refusals.
+> **STATUS: the served re-run has landed, and it is outcome 2 of the three
+> section 4 named in advance. The fold was MOST of the served disagreement and
+> not all of it: byte-identical bytes, same inode, same image, the two arms now
+> read `KL >= 0.005947` at 96.88% top-1 where #102 read `KL >= 0.012111` at
+> 91.02%.** So a real defect was found, fixed, and priced on the metric that
+> decides -- and a second term of `0.005947` survives it. The leading
+> explanation of that residual is measured but not yet decided, and section 6b
+> says what would decide it.
 >
-> **What changed in this pass is section 3.** The first pass priced the fold
-> with a Gaussian noise model on the BF16 teacher and got KL 3.2e-04 against a
-> measured 0.012111, then said honestly that one of the two readings was wrong
-> and could not say which. It can now: the screen was. Pricing the fold as the
-> deterministic rounding it actually is, on the served position set, in the
-> served decode regime, through the served estimator, reads **KL >= 0.007160 at
-> 95.70% top-1 against the served 0.012111 at 91.02%** -- a factor of 1.69, not
-> 38. A matched pair says where the 38 came from, and it is not correlation:
-> replacing the fold with independent Gaussians of the same rms *in this
-> harness* moves the number by 1.29x, while removing the route's per-token FP8
-> **activation quantiser** -- one variable, same regime, same arm, same 256
-> positions, same rms to within 0.5% -- moves it **68.9x**, from 0.007788 down
-> to 0.000113, landing on the first pass's independent 0.000318. The screen had
-> priced a W8A8 term on a trajectory that was not carrying W8A8's own
-> activation rounding.
+> The rest of the branch is settled. The lane's accumulation order is worth
+> **1.6e-07** and moves no bf16 output word; the fold this document names was
+> worth **1.4e-03**, ten thousand times that; with it gone the lane's bf16
+> output matches `torch._scaled_mm`'s on **99.85-100.00%** of elements at all
+> three served K. The correction is now green on a GPU -- **86 passed, 0
+> failed** -- which it was not when this receipt was last written. Every other
+> way the two served arms could have differed is closed by an artefact rather
+> than an assumption (section 2b), and three fresh controls close the rest
+> (section 6a): the untouched arm reproduces #102 to `KL >= 0.000000` at
+> 100.00% top-1, and so does the prefill regime the fix does not touch, over
+> 4088 positions.
 >
-> The remaining 1.69x is the emulation's **weight operating point**, and that
-> is measured too rather than asserted: degrade the weights toward the served
-> arms' distance from BF16 (`--weight-bits 4`, same regime, same arm, same
-> chunks) and the fold reads **0.012073**, a factor of 1.48, against a served
-> 0.012111 -- agreement to three digits that is a coincidence of magnitude at
-> 128 positions, but the right direction and the right size.
->
-> **This is still a screen** -- CPU, HF rather than vLLM, fp32 rather than bf16
-> residual, RTN rather than the Tessera wire -- and the served re-run
-> (`6c90ba1b`, queued and `ready` since this branch began) is confirmation now
-> rather than adjudication; section 4 names the three outcomes it can have.
-> Nothing below is a placeholder for a number that was taken and disliked, and
-> section 3a records a mechanism I proposed for the 68.9x, tested, and could
-> not confirm.
+> **What the CPU emulation got right, and where.** Section 3 priced the fold at
+> `KL >= 0.007160` and called it a floor on the weight axis. As served, the fix
+> moved arm A by `0.011845` -- a factor of 1.65 above that floor, in the
+> direction section 3b predicted and within the 1.48x it measured for the
+> weight operating point. The emulation was worth what it claimed to be worth.
+> Section 3a still records a mechanism I proposed for the 68.9x, tested, and
+> could not confirm; that paragraph stands withdrawn.
+
 
 **What #110 asked.** Two serves of one checkpoint through one inode, differing
 only in whether `prepare_fp8_gemv` could build, disagreed in the decode regime:
 `KL >= 0.012111`, top-1 91.02%, over 256 M = 1 positions. Is that accumulation
 order (document it and close), or a defect (fix it)?
 
-**The answer.** A defect, and not accumulation order. It is the same size as
-what was measured -- within a factor of 1.69 on a CPU emulation whose every
-substitution points the same way -- so the remaining question is whether it is
-ALL of what was measured, and only the served re-run answers that.
+**The answer, now served.** A defect, and it was worth about half of what was
+measured. Removing it takes the arms from `KL >= 0.012111` / 91.02% to
+`KL >= 0.005947` / 96.88% -- 2.04x on the bound, 2.88x on the top-1 flips
+(8.98% of positions to 3.12%). The remaining `0.005947` is not yet attributed,
+and section 6b names the one measurement that would attribute it.
 
 ---
 
@@ -102,11 +90,16 @@ fp64 reference of the product both claim to compute, at 1024 x 1024, per M
 
 Read the columns:
 
-* **The accumulation order #110 asked about is 1.6e-07** -- the lane run twice
-  on identical input, its `atomicAdd` reduction free to land in a different
-  order -- and it changes **no** bf16 output word (100.00% identical, all four
-  M). That is the magnitude the issue asked to have recorded somewhere a
-  receipt can cite. It is not what was served.
+* **The accumulation order #110 asked about is 1.6e-07 in fp32** -- the lane
+  run twice on identical input, its `atomicAdd` reduction free to land in a
+  different order. That is the magnitude the issue asked to have recorded
+  somewhere a receipt can cite, and it is four orders below what was served.
+  **The "and it changes no bf16 output word" that stood here was true of this
+  run and is not true in general**: the served-shape sweep in section 6c ran
+  the same control at K = 2048 and 3072 and reads **99.90-100.00%** identical,
+  not 100.00%. An fp32 disagreement of 1.6e-07 straddles a bf16 rounding
+  boundary about one time in a thousand, and a thousandth of the elements is
+  not nothing -- section 6b is about exactly that.
 * **The fold was ~10 000x that**, and the `bf16_A_only` control -- the same
   rounding applied in pure fp64, no kernel -- reproduces the folded arm to ten
   significant figures at every M, so the fold is the whole of the pre-fix
@@ -352,7 +345,14 @@ first pass's 0.000318 comes from `experiments/gemv_a_side_propagation.py`, a
 different harness, so it is a corroborating reading and not a row of this
 table.
 
-## 4. What remains, and the state of the queue that holds it
+## 4. What remained when this section was written -- kept, and marked
+
+> **Section 6 is the newer text.** Items 1 and 2 below have since run and are
+> answered there; item 3 has run and is section 6c. They are kept because the
+> outcomes they name in advance are what makes section 6 a reading rather than
+> a rationalisation -- item 1 named "about 0.005 ... the fold was most of it
+> with a second term left" before the serve, and that is the outcome that
+> landed. Items 4 and 5 still stand as written.
 
 1. **The served re-measurement. This is the only thing that closes #110.**
    `experiments/ts110_served_campaign.sh` reruns #102's exact pair off this
@@ -364,7 +364,12 @@ table.
    difference; it reads about 0.005 (0.012111 minus what section 3 prices),
    and the fold was most of it with a second term left; or it is unmoved, and
    whatever separates the two arms is not this Linear's arithmetic at all.
-2. **The CUDA leg HAS now executed, and it failed -- because the fix was
+   **RAN. The second one: `KL >= 0.005947` at 96.88% top-1 (section 6).** The
+   free control did read `0.000000` at 100.00%, and so did the prefill regime.
+2. **RAN AND PASSED on attempt 2: 86 passed, 0 failed, 115.6 s.** The account
+   below is of attempt 1 and is kept because the defect it found was real and
+   was this branch's own. **The CUDA leg HAS now executed, and it failed --
+   because the fix was
    never run on a GPU.** Action `6c90ba1b` placed at 05:49 on 2026-09-04 and
    its step-2 gate ran both modules with a device: **1 failed, 85 passed** in
    210 s, and the gate refused to spend the serve, which is the gate doing its
@@ -379,7 +384,10 @@ table.
    now follows the lane (M = 2 references `bf16(a_q)` and carries `a_scale` on
    the result with the accumulation bound scaled to match; the M = 4 row, which
    falls to `_scaled_mm`, is unchanged), and the action **auto-requeued for
-   attempt 2**, which will re-run the gate against the correction.
+   attempt 2**, which re-ran the gate against the correction and passed it
+   **86/86**. A second, independent action (`eaedecfd`, `wf110_tests.sh`, the
+   same two modules with nothing else in the process) reproduced that to the
+   centisecond, so the green is not an artefact of the campaign's environment.
 
    The two assertions the review named as unverified **passed**, at all four M:
    `same >= 0.90` in
@@ -398,7 +406,8 @@ table.
    it pins the arithmetic the fix rests on -- one bf16 rounding, bounded by
    2^-8, rms 1.6e-03 -- on a box with no GPU, which nothing else here could do.
 
-3. **The kernel leg is measured at K = 1024 only, and the served K are three.**
+3. **RAN; section 6c has the numbers, and one of them corrects section 1.**
+   **The kernel leg is measured at K = 1024 only, and the served K are three.**
    Qwen3-0.6B's served Linears carry K = 1024 (qkv, gate_up), 2048 (o_proj:
    16 heads x 128) and 3072 (down_proj) -- not the 4096 a reader might assume
    from the config's `intermediate_size`, which is an N. So the fixed lane's
@@ -416,7 +425,13 @@ table.
    (`_topk_log_softmax_kernel`) happened in **both** arms, and the attention
    backend and autotune outcome are identical.
 
-### 4a. Why the serve has not run, stated from the ledger and not from a snapshot
+### 4a. Why the serve had not run WHEN THIS WAS WRITTEN, from the ledger
+
+> It has since run -- see section 6. This subsection is the contention account
+> as of 05:55, and its structural point still stands: `6c90ba1b` waited about
+> 22 minutes in `ready/` behind nineteen other actions on a two-token pool,
+> because a box-local worktree pins its actions to one box
+> (`RobTand/prismabuild#5`).
 
 Every GPU leg went to the PrismaBuild pool. The precision leg (`084553c5`)
 waited 35 minutes as the oldest of fifteen GPU-needing items, then ran. The
@@ -468,10 +483,158 @@ tokens were at that moment held in their entirety by the action above. Nothing
 in either leg touches a GPU, and both ran under `CUDA_VISIBLE_DEVICES=` so that
 the kernel, not a promise, enforced it.
 
+---
+
 ## 5. The sign, at least, is the one the fold predicts
 
 #110 reports the arms against the BF16 teacher as arm A `KL >= 0.436065` and
 arm B `KL >= 0.432477`, and calls the direction surprising. Under this
 mechanism it is the expected direction: before the fix arm A carried one
 rounding arm B did not, so arm A should sit slightly further from the teacher.
-At 256 positions that is a consistent sign and not evidence.
+At 256 positions that is a consistent sign and not evidence. **Section 6 turns
+it into evidence:** re-served with the fix, arm A reads `0.432401` against the
+teacher, landing on arm B's `0.432477` -- which itself reproduced to six
+decimals -- so the gap the sign pointed at is gone, not merely the right shape.
+
+---
+
+## 6. The served re-run
+
+Pool action `6c90ba1b`, attempt 2, claimed 06:11:53 on 2026-09-04 and run off
+this tree at `548be80`; `done`, rc 0, 799 s. Same two arms as #102 --
+`ts83/arm{A,B}`, one inode `11665664` at 846 726 118 bytes, re-checked by the
+campaign at run start -- same corpus `076d33efc447`, same tokenizer
+`76f13c8e6e55`, and the same container: the run resolved
+`vllm/vllm-openai:latest` to `sha256:61fc8a896b0a...`, which is the digest #102
+served on, so `latest` did not move under the comparison. Arm A's route trace
+confirms the **fixed** lane is the one that ran -- `tessera_window_gemv::gemv`,
+7196 launches at `M1` on each of the four served shapes
+(`M1:N1024:K2048`, `M1:N1024:K3072`, `M1:N4096:K1024`, `M1:N6144:K1024`), with
+`torch._scaled_mm` only at `M16`.
+
+### 6a. The controls first, then the headline
+
+Every row is the same estimator the served headline uses: `kl_tool`'s lumped
+DPI lower bound over the top-1024 intersection.
+
+| pair | regime | positions | KL >= | top-1 |
+|---|---|---:|---:|---:|
+| **control** -- new arm B against #102's arm B (code path untouched) | decode | 256 | **0.000000** | **100.00%** |
+| **control** -- new arm A against #102's arm A, prefill (fix does not touch M = 512) | prefill | 4088 | **0.000000** | **100.00%** |
+| **control** -- new arm A against new arm B, prefill (both `_materialised_path`) | prefill | 4088 | **0.000000** | **100.00%** |
+| the size of the fix on the A side -- new arm A against #102's arm A | decode | 256 | 0.011845 | 91.80% |
+| **#110 as filed** -- #102 arm B against #102 arm A | decode | 256 | 0.012111 | 91.02% |
+| **#110 after the fix** -- new arm B against new arm A | decode | 256 | **0.005947** | **96.88%** |
+
+Read them in that order:
+
+* **The untouched arm reproduces itself exactly.** Arm B's code path
+  (`tessera_prepared.decode()` then `torch._scaled_mm`) is not on the diff, and
+  a serve a day after #102's reads `0.000000` at 100.00% against it. So the
+  comparison is not measuring session drift -- which is what
+  [[kl-cross-session-drift-is-zero-on-this-lane]] already said of this lane, now
+  said again on the arm that matters here.
+* **The regime the fix does not touch did not move**, over 4088 positions,
+  either across runs or across arms. The fix is confined to the
+  `M <= GEMV_MAX_M` branch by construction, and the serve agrees.
+* **The fold was most of the disagreement and not all of it.** `0.012111` to
+  `0.005947` is 2.04x on the bound; 8.98% of positions flipping top-1 to 3.12%
+  is 2.88x on the flips. A second term of `0.005947` survives.
+
+**And which arm was right, on the served metric rather than in fp64.** Against
+the BF16 teacher, decode regime, 256 positions:
+
+| arm | KL >= | top-1 |
+|---|---:|---:|
+| #110's arm A, folded | 0.436065 | 63.67% |
+| #110's arm B, the fallback | 0.432477 | 62.11% |
+| new arm B, the same fallback re-served | **0.432477** | 62.11% |
+| **new arm A, fixed** | **0.432401** | 61.72% |
+
+Arm B reproduces to six decimal places, and the fixed arm A lands on it to
+`7.6e-05`. #110 called the direction of that pair surprising; under the fold it
+is the expected direction, and removing the fold removes the gap. The fp64 leg
+had already said the fallback was the accurate arm (section 1); the serve now
+says the same thing on the metric that decides.
+
+### 6b. What the residual `0.005947` most likely is -- and the one run that would settle it
+
+Section 6c ran the fp64-referenced kernel leg at all three served K. Two of its
+columns are the point:
+
+* the fixed lane against `torch._scaled_mm`: **99.85-100.00%** of bf16 output
+  words bit-identical;
+* the lane against **itself**, rerun on identical input, its `atomicAdd`
+  reduction free to land in a different order: **99.90-100.00%** identical.
+
+**Those are the same size -- and at `M = 1`, which is the only shape the decode
+serve runs, they are the same numbers.** Restricting both columns to `M = 1`:
+
+| K | fixed lane vs `_scaled_mm` | lane vs ITSELF |
+|---:|---:|---:|
+| 1024 | 100.0000% | 99.9023% |
+| 2048 | 99.9023% | 99.9023% |
+| 3072 | 100.0000% | 100.0000% |
+
+At two of the three served K the lane differs from *itself* by at least as much
+as it differs from the fallback, and at the third they are equal to the fourth
+decimal. After the fix, the fixed lane differs from the fallback by no more than
+it differs from itself on a second run. If that is
+the whole story, then the residual `0.005947` is not a difference between the
+two arms at all -- it is the lane's own run-to-run nondeterminism, which an
+arm-vs-arm compare cannot separate from an arm-vs-arm difference, because #102
+and this campaign each served each arm exactly once.
+
+**And the control for that hypothesis already exists, which is the part worth
+saying carefully.** The kernel-level self-test above -- the same tensor, the
+same process, the kernel called twice -- is NOT the right control for a served
+replicate, because a serve adds vLLM's own nondeterminism on top: scheduler
+batching, KV-cache block allocation order, the autotuner, the sampler path. The
+sharper control is **arm B served twice**, and section 6a already has it: arm B
+is `torch._scaled_mm`, and a serve a day after #102's reproduces it at
+`KL >= 0.000000` / 100.00% over the same 256 decode positions. So on this lane,
+in this regime, everything outside the GEMM reproduces exactly. That is what
+makes a nonzero arm-A-against-arm-A replicate attributable to the lane rather
+than to the serve around it -- and it is why the replicate is worth a GPU at
+all.
+
+**This is a hypothesis with a number attached, not a conclusion, and it is
+falsifiable in one serve:** serve arm A a second time, unchanged, and compare
+the two decode dumps. `experiments/ts110_replicate_armA.sh` does exactly that
+and names its two outcomes in its own header -- about `0.006` and the residual
+is the lane's own nondeterminism (which answers #110's item 2 with a magnitude:
+*this* is what "bit-exact on the decoded tile" does not buy you on the GEMM);
+about `0.000` and the lane is reproducible across serves, so the residual is a
+real arm-vs-arm difference and #110 stays open on it.
+
+Two things NOT claimed here. First, a scaling argument: the residual per-element
+perturbation is roughly 8x smaller than the fold's, and a quadratic law would
+put its KL ~60x below the fold's rather than at half of it -- but this harness's
+own measured `rel` scaling is nearly flat (section 3a's unexplained OFF-row
+reads 1.17x for a 2x change), so neither the quadratic estimate nor its failure
+is evidence. Second, that `0.005947` is small: it is not, it is half of what
+#110 filed, and until the replicate runs the honest statement is that the fix
+removed a defect worth about half the disagreement and the rest is unattributed.
+
+### 6c. The kernel leg at the served shapes
+
+`experiments/gemv_a_side_precision.py` at `ROWS=1024`, `COLS` in
+{1024, 2048, 3072} -- the K of Qwen3-0.6B's served Linears, read off the route
+trace rather than guessed from `intermediate_size` (which is an N).
+Artefacts `/home/rob/tessera-runs/ts110/precision_k{1024,2048,3072}.json`. M = 1:
+
+| K | lane as fixed, fp32 vs fp64 | lane with the fold, fp32 | lane vs ITSELF, fp32 | bf16 identical to fallback: folded -> fixed |
+|---:|---:|---:|---:|---:|
+| 1024 | 1.397e-07 | 1.402e-03 | 1.640e-07 | 62.60% -> **100.00%** |
+| 2048 | 1.321e-07 | 1.754e-03 | 1.697e-07 | 52.44% -> **99.90%** |
+| 3072 | 1.481e-07 | 1.762e-03 | 1.815e-07 | 57.42% -> **100.00%** |
+
+The fixed lane's fp32 error is flat in K at ~1.4e-07 and the fold's is flat at
+~1.6e-03, so section 1's ratio holds at every served shape rather than at the
+one it was measured on. The identity fractions across all four M and all three
+K run **99.85-100.00%** for the fixed lane against the fallback and
+**99.90-100.00%** for the lane against itself -- which is the observation
+section 6b turns on, and the reason section 1's "changes no bf16 output word"
+had to be corrected: at K = 1024 alone it read 100.00% four times out of four,
+and a wider sweep says that was luck, not a property.
+
