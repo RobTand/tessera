@@ -9,18 +9,31 @@ reverse-reachable from the changed set.
 
 **It fails open, and that is the point.** Besides ordinary imports, explicit
 file loaders and source reads contribute edges from resolved paths, not module
-labels. Unresolved loader paths conservatively select the importing module's
-reverse-reachable tests for any non-inert change (a conftest forces full).
+labels. A path it cannot resolve conservatively selects the reading module's
+reverse-reachable tests for any non-inert change, and an unresolved *loader*
+reaching a conftest forces full -- a conftest that can run code it cannot name
+makes every test below it unpredictable. An unresolved *read* does not: bytes
+become a Python dependency only when something parses or executes them, and
+``tessera.source_dependencies`` says which readers can. Reading that
+distinction the other way is what made this tool return ``full`` for every
+change this repository can make (#148): one module hashes every tracked file,
+the root conftest imports it, and the whole tree was uncertain forever.
+
 Other kinds of coupling do not have ordinary import edges:
 
 * *conftest.py* is imported by pytest, not by the tests.  A changed conftest
   impacts every test at or below its directory, and that edge is added
-  explicitly.
+  explicitly.  The reverse -- a conftest that execs each ``test_*.py`` below it
+  to decide what it can collect -- is a collection probe, and it is excluded
+  from the walk that forces full: read as a dependency it closes a cycle
+  through which any one uncertain test file makes the whole population
+  uncertain.  An ordinary ``import`` in a conftest is not a probe.
 * *Data coupling* -- a JSON spec, a wire schema, or a shell harness is read at
-  runtime by code that never imports it as Python.  For a non-Python file the
-  graph has nothing to traverse, so the fallback is textual: any test that
-  mentions the path or its basename is impacted, and a file no test mentions
-  is inert *for test selection*.
+  runtime by code that never imports it as Python.  A file a module names by
+  an explicit path is a node in the graph under that path, so changing it
+  selects that module's tests.  For the rest the fallback is textual: any test
+  that mentions the path or its basename is impacted, and a file no test
+  mentions and no module reads is inert *for test selection*.
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
@@ -96,8 +109,16 @@ def _module_name(path: Path, root: Path) -> str | None:
     return ".".join(parts) if parts else None
 
 
-def _imports(path: Path, own: str, root: Path) -> set[str]:
-    """Every module this file imports, relative imports resolved against own."""
+def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[str]]:
+    """What this file depends on, split by how the dependency was established.
+
+    Statement imports, modules named by an explicit file path, and repository
+    files read by an explicit path that are not Python.  The split is not
+    cosmetic: importing ``pkg.mod`` executes ``pkg/__init__.py`` and loading
+    ``pkg/mod.py`` by path does not, and a conftest that reaches a test file
+    by path is probing its own collection targets rather than depending on
+    them.
+    """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (SyntaxError, OSError):
@@ -123,14 +144,45 @@ def _imports(path: Path, own: str, root: Path) -> set[str]:
             # both readings are recorded because only the graph can tell.
             found.update(f"{prefix}.{alias.name}" for alias in node.names)
     paths, unknown = file_imports(tree, path, root)
-    found.update(name for target in paths if (name := _module_name(target, root)))
+    loaded, data = set(), set()
+    for target in paths:
+        name = _module_name(target, root)
+        if name:
+            loaded.add(name)
+        else:
+            data.add(str(target.relative_to(root)))
     if unknown:
         found.add(WILDCARD)
-    return found
+    return found, loaded, data
 
 
-def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
-    """Module name -> file, and module name -> the modules that import it."""
+def _is_collection_probe(importer: Path, target: Path | None) -> bool:
+    """A conftest reaching a test file *by path* is probing, not depending.
+
+    ``tests/conftest.py`` execs each ``test_*.py`` to decide what it can
+    collect.  That is a real call, but the dependency it expresses runs the
+    other way: pytest imports the conftest for those tests, and each test's
+    own uncertainty is already carried by that test's own selection.  Read as
+    an ordinary edge it closes a cycle -- conftest imports every test, every
+    test depends on conftest -- through which one uncertain test file makes
+    the whole population uncertain.  An ordinary ``from tests.helper import
+    x`` in a conftest is a code dependency and is NOT this.
+    """
+    return (target is not None
+            and importer.name == "conftest.py"
+            and target.name.startswith("test_")
+            and target.is_relative_to(importer.parent))
+
+
+def import_graph(
+    root: Path,
+) -> tuple[dict[str, Path], dict[str, set[str]], set[tuple[str, str]]]:
+    """The graph, plus the reverse edges that are collection probes.
+
+    ``importers`` is keyed by module name and, for a file read by an explicit
+    path that is not Python, by its repository-relative path -- so a JSON spec
+    or a shell harness a module reads is a node like any other.
+    """
     files = [
         p for p in root.rglob("*.py")
         if not any(part in SKIP_DIRS for part in p.parts)
@@ -141,8 +193,10 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
         if name:
             by_name.setdefault(name, path)
     importers: dict[str, set[str]] = defaultdict(set)
+    probes: set[tuple[str, str]] = set()
     for name, path in by_name.items():
-        for target in _imports(path, name, root):
+        statements, loaded, data = _imports(path, name, root)
+        for target in statements:
             if target == WILDCARD:
                 importers[WILDCARD].add(name)
                 continue
@@ -165,17 +219,32 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
                     matched = True
                 elif known.name == "__init__.py":
                     importers[candidate].add(name)
+        for target in loaded:
+            # An exact path names an exact file.  It does not execute the
+            # packages above it, so it gets no prefix edges.
+            importers[target].add(name)
+            if _is_collection_probe(path, by_name.get(target)):
+                probes.add((target, name))
+        for target in data:
+            importers[target].add(name)
+    return by_name, importers, probes
+
+
+def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
+    """Module name -> file, and module name -> the modules that import it."""
+    by_name, importers, _ = import_graph(root)
     return by_name, importers
 
 
-def _reverse_reachable(seeds, importers):
+def _reverse_reachable(seeds, importers, skip=frozenset()):
     seen, queue = set(seeds), deque(seeds)
     while queue:
         node = queue.popleft()
         for importer in importers.get(node, ()):
-            if importer not in seen:
-                seen.add(importer)
-                queue.append(importer)
+            if importer in seen or (node, importer) in skip:
+                continue
+            seen.add(importer)
+            queue.append(importer)
     return seen
 
 
@@ -253,6 +322,7 @@ def _selection_reason(
     forced: list[str],
     tests: list[str],
     text_matched: set[str],
+    data_matched: set[str] = frozenset(),
 ) -> str:
     if missing:
         return (
@@ -274,9 +344,12 @@ def _selection_reason(
         )
     if text_matched:
         parts.append("text matches selected tests for non-Python changed paths")
-    if non_python - text_matched:
+    if data_matched:
+        parts.append("non-Python changed paths reached their readers "
+                     "through the import graph")
+    if non_python - text_matched - data_matched:
         parts.append("non-Python changed paths have no text-matched tests")
-    if inert_paths:
+    if inert_paths - data_matched:
         parts.append("inert changed paths require no tests")
     return "; ".join(parts) or "no changed path requires a test"
 
@@ -300,7 +373,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # that it is harmless scaffolding from its spelling, so fail open.
     forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
-    by_name, importers = build_graph(root)
+    by_name, importers, probes = import_graph(root)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
 
     # Seed from the path, not from a lookup in the checked-out tree.  The
@@ -310,14 +383,24 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # tests a human had already named for #92.  Deriving the name from the path
     # seeds it whether or not the file is present.
     seeds = set()
+    data_changed = set()
     for f in changed:
         name = name_of.get(f) or _module_name(root / f, root)
         if name:
             seeds.add(name)
+        else:
+            # Not a module, so it is a node under its own path: the graph
+            # holds an edge for every file a module reads by an explicit
+            # path, whatever its suffix.
+            seeds.add(f)
+            data_changed.add(f)
     unresolved = (importers.get(WILDCARD, set())
                   if any(Path(f).suffix not in INERT for f in changed) else set())
     seeds.update(unresolved)
-    uncertain_consumers = _reverse_reachable(unresolved, importers)
+    # The probe edges are excluded HERE and nowhere else: a conftest's own
+    # uncertainty still forces the population, but a test file's does not
+    # become the conftest's by way of the conftest having exec'd it.
+    uncertain_consumers = _reverse_reachable(unresolved, importers, skip=probes)
     forced += [str(by_name[name].relative_to(root)) for name in sorted(uncertain_consumers)
                if by_name[name].name == "conftest.py"]
     missing = [f for f in changed
@@ -339,6 +422,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     tests = sorted(found)
     # Non-Python changes have no import edges.  Fall back to text: a test that
     # names the file is coupled to it, and one that never mentions it is not.
+    data_matched = {f for f in data_changed if importers.get(f)}
     opaque_py = {f for f in changed
                  if Path(f).suffix not in INERT and Path(f).suffix != ".py"}
     text_matched: set[str] = set()
@@ -383,6 +467,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             forced=forced,
             tests=tests,
             text_matched=text_matched,
+            data_matched=data_matched,
         ),
     }
     if unresolved:

@@ -655,3 +655,216 @@ def test_a_package_init_change_selects_every_test_that_imports_the_package():
         f"{len(expected - selected)} test modules import a tessera submodule "
         f"and were not selected: {sorted(expected - selected)[:5]}"
     )
+
+
+def test_this_repository_narrows_for_a_leaf_source_edit():
+    """#148: the verdict was ``full`` for every change this tree can make."""
+
+    result = impacted.select(ROOT, ["src/tessera/wire.py"])
+
+    assert result["verdict"] == "narrowed", result["forces_full"]
+    assert result["tests"], "a narrowed verdict selecting nothing is not a selection"
+    population = len(list((ROOT / "tests").rglob("test_*.py")))
+    assert len(result["tests"]) < population, (
+        "narrowed must mean fewer than the whole population"
+    )
+
+
+_GROUND_TRUTH_PROBE = '''
+import importlib.util, json, sys, types
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / "src"))
+sys.path.insert(0, str(root))
+spec = importlib.util.spec_from_file_location("under_test", root / sys.argv[2])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+candidates = list(sys.modules.values()) + [
+    value for value in vars(module).values() if isinstance(value, types.ModuleType)
+]
+seen = set()
+for loaded in candidates:
+    path = getattr(loaded, "__file__", None)
+    if not path:
+        continue
+    resolved = Path(path).resolve()
+    if resolved.is_relative_to(root):
+        seen.add(str(resolved.relative_to(root)))
+print(json.dumps(sorted(seen)))
+'''
+
+
+def _files_an_import_actually_reaches(repo: Path, relative: str) -> set[str]:
+    """Ground truth: import the test module for real and see what it loaded."""
+
+    completed = subprocess.run(
+        [sys.executable, "-c", _GROUND_TRUTH_PROBE, str(repo), relative],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return set(json.loads(completed.stdout))
+
+
+def test_a_narrowed_selection_covers_what_importing_actually_reaches(tmp_path):
+    """The selector's answer against a ground truth built by importing.
+
+    Both halves of #148 are in this fixture: ``pkg/__init__.py`` is reached
+    only through a submodule import, and ``tools/script.py`` only through an
+    explicit file load.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "from pkg.core import CORE\n",
+        "src/pkg/core.py": "CORE = 1\n",
+        "src/pkg/leaf.py": "LEAF = 2\n",
+        "tools/script.py": "SCRIPT = 3\n",
+        "tests/test_core.py": "from pkg.core import CORE\ndef test_core(): assert CORE\n",
+        "tests/test_leaf.py": "import pkg.leaf\ndef test_leaf(): assert pkg.leaf.LEAF\n",
+        "tests/test_script.py": '''
+            import importlib.util
+            from pathlib import Path
+            PATH = Path(__file__).resolve().parents[1] / "tools" / "script.py"
+            _spec = importlib.util.spec_from_file_location("script", PATH)
+            script = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(script)
+            def test_script(): assert script.SCRIPT
+        ''',
+        "tests/test_alone.py": "def test_alone(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "ground truth fixture")
+
+    test_files = sorted(
+        str(p.relative_to(repo)) for p in (repo / "tests").glob("test_*.py")
+    )
+    reached = {name: _files_an_import_actually_reaches(repo, name)
+               for name in test_files}
+
+    for edit in ("src/pkg/__init__.py", "src/pkg/core.py", "src/pkg/leaf.py",
+                 "tools/script.py"):
+        truth = {name for name, files in reached.items() if edit in files}
+        assert truth, f"the fixture never imports {edit}"
+        result = impacted.select(repo, [edit])
+        assert result["verdict"] != "full", (edit, result["forces_full"])
+        assert not truth - set(result["tests"]), (
+            f"editing {edit} can change {sorted(truth - set(result['tests']))}, "
+            f"which the selector did not select"
+        )
+
+
+def test_an_unnameable_data_read_is_not_an_unknown_python_dependency(tmp_path):
+    """#148: a module that reads bytes it never parses is reading data.
+
+    Calling that "any module in the tree" is what put ``tessera.suite_source``
+    -- which hashes the tree and executes none of it -- in the conftest's
+    dependency closure, and every run at ``full``.
+    """
+
+    repo, base = _dynamic_repo(tmp_path, '''
+        from tools.driver import VALUE
+        def test_example(): assert VALUE
+    ''', {
+        "support/reader.py": '''
+            import json
+            def load(path):
+                return json.loads(path.read_text())
+        ''',
+        "tests/conftest.py": "from support.reader import load\n",
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "narrowed", result["forces_full"]
+    assert result["tests"] == ["tests/test_dynamic.py"]
+    assert result["unresolved_file_loaders"] == []
+
+
+def test_a_conftest_probing_its_own_tests_does_not_inherit_their_uncertainty(tmp_path):
+    """The probe closes a cycle: conftest execs every test, every test needs it."""
+
+    repo, base = _dynamic_repo(tmp_path, '''
+        import ast
+        def parse(path):
+            return ast.parse(path.read_text())
+        def test_dynamic(): pass
+    ''', {
+        "tests/conftest.py": '''
+            import importlib.util
+            from pathlib import Path
+            def collect():
+                here = Path(__file__).resolve().parent
+                for path in sorted(here.glob("test_*.py")):
+                    importlib.util.spec_from_file_location(path.stem, path)
+        ''',
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "narrowed", result["forces_full"]
+    assert "tests/test_dynamic.py" in result["tests"], (
+        "the uncertain test file is still selected; only the escalation went"
+    )
+
+
+def test_a_conftest_that_imports_a_test_module_outright_still_forces_full(tmp_path):
+    """A probe is a file-path edge. An ``import`` is a code dependency."""
+
+    repo, base = _dynamic_repo(tmp_path, '''
+        import ast
+        HELPER = 1
+        def parse(path):
+            return ast.parse(path.read_text())
+    ''', {
+        "tests/conftest.py": "from tests.test_dynamic import HELPER\n",
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change")
+
+    assert _selector(repo, f"{base}...HEAD")["verdict"] == "full"
+
+
+def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
+    """A resolved non-Python read was an unknown; it is the exact edge it is."""
+
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/config.py": '''
+            import json
+            from pathlib import Path
+            SPEC = Path(__file__).resolve().parents[1] / "data" / "spec.json"
+            def load():
+                return json.loads(SPEC.read_text())
+        ''',
+        "tests/test_config.py": '''
+            from support.config import load
+            def test_config(): assert load
+        ''',
+        "data/spec.json": '{"value": 1}\n',
+    })
+    (repo / "data/spec.json").write_text('{"value": 2}\n', encoding="utf-8")
+    _git(repo, "add", "data/spec.json")
+    _git(repo, "commit", "-qm", "the spec the reader names")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "narrowed"
+    assert result["tests"] == ["tests/test_config.py"]
+    assert result["unresolved_file_loaders"] == []
+    assert result["reason"] == (
+        "non-Python changed paths reached their readers through the import graph"
+    )
