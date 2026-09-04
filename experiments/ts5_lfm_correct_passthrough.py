@@ -4,12 +4,14 @@ Preserves the original artifact and seal. The new directory hard-links all
 unchanged files and writes its own config. No weight tensor is rewritten.
 """
 import copy
+import contextlib
 import json
 import os
 from pathlib import Path
 import struct
 import subprocess
 import sys
+import traceback
 
 sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from experiments.export_tessera_serving import ignored_modules
@@ -18,12 +20,11 @@ from tessera.serving_parts import source_identity, sha256_file
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 ORIGINAL = CAMPAIGN / "full-model"
 MODEL = CAMPAIGN / "full-model-r3"
-OUT = CAMPAIGN / "passthrough-correction-r1"
+OUT = CAMPAIGN / "passthrough-correction-r2"
 SEAL = CAMPAIGN / "merge-action-r1/artifact-seal.json"
 
 
 def main():
-    OUT.mkdir()
     original_seal = json.loads(SEAL.read_text())
     before = source_identity(ORIGINAL)
     assert before == original_seal["checkpoint_identity"]
@@ -40,6 +41,7 @@ def main():
                 ignored.update(ignored_modules(name, info["shape"]))
     old_ignored = set(config["quantization_config"]["ignore"])
     added, removed = sorted(ignored - old_ignored), sorted(old_ignored - ignored)
+    print(json.dumps({"ignore_added": added, "ignore_removed": removed}), flush=True)
     assert added and removed, "no passthrough correction was derived"
     # Only the observed dense gate/up naming defect may change here.
     assert all(name.endswith(".feed_forward.w13") for name in added)
@@ -88,4 +90,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    OUT.mkdir()
+    with (OUT / "action.log").open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+        try:
+            main()
+        except BaseException:
+            traceback.print_exc()
+            raise
