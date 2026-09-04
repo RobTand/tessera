@@ -177,9 +177,10 @@ def test_planning_a_routed_expert_is_refused_before_any_encode(tmp_path, monkeyp
 
 
 # --------------------------------------------------------------------------
-# The packed 3-D layout.  SYNTHETIC: no packed-expert source is at hand, so
-# these fix the CONTRACT (which axis is the output, and when to refuse), not
-# agreement with a real transformers-5 checkpoint.
+# The packed 3-D layout.  The orientation edge cases below are synthetic so
+# both axis orders and the square ambiguity can be exercised; the real
+# transformers-5 Qwen source farther down pins the on-disk spelling and
+# population separately.
 # --------------------------------------------------------------------------
 
 def test_packed_orientation_is_read_off_the_config_both_ways():
