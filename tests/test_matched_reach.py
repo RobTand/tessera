@@ -14,7 +14,10 @@ The tests below pin that property and the reason it needs a search:
 * the naive ``target / own_reach`` division misses on at least one cell of
   the shipped BF16 grid, which is why the module bisects instead of dividing;
 * a target no step of a width lands on raises rather than returning a near
-  miss.
+  miss;
+* and the table the helper reads is the one ``encode_unit`` builds -- the
+  sigma, the seed, the half and the grid are the recipe's own, so a matched
+  arm is matched in the encode and not only in the report.
 
 Needs torch (the table build lives in ``tessera.encode``), so it is one of
 the modules ``tests/conftest.py`` drops from the pure lane.
@@ -104,3 +107,44 @@ def test_interval_is_narrow_enough_to_retype(grid):
     for cell in grid["cells"].values():
         assert cell["width"] > 0
         assert cell["interval"][0] <= cell["ratio"] <= cell["interval"][1]
+
+
+def test_the_diagnostic_reads_the_table_the_encoder_builds():
+    """The reach helper and the BF16 encode share every table argument.
+
+    ``rows_over_reach`` is computed from the same helper on both sides of a
+    comparison, so it can only ever confirm the *diagnostic*'s arithmetic --
+    it is silent about whether the encoder built that table.  What makes the
+    matched arm an arm is this identity instead, and it is four constants:
+
+    * the sigma.  ``bf16_l_sigma_sweep`` passes ``window_sigma = ratio *
+      BF16_CHANNEL_SIGMA`` (``None`` at ratio 1.0), and ``encode_unit``'s
+      CHANNEL branch sets ``table_sigma = window_sigma``, falling back to
+      ``channel_sigma`` only when it is ``None`` -- the two spellings of the
+      same number (``encode.py`` `table_sigma`).
+    * the seed.  ``BF16_RECIPE.window_seed`` is ``DEFAULT_WINDOW_SEED`` is 0,
+      which is ``matched_reach``'s default.
+    * the half.  Read only on the ``sigma is None`` branch of
+      ``_window_points_cpu``; the BF16 CHANNEL path never takes it, so the
+      argument cannot move the table there.  Asserted rather than argued.
+    * the grid.  ``BF16_GRID``, the recipe's own.
+    """
+    from tessera import encode as enc
+    from tessera.export import BF16_RECIPE, DEFAULT_WINDOW_SEED
+
+    assert BF16_RECIPE.window_seed == DEFAULT_WINDOW_SEED == 0
+    assert BF16_RECIPE.window_sigma is None          # ratio 1.0 is the shipped arm
+    assert BF16_RECIPE.channel_sigma == SIGMA
+    assert BF16_RECIPE.scale_plane is enc.ScalePlaneKind.CHANNEL
+    assert BF16_RECIPE.body is enc.BodyKind.WINDOW
+
+    # ``half`` is inert once a sigma is given, so a matched arm cannot be
+    # reading one table while the encoder builds another through it.
+    for L in (12, 14):
+        for sigma in (SIGMA, 1.25 * SIGMA):
+            reaches = {
+                enc.window_table_reach(BF16_GRID, L, sigma=sigma, seed=0,
+                                       half=h).realised
+                for h in (8, 16, 32)
+            }
+            assert len(reaches) == 1, (L, sigma, reaches)

@@ -898,11 +898,31 @@ re-encoded in every row and must be byte- *and* tensor-identical to the same
 arm in the landed `pair_glm.json` / `pair_dense.json`.
 `experiments/matched_reach_report.py` refuses to summarise without it.
 
+That physical check, though, is a check on the *diagnostic*: both sides
+compute `rows_over_reach` from the same helper, so it can confirm the
+arithmetic and is silent about whether the **encoder** built the table the
+helper describes.  What makes a matched arm an arm is a separate identity,
+and it is four constants, verified in the code rather than argued:
+`bf16_l_sigma_sweep` passes `window_sigma = ratio * BF16_CHANNEL_SIGMA`
+(`None` at ratio 1.0) and `encode_unit`'s CHANNEL branch sets
+`table_sigma = window_sigma`, falling back to `channel_sigma` only when it is
+`None` (`src/tessera/encode.py:2378-2385`); the seed is
+`BF16_RECIPE.window_seed = DEFAULT_WINDOW_SEED = 0`
+(`src/tessera/export.py:146,714`), which is the helper's default; and `half`
+is read *only* on the `sigma is None` branch of `_window_points_cpu`
+(`src/tessera/encode.py:739-750`), which this path never takes, so that
+argument cannot move the table here at all.  The grid is `BF16_GRID`, the
+recipe's own.  `tests/test_matched_reach.py` pins all four, including by
+building each table at `half` 8, 16 and 32 and asserting one reach.
+
 **No numbers yet, and that is the state of this section.**  The apparatus,
 the ratios and the reading are here; the two `L=14` rows -- the cheap and
-decisive ones -- were submitted to the PrismaBuild pool on 2026-09-04 and sat
-at GPU-queue positions 12 and 13 of 14 behind other agents' work, with
-sparklina's GPU held out of the pool until ~07:00.  Nothing below this line
+decisive ones -- were submitted to the PrismaBuild pool on 2026-09-04
+(action keys `9f7abf6f...` for `glm-14` and `8b60e5a1...` for `dense-14`) and
+were still queued behind other agents' work when this was written, with
+sparklina's GPU held out of the pool until ~07:00 and sparky draining roughly
+one item every two and a half minutes.  The records outlive the session that
+submitted them, so the rows will run; what they will not do is run tonight.  Nothing below this line
 should be read as measured until those files exist at
 `/mnt/shared/tessera-runs/reach/matched/`, and
 `experiments/matched_reach_report.py` is what turns them into the table above.
