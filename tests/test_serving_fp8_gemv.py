@@ -447,26 +447,63 @@ def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monke
 # --- the contract publishes what the serve loads --------------------------------
 
 def test_the_gemv_prefix_is_the_constant_the_load_path_asks_for():
-    """The published prefix IS the module name the JIT load asks for (source, not value)."""
-    from pathlib import Path
-
+    """The published prefix IS the module name the JIT load asks for."""
     from tessera.serving import ext
     assert fp8_gemv.GEMV_MODULE_NAME == "tessera_window_gemv"
     entry = next(e for e in ext.NATIVE_EXTENSIONS
                  if e["module_name_prefix"] == fp8_gemv.GEMV_MODULE_NAME)
     assert entry["filename_glob"] == "tessera_window_gemv*.so"
-    src = (Path(__file__).resolve().parents[1] / "src" / "tessera" / "kernel_window_gemv.py"
-           ).read_text(encoding="utf-8")
-    assert 'name="tessera_window_gemv"' in src
+    captured = _capture_window_gemv_load()
+    assert captured["name"] == ext.WINDOW_GEMV_MODULE_NAME
 
 
-def test_the_serving_csrc_is_the_kernel_source_byte_for_byte():
-    """The contract's published source is the kernel the serve builds, not a copy
-    that drifted: byte-identical to the library's own csrc."""
-    from pathlib import Path
-    root = Path(__file__).resolve().parents[1] / "src" / "tessera"
-    assert (root / "serving" / "csrc" / "window_gemv.cu").read_bytes() == \
-        (root / "csrc" / "window_gemv.cu").read_bytes()
+class _Captured(Exception):
+    pass
+
+
+def _capture_window_gemv_load():
+    """Run ``kernel_window_gemv._ext`` up to the JIT call and return what it
+    would hand ``torch.utils.cpp_extension.load`` -- no toolchain, no GPU: the
+    device capability is stubbed and ``load`` raises before building."""
+    import os
+
+    import torch.utils.cpp_extension as cpp
+    from tessera import kernel_window_gemv as kg
+
+    seen = {}
+
+    def fake_load(**kwargs):
+        seen.update(kwargs)
+        raise _Captured()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cpp, "load", fake_load)
+        mp.setattr(torch.cuda, "get_device_capability", lambda *a, **k: (12, 1))
+        mp.setenv("TORCH_EXTENSIONS_DIR", os.path.join(os.path.expanduser("~"), "tmp",
+                                                       "torch-ext-gemv-test"))
+        kg._ext.cache_clear()
+        try:
+            with pytest.raises(_Captured):
+                kg._ext()
+        finally:
+            kg._ext.cache_clear()
+    return seen
+
+
+def test_the_published_source_is_the_file_the_loader_compiles():
+    """The contract's ``native_extensions[].source`` for the window GEMV names
+    the file ``kernel_window_gemv._ext`` hands the JIT -- the same inode, not a
+    second copy that happened to be byte-identical today (#134: the loader
+    built ``tessera/csrc/window_gemv.cu`` while the contract published
+    ``tessera/serving/csrc/window_gemv.cu``)."""
+    import os
+
+    from tessera.serving import ext
+    captured = _capture_window_gemv_load()
+    assert len(captured["sources"]) == 1, captured["sources"]
+    built = captured["sources"][0]
+    published = ext.native_source_path(fp8_gemv.GEMV_MODULE_NAME)
+    assert os.path.samefile(built, published), (built, published)
 
 
 def test_the_gemv_fallback_the_table_publishes_is_the_one_the_route_takes():

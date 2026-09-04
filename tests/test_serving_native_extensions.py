@@ -446,3 +446,36 @@ def test_a_fallback_block_that_answers_the_wrong_question_is_refused(
     monkeypatch.setattr(ext, "NATIVE_EXTENSIONS", contract["native_extensions"])
     with pytest.raises(ValueError, match=message):
         validate_serving_contract(contract)
+
+
+# --- one source, one path (#134) ------------------------------------------------
+
+def test_there_is_one_window_gemv_source_and_it_is_the_published_one():
+    """One ``window_gemv.cu`` under ``src/``, at the path the contract
+    publishes and the loader resolves through ``ext.native_source_path``.  Two
+    byte-identical copies were a test away from drifting; one file cannot."""
+    import os
+    from pathlib import Path
+
+    from tessera.serving import ext
+    src = Path(__file__).resolve().parents[1] / "src"
+    copies = sorted(p for p in src.rglob("window_gemv.cu"))
+    published = Path(ext.native_source_path(ext.WINDOW_GEMV_MODULE_NAME))
+    assert copies == [published], copies
+    assert published == Path(ext.csrc_dir()) / "window_gemv.cu"
+    entry = next(e for e in ext.NATIVE_EXTENSIONS
+                 if e["module_name_prefix"] == ext.WINDOW_GEMV_MODULE_NAME)
+    assert entry["source"] == ext.WINDOW_GEMV_SOURCE == "csrc/window_gemv.cu"
+    assert os.path.isfile(published)
+
+
+def test_native_source_path_resolves_every_published_source_and_nothing_else():
+    import os
+
+    from tessera.serving import ext
+    for entry in ext.NATIVE_EXTENSIONS:
+        path = ext.native_source_path(entry["module_name_prefix"])
+        assert path == os.path.join(ext.csrc_dir(), *entry["source"].split("/")[1:])
+        assert os.path.isfile(path)
+    with pytest.raises(KeyError, match="no native extension"):
+        ext.native_source_path("tessera_absent")

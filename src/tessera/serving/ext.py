@@ -68,7 +68,9 @@ __all__ = [
     "TESSERA_NVFP4_ABI_SCHEMA",
     "NATIVE_EXTENSIONS",
     "NVFP4_MODULE_PREFIX",
+    "NVFP4_SOURCE",
     "WINDOW_GEMV_MODULE_NAME",
+    "WINDOW_GEMV_SOURCE",
     "FALLBACK_REFUSED",
     "FALLBACK_STATUSES",
     "FALLBACK_SUBSTITUTED",
@@ -81,6 +83,7 @@ __all__ = [
     "StaleExtensionError",
     "IncompleteInstallError",
     "csrc_dir",
+    "native_source_path",
     "get_tessera_ext",
     "require_tessera_ext",
     "reset_for_tests",
@@ -108,9 +111,15 @@ NVFP4_MODULE_PREFIX = "tessera_nvfp4_"
 #: on either side is a test failure rather than a quietly short table.
 WINDOW_GEMV_MODULE_NAME = "tessera_window_gemv"
 
-#: The source, relative to this package -- the form the contract publishes, so
-#: a consumer resolves it the same way ``csrc_dir`` does.
+#: The sources, relative to this package -- the form the contract publishes, so
+#: a consumer resolves it the same way ``csrc_dir`` does.  Each is the ONE
+#: file of that name in the package: the loader that JIT-builds it resolves
+#: the same entry through :func:`native_source_path`, so the published path
+#: and the built path are one inode, not two copies kept equal by a test
+#: (#134: the window GEMV was built from ``tessera/csrc/`` and published from
+#: ``tessera/serving/csrc/``).
 NVFP4_SOURCE = "csrc/tessera_nvfp4.cu"
+WINDOW_GEMV_SOURCE = "csrc/window_gemv.cu"
 
 #: How a consumer turns ``filename_glob`` into a decision: ``fnmatch`` it
 #: against the BASENAME of a mapped ``.so``.  A value, not prose, because the
@@ -250,7 +259,7 @@ NATIVE_EXTENSIONS = [
         "module_name_prefix": WINDOW_GEMV_MODULE_NAME,
         "filename_glob": WINDOW_GEMV_MODULE_NAME + "*.so",
         "match": MATCH_BASENAME_FNMATCH,
-        "source": "csrc/window_gemv.cu",
+        "source": WINDOW_GEMV_SOURCE,
         "loaded_by": "tessera.serving.fp8_gemv",
         # BOTH window routes.  ``bf16_route.prepare_bf16_gemv`` repacks through
         # ``kernel_window_gemv.prepare_value_unit`` exactly as ``fp8_gemv`` does
@@ -538,6 +547,26 @@ def csrc_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "csrc")
 
 
+def native_source_path(module_name_prefix: str) -> str:
+    """The absolute path of the ``.cu`` the contract publishes for an extension.
+
+    Resolved from :data:`NATIVE_EXTENSIONS` by ``module_name_prefix`` -- the
+    one table the contract reads -- and refused (``IncompleteInstallError``) if
+    the file is not in this install.  Every JIT loader in the package takes its
+    source from here, so what the contract says is built is what is built.
+    """
+    for entry in NATIVE_EXTENSIONS:
+        if entry["module_name_prefix"] == module_name_prefix:
+            source = entry["source"]
+            break
+    else:
+        raise KeyError(f"no native extension publishes module prefix {module_name_prefix!r}")
+    head, _, rel = source.partition("/")
+    if head != "csrc" or not rel or "/" in rel:
+        raise ValueError(f"native extension source {source!r} is not a file under csrc/")
+    return os.path.join(_require_csrc(rel), rel)
+
+
 def _require_csrc(*names: str) -> str:
     d = csrc_dir()
     missing = [n for n in names if not os.path.isfile(os.path.join(d, n))]
@@ -663,8 +692,7 @@ def _load_locked():
         cuda_home = _resolve_cuda_home(torch)
         _resolve_ninja()
         extra_includes = _repair_include_path(cuda_home)
-        src_dir = _require_csrc("tessera_nvfp4.cu")
-        source = os.path.join(src_dir, "tessera_nvfp4.cu")
+        source = native_source_path(NVFP4_MODULE_PREFIX)
         cc = _target_capability("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
         identity, _payload = _build_identity(torch, source=source, capability=cc,
                                              extra_includes=extra_includes)

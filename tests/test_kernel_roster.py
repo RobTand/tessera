@@ -54,7 +54,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "src" / "tessera" / "csrc" / "window_gemv.cu"
+SOURCE = ROOT / "src" / "tessera" / "serving" / "csrc" / "window_gemv.cu"
 TEXT = SOURCE.read_text(encoding="utf-8")
 
 RATE_SWITCHES = ["switch (it.rate)", "switch (rate)"]

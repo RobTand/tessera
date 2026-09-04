@@ -27,8 +27,10 @@ contract on a layout and a kernel built for bandwidth:
 * **Blocks loop over items**, so the table is staged once per resident
   block, not once per tile.
 
-The kernel is ``src/tessera/csrc/window_gemv.cu``, JIT-built through
-``torch.utils.cpp_extension.load`` on first use (``ninja`` + ``nvcc``; build
+The kernel is ``src/tessera/serving/csrc/window_gemv.cu`` -- the file the
+serving contract publishes as the extension's ``source``, resolved through
+``tessera.serving.ext.native_source_path`` so the two cannot differ -- JIT-built
+through ``torch.utils.cpp_extension.load`` on first use (``ninja`` + ``nvcc``; build
 directory ``$TORCH_EXTENSIONS_DIR`` or ``~/tmp/torch-ext-gemv`` -- never
 ``/tmp``).  Bit-exactness against ``materialize_fp8`` is proven by
 :func:`decode_codes` (the same state extraction, writing the grid code) in
@@ -98,7 +100,7 @@ __all__ = [
 
 TILE_ROWS = 512
 # SUPPORTED_RATES and WINDOW_BITS_SUPPORTED are IMPORTED (above), not declared
-# here: tessera.kernel_roster reads them off csrc/window_gemv.cu -- the very
+# here: tessera.kernel_roster reads them off serving/csrc/window_gemv.cu -- the very
 # file _ext() compiles -- so the set this module refuses a unit against is the
 # set the kernel instantiates.  Declaring them beside the kernel instead of
 # inside it is the drift issue #145 filed: a rate could be added to the .cu and
@@ -157,7 +159,18 @@ def _ensure_toolchain_on_path() -> None:
 def _ext():
     from torch.utils.cpp_extension import load
 
+    from tessera.serving import ext as serving_ext
+
     _ensure_toolchain_on_path()
+    # The one source, resolved from the contract's native-extension table: the
+    # path the contract publishes IS the file compiled here (#134).
+    src = serving_ext.native_source_path(serving_ext.WINDOW_GEMV_MODULE_NAME)
+    # The roster and the build read one file: a published source that is not
+    # the roster's file would price a lane the build did not instantiate.
+    if not os.path.samefile(src, WINDOW_GEMV_SOURCE):
+        raise GrammarError(
+            f"the contract publishes {src} as the window GEMV source but the "
+            f"kernel roster reads {WINDOW_GEMV_SOURCE}; one file, one path")
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-gemv")
     pf = int(os.environ.get("TESSERA_WINDOW_GEMV_PF", "1"))   # column chunks in flight per warp (1 or 2)
     build = os.path.join(root, "tessera_window_gemv")
@@ -166,8 +179,8 @@ def _ext():
     os.makedirs(build, exist_ok=True)
     major, minor = torch.cuda.get_device_capability()
     return load(
-        name="tessera_window_gemv",
-        sources=[WINDOW_GEMV_SOURCE],
+        name="tessera_window_gemv",  # literal: the contract reader reads it statically
+        sources=[WINDOW_GEMV_SOURCE],  # the same file, by the check above; the roster test reads this line
         build_directory=build,
         extra_cuda_cflags=[
             "-O3", "-lineinfo", "-std=c++17",
@@ -413,7 +426,7 @@ class WindowGemvUnit:
 #: drift.
 _NO_START_STATE = (
     "this unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
-    "and the window GEMV does not take a start state: csrc/window_gemv.cu "
+    "and the window GEMV does not take a start state: serving/csrc/window_gemv.cu "
     "supplies state_{-1} = 0 itself -- the L-bit pad that opens a wire column "
     "is not stored, and lane 0 of tile 0 reads its history from that zero pad. "
     "Taking one is a kernel change, not a packing change. Serve this shard "
