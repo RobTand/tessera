@@ -147,13 +147,24 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
                 importers[WILDCARD].add(name)
                 continue
             # Attribute the edge to the longest known module prefix: an import
-            # of tessera.encode.foo is an edge to tessera.encode.
+            # of tessera.encode.foo is an edge to tessera.encode.  Importing a
+            # submodule also EXECUTES every package __init__ above it, so those
+            # are edges too.  Stopping at the longest prefix dropped them, and
+            # a package is exactly where a re-export lives: at #148 a change to
+            # src/tessera/__init__.py selected 98 of the 123 test modules that
+            # reach the package, and src/tessera/serving/__init__.py 31 of 70.
             parts = target.split(".")
+            matched = False
             for cut in range(len(parts), 0, -1):
                 candidate = ".".join(parts[:cut])
-                if candidate in by_name:
+                known = by_name.get(candidate)
+                if known is None:
+                    continue
+                if not matched:
                     importers[candidate].add(name)
-                    break
+                    matched = True
+                elif known.name == "__init__.py":
+                    importers[candidate].add(name)
     return by_name, importers
 
 

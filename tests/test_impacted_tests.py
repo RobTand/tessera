@@ -589,3 +589,69 @@ def test_unknown_source_reader_reaches_static_test_consumers(tmp_path):
     result = _selector(repo, f"{base}...HEAD")
     assert result["verdict"] == "narrowed"
     assert result["tests"] == ["tests/test_consumer.py"]
+
+
+def test_a_submodule_import_is_an_edge_to_every_package_it_executes(tmp_path):
+    """Importing ``pkg.inner.leaf`` runs two ``__init__`` files on the way in."""
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "VERSION = 1\n",
+        "src/pkg/inner/__init__.py": "",
+        "src/pkg/inner/leaf.py": "VALUE = 1\n",
+        "tests/test_leaf.py": "from pkg.inner.leaf import VALUE\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "package fixture")
+
+    _, importers = impacted.build_graph(repo)
+
+    for package in ("pkg", "pkg.inner", "pkg.inner.leaf"):
+        assert "tests.test_leaf" in importers.get(package, set()), (
+            f"a change to {package} reaches the importer of pkg.inner.leaf"
+        )
+
+
+def _modules_naming_the_package(root: Path, package: str) -> set[str]:
+    """Test files whose own AST imports ``package`` or a submodule of it.
+
+    Ground truth read from the tests, not from the selector's graph, so the
+    two cannot agree by sharing a bug.
+    """
+    import ast
+
+    found = set()
+    for path in sorted((root / "tests").rglob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:  # pragma: no cover - a broken test file is its own bug
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            if any(name == package or name.startswith(package + ".")
+                   for name in names):
+                found.add(str(path.relative_to(root)))
+                break
+    return found
+
+
+def test_a_package_init_change_selects_every_test_that_imports_the_package():
+    """#148: longest-prefix attribution dropped the package edge entirely."""
+
+    selected = set(impacted.select(ROOT, ["src/tessera/__init__.py"])["tests"])
+    expected = _modules_naming_the_package(ROOT, "tessera")
+
+    assert expected, "the fixture is vacuous if no test imports tessera"
+    assert not expected - selected, (
+        f"{len(expected - selected)} test modules import a tessera submodule "
+        f"and were not selected: {sorted(expected - selected)[:5]}"
+    )
