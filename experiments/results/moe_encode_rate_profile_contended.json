@@ -1,0 +1,226 @@
+{
+ "arm": "weights_only (no --hessian, so no LDLQ)",
+ "device": "NVIDIA GB10",
+ "finished_utc": "2026-09-04T03:43:34Z",
+ "fused_available": true,
+ "grid": "E4M3",
+ "idle_power_w": 67.94,
+ "layer": 1,
+ "netdata": {
+  "envelope_w": 140,
+  "metric": "nvidia_smi.gpu_power_draw",
+  "window": [
+   "2026-09-04T03:41:46Z",
+   "2026-09-04T03:43:34Z"
+  ]
+ },
+ "power_w_during_encode": [
+  72.17,
+  72.47,
+  72.61,
+  67.35,
+  70.57,
+  72.82
+ ],
+ "profiler": {
+  "top_self_cuda": [
+   {
+    "calls": 1056768,
+    "name": "_step",
+    "self_cuda_us": 8618429.67199886,
+    "share": 0.9603
+   },
+   {
+    "calls": 664,
+    "name": "aten::copy_",
+    "self_cuda_us": 74494.94099998438,
+    "share": 0.0083
+   },
+   {
+    "calls": 32,
+    "name": "_traceback",
+    "self_cuda_us": 38858.870000000345,
+    "share": 0.0043
+   },
+   {
+    "calls": 32,
+    "name": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+    "self_cuda_us": 38488.5000000007,
+    "share": 0.0043
+   },
+   {
+    "calls": 4,
+    "name": "Memcpy DtoH (Device -> Pageable)",
+    "self_cuda_us": 25888.686000000685,
+    "share": 0.0029
+   },
+   {
+    "calls": 26,
+    "name": "aten::index",
+    "self_cuda_us": 21492.50099999432,
+    "share": 0.0024
+   },
+   {
+    "calls": 6,
+    "name": "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<8> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<8> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1}>(long, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<8> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<8> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1})",
+    "self_cuda_us": 15951.672000001185,
+    "share": 0.0018
+   },
+   {
+    "calls": 33,
+    "name": "aten::min",
+    "self_cuda_us": 11280.478999998712,
+    "share": 0.0013
+   }
+  ],
+  "total_self_cuda_us": 8974337.868998827,
+  "unit": "model.language_model.layers.1.mlp.experts.0.gate_proj.weight"
+ },
+ "q256": 1024,
+ "recipe": {
+  "body": "WINDOW",
+  "plane": "CHANNEL",
+  "span": 1,
+  "window_bits": 14
+ },
+ "src": "/mnt/shared/models/GLM-5.3-Flash-4layer",
+ "started_utc": "2026-09-04T03:41:46Z",
+ "summary": {
+  "estimated_minutes_per_moe_layer": 143.2,
+  "seconds_per_unit_max": 10.1864,
+  "seconds_per_unit_mean": 9.9416,
+  "seconds_per_unit_min": 9.6668,
+  "units_per_moe_layer": 864,
+  "units_timed": 6
+ },
+ "torch": "2.11.0+cu130",
+ "tree": "c49e7a9964cb3539dadfc040c43188028e99f95c",
+ "units": [
+  {
+   "bpp": 4.01953125,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.656,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 10.0374,
+   "shape": [
+    2048,
+    4096
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.0.gate_proj.weight",
+   "wire_bytes": 4214784
+  },
+  {
+   "bpp": 4.01953125,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.2876,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 9.6668,
+   "shape": [
+    2048,
+    4096
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.0.up_proj.weight",
+   "wire_bytes": 4214784
+  },
+  {
+   "bpp": 4.0234375,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.8378,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 10.1864,
+   "shape": [
+    4096,
+    2048
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.0.down_proj.weight",
+   "wire_bytes": 4218880
+  },
+  {
+   "bpp": 4.01953125,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.4777,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 9.8465,
+   "shape": [
+    2048,
+    4096
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.1.gate_proj.weight",
+   "wire_bytes": 4214784
+  },
+  {
+   "bpp": 4.01953125,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.6233,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 9.9922,
+   "shape": [
+    2048,
+    4096
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.1.up_proj.weight",
+   "wire_bytes": 4214784
+  },
+  {
+   "bpp": 4.0234375,
+   "counters": {
+    "calls_by_rate": {
+     "4": 4
+    },
+    "fused_seconds": 9.5682,
+    "reached_viterbi_window_fused": 4,
+    "took_the_reference": 0,
+    "viterbi_window_calls": 4
+   },
+   "seconds": 9.9202,
+   "shape": [
+    4096,
+    2048
+   ],
+   "tensor": "model.language_model.layers.1.mlp.experts.1.down_proj.weight",
+   "wire_bytes": 4218880
+  }
+ ],
+ "verify": true,
+ "warm_counters": {
+  "calls_by_rate": {
+   "4": 4
+  },
+  "fused_seconds": 9.7208,
+  "reached_viterbi_window_fused": 4,
+  "took_the_reference": 0,
+  "viterbi_window_calls": 4
+ },
+ "warm_first_call_seconds": 10.6022,
+ "window_fused_max_rate": 11
+}
