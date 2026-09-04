@@ -401,3 +401,54 @@ device, zero skipped and zero uncollected modules. Receipt CAS:
 `c59c516c06effd80538a19c330f12f05bf2c389d527575110411a59b44959209`.
 This does not replace the full artifact-bound `--require-attested` replay or
 the coordinator's dual-population integration run.
+
+## 10. Complete post-promotion replay and preserved scope
+
+The full artifact/plan/sidecar collector was subsequently replayed with
+`--require-attested` under CPU-only PrismaBuild action
+`4510df8b36115685501166ba03a400eb21f31ae72bc1626d75656fce0f763ea8`.
+The original worker returned zero; receipt CAS:
+`fb4361f254a72f8ea67387a928a19af1f0621218c609cb8f5ad198211ed67763`.
+Its output is `census-bound-r4/check-v16-promotion-r1.json` under the campaign
+directory. The collector derives 22 required owners and 2,112 projection
+containers from the sealed common plan and matching model sidecars. Both
+decode and prefill have **22 modules, 22 covered, zero unattested and zero
+unsupported records**. Each phase resolves only its corresponding exact-runtime
+v16 routed-MoE cell. This is stronger than a top-level agreement boolean and
+does not modify the original v15 census or rerun its GPU work.
+
+Action `27f7ecb8aaa2f0024291792afa7e62369a8a00dc08c03b151eafda4137b9fbc4`
+independently compared the v16 document against pre-promotion `424dad5` and
+rehashed the complete corrected model against its original corrected seal.
+It returned zero, proving all eight dense cells, all non-lane contract blocks
+and prior changelog entries unchanged, and every current artifact file still
+matching that seal. Receipt CAS:
+`1c919a54c7a6bbe7c43124752a5aa35fa8a9fa6e5a5d571de9e645fb86b5885a`.
+At `048325c`, the raw contract SHA256 was
+`b2704acb6a2815baba4d014dde5ed1d1a126749512235d00043662bb259513ac`.
+
+A separate prose-only correction, `af9d23b`, changes the TP note's stale
+"both families" to "every declared family"; it changes no TP bound or gate.
+Action `90f7fc2a3f0feab2850e139340f38bbaab16125f38e026d35b79d0c12ed3f13b`
+verified that exact textual delta, then repeated the non-lane/dense/history
+invariance checks with only that documented text normalized. Original worker
+exit was zero; receipt CAS:
+`47134ae73689afe5658048047683e03a54c5b6f8d83652a1e4bd15d1054af85a`.
+The resulting raw contract SHA256 is
+`75137c73bce8837713b427d977beb0eec280faccb39fd3225acf1b3bd00eb0b1`.
+The collector's `current_contract_sha256` instead hashes canonical parsed
+JSON; it is a different explicitly defined identity, not this raw-file hash.
+
+**Verification-attribution correction to §7.** The independent reviewer
+checked the original PB worker/snapshot identity by direct inspection.
+Its CPU-only replay action `7769fb00d89e` checked the raw census hash,
+selected seal/path, artifact pre/post identity, cleanup and collector
+assertions, and printed the source snapshot. The earlier §7 sentence combined
+those checks; it must not be read as saying the CPU command itself asserted
+the original worker/snapshot equality. The verification and evidence remain
+valid, but their mechanisms are distinct.
+
+Independent review also corrected present-tense route docstrings and added a
+dated supersession note to the historical MoE design document in `06e5ac9`.
+Those are prose-only corrections to the now-measured scope; no frozen encoder
+or serving snapshot, contract byte, default or quality threshold moved.
