@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,7 +36,7 @@ def _child_env(**extra):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(ROOT / "src"), str(ROOT / "tests"), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
-    env.setdefault("TMPDIR", "/home/rob/tmp")
+    env.setdefault("TMPDIR", box_artifacts.scratch_tmpdir())
     env.setdefault("TRITON_CACHE_DIR", str(Path.home() / ".triton-cache"))
     env.update(extra)
     return env

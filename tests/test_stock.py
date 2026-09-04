@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import box_artifacts
 
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
 from tessera.errors import GrammarError
@@ -26,7 +27,7 @@ from tessera.stock import (
 from tessera.unit_artifact import read_unit_artifact
 
 K2 = tuple_grid(E2M1_GRID, 2)
-QWEN = Path("/home/rob/models/Qwen3-0.6B/model.safetensors")
+QWEN = box_artifacts.path("models", "Qwen3-0.6B", "model.safetensors")
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="the encoder is a GPU job")
 
@@ -121,7 +122,7 @@ def test_share_global_refuses_rather_than_rounds():
         share_global({"a": a, "b": b})
 
 
-@pytest.mark.skipif(not QWEN.exists(), reason="Qwen3-0.6B is not on this box")
+@box_artifacts.require("models", "Qwen3-0.6B", "model.safetensors")
 @pytest.mark.parametrize("layer", [0, 13, 27])
 def test_qwen_fused_groups_share_one_global_exactly(layer):
     from safetensors import safe_open

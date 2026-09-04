@@ -21,6 +21,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -28,9 +29,9 @@ SPEC = importlib.util.spec_from_file_location(
 PLAN = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PLAN)
 
-PQ_TREE = Path("/home/rob/pq-wt/tessera-continuous")
-ALLOC = Path("/mnt/shared/tessera-runs/pq-continuous/qwen06b/alloc")
-MODEL = Path("/home/rob/models/Qwen3-0.6B")
+PQ_TREE = box_artifacts.root("prismaquant_worktree")
+ALLOC = box_artifacts.path("shared_runs", "pq-continuous", "qwen06b", "alloc")
+MODEL = box_artifacts.path("models", "Qwen3-0.6B")
 
 
 def tessera(fmt: str) -> dict:
@@ -345,7 +346,7 @@ def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shap
     assert provenance["totals"]["prismaquant_charged_bpp"] == pytest.approx(achieved, abs=1e-12)
 
 
-@pytest.mark.skipif(not MODEL.exists(), reason="Qwen3-0.6B is not on this box")
+@box_artifacts.require("models", "Qwen3-0.6B")
 def test_the_shapes_come_from_the_checkpoint_itself():
     shapes = PLAN.body_weights(MODEL)
     assert shapes == one_layer_shapes(layers=28)
