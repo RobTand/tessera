@@ -19,8 +19,12 @@ disk actually reaches.
 | prefill (what #83 measured) | `torch._scaled_mm` in **both** arms | `KL >= 0.000000` | 100.00 % (4088 positions) |
 | decode (this receipt) | `tessera_window_gemv::gemv` in arm A, `torch._scaled_mm` in arm B | `KL >= 0.012111` | 91.02 % (256 positions) |
 
-The prefill regime returns a perfect null on a pair of serves that provably
-executed different kernels. That is the defect in #102, measured.
+The prefill regime returns a perfect null on a pair of serves that were
+provably **two lane states** -- the GEMV extension built in one and refused in
+the other, attested by each serve's own startup route sweep. The scored
+forwards in that regime ran the *same* kernel in both arms, which is precisely
+why the null is uninformative rather than reassuring. That is the defect in
+#102, measured.
 
 ---
 
@@ -236,7 +240,7 @@ quality. **The regime change is not a quality claim.** What it changes is which
 kernel is under test, and therefore whether a two-arm A/B can see anything at
 all.
 
-### A finding this turned up, not resolved here
+### A finding this turned up, filed as #110
 
 The two arms are **not** identical as served: mutual `KL >= 0.012111`, 91.02 %
 top-1 agreement over 256 M = 1 forwards. The existing bit-exactness receipts
@@ -246,8 +250,9 @@ about the two GEMMs agreeing: arm A multiplies through the window table with
 its own accumulation, arm B runs `torch._scaled_mm` on materialised fp8. A
 difference of this size is consistent with different accumulation rather than a
 defect -- but it had never been measured on a served path, because until today
-no served KL scored an M = 1 forward. Filed as an observation for whoever owns
-the lane; this receipt does not claim which arm is closer to BF16 (256
+no served KL scored an M = 1 forward. **Filed as #110** rather than carried in
+a report: it is a lane question and this change is the instrument. This receipt
+does not claim which arm is closer to BF16 (256
 positions is too few, and the two decode numbers, 0.4361 and 0.4325, straddle
 in the direction that would be surprising).
 
@@ -342,8 +347,8 @@ whole point is that every launch is attributable.
   there and the trace's own `note` says so). A decode-regime dump under a
   compiled serve is not blocked; its trace would not attest the shapes.
 * **The NVFP4 and BF16 routes**, and MoE. Not touched here.
-* **Which arm is right.** §5's closing note. 256 positions on one 0.6B
-  checkpoint is a signal to chase, not a verdict.
+* **Which arm is right.** §5's closing note, filed as **#110**. 256 positions
+  on one 0.6B checkpoint is a signal to chase, not a verdict.
 * **Cost.** Per scored position the decode regime is ~26x the prefill one: on
   arm A's serve the decode dump reported 45.0 s at its last chunk for 256
   positions (0.176 s each) against 27.3 s for 4088 (0.0067 s each). Both
