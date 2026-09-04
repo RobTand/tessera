@@ -383,9 +383,11 @@ by name, and fails on any disagreement. Receipt:
 That is not the same question as whether a named *lane inside* the route can
 read them, and the second one had no producer side at all until issue #104.
 The window GEMV (`kernel_window_gemv`) repacks each column's code stream at
-that column's own rate and has a 16-row lane only where R bits per code is a
-whole number of bytes, so it reads `SUPPORTED_RATES = (1, 2, 4)` and nothing
-else. A rung is a *root* rate that `grammar.bresenham_rate_schedule` realises
+that column's own rate and has a 16-row lane only where 16 codes of R bits are
+one 64-, 32- or 16-bit chunk (`chunk_width_supported` in
+`csrc/window_gemv.cu`), so it reads `SUPPORTED_RATES = (1, 2, 4)` and nothing
+else -- R = 3 would need 6-byte lanes. A rung is a *root* rate that
+`grammar.bresenham_rate_schedule` realises
 by mixing the two rates bracketing it -- so q256 1006 (root 3.93) is columns
 at rate 3 and columns at rate 4, and **every** unit of such a checkpoint
 refuses the lane at load, module by module, through a substitution the route
@@ -393,10 +395,29 @@ reports as a served module. All six allocated checkpoints under
 `/mnt/shared/tessera-runs/allocated` carried a rate outside the set, so no
 artifact we held could exercise the lane at all.
 
+**The set has one home, and it is the kernel** (issue #145).
+`csrc/window_gemv.cu` declares `TESSERA_GEMV_RATES(X) X(1) X(2) X(4)` and
+`TESSERA_GEMV_WINDOW_BITS 14`; every rate dispatch in the file is *generated*
+by expanding that list, and every window width -- template argument,
+`TORCH_CHECK` and its message -- is that macro. `tessera.kernel_roster` (parse
+only, torch-free, so a producer without torch can read it) parses the
+declaration off the same path `kernel_window_gemv._ext` hands to
+`cpp_extension.load`, and `SUPPORTED_RATES`, `WINDOW_BITS_SUPPORTED`,
+`serving.ext.WINDOW_GEMV_LANE.requires` and hence the contract's published copy
+are all that one parse. A rate therefore exists in the kernel and in the
+eligibility gate, or in neither. Before #145 they were three literals tied to
+each other by tests and to the kernel by nothing -- and already reading
+differently: `switch (it.rate)` spelled rates 4 and 2 as case labels and
+reached rate 1 through a `default`, so the source parse the issue proposed
+would have answered `(2, 4)`. `tests/test_kernel_roster.py` pins that no
+second spelling comes back: no rate switch hand-writes a case, no window width
+is a literal, the parse fails closed on a source it cannot read
+(`KernelSourceError`, never an empty roster), and the packaged contract's
+`requires` is checked against the parse directly rather than through the two
+Python spellings between them.
+
 The predicate is therefore published (`runtime_contract.json` v12,
-`native_extensions[].lane.requires`, which *is*
-`kernel_window_gemv.SUPPORTED_RATES` and `WINDOW_BITS_SUPPORTED` --
-`tests/test_lane_reachability.py` ties the two ends) and read on both sides:
+`native_extensions[].lane.requires`) and read on both sides:
 
 - **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
   calls `scheme.refuse_unreachable_lane` at argument time, beside
@@ -772,9 +793,9 @@ The following are rules rather than measured values:
   `WINDOW_GEMV_SYMBOL` -- narrowed by the cell's structure, regime, by the
   residency the cell's `TESSERA_SERVE_MODE` flag names, and by
   the lanes each rung reaches under `native_extensions[].lane.requires`. So a
-  cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
-  drop rate 4 from the published predicate and the document stops validating
-  (`tests/test_lane_reachability.py`).
+  cell naming the GEMV cannot outlive `SUPPORTED_RATES` -- which is the
+  kernel's own declaration (§4.4c): drop rate 4 from `TESSERA_GEMV_RATES` and
+  the document stops validating (`tests/test_lane_reachability.py`).
 - **The regime is *this* contract's, and two vocabularies say "decode".** Here
   `decode` is the one-row forward and `batch` is every M > 1
   (`contract.CENSUS_PHASE_REGIMES`, which is also what stamps a census

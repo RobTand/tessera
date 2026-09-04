@@ -84,3 +84,15 @@ class PromotionRefusedError(TesseraError):
     served KL that misses its bar each refuse here, by name, with the reason.
     Raised by :func:`tessera.control.assert_plane_promotion` (tessera#65).
     """
+
+
+class KernelSourceError(TesseraError):
+    """A packaged CUDA source does not declare what this package reads off it.
+
+    The window GEMV's supported rates and window width are read from the
+    kernel that instantiates them (:mod:`tessera.kernel_roster`), so an
+    absent, duplicated or malformed declaration is a named refusal at import
+    rather than an empty roster -- an empty ``SUPPORTED_RATES`` would refuse
+    every unit at load and read exactly like "no checkpoint can take this
+    lane", which is the confusion #104 spent four censuses on.
+    """

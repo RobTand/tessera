@@ -37,9 +37,9 @@ directory ``$TORCH_EXTENSIONS_DIR`` or ``~/tmp/torch-ext-gemv`` -- never
 Scope, stated: window body at L=14, CHANNEL plane, scalar 256-code grid with a
 ``native`` map, no RELEASE plane, no diagonals, no rotation, **no shard start
 state** (the kernel supplies ``state_{-1} = 0``, so a tensor-parallel row
-shard is refused with the two lanes that do serve it named), rates in
-{1, 2, 4} (R=3 needs 6-byte lanes and is refused with the fallback named),
-M <= 8.  The activation contract is W4A16: ``x`` is bf16, accumulation fp32.
+shard is refused with the two lanes that do serve it named), the rates the
+kernel declares (:data:`SUPPORTED_RATES`, read off ``window_gemv.cu``: R=3
+would need 6-byte lanes and is refused with the fallback named), M <= 8.  The activation contract is W4A16: ``x`` is bf16, accumulation fp32.
 
 **Under a compiled forward.**  Every route in ``tessera.serving`` is served
 eager and compiled, and this lane has been broken by exactly the shape the
@@ -69,10 +69,12 @@ import sys
 import torch
 
 from .errors import GrammarError
+from .kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED, WINDOW_GEMV_SOURCE
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 
 __all__ = [
     "TILE_ROWS",
+    "WINDOW_GEMV_SOURCE",
     "SUPPORTED_RATES",
     "WINDOW_BITS_SUPPORTED",
     "GEMV_MAX_M",
@@ -95,8 +97,13 @@ __all__ = [
 ]
 
 TILE_ROWS = 512
-SUPPORTED_RATES = (1, 2, 4)
-WINDOW_BITS_SUPPORTED = (14,)
+# SUPPORTED_RATES and WINDOW_BITS_SUPPORTED are IMPORTED (above), not declared
+# here: tessera.kernel_roster reads them off csrc/window_gemv.cu -- the very
+# file _ext() compiles -- so the set this module refuses a unit against is the
+# set the kernel instantiates.  Declaring them beside the kernel instead of
+# inside it is the drift issue #145 filed: a rate could be added to the .cu and
+# stay unreachable here, or dropped from it and stay advertised, with nothing
+# failing.
 GEMV_MAX_M = 8
 
 
@@ -151,7 +158,6 @@ def _ext():
     from torch.utils.cpp_extension import load
 
     _ensure_toolchain_on_path()
-    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "csrc", "window_gemv.cu")
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-gemv")
     pf = int(os.environ.get("TESSERA_WINDOW_GEMV_PF", "1"))   # column chunks in flight per warp (1 or 2)
     build = os.path.join(root, "tessera_window_gemv")
@@ -161,7 +167,7 @@ def _ext():
     major, minor = torch.cuda.get_device_capability()
     return load(
         name="tessera_window_gemv",
-        sources=[src],
+        sources=[WINDOW_GEMV_SOURCE],
         build_directory=build,
         extra_cuda_cflags=[
             "-O3", "-lineinfo", "-std=c++17",
@@ -441,7 +447,8 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
 
     Refuses, naming why, what this lane does not read: another body or
     plane, a RELEASE plane, diagonals, rotation, a grid without ``native``
-    bytes, a rate outside {1, 2, 4}, a window other than L=14.
+    bytes, a rate outside :data:`SUPPORTED_RATES`, a window outside
+    :data:`WINDOW_BITS_SUPPORTED`.
     """
     unit, grid = parsed.unit, parsed.grid
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
