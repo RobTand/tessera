@@ -1,0 +1,74 @@
+{
+ "observer_logs": {
+  "2f97d7ad": {
+   "end_utc": "2026-09-04T19:45:03Z",
+   "maximum_power_sample": {
+    "mem_available_kib": 119357816,
+    "power_w": 21.36,
+    "utc": "2026-09-04T19:38:36Z"
+   },
+   "minimum_memory_sample": {
+    "mem_available_kib": 22195448,
+    "power_w": 11.99,
+    "utc": "2026-09-04T19:29:17Z"
+   },
+   "path": "/mnt/shared/tessera-runs/ts113-r6-live-telemetry-2f97d7ad.log",
+   "samples": 261,
+   "sha256": "16172e01d56126efca29dfab07905557c3d43506e2fed54ed13e6648a016f126",
+   "start_utc": "2026-09-04T19:23:15Z"
+  },
+  "783ab956": {
+   "end_utc": "2026-09-04T19:11:27Z",
+   "maximum_power_sample": {
+    "mem_available_kib": 118799580,
+    "power_w": 19.1,
+    "utc": "2026-09-04T19:04:19Z"
+   },
+   "minimum_memory_sample": {
+    "mem_available_kib": 22426160,
+    "power_w": 11.93,
+    "utc": "2026-09-04T19:10:41Z"
+   },
+   "path": "/mnt/shared/tessera-runs/ts113-r6-live-telemetry-783ab956.log",
+   "samples": 111,
+   "sha256": "c18b7a22b62e35817f9581245f23c86d0820ed1b94e19b07f0c258d5dd74584f",
+   "start_utc": "2026-09-04T19:02:13Z"
+  }
+ },
+ "rank0_parsers": {
+  "A1": {
+   "elapsed": "0:23.95",
+   "exit_status": 0,
+   "maximum_rss_kib": 4553168,
+   "path": "/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r6/stages/A1/profile-A1-parser-resources.txt",
+   "sha256": "509cb3db298463b067bdb1349a8707961487db788c78d281fe99b262cd452457",
+   "swaps": 0
+  },
+  "A2": {
+   "elapsed": "0:23.41",
+   "exit_status": 0,
+   "maximum_rss_kib": 4321292,
+   "path": "/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r6/stages/A2/profile-A2-parser-resources.txt",
+   "sha256": "fb4599b3a52b30a5c7934e309b1a38f536bf60deda458e8a6614749c478aa863",
+   "swaps": 0
+  },
+  "B1": {
+   "elapsed": "0:17.44",
+   "exit_status": 0,
+   "maximum_rss_kib": 3712944,
+   "path": "/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r6/stages/B1/profile-B1-parser-resources.txt",
+   "sha256": "98b7c2721d75c307f5b9cbd4de4943ba431e9a9fa0b74e96f11a3ea3cee43268",
+   "swaps": 0
+  },
+  "B2": {
+   "elapsed": "0:17.50",
+   "exit_status": 0,
+   "maximum_rss_kib": 3710696,
+   "path": "/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r6/stages/B2/profile-B2-parser-resources.txt",
+   "sha256": "8ef140674172e074c21d87ddc0191677b07e07dbdf154f46eb38d539dd037491",
+   "swaps": 0
+  }
+ },
+ "schema": "tessera.ts113.r6-memory-observer-summary.v1",
+ "scope": "Sampled memory/power intervals and standalone post-teardown parser RSS; not a hard memory cap or performance comparison."
+}
