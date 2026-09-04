@@ -139,8 +139,26 @@ def read_serve_log(text: str) -> dict:
     fresh = 0
     version: str | None = None
     dispatch: dict | None = None
+    requested: dict | None = None
     for line in text.splitlines():
-        if dispatch is None and (d := _read_dispatch(line)) is not None:
+        if (d := _read_dispatch(line)) is not None:
+            # The LAST config line, not the first.  An arm that pins the
+            # dispatch logs the line twice: once for what the operator asked
+            # for on the CLI, and once for what vLLM resolved -- and only the
+            # second says what ran.  Reading the first made the gate compare a
+            # request against a resolution and answer "different
+            # implementations" for three pairs whose served KL is exactly
+            # 0.000000 at 100.00% top-1 over 4088 positions
+            # (eager vs compiled-both, compiled-both-noauto,
+            # compiled-eagerbackend; /home/rob/tessera-runs/compile-dispatch).
+            # Under this rule the gate reproduces all six measured pairs: the
+            # three above pass, and eager vs compiled / -ir / -ops refuse,
+            # which are the three that moved 0.244-0.249 KL and ~30% of top-1.
+            if dispatch is not None and requested is None and d != dispatch:
+                # Keep the ask, so a pinned arm is still distinguishable from
+                # one that was never pinned.  Only when it differs: an
+                # unpinned arm logs one line and has nothing to record.
+                requested = dispatch
             dispatch = d
         if (m := _AOT_LOADED.search(line)):
             loaded.add(m.group(1))
@@ -169,6 +187,7 @@ def read_serve_log(text: str) -> dict:
         "reload_failures": failures,
         "compiled_forward": bool(keys or backbone or fresh),
         "dispatch": dispatch,
+        "dispatch_requested": requested,
     }
 
 
@@ -345,6 +364,12 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
             "backbone": slots["backbone"],
             "artifact_path": artifact_path,
             "image_local_id": image_local_id,
+            # What the operator ASKED for, when that is not what vLLM
+            # resolved -- provenance, not identity, by the same rule as
+            # ``image`` above: a request that lost decides nothing about the
+            # arithmetic.  None on an arm that was never pinned, which logs
+            # one config line and has no second value to disagree with.
+            "dispatch_requested": parsed["dispatch_requested"],
             "fresh_compiles": parsed["fresh_compiles"],
             "reload_failures": parsed["reload_failures"],
             "aot_keys_loaded": parsed["aot_keys_loaded"],

@@ -1,0 +1,23 @@
+{
+  "schema": "tessera.ts60.crossbox_student_control.v1",
+  "question": "Does re-serving the same bytes on a different box, in a different session, against a teacher dumped on a third occasion, move the served KL at all?",
+  "why_it_was_asked": "The ts#60 bracket was moved from sparklina to sparky because sparklina is running the b4 encode. Two objections had to be cleared before any sparky number could be read against the incumbent: the repo's standing warning that KL drifts 4-8x across sessions, and the LUT receipt's warning that a student dumped on one box carries a cross-box term when read against another box's teacher. Both are testable against a checkpoint whose answer is already published.",
+  "checkpoint": "/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin",
+  "readings": [
+    {"label": "published", "host": "gx10-6b77", "when_utc": "2026-09-02T23:07:27.757964+00:00", "teacher": "qwen_rot_teacher_lina.json.npz", "all_kl_lower_mean": 0.5310275686796917},
+    {"label": "re-serve, same box, +29h", "host": "gx10-6b77", "when_utc": "2026-09-04T00:18:01.678260+00:00", "teacher": "qwen_rot_teacher_lina.json.npz", "all_kl_lower_mean": 0.5310275686796917},
+    {"label": "re-serve, OTHER box", "host": "sparky", "when_utc": "2026-09-04T05:26:37Z", "teacher": "qwen_rot_teacher_lina.json.npz", "all_kl_lower_mean": 0.5310275686796917, "confident_kl_lower_mean": 0.44606594216118406},
+    {"label": "re-serve, OTHER box, OTHER teacher", "host": "sparky", "when_utc": "2026-09-04T05:26:37Z", "teacher": "qwen_teacher_bf16_v028.json.npz", "all_kl_lower_mean": 0.5310275686796917, "confident_kl_lower_mean": 0.44606594216118406}
+  ],
+  "finding": "All four readings are identical to the last recorded digit: 0.5310275686796917, with confident-position KL 0.44606594216118406 on both sparky readings and build fingerprint 03b89d80124b6123 shared with the sparklina re-serve. Neither the session, nor the box, nor which box's BF16 teacher the arm is scored against, moves this number at all.",
+  "consequences": [
+    "The ts#60 bracket may be served on sparky and read directly against the incumbent, with no cross-box correction and no penalty.",
+    "The A/B/A drift bracket around the candidate is now confirmatory rather than load-bearing. It is still being run, because a control that is expected to be flat is exactly the control worth keeping, but a disagreement between its two default readings would now indicate a fault rather than ordinary drift.",
+    "The repo's '4-8x cross-session drift' warning is a PrismaQuant-era live-model fact. It does not describe this eager vLLM lane, on which the measured drift is zero, and this is now the second checkpoint-level demonstration."
+  ],
+  "scope_and_limits": [
+    "Eager serves only (TESSERA_KL_EAGER=1). The one known source of cross-container disagreement on this stack is inductor build nondeterminism in the compiled forward, and an eager serve does not have one. Nothing here licenses a graph-mode arm.",
+    "One image digest, sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14, verified identical on both boxes before the control was run. A floating :latest tag that had drifted between boxes would have made this a comparison of builds as well as boxes.",
+    "One model (Qwen3-0.6B), one corpus (076d33efc447), one tokenizer (76f13c8e6e55), one quantised family (the stock NVFP4 twin of a Tessera wire). It is not a general claim about box-invariance."
+  ]
+}

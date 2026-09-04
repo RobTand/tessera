@@ -1,0 +1,34 @@
+{
+  "schema": "tessera.ts60.teacher_cross_box.v1",
+  "question": "Does moving the ts#60 serve bracket from sparklina to sparky put a cross-box term inside every arm's KL?",
+  "why_it_was_asked": "The bracket scores students against qwen_rot_teacher_lina.json.npz, a teacher dumped on sparklina. The LUT receipt's own caveat is that an arm dumped on one box and read against another box's teacher carries a cross-box term inside the number it is judged on. Rather than assume the term is small, or spend a serve dumping a fresh teacher, the two BF16 teachers already on disk were compared directly. This is a CPU-only comparison of two existing dumps; it cost no GPU time.",
+  "teachers": [
+    {"file": "/mnt/shared/tessera-kl/qwen_rot_teacher_lina.json.npz", "host": "gx10-6b77", "produced_at_utc": "2026-09-02T17:12:00.224675+00:00", "role": "teacher", "teacher_label": "BF16", "elapsed_s": 44.292439460754395},
+    {"file": "/mnt/shared/tessera-kl/qwen_teacher_bf16_v028.json.npz", "host": "sparky", "produced_at_utc": "2026-09-02T05:32:45.810376+00:00", "role": "teacher", "teacher_label": "BF16", "elapsed_s": 25.058058261871338}
+  ],
+  "comparison": {
+    "metric": "KL-vs-BF16", "support": "top-1024",
+    "partition": "teacher-student-intersection",
+    "bound": "lower bound (data-processing inequality)",
+    "regime": "prefill", "positions": 4088,
+    "corpus": "076d33efc447(4096 tok)", "tokenizer": "76f13c8e6e55",
+    "all_kl_lower_mean": 0.0,
+    "all_kl_upper_at_declared_floor": 2.269728,
+    "top1_agree_pct": 100.0,
+    "confident_n": 1709, "confident_frac": 0.42,
+    "confident_kl_lower_mean": 0.0,
+    "legacy_v1_all": 0.0, "legacy_v1_confident": 0.0,
+    "teacher_tail_mass_outside_support_mean": 0.023316,
+    "teacher_tail_mass_outside_support_max": 0.721294
+  },
+  "finding": "Two BF16 teacher dumps of the same source model, taken on DIFFERENT boxes about twelve hours apart, agree at KL 0.000000 with 100.00% top-1 agreement over all 4088 positions, on the same corpus hash and the same tokenizer hash. The cross-box term on the teacher side is measured zero, not assumed small.",
+  "consequences": [
+    "The ts#60 serve bracket may run on sparky and still be read against the sparklina teacher the incumbent 0.531028 was read against, without a cross-box term entering the comparison.",
+    "A fresh sparky teacher dump was planned and is NOT needed; that serve was saved by measuring instead of assuming.",
+    "SCOPE: this establishes box-invariance on the TEACHER side only. It is one BF16 model, one corpus, one image digest (sha256:61fc8a896b0a, identical on both boxes), eager. It does not by itself establish that a QUANTISED student dump is box-invariant, because the student exercises the quantised kernel path and the teacher does not. That leg is tested separately by re-serving the ldlqH1 bytes on sparky and reading them against the same teacher and the published 0.5310275686796917."
+  ],
+  "not_measured": [
+    "Whether a graph-mode (non-eager) serve is box-invariant. Every dump here is eager, and inductor build nondeterminism is a known source of cross-container disagreement on the compiled forward.",
+    "Whether box-invariance holds for a larger model or a different corpus."
+  ]
+}

@@ -1,0 +1,36 @@
+{
+ "schema": "tessera.ldlq_block_promotion_record/1",
+ "candidate": "ldlq_block=8",
+ "incumbent": "ldlq_block=32",
+ "dense": {
+  "sweep": "/mnt/shared/tessera-runs/ldlq-block/dense4_below16.json",
+  "field": "out",
+  "units": [
+   "model.layers.0.self_attn.q_proj",
+   "model.layers.0.self_attn.k_proj",
+   "model.layers.0.self_attn.v_proj",
+   "model.layers.1.self_attn.q_proj",
+   "model.layers.1.self_attn.k_proj",
+   "model.layers.1.self_attn.v_proj"
+  ],
+  "unit_ratios": [
+   0.9315653114406394,
+   0.87728037185267,
+   0.9668146811854721,
+   0.9396974351153468,
+   0.9392993977580149,
+   0.9723939172771522
+  ],
+  "geomean": 0.9373207098285732
+ },
+ "served": {
+  "incumbent_first": 0.5200805955385711,
+  "candidate": 0.5099719526415252,
+  "incumbent_last": 0.5200805955385711,
+  "drift_abs": 0.0
+ },
+ "gate": {
+  "called": false,
+  "reason": "no --glm-candidate/--glm-incumbent: that leg has no input, and a placeholder would be the flattering default assert_plane_promotion exists to refuse"
+ }
+}
