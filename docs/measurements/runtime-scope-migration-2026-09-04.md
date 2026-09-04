@@ -93,3 +93,89 @@ dense image and execution-mode roster:
 It again reported 87 passed, 0 skipped and 0 uncollected modules in
 1.39 seconds on the same serial CPU population. Receipt:
 `ecd50ecc66d8a09dc75110a18a96d9feb42eb84c11fbebaa7ace51ea4e7b54a9`.
+
+## Selected reverse-reachable coverage and fixture repair
+
+Selector action
+`10b239becb8616477ae8ec4e87103ba0120788f8a2dd66caeec6d4ad2cd2dff4`
+compared the immutable snapshot against fetched
+`6d0b5e7f5c0acf159d775c3efd6903d899a77a83` and selected 48 files with verdict
+`narrowed`. The three files above and the two census files covered by the
+coordinated census change were excluded from the remaining 43-file action
+`d184116c23634215d5ada74b5d74e0e739f0d6df39f9868baf20dd5278fd6988`.
+Its completed first attempt was **red**: 590 passed, 2 failed, 301 skipped,
+0 uncollected modules, 14 warnings, in 360.82 seconds. The producer snapshot
+was `de243d4c2ce9030713fcb25ac579f86b8b1ecbb5`; the population is
+`/mnt/shared/tessera-runs/ts5/lfm25/astra-v5-contract-impact-r1.surface.json`.
+The subsequent retry was withdrawn through PrismaBuild after reading that
+completed attempt, not represented as a successful action.
+
+Both failures were old `test_lane_reachability.py` fixtures reaching the new
+unique-ID refusal before the gate each test intended to exercise:
+
+```text
+test_a_cell_may_not_claim_the_lane_in_the_residency_that_has_none:
+tests/test_lane_reachability.py:438: AssertionError: Regex pattern did not match.
+Actual message: "runtime_contract.lane_eligibility.cells[3] repeats cell id 'tessera_e4m3_k1_dense_sm121_decode_resident'; every cell has one identity"
+test_two_cells_may_not_cover_one_residency_of_one_regime:
+tests/test_lane_reachability.py:456: AssertionError: Regex pattern did not match.
+Actual message: "runtime_contract.lane_eligibility.cells[8] repeats cell id 'tessera_e4m3_k1_dense_sm121_decode_resident'; every cell has one identity"
+```
+
+The launch test now isolates its mutated cell, and the overlap test assigns
+its twin a distinct, valid runtime-derived ID. Thus both still demand the
+specific launch/semantic-overlap refusal rather than weakening their assertion
+to any earlier error. No producer validation was relaxed.
+
+Only the failing file was run against the pristine prior commit:
+`08d4966fc9081c1abd1038c3c16e4f48d5bb279c2f2441eabb687afa4c54b122`,
+42 passed, 0 skipped, 0 uncollected modules in 1.21 seconds; receipt
+`dd10c4aa4f149a44f6f37517b90d19a423409456e590c064c4dbee34fc072edf`.
+An earlier baseline invocation changed its sealed checkout and was correctly
+refused by PrismaBuild's closure verification; it is not counted as a green
+action. The quoted baseline instead used a separate pristine worktree.
+
+The repaired file passed on the assembled v5/census/image-gate tree:
+`3bf4bbda4a1c1d46327a7ed18791aefcb6d00a79368bba482a7fe246e5025181`,
+42 passed, 0 skipped, 0 uncollected modules in 1.25 seconds; receipt
+`ba890a1e58e4626aba47736cf18fe40b4b3c4983d260e904a8618ab5bda3573d`.
+This targeted repair does not turn the earlier red population into a green
+whole-run result. Merge-wide verification remains the coordinator's run.
+
+All these populations were serial dl380g10 CPU, torch 2.11.0+cpu, with no CUDA
+device. The 43-file run's skip reasons, verbatim, were:
+
+```text
+81  the encoder is a CUDA path
+79  needs a CUDA device
+29  the Viterbi is CUDA
+24  the kernel lane is a CUDA path
+23  the lane is a CUDA kernel
+15  the encoder is a GPU job
+14  the Tessera encoder is a CUDA path
+6   /home/rob/tessera-runs/compile-dispatch is not on this box
+6   needs CUDA
+5   the kernel lane runs on CUDA
+5   the reach checkpoint is not on this box
+4   Qwen3-0.6B is not on this box
+2   no stock twin
+1   /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box
+1   /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box
+1   E2M1 publishes no reader range
+1   could not import 'vllm': No module named 'vllm'
+1   the PrismaQuant tree or the allocation outputs are not on this box
+1   the PrismaQuant tree with tessera_formats is not on this box
+1   the shipped checkpoint is not here
+1   the two surviving compile caches from 2026-09-02 are not on this box
+```
+
+## Exact-image wrapper boundary after assembly
+
+The assembled tree combines the explicit-image resolver fix with the census
+wrapper that injects the selected image. Action
+`20cf2a19e60c7b8b52b9acef355cff827f3d90bb93a6d0ee1f25a1a733978c88`
+ran `test_census_runtime_wiring.py` and `test_runtime_image_pin.py`: 27 passed,
+0 skipped, 0 uncollected modules in 1.48 seconds; receipt
+`e4b2d82c41f7c91fde7dc497b1853d5fd3da23824704f7d0beae4539349e7f5c`.
+It was the same serial, device-less dl380g10 CPU population, not GPU or served
+quality evidence. No routed-MoE cell has been promoted by this migration.

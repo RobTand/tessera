@@ -50,3 +50,43 @@ No model bytes, encoder profile, default image, or quality threshold changed.
 The active LFM encoders remain on their original frozen source; their Docker
 commands were already exact digest references, so this provenance/gating fix
 does not require re-encoding.
+
+## Selected dependency coverage
+
+Selector action
+`48079ce7e8a72ffea4fa4a5fafaf56c1a03676aec8d1f5c4a3680bce7e55aa7c`
+compared exact fetched base `24f042704fc6ed9abb6addcca247ee6160f98c88`
+against the parentless snapshot of `a34de85`: `narrowed`, 28 test files.
+The selector explicitly reported its direct tree comparison because the
+snapshot has no merge base. Initial selector attempts used an unavailable
+snapshot `origin` remote; fetching the exact base from the repository URL
+resolved that dispatch error without a source change.
+
+The already-green 18-test image file was not repeated. The other 27 files
+ran in action
+`149bfa41831a839c47984b8b14f209cb7c091873a2edc1cab47be8d60ab67b29`:
+**403 passed, 291 skipped, 0 modules uncollected**, serial CPU on dl380g10,
+torch `2.11.0+cpu`, 220.35 seconds, test return code zero. This is not CUDA
+coverage. Result CAS:
+`76edc0880a8cf06e90aed623a4b2546bd19aecce6d09b22793930ab1d39e6521`.
+Verbatim skip reasons:
+
+```text
+81  the encoder is a CUDA path
+79  needs a CUDA device
+29  the Viterbi is CUDA
+24  the kernel lane is a CUDA path
+23  the lane is a CUDA kernel
+14  the Tessera encoder is a CUDA path
+10  the encoder is a GPU job
+ 6  needs CUDA
+ 6  /home/rob/tessera-runs/compile-dispatch is not on this box
+ 5  the kernel lane runs on CUDA
+ 5  the reach checkpoint is not on this box
+ 3  Qwen3-0.6B is not on this box
+ 2  no stock twin
+ 1  the two surviving compile caches from 2026-09-02 are not on this box
+ 1  /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box
+ 1  /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box
+ 1  the shipped checkpoint is not here
+```

@@ -36,7 +36,7 @@ from tessera.export import wire_recipe
 from tessera.grammar import bresenham_rate_schedule, rate_set, root_from_q256
 from tessera.serving import ext
 from tessera.serving.contract import (
-    extension_lane, lane_decoder, lane_requirements, load_serving_contract,
+    cell_runtime_id_suffix, extension_lane, lane_decoder, lane_requirements, load_serving_contract,
     validate_serving_contract)
 from tessera.serving.scheme import lane_rate_report, refuse_unreachable_lane
 
@@ -435,6 +435,8 @@ def test_a_cell_may_not_claim_the_lane_in_the_residency_that_has_none(monkeypatc
                 if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_streamed")
     cell["requires_serve_flags"] = ["TESSERA_SERVE_MODE=resident"]
     cell["id"] = "tessera_e4m3_k1_dense_sm121_decode_resident"
+    # Isolate this launch refusal from the separate unique-cell-ID gate.
+    payload["lane_eligibility"]["cells"] = [cell]
     with pytest.raises(ValueError, match=r"executes .* residency \['resident'\]"):
         validate_serving_contract(payload)
 
@@ -443,7 +445,8 @@ def test_two_cells_may_not_cover_one_residency_of_one_regime():
     """Otherwise a reader's answer depends on the order the cells were written.
 
     This is the hazard the residency split introduces and the rule that closes
-    it: a consumer resolving ``(platform, family, structure, regime, rung)``
+    it: a consumer resolving the same platform, family, structure, regime,
+    rung, residency, runtime image and execution mode
     picks among matching cells, and with two matches of equal status it picks
     whichever came first.  The publisher must not be able to write that table.
     """
@@ -451,7 +454,8 @@ def test_two_cells_may_not_cover_one_residency_of_one_regime():
     cell = next(c for c in payload["lane_eligibility"]["cells"]
                 if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_resident")
     twin = copy.deepcopy(cell)
-    twin["id"] = "tessera_e4m3_k1_dense_sm121_decode_resident"
+    # Distinct valid IDs must not bypass the semantic scope-overlap refusal.
+    twin["id"] = cell["id"] + cell_runtime_id_suffix(twin)
     payload["lane_eligibility"]["cells"].append(twin)
     with pytest.raises(ValueError, match="both cover"):
         validate_serving_contract(payload)
