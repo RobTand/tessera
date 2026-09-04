@@ -305,9 +305,14 @@ equal), and whether a packed `gate_up_proj` chunks or interleaves its halves.
 Both are refused by name; neither is guessed.
 
 **What is NOT claimed.** There is no `routed_moe` cell in
-`runtime_contract.json` and there will not be one until a served census and KL
-cover it on a real artifact. This is the `loader_axes` precedent: what the
-loader *does* is a different published fact from what has been *served*.
+`runtime_contract.json`. Half of what would justify one now exists and half
+cannot: a served census covers the three stacks (§4.5), and a KL does not,
+because the only routed-MoE checkpoint this box can encode and serve is a
+16-expert cut whose reference has zero confident positions -- the instrument
+refuses a verdict on it, and a cut that changes the routing could not carry one
+anyway. So the cell waits on a routed-MoE artifact a KL can grade, not on more
+census work. This is the `loader_axes` precedent: what the loader *does* is a
+different published fact from what has been *served*.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
@@ -337,9 +342,10 @@ vLLM builds one quant method for the declared stack prefix and attaches it to
 the `RoutedExperts` child it constructs underneath, so the route record lands
 at `<layer>.mlp.experts.routed_experts` while the checkpoint declares
 `<layer>.mlp.experts`. An exact-name join reads that as two faults at once --
-a served module nothing declared, and a declared module nothing served: six
-problems over three stacks on the first served MoE census, every one of them
-that single cause. So a record whose `kind` is `moe` joins to the one declared
+a served module nothing declared, and a declared module nothing served: eight
+problems over three stacks on the first served MoE census -- three records and
+one roll-up line in each of the two phases -- every one of them that single
+cause. So a record whose `kind` is `moe` joins to the one declared
 target that CONTAINS it, and to none if two do -- ambiguity is reported, never
 resolved by picking the longer prefix -- while a dense record still joins only
 to itself (`join_records_to_declared`,

@@ -125,6 +125,66 @@ should be made blind: the right time to write a `routed_moe` launch pair is when
 a served census has printed what the launch actually is. The eight dense groups
 are the control that says the mapper fix works and these two are MoE-specific.
 
+
+## Both predicted census defects are closed, and one had a shape I did not predict
+
+The section above named two things that would make the MoE half of the census
+report problems on a healthy serve. The first served census printed exactly
+those and nothing else: **eight problems, three names, one cause each.**
+
+**1. The off-by-one module, closed by containment.** `MoERunner` wraps
+`RoutedExperts` as `.routed_experts`, so vLLM builds ONE quant method for the
+declared stack prefix and attaches it to the child it constructs underneath.
+The record lands at `...mlp.experts.routed_experts`; the mapped declaration is
+`...mlp.experts`. An exact-name join reports the same served stack twice --
+once as a route nothing declared, once as a declaration nothing served -- which
+is six of the eight problems, and the other two are the summary line counting
+the same three names again. `join_records_to_declared` joins a record whose
+`kind` is `moe` to the single declared target that CONTAINS it, reports
+ambiguity when two do rather than taking the longer prefix, and leaves a dense
+record joining only to itself. A non-`moe` record under a declared target does
+**not** join: containment is the expert stack's structure, not a general
+fallback for a name that missed.
+
+**2. The missing launch pair, closed -- but not where the section predicted.**
+The prediction was a `ROUTE_LAUNCHES` entry. That table is the *contract's*
+derivation source: `contract.validate_serving_contract` builds every cell's
+`executes` from it, so a row added there changes what every dense cell is
+checked against and belongs with the contract version bump, not with a census
+fix. The expectation instead comes from the route that owns the dispatch --
+`moe_route.census_expected`, the same ownership rule `fp8_gemv.census_expected`
+follows -- and it is **one launch in both regimes**, because the stack is
+materialised once at load and nothing branches on M.
+
+The pair the serve actually reports is
+`("vllm.fused_moe.modular_kernel:TRITON", "torch_materialize_stock")`, and the
+suffix is why this is not a two-line table edit. `select_fp8_moe_backend` is
+vLLM's own predicate over the kernels it finds on the box, so the backend is a
+fact about the serve the record must keep and not a promise the route makes.
+The census compares the entry point and keeps every exact string in its
+histogram. Enumerating the backends we would accept would be a claim about
+vLLM's kernel roster written in our prose (principle 14); pinning one would
+refuse a box whose runtime picked another.
+
+**3. The one I did not predict: a dense cell would have covered the stack.**
+`census.cell_launch_agreement` keys a block to ONE structure and resolved a
+record's cell from `(family, mode, regime, rung)`. The three stacks came back
+`unattested` -- correctly -- but for the wrong reason: `rungs_by_module` is
+keyed by module name, the record's name carries a `.routed_experts` suffix no
+declaration has, so the rung lookup missed. That is an accident of the join,
+and the join had just been taught to cross it. With rungs resolved, a
+`structure: "dense"` cell whose `executes` is `torch._scaled_mm` over
+`torch_window` would have started covering a stack that executes vLLM's
+fused-MoE kernel -- reporting an agreement, or a disagreement, about a launch
+no cell in contract v14 publishes. `STRUCTURE_BY_RECORD_KIND` maps a record's
+`kind` to the structure whose cells could cover it, and it is checked **before**
+the rung. An unknown kind is covered by nothing.
+
+The stacks stay `unattested`, and that is the finished state for tonight, not a
+gap papered over: contract v14 declares `structures: ["dense"]`, and a receipt
+that invented coverage from that absence is the exact failure the block exists
+to prevent.
+
 ## Status of the serve: three arms, one GPU, one serve lock
 
 `experiments/ts5_moe_served.sh` takes three serves sequentially, because the box
@@ -409,6 +469,17 @@ directory with no owner. That one is fixed on our side —
 `experiments/serve_lock.sh` now reaps an ownerless lock after a full poll and a
 dead-owner lock immediately, with `tests/test_serve_lock.py` holding both rules
 plus the case that matters more than either (a *live* owner still blocks).
+
+The first version of that fix could not have run. `awk` exits 2 on a file that
+is not there, an ownerless lock is exactly that file, and every wrapper that
+sources the library runs under `set -euo pipefail` — so
+`pid="$(_serve_lock_owner_pid)"` took awk's status and ended the script at exit
+2 with an empty stderr, before the reaping rule it was written for. It would
+have fired only in a shell without `-e`, which is to say only in a test that
+forgot one. `tests/test_serve_lock.py` failed two of its six cases on first
+run, both on the ownerless path, and `a35a5c1` is the one-token fix; 6 passed
+after it. Recorded because the shape is the lesson: a rule added to a library
+and never exercised by a caller is a rule nobody has run.
 
 The container half is not ours to fix. Reported upward as a pool defect: a
 withdraw that releases an action's tokens must also reap the containers the
