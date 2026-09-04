@@ -163,3 +163,27 @@ def test_the_contract_states_no_version_the_distribution_does_not_have():
             f"runtime_contract versions.plugin_entry_point "
             f"{versions['plugin_entry_point']!r} != the declared entry point "
             f"{expected!r}")
+
+
+def test_the_sdist_policy_names_paths_that_exist():
+    """``MANIFEST.in`` is the whole sdist policy, and setuptools sweeps
+    directories when the policy is silent: a directive naming a path that has
+    since moved stops excluding anything, the sweep comes back, and nothing
+    says so.  ``tools/check_wheel.py`` holds the built artifact; this holds
+    the policy to the tree it is written against."""
+    manifest = ROOT / "MANIFEST.in"
+    directives = [
+        line.split()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert directives, (
+        "MANIFEST.in states no policy, so setuptools' directory sweep decides "
+        "what the sdist ships")
+    for command, *arguments in directives:
+        for argument in arguments:
+            if any(character in argument for character in "*?["):
+                continue  # a pattern, not a path; the built-artifact check covers it
+            assert (ROOT / argument).exists(), (
+                f"MANIFEST.in '{command} {argument}': no such path, so the "
+                "directive includes or excludes nothing")

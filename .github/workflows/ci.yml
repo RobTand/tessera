@@ -96,16 +96,19 @@ jobs:
               )
           PY
 
-      # The wheel is an artifact with its own failure modes: a data file the
-      # package-data table forgot ships nowhere, and an editable install never
-      # says so.  Build one here on every push and prove, from an empty
-      # directory with the source tree off the path, that the plugin entry
-      # point resolves and every file a route or a producer opens is inside.
-      - name: the wheel ships what the plugin and the producer open
+      # Both distributions are artifacts with their own failure modes: a data
+      # file the package-data table forgot ships nowhere and an editable
+      # install never says so, and setuptools' sweep decides sdist contents
+      # when MANIFEST.in does not.  Build both here on every push and prove,
+      # from an empty directory with the source tree off the path, that the
+      # plugin entry point resolves and every file a route or a producer opens
+      # is inside the wheel -- and that the sdist carries exactly the wheel's
+      # sources plus the inputs that rebuild it.
+      - name: the wheel and the sdist ship what they must, and nothing else
         run: |
           python -m pip install --quiet --upgrade build
-          python -m build --wheel
-          python tools/check_wheel.py dist/*.whl
+          python -m build
+          python tools/check_wheel.py dist/*.whl dist/*.tar.gz
 
   # Publishing rides the same workflow the Trusted Publisher on PyPI names, and
   # only ever on a version tag, only after the pure job is green.  There is no
@@ -140,5 +143,5 @@ jobs:
       - run: python -m pip install --upgrade build
       - run: python -m build
       # The same proof the pure job ran, on the bytes about to be published.
-      - run: python tools/check_wheel.py dist/*.whl
+      - run: python tools/check_wheel.py dist/*.whl dist/*.tar.gz
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2

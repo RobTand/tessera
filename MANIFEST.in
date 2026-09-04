@@ -1,0 +1,14 @@
+# The source distribution is the source that rebuilds the wheel, and nothing
+# else.  It is deliberately NOT a runnable test suite.
+#
+# setuptools' defaults decide sdist contents by sweeping directories: they
+# swept tests/test_*.py in and left tests/conftest.py out, so the 0.1.0 sdist
+# would have carried 149 test modules that cannot even be collected (issue
+# #151).  Shipping the other half would not fix that, because a testable
+# sdist is a claim this tree cannot back -- the suite reads tools/, docs/ and
+# experiments/, and pins per-box absolute paths (issue #153), so it runs from
+# a git checkout and only from one.  The tests live in git, where they run.
+#
+# tools/check_wheel.py holds a built sdist to exactly the wheel's own sources
+# plus the build inputs, so a future sweep cannot quietly add a third state.
+prune tests

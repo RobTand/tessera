@@ -7,7 +7,7 @@ the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
 `b83fd17`, CI at `2147909`, packaging metadata at `54cd1df` plus the
-version-derivation gate of #149, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
+version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -1242,6 +1242,21 @@ dependencies into an empty directory and imported with the source tree off
 the path, and prints the wheel's own file list; CI runs it on every push and
 the publish job runs it on the bytes it is about to upload.
 
+The **sdist is the source that rebuilds that wheel, and nothing else**. It
+is deliberately not a runnable test suite: a testable sdist is a claim this
+tree cannot back, because the suite reads `tools/`, `docs/` and
+`experiments/` and pins per-box absolute paths (#153), so it runs from a git
+checkout and only from one. `MANIFEST.in` states that decision and `prune
+tests` carries it out -- without it setuptools' directory sweep shipped 149
+test modules and left out the `conftest.py` that collects them (#151).
+Neither half of that is left to a sweep again: `tools/check_wheel.py`,
+given the sdist beside the wheel, derives the expected contents *from the
+wheel's own namelist* -- every source the wheel ships, under `src/`, plus
+the build inputs -- and refuses anything else, in either direction, and
+`tests/test_packaging.py` refuses a `MANIFEST.in` directive naming a path
+that has moved (which would silently stop excluding anything). Measured on
+this tree: the sdist rebuilds a wheel with an identical 76-entry namelist.
+
 Two extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
 host, and `kernels` installs Triton. A PyPI vLLM is a **working install, not
 an attested one**: every cell in the contract is pinned to an image digest
@@ -1277,8 +1292,9 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 interpreter with pytest and nothing else: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not), an import of the byte layer that asserts torch never entered the
-process, the empty-denylist refusal (build item 11), and the wheel check
-above. It proves the parser's dependency boundary and the wheel's contents.
+process, the empty-denylist refusal (build item 11), and the wheel and sdist check
+above. It proves the parser's dependency boundary and what both
+distributions contain.
 It does not run a CUDA kernel, a decoder against a served artifact, or the
 merged suite: those are the two-population suite of §1.1, dispatched through
 PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
@@ -1286,7 +1302,7 @@ claim also needs a served receipt (§3).
 
 **`publish`** runs only on a `v*` tag and only after `pure` is green. It
 refuses a tag that does not name the version in `pyproject.toml`, builds the
-sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
+sdist and wheel, runs `tools/check_wheel.py` on both, and uploads with
 `pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
 is no API token in the repository.
 
