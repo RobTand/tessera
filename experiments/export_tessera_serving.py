@@ -229,7 +229,8 @@ MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
 #: experts module rather than as a child Linear's ``weight``, so the tensor on
 #: disk is ``...mlp.experts.gate_up_proj`` with no suffix at all -- 98 of them
 #: on ``/mnt/shared/models/Qwen3.8-Flash-Next``, the one packed-source
-#: checkpoint on this box.  ``quantizable`` used to require the suffix before
+#: checkpoint on this box (96 decoder-body stacks plus two MTP-sidecar stacks
+#: outside ``BODY_LAYER``).  ``quantizable`` used to require the suffix before
 #: it looked at anything, so those tensors were classified as NOTHING and no
 #: plan-time refusal could name them; ``ignored_modules`` reads them through
 #: the same probe (#86).  ``packed_expert_orientation`` already read both
