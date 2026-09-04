@@ -216,10 +216,14 @@ def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch, m)
     The tolerance below is a bf16 ulp of the output, which is far wider than
     what separates two fp32 summation orders -- so the *sharp* statement is
     the second assertion: the two arms' bf16 outputs must be bit-identical on
-    all but a handful of elements.  Before #110 they agreed on about three
-    quarters of them, because the lane folded ``a_scale`` into a bf16 operand
-    and ``_scaled_mm`` does not.  ``m=1`` is the served shape (#110's decode
-    regime is every-position M=1) and was the shape no test compared.
+    the large majority of elements.  A per-element fp32 disagreement d shows up
+    as a differing bf16 word with probability about d / ulp, so the #110 fold
+    (1.6e-03 relative, against a bf16 ulp of 2^-8) put the arms roughly a third
+    apart, and summation order alone should leave them within a percent or so.
+    The 90% bar sits between those without pinning a floor this test has not
+    measured -- ``experiments/gemv_a_side_precision.py`` is what measures it.
+    ``m=1`` is the served shape (#110's decode regime is every-position M=1)
+    and was the shape no test compared.
     """
     _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=m, seed=13)
     holder = layer.tessera_gemv
@@ -235,7 +239,7 @@ def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch, m)
     tol = _bf16_tol(bound, y_mm.double())
     assert bool((((y_gemv.float() - y_mm.float()).abs()) <= tol).all())
     same = (y_gemv.view(torch.int16) == y_mm.view(torch.int16)).double().mean().item()
-    assert same >= 0.99, f"only {same:.4%} of bf16 outputs match the fallback's bit for bit"
+    assert same >= 0.90, f"only {same:.4%} of bf16 outputs match the fallback's bit for bit"
 
 
 @requires_cuda
@@ -269,12 +273,16 @@ def test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand(mon
         return float((y.double() - ref).norm() / ref.norm())
 
     kept, lost = relerr(served), relerr(folded)
-    # sqrt(K) * 2^-24 is ~2e-6 at K = 1024; 1e-5 leaves headroom for the
-    # reduction tree without admitting a bf16 rounding of the operand.
-    assert kept < 1e-5, f"the lane is {kept:.3e} from the fp64 product, not an accumulation floor"
-    assert lost > 50 * kept, (
-        f"folding a_scale into the bf16 operand reads {lost:.3e} against {kept:.3e}: this test "
-        "no longer discriminates the two arithmetics and its threshold needs re-deriving")
+    # Deliberately a RATIO and not a floor: the lane's own fp32 reduction error
+    # is a number this repo has not measured (that is what
+    # ``experiments/gemv_a_side_precision.py`` exists for), so a threshold on
+    # ``kept`` alone would be a constant from intuition.  The fold is 1.6e-03
+    # relative rms by the analytic leg of that script; 3x separation holds for
+    # any reduction error below a third of it.
+    assert lost > 3 * kept, (
+        f"folding a_scale into the bf16 operand reads {lost:.3e} against {kept:.3e}: the two "
+        "arithmetics are no longer separable here, so either the fold came back or the lane's "
+        "reduction error grew to meet it -- both want the precision experiment run")
 
 
 @requires_cuda

@@ -23,14 +23,18 @@ THE SCALE IS APPLIED ON THE OUTPUT, NEVER FOLDED INTO A BF16 OPERAND -- the
 rule ``bf16_route`` states for the weight side, held here for the activation
 side.  ``a_q * a_scale`` is NOT exact in bf16: a code carries four significant
 bits and an fp32 scale twenty-four, so their product needs up to twenty-eight
-and bf16 keeps eight.  Folding it in cost a rounding of ~2^-9 relative on
-EVERY activation element -- some 500x the fp32 accumulation floor, and enough
-to disagree with ``_scaled_mm`` (which multiplies the codes and scales in its
-epilogue) on about a quarter of bf16 output elements.  That was issue #110:
-the lane and its published fallback disagreed as served at M = 1, mutual
-KL 0.012 on byte-identical bytes.  Applying ``a_scale`` on the fp32 output
-leaves fp32 summation order as the only difference, which is what this
-module's docstring always claimed.
+and bf16 keeps eight.  Folding it in cost 1.6e-03 relative rms on EVERY
+activation element -- some 800x the fp32 accumulation floor -- where
+``_scaled_mm`` multiplies the codes and scales in its epilogue.  Applying
+``a_scale`` on the fp32 output leaves fp32 summation order as the only
+difference this module can name, which is what the docstring always claimed.
+
+THIS DOES NOT CLOSE #110.  The lane and its published fallback disagreed as
+served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes --
+and a calibrated propagation screen puts the fold at KL 1.4e-04, 1/86 of that.
+A second term is outstanding; ``docs/measurements/tessera-gemv-a-side-2026-09-
+04.md`` says what would find it.  Do not read the fix below as an explanation
+of the served number.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is
 symbolic under vLLM's compiled forward, so a Python branch on it would

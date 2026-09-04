@@ -199,6 +199,23 @@ top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's.
 
+**That decode-regime gap is not yet explained, and it is not accumulation
+order** (#110). One real term was found and fixed: the streamed lane handed the
+kernel `(a_q.float() * a_scale).to(bfloat16)`, folding the per-token fp32
+activation scale into a bf16 operand, where `torch._scaled_mm` multiplies the
+fp8 codes and applies both scales in its fp32 epilogue. An E4M3 code is exact
+in bf16; the code times an fp32 scale is not, so the fold cost 1.6e-03 relative
+rms per Linear output against an fp32 accumulation floor ~800x below it. The
+lane now applies `a_scale` to the fp32 output, which is the rule `bf16_route`
+already held for the weight side. But a calibrated propagation screen puts that
+term at KL 1.4e-04 (2.5e-04 at a quantised operating point), **1/86 of what was
+measured** -- the size that reproduces 0.012111 at 91% top-1 is ~1.5e-02, nine
+times larger -- so a second term is outstanding and #110 stays open.
+`docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
+which of its legs did not get a GPU. Until it closes, treat the lane's
+"bit-exact" receipts as claims about the **decoded tile** only, never about the
+GEMM over it.
+
 ### 4.6 The stock twin isolates the wire from the kernel
 
 `--stock-twin` writes the same wires materialised for vanilla vLLM, so a
