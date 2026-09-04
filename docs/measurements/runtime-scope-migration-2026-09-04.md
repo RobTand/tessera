@@ -179,3 +179,10 @@ ran `test_census_runtime_wiring.py` and `test_runtime_image_pin.py`: 27 passed,
 `e4b2d82c41f7c91fde7dc497b1853d5fd3da23824704f7d0beae4539349e7f5c`.
 It was the same serial, device-less dl380g10 CPU population, not GPU or served
 quality evidence. No routed-MoE cell has been promoted by this migration.
+
+The fixture repair's own selector action
+`9ecc7ea39da7ddf9bff7d37f773e7230d999f0b124b5ce40dbc65e552b7b7669`
+compared against fetched `7f7ebd2f12637cedb7fb9df4d93b57625809d39a` and
+returned `narrowed` with only `tests/test_lane_reachability.py`, the 42-pass
+file reported above. Its temporary pristine baseline worktree was removed
+after the completed baseline receipt; no source branch was deleted.
