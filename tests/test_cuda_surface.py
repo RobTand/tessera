@@ -227,12 +227,17 @@ def test_the_population_is_published_as_a_table_not_scraped(tmp_path):
     import json
 
     payload = json.loads(surface.read_text())
-    assert payload["schema"] == "tessera.test_surface.v1"
+    assert payload["schema"] == "tessera.test_surface.v2"
     assert payload["cuda"] is False
     assert payload["strict_cuda"] is False
     assert payload["counts"]["skipped"] == 1
     assert payload["counts"]["passed"] == 1
     assert payload["skip_reasons"] == {"ts112 synthetic gate": 1}
+    # A serial run is its own controller, so this file is the whole run.  The
+    # field is what makes that a stated fact rather than an assumption a
+    # reader has to make about how the run was launched.
+    assert payload["role"] == "population"
+    assert payload["worker_id"] is None
 
 
 def test_both_mechanisms_survive_a_parallel_run(tmp_path):
@@ -247,8 +252,10 @@ def test_both_mechanisms_survive_a_parallel_run(tmp_path):
     `pytest_terminal_summary`, and its counts have to be the aggregate the
     controller collected, not one worker's share.
 
-    Skipped where xdist is absent -- which is every venv on this fleet, so this
-    test appears in the very histogram it is about until one grows it.
+    Skipped where xdist is absent.  That is not "everywhere": the x86 arm's
+    interpreter on dl380g10 has it, which is where the ``-n 8`` run that
+    exposed the shard bug below came from.  On a venv without it this test
+    appears in the very histogram it is about.
     """
 
     pytest.importorskip("xdist", reason="parallel run needs pytest-xdist")
@@ -278,6 +285,86 @@ def test_both_mechanisms_survive_a_parallel_run(tmp_path):
 def _passed_in_tail(stdout):
     match = re.search(r"(\d+) passed", stdout)
     return int(match.group(1)) if match else 0
+
+
+def test_a_parallel_run_writes_one_population_and_named_worker_shares(tmp_path):
+    """Eight shards on the population's path, filed as eight retries.
+
+    ``pytest_terminal_summary`` runs in every xdist worker, not only in the
+    controller, and each worker's ``stats`` are that worker's SHARE of the run.
+    The first spelling of ``--surface-json`` sent all of them to the arm's one
+    canonical path, so a single ``-n 8`` run wrote eight shards over each other
+    before the controller's aggregate landed on top.  ``_keep_any_previous``
+    then renamed the eight to ``superseded-<mtime>`` -- a name whose meaning is
+    "an earlier run wrote this path".  Receipt ``20260904T040432`` on
+    ``/mnt/shared`` therefore records eight retries of a run that ran ONCE, and
+    its shards' passed counts sum to exactly the aggregate (1406) with 520
+    skips against the aggregate's 499 -- 21 = 7x3 duplicated collection skips.
+    False provenance, in the one artefact this branch exists to make
+    trustworthy.  And had that run been killed between a worker's write and the
+    controller's, the canonical path would have held a shard -- 206 passed /
+    108 skipped, in that receipt -- and ``--resume`` would have recorded it in
+    ``docs/status/suite-populations.md`` as the arm's population.
+
+    Before this test, on dl380g10 under ``/home/rob/venvs/pb-cpu`` -- the
+    interpreter that has xdist, and the one the ``-n 8`` run used::
+
+        AssertionError: a run that ran once left retry-named files:
+        ['surface.x86.superseded-20260904T084454Z.json',
+         'surface.x86.superseded-20260904T084456Z.json']
+
+    Two workers, two shards, one run.  Eight of them at ``-n 8``.
+
+    ``--dist load`` rather than production's ``loadfile`` for one reason: it
+    guarantees both workers get tests, so the sum-equals-aggregate assertion
+    discriminates.  Which worker gets which test is not what is under test; the
+    path each worker writes is, and that is chosen the same way in both modes.
+    """
+
+    pytest.importorskip("xdist", reason="parallel run needs pytest-xdist")
+
+    surface = tmp_path / "surface.x86.json"
+    ran = _run([STDLIB_ONLY_TEST, "-q", "-n", "2", "--dist", "load",
+                "--surface-json", str(surface)], CUDA_VISIBLE_DEVICES="")
+    out = ran.stdout + ran.stderr
+    assert ran.returncode == 0, out
+
+    import json
+
+    # A run that ran ONCE leaves no trace of a retry.  This is the assertion
+    # the receipt on /mnt/shared fails.
+    kept = sorted(p.name for p in tmp_path.glob("*superseded*"))
+    assert kept == [], f"a run that ran once left retry-named files: {kept}"
+
+    payload = json.loads(surface.read_text())
+    assert payload["role"] == "population", payload
+    assert payload["worker_id"] is None, payload
+    assert payload["xdist_workers"] == 2, payload
+
+    shares = sorted(tmp_path.glob("surface.x86.gw*.json"))
+    assert len(shares) == 2, sorted(p.name for p in tmp_path.iterdir())
+    total = 0
+    seen = set()
+    for share in shares:
+        slice_ = json.loads(share.read_text())
+        assert slice_["role"] == "worker-share", slice_
+        # The worker names itself, and its name is in its filename: a reader
+        # of the directory can tell the shards apart and tell them from the
+        # population without opening anything.
+        assert slice_["worker_id"], slice_
+        assert slice_["worker_id"] in share.name, share.name
+        assert slice_["worker_id"] not in seen, "two workers, one path"
+        seen.add(slice_["worker_id"])
+        assert slice_["counts"]["passed"] > 0, "a share with no work proves nothing"
+        total += slice_["counts"]["passed"]
+
+    # The relation that identified the shards in the first place: the shares
+    # partition the run.  Asserting it here is what makes the split provable
+    # rather than plausible.
+    assert total == payload["counts"]["passed"] == _passed_in_tail(ran.stdout), (
+        f"shares sum to {total}, population says "
+        f"{payload['counts']['passed']}, pytest said {_passed_in_tail(ran.stdout)}"
+    )
 
 
 def test_the_population_names_the_tree_it_was_measured_on(tmp_path):
@@ -345,7 +432,7 @@ def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):
     import json
 
     # The plain name is always the newest, so nothing that reads it changes.
-    assert json.loads(surface.read_text())["schema"] == "tessera.test_surface.v1"
+    assert json.loads(surface.read_text())["schema"] == "tessera.test_surface.v2"
     kept = sorted(tmp_path.glob("surface.superseded-*.json"))
     assert len(kept) == 1, sorted(p.name for p in tmp_path.iterdir())
     assert json.loads(kept[0].read_text())["counts"]["passed"] == 1

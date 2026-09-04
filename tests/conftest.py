@@ -329,8 +329,8 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
     destination = config.getoption("--surface-json")
     if destination:
-        _write_surface_json(Path(destination), terminalreporter, present,
-                            detail, counts, _strict_cuda(config))
+        _write_surface_json(Path(destination), config, terminalreporter,
+                            present, detail, counts)
 
 
 def _measured_commit():
@@ -364,23 +364,75 @@ def _measured_commit():
     return commit or None
 
 
-def _write_surface_json(path, terminalreporter, present, detail, reasons, strict):
+def _worker_id(config):
+    """Which xdist worker is speaking, or ``None`` for a whole run.
+
+    ``pytest_terminal_summary`` runs in every xdist worker as well as in the
+    controller, and a worker's ``stats`` hold that worker's SHARE of the run.
+    ``workerinput`` is the same attribute ``pytest_sessionstart`` above already
+    uses to tell the two apart; the environment variable is xdist's own and is
+    kept as a second answer to the same question.
+    """
+
+    workerinput = getattr(config, "workerinput", None)
+    if workerinput:
+        return str(workerinput.get("workerid") or "") or None
+    return os.environ.get("PYTEST_XDIST_WORKER") or None
+
+
+def _worker_count(config):
+    """How many workers the controller fanned out to, when it can say."""
+
+    count = getattr(config.option, "numprocesses", None)
+    return count if isinstance(count, int) else None
+
+
+def _write_surface_json(path, config, terminalreporter, present, detail,
+                        reasons):
     """The same population, as a table rather than as prose.
 
     A receipt that scrapes "1404 passed / 487 skipped" out of a terminal is
     reading a rendering; this is the run stating its own population, which is
     what a downstream gate or a stored receipt should read.
+
+    **A worker's share is not a population, and never lands on the population's
+    path.**  Under ``-n N`` every worker reaches this function with its own
+    slice of the run, and the first spelling of this file gave all of them the
+    same filename: one ``-n 8`` run wrote eight shards over each other and then
+    the controller's aggregate, and ``_keep_any_previous`` renamed the eight to
+    ``superseded-<mtime>`` -- a name that means "a retry wrote over this".  A
+    reader of ``20260904T040432`` therefore sees eight retries of a run that
+    ran once, and would have read a shard as the arm's population had the run
+    been killed before the controller wrote.  Both are false provenance, and
+    false provenance in the artefact built to make a suite result trustworthy
+    is worse than the gap it closes.
+
+    So the worker writes ``surface.<arm>.<workerid>.json`` and says ``role:
+    worker-share``; only the controller -- or a serial run, which is its own
+    controller -- writes the plain name, and only that file says ``role:
+    population``.  The two can no longer be confused by a reader, by a resume,
+    or by a kill.
     """
 
     import json
 
+    worker = _worker_id(config)
+    if worker:
+        path = path.with_name(f"{path.stem}.{worker}{path.suffix}")
+
     stats = terminalreporter.stats
     payload = {
-        "schema": "tessera.test_surface.v1",
+        # v2: a file at the population's own path is now GUARANTEED to be a
+        # whole run.  Under v1 it could be one worker's share, so the version
+        # is what tells a reader which guarantee this file carries.
+        "schema": "tessera.test_surface.v2",
+        "role": "worker-share" if worker else "population",
+        "worker_id": worker,
+        "xdist_workers": _worker_count(config),
         "commit": _measured_commit(),
         "cuda": present,
         "device": detail,
-        "strict_cuda": strict,
+        "strict_cuda": _strict_cuda(config),
         "counts": {
             outcome: len(stats.get(outcome, []))
             for outcome in ("passed", "failed", "error", "skipped",
@@ -393,26 +445,37 @@ def _write_surface_json(path, terminalreporter, present, detail, reasons, strict
     path.parent.mkdir(parents=True, exist_ok=True)
     superseded = _keep_any_previous(path)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
-    terminalreporter.write_line(f"tessera surface: population written to {path}")
+    what = "worker share" if worker else "population"
+    terminalreporter.write_line(f"tessera surface: {what} written to {path}")
     if superseded:
         terminalreporter.write_line(
-            f"tessera surface: a previous population was here; kept at {superseded}")
+            f"tessera surface: a previous {what} was here; kept at {superseded}")
 
 
 def _keep_any_previous(path):
-    """Move an existing population aside instead of writing over it.
+    """Move an earlier file aside instead of writing over it.
 
-    The path is fixed per arm, so a pool retry -- a lease that expired, a
-    worker that died, an action on its second attempt -- runs the suite again
-    and lands on the same filename.  That happened: the population at
-    ``20260904T025044/surface.x86.json`` (1389 passed / 1 failed, on e61974c)
-    was overwritten at 07:28:49Z by a retry that ran a different tree and
-    reported 1388/2.  The first measurement survived only because someone
-    happened to have copied it.
+    ``superseded-<mtime>`` means exactly one thing: **an earlier run wrote this
+    same path, and this run is writing it again.**  The path is fixed per arm
+    (and, since the shard fix above, per worker), so a pool retry -- a lease
+    that expired, a worker that died, an action on its second attempt -- runs
+    the suite again and lands on the same filename.  That happened: the
+    population at ``20260904T025044/surface.x86.json`` (1389 passed / 1 failed,
+    on e61974c) was overwritten at 07:28:49Z by a retry that ran a different
+    tree and reported 1388/2.  The first measurement survived only because
+    someone happened to have copied it.
 
     A measurement is evidence, and the second one does not disprove the first
     -- they are two populations, possibly of two trees.  Keep both.  The reader
     is unchanged: it still opens the plain name, which is always the newest.
+
+    Read the eight ``surface.x86.superseded-*.json`` files in receipt
+    ``20260904T040432`` against that sentence and they contradict it: that run
+    ran ONCE, under ``-n 8``, and the eight are its workers' shares, which the
+    first spelling of ``_write_surface_json`` aimed at the population's path.
+    They are shards misfiled as retries.  The bytes are left where they are --
+    a measurement is not edited after the fact -- and this docstring is the
+    place that says what they actually are.
     """
 
     import time
