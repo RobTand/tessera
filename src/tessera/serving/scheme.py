@@ -79,6 +79,8 @@ __all__ = [
     "MOE_GROUPS",
     "MOE_GROUP_SHARDS",
     "MOE_GROUP_ROLES",
+    "MOE_SHARD_PROJECTIONS",
+    "MOE_GROUP_PROJECTIONS",
     "MOE_BUILDERS",
     "MOE_SOURCE_UNPACKED",
     "MOE_SOURCE_OUT_FIRST_CHUNKED",
@@ -152,6 +154,15 @@ MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2"
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+#: The canonical wire role for each runtime shard. Source checkpoints may
+#: spell their tensors with either vocabulary, but wire roles are descriptive.
+#: The exporter and sidecar reader share this table so a self-consistent pair
+#: of sidecar and blobs cannot reinterpret the runtime's gate/up row order.
+MOE_SHARD_PROJECTIONS = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+MOE_GROUP_PROJECTIONS = {
+    group: tuple(MOE_SHARD_PROJECTIONS[shard] for shard in shards)
+    for group, shards in MOE_GROUP_SHARDS.items()
+}
 
 #: The checkpoint layouts the exporter can prove it interpreted.  This is
 #: provenance rather than a runtime layout: all three are normalised to the
@@ -978,6 +989,16 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
                 f"{[r[0] for r in declared['roles']]}, expected {MOE_GROUP_ROLES[name]} -- the "
                 f"group's members are exactly the shards the runtime loads into it "
                 f"({MOE_GROUP_SHARDS[name]}, scheme.MOE_GROUP_SHARDS), in that row order")
+        role_names = tuple(role for role, _ in declared["roles"])
+        if role_names != MOE_GROUP_PROJECTIONS[name]:
+            raise ValueError(
+                f"tessera target {target!r} group {name!r}: roles {role_names} must be "
+                f"{MOE_GROUP_PROJECTIONS[name]} in the runtime's row order")
+        if name == "w13" and len({rows for _, rows in declared["roles"]}) != 1:
+            raise ValueError(
+                f"tessera target {target!r} group 'w13': role rows "
+                f"{[rows for _, rows in declared['roles']]} must be equal halves; "
+                "the runtime splits gate and up at N in its [2N, K] tile")
         declared_groups[name] = declared
     if declared_groups["w13"]["rows"] != 2 * declared_groups["w2"]["columns"]:
         raise ValueError(

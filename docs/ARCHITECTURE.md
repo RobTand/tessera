@@ -240,6 +240,12 @@ blob's true length rides beside it and
 lengths imply -- the one check that catches a sidecar disagreeing with the
 bytes.
 
+`scheme.MOE_GROUP_PROJECTIONS` derives canonical role names from the runtime's
+shard order and is shared by the exporter and reader. The scheme refuses any
+other role names or order, even when the blobs agree with the sidecar; `w13`
+also requires equal gate/up row counts, because the runtime splits its tile
+at `N`. Matching total `[2N, K]` geometry alone does not prove that boundary.
+
 `tessera.serving.moe_route` decodes those containers into exactly the
 parameters vLLM's own per-channel FP8 MoE path reads (`w13_weight [E, 2N, K]`
 and `w2_weight [E, K, N]` in `float8_e4m3fn`, `w13_weight_scale [E, 2N, 1]`

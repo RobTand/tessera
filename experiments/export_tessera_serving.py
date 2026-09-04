@@ -155,7 +155,8 @@ from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     classify_construction, construction_entry, load_serving_contract)
 from tessera.serving.scheme import (  # noqa: E402
-    MOE_BUILDERS, MOE_GROUP_SHARDS, MOE_GROUPS, STRUCTURE_DENSE,
+    MOE_BUILDERS, MOE_GROUP_PROJECTIONS, MOE_GROUPS,
+    MOE_SHARD_PROJECTIONS as SHARD_PROJECTION, STRUCTURE_DENSE,
     STRUCTURE_ROUTED_MOE, MOE_SOURCE_IN_FIRST_INTERLEAVED,
     MOE_SOURCE_OUT_FIRST_CHUNKED, MOE_SOURCE_UNPACKED,
     refuse_unreachable_lane, refuse_unserveable_wire, validate_tessera_moe_scheme)
@@ -187,11 +188,9 @@ FUSED = (
 #: different facts and the plugin reads the second one (#86).
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
 
-#: The checkpoint spelling for each runtime shard.  GLM writes the descriptive
-#: names on the right; LFM writes the shard ids on the left.  The route and its
-#: sidecar use the descriptive role, while the emitted wire keeps the source
-#: spelling so the model's own FusedMoE mapping can hand it the shard id.
-SHARD_PROJECTION = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+#: GLM writes descriptive names; LFM writes shard ids. The shared scheme
+#: table normalises both, while the emitted wire retains the source spelling
+#: so the model's own FusedMoE mapping can hand it the shard id.
 EXPERT_SOURCE_PROJECTIONS = tuple(
     dict.fromkeys((*SHARD_PROJECTION.values(), *SHARD_PROJECTION.keys())))
 
@@ -720,12 +719,8 @@ def packed_expert_orientation(name: str, shape, config: dict):
         f"hidden_size={hidden} moe_intermediate_size={inter} (expected out={out_dim}, in={in_dim})")
 
 
-#: ``MOE_GROUP_SHARDS`` is the runtime's table -- which shards a group holds,
-#: in the row order ``RoutedExperts._load_w13`` narrows to.  ``SHARD_PROJECTION``
-#: above adds only what each shard means in the wire's canonical role
-#: vocabulary; a group's row order is therefore never spelled twice.
-MOE_GROUP_PROJECTIONS = {group: tuple(SHARD_PROJECTION[s] for s in shards)
-                         for group, shards in MOE_GROUP_SHARDS.items()}
+#: The scheme owns canonical roles and their runtime row order, for both
+#: the sidecar reader and this writer.
 EXPERT_PROJECTIONS = tuple(p for g in MOE_GROUPS for p in MOE_GROUP_PROJECTIONS[g])
 #: Which group a projection rides, inverted from the table above.
 PROJECTION_GROUP = {p: g for g, ps in MOE_GROUP_PROJECTIONS.items() for p in ps}

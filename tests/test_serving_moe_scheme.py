@@ -104,6 +104,31 @@ def test_a_group_holds_exactly_the_shards_the_runtime_loads_into_it():
         S.validate_tessera_moe_scheme(bad, "m")
 
 
+@pytest.mark.parametrize("group,roles", [
+    ("w13", [["up_proj", 64], ["gate_proj", 64]]),
+    ("w13", [["gate_proj", 64], ["gate_proj", 64]]),
+    ("w13", [["w1", 64], ["w3", 64]]),
+    ("w2", [["gate_proj", 128]]),
+])
+def test_group_roles_must_name_the_runtime_projections_in_row_order(group, roles):
+    # A matching sidecar and blob could otherwise agree on the wrong role:
+    # the runtime still treats the first w13 half as gate and the second as up.
+    bad = _moe()
+    bad["groups"][group]["roles"] = roles
+    with pytest.raises(ValueError, match=rf"group '{group}': roles.*row order"):
+        S.validate_tessera_moe_scheme(bad, "m")
+
+
+@pytest.mark.parametrize("gate_rows,up_rows", [(32, 96), (63, 65)])
+def test_gate_and_up_boundaries_must_match_the_runtime_equal_halves(gate_rows, up_rows):
+    bad = _moe()
+    bad["groups"]["w13"]["roles"] = [["gate_proj", gate_rows], ["up_proj", up_rows]]
+    # Total rows and the cross-group geometry still agree. Only the role
+    # boundary is wrong: vLLM applies gate/up at N, not at the declared split.
+    with pytest.raises(ValueError, match="w13.*role rows.*equal halves"):
+        S.validate_tessera_moe_scheme(bad, "m")
+
+
 def test_the_two_groups_geometries_are_checked_against_each_other():
     """w13 is [2N, K] and w2 is [K, N] over ONE expert: two statements of two
     numbers, so a checkpoint whose halves disagree is caught before a decode
