@@ -220,7 +220,7 @@ imported from `kl_estimator`, beside the full-vocab number).
 
 ### 3a. The reading
 
-Every row is 256 positions -- the served set, 8 chunks x stride 16 -- on
+Every row is 256 positions unless marked -- the served set, 8 chunks x stride 16 -- on
 Qwen3-0.6B, CPU-only, `/home/rob/tessera-runs/ts110/`. The **regime** column
 matters and is not decoration: `decode` is the served one (a clean prefill
 fills the KV cache, then each scored prefix is one M = 1 forward), `prefill`
@@ -270,29 +270,42 @@ Read the rows:
   served number; it is an over-application and is reported as one.
 
 Why a step quantiser amplifies a small term at all -- **a mechanism I
-proposed, tested, and could not confirm.** E4M3 per-token quantisation is a
+proposed, tested badly, and am withdrawing.** E4M3 per-token quantisation is a
 step function of local width `u`, so a relative perturbation `d` upstream of it
 should flip a fraction of order `d/u` of the downstream codes by one whole step
-and give variance `~d*u`: linear in `d`, not quadratic. That predicts halving
-`d` halves the KL with the quantiser on and quarters it with the quantiser off.
-Both pairs were run (prefill, Gaussian arm, one shared generator so the noise
-field is literally `rel` times a fixed realisation, paired chunk by chunk) and
-**neither holds**:
+and give variance `~d*u`: linear in `d`. That predicts halving `d` halves the
+KL with the quantiser on and quarters it with it off. Two things are wrong with
+it, and I found the second only after running the test:
+
+* **The placement is wrong.** The Gaussian is injected on `a_q * a_scale` --
+  *after* this Linear's own quantiser has already run. It never meets the step
+  function I was arguing about; it meets the quantisers of Linears downstream,
+  through attention and two norms. The mechanism may still be the right
+  physics, but not at the point the harness perturbs.
+* **The ON row is not a scaling pair, so it cannot test anything.** Its
+  baseline (`exact_fold_gaussian_control.json`) passed no `--rel` and used the
+  **measured per-Linear** relative size, of which 1.4005e-03 is only the mean
+  over 196 Linears; `lin_half_acton` injected a **constant** 7.0024e-04
+  everywhere. Two variables move, and a constant field that over-injects at
+  sensitive Linears would raise the KL in every chunk exactly as observed. The
+  four-of-four sign agreement I first read as "not noise" is evidence of that
+  confound, not of a harness bug.
 
 | pair, 128 positions, paired by chunk | full rel | half rel | ratio | predicted |
 |---|---:|---:|---:|---:|
-| quantiser ON | 0.010631 | 0.016021 | **0.66** | 2.0 |
-| quantiser OFF | 0.000229 | 0.000196 | **1.17** | 4.0 |
+| quantiser ON -- **confounded, measured-rel vs constant-rel** | 0.010631 | 0.016021 | 0.66 | -- |
+| quantiser OFF -- a real pair, both `--rel` | 0.000229 | 0.000196 | **1.17** | 4.0 |
 
-The ON leg is not noise -- all four chunks agree in sign, and halving the
-perturbation made the two arms disagree *more*. Something in the harness's
-`--rel` leg does not behave the way scaling a fixed noise field should, and I
-do not know what; it is written down here as an open question rather than
-guessed at. **It does not touch the 68.9x**, because that pair holds `rel`
-fixed (1.3329e-03 against 1.3398e-03) and varies only the quantiser flag, and
-it does not touch the 0.007160 headline, which uses the deterministic fold and
-no `--rel` at all. What survives is that the variable was *located*, not that
-its mechanism was explained.
+So one open anomaly survives and it is the OFF row: with one shared generator,
+so the field is literally `rel` times a fixed realisation, halving `rel` moved
+the KL by 1.17x where a square law demands 4.0. I do not have an explanation
+and I am not running a fifth emulation leg to find one, because it is outside
+what #110 asks. **Neither row touches the two numbers this branch rests on**:
+the 68.9x pair holds the measured rel fixed (1.3329e-03 against 1.3398e-03) and
+varies only the quantiser flag, and the 0.007160 headline uses the
+deterministic fold and passes no `--rel` at all. What survives is that the
+variable was *located*. Its mechanism is not explained, and the paragraph that
+claimed to explain it was mine and is withdrawn.
 
 ### 3b. What is still substituted, and which way it points
 
@@ -313,6 +326,13 @@ This is a screen and it says so. Three substitutions remain:
   to three digits is a coincidence of magnitude, not a reproduction. What it
   does establish is the *direction and rough size* the first pass had to guess
   at.
+* **The size matches; the character does not, yet.** The weight-degraded run
+  reads 0.012073 against a served 0.012111, but at **96.09% top-1 against a
+  served 91.02%** -- the serve turns the same KL into roughly twice the top-1
+  flips (about 5 of 128 positions here against about 11.5). At 128 positions
+  that is a handful of flips and not much of a signal, but it is the wrong
+  direction to leave unremarked: the emulation reproduces the *size* of the
+  disagreement and not yet its *shape*. The served re-run reads both.
 * **The residual stream is fp32; vLLM's is bf16.** Both arms share it, so it
   cannot manufacture a difference, but a bf16 trajectory is the noisier one and
   this axis is unmeasured.
