@@ -476,7 +476,14 @@ a compiled serve, where the trace declines and the attestation is
 profiler, starts it immediately before the decode dump, stops it before the
 prefill dump, and writes `window_gemv_trace_summary.py`'s kernel summary. That
 is the compiled arm's runtime launch evidence; it is not inferred from the
-compile-time route trace. The first arm taken for #113 read: compiled, the
+compile-time route trace. Its launch gate counts the manifest's source-role
+**units**, because every scored decode position launches the GEMV once for each
+role. Its fallback refusal gate separately counts module containers, because
+preparation refuses once per container. Thus the #113 population's 256 scored
+positions over 112 modules / 196 units requires exactly 50,176 GEMV launches
+in a lane arm and 112 preparation refusals in a fallback arm; collapsing those
+two manifest axes is a failed gate, not a tolerance. The first arm taken for
+#113 read: compiled, the
 same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
 and that decode number is **below** the same-artifact rebuild delta measured

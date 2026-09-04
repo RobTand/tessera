@@ -180,7 +180,7 @@ if [ "$pop_existed" = 1 ] && [ ! -f "$identity_path" ]; then
   echo "REFUSED: existing population lacks CAMPAIGN_IDENTITY.json" >&2
   exit 2
 fi
-read -r DECODE_POSITIONS ELIGIBLE_MODULES EXPECTED_LAUNCHES < <(
+read -r DECODE_POSITIONS ELIGIBLE_MODULES ELIGIBLE_UNITS EXPECTED_LAUNCHES < <(
   PYTHONPATH="$WT/src" "$PY" - \
     "$closure_stamp" "$snapshot_commit" "$IMAGE" \
     "$ARMA/tessera_gridbook_manifest.json" \
@@ -246,6 +246,15 @@ if len(eligible) != module_total:
     raise SystemExit(
         f"REFUSED: only {len(eligible)}/{module_total} staged modules are lane-eligible"
     )
+unit_total = int(manifest["totals"]["units"])
+roster_units = sum(len(module["roles"]) for module in manifest["modules"].values())
+if unit_total != roster_units:
+    raise SystemExit("REFUSED: manifest unit total disagrees with its role roster")
+eligible_units = sum(len(manifest["modules"][name]["roles"]) for name in eligible)
+if eligible_units != unit_total:
+    raise SystemExit(
+        f"REFUSED: only {eligible_units}/{unit_total} staged units are lane-eligible"
+    )
 
 stride = int(stride_raw)
 if len(corpus["chunks"]) != int(corpus["n_chunks"]):
@@ -255,9 +264,9 @@ if any(len(chunk) != int(corpus["seqlen"]) for chunk in corpus["chunks"]):
 decode_per_chunk = len(range(1, int(corpus["seqlen"]), stride))
 decode_positions = int(corpus["n_chunks"]) * decode_per_chunk
 eligible_modules = len(eligible)
-expected_launches = decode_positions * eligible_modules
+expected_launches = decode_positions * eligible_units
 expected = {
-    "schema": "tessera.ts113.sparklina-population-identity.v2",
+    "schema": "tessera.ts113.sparklina-population-identity.v3",
     "host": os.uname().nodename,
     "image": image,
     "checkout": {
@@ -281,6 +290,7 @@ expected = {
         "positions_per_chunk": decode_per_chunk,
         "decode_positions": decode_positions,
         "eligible_modules": eligible_modules,
+        "eligible_units": eligible_units,
         "expected_window_gemv_launches": expected_launches,
         "fallback_refusals": eligible_modules,
     },
@@ -298,11 +308,12 @@ else:
         json.dump(expected, handle, indent=1, sort_keys=True)
         handle.write("\n")
     print("published campaign identity", file=sys.stderr)
-print(decode_positions, eligible_modules, expected_launches)
+print(decode_positions, eligible_modules, eligible_units, expected_launches)
 PY
 )
-[ -n "$DECODE_POSITIONS" ] && [ -n "$ELIGIBLE_MODULES" ] && [ -n "$EXPECTED_LAUNCHES" ]
-echo "TS113_DERIVED_GATE positions=$DECODE_POSITIONS modules=$ELIGIBLE_MODULES launches=$EXPECTED_LAUNCHES"
+[ -n "$DECODE_POSITIONS" ] && [ -n "$ELIGIBLE_MODULES" ] && \
+  [ -n "$ELIGIBLE_UNITS" ] && [ -n "$EXPECTED_LAUNCHES" ]
+echo "TS113_DERIVED_GATE positions=$DECODE_POSITIONS modules=$ELIGIBLE_MODULES units=$ELIGIBLE_UNITS launches=$EXPECTED_LAUNCHES"
 
 if [ "$MODE" = preflight-stage ]; then
   if prepare_stage path-expansion ts113-aa6-r4-preflight; then
@@ -377,8 +388,8 @@ run_arm() {
       expected_profile_launches=0
     fi
     "$PY" - "$dir/profile-$stage-summary.json" \
-      "$expected_profile_launches" "$DECODE_POSITIONS" "$ELIGIBLE_MODULES" \
-      "$lane" <<'PY'
+      "$expected_profile_launches" "$DECODE_POSITIONS" "$ELIGIBLE_UNITS" \
+      "$ELIGIBLE_MODULES" "$lane" <<'PY'
 import json
 import sys
 
@@ -387,16 +398,17 @@ launches = sum(
     row.get("by_bucket", {}).get("window_gemv", {}).get("launches", 0)
     for row in rows
 )
-expected, positions, modules = map(int, sys.argv[2:5])
-lane = sys.argv[5]
+expected, positions, units, modules = map(int, sys.argv[2:6])
+lane = sys.argv[6]
 assert launches == expected, (launches, expected)
 if lane == "lane":
-    assert expected == positions * modules
+    assert expected == positions * units
 else:
     assert lane == "fallback" and expected == 0
 print(
     f"TS113_LAUNCH_OK window_gemv={launches} "
-    f"lane={lane} positions={positions} eligible_modules={modules}"
+    f"lane={lane} positions={positions} eligible_modules={modules} "
+    f"eligible_units={units}"
 )
 PY
   fi

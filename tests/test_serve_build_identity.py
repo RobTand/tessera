@@ -29,6 +29,7 @@ agree needs a live serve and is not claimed here.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -679,6 +680,11 @@ def test_the_real_serve_logs_of_the_measured_pair(log, expected):
 # A gate that refuses on a match (#16)
 
 _WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
+_TS113_CAMPAIGN = (
+    Path(__file__).resolve().parents[1]
+    / "experiments"
+    / "ts113_sparklina_campaign.sh"
+)
 _EAGER_WRAPPERS = [
     Path(__file__).resolve().parents[1] / "experiments" / name
     for name in (
@@ -758,6 +764,74 @@ def test_decode_wrapper_makes_container_output_mounts_writable():
     body = _EAGER_WRAPPERS[0].read_text()
     assert 'chmod a+rwx "$TRACEDIR"' in body
     assert 'chmod a+rwx "$PROFILE_DIR"' in body
+
+
+def test_ts113_launch_gate_counts_source_roles_not_module_containers(tmp_path):
+    """One GEMV launches per source role, while fallback refuses per module."""
+    body = _TS113_CAMPAIGN.read_text()
+    anchor = body.index("read -r DECODE_POSITIONS")
+    start = body.index("<<'PY'\n", anchor) + len("<<'PY'\n")
+    end = body.index("\nPY\n", start)
+    program = body[start:end]
+
+    closure = tmp_path / ".pbrun-closure.test.json"
+    manifest = tmp_path / "manifest.json"
+    contract = tmp_path / "runtime_contract.json"
+    corpus = tmp_path / "corpus.json"
+    identity = tmp_path / "CAMPAIGN_IDENTITY.json"
+    closure.write_text(json.dumps({
+        "cwd": ".",
+        "dirty_sha256": hashlib.sha256(b"").hexdigest(),
+        "head": "a" * 40,
+    }))
+    manifest.write_text(json.dumps({
+        "modules": {
+            "model.layers.0.qkv_proj": {
+                "grid": "E4M3", "q256": 1024, "roles": ["q", "k", "v"],
+            },
+            "model.layers.0.gate_up_proj": {
+                "grid": "E4M3", "q256": 1024, "roles": ["gate", "up"],
+            },
+        },
+        "totals": {"modules": 2, "units": 5},
+    }))
+    contract.write_text(json.dumps({
+        "formats": [{"grid": "E4M3", "family": "TESSERA_FP8"}],
+        "lane_eligibility": {"cells": [{
+            "platform": "sm_121",
+            "structure": "dense",
+            "regime": "decode",
+            "family": "TESSERA_FP8",
+            "rungs_q256": [1024],
+            "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
+            "executes": [{
+                "symbol": "tessera_window_gemv::gemv",
+                "decoder": "window_gemv",
+            }],
+        }]},
+    }))
+    corpus.write_text(json.dumps({
+        "n_chunks": 1,
+        "seqlen": 5,
+        "chunks": [[1, 2, 3, 4, 5]],
+        "contract_sha256": "b" * 64,
+    }))
+
+    result = subprocess.run(
+        [sys.executable, "-", str(closure), "c" * 40, PIN,
+         str(manifest), str(contract), str(corpus), str(identity), "2",
+         "device:inode"],
+        input=program,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [int(value) for value in result.stdout.split()] == [2, 2, 5, 10]
+    derived = json.loads(identity.read_text())["derived_gate"]
+    assert derived["eligible_modules"] == 2
+    assert derived["eligible_units"] == 5
+    assert derived["expected_window_gemv_launches"] == 10
+    assert derived["fallback_refusals"] == 2
 
 
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
