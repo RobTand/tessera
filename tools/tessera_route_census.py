@@ -152,8 +152,8 @@ def join_records_to_declared(records, declared):
     ``kind`` is ``moe`` and whose module path lies under exactly one declared
     target belongs to that target.  ``kind`` is the record's own word for what
     it served, so the rule reads the runtime's statement rather than matching
-    the child's name; a second Tessera module nested under a declared one would
-    be AMBIGUOUS and is reported, never guessed.
+    the child's name. A record under two declared targets is ambiguous and
+    reported; this join does not require a declaration to own only one record.
     """
     owner, problems = {}, []
     for name, record in records.items():
