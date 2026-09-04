@@ -89,6 +89,10 @@ def main() -> None:
                          "a full-H metric only -- under a diagonal metric the blocks "
                          "decouple and the encoder refuses the flag rather than name an "
                          "arm that changed nothing.")
+    ap.add_argument("--coupled-landing", action="store_true",
+                    help="add issue #50's arms: the full-H refit with its landing made "
+                         "cross-block aware (refit_coupled_landing), under both sweep orders, "
+                         "on every pass and on the trailing refit only")
     ap.add_argument("--drift-control", action="store_true",
                     help="run the served default (`LDLQ <pair> + refit h^<first alpha>`) as "
                          "the FIRST arm and again as the LAST, under distinct names.  One "
@@ -256,6 +260,27 @@ def main() -> None:
                     refit_gauss_seidel=True)
                 run("refit full-H only (Gauss-Seidel)",
                     refit_metric=H, refit_gauss_seidel=True)
+            if a.coupled_landing:
+                # Issue #50: the ONE difference from the two full-H arms above
+                # is the landing -- each block re-assigned to the table entry
+                # minimising the full quadratic given its neighbours, instead
+                # of nearest to its own continuous target.  Under both sweep
+                # orders, so the sweep and the landing stay separate treatments.
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H (Jacobi, coupled landing)",
+                    ldl=L, ldl_block=best[1], refit_metric=H,
+                    refit_coupled_landing=True)
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H (Gauss-Seidel, coupled landing)",
+                    ldl=L, ldl_block=best[1], refit_metric=H,
+                    refit_gauss_seidel=True, refit_coupled_landing=True)
+                # The same landing on the LAST refit only: the inner passes
+                # are the plain full-H arms' passes, so the trellis sees the
+                # planes it always saw and only the shipped plane is re-landed.
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H (Jacobi, trailing coupled landing)",
+                    ldl=L, ldl_block=best[1], refit_metric=H,
+                    refit_coupled_landing="trailing")
+                run(f"LDLQ {best[0]}/{best[1]} + refit full-H (Gauss-Seidel, trailing coupled landing)",
+                    ldl=L, ldl_block=best[1], refit_metric=H,
+                    refit_gauss_seidel=True, refit_coupled_landing="trailing")
             if channel:
                 run(f"LDLQ {best[0]}/{best[1]} + refit full-H + reach floor",
                     ldl=L, ldl_block=best[1], refit_metric=H, refit_reach_floor=True)

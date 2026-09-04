@@ -1106,6 +1106,7 @@ def encode_linear_planes(
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
     refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -1137,6 +1138,16 @@ def encode_linear_planes(
     a measurement option, encoder-side and opt-in: ``ActivationSource``
     carries it (tessera#103) and the merge guard compares it, and with it off
     the encode is byte for byte what it was.
+
+    ``refit_coupled_landing`` (issue #50) is the rule ``refit_gauss_seidel``
+    used to be held to, and still is until somebody wants it on a real export:
+    a measurement option reachable only from here, with **no**
+    ``ActivationSource`` field, so no ``export_checkpoint`` run can set it and
+    no ``tessera_config.json`` can record a landing the merge guard has no
+    field to compare.  Unlike its neighbour it does move bytes when it is on,
+    which is the reason the rule matters here and not only tidiness --
+    promoting it means adding the field, the guard entry and a wire identity
+    that says which landing produced the bytes, in one change.
 
     ``ldl``/``ldl_block``/``refit_metric``/``refit_reach_floor`` are the
     activation-aware encoder settings (``encode_unit``): the input Hessian's
@@ -1189,6 +1200,7 @@ def encode_linear_planes(
         refit_reach_floor=refit_reach_floor,
         refit_gauss_seidel=refit_gauss_seidel,
         refit_lut_exact=refit_lut_exact,
+        refit_coupled_landing=refit_coupled_landing,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares

@@ -107,6 +107,12 @@ B_JAC = "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)"
 B_GS = "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)"
 C_JAC = "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)"
 C_GS = "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)"
+# #50's coupled landing, the half its own receipt left at TBD: the oracle
+# replayed the trailing refit at frozen codes, so it could not see what a
+# re-assignment does to the codes the NEXT trellis pass sees.  These two arms
+# are that, in the encoder, at the wire.
+B_GS_CL = "B-GS+CL T R_h T R_h T R_h T R_H(GS,CL)   (trailing full-H, sweep, coupled landing)"
+C_GS_CL = "C-GS+CL T R_H T R_H T R_H T R_H(GS,CL)   (full-H every pass, sweep, coupled landing)"
 
 
 def grid_by_name(name: str):
@@ -308,6 +314,11 @@ def main() -> None:
                 refit_gauss_seidel=True)
             run(C_JAC + tag, landing, refit_metric=H)
             run(C_GS + tag, landing, refit_metric=H, refit_gauss_seidel=True)
+            run(B_GS_CL + tag, landing,
+                refit_metric=hmetric, refit_metric_trailing=H,
+                refit_gauss_seidel=True, refit_coupled_landing="trailing")
+            run(C_GS_CL + tag, landing, refit_metric=H,
+                refit_gauss_seidel=True, refit_coupled_landing="every")
             last = run(A_LAST + tag, landing, dup_ok=True, refit_metric=hmetric)
             first = res[A_FIRST + tag]
             same = first["sha256"] == last["sha256"]
