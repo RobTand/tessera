@@ -54,8 +54,37 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Four narrower blind spots, named because a reader would otherwise assume them
-covered:
+Nine narrower blind spots, named because a reader would otherwise assume them
+covered.  The first five are *surfaces no fixture reaches* (tessera#143), and
+they are stated first because they are the ones a reader is likeliest to assume
+away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
+structure, and "shipping" is doing load-bearing work in that sentence.
+
+* **The S6b scale plane.**  ``wire_recipe`` never selects it, so no fixture
+  encodes one -- but ``export.encode_linear_planes(scale_plane=...)`` is a
+  caller-facing override and ``unit_artifact._read_scale_planes`` accepts what
+  it writes, so an S6b artifact is a thing that exists and this identity cannot
+  see a change to how it is packed or refitted.
+* **Segment-2a diagonals.**  ``with_diagonals=`` is the same kind of override,
+  and it is a different producer of the DIAG planes than the CHANNEL row scale
+  the fixtures do cover.
+* **The RELEASE plane.**  ``encode_linear`` has no ``released_positions``
+  keyword, so no fixture can carry a release at all; the placement rule lives
+  in ``encode._canonical_release_order`` and moves nothing here.
+* **The completion axis.**  Every fixture spends the exporter's default of
+  zero, so the completion argmin has one descendant and cannot choose wrongly.
+* **Shards.**  ``slicing.slice_unit`` is a second byte-producing path -- the
+  INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
+  descriptor -- and nothing an encode alone produces, so no fixture reaches it.
+
+``experiments/audit_byte_baseline.py`` covers all five: its ``layout`` matrix
+and its release rows write every plane a reader reads, and
+``tests/test_audit_byte_baseline.py`` derives that claim from
+``planes.SHARD_PLANE_ORDER`` rather than restating it.  Closing them *here*
+instead would re-base the identity, which is the third blind spot below and a
+cost only Rob prices.
+
+The remaining four:
 
 * **Rate.**  Each structure is encoded at one declared rung, not at every rung
   it covers.  ``window_bits`` varies with the rung on BF16 (L=14/15/16), and it
