@@ -27,8 +27,14 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tessera.serving.contract import contract_path
 from tessera.serving.runtime_image import (  # noqa: E402
+    ATTESTATION_SCHEMA,
+    ATTESTATION_SOURCE,
+    CENSUS_ATTESTATION_ENV,
+    CENSUS_IMAGE_ENV,
     PIN_CONTRACT_FIELD,
     RuntimeImageError,
+    attested_reference,
+    container_env,
     parse_reference,
     pinned_reference,
     require_pinned,
@@ -217,6 +223,132 @@ def test_explicit_requested_digest_is_stamped_even_when_the_default_pin_is_an_al
     requested = pin.split("@", 1)[0] + "@sha256:" + "f" * 64
     record = require_pinned(requested, inspector=_inspector(repo_digests=[pin, requested]))
     assert record["resolved_digest"] == requested.split("@", 1)[1]
+
+
+# ----------------------------------------------- the reference it resolved ---
+
+def test_the_record_names_the_resolved_reference_not_only_its_digest():
+    """A caller that must NAME the bytes downstream should not rebuild it.
+
+    ``resolved_digest`` is half a reference.  Every consumer that has to hand
+    the identity to another process -- a container launcher writing it into the
+    environment the census reads -- would otherwise concatenate repository and
+    digest itself, which is the second spelling rule 4 exists to prevent.
+    """
+    pin = pinned_reference()
+    record = resolve(pin, inspector=_inspector(repo_digests=[pin]))
+    repository, _, digest = parse_reference(pin)
+    assert record["resolved_digest"] == digest
+    assert record["resolved_reference"] == f"{repository}@{digest}" == pin
+
+
+def test_a_tag_resolves_to_the_reference_a_launcher_must_pass_on():
+    """The caller spelled a tag; what ran is a digest, and that is the value.
+
+    A launcher that passed its own ``IMG`` string into the container would
+    export a floating tag, which identifies no runtime at all.
+    """
+    pin = pinned_reference()
+    record = resolve("vllm/vllm-openai:latest", inspector=_inspector(repo_digests=[pin]))
+    assert record["requested_tag"] == "latest"
+    assert record["resolved_reference"] == pin
+
+
+def test_an_image_with_no_manifest_digest_names_no_reference():
+    """A locally built image carries no ``RepoDigests``; say so, do not invent."""
+    record = resolve("local/built:dev", inspector=_inspector(repo_digests=[]))
+    assert record["refused"] is False and record["resolved_digest"] is None
+    assert record["resolved_reference"] is None
+
+
+# ------------------------------------------- attesting from inside the run ---
+#
+# A process inside a container cannot ask the daemon what image it is running:
+# there is no socket, and ``/proc/self/mountinfo`` names overlay layer paths
+# whose spelling differs between the two snapshotters on the two GB10s and
+# never carries a manifest digest at all.  What CAN be done is to have the
+# launcher transcribe ``docker image inspect``'s answer verbatim into the
+# environment, and have the process inside check its own claim against that
+# table.  That is not unforgeable -- a hand ``docker run -e`` can still lie --
+# and it is exactly why the receipt names the mechanism instead of asserting
+# the image (issue #132).
+
+IMAGE = "example/runtime@sha256:" + "e" * 64
+
+
+def _attested(reference=IMAGE, **overrides):
+    record = resolve(reference, inspector=_inspector(repo_digests=[reference]))
+    record.update(overrides)
+    return container_env(record)
+
+
+def test_the_launcher_exports_the_resolved_reference_and_the_whole_record():
+    env = _attested()
+    assert env[CENSUS_IMAGE_ENV] == IMAGE
+    assert json.loads(env[CENSUS_ATTESTATION_ENV])["repo_digests"] == [IMAGE]
+    assert set(env) == {CENSUS_IMAGE_ENV, CENSUS_ATTESTATION_ENV}
+
+
+def test_an_unattestable_image_exports_nothing_rather_than_an_empty_claim():
+    """No ``RepoDigests`` means no identity; an empty variable would read as one."""
+    record = resolve("local/built:dev", inspector=_inspector(repo_digests=[]))
+    assert container_env(record) == {}
+
+
+def test_the_requested_image_is_checked_against_the_daemons_table():
+    block = attested_reference(IMAGE, env=_attested())
+    assert block["schema"] == ATTESTATION_SCHEMA
+    # The mechanism, as a value a gate switches on -- not prose.
+    assert block["source"] == ATTESTATION_SOURCE
+    assert block["image"] == IMAGE
+    # The daemon's own answer travels verbatim, so a reader can redo the join.
+    assert block["record"]["resolved_reference"] == IMAGE
+    assert IMAGE in block["record"]["repo_digests"]
+
+
+@pytest.mark.parametrize("env", [
+    {},
+    {CENSUS_IMAGE_ENV: IMAGE},
+    {CENSUS_ATTESTATION_ENV: "{}"},
+    {CENSUS_IMAGE_ENV: "", CENSUS_ATTESTATION_ENV: ""},
+])
+def test_an_absent_attestation_refuses_rather_than_trusting_the_caller(env):
+    with pytest.raises(RuntimeImageError) as exc:
+        attested_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_attestation_missing"
+
+
+def test_an_image_the_launcher_did_not_start_is_refused():
+    """The #132 defect, as a gate: the operator names other bytes."""
+    other = "example/runtime@sha256:" + "d" * 64
+    with pytest.raises(RuntimeImageError) as exc:
+        attested_reference(other, env=_attested())
+    payload = exc.value.payload
+    assert payload["reason"] == "image_attestation_mismatch"
+    assert payload["requested"] == other and payload["attested"] == IMAGE
+
+
+@pytest.mark.parametrize("attestation", ["not json", "[]", '{"schema": "other/1"}'])
+def test_an_unreadable_attestation_is_refused_not_ignored(attestation):
+    env = {CENSUS_IMAGE_ENV: IMAGE, CENSUS_ATTESTATION_ENV: attestation}
+    with pytest.raises(RuntimeImageError) as exc:
+        attested_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_attestation_unreadable"
+
+
+def test_the_two_variables_must_agree_with_each_other():
+    """Half a forged pair is still a forged pair."""
+    env = dict(_attested(), **{CENSUS_IMAGE_ENV: "example/runtime@sha256:" + "d" * 64})
+    with pytest.raises(RuntimeImageError) as exc:
+        attested_reference(env[CENSUS_IMAGE_ENV], env=env)
+    assert exc.value.payload["reason"] == "image_attestation_inconsistent"
+
+
+def test_a_record_that_records_its_own_refusal_attests_nothing():
+    env = _attested(refused=True, reason="image_digest_mismatch")
+    with pytest.raises(RuntimeImageError) as exc:
+        attested_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_attestation_refused"
 
 
 # ------------------------------------------------------------- the wiring ---

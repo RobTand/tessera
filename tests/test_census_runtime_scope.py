@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tessera.serving.census import cell_launch_agreement
+from tessera.serving.runtime_image import container_env, resolve
 
 
 IMAGE = "example/runtime@sha256:" + "1" * 64
@@ -146,6 +147,10 @@ def test_cli_records_mode_from_the_flag_that_controls_llm(compiled):
     argv = ["checkpoint", "receipt.json", "--runtime-image", IMAGE]
     if compiled:
         argv.append("--compiled")
-    args = _tool().parse_args(argv)
+    # The image must be attested from inside the container since #132; what is
+    # under test here is the mode, so the launcher's environment is supplied
+    # by the code the launcher itself calls.
+    args = _tool().parse_args(argv, env=container_env(resolve(IMAGE, inspector=lambda _r: {
+        "present": True, "local_id": "sha256:" + "ab" * 32, "repo_digests": [IMAGE]})))
     assert args.runtime_image == IMAGE
     assert args.execution_mode == ("compiled" if compiled else "eager")

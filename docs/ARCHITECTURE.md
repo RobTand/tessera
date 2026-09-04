@@ -299,7 +299,11 @@ local image has other aliases. Missing or mismatched explicit images refuse
 before a census or serve (#126). Floating tags outside the default pinned
 repository remain resolved and stamped without being compared to that
 unrelated pin; they cannot supply an exact-runtime census context. Scoped
-lane images do not change the existing dense default.
+lane images do not change the existing dense default. The record also names
+the reference it resolved to, and `experiments/tessera_plugin_run.sh` exports
+that reference and the record itself into the container it starts, under the
+two variable names the module owns -- so a tag on the command line becomes a
+digest inside the run rather than travelling as a name that identifies nothing.
 
 `experiments/serve_lock.sh` is the one lock protocol for every serve and every
 GPU-only probe.  Acquisition publishes one symlink at the host-local
@@ -658,14 +662,25 @@ stable, with an optional hash of canonical runtime scope to distinguish
 disjoint variants; IDs must be unique, and explicit fields decide eligibility.
 
 The census requires `--runtime-image` as an exact digest reference, checked
-before loading vLLM. Its existing `--compiled` flag determines both the
-recorded execution mode and `LLM(enforce_eager=...)`. The plugin wrapper
-injects its selected image after caller-supplied Docker environment arguments;
-shell census callers pass that container value instead of reconstructing an
-image from the global pin. Historical tag callers must supply an exact digest
-for new censuses. Offline replay reads only the receipt's explicit runtime
-context: missing context remains unattested, and a mode contradicting the
-receipt's `compiled` field is refused.
+before loading vLLM, and since #132 that flag is a CROSS-CHECK rather than the
+source of the scope: the launcher resolves the image through docker's
+`RepoDigests` and exports the resolved reference and its record into the
+container, the census compares its argument against that record, and a run
+where the two disagree -- or where nothing attested the image at all -- refuses
+before the first model load. There is no opt-out, because a receipt stamped
+`operator_asserted` is the same defect wearing a field name. Nothing inside a
+container can ask the daemon what it is running, so this is attestation by the
+launcher's transcript, not proof; the receipt therefore records the mechanism
+in `runtime_image_attestation` (`source`, the two variables, and the record
+verbatim) and its absence marks a receipt written before this gate. Its
+existing `--compiled` flag determines both the recorded execution mode and
+`LLM(enforce_eager=...)`. The plugin wrapper injects its resolved image after
+caller-supplied Docker environment arguments; census callers pass that
+container value instead of reconstructing an image from the global pin.
+Historical tag callers must supply an exact digest for new censuses. Offline
+replay reads only the receipt's explicit runtime context: missing context
+remains unattested, and a mode contradicting the receipt's `compiled` field is
+refused.
 
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the

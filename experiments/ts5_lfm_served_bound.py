@@ -125,7 +125,13 @@ try:
                    "-e", "TESSERA_SERVE_MODE=resident", "-v", "/mnt/shared:/mnt/shared:ro",
                    "-v", f"{MODEL}:{MODEL}:ro", "-v", f"{local}:/census", "--",
                    f"python3 tools/tessera_route_census.py {MODEL} /census/census.json "
-                   f"--runtime-image {IMAGE} --tessera-commit {commit} "
+                   # The container's own value, not this constant: the census
+                   # checks its argument against what the launcher resolved
+                   # from docker's RepoDigests (#132), and a driver that
+                   # spells the digest itself would learn that only after two
+                   # model loads.
+                   '--runtime-image "$TESSERA_CENSUS_RUNTIME_IMAGE" '
+                   f"--tessera-commit {commit} "
                    "--prompt-tokens 64 --max-model-len 512 --gpu-memory-utilization 0.35"]
     else:
         binding_path = TEACHER / "source-bound-result.json"
