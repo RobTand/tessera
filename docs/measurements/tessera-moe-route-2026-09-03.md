@@ -25,7 +25,7 @@ issue body at face value will redo landed work:
 | `quantizable()` filters `startswith("model.layers.")`, so GLM-5.3-Flash's `model.language_model.layers.*` "drops everything" | `BODY_LAYER = ^model\.(?:[^.]+\.)*layers\.(\d+)\.` matches the sub-model prefix; `body_layer()` reads the index off that match, not off `name.split(".")[2]` |
 | the 864 per-expert 2-D weights "fall through the 2-D path as individual dense modules" | `quantizable` returns a fourth bucket, `routed_shapes`, and `main` refuses a plan that names one **before** `args.out.mkdir` |
 | the `[E, 2, nbytes]` blob-length problem needs padding plus companions | `src/tessera/moe_layout.py` is exactly that, with the round trip tested |
-| "~4.9-5.7 s per unit ... ~10x below the fused-Viterbi rate elsewhere, so the fused path may not be being taken" | the seconds are right and the inference from them is wrong. The fused path **is** taken — 4 of 4 calls, 0 to the reference, `_step` at 96.03% of self-CUDA (§3). The rate cliff the suspicion rests on was fixed besides: `WINDOW_FUSED_MAX_RATE` was 7 because of a 690-byte-per-thread register spill in the class-minimum scan at R = 8, and with the scan spelled as a runtime loop it is **11** (`encode.py:826-857`), so rate 4 is nowhere near it |
+| "~4.9-5.7 s per unit ... ~10x below the fused-Viterbi rate elsewhere, so the fused path may not be being taken" | the seconds are right and the inference from them is wrong. The fused path **is** taken — 4 of 4 calls, 0 to the reference, `_step` at 96.03% of self-CUDA in the contended arm and 96.14% in the exclusive one, from both result files (§3). The rate cliff the suspicion rests on was fixed besides: `WINDOW_FUSED_MAX_RATE` was 7 because of a 690-byte-per-thread register spill in the class-minimum scan at R = 8, and with the scan spelled as a runtime loop it is **11** (`encode.py:826-857`), so rate 4 is nowhere near it |
 
 Landed in `8ddd0a2` / `04119df` / `91cae45` (plan-time half) and `c9561e3`
 (the wire layout). This branch adds the measurements and the decode-target
@@ -192,8 +192,9 @@ process existed. The contract doc's §9.4 measured this encoder against **6-17 W
 idle**. So a second GPU job held sparky's other slot throughout, and **9.94
 s/unit is a contended upper bound, not a clean rate**. Read against the
 envelope rather than utilisation, the box sat at ~0.5 of ~140 W the entire
-time — which is also §9.4's finding about the encoder alone, so power cannot
-separate the two jobs here; only exclusivity can.
+time — which is also §9.4's finding about the encoder alone, so power alone
+cannot separate the two jobs *within this window*; only holding the box can,
+and the next arm is exactly that.
 
 **The exclusive arm, and what the pair proves.** The same harness at
 `--experts 1` under `pbrun --exclusive --gpu-capacity 2`
@@ -205,7 +206,11 @@ separate the two jobs here; only exclusivity can.
 | `experts.0.up_proj` | `[2048, 4096]` | 5.09 |
 | `experts.0.down_proj` | `[4096, 2048]` | 5.46 |
 
-**5.21 s/unit**, and this time the box is provably mine. In-process
+**5.21 s/unit** over the whole expert — **5.08 s** for the two `[2048, 4096]`
+projections alone, which is the shape the contract doc's E2M1x2 row was
+measured on, so that is the figure to compare against it (14.1x, not 14.5x).
+Both shapes carry 8,388,608 parameters, so a campaign runs at the
+three-projection mean either way. And this time the box is provably mine: in-process
 `idle_power_w` = **13.59 W**, inside §9.4's 6-17 W idle band; the box-level
 series agrees and is unambiguous:
 
