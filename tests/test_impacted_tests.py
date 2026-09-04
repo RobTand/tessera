@@ -457,3 +457,61 @@ def _load():
     monkeypatch.setattr(Path, "glob", refuse_external_glob)
     _, importers = impacted.build_graph(repo)
     assert "tests.test_dynamic" in importers.get("*", set())
+
+
+@pytest.mark.parametrize(("definition", "target"), [
+    pytest.param('def f(TOOL: load_spec("loaded", TOOL)): pass', "tools.driver", id="parameter"),
+    pytest.param('def f(TOOL) -> load_spec("loaded", TOOL): pass', "tools.driver", id="return"),
+    pytest.param('def f(*, TOOL: load_spec("loaded", TOOL)): pass', "tools.driver", id="keyword-only"),
+    pytest.param('def f(*TOOL: load_spec("loaded", TOOL)): pass', "tools.driver", id="varargs"),
+    pytest.param('def f(**TOOL: load_spec("loaded", TOOL)): pass', "tools.driver", id="kwargs"),
+    pytest.param('value: load_spec("loaded", TOOL) = 1', "tools.driver", id="assignment-with-value"),
+    pytest.param('value: load_spec("loaded", TOOL)', "tools.driver", id="assignment-no-value"),
+    pytest.param('''
+        class Example:
+            def method(self, TOOL: load_spec("loaded", TOOL)): pass
+    ''', "tools.driver", id="method-annotation"),
+    pytest.param('''
+        def f(TOOL):
+            value: load_spec("loaded", TOOL)
+    ''', "*", id="local-annotation-unknown-parameter"),
+])
+def test_annotation_expressions_keep_file_loader_edges(tmp_path, definition, target):
+    source = '''\
+from importlib.util import spec_from_file_location as load_spec
+from pathlib import Path
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
+''' + textwrap.dedent(definition) + "\n"
+    repo, base = _dynamic_repo(tmp_path, source)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get(target, set()), (
+        "annotation expressions must retain their explicit or uncertain file dependency"
+    )
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "annotation's dependency changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert result["tests"] == ["tests/test_dynamic.py"]
+
+
+def test_generic_annotation_shadow_does_not_borrow_or_pollute_outer_paths(tmp_path):
+    import ast
+    from types import SimpleNamespace
+    from tessera.source_dependencies import file_imports
+
+    source = '''\
+from importlib.util import spec_from_file_location as load_spec
+from pathlib import Path
+TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
+def generic(value: load_spec("loaded", TOOL)): pass
+def ordinary(value: load_spec("loaded", TOOL)): pass
+'''
+    repo, _ = _dynamic_repo(tmp_path, source)
+    tree = ast.parse(source)
+    # Exercise the type-parameter name field on every supported Python,
+    # including versions whose parser predates generic-function syntax.
+    tree.body[-2].type_params = [SimpleNamespace(name="TOOL")]
+    found, unknown = file_imports(tree, repo / "tests/test_dynamic.py", repo)
+    assert unknown, "a type parameter is not the shadowed global file path"
+    assert repo / "tools/driver.py" in found, "annotation scope must not leak to a sibling"
