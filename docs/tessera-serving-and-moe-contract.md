@@ -18,7 +18,7 @@ run that produced it; nothing is asserted about a runtime we have not read.
 | built artifact at 512x256 | 4.031250 bpp (forest planes) | `built 66048 = calc 65536 + 512` |
 | encode throughput, GLM expert shape, **E2M1x2 R=7** | **23.3 Mparam/s** (0.36 s per 2048x4096) | `experiments/encode_throughput_glm_expert.py` (defaults `--arity 2 --rate 7`, `E2M1_GRID`) |
 | same shape, **E4M3 / CHANNEL / window L=14** | **1.651 Mparam/s** (5.08 s per 2048x4096, box held) | `experiments/results/moe_encode_rate_profile_exclusive.json`, 2026-09-04; gate/up only, so the shape matches the row above |
-| the same, **sharing the box** | 0.848 Mparam/s (9.89 s per 2048x4096) | `..._contended.json`; 1.95x at matched shape, invisible from inside the process |
+| the same, **sharing the box** | 0.849 Mparam/s (9.89 s per 2048x4096) | `..._contended.json`; 1.95x at matched shape, invisible from inside the process |
 | the same, **over a whole expert** (gate, up, down) | 1.611 Mparam/s (5.21 s mean) | exclusive arm, all three projections; both shapes are 8,388,608 params, so this is the rate a campaign runs at |
 | GLM routed-expert encode, **at the E2M1x2 rate above** | **3.72 h one box / 1.86 h two** | same, over 311,653,564,416 params |
 | the same campaign **at the E4M3 rate** | **~54 h one box / ~27 h two** | same param count, at the whole-expert 1.611 Mparam/s |
@@ -41,8 +41,11 @@ run that produced it; nothing is asserted about a runtime we have not read.
 > so the 9.94 s figure was an upper bound by a factor of **1.91**, entirely from
 > sharing sparky. Compared at the *one shape* the E2M1x2 row was measured on
 > (2048x4096, gate/up), the quiet box runs 5.08 s against 9.89 s, and the gap to
-> that row is **14.1x** per parameter rather than 27.6x. The two
-> arms are a matched pair, and the pairing is what makes them readable:
+> that row is **14.1x** per parameter rather than 27.6x -- and that ratio is
+> held-box against held-box, because the E2M1x2 arm's own **47 W** total is
+> below the 63-88 W a shared sparky reads, so it cannot have been contended
+> either. The two arms are a matched pair, and the pairing is what makes them
+> readable:
 > `torch.profiler` counted **1,056,768** `_step` invocations in both, at 96.03%
 > and 96.14% of self-CUDA. Identical work; only the wall clock moved.
 > Utilisation read the same on both sides -- the box-level power series is what
