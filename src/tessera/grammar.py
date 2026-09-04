@@ -38,6 +38,7 @@ __all__ = [
     "forest_plane_bytes",
     "descendant_set_size",
     "bresenham_rate_schedule",
+    "rate_set",
     "validate_rate_schedule",
     "superblock_quota_ok",
     "require_column_groups",
@@ -292,6 +293,32 @@ def bresenham_rate_schedule(
         else:
             schedule.append(lower)
     return tuple(schedule)
+
+
+def rate_set(root: Fraction, cap: "int | None" = C_FULL_BITS) -> tuple[int, ...]:
+    """The distinct rates :func:`bresenham_rate_schedule` emits for ``root``.
+
+    Ascending, and independent of the column count: a schedule mixes only the
+    two rates bracketing the root, and both appear whenever the root is not an
+    integer (the fractional part is in ``(0, 1)``, so neither count can be
+    zero at any column count the root is realisable over).  An integral root
+    is one rate for every column.
+
+    It exists because the rate axis is a PLAN-TIME fact and the column count
+    is not.  A gate that must answer "can this lane read a unit at this rung?"
+    is asked before the checkpoint's shapes are read -- and a lane whose
+    kernel reads a fixed set of column widths (``kernel_window_gemv.
+    SUPPORTED_RATES``) is a constraint on exactly this set.  Deriving it here
+    rather than in the gate keeps one authority: ``tests/test_rate_set.py``
+    checks it against ``bresenham_rate_schedule`` itself over every root the
+    schedule realises.
+    """
+    lower = root.numerator // root.denominator
+    _check_rate(lower, cap)
+    if root.denominator == 1:
+        return (lower,)
+    _check_rate(lower + 1, cap)
+    return (lower, lower + 1)
 
 
 def validate_rate_schedule(

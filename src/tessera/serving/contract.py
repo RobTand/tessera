@@ -80,7 +80,11 @@ __all__ = [
     "FORMAT_KIND",
     "REQUIRES_PLUGIN",
     "contract_path",
+    "extension_lane",
+    "lane_decoder",
+    "lane_requirements",
     "load_serving_contract",
+    "route_wire_spelling",
     "validate_serving_contract",
 ]
 
@@ -288,8 +292,8 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
     import os
     from importlib import util as importlib_util
 
-    from .ext import FALLBACK_REFUSED, FALLBACK_STATUSES, MATCH_BASENAME_FNMATCH, \
-        NATIVE_EXTENSIONS, csrc_dir
+    from .ext import FALLBACK_REFUSED, FALLBACK_STATUSES, LANE_FIELDS, \
+        LANE_REQUIREMENT_FIELDS, MATCH_BASENAME_FNMATCH, NATIVE_EXTENSIONS, csrc_dir
     from .lane import MODES
     from .scheme import ROUTES
 
@@ -307,7 +311,7 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
         at = f"{where}[{i}]"
         _require_keys(entry, at,
                       required={"module_name_prefix", "filename_glob", "match", "source",
-                                "loaded_by", "routes", "when_unavailable"})
+                                "loaded_by", "routes", "lane", "when_unavailable"})
         prefix = entry["module_name_prefix"]
         if not isinstance(prefix, str) or not prefix:
             raise ValueError(f"{at}.module_name_prefix must be a non-empty string")
@@ -355,6 +359,61 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
             raise ValueError(
                 f"{at}.routes names {unknown}, which this package does not serve "
                 f"(tessera.serving.scheme.ROUTES)")
+        # THE LANE, AND WHAT IT CAN READ.  ``when_unavailable`` names the
+        # SUBSTITUTE's decoder; this names the extension's OWN, so a consumer
+        # can tell "the lane ran" from "the fallback ran" without inverting a
+        # fallback table.  ``requires`` is the lane's wire predicate, and it is
+        # published because it is decidable from a PLAN: every field is a
+        # function of ``(grid, q256)``, so a producer can refuse a checkpoint
+        # that could never reach the lane before it encodes one unit (#104).
+        # Absent means the lane has no predicate beyond its route's own -- an
+        # empty object would be a claim of no constraint, which is different.
+        lane = entry["lane"]
+        _require_keys(lane, f"{at}.lane", required={"decoder"},
+                      optional={"requires"})
+        if not isinstance(lane["decoder"], str) or not lane["decoder"]:
+            raise ValueError(
+                f"{at}.lane.decoder must be the non-empty name this lane stamps in "
+                "tessera.serving.telemetry's 'decoder' field; it is how a census counts the "
+                "modules that actually took the lane")
+        if "requires" in lane:
+            spot = f"{at}.lane.requires"
+            _require_keys(lane["requires"], spot, required=set(),
+                          optional=set(LANE_REQUIREMENT_FIELDS))
+            if not lane["requires"]:
+                raise ValueError(
+                    f"{spot} is empty; a lane with no wire predicate omits the block rather "
+                    "than publishing an empty one, because 'no constraint' and 'nobody wrote "
+                    "the constraint down' must not read the same to a gate")
+            for field in ("column_rates", "window_bits"):
+                if field not in lane["requires"]:
+                    continue
+                values = lane["requires"][field]
+                if (not isinstance(values, list) or not values
+                        or not all(isinstance(v, int) and not isinstance(v, bool) and v > 0
+                                   for v in values)):
+                    raise ValueError(
+                        f"{spot}.{field} must be a non-empty list of positive integers -- the "
+                        f"exact set the lane's kernel reads -- got {values!r}")
+                if sorted(values) != list(values) or len(set(values)) != len(values):
+                    raise ValueError(
+                        f"{spot}.{field} must be ascending and without repeats, got {values!r}")
+            # The CHECKPOINT's dialect for body and plane (``attested_wire``'s,
+            # not ``ROUTES``'), because that is the vocabulary a plan speaks;
+            # the map to the route's spelling is the one already written for
+            # ``attested_wire``, so a rename fails in one place.
+            for field, dialect in (("body", _ATTESTED_WIRE_BODY),
+                                   ("plane", _ATTESTED_WIRE_PLANE)):
+                if field not in lane["requires"]:
+                    continue
+                value = lane["requires"][field]
+                if value not in dialect:
+                    raise ValueError(
+                        f"{spot}.{field} is {value!r}, which is not a {field} this package "
+                        f"names ({sorted(dialect)}); a lane predicate a gate cannot resolve is "
+                        "prose")
+        if sorted(lane) != sorted(f for f in LANE_FIELDS if f in lane):
+            raise ValueError(f"{at}.lane fields must come from {list(LANE_FIELDS)}")
         behaviours = entry["when_unavailable"]
         if not isinstance(behaviours, Mapping) or sorted(behaviours) != sorted(MODES):
             raise ValueError(
@@ -635,6 +694,47 @@ def reader_rate_grid(route: str, grid: str, contract: Mapping[str, Any] | None =
     return None
 
 
+def extension_lane(module_name_prefix: str, contract: Mapping[str, Any] | None = None) -> dict:
+    """The ``lane`` block a native extension publishes, or raise.
+
+    A lane is addressed by the extension's ``module_name_prefix`` because that
+    is the string the load path itself asks ``cpp_extension.load`` for -- the
+    one name a lane cannot be renamed behind.  Raises rather than returning
+    ``None``: a caller asking about a lane this build does not publish has
+    asked a question with no answer, and the honest outcome is a refusal, not
+    an empty dict that reads like "no requirements".
+    """
+    payload = load_serving_contract() if contract is None else contract
+    for entry in payload["native_extensions"]:
+        if entry["module_name_prefix"] == module_name_prefix:
+            return dict(entry["lane"])
+    known = [e["module_name_prefix"] for e in payload["native_extensions"]]
+    raise ValueError(
+        f"this build publishes no native extension {module_name_prefix!r}, so it publishes no "
+        f"lane for it. Known: {known}.")
+
+
+def lane_decoder(module_name_prefix: str, contract: Mapping[str, Any] | None = None) -> str:
+    """The ``telemetry`` decoder name a serve ON this lane stamps.
+
+    Not the substitute's (``when_unavailable[mode].decoder``): this is what a
+    census counts when it asks how many modules actually took the lane.
+    """
+    return extension_lane(module_name_prefix, contract)["decoder"]
+
+
+def lane_requirements(module_name_prefix: str,
+                      contract: Mapping[str, Any] | None = None) -> dict:
+    """What a unit's wire must be for this lane to read it; ``{}`` if unstated.
+
+    ``{}`` here means the lane publishes no predicate of its own -- its
+    eligibility is the route's, already published in ``formats[]``.  The
+    distinction between that and "the block exists and is empty" is enforced
+    at contract load: an empty ``requires`` is refused.
+    """
+    return dict(extension_lane(module_name_prefix, contract).get("requires", {}))
+
+
 #: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names
 #: for one thing, and they are deliberately different: the contract's family is
 #: a PAYLOAD name a producer prices (grid + arity), the route key is what the
@@ -655,6 +755,23 @@ _FAMILY_TO_ROUTE = {
 #: sources, so a rename on either side fails there rather than drifting here.
 _ATTESTED_WIRE_BODY = {"tcq": "TCQ", "window": "WINDOW"}
 _ATTESTED_WIRE_PLANE = {"s6b": "S6B", "lut16": "LUT", "channel": "CHANNEL"}
+
+
+def route_wire_spelling(field: str, value: str) -> str:
+    """``scheme.ROUTES``' spelling of a checkpoint-dialect body or plane name.
+
+    The contract states a wire in the vocabulary a checkpoint's own config
+    records (``window``, ``channel``); the table a loader gates on spells the
+    same facts ``WINDOW`` and ``CHANNEL``.  One map, the one
+    ``attested_wire`` already uses, so a caller comparing a recipe against a
+    published predicate does not carry a second copy of it.
+    """
+    dialect = {"body": _ATTESTED_WIRE_BODY, "plane": _ATTESTED_WIRE_PLANE}.get(field)
+    if dialect is None:
+        raise ValueError(f"no wire dialect for field {field!r}; known: ['body', 'plane']")
+    if value not in dialect:
+        raise ValueError(f"{value!r} is not a {field} this package names ({sorted(dialect)})")
+    return dialect[value]
 
 
 def _validate_attested_wire(entry: Mapping[str, Any], route: str, where: str) -> None:
