@@ -76,6 +76,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
+
 PBRUN = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py")
 SHARED_ROOT = Path("/mnt/shared")
 #: Surface reports are written OUTSIDE the checkout on purpose.  pbrun binds a
@@ -90,6 +93,9 @@ DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 PROCESS_THREAD_LIMITS = dict.fromkeys(
     ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
 )
+# Cleanup backstop, matching the deployed PB worker's TERM grace. The inner
+# command needs its own deadline: deployed pbrun parses but ignores --timeout-s.
+TIMEOUT_KILL_AFTER_S = 5.0
 
 #: Where the pool publishes what it did.  A finished action's outcome record
 #: carries the exit status the worker actually saw; the CAS request beside it
@@ -260,13 +266,23 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     return command + extra
 
 
+def _timed_command(command: list[str], timeout_s: float) -> list[str]:
+    """Per-attempt managed-process-group deadline, not a queue/descendant cap."""
+    deadline = _positive_seconds(timeout_s)
+    grace = _positive_seconds(TIMEOUT_KILL_AFTER_S)
+    # Use the arm's named interpreter, not a host's unverified timeout binary.
+    return [command[0], "tools/suite_deadline.py", "--timeout-s", str(deadline),
+            "--kill-after-s", str(grace), "--", *command]
+
+
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
     # The reservation is this ARM's, not the run's: an arm clamped to serial
     # must not hold the cores it was told to spend, or the ledger says the box
     # is busy while seven of its cores idle.
     cpus = _arm_cpus(arm, args.cpus)
-    command = _command(arm, surface_json, args.pytest_arg, cpus)
+    command = _timed_command(_command(arm, surface_json, args.pytest_arg, cpus),
+                             args.timeout_s)
     flags = list(arm["pbrun_flags"])
     if name == "gpu" and args.gpu_tag:
         flags += ["--tag", args.gpu_tag]
@@ -298,6 +314,9 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "cpus_requested": args.cpus,
         "cpus_used": cpus,
         "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
+        "timeout_s": args.timeout_s,
+        "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
+        "timeout_scope": "per attempt; excludes queue time, retries and detached descendants",
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
     if cpus != args.cpus:
@@ -883,7 +902,9 @@ def main() -> int:
                          "so one number can submit an -n x86 arm and a serial "
                          "GPU arm in the same run. Default 1")
     ap.add_argument("--mem-gb", type=int, default=16)
-    ap.add_argument("--timeout-s", type=float, default=3600.0)
+    ap.add_argument("--timeout-s", type=_positive_seconds, default=3600.0,
+                    help="positive finite per-attempt inner deadline; TERM then KILL "
+                         "after 5s, not a queue/retry lifetime limit")
     ap.add_argument("--wait-s", type=float, default=5400.0)
     ap.add_argument("--out", default="",
                     help="receipt path; default is a timestamped file under "

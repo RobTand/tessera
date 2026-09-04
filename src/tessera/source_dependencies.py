@@ -1,4 +1,4 @@
-"""Conservative, non-executing discovery of Python file-loader dependencies.
+"""Conservative, non-executing discovery of Python file-consumer dependencies.
 
 The supported expressions are finite Path constructions, not arbitrary Python.
 An unresolved recognized loader returns a wildcard edge instead of no edge.
@@ -15,6 +15,8 @@ _LOADERS = {"spec_from_file_location": (1, "location"),
 _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
             "SourceFileLoader": "importlib.machinery.SourceFileLoader",
             "run_path": "runpy.run_path"}
+_READ_METHODS = {"read_text", "read_bytes", "open"}
+_KINDS = set(_LOADERS) | _READ_METHODS
 
 
 class _Scope:
@@ -187,7 +189,7 @@ def _values(node, scope, root, visiting=frozenset()):
             here = here.parent
         if here is None:
             return {("symbol", "builtins." + node.id)} if node.id in {
-                "str", "sorted", "list", "tuple", "set"} else None
+                "str", "sorted", "list", "tuple", "set", "open"} else None
         key = (id(here), node.id)
         if key in visiting:
             return None
@@ -208,6 +210,8 @@ def _values(node, scope, root, visiting=frozenset()):
                 result.add(("symbol", value[1] + "." + node.attr))
             elif isinstance(value, Path) and node.attr == "parent":
                 result.add(value.parent)
+            elif isinstance(value, Path) and node.attr in _READ_METHODS:
+                result.add(("file_reader", value))
             else:
                 return None
         return result
@@ -285,17 +289,17 @@ def file_imports(tree, path, root):
     """Return repository-relative .py dependencies and an unknown-loader flag."""
     scanner = _Scanner(path)
     scanner.visit(tree)
-    aliases = {name: {name} for name in _LOADERS}
+    aliases = {name: {name} for name in _KINDS}
     assignments = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                if alias.name in _LOADERS:
+                if alias.name in _KINDS:
                     aliases.setdefault(alias.asname or alias.name, set()).add(alias.name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             assignments.append(node)
     def kind(expression):
-        if isinstance(expression, ast.Attribute) and expression.attr in _LOADERS:
+        if isinstance(expression, ast.Attribute) and expression.attr in _KINDS:
             return {expression.attr}
         if isinstance(expression, ast.Name):
             return aliases.get(expression.id, set())
@@ -322,14 +326,30 @@ def file_imports(tree, path, root):
             unknown = True
             continue
         loader = next(iter(loaders))
-        position, keyword = _LOADERS[loader]
-        expression = call.args[position] if len(call.args) > position else next(
-            (arg.value for arg in call.keywords if arg.arg == keyword), None)
         try:
             functions = _values(call.func, scope, root)
-            if functions != {("symbol", _SYMBOLS[loader])}:
-                unknown = True
-            values = _values(expression, scope, root)
+            if loader in _READ_METHODS:
+                # Reading source bytes is already a dependency, whether the
+                # consumer later ast.parse/execs them or asserts on the text.
+                # No execution/data-flow guess or hardcoded consumer roster.
+                if functions is not None and all(
+                        isinstance(function, tuple) and function[0] == "file_reader"
+                        for function in functions):
+                    values = {function[1] for function in functions}
+                elif loader == "open" and functions is not None and functions <= {
+                        ("symbol", "builtins.open"), ("symbol", "io.open")}:
+                    expression = call.args[0] if call.args else next(
+                        (arg.value for arg in call.keywords if arg.arg == "file"), None)
+                    values = _values(expression, scope, root)
+                else:
+                    values = None
+            else:
+                position, keyword = _LOADERS[loader]
+                expression = call.args[position] if len(call.args) > position else next(
+                    (arg.value for arg in call.keywords if arg.arg == keyword), None)
+                if functions != {("symbol", _SYMBOLS[loader])}:
+                    unknown = True
+                values = _values(expression, scope, root)
         except (OSError, ValueError, TypeError, RecursionError):
             values = None
         if values is None or not all(isinstance(value, (str, Path)) for value in values):

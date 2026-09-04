@@ -8,7 +8,7 @@ parse every module's imports, invert the edges, and take everything
 reverse-reachable from the changed set.
 
 **It fails open, and that is the point.** Besides ordinary imports, explicit
-file loaders contribute edges from their resolved paths, not their module
+file loaders and source reads contribute edges from resolved paths, not module
 labels. Unresolved loader paths conservatively select the importing module's
 reverse-reachable tests for any non-inert change (a conftest forces full).
 Other kinds of coupling do not have ordinary import edges:
