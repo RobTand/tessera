@@ -239,6 +239,147 @@ def test_submission_caps_native_threads_and_compiler_jobs_per_process(
     assert record["process_thread_limits"] == dict.fromkeys(limits, "1")
 
 
+@pytest.mark.parametrize("name", ["gpu", "x86"])
+def test_attempt_timeout_is_inside_the_sealed_submission(tmp_path, name):
+    import shlex
+    from types import SimpleNamespace
+
+    merge_suite = _module()
+    args = SimpleNamespace(cpus=8, pytest_arg=[], gpu_tag="sparky", mem_gb=4,
+                           checkout=ROOT, timeout_s=12.5, wait_s=300, dry_run=True)
+    record = merge_suite._submit(name, merge_suite.ARMS[name], args, tmp_path)
+    invocation = shlex.split(record["pbrun"])
+    command = invocation[invocation.index("--") + 1:]
+    assert command[:7] == [merge_suite.ARMS[name]["python"], "tools/suite_deadline.py",
+                           "--timeout-s", "12.5", "--kill-after-s", "5.0", "--"]
+    assert command[7] == merge_suite.ARMS[name]["python"]
+    assert "--foreground" not in command and "--preserve-status" not in command
+    assert record["timeout_s"] == 12.5
+    assert record["timeout_kill_after_s"] == 5.0
+
+
+@pytest.mark.parametrize("duration", ["0", "-1", "nan", "inf", "-inf"])
+def test_attempt_timeout_refuses_disabled_or_nonfinite_deadlines(tmp_path, duration):
+    out = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
+         "--checkout", str(ROOT), "--out", str(out), f"--timeout-s={duration}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 2
+    assert "positive finite" in result.stderr
+    assert not out.exists(), "invalid deadlines must refuse before receipt/submission writes"
+
+
+@pytest.mark.parametrize("status", [0, 7])
+def test_attempt_timeout_preserves_ordinary_command_status(status):
+    merge_suite = _module()
+    command = merge_suite._timed_command([sys.executable, "-c", f"raise SystemExit({status})"], 2.0)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == status
+
+
+def test_attempt_timeout_term_handler_cannot_turn_deadline_into_success():
+    merge_suite = _module()
+    script = ("import signal,time,sys; "
+              "signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); "
+              "print('ready', flush=True); time.sleep(60)")
+    result = subprocess.run(merge_suite._timed_command([sys.executable, "-c", script], 2.0),
+                            capture_output=True, text=True, timeout=10)
+    assert "ready" in result.stdout
+    assert result.returncode == 124, "timeout must remain non-green even if TERM cleanup exits0"
+
+
+@pytest.mark.parametrize("leader_exits", [False, True])
+def test_attempt_timeout_kills_a_term_resistant_process_group(monkeypatch, leader_exits):
+    import signal
+
+    merge_suite = _module()
+    monkeypatch.setattr(merge_suite, "TIMEOUT_KILL_AFTER_S", 0.2)
+    leader_handler = ("signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); "
+                      if leader_exits else "")
+    script = ("import json,os,signal,subprocess,sys,time; "
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+              + leader_handler +
+              "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
+    command = merge_suite._timed_command([sys.executable, "-c", script], 2.0)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    pids = []
+
+    def running(pid):
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[0]
+        except FileNotFoundError:
+            return False
+        return state != "Z"  # a reparented zombie is dead, not retained work
+
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+        pids = json.loads(stdout)
+        expected = {124} if leader_exits else {-signal.SIGKILL, 137}
+        assert process.returncode in expected, stderr
+        deadline = time.monotonic() + 2.0
+        while any(running(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not any(running(pid) for pid in pids), "the managed parent and child must stop"
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+        for pid in pids:
+            if running(pid):
+                os.kill(pid, signal.SIGKILL)
+
+
+def test_attempt_timeout_supervisor_interrupt_cleans_its_owned_group():
+    import selectors
+    import signal
+
+    merge_suite = _module()
+    script = ("import json,os,signal,subprocess,sys,time; "
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+              "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
+    process = subprocess.Popen(merge_suite._timed_command([sys.executable, "-c", script], 60.0),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    pids = []
+
+    def running(pid):
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[0] != "Z"
+        except FileNotFoundError:
+            return False
+
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            assert ready.select(timeout=5), "owned child must announce readiness"
+        pids = json.loads(process.stdout.readline())
+        process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=10)
+        assert process.returncode in (-signal.SIGTERM, 143)
+        deadline = time.monotonic() + 2.0
+        while any(running(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not any(running(pid) for pid in pids), "interrupt must not abandon the owned group"
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+        for pid in pids:
+            if running(pid):
+                os.kill(pid, signal.SIGKILL)
+
+
 def test_live_gpu_submission_requires_an_explicit_placement_tag(monkeypatch, tmp_path, capsys):
     merge_suite = _module()
     monkeypatch.setattr(merge_suite, "DEFAULT_RECEIPT_ROOT", tmp_path / "receipts")

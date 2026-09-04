@@ -28,6 +28,22 @@ Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
+The sealed inner command also uses `tessera.suite_deadline`, launched through
+`tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
+positive and finite; expiry signals its owned process group with TERM, then
+KILL after a five-second grace. The leader remains unreaped during the grace,
+so its PID cannot be reused and a resistant child is killed even if the leader
+exits on TERM. Normal command status passes through; expiry remains non-green
+even if a TERM handler exits zero. Supervisor TERM/INT kills and reaps its
+owned group before returning a nonzero status. This is a per-attempt deadline,
+not a bound on queueing/retries, detached sessions/containers, or descendants
+left after a command completes before its deadline. Host `timeout` binaries
+are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
+137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
+The deployed pbrun parses but does not apply
+its own `--timeout-s`; its worker may report outer status 1 for any nonzero
+inner result, so a receipt must not claim it observed numeric 124/137 merely
+from that outer status. The command and deadline/grace are retained per arm.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
