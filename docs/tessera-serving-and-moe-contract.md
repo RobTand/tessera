@@ -17,10 +17,12 @@ run that produced it; nothing is asserted about a runtime we have not read.
 | E2M1 k=2 R=7 body rate | **exactly 4.000000 bpp** | `terminal_rate`, both accountants agree |
 | built artifact at 512x256 | 4.031250 bpp (forest planes) | `built 66048 = calc 65536 + 512` |
 | encode throughput, GLM expert shape, **E2M1x2 R=7** | **23.3 Mparam/s** (0.36 s per 2048x4096) | `experiments/encode_throughput_glm_expert.py` (defaults `--arity 2 --rate 7`, `E2M1_GRID`) |
-| same shape, **E4M3 / CHANNEL / window L=14** | **0.844 Mparam/s** (9.94 s per 2048x4096, mean of 6) | `experiments/results/moe_encode_rate_profile_contended.json`, 2026-09-04 |
+| same shape, **E4M3 / CHANNEL / window L=14** | **1.651 Mparam/s** (5.08 s per 2048x4096, box held) | `experiments/results/moe_encode_rate_profile_exclusive.json`, 2026-09-04; gate/up only, so the shape matches the row above |
+| the same, **sharing the box** | 0.849 Mparam/s (9.89 s per 2048x4096) | `..._contended.json`; 1.95x at matched shape, invisible from inside the process |
+| the same, **over a whole expert** (gate, up, down) | 1.611 Mparam/s (5.21 s mean) | exclusive arm, all three projections; both shapes are 8,388,608 params, so this is the rate a campaign runs at |
 | GLM routed-expert encode, **at the E2M1x2 rate above** | **3.72 h one box / 1.86 h two** | same, over 311,653,564,416 params |
-| the same campaign **at the E4M3 rate** | **~103 h one box / ~51 h two** | same param count, 0.844 Mparam/s |
-| encode power | 47 W of ~140 W envelope (E2M1x2); 72 W of 140 W (E4M3, contended) | neither is envelope-bound |
+| the same campaign **at the E4M3 rate** | **~54 h one box / ~27 h two** | same param count, at the whole-expert 1.611 Mparam/s |
+| encode power | 47 W of ~140 W envelope (E2M1x2); 64-70 W of 140 W (E4M3) | neither is envelope-bound |
 
 > **Correction, 2026-09-04 — the grid was missing, and it is the whole number.**
 > The 23.3 Mparam/s row was measured on **E2M1x2 at rate 7**, which is the
@@ -30,12 +32,28 @@ run that produced it; nothing is asserted about a runtime we have not read.
 > CHANNEL plane, window body L=14 -- and that encode is **27.6x slower per
 > parameter** on the identical shape and box.
 >
-> So the conclusion below inverts. The E4M3 campaign is **four days on one box,
-> two on two**, not an afternoon, and encode cost is back on the list of things
-> that gate a served expert route. The 9.94 s figure was measured under
-> contention (the file is named for it) and is therefore an **upper** bound on
-> the per-unit time; a quiet-box measurement would move it down by an unmeasured
-> amount and is the thing to run before anyone schedules the campaign.
+> So the conclusion below inverts. The E4M3 campaign is **two and a bit days on
+> one box, about one on two**, not an afternoon, and encode cost is back on the
+> list of things that gate a served expert route.
+>
+> **Amended the same day: the quiet-box measurement this note asked for has been
+> run.** It is 5.21 s per unit over a whole expert, 1.611 Mparam/s, **~54 h** --
+> so the 9.94 s figure was an upper bound by a factor of **1.91**, entirely from
+> sharing sparky. Compared at the *one shape* the E2M1x2 row was measured on
+> (2048x4096, gate/up), the quiet box runs 5.08 s against 9.89 s, and the gap to
+> that row is **14.1x** per parameter rather than 27.6x -- and that ratio is
+> held-box against held-box, because the E2M1x2 arm's own **47 W** total is
+> below the 63-88 W a shared sparky reads, so it cannot have been contended
+> either. The two arms are a matched pair, and the pairing is what makes them
+> readable:
+> `torch.profiler` counted **1,056,768** `_step` invocations in both, at 96.03%
+> and 96.14% of self-CUDA. Identical work; only the wall clock moved.
+> Utilisation read the same on both sides -- the box-level power series is what
+> separated them, 14-15 W idle before the exclusive run against 63-88 W before
+> the contended one. Both files stay committed, because the contended one is the
+> evidence for the sentence that follows: **schedule this campaign on a held
+> box.** Sharing it costs 1.91x, and nothing inside the process can see that
+> happening.
 >
 > Original text, kept because it is the reasoning the correction overturns:
 > *"The encode campaign is an afternoon. Encode cost is **not** what gates this

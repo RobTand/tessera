@@ -25,7 +25,7 @@ issue body at face value will redo landed work:
 | `quantizable()` filters `startswith("model.layers.")`, so GLM-5.3-Flash's `model.language_model.layers.*` "drops everything" | `BODY_LAYER = ^model\.(?:[^.]+\.)*layers\.(\d+)\.` matches the sub-model prefix; `body_layer()` reads the index off that match, not off `name.split(".")[2]` |
 | the 864 per-expert 2-D weights "fall through the 2-D path as individual dense modules" | `quantizable` returns a fourth bucket, `routed_shapes`, and `main` refuses a plan that names one **before** `args.out.mkdir` |
 | the `[E, 2, nbytes]` blob-length problem needs padding plus companions | `src/tessera/moe_layout.py` is exactly that, with the round trip tested |
-| "~4.9-5.7 s per unit ... ~10x below the fused-Viterbi rate elsewhere, so the fused path may not be being taken" | the seconds are right and the inference from them is wrong. The fused path **is** taken — 4 of 4 calls, 0 to the reference, `_step` at 96.03% of self-CUDA (§3). The rate cliff the suspicion rests on was fixed besides: `WINDOW_FUSED_MAX_RATE` was 7 because of a 690-byte-per-thread register spill in the class-minimum scan at R = 8, and with the scan spelled as a runtime loop it is **11** (`encode.py:826-857`), so rate 4 is nowhere near it |
+| "~4.9-5.7 s per unit ... ~10x below the fused-Viterbi rate elsewhere, so the fused path may not be being taken" | the seconds are right and the inference from them is wrong. The fused path **is** taken — 4 of 4 calls, 0 to the reference, `_step` at 96.03% of self-CUDA in the contended arm and 96.14% in the exclusive one, from both result files (§3). The rate cliff the suspicion rests on was fixed besides: `WINDOW_FUSED_MAX_RATE` was 7 because of a 690-byte-per-thread register spill in the class-minimum scan at R = 8, and with the scan spelled as a runtime loop it is **11** (`encode.py:826-857`), so rate 4 is nowhere near it |
 
 Landed in `8ddd0a2` / `04119df` / `91cae45` (plan-time half) and `c9561e3`
 (the wire layout). This branch adds the measurements and the decode-target
@@ -192,23 +192,54 @@ process existed. The contract doc's §9.4 measured this encoder against **6-17 W
 idle**. So a second GPU job held sparky's other slot throughout, and **9.94
 s/unit is a contended upper bound, not a clean rate**. Read against the
 envelope rather than utilisation, the box sat at ~0.5 of ~140 W the entire
-time — which is also §9.4's finding about the encoder alone, so power cannot
-separate the two jobs here; only exclusivity can.
+time — which is also §9.4's finding about the encoder alone, so power alone
+cannot separate the two jobs *within this window*; only holding the box can,
+and the next arm is exactly that.
 
-**What the two numbers bracket.** §9.4's uncontended 5.0 s/unit (2026-09-02,
-before #94 and the #50/#75 refit landing) and this branch's contended 9.94
-s/unit give a schedule range rather than a point:
+**The exclusive arm, and what the pair proves.** The same harness at
+`--experts 1` under `pbrun --exclusive --gpu-capacity 2`
+(`experiments/results/moe_encode_rate_profile_exclusive.json`, tree `721c81e`):
+
+| tensor | shape | seconds |
+|---|---|---|
+| `experts.0.gate_proj` | `[2048, 4096]` | 5.07 |
+| `experts.0.up_proj` | `[2048, 4096]` | 5.09 |
+| `experts.0.down_proj` | `[4096, 2048]` | 5.46 |
+
+**5.21 s/unit** over the whole expert — **5.08 s** for the two `[2048, 4096]`
+projections alone, which is the shape the contract doc's E2M1x2 row was
+measured on, so that is the figure to compare against it (14.1x, not 14.5x).
+Both shapes carry 8,388,608 parameters, so a campaign runs at the
+three-projection mean either way. And this time the box is provably mine: in-process
+`idle_power_w` = **13.59 W**, inside §9.4's 6-17 W idle band; the box-level
+series agrees and is unambiguous:
+
+```
+04:15:30Z 14   04:16:40Z 14   04:17:50Z 15   04:18:40Z 14   <- idle, three and a half minutes
+04:19:10Z 69   04:19:20Z 64   04:19:30Z 70                  <- the encode, and only the encode
+04:19:40Z 15   04:20:00Z  6   04:20:10Z 25                  <- idle again
+```
+
+Against the contended window's 63-88 W *before the run began*, that is the
+whole explanation. **The two arms are a matched pair and the difference is
+occupancy, not the tree:** the profiler counted **1,056,768** `_step`
+invocations in *both* runs — identical work, 96.03% vs 96.14% of self-CUDA —
+at 9.94 s and 5.21 s of wall. The contended arm was **1.91x** slower for doing
+exactly the same thing.
+
+So there is no regression from #94 or the #50/#75 refit landing, and #5's own
+estimate was right:
 
 | | s/unit | one MoE layer (864 units) | the 4-layer model (2592) |
 |---|---|---|---|
-| §9.4, uncontended, older tree | 5.0 | ~72 min | ~3.6 h |
-| here, contended, current tree | 9.94 | ~143 min | ~7.2 h |
+| #5's estimate | 4.9-5.7 | — | — |
+| §9.4, 2026-09-02, older tree | 5.0 | ~72 min | ~3.6 h |
+| **here, exclusive, current tree** | **5.21** | **75 min** | **~3.75 h** |
+| here, contended, current tree | 9.94 | ~143 min | ~7.2 h (what sharing costs) |
 
-Either way the encode leg is hours, not minutes, on one box — which is the
-decision the profile was asked for, and it holds across the bracket. Narrowing
-it needs an exclusive box: a `--experts 1` re-run under `pbrun --exclusive` is
-queued and its result belongs beside this table when it lands
-(`experiments/results/moe_encode_rate_profile_exclusive.json`).
+**Schedule against 5.21 s/unit and hold the box.** The encode leg is hours, not
+minutes; sharing sparky nearly doubles it, and the in-process profiler cannot
+see that happening — only the power series can.
 
 **A pool defect found on the way, reported not worked around.**
 `pbrun --exclusive` computes its demand as `demand["gpu"] = args.gpu_capacity`
@@ -375,8 +406,9 @@ blocking the next:
    4-layer arm, then KL against the BF16 teacher at matched bytes.
 
 **Cost of the encode leg, so it can be scheduled rather than guessed:** one MoE
-layer is 288 x 3 = 864 units and the whole 4-layer model is 2592, at the
-per-unit rate in §3.
+layer is 288 x 3 = 864 units and the whole 4-layer model is 2592, at **5.21
+s/unit** on an exclusive box (§3) — **75 min per layer, ~3.75 h for the model**.
+Sharing the box costs 1.91x of that, so this leg wants `--exclusive`.
 
 ---
 
