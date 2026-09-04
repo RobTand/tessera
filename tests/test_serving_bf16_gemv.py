@@ -73,17 +73,30 @@ def _encode_cpu(q256, rows=32, cols=64, seed=0):
 
 
 def test_eligibility_is_derived_from_the_kernel_constants():
-    """The rule, not a roster: every supported rate and window is eligible."""
+    """The rule, not a roster: every rate and window THE KERNEL DECLARES is
+    eligible.
+
+    This used to open by restating ``(1, 2, 4)`` and ``(14,)`` -- the shape
+    AGENTS.md rule 3 names, a test that passes on the day the list is wrong.
+    The constants are now the parse of ``csrc/window_gemv.cu``'s own
+    declaration (issue #145) and ``tests/test_kernel_roster.py`` owns that
+    derivation, so what is left here is the rule this module is about: the
+    eligibility gate says yes to everything the kernel has a lane for.
+    """
     kg = _kg()
-    assert tuple(kg.SUPPORTED_RATES) == (1, 2, 4)
-    assert tuple(kg.WINDOW_BITS_SUPPORTED) == (14,)
     from types import SimpleNamespace
+    top = max(kg.SUPPORTED_RATES)
     for rate in kg.SUPPORTED_RATES:
-        unit = SimpleNamespace(rates=(rate,) * 8, window_bits=14, initial_state=None)
-        assert route.gemv_eligible_for_unit(unit), rate
-    for window_bits in kg.WINDOW_BITS_SUPPORTED:
-        unit = SimpleNamespace(rates=(4,) * 8, window_bits=window_bits, initial_state=None)
-        assert route.gemv_eligible_for_unit(unit), window_bits
+        for window_bits in kg.WINDOW_BITS_SUPPORTED:
+            unit = SimpleNamespace(rates=(rate,) * 8, window_bits=window_bits,
+                                   initial_state=None)
+            assert route.gemv_eligible_for_unit(unit), (rate, window_bits)
+    outside = max(kg.WINDOW_BITS_SUPPORTED) + 1
+    assert not route.gemv_eligible_for_unit(
+        SimpleNamespace(rates=(top,) * 8, window_bits=outside, initial_state=None))
+    assert not route.gemv_eligible_for_unit(
+        SimpleNamespace(rates=(max(kg.SUPPORTED_RATES) + 1,) * 8,
+                        window_bits=kg.WINDOW_BITS_SUPPORTED[0], initial_state=None))
 
 
 def test_a_bresenham_mix_inside_the_supported_set_is_eligible():

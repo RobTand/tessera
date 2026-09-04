@@ -62,6 +62,8 @@ import sys
 import sysconfig
 import threading
 
+from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
+
 __all__ = [
     "TESSERA_NVFP4_ABI_SCHEMA",
     "NATIVE_EXTENSIONS",
@@ -143,11 +145,11 @@ NVFP4_LANE = {"decoder": "native_span2"}
 #: The window GEMV's lane, and the reason this block exists.
 #:
 #: ``kernel_window_gemv`` repacks each column's code stream at that column's
-#: OWN rate, and its kernel has a lane for three rates only -- lane widths of
-#: 16 rows at R in (1, 2, 4) are whole numbers of bytes, R = 3 would need
-#: 6-byte lanes.  So a unit is readable by this lane iff EVERY column rate is
-#: in ``kernel_window_gemv.SUPPORTED_RATES`` and its window is in
-#: ``WINDOW_BITS_SUPPORTED``; ``repack_window_body`` and
+#: OWN rate, and the kernel has a lane only where 16 rows of R-bit codes are
+#: one 64-, 32- or 16-bit chunk (``chunk_width_supported`` in the ``.cu``) --
+#: R = 3 would need 6-byte lanes.  So a unit is readable by this lane iff
+#: EVERY column rate is in ``kernel_roster.SUPPORTED_RATES`` and its window is
+#: in ``WINDOW_BITS_SUPPORTED``; ``repack_window_body`` and
 #: ``bf16_route.gemv_eligible_for_unit`` are the two enforcement points.
 #:
 #: Published because the constraint is a PRODUCER's problem.  A rung is a root
@@ -160,15 +162,21 @@ NVFP4_LANE = {"decoder": "native_span2"}
 #: held could exercise the lane at all).  With the predicate in the contract a
 #: producer refuses the plan instead (``scheme.refuse_unreachable_lane``).
 #:
-#: The values are literals here and not imports because this module is read by
-#: a producer with no torch and ``kernel_window_gemv`` needs it; they are tied
-#: to the kernel's own constants by ``tests/test_lane_reachability.py``, the
-#: same way ``loader_axes`` is tied to ``sharding.ROUTE_TP_AXES``.
+#: The two numeric values are READ OFF THE KERNEL (``tessera.kernel_roster``
+#: parses ``csrc/window_gemv.cu``'s own ``TESSERA_GEMV_RATES`` /
+#: ``TESSERA_GEMV_WINDOW_BITS`` declaration, which is what the file's dispatch
+#: is generated from).  They used to be literals, on the ground that this
+#: module is read by a producer with no torch and so cannot import
+#: ``kernel_window_gemv`` -- true, and it made this block a restatement tied to
+#: another restatement by a test, with the kernel tied to neither (issue #145).
+#: ``kernel_roster`` is torch-free precisely so that this module can derive
+#: them: a lane predicate published here now cannot outlive the rates the
+#: kernel instantiates.
 WINDOW_GEMV_LANE = {
     "decoder": "window_gemv",
     "requires": {
-        "column_rates": [1, 2, 4],
-        "window_bits": [14],
+        "column_rates": list(SUPPORTED_RATES),
+        "window_bits": list(WINDOW_BITS_SUPPORTED),
         "body": "window",
         "plane": "channel",
     },
