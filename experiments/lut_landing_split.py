@@ -123,6 +123,45 @@ def table(path: Path):
                       f"{(tc - ta) / tc:>8.2%}")
             elif not ok:
                 print("    -- not comparable pass for pass")
+
+        # A unit whose table is unchanged in pass 1 hands pass 2 an identical
+        # plane -- the encode is deterministic, so the two arms are still on
+        # shared inputs -- and it may diverge later.  Walk forward to the FIRST
+        # pass where the landed costs differ, and report it only if that pass's
+        # ``continuous`` still agrees to 1e-6, which is the same like-for-like
+        # test pass 1 passes trivially.  Without this a unit reads 0.00% above
+        # while its held-out ``out`` moved, and the two look contradictory.
+        print(f"\n    first pass whose tables differ, per unit "
+              f"(reported only while both arms still share ``continuous``)")
+        print(f"\n{'unit':<40} {'pass':>5} {'control':>10} {'arm':>10} "
+              f"{'removed':>9}")
+        for name in rows:
+            if name == ctl:
+                continue
+            print(f"  {name}")
+            for u, arms in units.items():
+                if name not in arms or not arms[name].get("refit"):
+                    continue
+                C, A = arms[ctl]["refit"], arms[name]["refit"]
+                hit = None
+                for i, (c, a) in enumerate(zip(C, A)):
+                    if c["landed"] != a["landed"]:
+                        hit = (i, c, a)
+                        break
+                if hit is None:
+                    print(f"    {u:<38} {'--':>5}   tables identical in every "
+                          f"pass")
+                    continue
+                i, c, a = hit
+                if abs(c["continuous"] - a["continuous"]) > 1e-6:
+                    print(f"    {u:<38} {i + 1:>5}   diverged after the arms "
+                          f"stopped sharing inputs -- not comparable")
+                    continue
+                lc = c["landed"] - c["continuous"]
+                la = a["landed"] - a["continuous"]
+                share = (lc - la) / lc if lc else float("nan")
+                print(f"    {u:<38} {i + 1:>5} {lc:>10.4f} {la:>10.4f} "
+                      f"{share:>8.2%}")
     return rows
 
 
