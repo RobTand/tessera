@@ -704,7 +704,21 @@ beside it (`KL >= 0.019423`, arm A re-served, one lane state, two builds), so
 compiled serve on this stack stamps `inductor_deterministic: false`
 (`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md` §7).
 
-**That decode-regime gap is now fully accounted for, and it was half a defect
+The fresh #113 r6 population now completes the compiled measurement with two
+lane builds, two fallback builds and one same-dispatch compiled BF16 teacher
+on Sparklina (`tessera-compiled-decode-kl-r6-2026-09-04.md`). Actual profiler
+evidence verifies 50,176 GEMV launches per lane arm and zero per fallback arm,
+with 112 fallback preparation refusals. Cross-arm decode KL lower bounds are
+0.017367–0.017437 (A as reference), versus 0.006155 for the A rebuild and zero
+for the B rebuild. However, cross-arm prefill is also nonzero (0.019502), so
+this is not an isolated M=1 GEMV quality effect. The teacher lower-bound ordering
+flips between A1 (0.437342), A2 (0.442105) and B1/B2 (0.438400); these are
+top-1024 bounds with substantial unobserved mass, not full-vocabulary KL or a
+quality winner. #113 closes as a completed measurement, without changing a
+promotion gate. R6 reaps the serve before rank0 parsing; the two sampled memory
+intervals stayed above 21 GiB available, and peak parser RSS was 4.34 GiB.
+
+**The eager decode-regime gap is now fully accounted for, and it was half a defect
 and half accumulation order** (#110) -- the issue offered those as alternatives
 and the answer was both. One real term was found, fixed,
 and re-served: the streamed lane handed the

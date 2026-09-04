@@ -1,8 +1,84 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T15:59:06Z",
+ "generated": "2026-09-04T19:53:39Z",
  "repos": {
   "RobTand/prismaquant": {
+   "1": {
+    "state": "CLOSED",
+    "title": "Gracefully handle missing MTP tensors in index"
+   },
+   "10": {
+    "state": "CLOSED",
+    "title": "Fix #4 (fla fast-path poisoning) + #6 (Gemma4 rotary init) + multi-layer-type rope forward"
+   },
+   "100": {
+    "state": "CLOSED",
+    "title": "refactor(names): one shared name-projection layer, and all four consumers on it"
+   },
+   "101": {
+    "state": "CLOSED",
+    "title": "test(docs): pin section 8.4 profile matrix"
+   },
+   "102": {
+    "state": "CLOSED",
+    "title": "tools(cluster): TP=2 decode feasibility harness and residency budget planner"
+   },
+   "103": {
+    "state": "CLOSED",
+    "title": "feat(probe): price the grouped operand wo_a with an exact grouped Fisher"
+   },
+   "104": {
+    "state": "CLOSED",
+    "title": "feat(cluster): unit-sharded production-cache renders, with a byte-faithful merge"
+   },
+   "105": {
+    "state": "CLOSED",
+    "title": "fix: three independent corrections rescued from merge/proven-rescues"
+   },
+   "106": {
+    "state": "CLOSED",
+    "title": "docs(pqwork): make hand-launched reservations self-clearing"
+   },
+   "107": {
+    "state": "CLOSED",
+    "title": "docs: survey GB10 GPU oversubscription prior art"
+   },
+   "108": {
+    "state": "CLOSED",
+    "title": "Add production-tier bf16 FP8-CB rerender driver"
+   },
+   "109": {
+    "state": "CLOSED",
+    "title": "docs: trace shipping trellis alphabet selection"
+   },
+   "11": {
+    "state": "CLOSED",
+    "title": "AURA: KL-Fisher allocation cost + retire PrismaSCOUT as the paper spine"
+   },
+   "110": {
+    "state": "CLOSED",
+    "title": "fix(cache): fail closed on activation sidecar corruption"
+   },
+   "111": {
+    "state": "CLOSED",
+    "title": "docs: survey GB10 GPU oversubscription prior art"
+   },
+   "112": {
+    "state": "CLOSED",
+    "title": "feat(pqwork): shared pull-queue, declared memory budgets, and the oversubscription survey behind them"
+   },
+   "113": {
+    "state": "CLOSED",
+    "title": "feat(gridbook): pin Gridbook 0.9.1 / runtime-contract v12"
+   },
+   "114": {
+    "state": "CLOSED",
+    "title": "fix(pqwork): attribute evictions and age work into protection"
+   },
+   "115": {
+    "state": "CLOSED",
+    "title": "fix(tests): preserve the venv for pipeline gate subprocesses"
+   },
    "116": {
     "state": "CLOSED",
     "title": "Tessera is not an export lane: EXPORT_LANES is a 2-tuple and a test pins it"
@@ -63,6 +139,10 @@
     "state": "CLOSED",
     "title": "promote_serving_units raises a bare KeyError on an unranked format"
    },
+   "13": {
+    "state": "CLOSED",
+    "title": "DSv4-Flash probe enablement"
+   },
    "130": {
     "state": "CLOSED",
     "title": "Striped production-cache renders do not keep the same calibration rows as an unstriped one"
@@ -102,6 +182,10 @@
    "139": {
     "state": "CLOSED",
     "title": "`EXTENSION_PATTERN`'s bare `fla` alternative matches any path containing those three letters (`libflac.so`)"
+   },
+   "14": {
+    "state": "CLOSED",
+    "title": "Fisher: normalize h_trace by the global calib token count"
    },
    "140": {
     "state": "CLOSED",
@@ -143,6 +227,10 @@
     "state": "CLOSED",
     "title": "The Tessera campaign expands one menu per Linear, 37,861 times for 25 distinct answers"
    },
+   "15": {
+    "state": "CLOSED",
+    "title": "Footprint: per-tensor source-byte manifest; reject negative floors"
+   },
    "150": {
     "state": "CLOSED",
     "title": "The lane-wiring test trusts a hand-kept roster, so a bogus tessera declaration passes once the set is updated in lockstep"
@@ -182,6 +270,10 @@
    "159": {
     "state": "CLOSED",
     "title": "Fisher row-weight clip 64 caps the measured objective below n_rows, in two copies"
+   },
+   "16": {
+    "state": "CLOSED",
+    "title": "Solver: feasible-only termination + solve memoization"
    },
    "160": {
     "state": "CLOSED",
@@ -223,6 +315,10 @@
     "state": "CLOSED",
     "title": "promote_fused silently collapses the per-member rung licence #140 just built"
    },
+   "17": {
+    "state": "CLOSED",
+    "title": "Allocator: packed serving groups become first-class DP units"
+   },
    "170": {
     "state": "CLOSED",
     "title": "The cache render-identity sidecar does not cover the MTP or packed-expert appends that write into the same directory"
@@ -247,6 +343,30 @@
     "state": "OPEN",
     "title": "CI cannot install the now-required private Tessera package"
    },
+   "176": {
+    "state": "CLOSED",
+    "title": "Install the exact Tessera development pin in CI"
+   },
+   "177": {
+    "state": "CLOSED",
+    "title": "Fix boundary gate HTTP response contract"
+   },
+   "178": {
+    "state": "CLOSED",
+    "title": "Refuse empty boundary samples and add paired BF16 measurement"
+   },
+   "179": {
+    "state": "CLOSED",
+    "title": "Consume Tessera v4 launches and explicit residency"
+   },
+   "18": {
+    "state": "CLOSED",
+    "title": "CI: run the test suite on push and PR; green main again"
+   },
+   "180": {
+    "state": "CLOSED",
+    "title": "Integrate reviewed Tessera admission and boundary-request fixes"
+   },
    "19": {
     "state": "CLOSED",
     "title": "register_qwen3() silently stops overriding on newer transformers (broken by 5.13.1; good on 5.6.0)"
@@ -254,6 +374,14 @@
    "2": {
     "state": "CLOSED",
     "title": "Possibly Useful Theoretical Basis"
+   },
+   "20": {
+    "state": "CLOSED",
+    "title": "Allocator: bit-exact re-encode pricing, gated on an identity activation path"
+   },
+   "21": {
+    "state": "CLOSED",
+    "title": "Allocator: opt-in gate_up/down role split, hard-gated on per-role serving-profile support"
    },
    "22": {
     "state": "CLOSED",
@@ -287,29 +415,313 @@
     "state": "CLOSED",
     "title": "export: runtime coercion omits source_kind, so every FP8_SOURCE Linear is judged illegal and fills runtime_coercions with bogus rows"
    },
+   "3": {
+    "state": "CLOSED",
+    "title": "Codex/fix format validation failures"
+   },
+   "30": {
+    "state": "CLOSED",
+    "title": "Keep vendored Gridbook fused FP4 prefill opt-in"
+   },
+   "31": {
+    "state": "CLOSED",
+    "title": "Repair integration CI portability"
+   },
+   "32": {
+    "state": "CLOSED",
+    "title": "Sync post-0.3 Gridbook runtime safety fixes"
+   },
+   "33": {
+    "state": "CLOSED",
+    "title": "gridbook: sync MoE prefill overhead cleanup"
+   },
+   "34": {
+    "state": "CLOSED",
+    "title": "gridbook: sync dotted MoE target boundary"
+   },
+   "35": {
+    "state": "CLOSED",
+    "title": "gridbook: sync fail-closed runtime contracts"
+   },
+   "36": {
+    "state": "CLOSED",
+    "title": "gridbook: sync parity harness and cold CUDA loader hardening"
+   },
+   "37": {
+    "state": "CLOSED",
+    "title": "producer: make CB byte and artifact budgets exact"
+   },
+   "38": {
+    "state": "CLOSED",
+    "title": "release: bump Gridbook source to 0.4.0"
+   },
+   "39": {
+    "state": "CLOSED",
+    "title": "policy: constrain native parity and production CB menu"
+   },
    "4": {
     "state": "CLOSED",
     "title": "Qwen3.5/3.6 MoE."
+   },
+   "40": {
+    "state": "CLOSED",
+    "title": "Fix partial LFM CB expert export layouts"
+   },
+   "41": {
+    "state": "CLOSED",
+    "title": "Remove vendored Gridbook runtime and consolidate CB ABI"
+   },
+   "42": {
+    "state": "CLOSED",
+    "title": "Integrate audited PrismaQuant Gridbook producer stack"
+   },
+   "43": {
+    "state": "CLOSED",
+    "title": "Release PrismaQuant 0.5.0"
+   },
+   "44": {
+    "state": "CLOSED",
+    "title": "Release PrismaQuant 0.5.1 with versioned NVFP4 activation contracts"
+   },
+   "45": {
+    "state": "CLOSED",
+    "title": "release: prismaquant 0.5.2"
+   },
+   "46": {
+    "state": "CLOSED",
+    "title": "Ultraplan P5: activation-fair pricing, serving-lane metadata, constrained Pareto solver, D0.3 harness, K0.2 stage attestation"
+   },
+   "47": {
+    "state": "CLOSED",
+    "title": "Release PrismaQuant 0.6.0"
+   },
+   "48": {
+    "state": "CLOSED",
+    "title": "Add the cross-repo attestation interop test to the pinned-contract job"
+   },
+   "49": {
+    "state": "CLOSED",
+    "title": "Docs-truth batch: post-0.6.0 corpus review fixes"
+   },
+   "5": {
+    "state": "CLOSED",
+    "title": "fix: HALO on Qwen3.5/3.6 \u2014 gamma fold + linear_attn block detection"
+   },
+   "50": {
+    "state": "CLOSED",
+    "title": "DSV4-Flash 92 GB production pipeline: port, calibration machinery, encoder 2.18x"
+   },
+   "51": {
+    "state": "CLOSED",
+    "title": "Release PrismaQuant 0.7.0"
+   },
+   "52": {
+    "state": "CLOSED",
+    "title": "DSV4 export bridge: naming, packed stacking, K0.2 attestation (items A-F)"
+   },
+   "53": {
+    "state": "CLOSED",
+    "title": "Source-passthrough format family: MXFP4/FP8-block experts+body, measured route verdicts, exporter lane"
+   },
+   "54": {
+    "state": "CLOSED",
+    "title": "MXFP8_UE8M0_G32 menu format: W8A8 per-32 UE8M0, wire-matched to the gridbook lane"
+   },
+   "55": {
+    "state": "CLOSED",
+    "title": "Stage the dual-variant DP drivers for the mid-rung and body-route questions"
+   },
+   "56": {
+    "state": "CLOSED",
+    "title": "release 0.8.0"
+   },
+   "57": {
+    "state": "CLOSED",
+    "title": "Add the exact MXFP4 -> MXFP8 widening transcode"
+   },
+   "58": {
+    "state": "CLOSED",
+    "title": "Declare the block-FP8 floor instead of dropping its scale planes"
+   },
+   "59": {
+    "state": "CLOSED",
+    "title": "Persist and verify CB encoder scale-search warm starts"
    },
    "6": {
     "state": "CLOSED",
     "title": "Gemma4 support"
    },
+   "60": {
+    "state": "CLOSED",
+    "title": "Price the per-expert allocation counterfactual, and fix per-row P5a reconciliation"
+   },
+   "61": {
+    "state": "CLOSED",
+    "title": "Measure per-output-row quantization-error dispersion (tier-3 pilot)"
+   },
+   "62": {
+    "state": "CLOSED",
+    "title": "Screen never-routed experts with a CPU-only cold-expert atlas"
+   },
+   "63": {
+    "state": "CLOSED",
+    "title": "Study calibration stability from existing DSv4 artifacts"
+   },
+   "64": {
+    "state": "CLOSED",
+    "title": "Survey PTQ calibration-data literature and practice (docs/research)"
+   },
+   "65": {
+    "state": "CLOSED",
+    "title": "Survey rotations, learned codebooks and second-order compensation (docs/research)"
+   },
+   "66": {
+    "state": "CLOSED",
+    "title": "Index docs/research/ in the docs README"
+   },
+   "67": {
+    "state": "CLOSED",
+    "title": "Add a sanctioned research-grade cost acceptance path, and the full-menu allocation study it enables"
+   },
+   "68": {
+    "state": "CLOSED",
+    "title": "Pilot fused rotation (SKIP) and fixed-CB LDLQ feedback (validated on held-out rows)"
+   },
+   "69": {
+    "state": "CLOSED",
+    "title": "Export tier-2 per-expert split stacks, with completeness and footprint accounting"
+   },
    "7": {
     "state": "CLOSED",
     "title": "Is this model only for single spark?  Qwen3.6-35B-A3B-PrismQuant-4.75bit"
+   },
+   "70": {
+    "state": "CLOSED",
+    "title": "Onboard the Qwen3-30B-A3B producer profile (contract-aligned)"
+   },
+   "71": {
+    "state": "CLOSED",
+    "title": "Validate fixed-CB LDLQ on genuinely fresh text (VALIDATED-PENDING-SERVED)"
+   },
+   "72": {
+    "state": "CLOSED",
+    "title": "Add the flag-gated LDLQ production encoder mode"
+   },
+   "73": {
+    "state": "CLOSED",
+    "title": "LDLQ: batch encode+feedback across identical-shape expert units"
+   },
+   "74": {
+    "state": "CLOSED",
+    "title": "Qwen3.6-35B campaign: model profile, packed-expert measurement, per-slice ladder gating"
+   },
+   "75": {
+    "state": "CLOSED",
+    "title": "Export: three-stage read/encode/write pipeline (flag-gated, byte-identical)"
+   },
+   "76": {
+    "state": "CLOSED",
+    "title": "CB: productionize Monotone Min-Chain encoding (flag-gated)"
+   },
+   "77": {
+    "state": "CLOSED",
+    "title": "Release 0.9.0"
+   },
+   "78": {
+    "state": "CLOSED",
+    "title": "release: prismaquant 0.10.0 \u2014 the DeepSeek-V4-Flash campaign release"
+   },
+   "79": {
+    "state": "CLOSED",
+    "title": "PrismaQuant 0.11.0: learned codebooks in production, platform-agnostic anchored AURA"
+   },
+   "8": {
+    "state": "CLOSED",
+    "title": "Enable LFM2.5-8B-A1B (Lfm2Moe): profile + generic per-expert\u2192packed loader, vLLM-servable"
+   },
+   "80": {
+    "state": "CLOSED",
+    "title": "Fix hybrid linear-attention masking in layer streaming for Qwen3.5/3.6 on transformers >= 5.15"
+   },
+   "81": {
+    "state": "CLOSED",
+    "title": "Ship DSv4Flash activation-safe AURA Gridbook release path"
+   },
+   "82": {
+    "state": "CLOSED",
+    "title": "release: PrismaQuant 0.12.0 and DSv4 source-FP8 W8A16"
+   },
+   "83": {
+    "state": "CLOSED",
+    "title": "fix: the public repo defaulted DATASET to a path in my home directory"
+   },
+   "84": {
+    "state": "CLOSED",
+    "title": "fix: scope CB warm-state LDLQ identity per format"
    },
    "85": {
     "state": "CLOSED",
     "title": "Archived-branch follow-ups: AURA, DSpark selection, and score persistence"
    },
-   "87": {
+   "86": {
     "state": "CLOSED",
+    "title": "FP8-source wrapped-MoE checkpoints build end to end (imatrix scale contract + live-namespace bridging in the codebook exporter)"
+   },
+   "87": {
+    "state": "OPEN",
     "title": "shipgate: KL/PPL + greedy-smoke certify boundary-broken artifacts \u2014 three DSV4-Flash quants within ~3% PPL span a 6\u00d7 behavioral gap; proposal: add a sampled behavioral component"
+   },
+   "88": {
+    "state": "CLOSED",
+    "title": "Continuous trellis rate surface (fail-closed seam), GLM-5.3 stock-cost campaign, telemetry flight recorder, forked-stream expert eval"
+   },
+   "89": {
+    "state": "CLOSED",
+    "title": "Fail-closed review deltas on the wrapped-MoE FP8-source export (follow-up to #86)"
    },
    "9": {
     "state": "CLOSED",
     "title": "Gemma4 full quantization: streaming-forward enablement (shared-KV state, beyond #6 rotary fix)"
+   },
+   "90": {
+    "state": "CLOSED",
+    "title": "fix(tests): derive the Fisher quadratic-form tolerance from fp32 precision"
+   },
+   "91": {
+    "state": "CLOSED",
+    "title": "chore(dsv4-w8a16): re-freeze the export-source closure after per-file review"
+   },
+   "92": {
+    "state": "CLOSED",
+    "title": "feat(trellis): wire 7 of 8 seam links; the anchors' currency stays a refusal"
+   },
+   "93": {
+    "state": "CLOSED",
+    "title": "ci: drop python 3.11 from the test matrix and the supported floor"
+   },
+   "94": {
+    "state": "CLOSED",
+    "title": "fix(tests): glm5_next parity NaN \u2014 the polyfill leaves from-config expert weights uninitialized"
+   },
+   "95": {
+    "state": "CLOSED",
+    "title": "Land the proven rescues: walker R5 name projection, grouped wo_a Fisher, unit-sharded producer, TP=2 tooling"
+   },
+   "96": {
+    "state": "CLOSED",
+    "title": "docs: correct two live claims the 2026-08-29 measurements superseded"
+   },
+   "97": {
+    "state": "CLOSED",
+    "title": "docs(format-menu): correct the encode tier and record the fp8 learned-book inversion"
+   },
+   "98": {
+    "state": "CLOSED",
+    "title": "docs(architecture): correct the glm5_next conformance row (principle-13 sweep)"
+   },
+   "99": {
+    "state": "CLOSED",
+    "title": "feat(model-walk): the discovery walker as a fail-closed export gate"
    }
   },
   "RobTand/tessera": {
@@ -366,7 +778,7 @@
     "title": "The fused window-Viterbi kernel collapses at R=8 (dispatch is a workaround)"
    },
    "110": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The window GEMV and its torch fallback disagree as served at M=1: mutual KL 0.012, top-1 91%"
    },
    "111": {
@@ -393,9 +805,57 @@
     "state": "CLOSED",
     "title": "Encoder identity fixture misses unraised fp16 reach-boundary landing"
    },
+   "117": {
+    "state": "CLOSED",
+    "title": "serve_and_dump_kl emits duplicate trust-remote-code flags"
+   },
+   "118": {
+    "state": "CLOSED",
+    "title": "Emit each vLLM serve flag once"
+   },
+   "119": {
+    "state": "CLOSED",
+    "title": "PR CI cannot resolve master for merge-suite receipt test"
+   },
    "12": {
     "state": "CLOSED",
     "title": "Dense 4-bit: Tessera W4A4 loses to NVFP4 GPTQ+JSO at equal residency (1.039x, in q_proj and k_proj)"
+   },
+   "120": {
+    "state": "CLOSED",
+    "title": "Fetch the base ref for PR population receipts"
+   },
+   "121": {
+    "state": "CLOSED",
+    "title": "impacted_tests counts PrismaBuild closure files and misstates no-test verdict"
+   },
+   "122": {
+    "state": "CLOSED",
+    "title": "Close #110 with immutable served A/B evidence"
+   },
+   "123": {
+    "state": "CLOSED",
+    "title": "Make impacted-test receipts match snapshots"
+   },
+   "124": {
+    "state": "CLOSED",
+    "title": "Measure compiled GEMV KL with matched repeated builds"
+   },
+   "125": {
+    "state": "CLOSED",
+    "title": "Reap teacher serves before releasing ownership on exit"
+   },
+   "126": {
+    "state": "OPEN",
+    "title": "Scope MoE eligibility to the measured runtime image and execution mode"
+   },
+   "127": {
+    "state": "OPEN",
+    "title": "Integrate full-model MoE serving, partitioning, and coverage gates"
+   },
+   "128": {
+    "state": "OPEN",
+    "title": "Close compiled KL measurement with fresh r6 controls and receipts"
    },
    "13": {
     "state": "CLOSED",
