@@ -447,6 +447,19 @@ def stage_refit(a) -> None:
       columns.  If the metric collapses the ratio toward 1.04, that is the
       mechanism.  (An h-aware refit scored on h is teaching to the test in
       weight space: a mechanism probe, never a ship claim.)
+    * ``refit_metric=H`` (``--fullh``, added after the diagonal arm read
+      0.9853).  ``DEFAULT_REFIT_OBJECTIVE["channel"] == "hessian"``, so the
+      shipping CHANNEL plane already refits under a metric -- but when export
+      supplies an ``ActivationSource`` that metric is the **full** ``[cols,
+      cols]`` Hessian, not this diagonal.  "Production already avoids the
+      h-blind refit" is a claim about an arm nobody had run, and a diagonal
+      cannot stand in for it: the full form solves ``B/A`` with
+      ``A = u H u^T``, which couples the columns the diagonal treats as
+      independent.  The full H comes from a different capture than the scoring
+      diagonal (``ldlq/h_full_qwen06b.pt`` vs ``bf16/refs/h_diag.pt``); the two
+      agree on this unit's top-six columns exactly and on the median diagonal
+      to 7%, so the arm is honest about which columns matter while remaining
+      an out-of-sample metric for the score.
     * ``refit_reach_floor=True``.  ``floor`` is ``None`` by default, so the
       refit may re-inflate an over-row's scale past ``amax / reach`` and
       re-clip the weight the reach-aware start was protecting.  ``rows_at_clip``
@@ -580,10 +593,20 @@ def stage_refit(a) -> None:
             b.log(f"\n    at scale_refit={deep}, the two refit knobs, both sigmas")
             b.log(f"    {'refit arm':<22}{'m':>6}{'wt':>10}{'h':>10}"
                   f"{'h ratio':>9}{'rows@clip':>11}{'moved':>7}{'top6%':>7}{'s':>7}")
-            for arm_name, kw in (("metric=h", {"refit_metric": h}),
-                                 ("reach_floor", {"refit_reach_floor": True}),
-                                 ("metric=h+floor", {"refit_metric": h,
-                                                     "refit_reach_floor": True})):
+            arms = [("metric=h", {"refit_metric": h}),
+                    ("reach_floor", {"refit_reach_floor": True}),
+                    ("metric=h+floor", {"refit_metric": h,
+                                        "refit_reach_floor": True})]
+            if a.fullh:
+                # Production's CHANNEL default is objective "hessian", and when
+                # export supplies an ActivationSource that is the FULL H, not
+                # this diagonal.  A diagonal-h arm is a different objective, so
+                # "production already avoids this" cannot rest on it.
+                Hfull = torch.load(a.fullh, map_location="cpu",
+                                   weights_only=False)["H"][uname]
+                arms.insert(1, ("metric=H(full)",
+                                {"refit_metric": Hfull.cuda().float()}))
+            for arm_name, kw in arms:
                 per_sigma = {}
                 for m in (1.0, 0.75):
                     r, _rs = arm(m * base, deep, kw, rs_base.get(m))
@@ -620,6 +643,9 @@ def main() -> None:
     p.add_argument("--refits", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     p.add_argument("--units", nargs="+", default=[UNIT],
                    help="unit names, or the single word all")
+    p.add_argument("--fullh", default=None,
+                   help="path to a full-Hessian capture; adds a metric=H(full) "
+                        "arm to the 2x2, which is production's CHANNEL objective")
     p.add_argument("--skip-2x2", action="store_true",
                    help="walk only; for the multi-unit generality run")
     a = p.parse_args()
