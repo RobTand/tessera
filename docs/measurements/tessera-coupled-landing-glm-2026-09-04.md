@@ -196,7 +196,17 @@ read-only, the same inputs `ad26a21`'s GLM leg used. Wire: E2M1x2 `q256=896`,
 body TCQ, plane LUT16, `LUT_LANDING_WIRE`.
 
 Data: `experiments/results/refit_trailing_pair_glm_cl.json`, gate verdicts
-`experiments/results/refit_trailing_pair_gate_cl.json`. The Qwen column is
+`experiments/results/refit_trailing_pair_gate_cl.json`.
+
+**Reproduced.** The arms were first run at `32b0439` --- the commit merged as
+#105 --- in a worktree whose session ended before the output was harvested.
+They were re-run from scratch on this branch, whose `src/tessera/` is
+byte-identical to master `766033c` (`git diff master -- src/` is empty), and
+the two runs agree on **48 of 48 records over every one of 642 scored and hash
+fields** (6 units x 8 arms; `secs` excluded as wall-clock). Every `out`,
+`hfit`, `plain`, `hweighted`, `bytes`, `codes_sha256` and `sink_vs_wire_*`
+value is equal, and `refit_trailing_pair_gate.py` re-run over the new file
+emits byte-identical verdicts. The committed file is the master-side run. The Qwen column is
 `experiments/results/refit_trailing_pair_qwen_cl.json` (#105, unchanged here
 and not re-derived).
 
