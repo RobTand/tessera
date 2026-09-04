@@ -240,7 +240,24 @@ wrong, and it should not be used as a size reference.
 
 Targeted, per the branch rule.
 
-PLACEHOLDER_TESTS
+```
+$ pytest -q -p no:randomly \
+    tests/test_serving_construction.py tests/test_export_construction_gate.py \
+    tests/test_serving_contract.py tests/test_serving_export_gate.py \
+    tests/test_serving_attested_wire.py tests/test_serving_native_extensions.py \
+    tests/test_serving_loader_gates.py tests/test_serving_dispatch.py \
+    tests/test_serving_sharding.py tests/test_serving_tp_axes.py \
+    tests/test_serving_moe_dispatch.py tests/test_route_census_regimes.py \
+    tests/test_route_grid_and_census_guard.py tests/test_no_gridbook_import.py \
+    tests/test_fused_member_rungs.py tests/test_serving_residency_modes.py
+234 passed, 1 skipped in 110.35s
+PYTEST_EXIT=0
+```
+
+That set is: the two files this branch adds, plus every test file that imports
+what it changed (`tessera.serving.contract` / `tessera.serving`). The one skip
+is pre-existing and unrelated (a CUDA-gated case). No failures, so nothing
+needed re-running against master.
 
 New tests and the pre-fix failure line each one asserts:
 
