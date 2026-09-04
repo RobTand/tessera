@@ -1,0 +1,32 @@
+{
+ "schema": "tessera.ldlq_block_encode_cost/1",
+ "design": "matched pair on the SAME 20 units (identical geometry), encoded CONCURRENTLY on one box, so both arms saw the same background load at the same moment and interfered symmetrically",
+ "measured": {
+  "b32_s": 930.0,
+  "b4_s": 5721.0,
+  "ratio_b4_over_b32": 6.151612903225806,
+  "segment_ratio": 8.0,
+  "b32_segments": 928.0,
+  "b4_segments": 7424.0
+ },
+ "fit": {
+  "s_per_segment": 0.7375307881773399,
+  "fixed_s": 245.57142857142867,
+  "cross_check": "the LUT-plane receipt independently measured 0.694 s/segment on a GLM expert and the CHANNEL plane; this is 0.738 on dense Qwen and the LUT plane, 6% apart"
+ },
+ "whole_export_bounds_h": {
+  "32": [
+   1.9038464696223316,
+   2.504132183908046
+  ],
+  "8": [
+   7.41074302134647,
+   8.011028735632184
+  ],
+  "4": [
+   14.753271756978654,
+   15.353557471264368
+  ]
+ },
+ "correction": "issue #60 quotes ~15x for b4 (L0.q_proj 12 s -> 175 s), which is a single unit in the dense4_reach_sweep harness.  On the PRODUCTION export path, at whole-export scale and on matched units, b4 is 6.15x b32 -- because a per-export fixed cost the single-unit figure does not carry dilutes the 8x segment ratio. The decision's cost input is 6-8x, not 15x."
+}
