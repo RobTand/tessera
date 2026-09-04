@@ -543,6 +543,191 @@ def test_the_diagnostic_sink_is_off_unless_asked_for():
 
 
 # --------------------------------------------------------------------------
+# Issue #50: the coupled landing.  The refit's landing puts each block at the
+# table entry nearest its OWN continuous target; once its neighbours have
+# landed somewhere else that entry is no longer the block's conditional
+# minimiser under a coupled metric.  ``coupled_landing`` re-assigns until it
+# is.  Tests pin the property (no block left first-order improvable), the
+# monotone cost, the off-is-identical claim, the sink's separation, and the
+# refusals where the landing is already exact.
+# --------------------------------------------------------------------------
+
+
+def _remaining_gain(work, units, half, eff, table_bytes, glob, H):
+    """``(sum of the exact per-block decreases still available, cost)``.
+
+    A block's error with the others held is ``A_b (c_b - s_b)^2 + const``;
+    the decrease from moving it to the table entry nearest ``s_b`` is exact.
+    Summed over blocks it is the first-order money the landing left on the
+    table -- zero, up to fp32 resolution on the cost, for a landing that is
+    conditionally optimal block by block.  Blocks whose conditional optimum
+    is non-positive are excluded: the refit holds them on purpose.
+    """
+    from tessera.encode import _lut_values
+    rows, cols = work.shape
+    nb = cols // half
+    W, U = work.float(), units.float()
+    Ub = U.reshape(rows, nb, half)
+    C = eff.reshape(rows, nb)
+    T = _lut_values(table_bytes, glob)
+    Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
+    A = torch.einsum("rbi,bij,rbj->rb", Ub, Hd, Ub)
+    E = W - C.repeat_interleave(half, dim=1) * U
+    G = E @ H
+    s = C + (G.reshape(rows, nb, half) * Ub).sum(dim=2) / A.clamp_min(1e-30)
+    best = T[(s[:, :, None] - T[None, None, :]).abs().argmin(dim=2)]
+    gain = A * ((C - s) ** 2 - (best - s) ** 2)
+    # Blocks whose conditional optimum is non-positive are held by the refit's
+    # revert rule, so they are not money the landing left on the table.
+    gain = torch.where((A > 0) & (s > 0), gain, torch.zeros_like(gain)).clamp_min(0.0)
+    return float(gain.sum()), float((G * E).sum())
+
+
+def test_the_coupled_landing_leaves_no_block_first_order_improvable():
+    """The property, on the fixture the sweep tests use.
+
+    The separable landing leaves blocks that would lower the quadratic by
+    moving one table entry over; the coupled landing leaves none beyond what
+    fp32 can resolve on the cost -- the exact stop rule the sweep runs to.
+    Asserting both halves is what makes this a test of the landing and not of
+    the fixture.
+    """
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=11, cols=128)
+    H = _hessian(cols=128, seed=11, device="cpu", coupling=4.0)
+    eps = torch.finfo(torch.float32).eps
+    for gs in (False, True):
+        sep = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                metric=H, gauss_seidel=gs)
+        cou = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                metric=H, gauss_seidel=gs, coupled_landing=True)
+        left_sep, cost_sep = _remaining_gain(work, units, half, sep[2], sep[0], glob, H)
+        left_cou, cost_cou = _remaining_gain(work, units, half, cou[2], cou[0], glob, H)
+        assert left_sep > 1e-3 * cost_sep, (
+            "the separable landing left nothing to re-assign on this fixture; "
+            "it cannot show the coupled one does anything")
+        assert left_cou <= eps * cost_cou, (left_cou, cost_cou)
+        assert cost_cou < cost_sep
+
+
+def test_the_coupled_landing_is_monotone_and_below_the_separable_one():
+    """Fourth candidate, at or below the third, never above the plane the
+    unit already had -- the guard is the same guard."""
+    for seed in (12, 13, 14):
+        work, units, half, table, index, eff, glob = _lut_fixture(seed=seed, cols=128)
+        H = _hessian(cols=128, seed=seed, device="cpu", coupling=4.0)
+        before = _cost(work, units, eff, half, H)
+        sep = _cost(work, units, _refit_scales_lut(
+            work, units, half, table, index, eff, glob, metric=H, gauss_seidel=True)[2], half, H)
+        cou = _cost(work, units, _refit_scales_lut(
+            work, units, half, table, index, eff, glob, metric=H, gauss_seidel=True,
+            coupled_landing=True)[2], half, H)
+        assert cou <= sep + 1e-9 * sep
+        assert sep <= before + 1e-9 * before
+
+
+def test_the_coupled_landing_off_is_the_refit_that_was_there():
+    """The byte claim, at the function it is made about, for both sweep orders."""
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=15, cols=128)
+    H = _hessian(cols=128, seed=15, device="cpu", coupling=4.0)
+    for gs in (False, True):
+        a = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H, gauss_seidel=gs)
+        b = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H, gauss_seidel=gs,
+                              coupled_landing=False)
+        assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]) and torch.equal(a[2], b[2])
+
+
+def test_the_coupled_landing_is_a_no_op_under_a_separable_metric():
+    """Under a 1-D metric nearest-in-linear already is each block's
+    conditional minimiser, so the coupled sweep has nothing to move and the
+    function returns the separable landing bit for bit.  ``encode_unit``
+    refuses the flag there for exactly this reason; this pins the reason."""
+    from tessera.encode import _refit_scales_lut_metric
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=16, cols=128)
+    h = torch.rand(128) + 0.1
+    a = _refit_scales_lut_metric(work, units, half, table, index, eff, glob, h)
+    b = _refit_scales_lut_metric(work, units, half, table, index, eff, glob, h, coupled_landing=True)
+    assert torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]) and torch.equal(a[2], b[2])
+
+
+@cuda
+def test_the_trailing_mode_lands_the_last_refit_only():
+    """``"trailing"`` leaves every inner pass's refit exactly as the plain
+    full-H arm computed it and re-lands the last one; ``True`` re-lands them
+    all.  Read from the sink, which records ``coupled`` only where the sweep
+    ran, and from the inner passes matching the plain arm's to the float."""
+    from tessera.encode import refit_diagnostics
+    w = _weights(seed=20).bfloat16()
+    H = _hessian(seed=20, coupling=4.0)
+    kw = dict(grid=K2, q256=CAP, name="x", scale_refit=3, refit_metric=H,
+              refit_gauss_seidel=True)
+    runs = {}
+    for mode in (False, "trailing", True):
+        with refit_diagnostics() as sink:
+            encode_linear(w, refit_coupled_landing=mode, **kw)
+        runs[mode] = [dict(r) for r in sink]
+    assert [len(r) for r in runs.values()] == [3, 3, 3]
+    assert ["coupled" in r for r in runs[False]] == [False, False, False]
+    assert ["coupled" in r for r in runs["trailing"]] == [False, False, True]
+    assert ["coupled" in r for r in runs[True]] == [True, True, True]
+    # The trailing run's inner passes ARE the plain run's inner passes, and
+    # its last pass starts where the plain run's last pass started.
+    for a, b in zip(runs[False][:2], runs["trailing"][:2]):
+        assert a["before"] == b["before"] and a["landed"] == b["landed"]
+    assert runs["trailing"][2]["before"] == runs[False][2]["before"]
+    assert runs["trailing"][2]["landed"] == runs[False][2]["landed"]
+    assert runs["trailing"][2]["coupled"] <= runs["trailing"][2]["landed"]
+    with pytest.raises(GrammarError, match="expected False, True"):
+        encode_linear(w, refit_coupled_landing="always", **kw)
+
+
+def test_the_sink_keeps_the_separable_landing_next_to_the_coupled_one():
+    """With the option on, the record's ``landed`` is still the separable
+    landing and ``coupled`` is the plane returned -- so the instrument that
+    found the loss can still read it after the fix.  With it off, no
+    ``coupled`` key at all."""
+    from tessera.encode import refit_diagnostics
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=17, cols=128)
+    H = _hessian(cols=128, seed=17, device="cpu", coupling=4.0)
+    with refit_diagnostics() as off:
+        _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H, gauss_seidel=True)
+    with refit_diagnostics() as on:
+        out = _refit_scales_lut(work, units, half, table, index, eff, glob, metric=H,
+                                gauss_seidel=True, coupled_landing=True)
+    assert "coupled" not in off[0]
+    assert on[0]["landed"] == pytest.approx(off[0]["landed"])
+    assert on[0]["coupled"] == pytest.approx(_cost(work, units, out[2], half, H), rel=1e-5)
+    assert on[0]["coupled"] <= on[0]["landed"]
+    assert on[0]["coupled_moves"] > 0 and on[0]["coupled_sweeps"] >= 1
+    assert on[0]["candidate"].endswith("+coupled")
+
+
+@cuda
+def test_the_coupled_landing_reaches_the_bytes_and_leaves_the_wire_alone():
+    w = _weights(seed=18).bfloat16()
+    H = _hessian(seed=18)
+    L = block_ldl(regularize_hessian(H, sigma_reg=1.0), 32)
+    gs = encode_linear(w, grid=K2, q256=CAP, name="x", ldl=L, ldl_block=32,
+                       refit_metric=H, refit_gauss_seidel=True).blob
+    cou = encode_linear(w, grid=K2, q256=CAP, name="x", ldl=L, ldl_block=32,
+                        refit_metric=H, refit_gauss_seidel=True, refit_coupled_landing=True).blob
+    assert gs != cou
+    assert len(gs) == len(cou), "the wire is unchanged"
+
+
+@cuda
+def test_the_coupled_landing_is_refused_where_the_landing_is_already_exact():
+    w = _weights(seed=19).bfloat16()
+    H = _hessian(seed=19)
+    h = H.diagonal() / H.diagonal().mean()
+    with pytest.raises(GrammarError, match="without refit_metric"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_coupled_landing=True)
+    with pytest.raises(GrammarError, match="separable"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=h, refit_coupled_landing=True)
+    with pytest.raises(GrammarError, match="no table"):
+        encode_linear(w, grid=K2, q256=CAP, name="x", refit_metric=H,
+                      scale_plane=ScalePlaneKind.CHANNEL, refit_coupled_landing=True)
+
+
 # The landing ceiling (issue #50): what the sixteen-entry table costs.
 # --------------------------------------------------------------------------
 

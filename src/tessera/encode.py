@@ -1547,12 +1547,15 @@ def lut_landing(mode: str = "table"):
 def refit_diagnostics():
     """Collect one record per metric-aware LUT refit call, for a measurement.
 
-    A refit's *landed* error is the only number an encode acts on, and it is
+    A refit's *landed* error is the number an encode acts on, and it is
     the sum of two different things: how good a point the step reaches, and
     how much of that the sixteen-entry table and its nearest-in-linear landing
     give back.  A screen that moves and a screen that does not are the same
     landed number until those are separated, so this yields the list the refit
-    appends to.  Debug-only: floats out, no byte in.  For a 1-D metric the
+    appends to.  With ``coupled_landing`` on, the plane the encode acts on is
+    the record's ``coupled`` instead, and ``landed`` stays the separable
+    landing so the two remain readable side by side (issue #50).  Debug-only:
+    floats out, no byte in.  For a 1-D metric the
     recorded costs are the separable parabola ``sum A c^2 - 2 B c``, which
     equals the true weighted error only up to a constant -- so compare records
     within one call, never a 1-D call's numbers against a full-H call's.
@@ -1576,6 +1579,7 @@ def _refit_scales_lut_metric(
     metric: torch.Tensor,
     gauss_seidel: bool = False,
     exact_fit: bool = False,
+    coupled_landing: bool = False,
 ):
     """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
 
@@ -1633,14 +1637,43 @@ def _refit_scales_lut_metric(
     entries under the separable second-order model ``sum_b A_b (c_b - s*_b)^2``,
     i.e. the expansion around the current plane with cross-block terms dropped.
     (c) Assignment is nearest-in-linear to ``s*``, the exact per-block optimum
-    given the others.  The accept test is where the cross terms come back: the
-    candidate planes are scored on the **full quadratic**, and the plane the
-    unit already has is one of the candidates, so the *step* is monotone in
-    the metric's own error.  The *alternation* with the trellis is not: the
-    Viterbi's branch metric never sees ``metric``, so under an H-weighted
-    refit the two halves descend different errors by construction.  ``ldl``
-    and ``trellis_weighting="none"`` separate them further, exactly as in
-    ``_refit_scales``.
+    given the others -- given the others *at the continuous target*, which is
+    not where the others land.  The accept test is where the cross terms come
+    back: the candidate planes are scored on the **full quadratic**, and the
+    plane the unit already has is one of the candidates, so the *step* is
+    monotone in the metric's own error.  The *alternation* with the trellis is
+    not: the Viterbi's branch metric never sees ``metric``, so under an
+    H-weighted refit the two halves descend different errors by construction.
+    ``ldl`` and ``trellis_weighting="none"`` separate them further, exactly as
+    in ``_refit_scales``.
+
+    **Which of (b) and (c) costs anything was measured, not argued** (issue
+    #50, `docs/measurements/tessera-lut-landing-oracle-2026-09-03.md`).  On
+    six Qwen3-0.6B units at the E2M1x2 cap wire, 24 Gauss-Seidel passes: the
+    ``new-table`` candidate won 4 (q_proj's first pass and three passes of
+    L2.down_proj, the unit whose plane starts furthest from its optimum) and
+    the table the unit already had was re-assigned on the other 20; an exact
+    coordinate step over the sixteen entries with every cross-block term
+    kept, started from the coupled assignment, moved 0 entries on every pass
+    of five of the six units, and on L2.down_proj 2-11 entries a pass worth
+    0.9% of that unit's error against the 61% its re-assignment was worth.
+    (b) is separable and it is not where the loss is.  (c) is: a block landed
+    nearest to ``s*_b`` is not at its conditional minimiser once its
+    neighbours have landed somewhere else.
+    ``coupled_landing`` fixes exactly that, and nothing else: starting from
+    the plane the accept test chose, each block is re-assigned to the table
+    entry minimising the full quadratic given every other block where it now
+    stands, with the gradient field carried block to block as the
+    Gauss-Seidel step carries it (``_coupled_landing``).  Every move lowers
+    the quadratic by an exactly known amount, so the result is a fourth
+    candidate that can only be at or below the third, and the guard is
+    unchanged.  Under a 1-D metric the blocks are independent and nearest-in-
+    linear IS the conditional minimiser, so there is nothing for the sweep to
+    do -- the oracle's replay of the diagonal control found fp32 ties worth
+    0.03% of the cost and no more -- and ``encode_unit`` refuses the flag
+    there rather than name an arm that did nothing.  Encoder-side and
+    opt-in like ``gauss_seidel``: the wire, the decoder and the profile id do
+    not move, and an exporter cannot set it.
 
     Landing is unchanged and needs no rounding rule of its own: the table holds
     exact E4M3 bytes, and nearest-in-linear to ``s*`` is the exact minimiser
@@ -1760,6 +1793,26 @@ def _refit_scales_lut_metric(
         here = cost(cand)
         if here < best:
             best, best_eff, won = here, cand, _LUT_LANDING
+    landed = best
+    coupled = None
+    if coupled_landing and metric.ndim == 2:
+        # The fourth candidate: the chosen plane with its assignment made
+        # cross-block aware.  Monotone from ``best`` by construction, so it
+        # is taken without another comparison; the sink records both so the
+        # separable landing stays measurable next to it.  It re-assigns INTO
+        # the table, so a ``lut_landing`` ceiling mode -- which removed the
+        # table -- has nothing for it to assign into.
+        if _LUT_LANDING != "table":
+            raise GrammarError(
+                f"coupled_landing re-assigns blocks into the sixteen-entry table; "
+                f"lut_landing({_LUT_LANDING!r}) removed it, so the two cannot be "
+                "read in one refit"
+            )
+        best_eff, best_index, best, coupled = _coupled_landing(
+            W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
+            _lut_values(best_bytes, global_scale), half, best)
+        best_index = best_index.reshape(-1)
+        won = won + "+coupled"
     if _REFIT_DIAG is not None:
         # Debug-only, floats only, appended after every decision this call
         # made.  The refit's landed error is three things added together and
@@ -1795,12 +1848,85 @@ def _refit_scales_lut_metric(
             "before": before,
             "stepped": cost(stepped),
             "continuous": cost(target),
-            "landed": best,
+            "landed": landed,
             "landing": _LUT_LANDING,
             "reverted": int((~valid).sum()),
             "candidate": won,
+            **({} if coupled is None else {
+                "coupled": coupled["cost"], "coupled_sweeps": coupled["sweeps"],
+                "coupled_moves": coupled["moves"]}),
         })
     return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
+
+
+def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
+    """Re-assign every block to the table entry minimising the FULL quadratic
+    given every other block where it now stands -- the landing (c) above with
+    the cross-block terms kept.
+
+    A block's error with the others held is a parabola in its own scale,
+    ``A_b (c_b - s_b)^2 + const`` with ``s_b = c_b + (G_b . u_b) / A_b`` the
+    conditional optimum read off the CURRENT gradient field ``G = (W - C U) H``.
+    The table entry nearest ``s_b`` in linear distance is its exact minimiser
+    over the table, and the decrease from moving there is exactly ``A_b
+    ((c_b - s_b)^2 - (t - s_b)^2)``.  A move is taken only where that is
+    positive, and ``G`` is pushed through H's rows for the block's sixteen
+    columns so the next block sees it -- one ``E @ H`` of flops per sweep,
+    split into ``nb`` panels, the same shape as the Gauss-Seidel step.  A
+    block whose conditional optimum is non-positive is held where it is, the
+    refit's own revert rule (``valid``): the trellis runs on ``work / scale``
+    and a collapsed scale was measured to break the alternation's
+    monotonicity, so the sweep re-assigns and never collapses.
+
+    Sweeps repeat until no block moves or a whole sweep lowers the quadratic
+    by less than fp32 can resolve on it (``torch.finfo(float32).eps`` times
+    the cost -- a dtype constant, not a tuning).  The gradient field and the
+    cost are recomputed exactly at the top of every sweep, so the stop rule
+    reads a true cost and rounding in the incremental pushes cannot
+    accumulate across sweeps.  Returns ``(C, I, cost, record)``.
+    """
+    rows, nb = C.shape
+    C, I = C.clone(), I.clone()
+    eps = torch.finfo(torch.float32).eps
+    prev = start_cost
+    sweeps = moves = 0
+    while True:
+        E = W - C.repeat_interleave(half, dim=1) * U
+        G = E @ H
+        now = float((G * E).sum())
+        if sweeps and (now >= prev or prev - now <= eps * prev):
+            break
+        prev = now
+        moved = 0
+        for b in range(nb):
+            lo, hi = b * half, (b + 1) * half
+            Ubb = Ub[:, b, :]
+            Ab = A[:, b]
+            s = C[:, b] + (G[:, lo:hi] * Ubb).sum(dim=1) / Ab.clamp_min(1e-30)
+            j = (s[:, None] - table[None, :]).abs().argmin(dim=1)
+            new = table[j]
+            gain = Ab * ((C[:, b] - s) ** 2 - (new - s) ** 2)
+            # The refit's own revert rule, unchanged: a block whose conditional
+            # optimum is non-positive keeps the scale it has (see ``valid``
+            # above and the measured reason in ``_refit_scales_lut``) -- the
+            # sweep may re-assign, never collapse.
+            take = (Ab > 0) & (s > 0) & (gain > 0)
+            if bool(take.any()):
+                d = torch.where(take, new - C[:, b], torch.zeros_like(new))
+                G = G - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+                C[:, b] = torch.where(take, new, C[:, b])
+                I[:, b] = torch.where(take, j, I[:, b])
+                moved += int(take.sum())
+        sweeps += 1
+        moves += moved
+        if moved == 0:
+            break
+    # ``prev`` is the exact cost of the plane as it stood at the top of the
+    # last completed sweep; the final plane is at or below it, so read it once
+    # more so the record is the plane's own number.
+    E = W - C.repeat_interleave(half, dim=1) * U
+    final = float(((E @ H) * E).sum())
+    return C, I, final, {"cost": final, "sweeps": sweeps, "moves": moves}
 
 
 def _refit_scales_lut(
@@ -1814,6 +1940,7 @@ def _refit_scales_lut(
     metric: "torch.Tensor | None" = None,
     gauss_seidel: bool = False,
     exact_fit: bool = False,
+    coupled_landing: bool = False,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -1834,6 +1961,7 @@ def _refit_scales_lut(
         return _refit_scales_lut_metric(
             work, units, half, table_bytes, index, effective, global_scale, metric,
             gauss_seidel=gauss_seidel, exact_fit=exact_fit,
+            coupled_landing=coupled_landing,
         )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
@@ -1904,6 +2032,7 @@ def encode_unit(
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
     refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
 ) -> EncodedUnit:
     """Encode one Linear.  ``weights`` is ``[rows, cols]`` in the source dtype.
 
@@ -1972,6 +2101,21 @@ def encode_unit(
     silently ignored encoder setting is how an export ships bytes it did not
     ask for.  Encoder-side and opt-in: the wire, the decoder and the profile
     id are untouched, and with it off the encode is byte for byte what it was.
+
+    ``refit_coupled_landing`` makes the same refit's landing cross-block aware
+    (issue #50): after the table is chosen, every block is re-assigned to the
+    entry minimising the full quadratic given where its neighbours landed
+    (``_coupled_landing``), instead of nearest to its own continuous target.
+    ``True`` (or ``"every"``) does it on every pass's refit; ``"trailing"`` on
+    the last refit only, leaving the alternation's inner passes exactly as
+    they were -- the Viterbi's branch metric never sees ``refit_metric``, so a
+    plane moved further under H between passes is a plane the next trellis
+    pass did not ask for, and the two modes are measured as two arms.
+    Refused under the same three conditions as ``refit_gauss_seidel`` and for
+    the same reason -- under a 1-D metric nearest-in-linear already IS the
+    conditional minimiser, so the flag would name an arm that changed
+    nothing.  Independent of ``refit_gauss_seidel``: the two are separate
+    treatments and are measured as such.
 
     ``span`` is the trellis super-symbol length (``viterbi_columns``) and
     ``scale_plane`` how segment 2b is written; both are wire and both default
@@ -2319,6 +2463,39 @@ def encode_unit(
                 "scale_refit=0 runs none: the amax plane is written byte for byte "
                 "and the argument would be silently ignored"
             )
+    if refit_coupled_landing is True:
+        refit_coupled_landing = "every"
+    if refit_coupled_landing not in (False, "every", "trailing"):
+        raise GrammarError(
+            f"refit_coupled_landing={refit_coupled_landing!r}: expected False, True "
+            "(every pass's refit) or 'trailing' (the last refit only)"
+        )
+    if refit_coupled_landing:
+        # Same three refusals as the sweep, for the same reason: under no
+        # metric there is no coupled quadratic; under a 1-D one the blocks are
+        # independent and nearest-in-linear is already each block's
+        # conditional minimiser; on CHANNEL there is one scale per row and no
+        # block.
+        if refit_metric is None:
+            raise GrammarError(
+                "refit_coupled_landing re-assigns the LUT plane's blocks under the "
+                "metric-aware refit, and without refit_metric no such refit runs: "
+                "the plain landing is already per-block exact"
+            )
+        if refit_metric.ndim == 1:
+            raise GrammarError(
+                "refit_coupled_landing needs a metric that couples the blocks. A 1-D "
+                f"refit_metric ({tuple(refit_metric.shape)}) is separable: nearest-"
+                "in-linear is already each block's conditional minimiser, so the "
+                "coupled sweep moves nothing and the flag would name an arm that "
+                "changed nothing"
+            )
+        if scale_plane is not ScalePlaneKind.LUT:
+            raise GrammarError(
+                f"refit_coupled_landing re-assigns the LUT plane's per-{half} block "
+                f"scales; the {scale_plane.name} plane has no table to assign into, "
+                "so this would be silently ignored"
+            )
     if _LUT_LANDING != "table":
         # A ceiling read (``lut_landing``, issue #50) is only a ceiling on the
         # thing it removes.  Off the LUT plane there is no table to remove; with
@@ -2481,6 +2658,10 @@ def encode_unit(
                 work, units, half, table_bytes, refine, effective, global_scale,
                 metric=metric_now, gauss_seidel=refit_gauss_seidel,
                 exact_fit=refit_lut_exact,
+                coupled_landing=(
+                    refit_coupled_landing == "every"
+                    or (refit_coupled_landing == "trailing" and last)
+                ),
             )
         else:
             base_byte, refine, effective = _refit_scales(
