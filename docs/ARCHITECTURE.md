@@ -33,7 +33,9 @@ The sealed inner command also uses `tessera.suite_deadline`, launched through
 positive and finite; expiry signals its owned process group with TERM, then
 KILL after a five-second grace. The leader remains unreaped during the grace,
 so its PID cannot be reused and a resistant child is killed even if the leader
-exits on TERM. Normal command status passes through; expiry remains non-green
+exits on TERM. The supervisor explicitly owns/restores SIGCHLD disposition;
+inherited auto-reaping cannot erase child failure status or that PID anchor.
+Normal command status passes through; expiry remains non-green
 even if a TERM handler exits zero. Supervisor TERM/INT kills and reaps its
 owned group before returning a nonzero status. This is a per-attempt deadline,
 not a bound on queueing/retries, detached sessions/containers, or descendants

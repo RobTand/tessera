@@ -279,6 +279,16 @@ def test_attempt_timeout_preserves_ordinary_command_status(status):
     assert result.returncode == status
 
 
+def test_attempt_timeout_owns_child_reaping_despite_inherited_sigchld_ignore():
+    merge_suite = _module()
+    command = merge_suite._timed_command([sys.executable, "-c", "raise SystemExit(7)"], 2.0)
+    script = ("import os,signal; signal.signal(signal.SIGCHLD,signal.SIG_IGN); "
+              f"os.execv({command[0]!r}, {command!r})")
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 7, "auto-reaping must not convert a failed command to status0"
+
+
 def test_attempt_timeout_term_handler_cannot_turn_deadline_into_success():
     merge_suite = _module()
     script = ("import signal,time,sys; "

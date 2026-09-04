@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 
+_INTERRUPT_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
 
 def positive_seconds(value):
     seconds = float(value)
@@ -41,7 +43,10 @@ def _kill_owned(process):
 def run(command, timeout_s, kill_after_s):
     timeout_s, kill_after_s = positive_seconds(timeout_s), positive_seconds(kill_after_s)
     process = None
-    previous = {sig: signal.signal(sig, _interrupt) for sig in (signal.SIGTERM, signal.SIGINT)}
+    previous = {sig: signal.signal(sig, _interrupt) for sig in _INTERRUPT_SIGNALS}
+    # SIG_IGN auto-reaps children: wait() can then report0 for a failed child,
+    # and the leader's PID no longer anchors group ownership during grace.
+    previous[signal.SIGCHLD] = signal.signal(signal.SIGCHLD, signal.SIG_DFL)
     try:
         process = subprocess.Popen(command, start_new_session=True)
         try:
@@ -58,7 +63,7 @@ def run(command, timeout_s, kill_after_s):
             return status
         return 128 - code if code < 0 else code
     except _Interrupted as exc:
-        for sig in previous:
+        for sig in _INTERRUPT_SIGNALS:
             signal.signal(sig, signal.SIG_IGN)
         _kill_owned(process)
         return 128 + exc.args[0]
