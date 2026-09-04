@@ -945,7 +945,7 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     lane-readable rung was served (#111).  The value is derived here from
     ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
     is built from, narrowed by exactly the axes the cell already carries: the
-    regime, the residency its serve flag names, and the lanes each of its
+    structure, regime, the residency its serve flag names, and the lanes each of its
     rungs can reach.
     """
     from ..grammar import rate_set, root_from_q256
@@ -961,12 +961,14 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
         rates = rate_set(root_from_q256(int(rung)), cap=cap)
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates)
         for mode in modes:
-            want |= launch_pairs(route, regime=cell["regime"], mode=mode, lanes=lanes)
+            want |= launch_pairs(route, structure=cell["structure"],
+                                 regime=cell["regime"], mode=mode, lanes=lanes)
     got = cell_executes(cell)
     if got != want:
         raise ValueError(
             f"{where}.executes is {sorted(got)} but the {route} route makes "
-            f"{sorted(want)} in the {cell['regime']!r} regime at residency {list(modes)} "
+            f"{sorted(want)} for structure {cell['structure']!r} in the "
+            f"{cell['regime']!r} regime at residency {list(modes)} "
             f"on rung(s) {list(cell['rungs_q256'])} (tessera.serving.scheme.ROUTE_LAUNCHES, "
             "the table the routes' own census_expected is derived from). A cell states what "
             "the runtime EXECUTES; it is derived from the dispatch's table or it is a claim "

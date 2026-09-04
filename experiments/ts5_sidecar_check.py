@@ -21,17 +21,20 @@ already been paid for:
 usage: ts5_sidecar_check.py <exported-dir>
 """
 import json
+import argparse
 import struct
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera.serving.scheme import MOE_GROUP_SHARDS
+from tessera.serving_parts import validate_explicit_plan
 
 
 def headers(d):
     """``{tensor name: (dtype, shape, nbytes)}`` across every shard, header-only."""
     out = {}
+    owners = {}
     index = d / "model.safetensors.index.json"
     shards = (sorted({d / name for name in
                       json.loads(index.read_text())["weight_map"].values()})
@@ -43,12 +46,17 @@ def headers(d):
         for name, meta in hdr.items():
             if name == "__metadata__":
                 continue
+            if name in owners:
+                raise ValueError(
+                    f"duplicate tensor name {name!r} in {owners[name]} and {shard}; "
+                    "each checkpoint tensor must have exactly one shard owner")
             beg, end = meta["data_offsets"]
             out[name] = (meta["dtype"], meta["shape"], end - beg)
+            owners[name] = shard
     return out
 
 
-def main(path):
+def main(path, plan_json=None):
     d = Path(path)
     cfg = json.loads((d / "config.json").read_text())
     qc = cfg.get("quantization_config") or {}
@@ -137,8 +145,29 @@ def main(path):
         if lanes:
             problems.append(f"manifest demands kernel lanes {lanes}: the census refuses "
                             "on engagement in resident mode whatever the routes are")
+        identity = m.get("export_identity", {})
+        embedded_plan = identity.get("options", {}).get("plan")
+        explicit_plan = json.loads(Path(plan_json).read_text()) if plan_json is not None else None
+        if explicit_plan is not None and embedded_plan is not None and explicit_plan != embedded_plan:
+            problems.append("explicit --plan-json differs from the merged export identity plan")
+        plan = explicit_plan if explicit_plan is not None else embedded_plan
+        if plan is not None:
+            try:
+                validate_explicit_plan(plan, m.get("modules", {}), groups,
+                                      source_tensors=identity.get("source", {}).get("tensors"))
+                recorded = m.get("routed_moe", {}).get("quantized_stacks")
+                actual = {name for name, record in m.get("modules", {}).items()
+                          if record.get("structure") == "routed_moe"}
+                if recorded is None or len(recorded) != len(actual) or set(recorded) != actual:
+                    raise ValueError("explicit plan stack population disagrees with routed_moe summary")
+                print(f"explicit plan: {len(actual)} routed stacks match config, manifest, "
+                      "source projections and requested role grid/rung")
+            except (ValueError, KeyError, TypeError) as exc:
+                problems.append(str(exc))
     else:
         print("manifest: absent (no lane demanded)")
+        if plan_json is not None:
+            problems.append("explicit --plan-json requires a serving manifest for coverage proof")
 
     print("PROBLEMS:" if problems else "NO PROBLEMS")
     for p in problems:
@@ -147,4 +176,9 @@ def main(path):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("checkpoint")
+    parser.add_argument("--plan-json", type=Path,
+                        help="require this exact export plan; otherwise use the merged identity plan")
+    args = parser.parse_args()
+    sys.exit(main(args.checkpoint, plan_json=args.plan_json))

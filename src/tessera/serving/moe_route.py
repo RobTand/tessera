@@ -76,7 +76,8 @@ import torch
 
 from ..moe_layout import W13_PROJECTIONS, MoePacked, unpack_moe_wires
 from .lane import MODE_RESIDENT, MODES
-from .scheme import (MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES, TESSERA_FP8,
+from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
+                     STRUCTURE_ROUTED_MOE, TESSERA_FP8, launch_pairs, route_launches,
                      expert_role_declarations, parse_tessera_expert_blob,
                      validate_tessera_moe_scheme)
 from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
@@ -93,7 +94,7 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
+GEMM_SYMBOL = MOE_GEMM_SYMBOL
 
 
 def census_expected(*, compiled: bool = False) -> dict:
@@ -124,19 +125,19 @@ def census_expected(*, compiled: bool = False) -> dict:
     kernel roster written in our own prose, which the runtime-attestation rule forbids;
     pinning one would refuse a box whose runtime picked another.
 
-    NOT PUBLISHED, DELIBERATELY.  Unlike the dense routes' sets this one is not
-    derived from ``scheme.ROUTE_LAUNCHES`` and no ``lane_eligibility`` cell
-    carries it: ``runtime_contract.json`` is at v14 with ``structures:
-    ["dense"]``, so a served expert stack is ``unattested`` in a census's
-    cell-agreement block and honestly so.  This value is what the CENSUS
-    compares a record against -- code against machine.  Publishing it (a
-    structure axis in ``ROUTE_LAUNCHES`` and a ``routed_moe`` cell at the next
-    contract version) is the document half, with its own consumers, and it is
-    not made true by this function existing.
+    DERIVED, BUT NOT ATTESTED. The shared ``scheme.ROUTE_LAUNCHES`` table
+    separates this expert structure from the dense FP8 launch set. Reading
+    that table keeps the census and contract derivations together. It does
+    not publish a served cell: ``runtime_contract.json`` remains dense-only
+    until a full-model quality and census receipt covers this structure.
     """
     del compiled  # documented above: one launch has nothing to combine
-    pair = (GEMM_SYMBOL, DECODER_TORCH_STOCK)
-    return {"decode": {pair}, "batch": {pair}}
+    launches = route_launches(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                              mode=MODE_RESIDENT)
+    regimes = {regime for launch in launches for regime in launch["regimes"]}
+    return {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                                 regime=regime, mode=MODE_RESIDENT)
+            for regime in regimes}
 
 
 def census_symbol_base(symbol: str) -> str:
@@ -236,8 +237,8 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
     for group in MOE_GROUPS:
         if len(blobs[group]) != experts:
             raise ValueError(
-                f"{target}: group {group!r} carries {len(blobs[group])} wire(s) for "
-                f"{experts} experts; every expert of a stack has one container per group")
+                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
+                f"{experts} experts; every expert must have its own row of projection containers")
     w13, w13_scale = _decode_group(blobs["w13"], declared["groups"]["w13"], f"{target} w13", device)
     w2, w2_scale = _decode_group(blobs["w2"], declared["groups"]["w2"], f"{target} w2", device)
     return PreparedTesseraMoeExperts(

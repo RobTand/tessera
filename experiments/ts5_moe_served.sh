@@ -2,10 +2,10 @@
 # Issue #5, item 5: serve a routed-MoE Tessera checkpoint, census its routes,
 # and measure its KL against a BF16 teacher of the SAME model.
 #
-# THE MODEL IS A CUT, AND THAT IS STATED WHEREVER THE NUMBER IS.  The only
-# routed-MoE model this box can serve is GLM-5.3-Flash-4layer, whose three
-# stacks are 21.74 G routed parameters and ~3.75 GPU-hours of encode.  So the
-# arms below run on the 16-expert cut written by ``moe_expert_cut.py``: same
+# THE HISTORICAL DEFAULT IS A CUT, NOT THE FULL-MODEL LFM CAMPAIGN.  The
+# original GLM-5.3-Flash-4layer candidate has three stacks totaling 21.74 G
+# routed parameters and a projected ~3.75 GPU-hours of encode.  This driver's
+# defaults therefore target the 16-expert cut written by ``moe_expert_cut.py``: same
 # model class, same tokenizer, same real weights, expert dimension narrowed.
 # The KL is student-against-teacher on that cut, so it measures the error the
 # Tessera expert route introduces on THESE experts.  It is NOT a quality claim

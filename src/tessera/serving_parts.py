@@ -152,6 +152,83 @@ def _expected_outputs(owned: set[str], modules: dict) -> set[str]:
     return (owned - consumed) | outputs
 
 
+def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_tensors=None) -> None:
+    """An explicit rung is an obligation, including a whole expert population.
+
+    Implicit/default dense planning has no complete plan roster to compare.
+    Unplanned expert stacks, in contrast, always pass through in the exporter,
+    so the explicit stack set must equal both emitted and declared stack sets.
+    """
+    if plan is None:
+        return
+    if not isinstance(plan, dict):
+        raise ValueError("explicit export plan must be an object")
+    requested = {}
+    for name, spec in plan.items():
+        if spec in ("PASSTHROUGH", "BF16"):
+            continue
+        if not isinstance(spec, dict) or "grid" not in spec or "q256" not in spec:
+            raise ValueError(f"explicit export plan has invalid entry {name!r}")
+        requested[name] = spec
+    planned_stacks = {name for name in requested if name.endswith(".experts")}
+    emitted_stacks = {name for name, module in modules.items()
+                      if module.get("structure") == "routed_moe"}
+    stack_schemes = {}
+    for group in config_groups.values():
+        scheme = group.get("scheme", {})
+        if scheme.get("structure") != "routed_moe":
+            continue
+        for name in group.get("targets", ()):
+            if name in stack_schemes:
+                raise ValueError(f"explicit plan stack {name}: declared twice")
+            stack_schemes[name] = scheme
+    if planned_stacks != emitted_stacks or planned_stacks != set(stack_schemes):
+        raise ValueError(
+            "explicit plan stack coverage differs: "
+            f"missing emitted={sorted(planned_stacks - emitted_stacks)}, "
+            f"extra emitted={sorted(emitted_stacks - planned_stacks)}, "
+            f"missing declared={sorted(planned_stacks - set(stack_schemes))}, "
+            f"extra declared={sorted(set(stack_schemes) - planned_stacks)}")
+    from .serving.scheme import MOE_GROUP_PROJECTIONS, validate_tessera_moe_scheme
+
+    all_roles = [role for module in modules.values() for role in module.get("roles", ())]
+    for name, spec in requested.items():
+        wanted_grid, wanted_rung = spec["grid"], int(spec["q256"])
+        if wanted_grid == "E2M1x1":  # tuple_grid's arity-one spelling
+            wanted_grid = "E2M1"
+        if name in planned_stacks:
+            record, scheme = modules[name], stack_schemes[name]
+            roles = record.get("roles", ())
+            declared = validate_tessera_moe_scheme(scheme, f"explicit plan {name}")
+            experts = declared["experts"]
+            expected_roles = {(expert, projection) for expert in range(experts)
+                              for projections in MOE_GROUP_PROJECTIONS.values()
+                              for projection in projections}
+            got_roles = [(r.get("expert"), r.get("role")) for r in roles]
+            if len(got_roles) != len(expected_roles) or set(got_roles) != expected_roles:
+                raise ValueError(f"explicit plan stack {name}: emitted expert/projection coverage differs")
+            if record.get("experts") != experts:
+                raise ValueError(f"explicit plan stack {name}: manifest expert count differs from config")
+            if source_tensors is not None:
+                expected_sources = {n for n in source_tensors if n.startswith(name + ".")}
+                consumed = {r.get("source_tensor", r["tensor"]) for r in roles}
+                if consumed != expected_sources:
+                    raise ValueError(f"explicit plan stack {name}: source projection coverage differs")
+            if record.get("grid") != wanted_grid or record.get("q256") != wanted_rung:
+                raise ValueError(f"explicit plan stack {name}: manifest grid/rung differs from plan")
+            if scheme.get("grid") != wanted_grid or any(
+                    any(rung != wanted_rung for rung in group["role_q256"])
+                    for group in declared["groups"].values()):
+                raise ValueError(f"explicit plan stack {name}: declared grid/rung differs from plan")
+        else:
+            roles = [r for r in all_roles if r.get("tensor") == name]
+            if len(roles) != 1:
+                raise ValueError(f"explicit plan tensor {name}: expected one emitted role, got {len(roles)}")
+        for role in roles:
+            if role.get("grid") != wanted_grid or role.get("q256") != wanted_rung:
+                raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
+
+
 def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     """Prove identities, ownership and written tensor coverage before publishing."""
     out, source = Path(out), Path(source)
@@ -233,6 +310,8 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
         raise ValueError("source tensor coverage is incomplete")
     if ignore & modules.keys():
         raise ValueError("a merged target is also declared ignored")
+    validate_explicit_plan(identity["options"].get("plan"), modules, groups,
+                           source_tensors=expected_source)
     config = copy.deepcopy(source_config)
     config["quantization_config"] = {"quant_method": "tessera", "format": base_format,
                                       "config_groups": groups, "ignore": sorted(ignore)}

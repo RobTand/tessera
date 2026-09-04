@@ -90,6 +90,7 @@ __all__ = [
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
     "WINDOW_GEMV_SYMBOL",
+    "MOE_GEMM_SYMBOL",
     "regime_of_m",
     "route_launches",
     "launch_pairs",
@@ -279,8 +280,8 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: THE LAUNCHES EACH ROUTE MAKES, and the conditions under which it makes one.
 #:
 #: ``ROUTES[...]["gemm_symbol"]`` answers "which GEMM does this route call",
-#: which was the whole answer while a route had exactly one launch.  The FP8
-#: and BF16 routes have three (issue #111): the materialised tile under the
+#: which was the whole answer while a route had exactly one launch. The dense
+#: FP8 and BF16 routes have three (issue #111): the materialised tile under the
 #: stock GEMM, the same GEMM over a tile the window-GEMV lane's kernel decoded,
 #: and -- where the lane prepared -- the lane's own ``gemv`` op.  Which one runs
 #: is a function of the token count M and of the RESIDENCY (``fp8_route`` and
@@ -291,8 +292,8 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: to get right (see :func:`regime_of_m`).  So the table is here, torch-free,
 #: and it is read by three sides that must not disagree about one runtime:
 #:
-#: * the ROUTES themselves -- ``fp8_route.census_expected`` and
-#:   ``bf16_route.census_expected`` are derived from it, and ``GEMV_SYMBOL`` is
+#: * the ROUTES themselves -- the dense and expert ``census_expected`` sets
+#:   are derived from it, and ``GEMV_SYMBOL`` is
 #:   read from it rather than spelled a third time beside the two dispatches;
 #: * the CONTRACT -- ``contract.validate_serving_contract`` refuses a
 #:   ``lane_eligibility`` cell whose ``executes`` list is not exactly the
@@ -301,12 +302,18 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: * the CENSUS -- ``census.cell_launch_agreement`` joins a served record to
 #:   the cell that covers it.
 #:
+#: ``structures`` separates a dense Linear from a routed-expert stack even
+#: when both serve the same payload family. The expert FP8 route materialises
+#: once at load and calls the runtime's modular fused-MoE kernel in resident
+#: mode; it never takes a dense GEMM or a window-GEMV lane. This table states
+#: dispatch capability, not attestation: it does not create a served cell.
+#:
 #: ``lane`` names the ``ext.NATIVE_EXTENSIONS`` entry a launch needs, or is
 #: ``None`` for a launch the route makes with no extension at all.  A lane
 #: launch is reachable only at a rung the lane reads -- the predicate the
 #: extension publishes at ``lane.requires`` -- and the contract validator ties
 #: the cell's rungs to it, so a GEMV cell cannot outlive the kernel's constants.
-LAUNCH_FIELDS = ("symbol", "decoder", "regimes", "modes", "lane",
+LAUNCH_FIELDS = ("symbol", "decoder", "regimes", "modes", "structures", "lane",
                  "when_lane_absent")
 
 
@@ -339,6 +346,9 @@ def regime_of_m(m: int) -> str:
 #: ``executes`` entry without importing the kernel -- the same reason
 #: ``gemm_symbol`` is a ``ROUTES`` field and not a literal in the route module.
 WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
+#: The entry point the expert route calls. Its recorded backend suffix is
+#: selected by vLLM at runtime and remains in the census receipt.
+MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 
 #: The decoder each launch stamps.  Strings rather than an import of
 #: ``telemetry``, which imports torch; ``tests/test_serving_contract.py`` ties
@@ -346,6 +356,7 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_WINDOW = "torch_window"
 _DECODER_WINDOW_GEMV = "window_gemv"
+_DECODER_TORCH_STOCK = "torch_materialize_stock"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -375,6 +386,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # what runs on a unit the lane did not prepare.  M does not enter it.
         {"symbol": gemm_symbol, "decoder": _DECODER_TORCH_WINDOW,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
         # The same GEMM over a tile the LANE's kernel decoded: the branch
         # ``decode_is_gemv`` refuses.  Every forward it can run on has M > 1 --
@@ -383,6 +395,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # at one row.
         {"symbol": gemm_symbol, "decoder": _DECODER_WINDOW_GEMV,
          "regimes": ("batch",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
         # The lane's own op, in BOTH regimes.  One row always takes it (the
         # rate-1 refusal starts at the 4-row tile), and so does the two-row
@@ -393,6 +406,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # wrong about the runtime.
         {"symbol": WINDOW_GEMV_SYMBOL, "decoder": _DECODER_WINDOW_GEMV,
          "regimes": _ALL_REGIMES, "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
     )
 
@@ -406,20 +420,27 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     TESSERA_NVFP4: (
         {"symbol": ROUTES[TESSERA_NVFP4]["gemm_symbol"], "decoder": _DECODER_NATIVE_SPAN2,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
     ),
-    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]),
+    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
+        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+    ),
     TESSERA_BF16: _window_launches(ROUTES[TESSERA_BF16]["gemm_symbol"]),
 }
 
 
-def route_launches(route: str, *, regime: str | None = None, mode: str | None = None,
+def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
+                   regime: str | None = None, mode: str | None = None,
                    lanes: "tuple[str, ...] | None" = None) -> tuple[dict, ...]:
-    """The launches ``route`` makes, narrowed by regime, residency and lanes.
+    """The launches ``route`` makes for a structure, narrowed by its conditions.
 
-    Every argument is OPTIONAL and ``None`` means "not narrowed on this axis",
-    so the unnarrowed call returns everything the route can launch -- which is
-    the admissive set a census compares a record against.  Narrowing all three
+    ``structure`` defaults to dense for existing Linear callers. Other axes
+    are optional and ``None`` means "not narrowed on this axis", so a call
+    specifying only structure returns all launches that structure can make --
+    the admissible set a census compares a record against. Narrowing all three
     is what a ``lane_eligibility`` cell does, and it is what makes the cell's
     ``executes`` a value rather than a disjunction.
 
@@ -440,8 +461,13 @@ def route_launches(route: str, *, regime: str | None = None, mode: str | None = 
         raise ValueError(
             f"{route!r} is not a route this package serves ({sorted(ROUTE_LAUNCHES)}); a "
             "launch set for an unknown route would read as 'this route launches nothing'")
+    if structure not in STRUCTURES:
+        raise ValueError(
+            f"{structure!r} is not a structure this package serves ({list(STRUCTURES)})")
     kept = []
     for launch in ROUTE_LAUNCHES[route]:
+        if structure not in launch["structures"]:
+            continue
         if regime is not None and regime not in launch["regimes"]:
             continue
         if mode is not None and mode not in launch["modes"]:

@@ -43,6 +43,19 @@ and ignores, derives totals from the combined module records, and writes the
 final `config.json` last. The runtime digest here names what the dispatch was
 asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
 
+Source coverage alone does not prove that a plan was fulfilled: an omitted
+expert stack can remain internally consistent BF16. Before publication the
+merger therefore reads the sealed `identity.options.plan` and requires every
+explicit quantized target to have its emitted roles at the requested grid and
+rung. Planned expert-stack names must equal both manifest and config stack
+sets, including each stack's complete expert/projection population and source
+projection coverage. Implicit dense defaults have no complete plan roster and
+are outside this additional check. `ts5_sidecar_check.py` repeats the same
+validator before serving, using the merged `export_identity.options.plan` or
+an explicit `--plan-json` that must agree with it; its routed-MoE summary must
+name the same population too. Existing version-one parts remain readable and
+their containers do not change.
+
 ## 3. Bytes: priced == served
 
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
@@ -416,7 +429,8 @@ arms cannot turn a failed census into a successful campaign action.
 Before serving, `experiments/ts5_sidecar_check.py` reads the indexed shards
 (or all safetensors files for an unindexed checkpoint), requires exactly one
 wire per declared expert and role under its canonical or runtime shard name,
-and recomputes each group's maximum wire length from those headers. A missing
+and refuses a repeated tensor name across shards before aggregating their
+headers. It recomputes each group's maximum wire length from those headers. A missing
 projection cannot pass merely because another wire has the declared stride.
 
 The eager route census emits `tessera.cell-launch-agreement/2`, aggregating
@@ -470,7 +484,11 @@ forward to combine. Resolving the expectation from the FAMILY alone hands the
 stack the dense route's pair set and refuses a serve that did exactly what the
 route intends, so it comes from the route that owns the dispatch
 (`moe_route.census_expected`, the same ownership rule as
-`fp8_gemv.census_expected`). Its symbol is compared without the backend suffix
+`fp8_gemv.census_expected`). Both derive from `scheme.ROUTE_LAUNCHES`, whose
+`structures` axis keeps dense and routed launches distinct. Existing launch
+lookups default to dense; routed FP8 admits only its resident modular-kernel
+launch, in both regimes. The contract's launch derivation passes each cell's
+structure to the same lookup. Its symbol is compared without the backend suffix
 the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is
 vLLM's predicate over the kernels on the box, so which backend ran is kept in
 the receipt's histogram and is never pinned by an expectation of ours.
@@ -482,8 +500,8 @@ And the stack stays **unattested** in the cell-agreement block.
 the stack and covers it with nothing, checked before the rung lookup rather
 than left to the accident that the record's name carries a suffix no
 declaration does. That is the same honest absence §4.4 records for the loader,
-and closing it is a document change: a structure axis in `ROUTE_LAUNCHES` and a
-`routed_moe` cell at the next contract version, derived from that table the way
+and closing it requires a receipt-bearing `routed_moe` cell at the next
+contract version, derived from the structure-aware launch table the way
 every dense cell is. The validator derives the positive
 `lane_eligibility.structures` set from those receipt-bearing cells, while
 `scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
