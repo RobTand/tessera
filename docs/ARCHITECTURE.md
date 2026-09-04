@@ -166,6 +166,60 @@ the field exists to catch. The per-phase counts stay in the block, and
 `all_required_engaged` is three-valued so "nobody said what to require" never
 reads as "everything required was engaged".
 
+### 4.5b What the contract says a serve EXECUTES, and the join that checks it
+
+A `lane_eligibility` cell says: on this platform, for this payload family, at
+these rungs, in this regime, at this residency, the plugin executes **these
+launches** on a route with this status. The launch half is
+`executes` -- a list of `{symbol, decoder}` -- and it arrived with
+`lane_eligibility` schema **v4** (contract v13, issue #111). Before it, a
+cell published the A-side contract and the rungs, and the launch appeared
+only inside the cell's `id`: the E4M3 family said `..._decode_scaled_mm_w8a8`
+for both regimes and no cell named the window-GEMV lane at all. That was
+accidentally true while the lane was unreachable (§4.4c) and false the moment
+a rate-constrained artifact was served -- the R1024 census records
+`tessera_window_gemv::gemv` on 112 of 112 modules in the decode regime
+(`docs/measurements/tessera-lane-eligibility-executes-2026-09-04.md`).
+
+Three things follow, and each is a rule rather than a value:
+
+- **The value is derived, never asserted.** `contract.validate_serving_contract`
+  builds each cell's `executes` from `scheme.ROUTE_LAUNCHES` -- the torch-free
+  table the routes' own `fp8_gemv.census_expected` / `bf16_route.census_expected`
+  are built from, and the home of `WINDOW_GEMV_SYMBOL` -- narrowed by the
+  regime, by the residency the cell's `TESSERA_SERVE_MODE` flag names, and by
+  the lanes each rung reaches under `native_extensions[].lane.requires`. So a
+  cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
+  drop rate 4 from the published predicate and the document stops validating
+  (`tests/test_lane_reachability.py`).
+- **The residency is a condition, not a label.** Both window routes set
+  `layer.tessera_gemv = None` in `resident`, so the lane exists in `streamed`
+  alone and one rung's decode regime has two answers. The E4M3 family
+  therefore carries four cells, and two cells of one `(platform, family,
+  structure, regime)` must cover **disjoint** residencies -- otherwise a
+  consumer resolving "what runs here" gets whichever cell it read first. A
+  cell `id` is now its scope and never a launch, because an id that names a
+  launch is a second, unparsed spelling of `executes`.
+- **The census closes the loop.** Deriving `executes` proves the document
+  agrees with the code; only a serve proves the code agrees with the machine.
+  `census.cell_launch_agreement` joins every served route record to the cell
+  covering its `(platform, family, structure, regime, residency, rung)` and
+  refuses a disagreement, and `tools/tessera_route_census.py` writes the block
+  into the receipt. It is eager-only and says so: a compiled record stamps
+  both launches as one `a+b` pair because one graph serves every M.
+
+`TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
+1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch
+window decode under `torch.mm` without being told to. The day a reachable BF16
+rung is attested the same derivation produces its GEMV cell.
+
+Schema v4 is **not** additive: a v3 reader must not read a v4 cell, both
+because `executes` is a key it does not know and because the E4M3 decode
+answer it would have read off one cell is now two. PrismaQuant's
+`lane_eligibility` parser pins `tessera.lane-eligibility.v3` exactly and
+refuses unknown cell keys, so it fails closed (loudly, not silently) until it
+is widened.
+
 ### 4.5a A served KL names which FORWARD it scored
 
 `kl_tool.py dump` has two regimes and they are two metrics. `--regime

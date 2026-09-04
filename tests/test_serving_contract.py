@@ -20,6 +20,7 @@ import copy
 import pytest
 
 from tessera.serving.contract import (
+    CENSUS_PHASE_REGIMES,
     CONTRACT_SCHEMA,
     LANE_ELIGIBILITY_SCHEMA,
     REQUIRES_PLUGIN,
@@ -28,62 +29,105 @@ from tessera.serving.contract import (
     validate_serving_contract,
 )
 
-#: The six cells the 2026-09-02 GB10 Tessera receipts cover, field for field:
+#: The eight cells the served Tessera receipts cover, field for field:
 #: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896), on the E4M3 window wire
-#: (q256 = 1024) and on the BF16 window wire (q256 = 1792), both residency
-#: modes, eager and compiled, every dense Linear on ``torch._scaled_mm`` for the
-#: two quantized-A routes and on ``torch.mm`` for the 16-bit one.  Widening ANY
-#: value here without a new receipt is the failure this pins.
+#: (q256 = 1024) and on the BF16 window wire (q256 = 1792), every dense Linear,
+#: eager and compiled -- the 2026-09-02 receipts for the six that were here
+#: before, plus ``/home/rob/tessera-runs/ts104/census-R1024-readable.json``
+#: (2026-09-03, streamed, eager) for what the E4M3 wire executes once the
+#: window-GEMV lane is reachable.  Widening ANY value here without a new
+#: receipt is the failure this pins.
+#:
+#: The E4M3 family carries FOUR cells because its launches differ by RESIDENCY:
+#: both window routes set ``layer.tessera_gemv = None`` in ``resident``, so the
+#: lane exists in ``streamed`` alone and the decode regime executes two
+#: different things under one rung (#111).  The other two families execute one
+#: launch in both residencies and keep one cell per regime -- and BF16 keeps
+#: the torch decode because its attested rung 1792 is root 7, outside the
+#: lane's rates, so its own GEMV lane is unreachable there.
 _CELL_LAWS: dict[str, dict[str, object]] = {
-    "tessera_e2m1_k2_dense_sm121_decode_scaled_mm_w4a4": {
+    "tessera_e2m1_k2_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
         "regime": "decode", "rungs_q256": [896],
         "activation_contract": "e2m1_group16_ue4m3_static",
+        "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
     },
-    "tessera_e2m1_k2_dense_sm121_batch_scaled_mm_w4a4": {
+    "tessera_e2m1_k2_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
         "regime": "batch", "rungs_q256": [896],
         "activation_contract": "e2m1_group16_ue4m3_static",
+        "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
     },
-    "tessera_e4m3_k1_dense_sm121_decode_scaled_mm_w8a8": {
+    "tessera_e4m3_k1_dense_sm121_decode_resident": {
         "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
         "regime": "decode", "rungs_q256": [1024],
         "activation_contract": "fp8_per_token_dynamic",
+        "executes": [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [],
     },
-    "tessera_e4m3_k1_dense_sm121_batch_scaled_mm_w8a8": {
+    # THE CELL THE CENSUS BOUGHT.  Before #111 this rung's decode regime
+    # published the materialised pair, in every case, on a document whose own
+    # receipt records ``tessera_window_gemv::gemv`` on 112 of 112 modules.
+    "tessera_e4m3_k1_dense_sm121_decode_streamed": {
+        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
+        "regime": "decode", "rungs_q256": [1024],
+        "activation_contract": "fp8_per_token_dynamic",
+        "executes": [{"symbol": "tessera_window_gemv::gemv", "decoder": "window_gemv"}],
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera",
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
+        "predicates": [],
+    },
+    "tessera_e4m3_k1_dense_sm121_batch_resident": {
         "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
         "regime": "batch", "rungs_q256": [1024],
         "activation_contract": "fp8_per_token_dynamic",
+        "executes": [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [],
     },
-    "tessera_bf16_k1_dense_sm121_decode_mm_w16a16": {
+    # The batch regime is ``torch._scaled_mm`` in BOTH residencies and the
+    # DECODER is what differs: with the lane prepared the prefill tile comes
+    # off the lane's own kernel decode, which is what the R1024 census records
+    # (``decoder window_gemv``, symbol ``torch._scaled_mm``, 112 of 112).
+    "tessera_e4m3_k1_dense_sm121_batch_streamed": {
+        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
+        "regime": "batch", "rungs_q256": [1024],
+        "activation_contract": "fp8_per_token_dynamic",
+        "executes": [{"symbol": "torch._scaled_mm", "decoder": "window_gemv"}],
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera",
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
+        "predicates": [],
+    },
+    "tessera_bf16_k1_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
         "regime": "decode", "rungs_q256": [1792],
         "activation_contract": "bf16_unquantized",
+        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
     },
-    "tessera_bf16_k1_dense_sm121_batch_mm_w16a16": {
+    "tessera_bf16_k1_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
         "regime": "batch", "rungs_q256": [1792],
         "activation_contract": "bf16_unquantized",
+        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
@@ -298,7 +342,7 @@ def test_the_reader_grid_resolves_by_route_AND_grid(contract):
     assert not reader_accepts(1025, 256, 2048, 128), "the step is part of the set"
 
 
-def test_the_four_cells_are_pinned_field_for_field(contract):
+def test_the_cells_are_pinned_field_for_field(contract):
     cells = _cells(contract)
     assert sorted(cells) == sorted(_CELL_LAWS)
     for cell_id, laws in _CELL_LAWS.items():
@@ -308,11 +352,23 @@ def test_the_four_cells_are_pinned_field_for_field(contract):
 
 
 def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
+    """Every route is plugin-gated and reached through a NAMED residency.
+
+    The flag was pinned to the literal ``resident|streamed`` until #111.  That
+    read as a formatting rule and was really a claim -- that both residencies
+    execute the same thing -- which is false on the E4M3 wire.  The rule is
+    that a cell names residencies from ``lane.MODES``, parsed rather than
+    matched; which ones it names is the LAWS table's business.
+    """
+    from tessera.serving.contract import cell_residency_modes
+    from tessera.serving.lane import MODES
+
     for cell in contract["lane_eligibility"]["cells"]:
         assert cell["route_status"] == "backed_with_serve_flag"
         assert cell["qualification"] == "device_qualified"
         assert cell["requires_plugin"] == "tessera"
-        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident|streamed"]
+        modes = cell_residency_modes(cell)
+        assert modes and set(modes) <= set(MODES)
 
 
 def test_the_table_is_dense_only(contract):
@@ -347,6 +403,100 @@ def test_each_cell_executes_the_contract_its_route_module_exposes(contract):
     }
     for cell in contract["lane_eligibility"]["cells"]:
         assert cell["activation_contract"] == by_family[cell["family"]]
+
+
+def test_the_launch_table_is_spelled_in_the_vocabulary_the_serve_stamps():
+    """``ROUTE_LAUNCHES`` is a table about telemetry, so it uses telemetry's words.
+
+    It lives in ``scheme`` (torch-free, because the contract validator reads it
+    on a producer box) and ``telemetry`` imports torch, so the decoder strings
+    are literals there.  That is exactly the drift ``loader_axes`` vs
+    ``ROUTE_TP_AXES`` is tied against, and this is the same tie.
+    """
+    pytest.importorskip("torch")
+    from tessera.serving import telemetry
+    from tessera.serving.scheme import LAUNCH_FIELDS, ROUTE_LAUNCHES, ROUTES
+
+    for route, launches in ROUTE_LAUNCHES.items():
+        assert route in ROUTES
+        assert launches, f"{route} launches nothing"
+        for launch in launches:
+            assert set(launch) == set(LAUNCH_FIELDS), launch
+            assert launch["decoder"] in telemetry.DECODERS
+            assert set(launch["regimes"]) <= set(CENSUS_PHASE_REGIMES.values())
+
+
+def test_the_launch_tables_lane_is_the_published_extension():
+    """A launch may only name a lane this build publishes an extension for."""
+    from tessera.serving import ext
+    from tessera.serving.scheme import ROUTE_LAUNCHES
+
+    published = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS if e.get("lane")}
+    for launches in ROUTE_LAUNCHES.values():
+        for launch in launches:
+            if launch["lane"] is not None:
+                assert launch["lane"] in published, launch
+
+
+def test_the_routes_census_expectation_is_the_launch_table():
+    """The routes' own ``census_expected`` and a cell's ``executes`` are one table.
+
+    Two spellings of "what this route may launch" is how the census tool and
+    the contract came to disagree about one runtime.  Both sides read
+    ``scheme.ROUTE_LAUNCHES`` now, so this asserts the derivation rather than
+    a copy of the answer.
+    """
+    pytest.importorskip("torch")
+    from tessera.serving import bf16_route, fp8_gemv
+    from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, launch_pairs
+
+    for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
+        eager = module.census_expected(compiled=False)
+        for regime in ("decode", "batch"):
+            assert eager[regime] == launch_pairs(route, regime=regime), (route, regime)
+        # The GEMV lane owns the decode regime and nothing else; the batch
+        # regime never reports the lane's op.
+        assert (module.GEMV_SYMBOL, "window_gemv") in eager["decode"]
+        assert not any(sym == module.GEMV_SYMBOL for sym, _ in eager["batch"])
+
+
+def test_every_cell_executes_a_launch_its_route_can_make(contract):
+    """The shipped table, read against the launch table rather than mutated."""
+    from tessera.serving.contract import cell_executes, cell_residency_modes
+    from tessera.serving.scheme import launch_pairs
+
+    by_family = {"TESSERA_E2M1_K2": "TESSERA_NVFP4", "TESSERA_E4M3_K1": "TESSERA_FP8",
+                 "TESSERA_BF16_K1": "TESSERA_BF16"}
+    for cell in contract["lane_eligibility"]["cells"]:
+        route = by_family[cell["family"]]
+        admissible = set()
+        for mode in cell_residency_modes(cell):
+            admissible |= launch_pairs(route, regime=cell["regime"], mode=mode)
+        assert cell_executes(cell) <= admissible, cell["id"]
+
+
+def test_a_cell_that_names_a_launch_its_route_cannot_make_is_refused(contract):
+    broken = copy.deepcopy(contract)
+    broken["lane_eligibility"]["cells"][0]["executes"] = [
+        {"symbol": "torch.mm", "decoder": "window_gemv"}]
+    with pytest.raises(ValueError, match="executes"):
+        validate_serving_contract(broken)
+
+
+def test_a_cell_with_no_launch_is_refused(contract):
+    broken = copy.deepcopy(contract)
+    broken["lane_eligibility"]["cells"][0]["executes"] = []
+    with pytest.raises(ValueError, match="non-empty list"):
+        validate_serving_contract(broken)
+
+
+def test_a_cell_id_may_not_name_a_launch(contract):
+    """The id is the SCOPE.  ``..._decode_scaled_mm_w8a8`` is the defect (#111)."""
+    broken = copy.deepcopy(contract)
+    cell = broken["lane_eligibility"]["cells"][0]
+    cell["id"] = cell["id"] + "_scaled_mm_w4a4"
+    with pytest.raises(ValueError, match="a cell id is its SCOPE"):
+        validate_serving_contract(broken)
 
 
 def test_no_unit_attests_a_world_size_above_one(contract):

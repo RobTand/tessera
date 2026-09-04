@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 12,
+  "contract_version": 13,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -189,7 +189,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v3",
+  "schema": "tessera.lane-eligibility.v4",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -207,7 +207,7 @@
   ],
   "cells": [
    {
-    "id": "tessera_e2m1_k2_dense_sm121_decode_scaled_mm_w4a4",
+    "id": "tessera_e2m1_k2_dense_sm121_decode",
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -216,6 +216,12 @@
      896
     ],
     "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "native_span2"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -225,7 +231,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_e2m1_k2_dense_sm121_batch_scaled_mm_w4a4",
+    "id": "tessera_e2m1_k2_dense_sm121_batch",
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -234,6 +240,12 @@
      896
     ],
     "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "native_span2"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -243,7 +255,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_e4m3_k1_dense_sm121_decode_scaled_mm_w8a8",
+    "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -252,16 +264,46 @@
      1024
     ],
     "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
+     "TESSERA_SERVE_MODE=resident"
     ],
     "predicates": []
    },
    {
-    "id": "tessera_e4m3_k1_dense_sm121_batch_scaled_mm_w8a8",
+    "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "tessera_window_gemv::gemv",
+      "decoder": "window_gemv"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -270,16 +312,46 @@
      1024
     ],
     "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
+     "TESSERA_SERVE_MODE=resident"
     ],
     "predicates": []
    },
    {
-    "id": "tessera_bf16_k1_dense_sm121_decode_mm_w16a16",
+    "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "window_gemv"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_decode",
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -288,6 +360,12 @@
      1792
     ],
     "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -297,7 +375,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_bf16_k1_dense_sm121_batch_mm_w16a16",
+    "id": "tessera_bf16_k1_dense_sm121_batch",
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -306,6 +384,12 @@
      1792
     ],
     "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -617,6 +701,11 @@
       ]
    },
    "changelog": [
+    {
+     "contract_version": 13,
+     "date": "2026-09-04",
+     "change": "lane_eligibility schema v4: every cell publishes `executes`, the (symbol, decoder) launches the route MAKES in that cell's regime at that cell's residency on that cell's rungs -- and the E4M3 family's cells split along the residency, because that is the axis those launches differ on. WHAT WAS WRONG: a cell said which A-side contract ran (correct, and still does: the FP8 route's per-token quantiser runs on every path and hands the GEMV dequantised values, so fp8_per_token_dynamic is what executes in both regimes) and which rungs a receipt covered, and the only place the LAUNCH appeared was the cell's id -- `..._decode_scaled_mm_w8a8`, a string no gate parses. That was accidentally true while the window-GEMV lane was unreachable: every allocated checkpoint carried a rate outside kernel_window_gemv.SUPPORTED_RATES, so an E4M3 decode really did execute the materialised FP8 pair (issue #104). It stopped being true on /mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024 (q256 1024, root rate 4 exactly), whose served census records decode: symbol tessera_window_gemv::gemv, decoder window_gemv, 112 of 112 modules; prefill: symbol torch._scaled_mm, decoder window_gemv, 112 of 112 (receipt /home/rob/tessera-runs/ts104/census-R1024-readable.json, streamed, eager). A gate reading the contract to decide what the decode regime runs would have read a false value: principle 14 from the other direction, an attested claim gone stale under a checkpoint the runtime can finally serve (issue #111). WHAT THE VALUE IS DERIVED FROM: tessera.serving.scheme.ROUTE_LAUNCHES, the torch-free table the routes' OWN fp8_gemv.census_expected / bf16_route.census_expected are built from and which owns WINDOW_GEMV_SYMBOL, narrowed by the three axes a cell already carries -- the regime, the residency its TESSERA_SERVE_MODE flag names (both window routes set layer.tessera_gemv = None in resident, so the lane exists in streamed alone), and the lanes each rung REACHES under the predicate native_extensions[].lane.requires publishes (contract v12), which is kernel_window_gemv's own constants. So a cell naming the GEMV cannot outlive the kernel's rate set: change SUPPORTED_RATES and this document stops validating. WHY THE RESIDENCY SPLIT AND NOT A PREDICATE: the two shapes issue #111 offered were a lane predicate on the cell and an explicit rung condition. The rung condition is kept -- rungs_q256 is an enumerated list and a reader resolves no predicate -- but the rung alone cannot separate the two launches, because the one attested E4M3 rung (1024) is lane-readable and the launch there is decided by the residency, which was already a machine-readable cell field spelled as an OR. Two cells of one (platform, family, structure, regime) must now cover DISJOINT residencies, so a reader's answer cannot depend on the order the cells were written in. Cell IDs no longer name a launch: an id is its scope (family, structure, platform, regime, plus the residency where a cell covers only some), because an id that names a launch is a second unparsed spelling of `executes` -- the one that went stale. NOT ADDITIVE, and the schema string says so: a v3 reader must not read a v4 cell, both because `executes` is a key it does not know and because the E4M3 decode answer it would have taken from one cell is now two. TESSERA_BF16_K1 gains `executes` and NO GEMV cell: its attested rung 1792 is root 7, outside SUPPORTED_RATES, so its own streamed GEMV lane is unreachable and the launch a receipt could cover there is the torch window decode under torch.mm -- which is what the derivation returns, unforced. The day a reachable BF16 rung is attested, the same derivation produces its GEMV cell."
+    },
     {
      "contract_version": 12,
     "date": "2026-09-03",

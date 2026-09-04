@@ -67,6 +67,11 @@ __all__ = [
     "STRUCTURE_DENSE",
     "STRUCTURES",
     "ROUTES",
+    "ROUTE_LAUNCHES",
+    "LAUNCH_FIELDS",
+    "WINDOW_GEMV_SYMBOL",
+    "route_launches",
+    "launch_pairs",
     "GROUP_SIZE",
     "FUSED_MODULE_FIELDS",
     "FUSED_MODULE_SCHEMA",
@@ -186,6 +191,160 @@ ROUTES: dict[str, dict] = {
 #: here or in ``lane`` has to be edited to admit it.  A hand-written tuple was
 #: a fourth place to remember.
 TESSERA_FAMILIES = tuple(ROUTES)
+
+#: THE LAUNCHES EACH ROUTE MAKES, and the conditions under which it makes one.
+#:
+#: ``ROUTES[...]["gemm_symbol"]`` answers "which GEMM does this route call",
+#: which was the whole answer while a route had exactly one launch.  The FP8
+#: and BF16 routes have three (issue #111): the materialised tile under the
+#: stock GEMM, the same GEMM over a tile the window-GEMV lane's kernel decoded,
+#: and -- in the decode regime only, where the lane prepared -- the lane's own
+#: ``gemv`` op.  Which one runs is a function of the REGIME (the lane owns
+#: ``kernel_window_gemv.GEMV_MAX_M``) and of the RESIDENCY (``fp8_route`` and
+#: ``bf16_route`` both set ``layer.tessera_gemv = None`` in ``resident`` mode,
+#: so the lane exists in ``streamed`` alone), and both of those are axes a
+#: ``lane_eligibility`` cell already carries.  So the table is here, torch-free,
+#: and it is read by three sides that must not disagree about one runtime:
+#:
+#: * the ROUTES themselves -- ``fp8_route.census_expected`` and
+#:   ``bf16_route.census_expected`` are derived from it, and ``GEMV_SYMBOL`` is
+#:   read from it rather than spelled a third time beside the two dispatches;
+#: * the CONTRACT -- ``contract.validate_serving_contract`` refuses a
+#:   ``lane_eligibility`` cell whose ``executes`` list is not exactly the
+#:   launches this table admits for that cell's regime and residency, which is
+#:   what makes the published value derived rather than asserted (principle 14);
+#: * the CENSUS -- ``census.cell_launch_agreement`` joins a served record to
+#:   the cell that covers it.
+#:
+#: ``lane`` names the ``ext.NATIVE_EXTENSIONS`` entry a launch needs, or is
+#: ``None`` for a launch the route makes with no extension at all.  A lane
+#: launch is reachable only at a rung the lane reads -- the predicate the
+#: extension publishes at ``lane.requires`` -- and the contract validator ties
+#: the cell's rungs to it, so a GEMV cell cannot outlive the kernel's constants.
+LAUNCH_FIELDS = ("symbol", "decoder", "regimes", "modes", "lane",
+                 "when_lane_absent", "only_rate_set")
+
+#: The op the window-GEMV lane dispatches through, in the spelling
+#: ``kernel_window_gemv`` registers it under.  It lives HERE, torch-free,
+#: because a producer reading the contract has to be able to resolve a cell's
+#: ``executes`` entry without importing the kernel -- the same reason
+#: ``gemm_symbol`` is a ``ROUTES`` field and not a literal in the route module.
+WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
+
+#: The decoder each launch stamps.  Strings rather than an import of
+#: ``telemetry``, which imports torch; ``tests/test_serving_contract.py`` ties
+#: every one of them to ``telemetry.DECODERS`` where torch is installed.
+_DECODER_NATIVE_SPAN2 = "native_span2"
+_DECODER_TORCH_WINDOW = "torch_window"
+_DECODER_WINDOW_GEMV = "window_gemv"
+
+_ALL_REGIMES = ("batch", "decode")
+_ALL_MODES = ("resident", "streamed")
+#: The extension whose ``lane`` block gates the two window launches below.
+#: Spelled here rather than imported from ``ext`` to keep this module's
+#: import graph flat; ``test_the_launch_tables_lane_is_the_published_extension``
+#: ties it to ``ext.WINDOW_GEMV_MODULE_NAME``.
+_WINDOW_GEMV_LANE = "tessera_window_gemv"
+
+
+def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
+    """The three launches a WINDOW-body route makes, given its GEMM.
+
+    The FP8 and BF16 routes differ in their alphabet, their tile and their
+    GEMM; they do not differ in this shape, and writing it twice is how the
+    second one would quietly stop matching the first.
+    """
+    return (
+        # The materialised tile.  ``when_lane_absent`` is the ``elif
+        # getattr(layer, "tessera_gemv", None) is None`` branch both routes
+        # take, as a value: in ``resident`` mode there is no lane to be absent
+        # from and this is simply the launch, and in ``streamed`` mode it is
+        # what runs on a unit the lane did not prepare.
+        {"symbol": gemm_symbol, "decoder": _DECODER_TORCH_WINDOW,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "when_lane_absent": True, "only_rate_set": None},
+        # The same GEMM over a tile the LANE's kernel decoded.  It owns the
+        # batch regime outright, and reaches the decode regime only where
+        # ``decode_is_gemv`` is false -- which for a whole rung means every
+        # column at rate 1, the one case with no 8-row lane.
+        {"symbol": gemm_symbol, "decoder": _DECODER_WINDOW_GEMV,
+         "regimes": ("batch",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "when_lane_absent": False, "only_rate_set": None},
+        {"symbol": gemm_symbol, "decoder": _DECODER_WINDOW_GEMV,
+         "regimes": ("decode",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "when_lane_absent": False, "only_rate_set": (1,)},
+        # The lane's own op.
+        {"symbol": WINDOW_GEMV_SYMBOL, "decoder": _DECODER_WINDOW_GEMV,
+         "regimes": ("decode",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "when_lane_absent": False, "only_rate_set": None},
+    )
+
+
+ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
+    # One launch: the span-2 kernel decodes and the scaled GEMM runs, in both
+    # regimes and both residencies.  The stock-materialise decoder is what runs
+    # when the extension is ABSENT, which is published as a fallback
+    # (``ext.NATIVE_EXTENSIONS[].when_unavailable``) and is not a launch an
+    # attested cell may name.
+    TESSERA_NVFP4: (
+        {"symbol": ROUTES[TESSERA_NVFP4]["gemm_symbol"], "decoder": _DECODER_NATIVE_SPAN2,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "when_lane_absent": True, "only_rate_set": None},
+    ),
+    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]),
+    TESSERA_BF16: _window_launches(ROUTES[TESSERA_BF16]["gemm_symbol"]),
+}
+
+
+def route_launches(route: str, *, regime: str | None = None, mode: str | None = None,
+                   lanes: "tuple[str, ...] | None" = None,
+                   rate_set: "tuple[int, ...] | None" = None) -> tuple[dict, ...]:
+    """The launches ``route`` makes, narrowed by regime, residency, lanes and rung.
+
+    Every argument is OPTIONAL and ``None`` means "not narrowed on this axis",
+    so the unnarrowed call returns everything the route can launch -- which is
+    the admissive set a census compares a record against.  Narrowing all four
+    is what a ``lane_eligibility`` cell does, and it is what makes the cell's
+    ``executes`` a value rather than a disjunction.
+
+    ``lanes`` is the set of extension lanes PREPARED.  ``()`` is a box with no
+    extension at all -- the honest reading of ``when_unavailable`` -- and a
+    non-empty set drops the ``when_lane_absent`` launch, exactly as the routes'
+    own ``elif ... tessera_gemv is None`` branch does.  ``rate_set`` is the
+    rung's own distinct column rates (``grammar.rate_set``), which is what
+    decides ``decode_is_gemv``'s rate-1 clause for a whole rung.
+    """
+    if route not in ROUTE_LAUNCHES:
+        raise ValueError(
+            f"{route!r} is not a route this package serves ({sorted(ROUTE_LAUNCHES)}); a "
+            "launch set for an unknown route would read as 'this route launches nothing'")
+    kept = []
+    for launch in ROUTE_LAUNCHES[route]:
+        if regime is not None and regime not in launch["regimes"]:
+            continue
+        if mode is not None and mode not in launch["modes"]:
+            continue
+        if lanes is not None and launch["lane"] is not None and launch["lane"] not in lanes:
+            continue
+        only = launch["only_rate_set"]
+        if rate_set is not None and only is not None and tuple(rate_set) != tuple(only):
+            continue
+        kept.append(launch)
+    # The fallback is a fallback: where the caller SAID which lanes are
+    # prepared and a lane launch survives every filter above, the launch that
+    # runs only in its absence does not.  ``lanes=None`` is "not narrowed", so
+    # it keeps both -- which is the admissive set a census compares against,
+    # where a rate-1 unit and a box with no toolchain both legitimately fall
+    # back inside a regime the lane otherwise owns.
+    if lanes is not None and any(l["lane"] is not None for l in kept):
+        kept = [l for l in kept if not l["when_lane_absent"]]
+    return tuple(kept)
+
+
+def launch_pairs(route: str, **narrow) -> set:
+    """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
+    return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
 _BODIES = ("TCQ", "WINDOW")
 _REQUIRED = ("family", "grid", "body", "plane", "q256", "rows", "columns", "wire_bytes", "roles")
 GROUP_SIZE = 16
