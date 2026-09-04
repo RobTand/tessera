@@ -421,6 +421,23 @@ class ActivationSource:
             raise GrammarError(
                 f"{path} carries no 'H': a capture payload is "
                 "{'H': {unit: [cols, cols]}, 'provenance': {...}}")
+        # A held-out capture is written by the same tool, in the same shape,
+        # carrying the *same* three ``HESSIAN_IDENTITY`` fields -- on purpose,
+        # so a scorer can prove the two halves are one split.  That makes it
+        # indistinguishable from the fit capture to every guard downstream:
+        # hand it here and the bytes would be shaped by the rows they are
+        # later scored on, and the identity stamped on the artifact would name
+        # the fit capture.  The marker is machine-readable because the file's
+        # ``role`` field is prose and no guard reads prose.  Absent means a
+        # capture written before the marker existed, which is a fit capture.
+        role = (payload.get("provenance") or {}).get("hessian_role")
+        if role is not None and role != "fit":
+            raise GrammarError(
+                f"{path} is a {role!r} Hessian and must not shape bytes: it "
+                "carries the fit capture's identity fields by design, so an "
+                "encode against it would be stamped with the fit capture's "
+                "identity and scored on the rows it was fitted to. Load it "
+                "directly for scoring; pass the fit capture here.")
         sigma = settings.pop("ldlq_sigma", DEFAULT_LDLQ_SIGMA)
         if sigma is not None and float(sigma) < 0:
             sigma = None
