@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 13,
+  "contract_version": 14,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -49,7 +49,8 @@
     "source": "csrc/window_gemv.cu",
     "loaded_by": "tessera.serving.fp8_gemv",
     "routes": [
-     "TESSERA_FP8"
+     "TESSERA_FP8",
+     "TESSERA_BF16"
     ],
     "lane": {
      "decoder": "window_gemv",
@@ -701,6 +702,11 @@
       ]
    },
    "changelog": [
+    {
+     "contract_version": 14,
+     "date": "2026-09-04",
+     "change": "native_extensions[tessera_window_gemv].routes gains TESSERA_BF16. The window GEMV is loaded by BOTH window routes -- bf16_route.prepare_bf16_gemv repacks through kernel_window_gemv.prepare_value_unit exactly as fp8_gemv does, sets the same layer.tessera_gemv, and bf16_route.apply branches on it -- and the table said TESSERA_FP8 alone. That is a claim about this runtime narrower than the runtime: a consumer keying reproducibility on native-extension residency (PrismaQuant's serve fingerprint, which is why this block exists) would have read a BF16 serve with the extension and one without as the same serve, and they execute different launches. Found by the tie tests added with lane_eligibility v4: scheme.ROUTE_LAUNCHES gives the 16-bit route the same three launches the 8-bit one has, and test_the_launch_tables_lane_is_the_published_extension asserts every launch's lane names an extension that lists that route. The correction is also load-bearing for v4's own derivation: contract._lanes_a_rung_reaches filters candidate lanes by route, so with the narrower list a TESSERA_BF16_K1 cell could never derive a GEMV launch -- correct today only because the attested rung 1792 is root 7 and unreachable anyway, and silently wrong the day a reachable BF16 rung is attested. NO CELL MOVES: at 1792 the derivation still returns torch.mm over torch_window, because the rung, not the route list, is what refuses the lane there. loaded_by stays tessera.serving.fp8_gemv: the field is a single string by schema and both reaching modules are under tessera.serving, so it still says what it is for -- that this entry is serving-side and not producer-side -- while naming one of the two. Widening it to a list is a shape change to native_extensions with its own consumer coordination and is not attempted here. ADDITIVE for a reader that treats routes as a set: nothing was removed."
+    },
     {
      "contract_version": 13,
      "date": "2026-09-04",

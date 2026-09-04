@@ -432,10 +432,18 @@ def test_the_launch_tables_lane_is_the_published_extension():
     from tessera.serving.scheme import ROUTE_LAUNCHES
 
     published = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS if e.get("lane")}
-    for launches in ROUTE_LAUNCHES.values():
+    for route, launches in ROUTE_LAUNCHES.items():
         for launch in launches:
             if launch["lane"] is not None:
                 assert launch["lane"] in published, launch
+                # And the extension must say it serves that route.  The
+                # window GEMV published TESSERA_FP8 alone while
+                # ``bf16_route`` loads and dispatches on it too, so a BF16
+                # serve with the extension and one without fingerprinted
+                # alike -- and no BF16 cell could ever derive a GEMV launch.
+                assert route in next(
+                    e["routes"] for e in ext.NATIVE_EXTENSIONS
+                    if e["module_name_prefix"] == launch["lane"]), (route, launch["lane"])
 
 
 def test_the_routes_census_expectation_is_the_launch_table():

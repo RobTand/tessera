@@ -406,7 +406,10 @@ def test_the_gemv_fallback_the_table_publishes_is_the_one_the_route_takes():
     assert ext.substitutes_when_unavailable(MODE_RESIDENT, fp8_gemv.GEMV_MODULE_NAME) is True
     entry = next(e for e in ext.NATIVE_EXTENSIONS
                  if e["module_name_prefix"] == fp8_gemv.GEMV_MODULE_NAME)
-    assert entry["routes"] == [TESSERA_FP8]
+    # Membership, not the whole list: this test is about the FP8 route's
+    # fallback, and pinning the roster is what made the entry read as "no
+    # other route loads this" while ``bf16_route`` loaded it too.
+    assert TESSERA_FP8 in entry["routes"]
     assert entry["when_unavailable"]["streamed"]["decoder"] in telemetry.DECODERS
     assert entry["when_unavailable"]["resident"]["decoder"] in telemetry.DECODERS
     assert entry["when_unavailable"]["streamed"]["decoder"] == telemetry.DECODER_TORCH_WINDOW

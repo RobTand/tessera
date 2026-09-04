@@ -148,6 +148,15 @@ it (`docs/measurements/tessera-gemv-lane-reachable-2026-09-03.md`). Scope:
 family's streamed GEMV lane is unreachable at its own attested rung for the
 same reason, and no BF16 receipt covers it.
 
+The lane belongs to **both** window routes, and the published table says so
+since contract v14: `bf16_route.prepare_bf16_gemv` repacks through
+`kernel_window_gemv.prepare_value_unit` exactly as `fp8_gemv` does and
+branches its `apply` on the same `layer.tessera_gemv`, so
+`native_extensions[tessera_window_gemv].routes` lists `TESSERA_FP8` and
+`TESSERA_BF16`. It listed one until then, which said a BF16 serve is
+unaffected by whether the `.so` mapped -- the exact claim a consumer keys a
+serve fingerprint on.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every
