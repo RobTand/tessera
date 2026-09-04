@@ -105,8 +105,9 @@ DEFAULT_CODE = ConvCode(memory=6)
 DEFAULT_GROUP = 32
 DEFAULT_HALF = 16
 #: Scale-plane refits per unit (``encode_unit``).  An encoder setting, not
-#: wire: the bytes decode identically at any value.  Recorded in the config so
-#: a merge can refuse parts built at different settings.
+#: wire: it changes which bytes the encoder writes, not how any reader
+#: decodes them.  Recorded in the config so a merge can refuse parts built
+#: at different settings.
 DEFAULT_SCALE_REFIT = 4
 #: Branch-metric weighting for the Viterbi (``encode_unit``).  ``"scale"``
 #: weights every position by its half's scale squared so the path minimises
