@@ -382,10 +382,16 @@ def _arm_commit(record: dict, population: dict) -> tuple[str, bool]:
 
 LEDGER_HEADER = """# Suite populations
 
-One row per arm per `tools/merge_suite.py` run. The two arms of a run are
-adjacent on purpose: a pass count means nothing without the device population
-it was measured on, and this file exists so neither can be read without the
-other (tessera#112).
+One row per arm per `tools/merge_suite.py` run, and **every** arm gets a row:
+an arm the run did not submit is written as `not submitted in this run` rather
+than left out. A pass count means nothing without the device population it was
+measured on, and a lone row is a result quoted without its counterpart --
+exactly the misreading tessera#112 is about. So the rows of a run always name
+both populations, even when only one was measured.
+
+Rows above 2026-09-04T08:11 predate that rule and can be lone: a run submitted
+with `--arm x86` wrote one row and said nothing about the GPU population. Read
+a lone row there as "the other arm was not recorded", not as a whole result.
 
 `master head?` is whether the commit under test was master's tip at submit
 time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
@@ -402,6 +408,11 @@ commits are two measurements, not one merge receipt.
 receipt was assembled after the fact from what the run published (`--resume`):
 the failure count in that row is still a fact, but a zero in it does not make
 the row green, because a suite can exit non-zero after a clean summary.
+
+`device` distinguishes three absences that are not the same thing. `not
+submitted in this run` is an arm nobody asked for. `no population published`
+is an arm that was submitted and returned nothing -- refused, never placed, or
+dead before its summary. A device string is a measurement.
 
 | measured (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected | exit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -451,6 +462,21 @@ def _record_markdown(path: Path, receipt: dict) -> None:
             f"{cell('passed')} | {cell('failed')} | {cell('skipped')} | "
             f"{len(surface.get('not_collected', []))} | {exit_text} |"
         )
+    # An arm this run did not submit still gets a row, saying so.  The header
+    # promises the two populations side by side; three of the first four rows
+    # this tool ever wrote were lone `--arm x86` rows with no GPU counterpart,
+    # so the promise was true of the prose and false of the artefact.  A reader
+    # of a lone row cannot tell "the other arm was not asked for" from "the
+    # other arm is somewhere else in this file", and a whole result is what a
+    # lone row looks like.  Naming the absence costs one line and removes the
+    # question.
+    covered = {record["arm"] for record in receipt["arms"]}
+    for name in sorted(ARMS):
+        if name in covered:
+            continue
+        rows.append(
+            f"| -- | -- | -- | {name} | not submitted in this run "
+            "| -- | -- | -- | -- | -- |")
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text(LEDGER_HEADER)

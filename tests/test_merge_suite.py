@@ -362,7 +362,12 @@ def test_a_resumed_row_is_dated_by_the_run_and_never_looks_watched(tmp_path):
             "counts": {"passed": 1381, "failed": 0, "skipped": 497},
             "not_collected": []}}],
     })
-    watched = [line for line in ledger.read_text().splitlines() if "| x86 |" in line][0]
+    # ``[-1]``, not ``[0]``: the gpu-only receipt above now also writes an x86
+    # row saying that arm was not submitted, so the first x86 line in the file
+    # is that absence and the watched row is the one just appended.
+    x86_rows = [line for line in ledger.read_text().splitlines() if "| x86 |" in line]
+    assert "not submitted in this run" in x86_rows[0], x86_rows
+    watched = x86_rows[-1]
     assert watched.rstrip().endswith("| 0 |"), watched
 
 
@@ -675,3 +680,61 @@ def test_the_gpu_arms_green_has_two_legs_not_one(tmp_path):
     assert merge_suite._resume("x86", merge_suite.ARMS["x86"],
                               tmp_path)["requires_cuda"] is False
 
+
+def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
+    """The header promises two populations per run; the artefact must keep it.
+
+    Three of the first four rows this tool wrote were lone `--arm x86` rows
+    under a header that says "the two arms of a run are adjacent on purpose".
+    A reader of `docs/status/suite-populations.md` saw a suite result with no
+    second population beside it and no way to tell whether the other arm was
+    elsewhere in the file, absent, or forgotten -- so the guarantee was true of
+    the prose and false of the bytes.
+
+    Three absences, three different sentences: `not submitted in this run`,
+    `no population published`, and a device string.
+
+    Before this test::
+
+        AssertionError: ['# Suite populations', '', 'One row per arm per ...']
+        assert 0 == 1
+         +  where 0 = len([])
+
+    -- the run that submitted only the GPU arm said nothing at all about the
+    x86 population.
+    """
+
+    merge_suite = _module()
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [{"arm": "gpu", "returncode": 0,
+                  "measured_utc": "2026-09-04T09:00:00Z",
+                  "surface": {"commit": "a" * 40, "cuda": True,
+                              "device": "torch 2.11, 1 CUDA device(s)",
+                              "counts": {"passed": 1827, "failed": 0,
+                                         "skipped": 10},
+                              "not_collected": []}}]})
+    lines = ledger.read_text().splitlines()
+    x86 = [l for l in lines if "| x86 |" in l]
+    assert len(x86) == 1, lines
+    assert "not submitted in this run" in x86[0], x86[0]
+    # Never a number, and never the other absence's words.
+    assert "no population published" not in x86[0], x86[0]
+    assert "| -- | -- | -- | -- | -- |" in x86[0], x86[0]
+    # Same dialect as every other row.
+    columns = merge_suite.LEDGER_HEADER.strip().splitlines()[-2].count("|")
+    assert x86[0].count("|") == columns, x86[0]
+
+    # A run that submitted both arms adds no such row -- both were asked for,
+    # and "published nothing" is the other sentence.
+    before = ledger.read_text()
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T10:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [{"arm": "gpu", "returncode": 0, "surface": None},
+                 {"arm": "x86", "returncode": 0, "surface": None}]})
+    appended = ledger.read_text()[len(before):]
+    assert "not submitted in this run" not in appended, appended
+    assert appended.count("no population published") == 2, appended
