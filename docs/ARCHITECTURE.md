@@ -350,21 +350,24 @@ kernel `(a_q.float() * a_scale).to(bfloat16)`, folding the per-token fp32
 activation scale into a bf16 operand, where `torch._scaled_mm` multiplies the
 fp8 codes and applies both scales in its fp32 epilogue. An E4M3 code is exact
 in bf16; the code times an fp32 scale is not, so the fold cost 1.6e-03 relative
-rms per Linear output against an fp32 accumulation floor ~800x below it. The
+rms per Linear output -- one bf16 rounding -- against a MEASURED fp32 reduction
+error of 1.7e-07, some 10 000x below it. The
 lane now applies `a_scale` to the fp32 output, which is the rule `bf16_route`
-already held for the weight side. Whether that fold *is* the served gap is
-unsettled, and the two available readings disagree by a factor of forty. Every
-other candidate is closed by an artefact: the arms are one inode, prefill (where
-both take the materialised path) reads exactly 0.000000 over 4088 positions, and
-the serve logs differ only in the 112 intended refusals -- same attention
-backend, FlashInfer autotune `Saved 0 configs` in both, the same lone JIT
-compile in both -- so the `M <= 8` branch is the only place a difference can
-live, and inside it the fold is the only term above 1.6e-07. But a propagation
-screen on the served model at the served position set puts the fold at KL
-3.2e-04 / 98.44% top-1 against the measured 0.012111 / 91.02%. Either the
-screen's Gaussian model understates a correlated bf16 rounding, or the branch
-holds a third difference; the served re-run after the fix decides it in one
-measurement and has not run. #110 stays open.
+already held for the weight side. Every other candidate is closed by an
+artefact: the arms are one inode, prefill (where both take the materialised
+path) reads exactly 0.000000 over 4088 positions, and the serve logs differ only
+in the 112 intended refusals -- same attention backend, FlashInfer autotune
+`Saved 0 configs` in both, the same lone JIT compile in both -- so the `M <= 8`
+branch is the only place a difference can live, and inside it the fold is the
+only term above 1.6e-07. Priced as the deterministic rounding it is, on the
+served position set and in the served decode regime, the fold reads
+`KL >= 0.007160` at 95.70% top-1 against the measured 0.012111 at 91.02%: the
+same size, within 1.69x. (An earlier Gaussian screen read 1/38 of that; the
+gap was the screen pricing a W8A8 term on a trajectory carrying no per-token
+FP8 activation quantiser, and it reproduces on demand.) The emulation is CPU
+with RTN weights and an fp32 residual stream, all of which make it quieter than
+the serve, so its number is a floor and the served re-run after the fix is what
+closes the issue. #110 stays open.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
 which of its legs did not get a GPU. Until it closes, treat the lane's
 "bit-exact" receipts as claims about the **decoded tile** only, never about the

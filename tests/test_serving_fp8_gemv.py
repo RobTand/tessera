@@ -218,8 +218,10 @@ def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch, m)
     the second assertion: the two arms' bf16 outputs must be bit-identical on
     the large majority of elements.  A per-element fp32 disagreement d shows up
     as a differing bf16 word with probability about d / ulp, so the #110 fold
-    (1.6e-03 relative, against a bf16 ulp of 2^-8) put the arms roughly a third
-    apart, and summation order alone should leave them within a percent or so.
+    (1.6e-03 relative rms, against a bf16 relative ulp of 2^-7 at the bottom of
+    a binade and 2^-8 at the top) put the arms roughly a third apart -- measured
+    58-78% identical at the four M -- and summation order alone leaves them
+    100.00% identical (``gemv_a_side_precision.py``).
     The 90% bar sits between those without pinning a floor this test has not
     measured -- ``experiments/gemv_a_side_precision.py`` is what measures it.
     ``m=1`` is the served shape (#110's decode regime is every-position M=1)
@@ -250,9 +252,9 @@ def test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand(mon
     An E4M3 code is exact in bf16 (four significant bits;
     ``test_every_legal_e4m3_byte_is_exact_in_bf16``).  ``code * a_scale`` is
     NOT -- the fp32 scale carries twenty-four significant bits and bf16 keeps
-    eight -- so folding costs ~2^-9 relative on every activation element,
-    hundreds of times the fp32 accumulation floor this lane's receipts claim
-    as its only error.  This is the same rule ``bf16_route`` holds for the
+    eight -- so folding costs one bf16 rounding on every activation element:
+    1.6e-03 relative rms, bounded by 2^-8, and about 10 000x the 1.7e-07 fp32
+    reduction error this lane's receipts claim as its only error.  This is the same rule ``bf16_route`` holds for the
     weight side (``test_value_family_scale_is_applied_on_the_output_not_the
     _tile``), here for the activation side, priced against an fp64 reference
     of the product both arms claim to compute.

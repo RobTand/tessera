@@ -109,9 +109,24 @@ def analytic_leg(rows: int = 1024, cols: int = 1024, seed: int = 5) -> dict:
     ref = dequant @ (w * sb).t()
     got = folded @ (w * sb).t()
     out_term = float((got - ref).norm() / ref.norm())
+
+    # What ONE bf16 rounding is worth, MEASURED rather than quoted.  bf16 keeps
+    # eight significand bits, so the relative half-ulp bound is 2^-8 at the
+    # bottom of a binade and 2^-9 at the top; the first pass of this script
+    # reported the 2^-9 end as "half a bf16 ulp", which is the loosest reading
+    # of the tightest case.  Over a log-uniform magnitude -- the shape a code
+    # times a per-token scale takes -- the bound is 2^-8 and the RMS is what
+    # the fold actually costs, which is the point: the fold IS one bf16
+    # rounding, not something merely of that order.
+    e = torch.rand(1 << 22, dtype=torch.float64) * 8.0 - 4.0
+    mag = torch.exp2(e) * torch.sign(torch.rand(1 << 22, dtype=torch.float64) - 0.5)
+    rel = (mag.to(torch.bfloat16).double() - mag) / mag
     return {"e4m3_codes_exact_in_bf16": exact_codes,
             "a_side_rel_rms": a_term, "output_rel_rms": out_term,
-            "bf16_half_ulp": 2.0 ** -9, "cols": cols, "rows": rows}
+            "bf16_rel_round_bound": 2.0 ** -8,
+            "bf16_rel_round_bound_measured": float(rel.abs().max()),
+            "bf16_rel_round_rms": float(rel.pow(2).mean().sqrt()),
+            "cols": cols, "rows": rows}
 
 
 def main() -> int:
@@ -119,7 +134,8 @@ def main() -> int:
     print("analytic leg (CPU, no kernel):")
     print(f"  every E4M3 code exact in bf16          : {leg['e4m3_codes_exact_in_bf16']}")
     print(f"  rel rms of bf16(code * a_scale)        : {leg['a_side_rel_rms']:.3e} "
-          f"(half a bf16 ulp is {leg['bf16_half_ulp']:.3e})")
+          f"(one bf16 rounding measures rms {leg['bf16_rel_round_rms']:.3e}, "
+          f"bounded by 2^-8 = {leg['bf16_rel_round_bound']:.3e})")
     print(f"  rel rms it costs at the K=%d output   : %.3e" % (leg["cols"], leg["output_rel_rms"]))
     if not torch.cuda.is_available():
         print("no CUDA device: the kernel leg needs one")

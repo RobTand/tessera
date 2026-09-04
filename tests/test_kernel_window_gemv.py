@@ -126,6 +126,41 @@ def test_every_legal_e4m3_byte_is_exact_in_bf16():
     assert torch.equal(value[finite].bfloat16().float(), value[finite])
 
 
+def test_a_code_times_a_per_token_scale_is_NOT_exact_in_bf16():
+    """The half-truth above is what #110 was built on, so pin the other half.
+
+    A code being exact in bf16 was read as licence to hand the GEMV
+    ``bf16(code * a_scale)``.  It is not: the code carries four significant
+    bits, an fp32 per-token scale carries twenty-four, and their product needs
+    up to twenty-eight where bf16 keeps eight.  So the fold is exactly ONE
+    bf16 rounding of every activation element -- which is why the lane applies
+    ``a_scale`` to the fp32 OUTPUT instead
+    (``fp8_gemv.streamed_apply``; the same rule ``bf16_route`` holds for the
+    weight side).
+
+    CPU, no kernel: this is arithmetic, and the point of putting it here is
+    that it runs on a box with no GPU, unlike everything else that pins the
+    fix.  The bounds are dtype properties (bf16 keeps 8 significand bits, so
+    one rounding is at most 2^-8 relative), never tuned constants.
+    """
+    torch.manual_seed(0)
+    codes = (torch.arange(256, dtype=torch.uint8).view(torch.float8_e4m3fn)
+             .float().double())
+    codes = codes[torch.isfinite(codes) & (codes != 0)]
+    # A per-token scale as the route makes it: amax / 448 over a random token.
+    scales = (torch.rand(4096, dtype=torch.float64) * 8.0 + 0.01) / 448.0
+    exact = codes[None, :] * scales[:, None]
+    folded = exact.to(torch.bfloat16).double()
+    rel = ((folded - exact) / exact).abs()
+
+    assert float(rel.max()) > 0.0, "bf16 rounded nothing: the product cannot be exact"
+    assert float(rel.max()) <= 2.0 ** -8 + 1e-12, "more than one bf16 rounding appeared"
+    rms = float(((folded - exact).pow(2).sum() / exact.pow(2).sum()).sqrt())
+    assert 1.0e-3 < rms < 2.0 ** -9 * 1.2, f"one bf16 rounding should read ~1.6e-3, got {rms:.3e}"
+    # And the operand the lane actually hands the kernel after the fix IS exact.
+    assert torch.equal(codes.float().to(torch.bfloat16).double(), codes)
+
+
 @cuda
 @pytest.mark.parametrize("rates_spec", ["4", "2", "1", "mixed24", "mixed124"])
 @pytest.mark.parametrize("rows", [512, 1024, 96, 1000])

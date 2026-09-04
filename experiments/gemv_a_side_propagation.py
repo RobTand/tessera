@@ -1,24 +1,43 @@
 #!/usr/bin/env python3
-"""How far a 1.6e-3 per-Linear output perturbation travels to the logits (#110).
+"""How far a 1.6e-3 per-Linear perturbation travels to the logits (#110).
 
-`gemv_a_side_precision.py` prices the arithmetic: folding the per-token FP8
-scale into the GEMV's bf16 operand perturbs every Linear's output by ~1.6e-3
-relative rms, against an fp32 accumulation floor ~800x below that.  What that
-is worth *as a KL* is a property of the model, not of the kernel, so this
-script measures it on the model directly: the BF16 teacher, forward twice,
-once with independent Gaussian noise of the measured relative size injected at
-the output of every Linear the Tessera route serves.
+SUPERSEDED AS AN ANSWER, KEPT AS A CONTROL.  This script prices the fold with
+a noise MODEL -- independent Gaussians of the measured relative size -- on a
+trajectory that carries NO per-token FP8 activation quantiser, because it
+perturbs the BF16 teacher (or a weight-degraded copy of it).  Both of those
+choices matter, and the second one dominates: on the served W8A8 trajectory
+the same perturbation is worth about eighty times more KL
+(`gemv_a_side_exact_fold.py --act-quant on|off`).  So the "factor of forty"
+this script contributed to the #110 receipt was an artefact of pricing the
+term off the operating point, not evidence of a second term.  Read it as the
+control it now is; read `gemv_a_side_exact_fold.py` for the number.
 
-THIS IS A SCREEN, NOT A SERVED RESULT.  It uses a noise MODEL of the term, on
-the BF16 model, on prefill positions; the lane's own served number is the
-decode-regime A/B (`experiments/decode_regime_campaign.sh`).  What it can
-settle is magnitude: whether a perturbation of this size plausibly accounts
-for a mutual KL of 0.012, or whether the served disagreement needs a second
-term.  Both readings are useful and the receipt must say which one it got.
+What it does: run the model over the corpus chunks twice, once with
+independent Gaussian noise of `--rel` relative rms injected at every served
+Linear (at the INPUT by default -- the fold's own injection point -- with
+`--where output` as a coarser cross-check), and report full-vocab KL and
+top-1 agreement.  `--stride 16` restricts scoring to the served decode
+regime's position set; `--degrade-bits` reaches a quantised operating point on
+the WEIGHT side only, which is the axis that turned out not to be the one that
+mattered.
 
-CPU by default -- 0.6B over a couple of chunks -- because the pool cannot
-place a CPU-only action from a box-local checkout.
+`gemv_a_side_precision.py` prices the arithmetic this stands in for: folding
+the per-token FP8 scale into the GEMV's bf16 operand perturbs every activation
+element by ~1.6e-3 relative rms -- one bf16 rounding -- against a MEASURED
+fp32 reduction error of 1.7e-07.
+
+THIS IS A SCREEN, NOT A SERVED RESULT.  The lane's own served number is the
+decode-regime A/B (`experiments/decode_regime_campaign.sh`).
+
+CPU-only.  It runs locally rather than through the PrismaBuild pool: a CPU-only
+submission from a box-local checkout is pinned to that box, and on 2026-09-04
+sparky offered 10 cpu tokens but zero free mem_gb -- every one of its 48 was
+held by one long GPU action -- so `pbrun --demand cpu=2[,mem_gb=0]` queued and
+never placed (twice, 120 s and 150 s).  The earlier note here, that sparky's
+offer carried no cpu capacity at all, was true when it was written and is not
+the reason now.
 """
+
 from __future__ import annotations
 
 import argparse

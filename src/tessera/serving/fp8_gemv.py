@@ -24,26 +24,32 @@ rule ``bf16_route`` states for the weight side, held here for the activation
 side.  ``a_q * a_scale`` is NOT exact in bf16: a code carries four significant
 bits and an fp32 scale twenty-four, so their product needs up to twenty-eight
 and bf16 keeps eight.  Folding it in cost 1.6e-03 relative rms on EVERY
-activation element -- some 800x the fp32 accumulation floor -- where
-``_scaled_mm`` multiplies the codes and scales in its epilogue.  Applying
+activation element -- ONE bf16 rounding, and about 10 000x the lane's fp32
+reduction error, which is MEASURED at 1.7e-07 rather than quoted from a
+sqrt(K)*eps estimate -- where ``_scaled_mm`` multiplies the codes and scales in
+its epilogue.  Applying
 ``a_scale`` on the fp32 output leaves fp32 summation order as the only
 difference this module can name, which is what the docstring always claimed --
 and that order is MEASURED, not asserted: the lane run twice on identical
 input differs by 1.6e-07 relative and changes no bf16 output word at any M
 (``experiments/gemv_a_side_precision.py``).
 
-THIS DOES NOT CLOSE #110.  The lane and its published fallback disagreed as
-served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes (one
-inode).  Reading the artefacts, this branch is the ONLY place that difference
-can live: prefill, where both arms take ``_materialised_path``, read exactly
-0.000000 over 4088 positions, and the two serve logs differ in nothing but the
-112 intended refusals.  Reading a propagation screen, the fold is only ~1/40 of
-what was measured (KL 3.2e-04 at the served position set).  Those two readings
-disagree by a factor of forty and this session could not run the one
-measurement that decides it -- the served re-run after the fix.  Do not read
-the fix below as an explanation of the served number, and do not read the
-screen as proof that a second term exists;
-``docs/measurements/tessera-gemv-a-side-2026-09-04.md`` holds both.
+THIS DOES NOT YET CLOSE #110.  The lane and its published fallback disagreed
+as served at M = 1 -- mutual KL 0.012111, top-1 91.02%, byte-identical bytes
+(one inode).  Reading the artefacts, this branch is the ONLY place that
+difference can live: prefill, where both arms take ``_materialised_path``, read
+exactly 0.000000 over 4088 positions, and the two serve logs differ in nothing
+but the 112 intended refusals.  Pricing the fold as the deterministic rounding
+it is -- on the served position set, in the served decode regime, through the
+served estimator -- reads KL >= 0.007160 at 95.70% top-1
+(``experiments/gemv_a_side_exact_fold.py``): the same size as what was served,
+within 1.69x, on a CPU emulation whose substitutions all make it quieter than
+the serve.  An earlier GAUSSIAN screen read 1/38 of it; that gap was the screen
+pricing a W8A8 term on a trajectory with no per-token FP8 activation quantiser,
+and is reproduced on demand with ``--act-quant off``.  So the fix below is the
+leading explanation of the served number rather than a proven one, and the
+served re-run is what settles whether it is the whole of it;
+``docs/measurements/tessera-gemv-a-side-2026-09-04.md`` holds every leg.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is
 symbolic under vLLM's compiled forward, so a Python branch on it would
