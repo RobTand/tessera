@@ -11,6 +11,7 @@ import hashlib
 import json
 import re
 import shutil
+import stat
 import struct
 from pathlib import Path
 
@@ -334,7 +335,13 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     out.mkdir(parents=True)
     transfer = shutil.move if move else shutil.copy2
     for payload, name in copies:
-        transfer(str(payload), str(out / name))
+        destination = out / name
+        transfer(str(payload), str(destination))
+        # A completed artifact must be readable by the serving identity,
+        # including root-squashed containers on NFS. Copy-mode source parts
+        # keep their private modes; only the destination gains read bits.
+        destination.chmod(stat.S_IMODE(destination.stat().st_mode)
+                          | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
     for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
         for aux in source.glob(pattern):
             if aux.name not in ("config.json", "model.safetensors.index.json", "tessera_serving_manifest.json", "tessera_part_config.json"):
