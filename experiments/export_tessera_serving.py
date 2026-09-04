@@ -77,7 +77,7 @@ re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.
 
-ROUTED-MoE EXPERTS ARE EXPORTED FROM THE UNPACKED SOURCE LAYOUT, and the
+ROUTED-MoE EXPERTS ARE EXPORTED FROM AN EXPLICIT SOURCE LAYOUT, and the
 plannable unit is the STACK.  A ``--plan-json`` entry keyed ``<moe>.experts``
 (not one of its 864 leaves) gives every expert of that stack one rung; the
 exporter writes ONE ``tessera.fused`` container per expert per PROJECTION under
@@ -108,21 +108,20 @@ Not planning a stack leaves it where it was -- source precision, named in
 this is byte-identical under the same command line.
 
 THE PACKED 3-D SOURCE LAYOUT (``mlp.experts.gate_up_proj``,
-``...down_proj``) STILL HAS NO EXPORT, and the reason is TWO unattested
-conventions rather than one.  (a) Orientation: ``[E, A, B]`` is ambiguous on
-its face; ``packed_expert_orientation`` reads it off
-``hidden_size``/``moe_intermediate_size`` where the dims decide, but
-GLM-5.3-Flash has ``hidden_size == 2 * moe_intermediate_size``, which makes a
-packed ``gate_up_proj`` square and no dim comparison can orient it.  (b) The
-gate/up SPLIT: a packed ``gate_up_proj`` holds both halves on one axis, and
-whether they are chunked or interleaved is the producing library's convention,
-which the tensor does not state.  Getting either wrong transposes or
-interleaves every expert in silence, and no receipt on this box settles (b) --
-so both are refused by name, with the shape and the orientation verdict in the
-message.  ``quantizable`` separates both layouts from the 2-D body, and an
-unplanned stack of either kind passes through as BF16 named in ``ignore``.  The
-grouping rule that a fused module's roles must share ONE family holds for
-experts exactly as it does for q/k/v: vLLM builds one method per module.
+``...down_proj``) is accepted only when the stack's plan states one of two
+closed conventions: ``out_first_chunked`` means ``[E, 2N, K]`` with gate then
+up and ``[E, K, N]`` down; ``in_first_interleaved`` means ``[E, K, 2N]`` with
+gate/up alternating and ``[E, N, K]`` down.  The exporter checks those exact
+shapes against config.json, slices them into canonical per-expert matrices,
+and stamps the source convention on the scheme and every manifest role.  It
+never infers a convention from dimensions: ``hidden_size == 2 *
+moe_intermediate_size`` makes a gate/up source square, while dimensions never
+state chunked versus interleaved.  Missing or invented conventions therefore
+refuse before encoding.  ``quantizable`` separates both layouts from the 2-D
+body, and an unplanned stack of either kind passes through at source precision
+named in ``ignore``.  The grouping rule that a fused module's roles must share
+one family holds for experts exactly as it does for q/k/v: vLLM builds one
+method per module.
 """
 from __future__ import annotations
 
@@ -157,8 +156,9 @@ from tessera.serving.contract import (  # noqa: E402
     classify_construction, construction_entry, load_serving_contract)
 from tessera.serving.scheme import (  # noqa: E402
     MOE_BUILDERS, MOE_GROUP_SHARDS, MOE_GROUPS, STRUCTURE_DENSE,
-    STRUCTURE_ROUTED_MOE, refuse_unreachable_lane, refuse_unserveable_wire,
-    validate_tessera_moe_scheme)
+    STRUCTURE_ROUTED_MOE, MOE_SOURCE_IN_FIRST_INTERLEAVED,
+    MOE_SOURCE_OUT_FIRST_CHUNKED, MOE_SOURCE_UNPACKED,
+    refuse_unreachable_lane, refuse_unserveable_wire, validate_tessera_moe_scheme)
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
@@ -760,7 +760,36 @@ def expert_stacks(routed_shapes):
     return stacks
 
 
-def plan_expert_stack(stack: str, experts: dict, grid, q256: int):
+def packed_expert_stacks(expert_shapes):
+    """Group physical rank-3 expert tensors by the runtime stack they feed.
+
+    A physical projection may be spelled with or without ``.weight``.  The
+    suffix cannot decide identity, and two spellings of the same projection
+    are refused instead of allowing safetensors order to choose the bytes.
+    """
+    stacks: dict[str, dict[str, tuple]] = {}
+    for name, shape in expert_shapes.items():
+        probe = name if name.endswith(".weight") else name + ".weight"
+        match = PACKED_EXPERT_ND.match(probe)
+        if match is None:  # ``quantizable`` owns this classification.
+            raise SystemExit(
+                f"{name} {list(shape)} was classified as a packed expert tensor but does "
+                "not match PACKED_EXPERT_ND; refusing a source the planner cannot name")
+        stack = match.group("moe") + ".experts"
+        projection = match.group("proj")
+        found = stacks.setdefault(stack, {})
+        if projection in found:
+            other = found[projection][0]
+            raise SystemExit(
+                f"the packed expert stack {stack} supplies {projection!r} twice: {other} "
+                f"and {name}. They are two physical spellings for one source tensor; "
+                "refusing rather than letting checkpoint order choose which bytes are served.")
+        found[projection] = (name, tuple(shape))
+    return stacks
+
+
+def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
+                      source_layout: str = MOE_SOURCE_UNPACKED):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -851,11 +880,133 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int):
             for projection in MOE_GROUP_PROJECTIONS[group]:
                 name, shape = experts[index][projection]
                 units.append({"tensor": name, "wire": name[: -len(".weight")] + ".wire",
+                              "source_tensor": name, "source_layout": source_layout,
+                              "source_slice": {"expert": index, "selector": "whole",
+                                               "transpose": False},
                               "expert": index, "projection": projection, "group": group,
                               "rows": shape[0], "cols": shape[1]})
     return {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
             "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
-            "groups": groups, "units": units}
+            "source_layout": source_layout, "groups": groups, "units": units}
+
+
+def _packed_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
+    """The three dimensions a packed source must prove against config.json."""
+    text = config.get("text_config", config)
+    hidden = text.get("hidden_size")
+    inter = text.get("moe_intermediate_size", text.get("intermediate_size"))
+    experts = next((text.get(key) for key in
+                    ("n_routed_experts", "num_experts", "num_local_experts")
+                    if text.get(key) is not None), None)
+    if not all(isinstance(value, int) and value > 0
+               for value in (experts, hidden, inter)):
+        raise SystemExit(
+            f"cannot validate packed expert stack {stack}: config.json must declare positive "
+            "integer expert count (n_routed_experts/num_experts/num_local_experts), "
+            f"hidden_size, and moe_intermediate_size/intermediate_size; got experts={experts!r} "
+            f"hidden_size={hidden!r} intermediate_size={inter!r}")
+    return experts, hidden, inter
+
+
+def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
+                             source_layout: str, config: dict):
+    """Normalise one explicitly-described packed source to canonical units.
+
+    The convention is deliberately not inferred from shape.  Orientation and
+    gate/up split are independent facts, and the square ``hidden == 2 * inter``
+    case demonstrates that shape cannot establish even the first one.
+    """
+    packed_layouts = (MOE_SOURCE_OUT_FIRST_CHUNKED,
+                      MOE_SOURCE_IN_FIRST_INTERLEAVED)
+    if source_layout not in packed_layouts:
+        raise SystemExit(
+            f"the packed expert stack {stack} requires source_layout to be one of "
+            f"{packed_layouts}, got {source_layout!r}; the tensor does not state its "
+            "orientation or whether gate/up is chunked or interleaved")
+    if set(sources) != {"gate_up_proj", "down_proj"}:
+        raise SystemExit(
+            f"the packed expert stack {stack} carries physical projections "
+            f"{sorted(sources)}, expected exactly ['down_proj', 'gate_up_proj']. The "
+            "supported conventions describe one fused gate/up tensor and one down tensor; "
+            "a different roster needs its own explicit source layout.")
+
+    experts, hidden, inter = _packed_config_geometry(config, stack)
+    expected = {
+        MOE_SOURCE_OUT_FIRST_CHUNKED: {
+            "gate_up_proj": (experts, 2 * inter, hidden),
+            "down_proj": (experts, hidden, inter),
+        },
+        MOE_SOURCE_IN_FIRST_INTERLEAVED: {
+            "gate_up_proj": (experts, hidden, 2 * inter),
+            "down_proj": (experts, inter, hidden),
+        },
+    }[source_layout]
+    for projection, want in expected.items():
+        name, shape = sources[projection]
+        if tuple(shape) != want:
+            raise SystemExit(
+                f"the packed expert stack {stack} declares source_layout={source_layout!r}, "
+                f"under which {projection} must be {list(want)} from config.json; "
+                f"{name} is {list(shape)}. Refusing rather than transposing or slicing a "
+                "source whose convention disagrees with its plan.")
+
+    synthetic: dict[int, dict[str, tuple]] = {}
+    for expert in range(experts):
+        synthetic[expert] = {
+            "gate_proj": (f"{stack}.{expert}.gate_proj.weight", (inter, hidden)),
+            "up_proj": (f"{stack}.{expert}.up_proj.weight", (inter, hidden)),
+            "down_proj": (f"{stack}.{expert}.down_proj.weight", (hidden, inter)),
+        }
+    record = plan_expert_stack(
+        stack, synthetic, grid, q256, source_layout=source_layout)
+    for unit in record["units"]:
+        projection = unit["projection"]
+        physical_projection = ("gate_up_proj" if projection in
+                               ("gate_proj", "up_proj") else "down_proj")
+        unit["source_tensor"] = sources[physical_projection][0]
+        if source_layout == MOE_SOURCE_OUT_FIRST_CHUNKED:
+            selector = {"gate_proj": "first_half", "up_proj": "second_half",
+                        "down_proj": "whole"}[projection]
+            transpose = False
+        else:
+            selector = {"gate_proj": "even", "up_proj": "odd",
+                        "down_proj": "whole"}[projection]
+            transpose = True
+        unit["source_slice"] = {
+            "expert": unit["expert"], "selector": selector,
+            "transpose": transpose,
+        }
+    record["source_tensors"] = sorted(name for name, _shape in sources.values())
+    return record
+
+
+def packed_expert_weight(source: torch.Tensor, unit: dict) -> torch.Tensor:
+    """Slice one canonical ``[rows, columns]`` matrix from a source tensor."""
+    if unit.get("source_layout") == MOE_SOURCE_UNPACKED:
+        weight = source
+    else:
+        spec = unit["source_slice"]
+        weight = source[int(spec["expert"])]
+        selector = spec["selector"]
+        if selector == "first_half":
+            weight = weight[:unit["rows"]]
+        elif selector == "second_half":
+            weight = weight[unit["rows"]:]
+        elif selector == "even":
+            weight = weight[:, 0::2]
+        elif selector == "odd":
+            weight = weight[:, 1::2]
+        elif selector != "whole":
+            raise SystemExit(
+                f"{unit['tensor']}: unknown packed source selector {selector!r}")
+        if spec["transpose"]:
+            weight = weight.transpose(0, 1)
+    want = (unit["rows"], unit["cols"])
+    if tuple(weight.shape) != want:
+        raise SystemExit(
+            f"{unit['tensor']}: source slice produced {list(weight.shape)}, expected "
+            f"canonical expert matrix {list(want)}")
+    return weight.contiguous()
 
 
 def stock_targets(modules):
@@ -883,7 +1034,10 @@ def main():
                     help="default grid per Linear: E2M1, E2M1x2 (NVFP4), E4M3 (FP8) or BF16 (W16A16)")
     ap.add_argument("--q256", type=int, default=896, help="default body bits per 256 weights")
     ap.add_argument("--plan-json", type=Path, default=None,
-                    help='{"tensor.weight": {"grid": "E4M3"|"BF16", "q256": 1024} | "PASSTHROUGH", ...} per-tensor overrides')
+                    help='{"tensor.weight": {"grid": "E4M3"|"BF16", "q256": 1024} | '
+                         '"PASSTHROUGH", "<moe>.experts": {"grid": "E4M3", '
+                         '"q256": 1024, "source_layout": "out_first_chunked"|'
+                         '"in_first_interleaved"}, ...}')
     ap.add_argument("--input-scales", type=Path, default=None,
                     help="safetensors carrying <module>.input_global_scale per NVFP4 Linear (a stock NVFP4 "
                          "export); required when any module takes the NVFP4 route")
@@ -989,6 +1143,7 @@ def main():
                  allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
     check_lanes(required_lanes, default_grid, args.q256)
     overrides = {}
+    source_layout_overrides: dict[str, str] = {}
     if args.plan_json:
         for name, spec in json.loads(args.plan_json.read_text()).items():
             if spec in ("BF16", "PASSTHROUGH"):
@@ -1005,6 +1160,8 @@ def main():
                              allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
                 check_lanes(required_lanes, g, int(spec["q256"]), where=name)
                 overrides[name] = (g, int(spec["q256"]))
+                if "source_layout" in spec:
+                    source_layout_overrides[name] = spec["source_layout"]
     src_config = json.loads((args.src / "config.json").read_text())
     shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
     if not shapes and not expert_shapes and not routed_shapes:
@@ -1019,7 +1176,16 @@ def main():
     # happens before the ``unknown`` check, which knows only about 2-D dense
     # body weights.
     stacks = expert_stacks(routed_shapes)
-    stack_overrides = {name: overrides.pop(name) for name in sorted(set(overrides) & set(stacks))}
+    packed_stacks = packed_expert_stacks(expert_shapes)
+    overlap = sorted(set(stacks) & set(packed_stacks))
+    if overlap:
+        raise SystemExit(
+            f"expert stack(s) {overlap} exist in both unpacked per-expert and packed 3-D "
+            "source layouts. They are two sources for the same runtime tile; refusing rather "
+            "than letting checkpoint or shard order choose which bytes are served.")
+    all_stacks = {**stacks, **packed_stacks}
+    stack_overrides = {name: overrides.pop(name)
+                       for name in sorted(set(overrides) & set(all_stacks))}
 
     # A routed expert LEAF must be refused HERE -- before a single unit is
     # encoded.  These leaves are 2-D, so the only thing standing between them
@@ -1054,17 +1220,16 @@ def main():
         first = planned_experts[0]
         raise SystemExit(
             f"the plan names {len(planned_experts)} packed expert tensor(s), e.g. {first} "
-            f"{list(expert_shapes[first])} (orientation "
-            f"{packed_expert_orientation(first, expert_shapes[first], src_config)}): the packed "
-            "3-D source layout has no export. The route and the write half both exist for the "
-            "UNPACKED layout -- a plan entry keyed <moe>.experts encodes it -- and what is "
-            "missing here is two conventions the tensor does not state: (a) which axis is the "
-            "output, which the dims decide only when hidden_size != 2 * moe_intermediate_size "
-            "(on GLM-5.3-Flash they are equal and a packed gate_up_proj is square), and (b) "
-            "whether a packed gate_up_proj chunks or interleaves its two halves. Either one "
-            "guessed wrong transposes or interleaves every expert in silence, and no receipt on "
-            "this box settles (b). Re-export this checkpoint unpacked, or remove these from the "
-            "plan to pass them through as BF16.")
+            f"{list(expert_shapes[first])}. A packed expert tensor is not a plannable module: "
+            "vLLM builds one method for the whole stack. Name <moe>.experts instead and state "
+            f"source_layout as one of {(MOE_SOURCE_OUT_FIRST_CHUNKED, MOE_SOURCE_IN_FIRST_INTERLEAVED)}, "
+            "or remove the physical entry to pass the stack through at source precision.")
+    misplaced_layouts = sorted(set(source_layout_overrides) - set(stack_overrides))
+    if misplaced_layouts:
+        raise SystemExit(
+            f"source_layout is a routed-MoE stack property, but the plan attaches it to "
+            f"{misplaced_layouts[:5]}. Put it on <moe>.experts; a dense tensor or physical "
+            "expert leaf has no packed-source convention to apply.")
     unknown = sorted(set(overrides) - set(shapes))
     if unknown:
         raise SystemExit(f"plan names tensors that are not 2-D body weights here: {unknown[:5]}; "
@@ -1080,17 +1245,49 @@ def main():
         if spec is None:                     # PASSTHROUGH, spelled deliberately
             continue
         grid, q256 = spec
-        layer = body_layer(next(iter(stacks[stack].values()))["gate_proj"][0])
+        source_layout = source_layout_overrides.get(stack)
+        if stack in packed_stacks:
+            if source_layout not in (MOE_SOURCE_OUT_FIRST_CHUNKED,
+                                     MOE_SOURCE_IN_FIRST_INTERLEAVED):
+                raise SystemExit(
+                    f"the packed expert stack {stack} requires source_layout to be one of "
+                    f"{(MOE_SOURCE_OUT_FIRST_CHUNKED, MOE_SOURCE_IN_FIRST_INTERLEAVED)}, "
+                    f"got {source_layout!r}; dimensions do not state orientation or the "
+                    "gate/up split")
+            source_name = next(iter(packed_stacks[stack].values()))[0]
+        else:
+            if source_layout not in (None, MOE_SOURCE_UNPACKED):
+                raise SystemExit(
+                    f"the unpacked expert stack {stack} has one 2-D tensor per expert and "
+                    f"requires source_layout={MOE_SOURCE_UNPACKED!r} when the field is "
+                    f"present, got {source_layout!r}")
+            source_layout = MOE_SOURCE_UNPACKED
+            source_name = next(iter(stacks[stack].values()))["gate_proj"][0]
+        layer = body_layer(source_name)
         if args.layers is not None and layer >= args.layers:
             raise SystemExit(
                 f"the plan gives the expert stack {stack} a rung, but --layers {args.layers} "
                 f"stops before its layer {layer}. One of the two is wrong and guessing which "
                 "would either skip a stack the plan asked for or encode past the smoke bound.")
-        record = plan_expert_stack(stack, stacks[stack], grid, q256)
+        if stack in packed_stacks:
+            record = plan_packed_expert_stack(
+                stack, packed_stacks[stack], grid, q256,
+                source_layout=source_layout, config=src_config)
+        else:
+            record = plan_expert_stack(
+                stack, stacks[stack], grid, q256, source_layout=source_layout)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
-              f"({len(record['units'])} units)", flush=True)
+              f"({len(record['units'])} units, source_layout={source_layout})", flush=True)
+    packed_plans = sorted(stack for stack in stack_plan
+                          if stack_plan[stack]["source_layout"] != MOE_SOURCE_UNPACKED)
+    if activation is not None and packed_plans:
+        raise SystemExit(
+            f"--hessian was given with packed expert stack(s) {packed_plans}. Activation "
+            "captures are keyed by logical per-expert modules, while this checkpoint carries "
+            "two physical stack tensors; their Hessian ownership and slicing have not been "
+            "attested. Refusing rather than silently encoding those experts weights-only.")
     if stack_plan and args.stock_twin is not None:
         raise SystemExit(
             f"--stock-twin was given and {len(stack_plan)} routed-MoE stack(s) are planned. The "
@@ -1099,10 +1296,12 @@ def main():
             "so the twin would silently be a checkpoint with no experts in it. Export the stacks "
             "without a twin, or leave them out of the plan.")
 
-    if expert_shapes:
-        print(f"  {len(expert_shapes)} packed expert tensors stay BF16 and are named in ignore "
-              f"(the packed 3-D source layout has no export -- see the refusal above); "
-              f"e.g. {sorted(expert_shapes)[0]}", flush=True)
+    packed_passthrough = {name: shape for name, shape in expert_shapes.items()
+                          if next(m for m in ignored_modules(name, shape)) not in stack_plan}
+    if packed_passthrough:
+        print(f"  {len(packed_passthrough)} unplanned packed expert tensors stay at source "
+              f"precision and are named in ignore; e.g. {sorted(packed_passthrough)[0]}",
+              flush=True)
     routed_passthrough = {n: shape for n, shape in routed_shapes.items()
                           if ROUTED_EXPERT_2D.match(n).group("moe") + ".experts" not in stack_plan}
     if routed_passthrough:
@@ -1255,10 +1454,14 @@ def main():
     # into the same shard its source came from; the two GROUP strides are the
     # maxima over every blob and are therefore known only at the end, which is
     # exactly when ``config.json`` is written.
-    expert_units = {u["tensor"]: dict(u, stack=stack)
-                    for stack, record in stack_plan.items() for u in record["units"]}
+    expert_units: dict[str, list[dict]] = {}
+    for stack, record in stack_plan.items():
+        for unit in record["units"]:
+            expert_units.setdefault(unit["source_tensor"], []).append(
+                dict(unit, stack=stack))
     moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
                            "q256": record["q256"], "experts": record["experts"],
+                           "source_layout": record["source_layout"],
                            "hidden_size": record["hidden_size"],
                            "intermediate_size": record["intermediate_size"],
                            "roles": [], "container_bytes": 0, "wire_bytes": 0,
@@ -1267,7 +1470,7 @@ def main():
                            "rows": sum(g["rows"] for g in record["groups"].values()),
                            "cols": record["hidden_size"]}
                    for stack, record in stack_plan.items()}
-    moe_total = len(expert_units)
+    moe_total = sum(len(units) for units in expert_units.values())
     moe_done = 0
 
     pending_modules = dict(modules)
@@ -1280,46 +1483,54 @@ def main():
                 if name in plan:
                     weights_cache[name] = tensor
                 elif name in expert_units:
-                    unit = expert_units[name]
-                    stack_spec = stack_plan[unit["stack"]]
-                    unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
-                    unit_recipe = wire_recipe(unit_grid, unit_q256)
-                    weight = tensor.to(args.device, torch.float32).contiguous()
-                    # Same call as the dense path: a missing Hessian key renders
-                    # RTN and raises nothing, ``for_unit`` refuses instead.
-                    extra = ({} if activation is None else
-                             activation.for_unit(name, weight.shape[1], args.device,
-                                                 scale_plane=unit_recipe.scale_plane))
-                    exported, unit_artifact_, _forests = encode_linear_planes(
-                        weight, grid=unit_grid, q256=unit_q256, name=name,
-                        verify=not args.no_verify, **extra)
-                    extra.clear()
-                    parse_unit_artifact(exported.blob, device=args.device)
-                    # ONE container per expert PROJECTION -- the granularity of
-                    # the checkpoint's tensors, of the runtime's shard ids, and
-                    # of ``scheme.expert_role_declarations``.  The GROUP is how
-                    # these stack into the tile, not a container of its own.
-                    blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
-                    shard_payload[unit["wire"]] = torch.frombuffer(
-                        bytearray(blob), dtype=torch.uint8).clone()
-                    stack_record = moe_records[unit["stack"]]
-                    stack_record["group_blob_bytes"][unit["group"]].append(len(blob))
-                    stack_record["container_bytes"] += len(blob)
-                    stack_record["wire_bytes"] += exported.exact_bytes
-                    stack_record["resident_bytes_resident_mode"] += (
-                        exported.rows * exported.columns + exported.rows * 4)
-                    stack_record["roles"].append({
-                        "tensor": name, "role": unit["projection"], "expert": unit["expert"],
-                        "group": unit["group"], "rows": exported.rows,
-                        "cols": exported.columns, "grid": unit_grid.name, "q256": unit_q256,
-                        "family": stack_spec["family"], "wire_bytes": exported.exact_bytes,
-                        "blob_bytes": len(blob), "wire_bpp": float(exported.bpp),
-                        "own_global": float(unit_artifact_.scale_global)})
-                    del weight
-                    moe_done += 1
-                    if moe_done % 50 == 0 or moe_done == moe_total:
-                        print(f"  [moe {moe_done}/{moe_total}] {name}  "
-                              f"{time.time() - started:.0f}s", flush=True)
+                    for unit in expert_units[name]:
+                        stack_spec = stack_plan[unit["stack"]]
+                        unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
+                        unit_recipe = wire_recipe(unit_grid, unit_q256)
+                        weight = packed_expert_weight(tensor, unit).to(
+                            args.device, torch.float32).contiguous()
+                        # Same call as the dense path: a missing Hessian key renders
+                        # RTN and raises nothing, ``for_unit`` refuses instead.
+                        extra = ({} if activation is None else
+                                 activation.for_unit(
+                                     unit["tensor"], weight.shape[1], args.device,
+                                     scale_plane=unit_recipe.scale_plane))
+                        exported, unit_artifact_, _forests = encode_linear_planes(
+                            weight, grid=unit_grid, q256=unit_q256,
+                            name=unit["tensor"], verify=not args.no_verify, **extra)
+                        extra.clear()
+                        parse_unit_artifact(exported.blob, device=args.device)
+                        # ONE container per expert PROJECTION -- the granularity of
+                        # the runtime's shard ids and of
+                        # ``scheme.expert_role_declarations``.  A packed physical
+                        # tensor may supply several such logical projections.
+                        blob = pack_fused([
+                            (unit["projection"], exported.rows, exported.blob)])
+                        shard_payload[unit["wire"]] = torch.frombuffer(
+                            bytearray(blob), dtype=torch.uint8).clone()
+                        stack_record = moe_records[unit["stack"]]
+                        stack_record["group_blob_bytes"][unit["group"]].append(len(blob))
+                        stack_record["container_bytes"] += len(blob)
+                        stack_record["wire_bytes"] += exported.exact_bytes
+                        stack_record["resident_bytes_resident_mode"] += (
+                            exported.rows * exported.columns + exported.rows * 4)
+                        stack_record["roles"].append({
+                            "tensor": unit["tensor"],
+                            "source_tensor": unit["source_tensor"],
+                            "source_layout": unit["source_layout"],
+                            "source_slice": unit["source_slice"],
+                            "role": unit["projection"], "expert": unit["expert"],
+                            "group": unit["group"], "rows": exported.rows,
+                            "cols": exported.columns, "grid": unit_grid.name,
+                            "q256": unit_q256, "family": stack_spec["family"],
+                            "wire_bytes": exported.exact_bytes,
+                            "blob_bytes": len(blob), "wire_bpp": float(exported.bpp),
+                            "own_global": float(unit_artifact_.scale_global)})
+                        del weight
+                        moe_done += 1
+                        if moe_done % 50 == 0 or moe_done == moe_total:
+                            print(f"  [moe {moe_done}/{moe_total}] {unit['tensor']}  "
+                                  f"{time.time() - started:.0f}s", flush=True)
                 else:
                     shard_payload[name] = tensor
                     twin_payload[name] = tensor
@@ -1482,6 +1693,7 @@ def main():
                 "roles": spec["groups"][group]["roles"], "wire_stride": max(lengths)}
         scheme = {
             "family": spec["family"], "structure": STRUCTURE_ROUTED_MOE,
+            "source_layout": spec["source_layout"],
             "grid": spec["grid"].name, "body": recipe.body.name,
             "plane": recipe.scale_plane.name, "experts": spec["experts"], "groups": groups,
         }
@@ -1631,6 +1843,8 @@ def main():
             "unpacked_source_tensors": len(routed_shapes),
             "quantized_stacks": sorted(stack_plan),
             "quantized_source_tensors": len(expert_units),
+            "quantized_logical_units": sum(
+                len(record["units"]) for record in stack_plan.values()),
             # The ignore entries this block accounts for -- read off
             # ``ignored_modules``, the same rule that put them there, so it
             # cannot drift from the list it summarises (#86).  A stack that was

@@ -305,6 +305,54 @@ def test_a_packed_stack_is_recognised_by_name(tmp_path):
     assert not any(".mlp.experts." in n for n in shapes), sorted(shapes)
 
 
+@pytest.mark.parametrize(
+    "source_layout,suffix",
+    [("out_first_chunked", ".weight"), ("in_first_interleaved", "")],
+)
+def test_explicit_packed_layouts_slice_to_canonical_expert_matrices(
+        source_layout, suffix):
+    """Both packed conventions become the same gate/up/down matrices.
+
+    The tensor dimensions alone are deliberately ambiguous here
+    (``hidden == 2 * intermediate``).  The plan's explicit convention—not a
+    dimension heuristic—must decide the axis order and gate/up split.
+    """
+    stack = "model.language_model.layers.1.mlp.experts"
+    gate = torch.arange(EXPERTS * MOE_INTER * HIDDEN, dtype=torch.float32).reshape(
+        EXPERTS, MOE_INTER, HIDDEN)
+    up = gate + gate.numel()
+    down = (torch.arange(EXPERTS * HIDDEN * MOE_INTER, dtype=torch.float32)
+            .reshape(EXPERTS, HIDDEN, MOE_INTER) + 2 * gate.numel())
+    if source_layout == "out_first_chunked":
+        gate_up_source = torch.cat((gate, up), dim=1)
+        down_source = down
+    else:
+        gate_up_source = torch.empty(EXPERTS, HIDDEN, 2 * MOE_INTER)
+        gate_up_source[:, :, 0::2] = gate.transpose(1, 2)
+        gate_up_source[:, :, 1::2] = up.transpose(1, 2)
+        down_source = down.transpose(1, 2).contiguous()
+    sources = {
+        f"{stack}.gate_up_proj{suffix}": gate_up_source,
+        f"{stack}.down_proj{suffix}": down_source,
+    }
+    packed = export.packed_expert_stacks(
+        {name: tuple(tensor.shape) for name, tensor in sources.items()})
+    planned = export.plan_packed_expert_stack(
+        stack, packed[stack], export.grid_for("E4M3"), 1024,
+        source_layout=source_layout, config=_config())
+
+    expected = {"gate_proj": gate, "up_proj": up, "down_proj": down}
+    assert planned["source_layout"] == source_layout
+    assert len(planned["units"]) == EXPERTS * 3
+    for unit in planned["units"]:
+        actual = export.packed_expert_weight(sources[unit["source_tensor"]], unit)
+        assert torch.equal(actual, expected[unit["projection"]][unit["expert"]])
+        assert unit["tensor"] == f"{stack}.{unit['expert']}.{unit['projection']}.weight"
+        assert unit["wire"] == f"{stack}.{unit['expert']}.{unit['projection']}.wire"
+        assert unit["source_layout"] == source_layout
+        assert unit["source_slice"]["expert"] == unit["expert"]
+
+
 # --------------------------------------------------------------------------
 # ``ignore`` must name the modules vLLM BUILDS.
 #
@@ -566,6 +614,27 @@ def test_planning_a_packed_stack_is_refused_before_any_encode(tmp_path, monkeypa
     assert stack in message, message
     assert not out.exists() or not list(out.glob("*.safetensors")), (
         "the refusal fired only after writing weights")
+
+
+@pytest.mark.parametrize("source_layout", [None, "guessed_from_shape"])
+def test_a_packed_stack_plan_requires_a_supported_source_layout(
+        tmp_path, monkeypatch, source_layout):
+    """Missing and invented packed conventions both fail before encoding."""
+    src = _write(tmp_path, _packed_checkpoint(""), _config(inter=PACKED_INTER))
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    stack = "model.language_model.layers.1.mlp.experts"
+    spec = {"grid": "E4M3", "q256": 1024}
+    if source_layout is not None:
+        spec["source_layout"] = source_layout
+    plan.write_text(json.dumps({stack: spec}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+                                     "--q256", "1024", "--plan-json", str(plan)])
+
+    with pytest.raises(SystemExit, match=(
+            "source_layout.*out_first_chunked.*in_first_interleaved")):
+        export.main()
+    assert not out.exists() or not list(out.glob("*.safetensors"))
 
 
 #: The one packed-expert source on this box.  Skipped rather than synthesised

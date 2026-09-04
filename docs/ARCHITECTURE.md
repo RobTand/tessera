@@ -307,11 +307,17 @@ emitted wire name, so the model's own `FusedMoEFactory(ckpt_names=...)` mapping
 supplies the shard id to the wire parameter's loader. Two source spellings for
 one canonical role are refused rather than resolved by checkpoint order.
 
-The PACKED 3-D source layout has no export, and the reason is two conventions
-the tensor does not state: which axis is the output (the dims decide only when
-`hidden_size != 2 * moe_intermediate_size`, and on GLM-5.3-Flash they are
-equal), and whether a packed `gate_up_proj` chunks or interleaves its halves.
-Both are refused by name; neither is guessed.
+The PACKED 3-D source layout is accepted only under an explicit plan
+convention. `out_first_chunked` is `gate_up [E, 2N, K]` with gate then up and
+`down [E, K, N]`; `in_first_interleaved` is `gate_up [E, K, 2N]` with gate/up
+alternating and `down [E, N, K]`. The exporter checks those exact shapes
+against `config.json`, slices canonical per-expert gate/up/down matrices, and
+stamps the convention as `source_layout` on the routed-MoE scheme and each
+manifest role. It does not infer either fact from dimensions: when `hidden_size
+== 2 * moe_intermediate_size` gate/up is square, and no dimension states
+chunked versus interleaved. A missing or unknown convention is refused before
+encoding. Old schemes default to `unpacked_per_expert`, the only source layout
+their writer supported.
 
 **What is NOT claimed.** There is no `routed_moe` cell in
 `runtime_contract.json`. Half of what would justify one now exists and half

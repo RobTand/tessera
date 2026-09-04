@@ -80,6 +80,10 @@ __all__ = [
     "MOE_GROUP_SHARDS",
     "MOE_GROUP_ROLES",
     "MOE_BUILDERS",
+    "MOE_SOURCE_UNPACKED",
+    "MOE_SOURCE_OUT_FIRST_CHUNKED",
+    "MOE_SOURCE_IN_FIRST_INTERLEAVED",
+    "MOE_SOURCE_LAYOUTS",
     "ROUTES",
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
@@ -148,6 +152,20 @@ MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2"
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+
+#: The checkpoint layouts the exporter can prove it interpreted.  This is
+#: provenance rather than a runtime layout: all three are normalised to the
+#: same canonical per-expert gate/up/down wires before vLLM sees them.  Old
+#: schemes predate the field and can only have come from the original
+#: per-expert writer, so their closed-world default is ``unpacked_per_expert``.
+MOE_SOURCE_UNPACKED = "unpacked_per_expert"
+MOE_SOURCE_OUT_FIRST_CHUNKED = "out_first_chunked"
+MOE_SOURCE_IN_FIRST_INTERLEAVED = "in_first_interleaved"
+MOE_SOURCE_LAYOUTS = (
+    MOE_SOURCE_UNPACKED,
+    MOE_SOURCE_OUT_FIRST_CHUNKED,
+    MOE_SOURCE_IN_FIRST_INTERLEAVED,
+)
 
 #: WHICH FAMILIES HAVE AN EXPERT ROUTE, and the one home for that rule.
 #: FAMILY = ROUTE holds on the expert stack exactly as it does on a Linear,
@@ -916,6 +934,13 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     if family not in TESSERA_FAMILIES:
         raise ValueError(
             f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
+    source_layout = scheme.get("source_layout", MOE_SOURCE_UNPACKED)
+    if source_layout not in MOE_SOURCE_LAYOUTS:
+        raise ValueError(
+            f"tessera target {target!r}: source_layout must be one of "
+            f"{MOE_SOURCE_LAYOUTS}, got {source_layout!r}. The source convention "
+            "decides how packed expert weights are sliced before encoding; an "
+            "unknown value cannot be reconstructed safely from the emitted wires.")
     experts = _as_int(scheme, "experts", target)
     groups = scheme.get("groups")
     if not isinstance(groups, Mapping):
@@ -966,6 +991,7 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
             "hidden size, so they are one number")
     return {
         "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        "source_layout": source_layout,
         "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
         "plane": declared_groups["w13"]["plane"],
         "hidden_size": declared_groups["w13"]["columns"],

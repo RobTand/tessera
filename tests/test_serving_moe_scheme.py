@@ -54,6 +54,16 @@ def test_a_moe_scheme_normalises_to_groups_and_the_two_sizes():
     assert norm["groups"]["w2"]["roles"] == [("down_proj", 128)]
 
 
+def test_the_source_layout_stamp_is_closed_and_old_wires_default_to_unpacked():
+    for layout in S.MOE_SOURCE_LAYOUTS:
+        assert S.validate_tessera_moe_scheme(
+            _moe(source_layout=layout), "m")["source_layout"] == layout
+    assert S.validate_tessera_moe_scheme(
+        _moe(), "old")["source_layout"] == S.MOE_SOURCE_UNPACKED
+    with pytest.raises(ValueError, match="source_layout"):
+        S.validate_tessera_moe_scheme(_moe(source_layout="guessed"), "m")
+
+
 def test_the_group_check_is_the_dense_check_so_a_route_fact_refuses_the_same_way():
     with pytest.raises(ValueError, match="scalar E4M3 grid"):
         S.validate_tessera_moe_scheme(_moe(grid="E2M1x2"), "m")
