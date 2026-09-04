@@ -4,8 +4,8 @@ set -euo pipefail
 
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 STAGE_ROOT=${TS113_STAGE_ROOT:-/mnt/shared/tessera-runs/ts113-fresh-sparklina-aa6-r1}
-POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r3}
-LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r3}
+POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r4}
+LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r4}
 source "$WT/experiments/runtime_image.sh"
 IMAGE=$(runtime_image_pin)
 CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
