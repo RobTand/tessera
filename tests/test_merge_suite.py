@@ -871,3 +871,45 @@ def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
     assert len(record["pool_actions_matching"]) == 2, record
     assert "no single exit status" in record["exit_status_note"], record
     assert not merge_suite._verdict([record]).startswith("green on")
+
+
+def test_a_resume_keeps_the_receipt_the_original_run_wrote(tmp_path):
+    """The file that holds the two arms together was the one left unprotected.
+
+    ``--resume`` reassembles into the directory the original run wrote, and its
+    default output name is that run's own ``receipt.json``. So resuming one arm
+    wrote over the receipt recording the other -- the same loss the surface
+    files have been protected from since ``ab4867e``, in the file whose whole
+    purpose is to hold both populations side by side. On this branch that would
+    have landed on ``20260904T025044``, whose ``receipt.json`` is the only
+    record of that run's x86 submission and whose GPU arm sat queued behind a
+    held reservation for nine hours before anyone could resume it.
+
+    Before this test::
+
+        >       assert kept, sorted(p.name for p in receipt_dir.iterdir())
+        E       AssertionError: ['receipt.json', 'surface.gpu.json']
+        E       assert []
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    (receipt_dir / "receipt.json").write_text(
+        json.dumps({"schema": "tessera.merge_suite.v1", "arms": [{"arm": "x86"}]}))
+    os.utime(receipt_dir / "receipt.json", (1788500000, 1788500000))
+    _gpu_population(receipt_dir / "surface.gpu.json")
+
+    rc = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu",
+         "--resume", str(receipt_dir), "--checkout", str(ROOT)],
+        capture_output=True, text=True, timeout=300)
+    assert rc.returncode in (0, 1), rc.stdout + rc.stderr
+
+    kept = sorted(receipt_dir.glob("receipt.superseded-*.json"))
+    assert kept, sorted(p.name for p in receipt_dir.iterdir())
+    # The first run's record survives intact...
+    assert json.loads(kept[0].read_text())["arms"][0]["arm"] == "x86"
+    # ...and the plain name is the newest, so nothing that reads it changes.
+    assert json.loads((receipt_dir / "receipt.json").read_text())["arms"][0]["arm"] == "gpu"
+    assert "kept at" in rc.stdout, rc.stdout

@@ -611,6 +611,35 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         handle.write("\n".join(rows) + "\n")
 
 
+def _keep_any_previous(path: Path):
+    """Move an earlier receipt aside instead of writing over it.
+
+    ``--resume`` reassembles a receipt in the directory the original run wrote
+    one into, and its default output name is that run's own ``receipt.json``.
+    So resuming an arm silently destroyed the receipt that recorded the other
+    arm -- the exact loss the surface files are already protected from, in the
+    file that holds them together.  ``20260904T025044`` is where this would
+    have landed: its ``receipt.json`` is the only record of that run's x86
+    submission, and the GPU arm queued behind a held reservation for nine
+    hours before anyone could resume it.
+
+    Both receipts are evidence and the second does not disprove the first, so
+    keep both.  The reader is unchanged: ``receipt.json`` is always the newest.
+    """
+
+    if not path.exists():
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(path.stat().st_mtime))
+    kept = path.with_name(f"{path.stem}.superseded-{stamp}{path.suffix}")
+    index = 0
+    while kept.exists():
+        index += 1
+        kept = path.with_name(
+            f"{path.stem}.superseded-{stamp}-{index}{path.suffix}")
+    path.rename(kept)
+    return kept
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -705,7 +734,10 @@ def main() -> int:
         ),
     }
     out.parent.mkdir(parents=True, exist_ok=True)
+    kept = _keep_any_previous(out)
     out.write_text(json.dumps(receipt, indent=2) + "\n")
+    if kept:
+        print(f"merge_suite: a previous receipt was here; kept at {kept}")
     if args.record:
         _record_markdown(Path(args.record), receipt)
 
