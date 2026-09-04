@@ -5,15 +5,26 @@ are measured and stand. The served A/B is IN FLIGHT — the three `PENDING`
 sections below are produced by one pool action, not by hand, and no number in
 them may be quoted until they are filled.**
 
-The action is `experiments/refit_trailing_run_all.sh`, submitted to the
-PrismaBuild pool as key `aadd46b6525d…` (checkout `/home/rob/tmp/wf75`, tag
-`sparky`, `gpu 1 / mem_gb 40 / cpu 4`). It exports the control, runs the pair
-check, and **serves only if the pair check passes** — same-day arms whose codes
-differ would mean the encoder is not deterministic, and a served number on top
-of that is two treatments again, arriving by a different door. It leaves
-`/mnt/shared/tessera-runs/refit-trailing/DONE` carrying the verdict lines, and
-copies the three receipts beside it; `pb-queue/done/aadd46b6525d….json` holds
-the whole log under `detail.stdout`.
+The action is `experiments/refit_trailing_run_all.sh`, queued on the PrismaBuild
+pool twice — `aadd46b6525d…` at `gpu 1 / mem_gb 40 / cpu 4`, and
+`b19a7b789fd2…` at `mem_gb 24` once the first was found unplaceable — both with
+checkout `/home/rob/tmp/wf75` and tag `sparky`. Either one runs the whole
+chain, and the chain is idempotent (the export skips an existing twin, the
+serve an existing npz), so whichever lands first does the work and the other
+re-verifies. It exports the control, runs the pair check, and **serves only if
+the pair check passes**: same-day arms whose codes differ would mean the
+encoder is not deterministic, and a served number on top of that is two
+treatments again, arriving by a different door. It leaves
+`/mnt/shared/tessera-runs/refit-trailing/DONE` carrying the verdict lines and
+copies the three receipts beside it; `pb-queue/done/<key>.json` (or
+`failed/<key>.json` on a non-zero exit) holds the whole log under
+`detail.stdout`. `experiments/refit_trailing_fill_doc.py` then fills the three
+sections from those receipts.
+
+Neither had been placed as of 05:30 on 2026-09-04: fifteen GPU items were
+queued for sparky's two slots, eight of them 1300–1600 denied passes deep, and
+sparklina's GPU was held out of pool. **The worktree must not be removed until
+one of them lands** — both actions name it as their cwd.
 
 **What this is.** tessera#75's fair pair, taken to the one leg a screen cannot
 supply. The measurement half is on master (`experiments/refit_trailing_pair.py`,
