@@ -46,7 +46,15 @@ TS=${TS:-$WT}
 RUNS=${RUNS:-/home/rob/tessera-runs/ts83}
 EXT=${EXT:-$RUNS/ext-A}
 VLLM_CACHE=${VLLM_CACHE:-$RUNS/vllm-cache-lat-$ARM}
-IMAGE=${IMAGE:-vllm/vllm-openai:latest}
+# The pin, not a floating tag.  This wrapper and the gate that requires it
+# landed on two branches that never saw each other, so `latest` survived a
+# merge into a tree whose contract had already replaced it with a digest
+# (contract v10, `versions.attested_on.image`).  A latency number is a claim
+# about a runtime, and a claim about a runtime is attested (principle 14):
+# `latest` names whichever image the box last pulled.
+source "$(dirname "$0")/runtime_image.sh"
+IMAGE=${IMAGE:-$(runtime_image_pin)}
+runtime_image_require "$IMAGE" || exit 2
 PORT=${PORT:-8000}
 NAME=${NAME:-tessera-ts83-lat-$ARM-$MODE-$REGIME}
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
