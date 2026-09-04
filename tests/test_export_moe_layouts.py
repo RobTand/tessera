@@ -304,8 +304,14 @@ def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
     """End to end: run the exporter and read the ignore list it writes."""
     src = _write(tmp_path, _unpacked_checkpoint())
     out = tmp_path / "out"
+    # --passthrough-unrouted: the fixture's body carries ``o_proj``, which #99's
+    # construction gate refuses because the pinned runtime builds it with
+    # ``quant_config=None``.  The refusal is correct and stays default-on; this
+    # test is about the MoE ignore/passthrough layout, not the routing gate, so
+    # it takes the safe escape hatch rather than suppressing the gate.
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
-                                     "--grid", "E4M3", "--q256", "1024"])
+                                     "--grid", "E4M3", "--q256", "1024",
+                                     "--passthrough-unrouted"])
     export.main()
 
     written = json.loads((out / "config.json").read_text())["quantization_config"]
@@ -383,8 +389,14 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
     tensors["model.language_model.layers.1.mlp.gate.weight"] = torch.zeros(64, HIDDEN)
     src = _write(tmp_path, tensors)
     out = tmp_path / "out"
+    # --passthrough-unrouted: the fixture's body carries ``o_proj``, which #99's
+    # construction gate refuses because the pinned runtime builds it with
+    # ``quant_config=None``.  The refusal is correct and stays default-on; this
+    # test is about the MoE ignore/passthrough layout, not the routing gate, so
+    # it takes the safe escape hatch rather than suppressing the gate.
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
-                                     "--grid", "E4M3", "--q256", "1024"])
+                                     "--grid", "E4M3", "--q256", "1024",
+                                     "--passthrough-unrouted"])
     export.main()
 
     written = json.loads((out / "config.json").read_text())["quantization_config"]
