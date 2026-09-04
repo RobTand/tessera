@@ -5,7 +5,9 @@ The issue says Tessera W4A4 **0.640** against PrismaQuant NVFP4 GPTQ+JSO
 **0.511**, a gap of 1.254x. That was the *weights-only* wire. LDLQ plus the
 `h^1.0` row-scale refit landed on 2026-09-02 and took the same bytes to
 **0.5310275686796917** served (`tessera-ldlq-lut-plane-served-2026-09-02.md`),
-so the live gap this document is about is **1.040x**, not 1.254x.
+so the live gap this document is about is **1.040x** (provisional -- see
+below: the two ends were scored against different BF16 teacher dumps, and a
+queued job re-scores the comparator on the bracket's teacher), not 1.254x.
 
 | what | served KL-vs-BF16 | teacher dump | wire bpp | resident bpp |
 |---|---|---|---|---|
@@ -281,9 +283,13 @@ against the zones pre-registered at the top of this document.
 
 What is settled without them, and does not change when they arrive:
 
-* the gap the issue is about is **1.040x**, not the 1.254x in its title, and
-  both ends of that ratio are now quoted at full precision from their own
-  compare files;
+* the gap the issue is about is nearer **1.04x** than the 1.254x in its
+  title, and both ends are now quoted at full precision from their own compare
+  files -- *provisionally*, because 0.5310275686796917 was scored against
+  `qwen_rot_teacher_lina` and 0.5105764371970046 against
+  `qwen_teacher_bf16_v028`. The one-teacher ratio from
+  `ts12_kl_nvfp4prod_vs_lina.json` replaces it; this number is the one thing
+  here that a pending job can still move;
 * the control for the delta is the bracket's own `b32`, not the published
   0.5310275686796917, because a fresh export of the same recipe at the same
   block moves 161 of 784 tensors;
@@ -300,9 +306,12 @@ What is settled without them, and does not change when they arrive:
   read, not rebuilt.
 
   What that costs in scope is stated rather than waved at. The bracket was
-  encoded at `82cdf513`, and `82cdf513..HEAD~1` moves bytes -- the same recipe
-  at the same block already differs from the 2026-09-02 artifact in 161 of 784
-  tensors, so it is not safe to assume it would reproduce here either. The
+  encoded at `82cdf513`. Whether `82cdf513..HEAD` moves bytes is *measured*
+  by `ts12_byte_identity.json` (a fresh layer-0 export at this checkout hashed
+  against that arm) and is reported there rather than assumed here; what is
+  already known is that the *preceding* range moved them, since the same
+  recipe at the same block differs from the 2026-09-02 artifact in 161 of 784
+  tensors, which is why the forward range is measured instead of trusted. The
   bracket is therefore read as an *internally matched* pair: control and
   candidates from one tree, one session, one teacher, so the delta between them
   is a fact about the block. Its absolute values describe `82cdf513`'s encoder,

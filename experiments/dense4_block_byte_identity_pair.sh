@@ -35,9 +35,9 @@ cd "$POST" && PYTHONPATH=$POST/src $PY -u experiments/export_tessera_serving.py 
     "${args[0]}" "$OUT/post" "${args[@]:1}"
 
 cd "$POST"
+rc=0
 PYTHONPATH=$POST/src $PY -u experiments/dense4_block_byte_identity.py \
-    "$OUT/pre" "$OUT/post" --out "$RESULT"
-rc=$?
+    "$OUT/pre" "$OUT/post" --out "$RESULT" || rc=$?
 du -sh "$OUT" || true
 rm -rf "$OUT"
 exit $rc
