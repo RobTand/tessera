@@ -1009,7 +1009,12 @@ factorial has one row of three.  Attributing the residual to entry count --
 "the L=16 entries alone cost 1.1655/0.9606 = 1.21x on dense R=8" -- assumes
 the two axes compose multiplicatively, which one row cannot test.  The cell
 that tests it is `L=16` at reach 4.0 (the wide table with its spread narrowed
-to the shipped reach), which is the queued `L=16` row: about 38 minutes of GPU
-on the experts, 11 for `L=12`.  Nothing here moves a default in any case --
+to the shipped reach).  The four rows that complete the factorial were
+submitted to the pool after the two above landed -- `87cf849b` (`glm-16`),
+`ef037166` (`dense-16`), `6977d165` (`glm-12`), `fa81010e` (`dense-12`), about
+38 minutes of GPU for the expert `L=16` row and 11 for `L=12` -- and write
+beside these two, where `experiments/matched_reach_report.py` takes any
+combination of them on one command line.  Removing their `pb-queue/ready`
+records cancels them.  Nothing here moves a default in any case --
 both axes change `encoder_profile_id`, there is no BF16 serving lane, and both
 gates are weight-space or H-weighted columns.  House principle 3: a screen.
