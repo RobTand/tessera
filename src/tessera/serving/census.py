@@ -35,7 +35,9 @@ import collections
 from typing import Any, Mapping
 
 __all__ = [
+    "CELL_AGREEMENT_SCHEMA",
     "LANE_ENGAGEMENT_SCHEMA",
+    "cell_launch_agreement",
     "decoder_histogram",
     "lane_engagement",
 ]
@@ -147,3 +149,96 @@ def lane_engagement(records_by_phase: Mapping[str, Mapping[str, Mapping[str, Any
                                  else all(n > 0 for n in engaged_anywhere.values())),
     }
     return block, problems
+
+
+#: Bumped when the block's shape changes.  A consumer keys on it.
+CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/1"
+
+
+def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
+                          rungs_by_module, families_by_route, structure="dense"):
+    """Every served record's launch against the CELL that covers it (#111).
+
+    The lane-engagement block above asks whether a lane took any modules.  This
+    asks the other half: does what the serve executed match what the contract
+    says it executes?  Since lane_eligibility schema v4 a cell publishes
+    ``executes`` -- the ``(symbol, decoder)`` launches the route makes at that
+    cell's regime, residency and rungs -- so the question is answerable, and a
+    receipt is where it has to be answered: the cell is DERIVED from the
+    dispatch table, which proves the document agrees with the code, and only a
+    serve proves the code agrees with the machine.
+
+    The route and the residency come off the record's own ``policy`` field
+    (``ROUTE:mode``) and ``families_by_route`` turns the route into the payload
+    family a cell is keyed by (``contract.PAYLOAD_FAMILY_BY_ROUTE``), so the
+    caller supplies only the rung per module -- the one fact a route record
+    does not carry.  A module the table does not cover
+    is counted as ``unattested`` and is NOT a problem: absence is the honest
+    state a v4 table has for a rung no receipt covered, and inventing a
+    verdict from it is the failure the whole table is shaped to avoid.
+
+    Returns ``(block, problems)``.  ``agrees`` is three-valued for the same
+    reason ``all_required_engaged`` is: ``None`` when no record was covered by
+    any cell, so a gate can tell "nothing to check" from "everything checked".
+    """
+    by_regime = {}
+    for cell in cells:
+        if cell.get("platform") != platform or cell.get("structure") != structure:
+            continue
+        modes = _cell_modes(cell)
+        for mode in modes:
+            for rung in cell.get("rungs_q256", ()):
+                key = (cell["family"], mode, cell["regime"], int(rung))
+                by_regime[key] = cell
+
+    phases = {}
+    problems = []
+    covered_total = 0
+    for phase, records in sorted(records_by_phase.items()):
+        regime = phase_regimes.get(phase)
+        counts = collections.Counter()
+        covered = unattested = 0
+        for name, record in sorted(records.items()):
+            policy = str(record.get("policy", ""))
+            route, _, mode = policy.partition(":")
+            family = families_by_route.get(route)
+            rung = rungs_by_module.get(name)
+            cell = (None if rung is None or family is None
+                    else by_regime.get((family, mode, regime, int(rung))))
+            if cell is None:
+                unattested += 1
+                continue
+            covered += 1
+            pair = (str(record.get("symbol")), str(record.get("decoder")))
+            allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
+            counts[cell["id"]] += 1
+            if pair not in allowed:
+                problems.append(
+                    f"{phase}: {name} executed {pair!r}, which cell {cell['id']!r} does not "
+                    f"publish (it executes {sorted(allowed)!r}). The cell is what a producer "
+                    "prices and a gate reads; a serve that disagrees with it means one of the "
+                    "two is describing a runtime nobody ran.")
+        covered_total += covered
+        phases[phase] = {"regime": regime, "modules": len(records),
+                         "covered_by_cell": covered, "unattested": unattested,
+                         "cells": dict(sorted(counts.items()))}
+    block = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform, "structure": structure,
+             "phases": phases,
+             "agrees": None if not covered_total else not problems}
+    return block, problems
+
+
+def _cell_modes(cell):
+    """The residencies a cell's serve flags name.
+
+    A local parse rather than an import of ``contract.cell_residency_modes``
+    because this module is imported inside a serving container from a tool that
+    must not need the validator's import graph; the shape is one flag,
+    ``TESSERA_SERVE_MODE=a|b``, and a cell that does not carry one covers
+    nothing here rather than covering everything.
+    """
+    head = "TESSERA_SERVE_MODE="
+    for flag in cell.get("requires_serve_flags", ()):
+        if str(flag).startswith(head):
+            return tuple(str(flag)[len(head):].split("|"))
+    return ()

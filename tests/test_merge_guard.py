@@ -246,6 +246,38 @@ def test_a_part_from_an_older_exporter_is_refused(aware_config):
         merge.check_configs([("partA", old), ("partB", copy.deepcopy(aware_config))])
 
 
+def test_parts_cut_by_different_encoders_are_refused(aware_config):
+    """The field tessera#101 added: same settings, same profile ids, different
+    encoder.  Nothing else in the config can tell these two apart, which is
+    exactly the merge that went through once already (tessera#78)."""
+    a = copy.deepcopy(aware_config)
+    b = copy.deepcopy(aware_config)
+    assert len(a["encoder_fixture_id"]) == 64
+    b["encoder_fixture_id"] = "f" * 64
+    with pytest.raises(SystemExit, match="encoder_fixture_id"):
+        merge.check_configs([("partA", a), ("partB", b)])
+    merge.check_configs([("partA", a), ("partB", copy.deepcopy(aware_config))])
+
+
+def test_one_part_predating_the_encoder_identity_is_refused(aware_config):
+    """Written by some parts and not others means two exporters, and the older
+    one cannot say which encoder cut it."""
+    old = copy.deepcopy(aware_config)
+    del old["encoder_fixture_id"]
+    with pytest.raises(SystemExit, match="different exporters"):
+        merge.check_configs([("partA", copy.deepcopy(aware_config)), ("partB", old)])
+
+
+def test_no_part_carrying_the_encoder_identity_is_noted(aware_config, capsys):
+    """Parts that both predate the field merge, and the note says what went
+    unchecked rather than reading as a clean comparison."""
+    a = copy.deepcopy(aware_config)
+    b = copy.deepcopy(aware_config)
+    del a["encoder_fixture_id"], b["encoder_fixture_id"]
+    merge.check_configs([("partA", a), ("partB", b)])
+    assert "whether one encoder cut both parts is unrecorded" in capsys.readouterr().out
+
+
 def test_no_part_carrying_the_key_is_noted_not_refused(plain_config, capsys):
     """Pre-2026-09-02 parts predate the field; they merge, and say so."""
     old = copy.deepcopy(plain_config)
@@ -622,3 +654,124 @@ def test_a_plain_trailing_leg_over_a_plain_base_is_legal():
     kwargs = source.for_unit("unit.weight", 4, scale_plane=ScalePlaneKind.S6B)
     assert "refit_metric" not in kwargs
     assert "refit_metric_trailing" not in kwargs
+
+
+# --------------------------------------------------------------------------
+# The sweep is per scale plane (tessera#107).
+# --------------------------------------------------------------------------
+
+
+def test_the_sweep_map_serves_each_plane_the_answer_it_was_given():
+    """#107: one bool cannot be true on a checkpoint that spans two planes.
+
+    ``encode_linear`` refuses ``refit_gauss_seidel`` off the LUT plane rather
+    than ignoring it -- deliberately, since a sequential sweep with nothing to
+    sweep is the parallel step under another name, and a silently dropped
+    encoder setting is how an export ships bytes its config misdescribes.  So
+    a bare ``True`` is unreachable on any checkpoint whose units do not all
+    sit on the LUT plane: ``experiments/export_tessera_serving.py`` reads
+    ``(grid, q256)`` per member and encodes GLM's attention on E4M3/CHANNEL
+    beside its experts on E2M1x2/LUT16, from ONE ``ActivationSource``, so the
+    first CHANNEL unit refuses.  The map is the one value both halves carry.
+    """
+    from tessera.manifest import ScalePlaneKind
+
+    source = _source(refit_gauss_seidel={"lut16": True})
+    assert source.gauss_seidel_for(ScalePlaneKind.LUT) is True
+    # Not a refusal, and not another plane's answer: the field's own default.
+    # This is the asymmetry with ``objective_for``, which refuses an unnamed
+    # plane because no objective is neutral -- ``False`` here is.
+    assert source.gauss_seidel_for(ScalePlaneKind.CHANNEL) is False
+    assert source.gauss_seidel_for(ScalePlaneKind.S6B) is False
+
+
+def test_a_bare_sweep_flag_still_means_every_plane():
+    """The map must not have quietly turned ``True`` into "the LUT plane only".
+
+    A bare bool is the *whole model's* setting, so on a CHANNEL unit it still
+    reaches the encoder as ``True`` and still refuses there.  Resolving it to
+    ``False`` instead would be the silent no-op the refusal exists to prevent,
+    dressed up as a fix.
+    """
+    from tessera.manifest import ScalePlaneKind
+
+    source = _source(refit_gauss_seidel=True)
+    assert source.gauss_seidel_for(ScalePlaneKind.CHANNEL) is True
+    assert source.gauss_seidel_for(ScalePlaneKind.LUT) is True
+    assert source.gauss_seidel_for(None) is True
+
+
+def test_the_sweep_map_is_what_for_unit_hands_the_encoder():
+    """The plane the encode resolved decides the kwarg, unit by unit."""
+    from tessera.manifest import ScalePlaneKind
+
+    tensors = _tensors()
+    source = _source(tensors, refit_objective="hessian",
+                     refit_gauss_seidel={"lut16": True})
+    name = next(iter(tensors))
+    on_lut = source.for_unit(name, COLS, scale_plane=ScalePlaneKind.LUT)
+    on_channel = source.for_unit(name, COLS, scale_plane=ScalePlaneKind.CHANNEL)
+    assert on_lut["refit_gauss_seidel"] is True
+    assert on_channel["refit_gauss_seidel"] is False
+    # The rest of the recipe is untouched: the same Hessian shapes both.
+    assert torch.equal(on_lut["refit_metric"], on_channel["refit_metric"])
+
+
+def test_the_sweep_map_round_trips_through_config_block():
+    """The config records which planes swept, not one bool that cannot be true.
+
+    The whole map travels, not the value at the plane this part used: the
+    merge guard compares this field across parts, and a part that recorded
+    only its own plane's answer would compare unequal to a part that recorded
+    only the other's while both were built from one setting.
+    """
+    from tessera.manifest import ScalePlaneKind
+
+    block = _source(refit_gauss_seidel={"lut16": True}).config_block()
+    assert block["refit_gauss_seidel"] == {"lut16": True}
+    json.loads(json.dumps(block))       # a MappingProxyType would fail the write
+    # The default is unchanged, and it is still a bool: an artifact that never
+    # asked for the sweep records what it always recorded.
+    assert _source().config_block()["refit_gauss_seidel"] is False
+    assert _source().gauss_seidel_for(ScalePlaneKind.LUT) is False
+
+
+def test_a_sweep_map_needs_the_plane_it_is_asked_about():
+    """A per-plane setting resolved without a plane would silently be off."""
+    source = _source(refit_gauss_seidel={"lut16": True})
+    with pytest.raises(GrammarError, match="scale plane"):
+        source.gauss_seidel_for(None)
+    with pytest.raises(GrammarError, match="refit_gauss_seidel"):
+        source.gauss_seidel_for(None)
+
+
+@pytest.mark.parametrize("bad,message", [
+    ({"nope": True}, "are not scale planes"),
+    ({"lut16": 1}, "on or off on a plane"),
+    ({"lut16": "yes"}, "on or off on a plane"),
+    ("yes", "must be a bool or a plane"),
+    (1, "must be a bool or a plane"),
+    (None, "must be a bool or a plane"),
+    ({}, "turns the sweep on nowhere"),
+    ({"lut16": False}, "turns the sweep on nowhere"),
+    ({"lut16": False, "channel": False}, "turns the sweep on nowhere"),
+])
+def test_a_bad_sweep_setting_is_refused_by_name(bad, message):
+    """A map with no plane set to ``True`` is refused rather than accepted as
+    a second spelling of ``False``: it encodes the same bytes while comparing
+    unequal to ``False`` at the merge guard, so two parts spelling one default
+    two ways would refuse over bytes that agree."""
+    with pytest.raises(GrammarError, match=message):
+        ActivationSource(hessians={}, provenance=_provenance(),
+                         refit_gauss_seidel=bad)
+
+
+def test_the_guard_refuses_two_parts_that_swept_different_planes():
+    """The map is compared like the objective map: whole, and by value."""
+    a = _guard_template()
+    b = _guard_template()
+    _set(a, "activation_aware.refit_gauss_seidel", {"lut16": True})
+    _set(b, "activation_aware.refit_gauss_seidel", {"channel": True})
+    with pytest.raises(SystemExit, match="refit_gauss_seidel"):
+        merge.check_configs([("partA", a), ("partB", b)])
+    merge.check_configs([("partA", a), ("partB", copy.deepcopy(a))])

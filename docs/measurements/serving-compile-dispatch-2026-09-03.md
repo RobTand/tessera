@@ -322,11 +322,21 @@ Rob's call, not a code change.
 ## 5. Provenance
 
 Corpus `/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json`, contract sha
-`cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d`, tokenizer
-`/home/rob/models/Qwen3-0.6B`, 8x512, 4088 scored positions. Op-level probe on
-GB10, torch 2.13.0+cu130, vLLM 0.28.0 in `vllm/vllm-openai:latest`
-(`sha256:61fc8a896b0a`). The two attested serve logs are
-`/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12` (eager) and
-`serve_qwen_stock_tessera-k2-graph.log:12` (compiled). No KL number in this
-receipt was produced by me; the ones quoted are from
-`serving-compile-divergence-2026-09-02.md` and carry that receipt's provenance.
+`cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d` over source
+text `/mnt/shared/tessera-kl/wikitext_test.txt` sha
+`076d33efc4476dcc417a2bb249c0bc950bb54bbb471d73f69c15cef0010b53d0`, tokenizer
+`/home/rob/models/Qwen3-0.6B` sha
+`76f13c8e6e553e35b09733ed5543274fdcd97285d3fcd7e1cccd4e0ad8089891`, 8x512, 4088
+scored positions. Op-level probe on GB10, torch 2.13.0+cu130, vLLM 0.28.0 in
+`vllm/vllm-openai:latest` (`sha256:61fc8a896b0a`). The two attested serve logs
+for section 1 are `/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12`
+(eager) and `serve_qwen_stock_tessera-k2-graph.log:12` (compiled).
+
+**Which numbers are mine.** Section 3's ladder is: seven arms served here at
+03:00--03:03 UTC on 2026-09-04, logs and dumps under
+`/home/rob/tessera-runs/compile-dispatch/`, comparisons in
+`kl_<teacher>__vs__<student>.json` (schema `prismaquant.kl_compare/2`).  Section
+2's op-level numbers are also mine.  The numbers quoted for orientation from the
+earlier regime -- the 0.026861 / 0.118001 / 0.244481 / 0.247301 ladder and the
+0.017117 rebuild -- are from `serving-compile-divergence-2026-09-02.md` and carry
+that receipt's provenance, not this one's.

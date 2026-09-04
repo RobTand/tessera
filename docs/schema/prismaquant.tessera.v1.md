@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0`–`5`; see §1a–§1d, §1f for the reach record, and §1e for a width that needs no minor) |
+| 10 | 2 | schema minor (`0`–`6`; see §1a–§1d, §1f for the reach record, §1g for the encoder identity, and §1e for a width that needs no minor) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -440,6 +440,75 @@ the record is present.
 **Writing.** `serialize` writes the lowest minor a manifest needs. A record
 that binds nothing — default spellings, or spellings a TCQ body over a
 block plane never reads — is refused at construction, not written.
+
+### 1g. Schema minor 6 (2026-09-04): the encoder identity
+
+Minor 6 appends one optional field to the canonical manifest, **after** the
+minor-5 reach section:
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `has_encoder_fixture_id` | uint | `0` = no identity, and nothing follows: the artifact was cut by `encoder_identity.UNTAGGED_ENCODER_ID`, the encoder as it stood when this field was added. `1` = the digest follows. |
+| `encoder_fixture_id` | digest32 | Which **encoder** cut the bytes: the SHA-256 of what this encoder emits for a fixed fixture set at fixed arguments (`tessera.encoder_identity`). |
+
+**Why it exists.** Every earlier identity field binds an *argument*.
+`encoder_profile_id` is input-only by decision — `manifest.py`'s own summary
+says it "contains nothing an encode alone can produce" — so an **encoder**
+change, same arguments and different bytes out, moves nothing in it. Neither
+does `CONTAINER_VERSION`, which versions the on-disk container, nor the merge
+guard's `activation_aware` block, which compares settings. Two halves of one
+checkpoint built either side of such a change compared equal and merged; that
+is not hypothetical, it happened, and only a uniform `q896` made it
+recoverable (issue #78, issue #101).
+
+**Why it is derived and not declared.** A hand-maintained `ENCODER_VERSION`
+is a discipline, and a discipline that fails does so silently — the same
+failure, relocated one level up. A source hash over a roster of encoder files
+is no better: it moves on a comment, and it is a roster. So the value is the
+digest of a **fixture encode**: it moves exactly when the encoder's output
+moves at fixed inputs, and never when a comment, a docstring or a refactor
+changes. Nobody bumps it and nobody can forget to.
+
+**The limit, stated rather than assumed.** A fixture hash is exact for what it
+covers and blind to what it does not: a change that moves only E4M3 bytes is
+invisible to an E2M1-only fixture. The set therefore spans every `(grid, body,
+scale plane)` an export can write, derived from `recipe_table` over
+`SERIALISABLE_GRIDS` rather than restated, and
+`tests/test_encoder_identity.py` fails when a shipping structure has no
+fixture — so adding a grid, body or plane must add a fixture. Rate is covered
+at one declared rung per structure (`window_bits` varies with the rung and is
+already bound in `encoder_profile_id`); the activation-aware arms use a
+synthetic Hessian, so the CHANNEL refit's `B <= 0` branch — a property of a
+real capture's off-diagonal structure — stays the byte-baseline harness's to
+catch. The digest also binds the fixture set itself, so extending the set
+re-bases the identity, exactly as digesting the payload grid once re-based
+every profile id.
+
+**Not bound into `encoder_profile_id`.** The profile id stays input-only, which
+is the one thing it is for; this is a **sibling** field, never a digest input.
+A reader recomputes the profile id exactly as it did before minor 6.
+
+**Reading.** A minor-6 reader takes the field off the manifest and carries it;
+it is not a decode input and nothing is recomputed from it. A manifest with no
+field means `UNTAGGED_ENCODER_ID`, so every artifact written before this minor
+still verifies and still means what it meant. A header below minor 6 carrying
+an identity cannot occur, because the manifest declares minor 6 whenever the
+field is present.
+
+**Writing.** `serialize` writes the lowest minor a manifest needs. An artifact
+cut by the untagged encoder carries no field and writes at the minor it always
+did, byte for byte — the same conditional binding a span-1 S6b pair and a
+default reach record already use. Only an encoder that differs from it stamps,
+and then every artifact it writes declares minor 6.
+
+**Consumers.** `experiments/merge_tessera_parts.py` compares the stamped
+`encoder_fixture_id` in `tessera_config.json` across parts and refuses a mix;
+`encoder_identity.resumable` states the rule for "may this cached unit be
+reused by this encoder" — **stated, not yet called**: no path here or in
+PrismaQuant reuses a cached wire shard today, so the rule waits where the
+identity lives instead of being invented inside the first consumer to need it.
+Both compare a stamped value; only a process that is about to encode ever
+computes one.
 
 ## 2. Decisions this schema makes
 

@@ -165,8 +165,17 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the encoder is 
 
 @cuda
 def test_the_vision_tower_is_named_beside_a_real_body_encode(tmp_path, monkeypatch):
-    """The same, with the body actually encoded: declared and ignored partition."""
-    written = _export(tmp_path, monkeypatch)
+    """The same, with the body actually encoded: declared and ignored partition.
+
+    ``--passthrough-unrouted`` because this arm encodes the body, and the body
+    contains ``o_proj``, which #99's construction gate refuses: the pinned
+    runtime builds it with ``quant_config=None``, so a wire written there is
+    dead weight.  The refusal is correct and stays default-on -- this test is
+    about the ignore partition, not about the routing gate, so it takes the
+    safe escape hatch (source precision) rather than suppressing the gate.
+    The gate itself is tested in ``test_serving_export_gate.py``.
+    """
+    written = _export(tmp_path, monkeypatch, "--passthrough-unrouted")
     ignore = set(written["ignore"])
     declared = {t for g in written["config_groups"].values() for t in g["targets"]}
     assert declared, "nothing was quantized; this arm no longer tests the encode path"

@@ -73,7 +73,7 @@ from typing import List, Sequence
 import torch
 
 from .ext import WINDOW_GEMV_MODULE_NAME
-from .scheme import ROUTES, TESSERA_FP8
+from .scheme import ROUTES, TESSERA_FP8, WINDOW_GEMV_SYMBOL, launch_pairs
 from .telemetry import DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV
 
 __all__ = [
@@ -98,8 +98,12 @@ __all__ = [
 GEMV_MODULE_NAME = WINDOW_GEMV_MODULE_NAME
 
 #: Stamped on a route record whose launch was the window GEMV: the custom op
-#: actually invoked, the honest spelling of "which GEMM ran".
-GEMV_SYMBOL = "tessera_window_gemv::gemv"
+#: actually invoked, the honest spelling of "which GEMM ran".  Read off
+#: ``scheme.WINDOW_GEMV_SYMBOL`` rather than spelled here, for the reason
+#: ``GEMM_SYMBOL`` below is read off ``ROUTES``: the contract validator and
+#: this dispatch must name one op, and this module imports torch so the
+#: torch-free side cannot import it.
+GEMV_SYMBOL = WINDOW_GEMV_SYMBOL
 
 #: The route-table symbol of the materialised path, read off ROUTES rather
 #: than restated: the census compares the record against this table.
@@ -410,11 +414,8 @@ def census_expected(*, compiled: bool):
     regimes in one graph and stamps the combined pair (plus the torch pair
     where no GEMV lane was prepared).
     """
-    torch_pair = (GEMM_SYMBOL, DECODER_TORCH_WINDOW)
-    lane_mm_pair = (GEMM_SYMBOL, DECODER_WINDOW_GEMV)
-    gemv_pair = (GEMV_SYMBOL, DECODER_WINDOW_GEMV)
-    decode = {gemv_pair, torch_pair, lane_mm_pair}
-    batch = {torch_pair, lane_mm_pair}
+    decode = launch_pairs(TESSERA_FP8, regime="decode")
+    batch = launch_pairs(TESSERA_FP8, regime="batch")
     if compiled:
         combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
         return {"decode": combined | batch, "batch": combined | batch}
