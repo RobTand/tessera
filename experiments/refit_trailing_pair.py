@@ -40,6 +40,11 @@ route's TCQ cap wire, whose plane is LUT16):
 * ``C-GS``   -- ``refit_metric=H`` with the sweep on EVERY pass: #35's promoted
   alternation, the incumbent candidate the pair is measured against.
 * ``C-Jac``  -- the same alternation stepped in parallel.
+* ``B-GS+CL``/``C-GS+CL`` -- those two with #50's **coupled landing**
+  (``refit_coupled_landing``), on the trailing pass and on every pass
+  respectively.  #50's own receipt could only replay the landing at frozen
+  codes, so these are the arms that show what a re-assignment does to the
+  codes the NEXT trellis pass sees.
 
 **Landings, and which numbers a gate may read.**  Since #85
 ``tessera.control.assert_plane_promotion`` refuses a per-plane promotion whose
@@ -53,11 +58,15 @@ plane and not a wire**) purely to report whether this pair reorders the way
 #35's did.  Off-wire rows are labelled ``[NOT A WIRE]`` in the log and carry
 ``serialisable: false`` in the JSON.
 
-*What this cannot run.*  #75's own screen was taken under #50's **coupled**
-landing (``refit_coupled_landing``), which lives only on the session-kill
-snapshot branch ``claude/ts-50-lut-landing`` and is not on master.  So this
-run is not a reproduction of #75's table; it is the matched pair at the
-landing that ships.
+*The coupled landing is on master and this script runs it.*  That was not
+true when this docstring was first written -- ``refit_coupled_landing`` then
+lived only on the session-kill snapshot branch ``claude/ts-50-lut-landing`` --
+and the sentence outlived the rescue: the mechanism landed on master with
+#105, ``B_GS_CL``/``C_GS_CL`` below pass the flag, and the run reproduces
+#75's screen conditions rather than only approximating them.  Every arm is
+still scored at the landing that ships (``table``), including the coupled
+ones: the coupled landing re-assigns blocks among the SAME sixteen E4M3 table
+entries, so it moves no byte of the wire and is not an off-wire read.
 
 **Scored** ``out`` = held-out activation-space relative error (the deciding
 column, and a screen -- nothing here is served); ``plain`` = weight-space
