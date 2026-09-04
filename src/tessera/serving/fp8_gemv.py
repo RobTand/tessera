@@ -3,19 +3,74 @@
 The streamed route holds the packed window streams and, before this module,
 decoded them into a fresh tile per forward and called ``torch._scaled_mm`` --
 two passes over the data and a materialised tile.  The fused window-body GEMV
-(``tessera.kernel_window_gemv``: bit-exact on 196/196 reach units, ~1.9x the
-resident FP8 lane per token at M=1 on the 4B shapes) reads the wire once and
-never materialises it; this module wires it into the forward for the decode
+(``tessera.kernel_window_gemv``: its DECODED TILE bit-exact against the torch
+decoder's on 196/196 reach units -- a claim about the bytes, never about the
+GEMM over them; ~1.9x the resident FP8 lane per token at M=1 on the 4B shapes)
+reads the wire once and never materialises it; this module wires it into the forward for the decode
 regime (M <= 8) and keeps the materialised path for prefill.
 
 THE ACTIVATION CONTRACT DOES NOT CHANGE.  The GEMV is a W4A16 kernel (bf16
 ``x`` in, fp32 accumulation), while this route is W8A8 (per-token-dynamic FP8
 ``x``).  The dispatch therefore runs the route's own FP8 quantiser first and
-hands the GEMV the DEQUANTISED values -- every E4M3 code is exact in bf16, so
-the dequant is exact and what the GEMV computes is the route's own product up
-to fp32 summation order.  Feeding it raw bf16 activations would be a silent
-contract change (less quant noise, a different KL) and is refused by
-construction here: the quantiser runs on every path.
+hands the GEMV the quantised E4M3 **codes** -- every legal E4M3 byte is exact
+in bf16 (``test_every_legal_e4m3_byte_is_exact_in_bf16``) -- with the
+per-token ``a_scale`` applied to the kernel's fp32 output.  Feeding it raw
+bf16 activations would be a silent contract change (less quant noise, a
+different KL) and is refused by construction here: the quantiser runs on every
+path, and what the kernel multiplies is its output.
+
+THE SCALE IS APPLIED ON THE OUTPUT, NEVER FOLDED INTO A BF16 OPERAND -- the
+rule ``bf16_route`` states for the weight side, held here for the activation
+side.  ``a_q * a_scale`` is NOT exact in bf16: a code carries four significant
+bits and an fp32 scale twenty-four, so their product needs up to twenty-eight
+and bf16 keeps eight.  Folding it in cost 1.6e-03 relative rms on EVERY
+activation element -- ONE bf16 rounding, and about 10 000x the lane's fp32
+reduction error, which is MEASURED at 1.7e-07 rather than quoted from a
+sqrt(K)*eps estimate -- where ``_scaled_mm`` multiplies the codes and scales in
+its epilogue.  Applying
+``a_scale`` on the fp32 output leaves fp32 summation order as the only
+difference this module can name, which is what the docstring always claimed --
+and that order is MEASURED, not asserted: the lane run twice on identical
+input differs by 1.6e-07 relative, which moves 0-0.10% of bf16 output words
+across the three served K and four M (``experiments/gemv_a_side_precision.py``).
+An earlier reading of this line said it changes NO output word; that was four
+100.00% readings at one K, and widening the sweep falsified it.  The words it
+moves are what section 6d of the receipt then priced as served KL.
+
+THIS FIXES MOST OF #110, NOT ALL OF IT, AND THE SPLIT IS SERVED.  The lane and
+its published fallback disagreed as served at M = 1 -- mutual KL 0.012111,
+top-1 91.02%, byte-identical bytes (one inode).  Re-served off this tree with
+the fold gone, on the same two arms through the same inode and the same
+container digest, they read **KL >= 0.005947 at 96.88% top-1**: 2.04x on the
+bound, 2.88x on the top-1 flips.  Three controls hold that up -- the arm whose
+code path is untouched reproduces its own earlier serve at KL >= 0.000000 /
+100.00%, and so does the prefill regime this branch does not touch, over 4088
+positions -- and against the BF16 teacher the fixed arm moves from 0.436065
+onto the fallback's 0.432477, reading 0.432401.  So the fallback was the
+accurate arm and this lane has joined it.
+
+THE RESIDUAL 0.005947 IS THIS KERNEL'S OWN RUN-TO-RUN SPREAD, AND THAT IS
+SERVED TOO.  Serving this lane a SECOND time, unchanged -- same tree, same
+bytes, same inode, same container digest -- and comparing the two decode dumps
+against each other reads **KL >= 0.005985 at 95.31% top-1**
+(``experiments/ts110_replicate_armA.sh``, pool action ``6921120b``).  That is
+the same size as, and if anything slightly larger than, the 0.005947 the fixed
+lane differs from ``torch._scaled_mm`` by.  So after the fold is gone the two
+arms agree to within this lane's own reproducibility, and no arm-vs-arm decode
+comparison on it can resolve anything finer.  The matched null is in the same
+run: the prefill regime, where the GEMV never executes on a scored forward,
+reads exactly KL >= 0.000000 / 100.00% over 4088 positions BOTH across arms and
+across the two serves -- so the serve around this kernel is exact and the spread
+is the kernel's fp32 reduction order, not the scheduler, the KV allocator or a
+recompile.
+
+WHAT THAT MEANS FOR "BIT-EXACT" ON THIS LANE, CONCRETELY.  The decoded tile is
+bit-exact (196/196).  The GEMM over it is NOT, and the magnitude a receipt
+should cite is the one above: **KL >= ~0.006 at ~95% top-1 in the decode
+regime** is this lane's reproducibility floor, and any served decode difference
+at or below it is noise, not signal.  Scope: 256 M=1 positions on one 0.6B
+checkpoint, one box.  ``docs/measurements/tessera-gemv-a-side-2026-09-04.md``
+section 6d holds every leg.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is
 symbolic under vLLM's compiled forward, so a Python branch on it would
@@ -321,8 +376,11 @@ def streamed_apply(a_q: torch.Tensor, a_scale: torch.Tensor, scale_b: torch.Tens
     # The tile is read only on the GEMV branch: past the lane's max the batch
     # is prefill and ``_m_tile`` refuses it by name.
     if M <= GEMV_MAX_M and not (_m_tile(M) >= 4 and rate_one):
-        a_val = (a_q.float() * a_scale).to(torch.bfloat16).contiguous()
-        return _gemv_path(a_val, tensors, meta).to(torch.bfloat16)
+        # The CODES, exact in bf16; ``a_scale`` multiplies the fp32 output.
+        # Folding it into the operand instead rounds every element to bf16 and
+        # is the whole of #110 -- see the module docstring.
+        a_val = a_q.float().to(torch.bfloat16).contiguous()
+        return (_gemv_path(a_val, tensors, meta) * a_scale).to(torch.bfloat16)
     return _materialised_path(a_q, a_scale, scale_b, tensors, meta, cols)
 
 

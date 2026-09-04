@@ -50,8 +50,12 @@ CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 TEACHER_DECODE=${TEACHER_DECODE:-$KLDIR/qwen_teacher_bf16_v028_decode.json}
 TEACHER_PREFILL=${TEACHER_PREFILL:-$KLDIR/qwen_teacher_bf16_v028.json}
 STRIDE=${TESSERA_KL_DECODE_STRIDE:-16}
-DUMP_DECODE=$KLDIR/qwen_ts102_${ARM}_decode.json
-DUMP_PREFILL=$KLDIR/qwen_ts102_${ARM}_prefill.json
+# The dump family this campaign writes.  Defaulted to #102's so that receipt
+# reproduces byte for byte; a later campaign over the same arms (#110's, after
+# the lane's A-side fix) sets its own and cannot clobber the evidence.
+DUMP_PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
+DUMP_DECODE=$KLDIR/${DUMP_PREFIX}_${ARM}_decode.json
+DUMP_PREFILL=$KLDIR/${DUMP_PREFIX}_${ARM}_prefill.json
 LOG=$RUNS/serve_$ARM.log
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 KL=${KL:-/home/rob/dq-runs/kl_tool.py}

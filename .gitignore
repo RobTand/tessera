@@ -29,8 +29,13 @@ build/
 .pbrun-closure.*.json
 pbrun_result.*.txt
 
+# Torch JIT extension builds: a run that points TORCH_EXTENSIONS_DIR at the
+# checkout (the pool submits from one) leaves a compiled .so and ninja logs
+# here, and two commits on this branch swept them in before this line existed.
+/.ext/
+
 # Agent scratch: a per-checkout campaign log, dropped from tracking twice
 # (d3ff7c2 and the #60 merge) and still arriving on merges.  The durable
 # version of a campaign write-up goes to docs/reports/.
 report.md
-.pbrun-closure.*.json
+
