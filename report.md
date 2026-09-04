@@ -1,6 +1,10 @@
 # tessera#60, served leg: `ldlq_block=4` against a re-run of `ldlq_block=32`
 
-Status: **in progress.** This file is written as the run goes, not at the end.
+Status: **served leg complete on b8; b4 still encoding.** This file was written
+as the run went, so the sections below are in the order they were learned. Where
+a projection made before the run is contradicted by what the run then did, the
+projection is left standing with the measurement under it, because the failure
+of the projection is itself one of the findings.
 
 ## The served answer
 
@@ -68,20 +72,32 @@ PlanePromotion(candidate='ldlq_block=8', served_arm='ldlq_block=8',
 All five legs pass once the missing one is filled. **This is not a promotion**
 and I am not reporting one: the input that makes it pass is not a measurement
 of the candidate. Two things the gate does not look at are worth saying out
-loud, because a pass here would be read as more than it is -- it has no encode
-cost leg, and this lever is precisely a quality-for-encode-time trade; and it
-reads the all-position KL that moved, not the confident-position KL that
-didn't.
+loud, because a pass here would be read as more than it is. It has no encode
+cost leg, and this lever is precisely a quality-for-encode-time trade. It reads
+the all-position KL that moved, not the confident-position KL that didn't. And
+its `unit_ratios` leg -- "a strict majority of per-unit wins" -- is fed the
+six-unit **weight-space** sweep over layers 0-1, not a per-unit measurement of
+the 196 units that actually served. That is the input the gate was built to
+take, so this is not misuse; but the majority-of-units leg and the served-KL
+leg are evidence about different populations, and only the second is about the
+artifact.
 
 Receipt: `experiments/results/ldlq_block_served_ab.json`.
 
 ## What this run settles, and what it no longer settles
 
 It was funded to decide whether `DEFAULT_LDLQ_BLOCK` flips 32 -> 4. **The
-encode cost below takes that question off the table before the KL arrives:** if
-block 4 is ~8x the encode model-wide, a *global* default of 4 charges GLM's
-experts 8x for an axis that is flat there (0.4% across 16->256), and a flip to
-another round number is the wrong shape of fix whatever the KL says.
+encode cost takes that question off the table before the KL arrives** -- but by
+less than I said before the arms landed, and the correction matters enough to
+lead with. I projected block 4 at ~8x block 32 model-wide. The arms refute that
+number: see "What the arms did to the projection" below. What survives is the
+*shape* of the argument, not its size. Block 4 costs meaningfully more than
+block 32 -- at least 2.4x, and the contention runs the wrong way to bound it
+tighter -- while GLM's experts are flat across the axis (0.4% from 16 to 256).
+A *global* default of 4 therefore charges GLM for an axis that pays it nothing,
+and a flip to another round number is the wrong shape of fix whatever the KL
+says. That conclusion was right; the 8x I attached to it was not measured, and
+is withdrawn.
 
 What is left is the question behind it, and it is the one worth the wall
 clock: **does the weight-space win carry to served KL at all?** If it does not,
@@ -294,6 +310,36 @@ to load 86 within twenty minutes. Both exports hold a full core each (98% CPU,
 says), so they are not stalled, but the wall clock will exceed the projection
 and is reported as measured rather than as projected.
 
+### What the arms did to the projection: it broke, in both directions
+
+That paragraph is wrong and I am leaving it visible rather than editing it away.
+The arms landed and the segment-cost model that produced it does not survive
+them.
+
+| block | segments | projected quiet | **measured, contended** | s/segment |
+|---:|---:|---:|---:|---:|
+| 32 | 8,960 | ~6,200 s | **12,876 s** (3:34:36) | 1.437 |
+| 8 | 35,840 | ~24,800 s | **20,849 s** (5:47:29) | 0.582 |
+| 4 | 71,680 | ~49,700 s | 21,769 s at 120/196, still running | ~0.44 |
+
+The receipt's model -- `0.694 s x segments`, flat to 0.6% across a 4x width
+range -- assumed cost per segment is invariant. Across *block sizes* it is not:
+per-segment cost falls 3.3x from block 32 to block 4. So the projection
+over-predicted the small blocks and under-predicted the large one, and the two
+errors are not the same error with a sign flip. The likely reading is that at
+block 32 a per-unit fixed cost the model never had to separate is a large share
+of the total, and it does not multiply when the segments do -- but I did not
+measure that decomposition and am not claiming it.
+
+The practical consequence is the one in "What this run settles": **the ~8x
+encode penalty for block 4 was a projection, not a measurement, and it is
+withdrawn.** The measured contended ratios are b8/b32 = 1.62x and b4/b32 = 2.43x
+against b4's own extrapolated finish. Neither is a clean number -- b32 ran with
+three of my arms on the box, b8 with two, b4 is now alone -- and the bias runs
+the same way for both: the more-contended arm is the denominator, so the true
+quiet ratios are **larger** than these. 2.4x is therefore a floor for b4/b32,
+not an estimate, and 8x has nothing behind it.
+
 ## The concurrent design failed as a measurement, three times over
 
 I ran the three arms side by side and argued that made them a matched set. It
@@ -317,35 +363,110 @@ refinement of the concurrent measurement. It is the only version of it that was
 ever going to work, and the concurrent full-export wall clocks will be reported
 as elapsed-under-named-conditions rather than as any kind of ratio.
 
-## Projected completion, by each arm's own rate
+## Completion: what I projected, and what happened
 
-Two methods disagree and the difference decides whether b4 is deliverable:
+Recorded before the arms landed, and kept because the outcome grades it:
 
-| arm | own rate (s/Mparam) | total | scaling b32's quiet rate by 32/block |
+| arm | own rate (s/Mparam) | projected total | 1/block scaling of b32 |
 |---|---|---|---|
 | b32 | 20.2 | ~2.5 h | ~3.7 h |
 | b8 | 88.2 | **~10.8 h** | ~15.0 h |
 | b4 | 124.0 | **~15.2 h** | ~29.3 h |
 
-The right-hand column assumes cost scales as 1/block, which my own data
-refutes: b4's measured rate is 124 s/Mparam where 1/block predicts 253. Each
-arm's own rate involves no cross-block extrapolation and is the defensible one.
-All three were measured through the load spike, so all three are upper bounds.
+**b8 finished in 5:47:29 -- 1.9x faster than its own-rate projection, and 2.6x
+faster than the 1/block one.** Both methods were built on rates sampled through
+the load spike and both were badly pessimistic; "all three are upper bounds" was
+the only part of that paragraph that held.
 
-Both candidates are inside the driver's window, so both should get served.
+**b4 is still running.** At 6:17 elapsed it is 120/196 units, 21,769 s at the
+last checkpoint. Extrapolating its recent per-unit rate (124.9 s/unit over units
+100-120) gives ~8.7 h; extrapolating its overall average gives ~9.9 h. Both are
+extrapolations of an unfinished run on a box whose load is falling, so **the
+finish time is an estimate and is labelled as one.** It is not 15.2 h.
+
+The lesson is narrow and worth keeping: every encode-cost number this campaign
+produced ahead of the run was wrong by 1.6-2.6x, in both directions, from two
+independent methods. The only encode numbers here that are worth anything are
+the two completed wall clocks, and those are contended.
 
 ## The branch suite
 
-`pytest -q` on the branch, run once through the pool on sparky:
-**1,619 passed, 9 skipped, 0 failed**, exit code 0, 990 s. No failures, so
-nothing needed checking against master.
+`pytest -q` on the branch, through the pool on sparky. It ran twice, and the
+two runs are not interchangeable, so both are here:
+
+| run | placement | result | exit |
+|---|---|---|---|
+| earlier | pool, GPU visible | **1,619 passed, 9 skipped, 0 failed**, 990 s | 0 |
+| final | pool, `--cpus 8`, no GPU | **1,178 passed, 450 skipped, 0 failed**, 293 s | 0 |
+
+Same 1,628 tests collected both times, so this is one suite under two
+placements, not two suites. The 441-test difference is entirely CUDA-gated
+tests skipping themselves when the pool handed out no GPU -- which is the
+correct behaviour, but it means **the no-GPU run is not the one that clears the
+branch**; the GPU-visible run is. Quoting the shorter run's pass count as the
+denominator would have understated coverage by 27%.
+
+**0 failed in both**, so no test needed running against pristine master.
+
+## Off-task fixes and things I found but did not fix
+
+Fixed on this branch, each in its own commit so it can be taken or dropped
+independently of the measurement:
+
+- `c1f9ca7` -- `experiments/ldlq_block_serve_ab.sh` hard-coded one teacher dump.
+  Made it `$TESSERA_KL_TEACHER`-overridable and added an optional second
+  cross-check teacher per arm, which is what let every arm be scored twice.
+- `357fe49` -- added `experiments/ldlq_block_crossbox_control.sh`, and gave it a
+  distinct `TESSERA_KL_NAME` so one worker's `docker rm -f` cannot reap another
+  worker's serve. The shared name was a live hazard with several agents serving.
+
+Found, not fixed, with the reason:
+
+- **`choose_ldl_block` floors LUT/S6B callers at block 16.** The floor comes
+  from a constraint only the slice-stitching path has, and it excludes every
+  block that wins in this campaign's own sweep. Not fixed here: it is the
+  mechanism a `DEFAULT_LDLQ_BLOCK` decision would go through, so moving it is
+  Rob's call, not a side effect of a measurement branch.
+- **The LUT-plane receipt's encode-cost model does not hold across block
+  sizes.** Its `0.694 s x segment` is flat across widths but not across blocks
+  -- 1.44 s/segment at block 32 against ~0.44 at block 4. Not fixed here: the
+  correct fix needs the controlled sequential measurement that is still
+  pending, and re-fitting a constant on contended data would replace one wrong
+  number with another.
+- **prismabuild#4** -- my b8/b4 encodes were launched bare over `ssh`, so the
+  pool's ledger showed sparklina's GPU free while four of my processes held it.
+  Filed rather than fixed: it is another project's admission path. Every GPU
+  action after that point in this session went through `pbrun`.
+
+`DEFAULT_LDLQ_BLOCK` is untouched on this branch, as instructed. It reads 32.
 
 ## What is pending
 
-- [ ] b32 export wall-clock and bytes
-- [ ] b4 export wall-clock and bytes
-- [ ] byte equality between the arms, and `activation_aware.ldlq_block` on each
-- [ ] served KLs: b32, b4, b32-again
-- [ ] matched-pair encode cost, back-to-back-plus-repeat
-- [ ] `assert_plane_promotion` output, verbatim
-- [ ] branch suite, and master only for whatever fails
+Done, and where it is:
+
+- [x] b32 and b8 export wall clocks and bytes -- contended, both named as such
+- [x] byte equality and `activation_aware.ldlq_block` on each arm --
+      `experiments/results/ldlq_block_b8_byte_check.json`, PASS
+- [x] served KLs b32 / b8 / b32-again, plus the cross-box controls --
+      `experiments/results/ldlq_block_served_ab.json`
+- [x] `assert_plane_promotion` output verbatim, both calls
+- [x] branch suite, twice; 0 failures, so master was not needed
+
+Not done, and none of it is blocking the answer above:
+
+- [ ] **b4's own bracket.** b4 is ~8.7-9.9 h into an unfinished encode. When it
+      lands it is mechanical: byte-check it against b32, then
+      `experiments/ldlq_block_serve_ab.sh` with `b4` as the candidate, on an
+      idle box. b8 is the arm this report is about and the coordinator
+      authorised the substitution; b4 refines the size of the effect, not its
+      sign.
+- [ ] **A controlled encode cost.** The only defensible version is a sequential
+      matched pair under `pbrun --gpu --exclusive`, which needs a quiet box for
+      roughly 10 h for the b32+b4 pair. Every encode number in this report is
+      either contended or extrapolated. Given the carry fraction is 0.31, that
+      box-time is a judgement call and I am not making it unasked.
+- [ ] **A GLM leg at block 8 or 4.** This is the leg that stops the promotion
+      gate from being callable on the candidate's own evidence. It does not
+      exist because `choose_ldl_block` floors LUT/S6B callers at block 16 (see
+      the off-task fixes below), so producing it means going around or changing
+      that floor -- a default-adjacent change I am not making on this branch.
