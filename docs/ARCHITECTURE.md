@@ -449,6 +449,15 @@ KL remains outstanding. The cell waits on that measurement. This is the
 `loader_axes` precedent: what the loader *does* is a different published fact
 from what has been *served*.
 
+The full-model LFM teacher campaign uses
+`experiments/ts5_lfm_teacher_bound.py`: the encoder's sealed source identity
+must match hashes of the BF16 source both before and after its read-only
+serve. Its receipt binds those checks to the exact image, corpus, tokenizer,
+eager prefill mode, dump and build sidecars, and reference-usability result.
+The earlier revision-labelled teacher remains historical evidence; checking
+its dump hash now does not retroactively establish loaded-weight identity.
+This is provenance for the quality measurement, not a new quality threshold.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `experiments/ts5_moe_served.sh` requires success from all three arms: the
