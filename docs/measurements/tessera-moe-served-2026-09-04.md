@@ -260,11 +260,17 @@ same corpus contract (`/mnt/shared/tessera-kl/teacher_bf16.json.npz`). For each
 arm, how often its top-1 is the corpus's actual next token, and where the true
 token ranks in the 1025 returned:
 
-| arm | next-token top-1 | median rank of the true token | mass in top-1025 | median max-prob |
-|---|---:|---:|---:|---:|
-| GLM-5.3-Flash-4layer, **all 128 experts**, BF16 | **0.00%** | 1024 | 0.2716 | 0.0185 |
-| the 16-expert cut, BF16 (the teacher) | **0.00%** | 1024 | 0.2259 | 0.0036 |
-| the 16-expert cut, **Tessera wire** | **0.00%** | 1024 | 0.2265 | 0.0033 |
+| arm | next-token top-1 | median rank of the true token | mass in top-1025 | median top-1 prob | confident (>=0.5) |
+|---|---:|---:|---:|---:|---:|
+| GLM-5.3-Flash-4layer, **all 128 experts**, BF16 | **0.00%** | 1024 | 0.2716 | 0.0185 | 0 |
+| the 16-expert cut, BF16 (the teacher) | **0.00%** | 1024 | 0.2259 | 0.0036 | 0 |
+| the 16-expert cut, **Tessera wire** | **0.00%** | 1024 | 0.2265 | 0.0033 | 0 |
+| *positive control:* Qwen3-0.6B BF16, its own corpus | **39.73%** | **1** | 0.9767 | 0.4300 | 1709 |
+
+The last row is what a usable reference looks like, on the same tool and the
+same code path: a trained model puts the true next token first at the median
+position and holds 98% of its mass inside the compared support. It is the arm
+`tessera-served-kl-2026-09-01` switched to when it hit this wall.
 
 Not one correct next token in 4088, on any arm, including the one with no
 quantization and every expert. The true token's median rank is 1024 of 1025 —
@@ -283,11 +289,13 @@ category of evidence.
 
 Two things tonight's numbers add to that ruling:
 
-- **The cut is strictly worse than the base it came from as a reference.** The
-  uncut base still had 1709 positions the 09-01 run could call confident; the
-  16-expert cut has **none**, and its median max-probability falls 0.0185 →
-  0.0036. Narrowing the expert dimension bought the encode budget by spending
-  the last of the measurability.
+- **The cut is worse than the base, and the base was already unusable.** The
+  uncut 128-expert base's median top-1 probability is 0.0185; the cut's is
+  0.0036, five times flatter. But *neither* has a single confident position in
+  4088. (The 1709 confident positions the 09-01 table quotes are **Qwen3-0.6B's**
+  — the model that run switched to. The GLM 4-layer arm never had any. I wrote
+  the opposite here first, from the table's column header, and the check below
+  is what caught it.)
 - **`top1_agree` is a trap on a model like this.** 62.74% looks respectable and
   is higher than the 23% the *uncut* base scored against its own quantization
   on 09-01 — which is the giveaway, not the reassurance. Two near-uniform
@@ -337,3 +345,18 @@ wrapper's own default `RUNS` is a local path for exactly this reason; this
 driver was the caller that pointed it at NFS. Fixed by writing to a local mount
 and copying on the host, and the student arm now skips if its dump exists, so
 the re-run costs one load instead of three.
+
+### The check is now a script, because this is the second time
+
+`experiments/kl_reference_usable.py` takes a teacher dump and its corpus
+contract and answers, before a student serve is spent, whether the reference
+can carry a comparison at all — next-token top-1, where the true token ranks,
+how much mass the support holds, how many positions are confident. It refuses
+(exit 2) when a reference cannot say anything, and it refuses (exit 1) a corpus
+that is not the one the dump was taken on: passing the GLM contract against the
+Qwen dump scored 1.54% and looked exactly like the failure it exists to raise,
+which is how that gate came to be there.
+
+Both cuts and the uncut base are refused by it. Qwen3-0.6B passes. Running it
+on the teacher costs a second and would have said, before either serve tonight,
+that the KL at the end was not going to be a number.
