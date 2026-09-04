@@ -5,6 +5,12 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+**Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
+`b83fd17`, CI at `94e8289`, packaging metadata at `54cd1df`, release
+documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
+line with any change to the wire, the recipe table, the serving lane, the
+plugin contract or a gate (AGENTS.md principle 10).
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -15,6 +21,79 @@ plus `experiments/uniform_control.py` (the gate that judges the result).
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
 allocator sees is `docs/tessera-one-format.md` §5.
 
+### 1.1 Integration suite placement
+
+`tools/merge_suite.py` dispatches its device populations only through
+PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
+`--exclusive`: the deployed scheduler derives the complete GPU reservation
+from that worker's advertised capacity, rather than treating one logical slot
+as physical exclusion. The GPU arm remains serial under `--strict-cuda`;
+the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
+Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
+`MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` and `MAX_JOBS=1`, overriding pool
+defaults and preventing each xdist worker's native math or extension compiler
+from multiplying its one-CPU share. The per-process limits are recorded in
+each arm's receipt; these environment settings are not an OS-level CPU quota.
+The sealed inner command also uses `tessera.suite_deadline`, launched through
+`tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
+positive and finite; expiry signals its owned process group with TERM, then
+KILL after a five-second grace. The leader remains unreaped during the grace,
+so its PID cannot be reused and a resistant child is killed even if the leader
+exits on TERM. The supervisor explicitly owns/restores SIGCHLD disposition;
+inherited auto-reaping cannot erase child failure status or that PID anchor.
+Normal command status passes through; expiry remains non-green
+even if a TERM handler exits zero. Supervisor TERM/INT kills and reaps its
+owned group before returning a nonzero status. This is a per-attempt deadline,
+not a bound on queueing/retries, detached sessions/containers, or descendants
+left after a command completes before its deadline. Host `timeout` binaries
+are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
+137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
+The deployed pbrun parses but does not apply
+its own `--timeout-s`; its worker may report outer status 1 for any nonzero
+inner result, so a receipt must not claim it observed numeric 124/137 merely
+from that outer status. The command and deadline/grace are retained per arm.
+
+Each population retains the actual Git snapshot commit and separately records
+`tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
+mode, and actual file/symlink bytes, checked against the snapshot blobs. Only
+the exact generated closure member verified against that action's sealed CAS
+request is omitted. The action-prefix directory is a bounded lookup hint,
+not proof: the full action key, snapshot commit, container owner, closure
+hash/size, logical path and generated filename fingerprint must all agree.
+Other closure-looking tracked files remain source. Original-head and dirty
+stamps are never substituted for the actual source hash. Post-materialization
+dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+The merge receipt keeps raw commit agreement and effective-source agreement
+separate; legacy populations cannot establish the latter. Population pass
+counts alone still do not establish a same-source merge check.
+`tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
+tracked file is not ignored by name, and unverifiable metadata forces a full
+selection. Verified PB metadata still permits narrowed selection.
+Both normal and parentless diffs use Git's NUL-delimited path protocol, so
+display quoting cannot conceal metadata under tab/newline-containing paths.
+Explicit Python file loaders also contribute dependency edges: the non-executing
+`tessera.source_dependencies` resolver follows finite `Path` expressions,
+lexical bindings, loader aliases and repository globs, using the file path rather
+than the loader's arbitrary module label. An unresolved recognized loader
+conservatively seeds its importing module and downstream tests for every
+non-inert change; an unresolved loader reaching a conftest forces the full
+population. The selector reports those unresolved importers in its receipt.
+One-directory conftest globs resolve to ordinary edges; recursive, escaping or
+otherwise unresolved path expressions retain the conservative fallback.
+Parameter, return and annotated-assignment expressions retain potential loader
+dependencies even when annotation evaluation is deferred. Function annotations
+use the defining scope (including a method's class scope), not value-parameter
+locals; generic type-parameter names remain unknown in a separate annotation
+scope instead of borrowing an outer file path.
+Explicit `Path.read_text`/`read_bytes`/`open` and builtin/`io.open` source reads
+also create edges, including aliased readers. This covers `ast.parse`/`exec`
+consumers without guessing what they later do with those bytes. Runtime-selected
+or shadowed paths remain conservative unknown edges and propagate to downstream
+tests; a parameterized filename is not silently treated as no dependency.
+A conftest change reaches its entire test population; a delegated runner-fix task records
+its targeted regression evidence while the coordinator owns the final full
+dual-population integration run.
+
 ## 2. The pipeline
 
 An allocator proposes one rung per Linear. The converter translates that
@@ -23,6 +102,57 @@ cannot serve (non-Tessera quantised choices, fused groups split across two
 families) and stamping coverage and accounting into `<plan>.provenance.json`.
 The exporter encodes what the plan names and the manifest states what is on
 disk; the census checks every module serves on its declared family.
+Construction and route censuses share one runtime-mapper adapter: the current
+`get_rename_mapper` name-only view takes precedence over the earlier
+`get_unstacked_mapper`; a directly exposed mapper is replayed as-is. An
+existing wrapper method that fails is not silently ignored.
+
+The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
+constructed `feed_forward.w13`, for both quantized targets and explicit BF16
+passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
+owned by the MoE stack; no dense alias applies to them. This naming comes from
+the pinned LFM construction receipt, not a fallback in the serving plugin.
+
+The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
+constructed `feed_forward.w13`, for both quantized targets and explicit BF16
+passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
+owned by the MoE stack; no dense alias applies to them. This naming comes from
+the pinned LFM construction receipt, not a fallback in the serving plugin.
+
+### 2.1 Whole-layer export parts have one checked assembly
+
+`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
+validates the same full plan before selecting its work, so a fused module and
+an expert stack cannot be divided between workers. Each worker reads and writes
+only its owned source tensors. A part has `tessera_part_config.json`, never a
+loadable `config.json`; it is not a checkpoint until assembly.
+
+`merge_tessera_parts.py` recognizes these serving parts separately from the
+older shard-split wire exports. Before creating its output it requires every
+partition exactly once, exact source-tensor ownership and coverage, identical
+source/config/tokenizer hashes, encoder source and behavior fixture hashes, full plan/options and
+dispatch-pinned runtime digest, and an index matching the hashed output files.
+It copies the containers unchanged under unique shard names, unions the schemes
+and ignores, derives totals from the combined module records, and writes the
+final `config.json` last. Each assembled weight shard gains owner/group/other
+read bits so a root-squashed serving container can read it; no write or execute
+bits are added. Default copy assembly leaves the private source-part modes and
+all payload bytes unchanged. The runtime digest here names what the dispatch was
+asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
+
+Source coverage alone does not prove that a plan was fulfilled: an omitted
+expert stack can remain internally consistent BF16. Before publication the
+merger therefore reads the sealed `identity.options.plan` and requires every
+explicit quantized target to have its emitted roles at the requested grid and
+rung. Planned expert-stack names must equal both manifest and config stack
+sets, including each stack's complete expert/projection population and source
+projection coverage. Implicit dense defaults have no complete plan roster and
+are outside this additional check. `ts5_sidecar_check.py` repeats the same
+validator before serving, using the merged `export_identity.options.plan` or
+an explicit `--plan-json` that must agree with it; its routed-MoE summary must
+name the same population too. Existing version-one parts remain readable and
+their containers do not change.
 
 ## 3. Bytes: priced == served
 
@@ -50,10 +180,9 @@ the encoder's output moves and never when a comment or a refactor does. It is
 a sibling of the profile id and never an input to it. It rides in the manifest
 at schema minor 6 and in `tessera_config.json`; `merge_tessera_parts.py`
 compares the stamped value across parts. `encoder_identity.resumable` states
-the rule for whether a cached unit may be reused, and nothing calls it yet —
-no path reuses a cached wire shard today, so the rule sits with the identity
-rather than being invented inside the first consumer that needs one. Both
-compare, never compute: only a process about to encode pays for the fixtures. The untagged spelling —
+the rule for whether a cached unit may be reused. The explicit expert-cache
+intake below calls it and pays the memoized CPU fixture once; merge guards
+continue to compare recorded identities without computing it. The untagged spelling —
 the encoder the field was born against — writes no field and no minor, so
 every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
@@ -83,6 +212,38 @@ witness neutral again, and the full identity rolls back only when the other
 fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
+
+### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
+
+`experiments/tessera_producer_plan.py` reads source headers and an explicit
+stack plan, then calls the exporter's existing expert planners. Its JSON names
+the physical source tensor, logical tensor, source slice, expert, canonical
+role and both unit/group dimensions. PrismaQuant can invoke this producer tool
+without importing the serving runtime or restating its expert grammar. Source
+tensor names retain their actual suffix; logical tensors include `.weight`,
+and allocation/cache keys remove exactly that suffix via `ActivationSource`.
+
+`tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
+per-unit Hessian plus capture identity and full activation settings, resolved
+recipe, encoder behavior/source identities, and the whole blob digest.
+Its `encoding_input_identity` is shared by dense and projected campaign
+callers; `unit_input_identity` adds the producer's explicit expert projection.
+Both use the same unit-record construction and wire verifier, while the
+export boundary still requires the projected identity and exact field equality.
+`export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
+coverage of the planned experts and the full source checkpoint seal. It
+checks those receipts against the actual source slices and capture, validates
+wire geometry/rates/profile/reach/encoder identity and complete plane extents,
+and wraps accepted blobs in
+`pack_fused` unchanged. Their original unit-id spelling is preserved. A
+missing selected rung, including an interpolated rate with no measured blob,
+refuses; this intake has no encode fallback. The ordinary dense encode path
+and all defaults remain unchanged. The cache mode requires a fresh output
+directory and records each accepted blob's SHA in the export manifest.
+
+These are producer evidence and tests only. They do not promote a recipe,
+open an eligibility cell, or replace the source-matched served measurements
+required for the PrismaQuant campaign bridge.
 
 ## 4. Allocation and the uniform gate
 
@@ -132,8 +293,13 @@ manifest digest under the containerd snapshotter and the config digest under
 overlay2: the same image reads two ids on the two GB10s. Both KL wrappers
 stamp the resolved digest into the build sidecar's `identity`; the local id
 rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
-Images outside the pinned repository (Mia's GLM image) are resolved and
-stamped, not refused.
+An explicit digest reference on any repository must be present in that
+image's `RepoDigests`, and its requested digest is the stamp even when the
+local image has other aliases. Missing or mismatched explicit images refuse
+before a census or serve (#126). Floating tags outside the default pinned
+repository remain resolved and stamped without being compared to that
+unrelated pin; they cannot supply an exact-runtime census context. Scoped
+lane images do not change the existing dense default.
 
 `experiments/serve_lock.sh` is the one lock protocol for every serve and every
 GPU-only probe.  Acquisition publishes one symlink at the host-local
@@ -286,6 +452,12 @@ blob's true length rides beside it and
 lengths imply -- the one check that catches a sidecar disagreeing with the
 bytes.
 
+`scheme.MOE_GROUP_PROJECTIONS` derives canonical role names from the runtime's
+shard order and is shared by the exporter and reader. The scheme refuses any
+other role names or order, even when the blobs agree with the sidecar; `w13`
+also requires equal gate/up row counts, because the runtime splits its tile
+at `N`. Matching total `[2N, K]` geometry alone does not prove that boundary.
+
 `tessera.serving.moe_route` decodes those containers into exactly the
 parameters vLLM's own per-channel FP8 MoE path reads (`w13_weight [E, 2N, K]`
 and `w2_weight [E, K, N]` in `float8_e4m3fn`, `w13_weight_scale [E, 2N, 1]`
@@ -344,22 +516,144 @@ ratio whose width follows its value. On the GPU,
 kernel, matching the arm the probe encoded itself digit for digit while the
 bytes on disk differ.
 
-The PACKED 3-D source layout has no export, and the reason is two conventions
-the tensor does not state: which axis is the output (the dims decide only when
-`hidden_size != 2 * moe_intermediate_size`, and on GLM-5.3-Flash they are
-equal), and whether a packed `gate_up_proj` chunks or interleaves its halves.
-Both are refused by name; neither is guessed.
+The unpacked source grammar has two attested spellings for that same route.
+GLM owns the stack at `mlp.experts` and calls its source leaves
+`gate_proj`/`up_proj`/`down_proj`; LFM2.5 owns it at
+`feed_forward.experts` and calls them `w1`/`w3`/`w2`. The exporter normalizes
+both to the scheme's canonical roles but keeps the source spelling in each
+emitted wire name, so the model's own `FusedMoEFactory(ckpt_names=...)` mapping
+supplies the shard id to the wire parameter's loader. Two source spellings for
+one canonical role are refused rather than resolved by checkpoint order.
 
-**What is NOT claimed.** There is no `routed_moe` cell in
-`runtime_contract.json` and there will not be one until a served census and KL
-cover it on a real artifact. This is the `loader_axes` precedent: what the
-loader *does* is a different published fact from what has been *served*.
+The LFM construction row is derived from
+`docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json`, taken on the
+exact EUGR 0.28.1rc1 image recorded in that receipt. It offers
+`model.layers.*.feed_forward.experts` as a non-Linear `RoutedExperts` stack;
+the `short_conv.conv1d` projection is never offered and remains source
+precision. This records construction eligibility only: the dense runtime
+attestation remains on its own pinned image, and this row does not promote a
+routed-MoE quality cell.
+
+The PACKED 3-D source layout is accepted only under an explicit plan
+convention. `out_first_chunked` is `gate_up [E, 2N, K]` with gate then up and
+`down [E, K, N]`; `in_first_interleaved` is `gate_up [E, K, 2N]` with gate/up
+alternating and `down [E, N, K]`. The exporter checks those exact shapes
+against `config.json`, slices canonical per-expert gate/up/down matrices, and
+stamps the convention as `source_layout` on the routed-MoE scheme and each
+manifest role. It does not infer either fact from dimensions: when `hidden_size
+== 2 * moe_intermediate_size` gate/up is square, and no dimension states
+chunked versus interleaved. A missing or unknown convention is refused before
+encoding. Old schemes default to `unpacked_per_expert`, the only source layout
+their writer supported.
+
+Contract v16 adds exactly two `routed_moe` cells: E4M3/q1024, resident, eager,
+sm_121, on the exact EUGR image, for decode and batch. The full LFM2.5 receipt
+has all 22 planned stacks / 2,112 projection containers and observes M1 decode
+and M64 prefill on the modular TRITON route. Its source-bound usable BF16
+teacher comparison covers 4,096 prefill positions: top-1024 KL lower bound
+0.0831613565, top-1 agreement 85.1074%, with the recorded tail/upper-bound
+limitations. This is not full-vocabulary KL or decode-quality evidence, and
+no new numeric quality threshold is implied. Exact identities and results are
+in `docs/measurements/tessera-lfm-campaign-2026-09-04.md` §§7–8.
+
+**What is NOT claimed.** The eight dense cells and their default image remain
+unchanged. Compiled/streamed MoE, other MoE rungs/images, TP>1 and expert
+parallelism remain unattested. The historical three-stack GLM cut's unusable
+reference still cannot support a quality verdict. Construction capability is
+not itself attestation; the full LFM artifact, census and quality receipts
+supply the narrower served claim.
+
+The full-model LFM teacher campaign uses
+`experiments/ts5_lfm_teacher_bound.py`: the encoder's sealed source identity
+must match hashes of the BF16 source both before and after its read-only
+serve. Its receipt binds those checks to the exact image, corpus, tokenizer,
+eager prefill mode, dump and build sidecars, and reference-usability result.
+The earlier revision-labelled teacher remains historical evidence; checking
+its dump hash now does not retroactively establish loaded-weight identity.
+This is provenance for the quality measurement, not a new quality threshold.
+The separate census/student stages in `ts5_lfm_served_bound.py` likewise
+compare every merged shard and sidecar with the checked assembly seal before
+and after execution, mount the exact model directory read-only, and preserve
+the raw census or matched teacher/student comparison alongside their hashes.
+The default artifact and seal remain `full-model` and
+`merge-action-r1/artifact-seal.json` under the campaign directory. Explicit
+`--model` and `--seal` overrides must be supplied together; the seal's
+`checkpoint` must exactly name the selected model before its bytes are read
+or its container is launched. The receipt records both selected paths and the
+seal hash, and the existing pre/post checkpoint-identity equality still binds
+every shard and sidecar. Selecting a new pair never edits the original pair.
+Each stage owns one exclusive GPU reservation through verified cleanup.
+The teacher and plugin-student wrappers pass `TESSERA_KL_TOPK` to both the
+server's logprob limit and the dump request's explicit `--top-k`; a nondefault
+support request must not silently fall back to the dump tool's default.
+The teacher and served-stage drivers share `experiments/ts5_stage_cleanup.py`.
+Container ownership begins only immediately before their launch call; a
+prelaunch name collision is observed but never removed by the refusing action.
+Cleanup stops telemetry first, joins it for at most two seconds, and shares
+one 90-second deadline across all Docker/GPU subprocess waits, within the
+120-second outer cleanup grace. Failed inspections or an exhausted deadline
+produce an unsafe cleanup receipt; they never count as an empty process list.
+An explicit positive `--attempt` selects fresh output, container and local
+census paths after a failed stage. Automatic retries retain the same attempt
+and refuse its existing directory; no previous receipt is overwritten.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
+`experiments/ts5_moe_served.sh` requires success from all three arms: the
+teacher dump, the student comparison, and the route census. Successful KL
+arms cannot turn a failed census into a successful campaign action.
+Before serving, `experiments/ts5_sidecar_check.py` reads the indexed shards
+(or all safetensors files for an unindexed checkpoint), requires exactly one
+wire per declared expert and role under its canonical or runtime shard name,
+and refuses a repeated tensor name across shards before aggregating their
+headers. It recomputes each group's maximum wire length from those headers. A missing
+projection cannot pass merely because another wire has the declared stride.
+
+The route census emits `tessera.serving.route_census/2` with its measured
+`runtime={image,execution_mode}`. Its `tessera.cell-launch-agreement.by-structure/1`
+aggregate contains `tessera.cell-launch-agreement/3` per-structure blocks under
+that context. Each record resolves its rung through its declared owner; a MoE
+stack has one rung only when every group and role agrees. Dense cells cannot
+cover routed experts, and absent MoE cells remain explicitly unattested. A
+routed record retains its exact observed backend suffix; matching also accepts
+the route-owned base symbol when a cell publishes that entry point. An
+explicitly backend-specific cell still requires that exact backend.
+Compiled dense per-cell agreement remains unsupported because its trace combines
+launches across shapes. A compiled routed-MoE record can agree only when the
+record and the runtime-scoped cell each name one launch. Unsupported records
+are counted as unattested and retained verbatim in the receipt.
+
+Lane eligibility schema v5 additionally requires each cell's `runtime` scope:
+an exact `image` manifest reference and a nonempty, distinct `execution_modes`
+list (`eager`, `compiled`). Image and execution mode participate in overlap
+and lookup alongside platform, family, structure, token-count regime and
+residency. A missing context or mismatched image/mode is unattested; the global
+`versions.attested_on` image is never an implicit cell fallback. Its existing
+dense pin remains unchanged. The eight dense cells preserve both measured
+execution modes on that pin; the migration receipt records the historical
+headers and their contemporaneous global image binding separately, because
+those older census files did not each record a digest. Existing cell IDs stay
+stable, with an optional hash of canonical runtime scope to distinguish
+disjoint variants; IDs must be unique, and explicit fields decide eligibility.
+
+The census requires `--runtime-image` as an exact digest reference, checked
+before loading vLLM. Its existing `--compiled` flag determines both the
+recorded execution mode and `LLM(enforce_eager=...)`. The plugin wrapper
+injects its selected image after caller-supplied Docker environment arguments;
+shell census callers pass that container value instead of reconstructing an
+image from the global pin. Historical tag callers must supply an exact digest
+for new censuses. Offline replay reads only the receipt's explicit runtime
+context: missing context remains unattested, and a mode contradicting the
+receipt's `compiled` field is refused.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
-module serves on its declared family. A clean census with exact bytes is
-necessary and, by tessera#1, not sufficient. It is also not sufficient
+module serves on its declared family. The join is made in MODULE space: the
+route records come off `named_modules()`, the declared targets come off
+`config_groups` in the checkpoint's namespace, and the model class's own
+`hf_to_vllm_mapper` is replayed over the targets before the two are matched --
+the same translation `TesseraConfig.apply_vllm_mapper` makes at load, and
+without it a mapped architecture joins nothing. A clean census with exact
+bytes is necessary and, by tessera#1, not sufficient. It is also not sufficient
 *within* a route: the per-module check is a check on agreement, and the
 streamed FP8 route's decode regime legitimately admits both the GEMV pair
 and the materialised one, so a serve in which the lane prepared for nothing
@@ -373,11 +667,92 @@ the field exists to catch. The per-phase counts stay in the block, and
 `all_required_engaged` is three-valued so "nobody said what to require" never
 reads as "everything required was engaged".
 
+**A routed expert stack joins by containment, and is graded by its structure.**
+vLLM builds one quant method for the declared stack prefix and attaches it to
+the `RoutedExperts` child it constructs underneath, so the route record lands
+at `<layer>.mlp.experts.routed_experts` while the checkpoint declares
+`<layer>.mlp.experts`. An exact-name join reads that as two faults at once --
+a served module nothing declared, and a declared module nothing served: eight
+problems over three stacks on the first served MoE census -- three records and
+one roll-up line in each of the two phases -- every one of them that single
+cause. So a record whose `kind` is `moe` joins to the one declared
+target that CONTAINS it, and to none if two do -- ambiguity is reported, never
+resolved by picking the longer prefix -- while a dense record still joins only
+to itself (`join_records_to_declared`,
+`tests/test_route_census_module_space.py`).
+
+The structure then decides what that record is graded against. A stack serves
+under `TESSERA_FP8` -- same family, same wire, same activation contract -- and
+a different dispatch: one materialised launch through vLLM's own modular
+fused-MoE kernel, at every M, with no GEMV lane and nothing for a compiled
+forward to combine. Resolving the expectation from the FAMILY alone hands the
+stack the dense route's pair set and refuses a serve that did exactly what the
+route intends, so it comes from the route that owns the dispatch
+(`moe_route.census_expected`, the same ownership rule as
+`fp8_gemv.census_expected`). Both derive from `scheme.ROUTE_LAUNCHES`, whose
+`structures` axis keeps dense and routed launches distinct. Existing launch
+lookups default to dense; routed FP8 admits only its resident modular-kernel
+launch, in both regimes. The contract's launch derivation passes each cell's
+structure to the same lookup. Its symbol is compared without the backend suffix
+the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is
+vLLM's predicate over the kernels on the box, so which backend ran is kept in
+the receipt's histogram and is never pinned by an expectation of ours.
+The suffix comparison lives in dependency-free
+`scheme.moe_census_symbol_base`; the runtime route re-exports that helper.
+Receipt agreement therefore needs neither torch nor a vLLM import, including
+when comparing routed-MoE records in the pure CI population.
+
+`census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
+`lane_eligibility` structure whose cells could cover it (`moe` ->
+`routed_moe`). Contract v15 counted those records but left all unattested.
+Contract v16 covers only the measured LFM scope in §4.4, using the owner-to-rung
+join and explicit runtime context; the historical GLM receipt does not borrow
+the EUGR image attestation. The validator derives the positive
+`lane_eligibility.structures` set from those receipt-bearing cells, while
+`scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
+adding a future dispatch structure cannot attest it by omission from a
+hand-maintained "unserved" denylist: without a served cell, naming it in the
+structure axis is refused. The axis is a non-empty, duplicate-free string list
+and equals the cells' first-occurrence projection exactly; set-equivalent
+duplicate or reordered spellings are not a second form of the same contract.
+
+`experiments/ts5_census_check.py` gates the full routed-MoE campaign receipt.
+Its common plan, merged config and serving manifest must describe exactly one
+nonempty expert-stack population, including every expert projection and rung;
+the roster and geometry come from the scheme helpers, not a campaign count.
+Both driven phases must contain exactly one served record per planned owner,
+under the explicit serving-image digest, eager execution and resident mode.
+The checker replays construction mapping and ownership, validates launch pairs
+and activation contracts even when no cell exists, and requires distinct,
+nonempty eager shapes at every owner using the census's shared shape check.
+Shapes use telemetry's canonical `M<n>:N<n>:K<n>` spelling; `scheme.regime_of_m`
+must map each observed M to the phase it claims. The campaign also compares
+N/K with that owner's validated expert tile geometry, so arbitrary strings or
+two batch-shaped observations cannot claim decode/prefill coverage.
+It preserves actual backend suffixes. Host/container checkpoint paths may
+differ: the raw census records `checkpoint_sidecars`, SHA256s of the exact
+`config.json` and `tessera_serving_manifest.json` bytes read inside its process,
+and the campaign checker requires equality with both supplied file hashes.
+The census verifies those sidecar hashes again after both forwards and refuses
+to publish a served receipt if either changed.
+The generic census permits a missing manifest and records it as null; this
+merged-artifact campaign does not. The assembled artifact is held unchanged
+through serving; these sidecar hashes do not replace the checked assembly's
+tensor/wire validation. Exporter image provenance is not a serving-image
+eligibility rule.
+The initial check permits genuinely unattested owners. `--require-attested`
+replays the same raw records against the **current** packaged contract and
+requires every planned owner covered in both phases, ignoring stale embedded
+agreement. The result fingerprints its inputs and current contract. This is a
+population/dispatch receipt gate, not a wire audit or the separate served-KL
+quality gate, and publishes no cells itself.
+
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
-A `lane_eligibility` cell says: on this platform, for this payload family, at
-these rungs, in this regime, at this residency, the plugin executes **these
-launches** on a route with this status. The launch half is
+A `lane_eligibility` cell says: on this platform, for this payload family and
+structure, at these rungs, in this regime and residency, under this exact image
+and execution mode, the plugin executes **these launches** on a route with
+this status. The launch half is
 `executes` -- a list of `{symbol, decoder}` -- and it arrived with
 `lane_eligibility` schema **v4** (contract v13, issue #111). Before it, a
 cell published the A-side contract and the rungs, and the launch appeared
@@ -388,13 +763,14 @@ a rate-constrained artifact was served -- the R1024 census records
 `tessera_window_gemv::gemv` on 112 of 112 modules in the decode regime
 (`docs/measurements/tessera-lane-eligibility-executes-2026-09-04.md`).
 
-Three things follow, and each is a rule rather than a value:
+The following are rules rather than measured values:
 
 - **The value is derived, never asserted.** `contract.validate_serving_contract`
   builds each cell's `executes` from `scheme.ROUTE_LAUNCHES` -- the torch-free
-  table the routes' own `fp8_gemv.census_expected` / `bf16_route.census_expected`
-  are built from, and the home of `WINDOW_GEMV_SYMBOL` -- narrowed by the
-  regime, by the residency the cell's `TESSERA_SERVE_MODE` flag names, and by
+  table the routes' own `fp8_gemv.census_expected`, `bf16_route.census_expected`,
+  and `moe_route.census_expected` are built from, and the home of
+  `WINDOW_GEMV_SYMBOL` -- narrowed by the cell's structure, regime, by the
+  residency the cell's `TESSERA_SERVE_MODE` flag names, and by
   the lanes each rung reaches under `native_extensions[].lane.requires`. So a
   cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
   drop rate 4 from the published predicate and the document stops validating
@@ -416,21 +792,25 @@ Three things follow, and each is a rule rather than a value:
   `layer.tessera_gemv = None` in `resident`, so the lane exists in `streamed`
   alone and one rung's decode regime has two answers. The E4M3 family
   therefore carries four cells, and two cells of one `(platform, family,
-  structure, regime)` must cover **disjoint** residencies -- otherwise a
+  structure, regime, runtime image, execution mode)` must cover **disjoint**
+  residencies -- otherwise a
   consumer resolving "what runs here" gets whichever cell it read first. A
   cell `id` is now its scope and never a launch, because an id that names a
   launch is a second, unparsed spelling of `executes`.
 - **The census closes the loop.** Deriving `executes` proves the document
   agrees with the code; only a serve proves the code agrees with the machine.
   `census.cell_launch_agreement` joins every served route record to the cell
-  covering its `(platform, family, structure, regime, residency, rung)` and
-  refuses a disagreement, and `tools/tessera_route_census.py` writes the block
-  into the receipt. It is eager-only and says so: a compiled record stamps
-  both launches as one `a+b` pair because one graph serves every M.
-  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline, so
-  the R1024 evidence is reproducible without a GPU
-  (`/home/rob/tessera-runs/ts111/replay-R1024.txt`: 112 of 112 in both phases,
-  and 112 refusals when the pre-#111 value is put back).
+  covering its `(platform, family, structure, regime, residency, rung)` under
+  the measured image and execution mode. Missing or mismatched runtime context
+  is unattested; a covered launch disagreement refuses. The route census writes
+  that context with the block. Compiled dense agreement remains unsupported
+  because its trace combines launches as `a+b`; a compiled routed single-launch
+  observation may be compared with its explicitly scoped cell.
+  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline under
+  its recorded runtime context. The historical R1024 replay at
+  `/home/rob/tessera-runs/ts111/replay-R1024.txt` recorded 112 of 112 in both
+  phases and 112 refusals under the pre-#111 negative control; a source receipt
+  missing explicit runtime context now remains unattested under v5.
 
 `TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
 1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch
@@ -439,10 +819,12 @@ rung is attested the same derivation produces its GEMV cell.
 
 Schema v4 is **not** additive: a v3 reader must not read a v4 cell, both
 because `executes` is a key it does not know and because the E4M3 decode
-answer it would have read off one cell is now two. PrismaQuant's
-`lane_eligibility` parser pins `tessera.lane-eligibility.v3` exactly and
-refuses unknown cell keys, so it fails closed (loudly, not silently) until it
-is widened.
+answer it would have read off one cell is now two. As read on 2026-09-04,
+PrismaQuant's parser pinned `tessera.lane-eligibility.v3` exactly
+(`prismaquant/tessera_runtime_contract.py:120` at its `1eb88c4e`) and refuses
+unknown cell keys, so it fails closed (loudly, not silently) against v4 and
+the v5 this tree publishes until that repository widens it
+(RobTand/prismaquant#189 carries the v5 reader).
 
 ### 4.5a A served KL names which FORWARD it scored
 
@@ -462,6 +844,14 @@ checked against the serve's own `usage.prompt_tokens_details.cached_tokens`
 The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.
+
+The BF16-reference gate derives its target population from that corpus's
+contract before it reads quality. With `prepends_bos: true`, the injected BOS
+conditions the first corpus token and every token in every chunk is scored;
+without it, each chunk's unconditioned first token is omitted. The derived
+count must equal the contract's `scored_positions` and the dump's position
+count. It is never inferred from the dump shape: a malformed pair cannot pick
+the interpretation that lets itself through.
 
 `TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
 compile it declines and counts nothing, which is enforced since #113 rather
@@ -745,9 +1135,11 @@ no serve and no KL). `tests/test_landing_ordering.py` pins both halves.
 was one round number (`export.DEFAULT_LDLQ_BLOCK = 32`) applied to every unit
 of every model. It is measurably the wrong shape of knob:
 `compensate.block_penalty(H_reg, block)` prices what a block costs against
-full feedback in closed form, and at `b=32` that is **14.7%** of full feedback
+full feedback in closed form, and at `b=32` that is **9.8%** of full feedback
 on dense Qwen attention against **0.14%** on GLM experts -- a factor of 70
-between two populations one constant has to serve.
+between two populations one constant has to serve (and 14.7% on `q`/`k`/`v`
+specifically against `o_proj`'s 1.4%, a factor of ten inside one model;
+`compensate.block_penalty` and `tessera-dense4-gap-2026-09-03.md`).
 
 `ActivationSource.ldlq_block` therefore takes either the width it always took
 or a **budget**, `{"max_penalty": ratio}`, and `ActivationSource.block_for`
@@ -789,3 +1181,97 @@ that artifact and `82cdf513` closed a further 2.1% with no recipe change, and
 the block is worth 1.94% against its own session's control. Quoting the
 published incumbent instead of re-running it would have credited the block
 with twice its size.
+
+## 5. Packaging and release
+
+The distribution is `tessera-quant`; the import name is `tessera`
+(`pyproject.toml`). What the wheel carries, how the plugin registers once
+installed, and what the two CI jobs prove are gates in their own right, so
+they are recorded here with the rest.
+
+### 5.1 The plugin is delivered by an entry point
+
+`pyproject.toml` declares one entry point in the `vllm.general_plugins`
+group, `tessera = tessera.serving:register`. vLLM loads every plugin in that
+group at start-up; `register` imports vLLM lazily and registers
+`quant_method="tessera"` (`src/tessera/serving/__init__.py`). Nothing the
+operator passes selects the plugin: the checkpoint's `quantization_config`
+names the method, and the only operator knob is `TESSERA_SERVE_MODE`
+(`resident` or `streamed`, `src/tessera/serving/lane.py`). The entry point
+has to resolve without vLLM present, because the producer imports the same
+package on a box that has none; `tests/test_packaging.py` holds it to that.
+
+### 5.2 What the wheel ships besides Python
+
+Four non-Python files are opened at run time, and each is declared in
+`[tool.setuptools.package-data]` because an editable install reads the tree
+and would never notice one missing:
+
+| File | Opened by | Why it is in the wheel |
+|---|---|---|
+| `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
+| `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
+| `tessera/csrc/window_gemv.cu` | `tessera.kernel_window_gemv`, which `serving/fp8_gemv.py` and `bf16_route.py` load through | the window-body GEMV; this copy is the one the serving lane actually builds |
+| `tessera/serving/csrc/window_gemv.cu` | published as the extension's `source` in `ext.py`'s native-extension table | byte-identical to the copy above (`cmp` clean at `b83fd17`) but not the file the JIT compiles; the mismatch between the published path and the built path is filed as #134, not a design |
+
+`tests/test_packaging.py` refuses either half of that table on its own: a
+glob that matches no file, and a runtime data file no glob covers.
+`tools/check_wheel.py` asserts the same on a *built* wheel, installed with no
+dependencies into an empty directory and imported with the source tree off
+the path, and prints the wheel's own file list; CI runs it on every push and
+the publish job runs it on the bytes it is about to upload.
+
+Two extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
+host, and `kernels` installs Triton. A PyPI vLLM is a **working install, not
+an attested one**: every cell in the contract is pinned to an image digest
+(§3), and a serve on any other runtime gains no claim from it.
+
+### 5.3 The JIT build and what degrades without a compiler
+
+The native extensions are built by torch at first use from the packaged
+`.cu` sources and need an `nvcc` and a `ninja` on the box
+(`src/tessera/serving/ext.py`, "TOOLCHAIN"). Neither is a declared
+dependency; the same file records where each is looked for. When a build is
+unavailable the outcome is per extension and per residency, and it is a
+value the route record stamps, never a boolean:
+
+- `substituted` -- a *named* substitute decoder ran and the serve is a
+  different numeric object than the native one. The resident NVFP4 route
+  decodes once at load and may substitute `tessera.stock.materialize_stock`;
+  the window GEMV substitutes the torch window decode in both residencies.
+- `refused` -- no serve exists. The streamed NVFP4 route decodes inside a
+  traced forward whose data-dependent shapes the substitute cannot run, so it
+  refuses instead of serving something else (`ops.prepare_tessera_module`).
+
+The decoder that actually ran is the `decoder` field on every route record
+(`telemetry.py`), which is how a fingerprint tells a native serve from a
+fallback one. A census (`tools/tessera_route_census.py`) that reads
+`substituted` on a module is reporting a serve the contract does not attest.
+
+### 5.4 The two hosted jobs, and what each does not prove
+
+`.github/workflows/ci.yml` has two jobs.
+
+**`pure`** runs on every push to master and every pull request, in an
+interpreter with pytest and nothing else: the bytes-only tests (whatever
+`tests/conftest.py` can collect without torch, reported with the modules it
+could not), an import of the byte layer that asserts torch never entered the
+process, the empty-denylist refusal (build item 11), and the wheel check
+above. It proves the parser's dependency boundary and the wheel's contents.
+It does not run a CUDA kernel, a decoder against a served artifact, or the
+merged suite: those are the two-population suite of §1.1, dispatched through
+PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
+claim also needs a served receipt (§3).
+
+**`publish`** runs only on a `v*` tag and only after `pure` is green. It
+refuses a tag that does not name the version in `pyproject.toml`, builds the
+sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
+`pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
+is no API token in the repository. The trigger is a bare tag match with no
+ancestry check and no GitHub `environment`, and the action is pinned to a
+branch, not a digest -- recorded as an open issue against #17, not a property
+this section claims.
+
+The version string appears in `pyproject.toml` and in the contract's
+`versions.tessera`; the publish job checks the tag against the first only.
+Reconciling the copies is an open issue.

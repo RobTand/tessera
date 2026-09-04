@@ -7,8 +7,11 @@ is a judgement call made by whoever is in a hurry.  This computes it instead:
 parse every module's imports, invert the edges, and take everything
 reverse-reachable from the changed set.
 
-**It fails open, and that is the point.**  An import graph is sound only for
-coupling that an ``import`` statement expresses.  Three kinds here do not:
+**It fails open, and that is the point.** Besides ordinary imports, explicit
+file loaders and source reads contribute edges from resolved paths, not module
+labels. Unresolved loader paths conservatively select the importing module's
+reverse-reachable tests for any non-inert change (a conftest forces full).
+Other kinds of coupling do not have ordinary import edges:
 
 * *conftest.py* is imported by pytest, not by the tests.  A changed conftest
   impacts every test at or below its directory, and that edge is added
@@ -21,10 +24,11 @@ coupling that an ``import`` statement expresses.  Three kinds here do not:
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
-PrismaBuild snapshots add one generated source-closure member named exactly
-``.pbrun-closure.<16 lowercase hex>.json``. It describes the checkout rather
-than changing it, so it is removed before classification; lookalike basenames
-remain ordinary changes. A snapshot commit is intentionally parentless. When
+PrismaBuild snapshots add one generated source-closure member. Only the exact
+member independently verified by ``tessera.suite_source`` against the sealed
+action is removed before classification. A matching basename is not ownership
+proof; unverified closure-shaped changes force a full selection. A snapshot
+commit is intentionally parentless. When
 both endpoints of ``BASE...HEAD`` exist but have no merge base, the selector
 records and uses the equivalent direct ``BASE..HEAD`` tree comparison.
 
@@ -51,6 +55,10 @@ import sys
 from collections import defaultdict, deque
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.suite_source import measured_source  # noqa: E402
+from tessera.source_dependencies import WILDCARD, file_imports  # noqa: E402
+
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
 OPAQUE = (
@@ -64,10 +72,9 @@ SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
 # Extensions that cannot change behaviour and never force a full run.
 INERT = {".md", ".txt", ".rst"}
 
-# PrismaBuild seals this generated closure member into its parentless checkout
-# snapshot.  It describes the snapshot; it is not a project change.  Match the
-# complete basename because a broad prefix would hide a caller-owned file.
-PBRUN_CLOSURE_BASENAME = re.compile(
+# This grammar only identifies metadata that needs verification. It never
+# proves ownership or grants an exclusion: the sealed action does that.
+PBRUN_CLOSURE_CANDIDATE = re.compile(
     r"\.pbrun-closure\.[0-9a-f]{16}\.json\Z"
 )
 
@@ -89,7 +96,7 @@ def _module_name(path: Path, root: Path) -> str | None:
     return ".".join(parts) if parts else None
 
 
-def _imports(path: Path, own: str) -> set[str]:
+def _imports(path: Path, own: str, root: Path) -> set[str]:
     """Every module this file imports, relative imports resolved against own."""
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
@@ -115,6 +122,10 @@ def _imports(path: Path, own: str) -> set[str]:
             # "from x import y" may name a submodule rather than an attribute;
             # both readings are recorded because only the graph can tell.
             found.update(f"{prefix}.{alias.name}" for alias in node.names)
+    paths, unknown = file_imports(tree, path, root)
+    found.update(name for target in paths if (name := _module_name(target, root)))
+    if unknown:
+        found.add(WILDCARD)
     return found
 
 
@@ -131,7 +142,10 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
             by_name.setdefault(name, path)
     importers: dict[str, set[str]] = defaultdict(set)
     for name, path in by_name.items():
-        for target in _imports(path, name):
+        for target in _imports(path, name, root):
+            if target == WILDCARD:
+                importers[WILDCARD].add(name)
+                continue
             # Attribute the edge to the longest known module prefix: an import
             # of tessera.encode.foo is an edge to tessera.encode.
             parts = target.split(".")
@@ -141,6 +155,17 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
                     importers[candidate].add(name)
                     break
     return by_name, importers
+
+
+def _reverse_reachable(seeds, importers):
+    seen, queue = set(seeds), deque(seeds)
+    while queue:
+        node = queue.popleft()
+        for importer in importers.get(node, ()):
+            if importer not in seen:
+                seen.add(importer)
+                queue.append(importer)
+    return seen
 
 
 def _resolved_commit(ref: str, root: Path) -> str | None:
@@ -174,9 +199,9 @@ def _parentless_direct_diff(ref: str, root: Path) -> tuple[list[str], str] | Non
     if left_commit is None or right_commit is None:
         return None
     out = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", left_commit, right_commit],
+        ["git", "-C", str(root), "diff", "--name-only", "-z", left_commit, right_commit],
         capture_output=True,
-        text=True,
+        text=True, errors="surrogateescape",
     )
     if out.returncode != 0:
         return None
@@ -184,13 +209,13 @@ def _parentless_direct_diff(ref: str, root: Path) -> tuple[list[str], str] | Non
         f"direct {left_commit}..{right_commit} "
         f"(no merge base; requested {left}...{right})"
     )
-    return out.stdout.splitlines(), comparison
+    return out.stdout.split("\0"), comparison
 
 
 def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
     out = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", ref],
-        capture_output=True, text=True,
+        ["git", "-C", str(root), "diff", "--name-only", "-z", ref],
+        capture_output=True, text=True, errors="surrogateescape",
     )
     if out.returncode != 0:
         fallback = _parentless_direct_diff(ref, root)
@@ -198,12 +223,15 @@ def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
             raise SystemExit(f"git diff {ref} failed: {out.stderr.strip()}")
         lines, comparison = fallback
     else:
-        lines, comparison = out.stdout.splitlines(), ref
-    changed = [
-        line
-        for line in lines
-        if line.strip() and not PBRUN_CLOSURE_BASENAME.fullmatch(Path(line).name)
-    ]
+        lines, comparison = out.stdout.split("\0"), ref
+    # Display-quoted names are not paths: tabs/newlines must not hide a
+    # closure candidate (or split any other path) from classification.
+    changed = [line for line in lines if line]
+    if any(PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(line).name) for line in changed):
+        source = measured_source(root)
+        verified = ({member["path"] for member in source["excluded_metadata"]}
+                    if source["verification"] == "verified" else set())
+        changed = [line for line in changed if line not in verified]
     return sorted(changed), comparison
 
 
@@ -270,6 +298,9 @@ def main() -> int:
     ]
     # The root conftest is imported by pytest for the whole tree.
     forced += [f for f in changed if f == "conftest.py"]
+    # An unowned metadata-shaped file remains a real change. We cannot infer
+    # that it is harmless scaffolding from its spelling, so fail open.
+    forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
     by_name, importers = build_graph(root)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
@@ -285,17 +316,17 @@ def main() -> int:
         name = name_of.get(f) or _module_name(root / f, root)
         if name:
             seeds.add(name)
+    unresolved = (importers.get(WILDCARD, set())
+                  if any(Path(f).suffix not in INERT for f in changed) else set())
+    seeds.update(unresolved)
+    uncertain_consumers = _reverse_reachable(unresolved, importers)
+    forced += [str(by_name[name].relative_to(root)) for name in sorted(uncertain_consumers)
+               if by_name[name].name == "conftest.py"]
     missing = [f for f in changed
                if f.endswith(".py") and not (root / f).exists()]
     # Reverse-reachable closure: everything that imports a changed module,
     # transitively.
-    seen, queue = set(seeds), deque(seeds)
-    while queue:
-        node = queue.popleft()
-        for importer in importers.get(node, ()):
-            if importer not in seen:
-                seen.add(importer)
-                queue.append(importer)
+    seen = _reverse_reachable(seeds, importers)
 
     # A module in `seen` may have no file in this checkout -- a test the branch
     # ADDS is exactly that case, and it is the one selection can least afford
@@ -346,6 +377,8 @@ def main() -> int:
         "comparison": comparison,
         "tests": tests,
         "forces_full": forced,
+        "unresolved_file_loaders": sorted(
+            str(by_name[name].relative_to(root)) for name in unresolved),
         "reason": _selection_reason(
             changed,
             missing=missing,
@@ -354,6 +387,8 @@ def main() -> int:
             text_matched=text_matched,
         ),
     }
+    if unresolved:
+        result["reason"] += "; unresolved file loaders conservatively select their consumers"
     if args.json:
         print(json.dumps(result, indent=1))
     else:

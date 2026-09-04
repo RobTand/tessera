@@ -25,9 +25,11 @@ checkpoint is being served: this module imports neither torch nor vLLM at
 module level, so a producer can read the packaged contract on a machine with
 no GPU.
 
-SCOPE.  Dense Linears, TP=1, both residency modes, eager and compiled.  Routed
-MoE, tensor parallelism above one and expert parallelism are refused by name
-(``config.TesseraConfig.get_quant_method``), never degraded.
+SCOPE. Dense Linears in both residency modes, eager and compiled, with tensor
+parallel axes published by ``sharding.ROUTE_TP_AXES``. Declared routed-MoE
+stacks use the resident FP8 route at TP=1 and without expert parallelism.
+The loader refuses unsupported structure, parallelism and residency by name;
+``runtime_contract.json`` separately records which paths have served evidence.
 """
 from __future__ import annotations
 

@@ -37,6 +37,7 @@ from typing import Any, Mapping
 __all__ = [
     "CELL_AGREEMENT_SCHEMA",
     "LANE_ENGAGEMENT_SCHEMA",
+    "STRUCTURE_BY_RECORD_KIND",
     "cell_launch_agreement",
     "decoder_histogram",
     "lane_engagement",
@@ -44,6 +45,16 @@ __all__ = [
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
 LANE_ENGAGEMENT_SCHEMA = "tessera.lane-engagement/1"
+
+#: A route record's ``kind`` (``telemetry.ROUTE_FIELDS``) -> the
+#: ``lane_eligibility`` STRUCTURE whose cells could cover it.  Two vocabularies
+#: for one thing, and the join between them belongs in exactly one place: the
+#: record says what the layer IS ("dense" | "moe"), a cell says what it covers
+#: ("dense" | "routed_moe"), and :func:`cell_launch_agreement` is keyed to one
+#: structure per block.  A kind absent from this map is covered by nothing --
+#: the conservative direction, since the alternative is a block reporting
+#: agreement for a launch nobody published.
+STRUCTURE_BY_RECORD_KIND = {"dense": "dense", "moe": "routed_moe"}
 
 
 def decoder_histogram(records: Mapping[str, Mapping[str, Any]]) -> dict:
@@ -152,11 +163,12 @@ def lane_engagement(records_by_phase: Mapping[str, Mapping[str, Mapping[str, Any
 
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
-CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/1"
+CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/3"
 
 
 def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
-                          rungs_by_module, families_by_route, structure="dense"):
+                          rungs_by_module, families_by_route, structure="dense",
+                          symbol_alias=None, runtime_image=None, execution_mode=None):
     """Every served record's launch against the CELL that covers it (#111).
 
     The lane-engagement block above asks whether a lane took any modules.  This
@@ -171,19 +183,33 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     The route and the residency come off the record's own ``policy`` field
     (``ROUTE:mode``) and ``families_by_route`` turns the route into the payload
     family a cell is keyed by (``contract.PAYLOAD_FAMILY_BY_ROUTE``), so the
-    caller supplies only the rung per module -- the one fact a route record
-    does not carry.  A module the table does not cover
+    caller supplies the rung per module and the measured image/execution mode.
+    Since lane schema v5, those runtime facts must match the cell's explicit
+    scope. Missing context and cells without scope cover nothing; a global
+    image pin is never borrowed. A module the table does not cover
     is counted as ``unattested`` and is NOT a problem: absence is the honest
-    state a v4 table has for a rung no receipt covered, and inventing a
+    state a closed-world table has for a rung no receipt covered, and inventing a
     verdict from it is the failure the whole table is shaped to avoid.
 
     Returns ``(block, problems)``.  ``agrees`` is three-valued for the same
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
+    from .contract import cell_runtime_scope
+
+    runtime = {"image": runtime_image, "execution_mode": execution_mode}
+    unsupported_reason = (
+        "compiled dense route records combine shape-polymorphic launches; "
+        "per-cell agreement is unsupported for this observation"
+        if execution_mode == "compiled" and structure != "routed_moe" else None)
     by_regime = {}
     for cell in cells:
         if cell.get("platform") != platform or cell.get("structure") != structure:
+            continue
+        if runtime_image is None or execution_mode is None or "runtime" not in cell:
+            continue
+        image, execution_modes = cell_runtime_scope(cell)
+        if image != runtime_image or execution_mode not in execution_modes:
             continue
         modes = _cell_modes(cell)
         for mode in modes:
@@ -197,8 +223,26 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     for phase, records in sorted(records_by_phase.items()):
         regime = phase_regimes.get(phase)
         counts = collections.Counter()
-        covered = unattested = 0
+        covered = unattested = unsupported = 0
         for name, record in sorted(records.items()):
+            # THE RECORD'S OWN STRUCTURE, CHECKED BEFORE ITS RUNG.  This block
+            # is keyed to one structure and a record of another is not
+            # something its cells can cover.  Explicit rather than left to the
+            # accident that today a routed-expert stack's module name carries
+            # no rung: the record is written at ``<prefix>.routed_experts``
+            # while the checkpoint declares ``<prefix>``, and the day a caller
+            # resolves rungs across that join (the census's
+            # ``join_records_to_declared`` does exactly that join for the
+            # family lookup) a DENSE cell would begin "covering" a stack that
+            # executes vLLM's fused-MoE kernel -- reporting agreement, or a
+            # disagreement, about a launch no cell in this contract publishes.
+            if STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind"))) != structure:
+                unattested += 1
+                continue
+            if unsupported_reason:
+                unattested += 1
+                unsupported += 1
+                continue
             policy = str(record.get("policy", ""))
             route, _, mode = policy.partition(":")
             family = families_by_route.get(route)
@@ -208,11 +252,24 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             if cell is None:
                 unattested += 1
                 continue
-            covered += 1
             pair = (str(record.get("symbol")), str(record.get("decoder")))
+            if execution_mode == "compiled" and (
+                    len(cell["executes"]) != 1 or any("+" in item for item in pair)):
+                # Only the routed single-launch observation can be joined to
+                # a phase cell. A combined trace does not identify which of
+                # its branches the driven phase executed.
+                unattested += 1
+                unsupported += 1
+                continue
+            covered += 1
             allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
-            if pair not in allowed:
+            # The route may carry an observed backend suffix while a cell
+            # publishes the runtime entry point. Preserve exact matching too:
+            # a cell that explicitly pins a backend must not accept another.
+            alias_pair = ((str(symbol_alias(pair[0])), pair[1])
+                          if symbol_alias is not None else pair)
+            if pair not in allowed and alias_pair not in allowed:
                 problems.append(
                     f"{phase}: {name} executed {pair!r}, which cell {cell['id']!r} does not "
                     f"publish (it executes {sorted(allowed)!r}). The cell is what a producer "
@@ -221,21 +278,22 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
         covered_total += covered
         phases[phase] = {"regime": regime, "modules": len(records),
                          "covered_by_cell": covered, "unattested": unattested,
+                         "unsupported_records": unsupported,
                          "cells": dict(sorted(counts.items()))}
     block = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform, "structure": structure,
-             "phases": phases,
+             "runtime": runtime, "phases": phases,
              "agrees": None if not covered_total else not problems}
+    if unsupported_reason:
+        block["unsupported_reason"] = unsupported_reason
     return block, problems
 
 
 def _cell_modes(cell):
     """The residencies a cell's serve flags name.
 
-    A local parse rather than an import of ``contract.cell_residency_modes``
-    because this module is imported inside a serving container from a tool that
-    must not need the validator's import graph; the shape is one flag,
-    ``TESSERA_SERVE_MODE=a|b``, and a cell that does not carry one covers
-    nothing here rather than covering everything.
+    The published contract validates the flag strictly. This observation
+    reader treats a missing ``TESSERA_SERVE_MODE=a|b`` flag as covering
+    nothing rather than covering every residency.
     """
     head = "TESSERA_SERVE_MODE="
     for flag in cell.get("requires_serve_flags", ()):

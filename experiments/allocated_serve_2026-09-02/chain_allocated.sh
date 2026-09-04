@@ -34,6 +34,7 @@ census () {   # <checkpoint> <name> <mode> [--compiled]
   "$TS/experiments/tessera_plugin_run.sh" \
     -e TESSERA_SERVE_MODE="$mode" -v /mnt/shared:/mnt/shared -v "$RUNS":"$RUNS" -- \
     "python3 /work/tools/tessera_route_census.py $ckpt $RUNS/census_$name.json \
+       --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" \
        --expect-modules 112 --gpu-memory-utilization 0.30 --tessera-commit $COMMIT $extra" \
     > "$RUNS/census_$name.log" 2>&1
   echo "   rc=$? -> $RUNS/census_$name.json"

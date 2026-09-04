@@ -187,6 +187,224 @@ def test_the_default_submission_declares_one_core(tmp_path):
     assert " -n " not in pbrun, pbrun
 
 
+@pytest.mark.parametrize("gpu_tag", ["sparky", "sparklina"])
+def test_gpu_submission_delegates_physical_exclusion_to_pbrun(tmp_path, gpu_tag):
+    """One declared slot does not exclude a box offering two or three."""
+    import shlex
+
+    out = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
+         "--gpu-tag", gpu_tag, "--cpus", "8",
+         "--checkout", str(ROOT), "--out", str(out)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert out.exists(), result.stdout + result.stderr
+    record = json.loads(out.read_text())["arms"][0]
+    invocation = shlex.split(record["pbrun"])
+    options = invocation[:invocation.index("--")]
+    assert "--exclusive" in options
+    assert options[options.index("--tag") + 1] == gpu_tag
+    assert "gpu=" not in options[options.index("--demand") + 1]
+    assert "--gpu-capacity" not in options, "capacity belongs to PB's live offers"
+    assert options[options.index("--cpus") + 1] == "1"
+    assert "-n" not in invocation
+
+
+@pytest.mark.parametrize(("name", "requested"), [("gpu", 8), ("x86", 8), ("x86", 1)])
+def test_submission_caps_native_threads_and_compiler_jobs_per_process(
+    tmp_path, monkeypatch, name, requested,
+):
+    import shlex
+    from types import SimpleNamespace
+
+    merge_suite = _module()
+    limits = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS")
+    for variable in limits:
+        monkeypatch.setenv(variable, "64")
+    args = SimpleNamespace(cpus=requested, pytest_arg=[], gpu_tag="sparky", mem_gb=4,
+                           checkout=ROOT, timeout_s=300, wait_s=300, dry_run=True)
+    record = merge_suite._submit(name, merge_suite.ARMS[name], args, tmp_path)
+    invocation = shlex.split(record["pbrun"])
+    options = invocation[:invocation.index("--")]
+    environment = [options[index + 1] for index, option in enumerate(options) if option == "--env"]
+    for variable in limits:
+        assert [value for value in environment if value.startswith(variable + "=")] == [variable + "=1"], (
+            "every pytest process must override ambient/pool native and compiler thread defaults"
+        )
+    reserved = int(options[options.index("--cpus") + 1])
+    command = invocation[invocation.index("--") + 1:]
+    processes = int(command[command.index("-n") + 1]) if "-n" in command else 1
+    assert processes == reserved
+    assert record["process_thread_limits"] == dict.fromkeys(limits, "1")
+
+
+@pytest.mark.parametrize("name", ["gpu", "x86"])
+def test_attempt_timeout_is_inside_the_sealed_submission(tmp_path, name):
+    import shlex
+    from types import SimpleNamespace
+
+    merge_suite = _module()
+    args = SimpleNamespace(cpus=8, pytest_arg=[], gpu_tag="sparky", mem_gb=4,
+                           checkout=ROOT, timeout_s=12.5, wait_s=300, dry_run=True)
+    record = merge_suite._submit(name, merge_suite.ARMS[name], args, tmp_path)
+    invocation = shlex.split(record["pbrun"])
+    command = invocation[invocation.index("--") + 1:]
+    assert command[:7] == [merge_suite.ARMS[name]["python"], "tools/suite_deadline.py",
+                           "--timeout-s", "12.5", "--kill-after-s", "5.0", "--"]
+    assert command[7] == merge_suite.ARMS[name]["python"]
+    assert "--foreground" not in command and "--preserve-status" not in command
+    assert record["timeout_s"] == 12.5
+    assert record["timeout_kill_after_s"] == 5.0
+
+
+@pytest.mark.parametrize("duration", ["0", "-1", "nan", "inf", "-inf"])
+def test_attempt_timeout_refuses_disabled_or_nonfinite_deadlines(tmp_path, duration):
+    out = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
+         "--checkout", str(ROOT), "--out", str(out), f"--timeout-s={duration}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 2
+    assert "positive finite" in result.stderr
+    assert not out.exists(), "invalid deadlines must refuse before receipt/submission writes"
+
+
+@pytest.mark.parametrize("status", [0, 7])
+def test_attempt_timeout_preserves_ordinary_command_status(status):
+    merge_suite = _module()
+    command = merge_suite._timed_command([sys.executable, "-c", f"raise SystemExit({status})"], 2.0)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == status
+
+
+def test_attempt_timeout_owns_child_reaping_despite_inherited_sigchld_ignore():
+    merge_suite = _module()
+    command = merge_suite._timed_command([sys.executable, "-c", "raise SystemExit(7)"], 2.0)
+    script = ("import os,signal; signal.signal(signal.SIGCHLD,signal.SIG_IGN); "
+              f"os.execv({command[0]!r}, {command!r})")
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True,
+                            text=True, timeout=10)
+    assert result.returncode == 7, "auto-reaping must not convert a failed command to status0"
+
+
+def test_attempt_timeout_term_handler_cannot_turn_deadline_into_success():
+    merge_suite = _module()
+    script = ("import signal,time,sys; "
+              "signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); "
+              "print('ready', flush=True); time.sleep(60)")
+    result = subprocess.run(merge_suite._timed_command([sys.executable, "-c", script], 2.0),
+                            capture_output=True, text=True, timeout=10)
+    assert "ready" in result.stdout
+    assert result.returncode == 124, "timeout must remain non-green even if TERM cleanup exits0"
+
+
+@pytest.mark.parametrize("leader_exits", [False, True])
+def test_attempt_timeout_kills_a_term_resistant_process_group(monkeypatch, leader_exits):
+    import signal
+
+    merge_suite = _module()
+    monkeypatch.setattr(merge_suite, "TIMEOUT_KILL_AFTER_S", 0.2)
+    leader_handler = ("signal.signal(signal.SIGTERM, lambda *args: sys.exit(0)); "
+                      if leader_exits else "")
+    script = ("import json,os,signal,subprocess,sys,time; "
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+              + leader_handler +
+              "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
+    command = merge_suite._timed_command([sys.executable, "-c", script], 2.0)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    pids = []
+
+    def running(pid):
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[0]
+        except FileNotFoundError:
+            return False
+        return state != "Z"  # a reparented zombie is dead, not retained work
+
+    try:
+        stdout, stderr = process.communicate(timeout=10)
+        pids = json.loads(stdout)
+        expected = {124} if leader_exits else {-signal.SIGKILL, 137}
+        assert process.returncode in expected, stderr
+        deadline = time.monotonic() + 2.0
+        while any(running(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not any(running(pid) for pid in pids), "the managed parent and child must stop"
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+        for pid in pids:
+            if running(pid):
+                os.kill(pid, signal.SIGKILL)
+
+
+def test_attempt_timeout_supervisor_interrupt_cleans_its_owned_group():
+    import selectors
+    import signal
+
+    merge_suite = _module()
+    script = ("import json,os,signal,subprocess,sys,time; "
+              "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+              "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'], "
+              "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+              "print(json.dumps([os.getpid(),child.pid]), flush=True); time.sleep(60)")
+    process = subprocess.Popen(merge_suite._timed_command([sys.executable, "-c", script], 60.0),
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    pids = []
+
+    def running(pid):
+        try:
+            return Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[0] != "Z"
+        except FileNotFoundError:
+            return False
+
+    try:
+        with selectors.DefaultSelector() as ready:
+            ready.register(process.stdout, selectors.EVENT_READ)
+            assert ready.select(timeout=5), "owned child must announce readiness"
+        pids = json.loads(process.stdout.readline())
+        process.send_signal(signal.SIGTERM)
+        process.communicate(timeout=10)
+        assert process.returncode in (-signal.SIGTERM, 143)
+        deadline = time.monotonic() + 2.0
+        while any(running(pid) for pid in pids) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not any(running(pid) for pid in pids), "interrupt must not abandon the owned group"
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+        for pid in pids:
+            if running(pid):
+                os.kill(pid, signal.SIGKILL)
+
+
+def test_live_gpu_submission_requires_an_explicit_placement_tag(monkeypatch, tmp_path, capsys):
+    merge_suite = _module()
+    monkeypatch.setattr(merge_suite, "DEFAULT_RECEIPT_ROOT", tmp_path / "receipts")
+    monkeypatch.setattr(sys, "argv", [str(TOOL), "--arm", "gpu",
+                                     "--checkout", str(ROOT),
+                                     "--out", str(tmp_path / "receipt.json")])
+
+    def must_not_submit(*args, **kwargs):
+        raise AssertionError("a GPU action was submitted without explicit placement")
+
+    monkeypatch.setattr(merge_suite, "_submit", must_not_submit)
+    assert merge_suite.main() == 2
+    assert "--gpu-tag" in capsys.readouterr().err
+
+
 def test_a_missing_surface_is_reported_as_absent_not_as_a_pass():
     """An arm that was never placed is not a green arm."""
 
@@ -246,25 +464,48 @@ def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see(tmp_path):
     assert "/mnt/shared" in result.stderr
 
 
-def test_the_receipt_states_which_tree_it_is_about(tmp_path):
-    """A branch receipt is not a merge receipt, and must not read as one."""
+@pytest.mark.parametrize("master_ref,at_master", [
+    ("master", True), ("master", False),
+    ("origin/master", True), ("origin/master", False), (None, None),
+])
+def test_the_receipt_states_which_tree_it_is_about(tmp_path, master_ref, at_master):
+    """Exercise the ref states, not whichever refs the test runner inherited."""
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.name=Test",
+             "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             *args], text=True).strip()
+
+    git("init", "-q", "--initial-branch=measured")
+    git("commit", "-q", "--allow-empty", "-m", "fixture base")
+    base = git("rev-parse", "HEAD")
+    if master_ref:
+        ref = ("refs/heads/master" if master_ref == "master"
+               else "refs/remotes/origin/master")
+        git("update-ref", ref, base)
+    if at_master is False:
+        git("commit", "-q", "--allow-empty", "-m", "fixture branch")
+    head = git("rev-parse", "HEAD")
 
     out = tmp_path / "receipt.json"
     result = subprocess.run(
         [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
-         "--checkout", str(ROOT), "--out", str(out)],
+         "--checkout", str(checkout), "--out", str(out)],
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode != 0, "a dry run has covered no population"
     receipt = json.loads(out.read_text())
     population = receipt["population"]
-    assert population["commit"]
-    assert "is_master_head" in population
-    # A clone made for a pool run carries only ``origin/master``; the ref that
-    # actually answered is recorded so an unresolved comparison reads as
-    # "not established" rather than as "not master".
-    assert population["master_ref_used"] != "none resolved"
-    assert population["is_master_head"] is not None
+    assert population["commit"] == head
+    assert population["master_ref_used"] == (master_ref or "none resolved")
+    assert population["master_head_at_submit"] == (base if master_ref else None)
+    assert population["is_master_head"] is at_master
+    # A parentless PB snapshot has neither ref. That is an unknown comparison,
+    # not a failed receipt and not a reason to manufacture a master ref.
     assert receipt["verdict"] == "not run"
     # Both arms' numbers live under one key, so quoting one without its device
     # means quoting it out of this object rather than out of a scrollback.
@@ -635,6 +876,31 @@ def test_the_receipt_says_whether_the_arms_ran_one_tree():
         {"arm": "x86", "surface": {}}])
     assert half["agree"] is None, "a silent arm cannot agree with anything"
     assert half["unstamped_arms"] == ["x86"]
+
+
+def test_snapshot_commit_agreement_is_separate_from_effective_source():
+    merge_suite = _module()
+    arms = [{"arm": arm, "surface": {"commit": commit, "source_identity": {
+        "schema": "tessera.suite_source.v1", "verification": "verified",
+        "snapshot_commit": commit, "sha256": "c" * 64}}}
+        for arm, commit in (("gpu", "a" * 40), ("x86", "b" * 40))]
+    comparison = merge_suite._commits_measured(arms)
+    assert comparison["agree"] is False
+    assert comparison["effective_source"]["agree"] is True
+    arms[1]["surface"]["source_identity"]["sha256"] = "d" * 64
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is False
+    arms[1]["surface"]["source_identity"]["verification"] = "unknown"
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is None
+    del arms[1]["surface"]["source_identity"]
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is None
+
+
+def test_source_identity_cannot_be_borrowed_from_another_snapshot():
+    merge_suite = _module()
+    record = {"arm": "gpu", "surface": {"commit": "a" * 40, "source_identity": {
+        "schema": "tessera.suite_source.v1", "verification": "verified",
+        "snapshot_commit": "b" * 40, "sha256": "c" * 64}}}
+    assert merge_suite._commits_measured([record])["effective_source"]["agree"] is None
 
 
 def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():

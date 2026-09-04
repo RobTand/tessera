@@ -1,8 +1,9 @@
 """The Tessera routed-MoE expert route: per-expert E4M3 wires as the stock FP8 stack.
 
-WHAT IT SERVES.  One ``tessera.fused`` container per expert per GROUP -- ``w13``
-(gate then up, the row order ``RoutedExperts._load_w13`` narrows to) and ``w2``
--- decoded at load into exactly the parameters vLLM's own fused-MoE kernels
+WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
+assembled into ``w13`` (gate then up, the row order
+``RoutedExperts._load_w13`` narrows to) and ``w2`` (down), then decoded at
+load into exactly the parameters vLLM's own fused-MoE kernels
 read for a per-channel FP8 checkpoint: ``w13_weight [E, 2N, K]`` and
 ``w2_weight [E, K, N]`` in ``float8_e4m3fn``, with ``w13_weight_scale
 [E, 2N, 1]`` and ``w2_weight_scale [E, K, 1]`` in fp32.  From
@@ -53,17 +54,22 @@ expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
 
-WHAT IS NOT ATTESTED.  There is no ``routed_moe`` cell in this package's
-``runtime_contract.json`` and there will not be one until a served census and
-KL cover it on a real artifact.  This module is what the loader DOES, on the
-``loader_axes`` precedent: attempted, measured on the load-and-execute
-contract, and not claimed as served.  That measurement
+WHAT IS ATTESTED. Contract v16 publishes exactly two ``routed_moe`` cells:
+E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
+image named by each cell. The complete LFM artifact's census and source-bound
+prefill KL comparison are recorded in
+``docs/measurements/tessera-lfm-campaign-2026-09-04.md``. Other rungs/images,
+compiled/streamed MoE and multi-rank execution remain unattested.
+
+The earlier load-and-execute measurement
 (``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
 once on the pin, once on the build that registers ``Glm5Next`` -- and every
 recorded field, backend selection and error number is identical, so the route
-does not depend on which of the two loads it.  What it still does not cover:
-the model-level ``load_weights`` hop above ``RoutedExperts``, the compiled
-forward, and any expert count past four.
+does not depend on which of the two loads it. Later served GLM census
+receipts cover 16-expert stacks, and the exact EUGR LFM construction receipt
+(``docs/measurements/tessera-lfm-construction-2026-09-04.md``) covers model-level
+wire delegation into a 32-expert stack without a forward. These receipts do
+not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
@@ -73,21 +79,71 @@ import torch
 
 from ..moe_layout import W13_PROJECTIONS, MoePacked, unpack_moe_wires
 from .lane import MODE_RESIDENT, MODES
-from .scheme import (MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES, TESSERA_FP8,
+from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
+                     STRUCTURE_ROUTED_MOE, TESSERA_FP8, launch_pairs, route_launches,
+                     moe_census_symbol_base as census_symbol_base,
                      expert_role_declarations, parse_tessera_expert_blob,
                      validate_tessera_moe_scheme)
 from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
+    "GEMM_SYMBOL",
     "SHARD_TO_GROUP",
     "PreparedTesseraMoeExperts",
+    "census_expected",
+    "census_symbol_base",
     "prepare_tessera_moe_experts",
     "build_tessera_moe_method",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
+GEMM_SYMBOL = MOE_GEMM_SYMBOL
+
+
+def census_expected(*, compiled: bool = False) -> dict:
+    """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
+
+    Owned here for the same reason ``fp8_gemv.census_expected`` is owned there:
+    the dispatch is in this module, so a new path updates the expectation where
+    the path was added rather than in a second spelling inside the census tool.
+    Two things about this route are NOT the dense routes' shape.
+
+    ONE LAUNCH, BOTH REGIMES.  There is no GEMV lane and no kernel decode here.
+    ``process_weights_after_loading`` materialises the stack once and every
+    forward, at any M, hands the runtime's modular fused-MoE kernel the tile
+    that materialise produced -- so ``decode`` and ``batch`` admit the same
+    single pair, where the window routes' two regimes admit different ones.
+    ``compiled`` therefore changes nothing: the combined ``a+b`` symbol those
+    routes stamp under a traced forward exists because their dispatch BRANCHES
+    inside the graph, and one launch has nothing to combine.
+
+    THE SYMBOL CARRIES A SUFFIX THIS ROUTE DOES NOT CHOOSE.  ``_record`` stamps
+    ``vllm.fused_moe.modular_kernel:<backend>`` because which backend ran is a
+    fact about the serve a receipt must not lose -- but the backend is
+    ``select_fp8_moe_backend``'s answer, the RUNTIME's predicate over the
+    kernels it finds on this box, not a promise this route makes.  So the pair
+    below carries the entry point alone and a census compares
+    :func:`census_symbol_base`, keeping the exact string in its histogram.
+    Enumerating the backends we would accept would be a claim about vLLM's
+    kernel roster written in our own prose, which the runtime-attestation rule forbids;
+    pinning one would refuse a box whose runtime picked another.
+
+    DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
+    separates this expert structure from the dense FP8 launch set. Reading
+    that table keeps the census and contract derivations together. It does
+    not itself publish a served cell. Contract v16's measured E4M3/q1024
+    resident/eager cells name their exact EUGR image and sm_121 scope;
+    returning the same expected launch for compiled execution does not attest it.
+    """
+    del compiled  # documented above: one launch has nothing to combine
+    launches = route_launches(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                              mode=MODE_RESIDENT)
+    regimes = {regime for launch in launches for regime in launch["regimes"]}
+    return {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                                 regime=regime, mode=MODE_RESIDENT)
+            for regime in regimes}
+
 
 #: The runtime's shard name -> (group, row block).  DERIVED from
 #: ``MOE_GROUP_SHARDS``, so the loader's dispatch and the sidecar's group
@@ -177,8 +233,8 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
     for group in MOE_GROUPS:
         if len(blobs[group]) != experts:
             raise ValueError(
-                f"{target}: group {group!r} carries {len(blobs[group])} wire(s) for "
-                f"{experts} experts; every expert of a stack has one container per group")
+                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
+                f"{experts} experts; every expert must have its own row of projection containers")
     w13, w13_scale = _decode_group(blobs["w13"], declared["groups"]["w13"], f"{target} w13", device)
     w2, w2_scale = _decode_group(blobs["w2"], declared["groups"]["w2"], f"{target} w2", device)
     return PreparedTesseraMoeExperts(

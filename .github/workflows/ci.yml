@@ -1,11 +1,9 @@
 # The pure half of the repo runs anywhere; the kernel half needs a GPU.
 #
-# Splitting them is the point.  Build items 1a/1b are stdlib-only by design --
-# S16 forbids pipeline wiring before 1b passes, and a job that needs no torch
-# proves that structurally rather than by discipline.  The kernel lane is
-# pre-gate research (S16 P1-6/P1-7) and cannot run here; it is gated on a GPU
-# runner and must never become a required check, because a green tick on a
-# screen is exactly the promotion this project refuses.
+# The bytes-only job proves the parser's dependency boundary without torch.
+# The coordinator separately dispatches GPU-visible and device-less suites
+# through PrismaBuild and records both populations. Hosted CI alone does not
+# cover the CUDA surface, and test success does not establish served quality.
 name: ci
 
 on:
@@ -44,8 +42,7 @@ jobs:
         # fails the run, which is the breakage this job exists to catch, and
         # a new torch-needing test file needs no edit here.
         run: |
-          PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider \
-            --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py
+          PYTHONPATH=src python -m pytest tests -q -p no:cacheprovider
 
       # The byte layer must load with no torch in the process -- not just the
       # tests above, but the modules themselves, including the test closure.
@@ -99,6 +96,17 @@ jobs:
               )
           PY
 
+      # The wheel is an artifact with its own failure modes: a data file the
+      # package-data table forgot ships nowhere, and an editable install never
+      # says so.  Build one here on every push and prove, from an empty
+      # directory with the source tree off the path, that the plugin entry
+      # point resolves and every file a route or a producer opens is inside.
+      - name: the wheel ships what the plugin and the producer open
+        run: |
+          python -m pip install --quiet --upgrade build
+          python -m build --wheel
+          python tools/check_wheel.py dist/*.whl
+
   # Publishing rides the same workflow the Trusted Publisher on PyPI names, and
   # only ever on a version tag, only after the pure job is green.  There is no
   # token in this repo: `id-token: write` is what PyPI verifies.  The tag must
@@ -122,4 +130,6 @@ jobs:
           test "$tag" = "$ver" || { echo "tag v$tag != pyproject version $ver"; exit 1; }
       - run: python -m pip install --upgrade build
       - run: python -m build
+      # The same proof the pure job ran, on the bytes about to be published.
+      - run: python tools/check_wheel.py dist/*.whl
       - uses: pypa/gh-action-pypi-publish@release/v1

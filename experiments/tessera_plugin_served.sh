@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Serve a Tessera-wire checkpoint through TESSERA'S OWN vLLM plugin (both
-# families: TESSERA_NVFP4 W4A4 and TESSERA_FP8 W8A8, selected per module by the
-# checkpoint) on the vanilla vLLM 0.28 image, dump its logprobs on the same
-# corpus as the other arms, compare to the image-matched teacher, and grep the
-# route.
+# Serve a Tessera-wire checkpoint through Tessera's own vLLM plugin on the
+# selected digest-pinned image (the dense vLLM 0.28 pin is the default). Dump
+# its logprobs on the selected model-matched corpus, compare to the supplied
+# image-matched teacher, and record the route. Campaigns must supply matching
+# model, corpus, teacher and runtime settings together.
 #
-# The acceptance is the GRIDBOOK LANE's own number on the same bytes: these
-# checkpoints are hardlinks of the ones that lane served, retargeted by a
-# config edit only (``retarget_checkpoint_to_plugin.py``), and the plugin runs
-# the same decoder and the same ``torch._scaled_mm``.  A non-zero mutual KL
-# against the matching /mnt/shared/tessera-kl/qwen_gridbook_* dump would mean
-# the move changed the arithmetic, which it must not.
+# For the historical dense Gridbook retargeting experiment, the checkpoints
+# were hardlinks retargeted by config only (retarget_checkpoint_to_plugin.py),
+# so mutual KL against that lane tested preservation of its decoder arithmetic.
+# That experiment's acceptance rule is not a general MoE promotion criterion;
+# each campaign must retain its own matched-byte served evidence and gate.
 #
 # There is NO enable flag: ``quant_method: "tessera"`` in the checkpoint selects
 # the plugin.  TESSERA_SERVE_MODE declares the residency.
@@ -31,9 +30,14 @@ PORT=${PORT:-${TESSERA_KL_PORT:-8000}}
 # container of MINE must never be a name another worker's `docker rm -f` matches.
 NAME=${TESSERA_KL_NAME:-tessera-plugin-serve-$ARM}
 CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
-TEACHER=$KLDIR/qwen_teacher_bf16_v028.json
-DUMP=$KLDIR/qwen_tessera_$ARM.json
-LOG=$RUNS/serve_qwen_tessera_$ARM.log
+# The three paths a NON-Qwen arm has to move, defaulted to what every arm
+# before them used so an existing command line records the same files.  The
+# corpus was already overridable; these were not, and a model with another
+# tokenizer needs all four to move together or it compares its logprobs to
+# another model's.
+TEACHER=${TESSERA_KL_TEACHER:-$KLDIR/qwen_teacher_bf16_v028.json}
+DUMP=${TESSERA_KL_DUMP:-$KLDIR/qwen_tessera_$ARM.json}
+LOG=${TESSERA_KL_LOG:-$RUNS/serve_qwen_tessera_$ARM.log}
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # GPU-MEMORY UTILISATION IS PASSED IN, NOT EXPANDED IN THE CONTAINER.  The
 # `vllm serve` line lives inside a single-quoted `bash -c` string, so
@@ -103,6 +107,7 @@ fi
 curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/json' \
   -d '{"model":"kl-target","prompt":"The capital of France is","max_tokens":16,"temperature":0}' | $PY -c "import json,sys; print('completion:', repr(json.load(sys.stdin)['choices'][0]['text']))"
 if ! $PY /home/rob/dq-runs/kl_tool.py dump --model kl-target --out "$DUMP" --url "http://127.0.0.1:${PORT}/v1/completions" \
+  --top-k "${TESSERA_KL_TOPK:-1024}" \
   --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL"; then
   docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1
   echo "dump FAILED; serve log at $LOG"; exit 3

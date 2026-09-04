@@ -10,11 +10,13 @@
 # is a digest reference and it lives in ONE place --
 # src/tessera/serving/runtime_contract.json's versions.attested_on.image -- read
 # from here, never copied into a script.  See src/tessera/serving/runtime_image.py
-# for the rule, the RepoDigests-not-.Id trap, and why an unpinned repository is
-# stamped rather than refused.
+# for the rule and the RepoDigests-not-.Id trap. Explicit digest references
+# are checked for every repository; other repositories' floating tags remain
+# stamped without being compared to the unrelated default pin.
 #
 #   runtime_image_pin                -> print the pinned pull reference
-#   runtime_image_require IMAGE      -> refuse (exit 2) unless IMAGE is the pin;
+#   runtime_image_require IMAGE      -> enforce the default repository pin and
+#                                       verify any explicit digest reference;
 #                                       sets RUNTIME_IMAGE_{DIGEST,LOCAL_ID,JSON}
 #
 # The refusal happens BEFORE serve_lock_acquire in every caller: a wrapper that

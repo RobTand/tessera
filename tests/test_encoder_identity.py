@@ -23,7 +23,7 @@ import torch
 from tessera import encoder_identity as ei
 from tessera.alphabet import E4M3_GRID, SERIALISABLE_GRIDS
 from tessera.container import SCHEMA_MINOR, SCHEMA_MINORS_READ, parse
-from tessera.errors import ManifestError
+from tessera.errors import ManifestError, TesseraError
 from tessera.export import encode_linear, encode_linear_planes, recipe_table
 from tessera.manifest import Manifest
 from tessera.unit_artifact import _resolve_fixture_id, build_unit_artifact
@@ -359,3 +359,24 @@ def test_resumable_reads_absent_as_the_untagged_encoder():
     )
     assert ei.resumable(_Foreign()) is False
     assert ei.resumable(_Mine()) is True
+
+
+def test_a_presence_flag_that_is_not_a_bool_is_refused():
+    """The shard, reach and fixture records are flagged present with one
+    canonical bool.  A flag byte of 2 is not a bool, and a reader that treats
+    it as "present" would accept two byte strings for one manifest -- the
+    canonical encoding's one rule.  The reader has to refuse it, not truthy it."""
+    weight = ei._fixture_weight()
+    _exported, unit, forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024
+    )
+    manifest = build_unit_artifact(
+        unit, "u", forests, 1024, fixture_id=bytes(range(32))
+    )[0]
+    data = manifest.encode(6)
+    assert Manifest.decode(data, 6) == manifest
+    # The fixture record is the last field: one flag byte, then its digest.
+    assert data[-33] == 1
+    patched = data[:-33] + b"\x02" + data[-32:]
+    with pytest.raises(TesseraError, match="bool"):
+        Manifest.decode(patched, 6)

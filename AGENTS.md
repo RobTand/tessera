@@ -206,8 +206,15 @@ person or agent — changing the code.
   both red rows on `d11dc01` and `82f0047` are exactly that case. Each row names the commit **that arm** reported measuring, not
   the one the receipt was assembled against: the arms are separate processes
   on separate boxes, and a GPU arm queued behind a held reservation can place
-  after the checkout has moved. Two commits in one run's rows are two
-  measurements, not a merge receipt. The merge run is still the coordinator's
+  after the checkout has moved. Two different source trees in one run are two
+  measurements, not a merge receipt. PrismaBuild's parentless snapshot IDs can
+  also differ solely because their action-specific closure stamps differ.
+  Preserve those raw IDs and require
+  `commits_measured.effective_source.agree` to establish equivalent source:
+  the population hashes actual tracked paths, modes and bytes, excluding only
+  metadata verified against its exact sealed action. A shared original HEAD,
+  a stamp-shaped filename, or unknown provenance establishes no equivalence.
+  The merge run is still the coordinator's
   to launch, the way the x86 one already is; nothing triggers it
   automatically.
 - The pre-fix failure line for every test added.

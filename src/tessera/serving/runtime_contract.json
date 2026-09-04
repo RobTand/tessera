@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 14,
+ "contract_version": 16,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -190,7 +190,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v4",
+  "schema": "tessera.lane-eligibility.v5",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -204,11 +204,16 @@
    "batch"
   ],
   "structures": [
-   "dense"
+   "dense",
+   "routed_moe"
   ],
   "cells": [
    {
     "id": "tessera_e2m1_k2_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -233,6 +238,10 @@
    },
    {
     "id": "tessera_e2m1_k2_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -257,6 +266,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -281,6 +294,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -305,6 +322,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -329,6 +350,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -357,6 +382,10 @@
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -381,6 +410,10 @@
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -401,6 +434,44 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "runtime": {
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "execution_modes": ["eager"]
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regime": "decode",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
+    "runtime": {
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "execution_modes": ["eager"]
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regime": "batch",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
     "predicates": []
    }
   ]
@@ -455,7 +526,7 @@
     }
    }
   ],
-  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for both families because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
+  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for every declared family because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
  },
  "expert_parallel": {
   "axis": "vllm_expert_parallel_size",
@@ -637,6 +708,78 @@
             "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
          },
          {
+            "architecture": "Lfm2MoeForCausalLM",
+            "runtime": {
+               "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+               "image_id": "sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+               "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+            },
+            "model": {
+               "model_type": "lfm2_moe",
+               "num_hidden_layers": 24,
+               "layer_types": [
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention"
+               ],
+               "mlp_layer_types": null
+            },
+            "supports_quant": true,
+            "hf_to_vllm_mapper_unstacked": {
+               "orig_to_new_substr": {
+                  ".conv.": ".short_conv."
+               }
+            },
+            "offered": [
+               "model.layers.*.feed_forward.gate",
+               "model.layers.*.feed_forward.w13",
+               "model.layers.*.feed_forward.w2",
+               "model.layers.*.self_attn.out_proj",
+               "model.layers.*.self_attn.qkv_proj",
+               "model.layers.*.short_conv.in_proj",
+               "model.layers.*.short_conv.out_proj"
+            ],
+            "never_offered": [
+               {
+                  "prefix_pattern": "model.layers.*.short_conv.conv1d",
+                  "class": "ColumnParallelLinear",
+                  "quant_method": "UnquantizedLinearMethod"
+               }
+            ],
+            "offered_non_linear": [
+               {
+                  "prefix_pattern": "lm_head",
+                  "class": "ParallelLMHead"
+               },
+               {
+                  "prefix_pattern": "model.layers.*.feed_forward.experts",
+                  "class": "RoutedExperts"
+               }
+            ],
+            "receipt": "docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json"
+         },
+         {
             "architecture": "Qwen3ForCausalLM",
             "runtime": {
                "image": "vllm/vllm-openai:latest",
@@ -705,7 +848,17 @@
          }
       ]
    },
-   "changelog": [
+ "changelog": [
+  {
+   "contract_version": 16,
+   "date": "2026-09-04",
+   "change": "Two scoped routed_moe E4M3/q1024 resident eager sm121 cells, from the complete LFM2.5-8B-A1B artifact and exact EUGR digest. The full 22-stack/2112-projection census observed the modular TRITON FP8 route in decode M1 and prefill M64; the source-bound usable BF16 teacher/student comparison covers 4096 prefill positions, top-K1024 KL lower bound0.0831613565 and top1 agreement85.1074% (not full-vocabulary KL or decode-quality evidence). Exact artifact, runtime, source, tail limitations and cleanup receipts: docs/measurements/tessera-lfm-campaign-2026-09-04.md sections7-8. Launches derive from the existing structure-aware ROUTE_LAUNCHES. Lane schema stays v5; all eight dense cells, their default image, encoder bytes, rungs and TP/EP bounds remain unchanged. No compiled or streamed MoE claim is added."
+  },
+  {
+   "contract_version": 15,
+   "date": "2026-09-04",
+   "change": "lane_eligibility v5 requires an explicit runtime scope on each cell: exact image manifest digest and measured execution_modes. The eight existing dense cells preserve their eager and compiled scope on the existing vLLM 0.28.0 digest; versions.attested_on and all wire, activation, launch, residency, rung, TP and EP claims remain unchanged. Their historical census headers and the contemporaneous global image attestation supply that migration evidence, not newly fabricated per-census image stamps (docs/measurements/runtime-scope-migration-2026-09-04.md). Cell lookup and overlap include image and execution mode; missing runtime context resolves unattested. Existing ids remain stable, with an optional canonical-runtime hash suffix for disjoint variants and unique ids required. Old v4 readers must refuse this schema because ignoring runtime scope would widen the attestation. No routed-MoE cell is added by this schema change."
+  },
     {
      "contract_version": 14,
      "date": "2026-09-04",

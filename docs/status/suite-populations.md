@@ -19,8 +19,14 @@ master ref resolved in that checkout and the question was not answered.
 always the tree the receipt was assembled against: the arms are separate
 processes on separate boxes, and a queued arm can place after the checkout has
 moved. `(assumed)` marks a row whose run predates that field, where the
-receipt's own commit is the best available guess. Rows of one run with two
-commits are two measurements, not one merge receipt.
+receipt's own commit is the best available guess. PrismaBuild's parentless
+snapshot commits also differ when only its verified action-specific closure
+stamp differs. New populations retain that raw commit and independently hash
+the effective source; the JSON receipt's
+`commits_measured.effective_source.agree` distinguishes equivalent source from
+different source, and is unknown for legacy or unverifiable populations.
+`source <hash>` beside a row's snapshot commit names that verified source.
+Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
@@ -61,3 +67,7 @@ dead before its summary. A device string is a measurement.
 | -- | -- | -- | gpu | -- | not submitted in this run | -- | -- | -- | -- | -- |
 | 2026-09-04T14:34:06Z | `66f648017f44` | yes | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2121 | 0 | 13 | 0 | 0 (pool) |
 | 2026-09-04T14:35:57Z | `66f648017f44` | yes | x86 | -n 8 | torch 2.11.0+cpu reports no CUDA device | 1604 | 0 | 517 | 0 | 0 (pool) |
+| -- | `6072e572e749` (assumed) | no | gpu | serial | no population published | -- | -- | -- | 0 | -- |
+| -- | `6072e572e749` (assumed) | no | x86 | -n 24 | no population published | -- | -- | -- | 0 | -- |
+| 2026-09-04T22:25:35Z | `86aa47409242`<br>source `40f8d9ba0962` | unknown | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2535 | 0 | 12 | 0 | 0 |
+| 2026-09-04T22:27:09Z | `08d1571d7598`<br>source `40f8d9ba0962` | unknown | x86 | -n 24 | torch 2.11.0+cpu reports no CUDA device | 2016 | 0 | 518 | 0 | 0 |

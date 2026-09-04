@@ -1,19 +1,20 @@
 """The runtime contract this plugin packages, and what it is allowed to say.
 
-Principle 14: a claim about what a serving runtime DOES is derived from a
+Runtime attestation: a claim about what a serving runtime DOES is derived from a
 machine-readable table the runtime publishes, never asserted in prose a gate
 cannot read.  This package IS that runtime for Tessera bytes, so it publishes
 its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
 ``importlib.resources`` rather than hard-coding a route claim.
 
 WHAT A CELL MEANS.  A ``lane_eligibility`` cell says: on this platform, for
-this payload family, at these rungs, in this regime, at this residency, the
+this payload family, at these rungs, in this regime, at this residency, on
+this exact runtime image and measured execution mode, the
 plugin executes these LAUNCHES under this activation contract on a route with
 this status.  A cell exists only where a container receipt covers it; absence
-resolves ``unattested``, which is the honest status and not a refusal.  Today
-the table is DENSE-ONLY on sm_121, at one rung per family -- exactly the axes
-the served receipts cover.  Routed-MoE experts, TP>1 and any other rung are
-not in it.
+resolves ``unattested``, which is the honest status and not a refusal. The table
+preserves the measured dense cells and adds routed-MoE E4M3/q1024 resident eager
+on its own exact EUGR image. TP>1, expert parallelism and unmeasured runtime,
+residency or rung combinations are not attested.
 
 THE LAUNCH IS A VALUE, AND THE RESIDENCY IS A CONDITION (schema v4, #111).
 ``executes`` is a list of ``{symbol, decoder}`` and it is DERIVED here from
@@ -31,8 +32,9 @@ unreachable and false the moment a rate-constrained artifact was served, with
 the lane's own op on 112 of 112 modules.  The residency carries the condition
 because both window routes set ``layer.tessera_gemv = None`` in ``resident``
 -- the lane exists in ``streamed`` alone -- so two cells of one ``(platform,
-family, structure, regime)`` must cover DISJOINT residencies, and a cell
-``id`` is its scope and never a launch.
+family, structure, regime, runtime image, execution mode)`` must cover DISJOINT
+residencies. A cell ``id`` names its scope and never a launch; v5 permits a
+runtime-derived suffix for disjoint variants while retaining existing IDs.
 
 WHAT THE BYTES WERE.  A cell says a receipt covered a rung; it cannot say
 *which bytes* at that rung, and two encoders can write two byte strings at
@@ -88,6 +90,7 @@ on a machine with no GPU.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from types import MappingProxyType
@@ -95,6 +98,7 @@ from typing import Any, Mapping
 
 __all__ = [
     "CENSUS_PHASE_REGIMES",
+    "EXECUTION_MODES",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
     "classify_construction",
@@ -111,6 +115,9 @@ __all__ = [
     "contract_path",
     "cell_executes",
     "cell_residency_modes",
+    "cell_runtime_scope",
+    "cell_runtime_id_suffix",
+    "require_runtime_image",
     "extension_lane",
     "lane_decoder",
     "lane_requirements",
@@ -121,7 +128,10 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v4"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v5"
+#: Execution is a separate axis from token-count regime and residency. These
+#: are the two modes selected by a serving invocation's enforce_eager flag.
+EXECUTION_MODES = ("eager", "compiled")
 #: The ``formats[]`` discriminator for a family addressed by a RATE (body bits
 #: per 256 weights), not by a codebook size.  Every Tessera family is one.
 FORMAT_KIND = "tessera_wire"
@@ -146,7 +156,7 @@ REQUIRES_PLUGIN = "tessera"
 CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
     {"prefill": "batch", "decode": "decode"})
 
-_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked", "fallback"})
+_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked"})
 _QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
 
 
@@ -179,6 +189,44 @@ def _require_keys(payload: Mapping[str, Any], where: str, required: set[str],
     unknown = sorted(set(payload) - required - set(optional))
     if unknown:
         raise ValueError(f"{where} carries unknown field(s) {unknown}")
+
+
+def require_runtime_image(value: Any, where: str = "runtime.image") -> str:
+    """An exact manifest reference, using the serving image parser's grammar."""
+    from .runtime_image import parse_reference
+
+    if isinstance(value, str):
+        repository, tag, digest = parse_reference(value)
+        if digest is not None and tag is None and value == f"{repository}@{digest}":
+            return value
+    raise ValueError(
+        f"{where} must be an exact digest reference (repository@sha256:<64 lowercase hex>), "
+        f"got {value!r}; a floating tag or local image id does not identify an attested runtime")
+
+
+def cell_runtime_scope(cell: Mapping[str, Any],
+                       where: str = "lane_eligibility cell") -> tuple[str, tuple[str, ...]]:
+    """The explicit runtime scope a cell attests; no global image fallback."""
+    runtime = cell.get("runtime")
+    at = f"{where}.runtime"
+    _require_keys(runtime, at, required={"image", "execution_modes"})
+    image = require_runtime_image(runtime["image"], f"{at}.image")
+    modes = runtime["execution_modes"]
+    if (not isinstance(modes, list) or not modes
+            or any(not isinstance(mode, str) or mode not in EXECUTION_MODES for mode in modes)
+            or len(set(modes)) != len(modes)):
+        raise ValueError(
+            f"{at}.execution_modes must be a non-empty list of distinct modes from "
+            f"{list(EXECUTION_MODES)}, got {modes!r}")
+    return image, tuple(mode for mode in EXECUTION_MODES if mode in modes)
+
+
+def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
+    """An optional scope-derived suffix when multiple runtimes need distinct ids."""
+    image, modes = cell_runtime_scope(cell)
+    encoded = json.dumps({"image": image, "execution_modes": list(modes)},
+                         sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "_runtime_" + hashlib.sha256(encoded).hexdigest()
 
 
 def _validate_loader_axes(axes: Any, family: str, where: str) -> None:
@@ -478,7 +526,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
-    from .scheme import ROUTES, STRUCTURE_ROUTED_MOE, STRUCTURES
+    from .scheme import ROUTES, STRUCTURES
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
@@ -592,29 +640,24 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             "a phase the census drives under a name this document does not declare cannot be "
             "joined to a cell at all -- which is how a per-(family, regime) expectation goes "
             "vacuously true on half the matrix. Add the regime to BOTH sides, in this table.")
-    # ``lane_eligibility`` is an ATTESTATION block, so the set it may name is
-    # narrower than the set the dispatch serves -- the same split as
-    # ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
-    # does).  ``routed_moe`` entered ``scheme.STRUCTURES`` on 2026-09-04 and is
-    # executed by ``moe_route``; what covers it is a load-and-execute probe
-    # (docs/measurements/tessera-moe-route-load-2026-09-04.md), which is not a
-    # served receipt, so it does not enter here.  Derived from ``STRUCTURES``
-    # rather than written beside it, minus what has no served receipt, so a
-    # structure cannot appear here by being merely runnable.
-    unserved_structures = (STRUCTURE_ROUTED_MOE,)
-    attested = tuple(s for s in STRUCTURES if s not in unserved_structures)
-    unknown_structures = sorted(set(block["structures"]) - set(attested))
-    if unknown_structures:
-        refused = [s for s in unknown_structures if s not in STRUCTURES]
+    declared_structures = block["structures"]
+    if (not isinstance(declared_structures, list) or not declared_structures
+            or any(not isinstance(s, str) for s in declared_structures)
+            or len(set(declared_structures)) != len(declared_structures)):
         raise ValueError(
-            f"runtime_contract.lane_eligibility.structures names {unknown_structures}; this "
-            f"block may name {sorted(attested)}. "
-            + (f"{refused} is a structure the dispatch refuses outright. "
-               if refused else
-               "routed-MoE experts ARE executed by this build (scheme.STRUCTURES, "
-               "tessera.serving.moe_route) -- what they have no receipt for is being SERVED: no "
-               "census, no KL, no artifact. lane_eligibility is where served facts go, so the "
-               "cell waits for the serve, exactly as max_world_size waits for a two-rank one."))
+            "runtime_contract.lane_eligibility.structures must be a non-empty list of "
+            f"distinct strings, got {declared_structures!r}")
+    # ``scheme.STRUCTURES`` is the DISPATCH-capability bound, not an
+    # attestation source.  A new dispatch structure must not become eligible
+    # here merely because nobody remembered to add it to an ``unserved``
+    # denylist: only a cell below is the published authority that a served
+    # receipt exists.  First refuse anything the build cannot execute; after
+    # validating the cells, derive the positive attested set from them.
+    refused = sorted(set(declared_structures) - set(STRUCTURES))
+    if refused:
+        raise ValueError(
+            f"runtime_contract.lane_eligibility.structures names {refused}, which "
+            "scheme.STRUCTURES says the dispatch refuses outright")
     contracts_by_family = {
         # The route's own constant, not a copy: a cell that drifted from the
         # code would attest an activation contract the serve does not run.
@@ -622,19 +665,29 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
     _cell_scope: dict = {}
+    cell_ids: set[str] = set()
+    cell_structures: list[str] = []
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
         _require_keys(cell, where,
                       required={"id", "platform", "family", "structure", "regime",
                                 "rungs_q256", "activation_contract", "executes",
                                 "route_status", "qualification", "requires_plugin",
-                                "requires_serve_flags", "predicates"})
+                                "requires_serve_flags", "predicates", "runtime"})
+        if not isinstance(cell["id"], str) or not cell["id"]:
+            raise ValueError(f"{where}.id must be a non-empty string")
+        if cell["id"] in cell_ids:
+            raise ValueError(f"{where} repeats cell id {cell['id']!r}; every cell has one identity")
+        cell_ids.add(cell["id"])
+        runtime_image, execution_modes = cell_runtime_scope(cell, where)
         if cell["platform"] not in block["platforms"]:
             raise ValueError(f"{where}.platform {cell['platform']!r} is not declared")
         if cell["regime"] not in block["regimes"]:
             raise ValueError(f"{where}.regime {cell['regime']!r} is not declared")
         if cell["structure"] not in block["structures"]:
             raise ValueError(f"{where}.structure {cell['structure']!r} is not declared")
+        if cell["structure"] not in cell_structures:
+            cell_structures.append(cell["structure"])
         if cell["family"] not in families:
             raise ValueError(f"{where}.family {cell['family']!r} is not published in formats[]")
         if cell["route_status"] not in _ROUTE_STATUSES:
@@ -677,7 +730,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         _validate_cell_executes(cell, _FAMILY_TO_ROUTE[cell["family"]],
                                 families[cell["family"]], contract, where)
         # THE RESIDENCY IS A CONDITION, so two cells of one (platform, family,
-        # structure, regime) must not both claim one mode: a reader resolving
+        # structure, regime, runtime image, execution mode) must not both claim
+        # one residency: a reader resolving
         # "what runs here" would otherwise get whichever cell it read first,
         # and that is the failure this schema version exists to close.
         modes = cell_residency_modes(cell, where)
@@ -685,28 +739,52 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         # the launch it claimed (``..._decode_scaled_mm_w8a8``) -- an assertion
         # in a string no gate parses, which went stale the day the window-GEMV
         # lane became reachable while the id went on saying ``scaled_mm``
-        # (#111).  The launch is ``executes`` now; the id is the five facts a
-        # cell is resolved by, so it cannot say anything the table does not.
+        # (#111). The launch is ``executes`` now. The id retains its base
+        # scope, optionally with the v5 runtime suffix; explicit cell fields
+        # remain the authority for matching either spelling.
         expected_id = "_".join(
             [cell["family"].lower(), cell["structure"], cell["platform"].replace("_", ""),
              cell["regime"]]
             + ([] if len(modes) == len(_all_modes()) else list(modes)))
-        if cell["id"] != expected_id:
+        scoped_id = expected_id + cell_runtime_id_suffix(cell)
+        if cell["id"] not in (expected_id, scoped_id):
             raise ValueError(
                 f"{where}.id is {cell['id']!r}; a cell id is its SCOPE and must be "
-                f"{expected_id!r} (family, structure, platform, regime, plus the residency "
-                "where the cell covers only some). An id that names a launch is a second, "
+                f"{expected_id!r}, optionally followed by its derived runtime suffix "
+                "(family, structure, platform, regime, plus the residency where the cell "
+                "covers only some). An id that names a launch is a second, "
                 "unparsed spelling of `executes` -- exactly the one that went stale.")
-        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"])
+        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"], runtime_image)
         for mode in modes:
-            clash = _cell_scope.get((scope, mode))
-            if clash is not None:
-                raise ValueError(
-                    f"{where} ({cell['id']!r}) and {clash!r} both cover "
-                    f"{scope} at residency {mode!r}. A cell is resolved by those five facts "
-                    "plus the rung, so two cells claiming one of them is a table whose answer "
-                    "depends on the order it was written in.")
-            _cell_scope[(scope, mode)] = cell["id"]
+            for execution_mode in execution_modes:
+                key = (scope, mode, execution_mode)
+                clash = _cell_scope.get(key)
+                if clash is not None:
+                    raise ValueError(
+                        f"{where} ({cell['id']!r}) and {clash!r} both cover "
+                        f"{scope} at residency {mode!r} and execution mode {execution_mode!r}. "
+                        "A cell is resolved by these facts plus the rung, so two cells "
+                        "claiming one of them would make the answer depend on table order.")
+                _cell_scope[key] = cell["id"]
+
+    # The structure axis is a projection of the receipt-bearing cells, never
+    # of the dispatch roster.  This is intentionally positive authority: when
+    # a future structure enters ``scheme.STRUCTURES`` it remains unattested
+    # until a cell is published for an actual serve, without requiring a
+    # second hand-maintained list of every runnable-but-unserved structure.
+    if declared_structures != cell_structures:
+        without_cells = sorted(set(declared_structures) - set(cell_structures))
+        raise ValueError(
+            "runtime_contract.lane_eligibility.structures names "
+            f"{declared_structures}, but its receipt-bearing cells project exactly to "
+            f"{cell_structures}. "
+            + (f"no receipt-bearing cell names {without_cells}; lane_eligibility is where "
+               "served facts go, so dispatch capability alone cannot attest a structure. "
+               if without_cells else
+               "The structure axis is ordered by first occurrence in the cells, so a second "
+               "spelling cannot describe the same published contract. ")
+            + "Publish the served cell only after its census, artifact, and quality receipt "
+              "exist, then derive this axis from those cells.")
 
     _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
                   required={"axis", "semantics", "units"},
@@ -729,7 +807,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     if contract["expert_parallel"]["units"]:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "
-            "routed-MoE experts, so the contract makes no expert-parallel claim")
+            "expert-parallel execution, so the contract makes no expert-parallel claim")
     _validate_fused_module(contract["fused_module"], "runtime_contract.fused_module")
 
 
@@ -928,7 +1006,7 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     lane-readable rung was served (#111).  The value is derived here from
     ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
     is built from, narrowed by exactly the axes the cell already carries: the
-    regime, the residency its serve flag names, and the lanes each of its
+    structure, regime, the residency its serve flag names, and the lanes each of its
     rungs can reach.
     """
     from ..grammar import rate_set, root_from_q256
@@ -944,12 +1022,14 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
         rates = rate_set(root_from_q256(int(rung)), cap=cap)
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates)
         for mode in modes:
-            want |= launch_pairs(route, regime=cell["regime"], mode=mode, lanes=lanes)
+            want |= launch_pairs(route, structure=cell["structure"],
+                                 regime=cell["regime"], mode=mode, lanes=lanes)
     got = cell_executes(cell)
     if got != want:
         raise ValueError(
             f"{where}.executes is {sorted(got)} but the {route} route makes "
-            f"{sorted(want)} in the {cell['regime']!r} regime at residency {list(modes)} "
+            f"{sorted(want)} for structure {cell['structure']!r} in the "
+            f"{cell['regime']!r} regime at residency {list(modes)} "
             f"on rung(s) {list(cell['rungs_q256'])} (tessera.serving.scheme.ROUTE_LAUNCHES, "
             "the table the routes' own census_expected is derived from). A cell states what "
             "the runtime EXECUTES; it is derived from the dispatch's table or it is a claim "

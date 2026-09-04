@@ -127,7 +127,8 @@ def test_a_container_that_is_not_what_the_sidecar_declared_is_refused():
 def test_a_missing_expert_or_projection_is_refused_by_name():
     w13_blobs, w2_blobs, scheme, _ref = _stack()
     declared = validate_tessera_moe_scheme(scheme, "m")
-    with pytest.raises(ValueError, match="every expert of a stack"):
+    # Pin the named group/count refusal, not the explanatory suffix prose.
+    with pytest.raises(ValueError, match=r"group 'w13' carries .* expert row\(s\)"):
         moe_route.prepare_tessera_moe_experts(
             {"w13": w13_blobs[:-1], "w2": [[b] for b in w2_blobs]}, declared, "m", device="cpu")
     with pytest.raises(ValueError, match="declared projection"):
@@ -143,3 +144,75 @@ def test_a_blob_longer_than_the_declared_stride_is_refused():
     with pytest.raises(ValueError, match="longer than the"):
         moe_route.prepare_tessera_moe_experts(
             {"w13": w13_blobs, "w2": [[b] for b in w2_blobs]}, declared, "m", device="cpu")
+
+
+# --- what a census may compare a served expert stack against ----------------
+#
+# The route owns its expectation, exactly as ``fp8_gemv.census_expected`` owns
+# the dense FP8 route's: the dispatch is here, so the value a receipt is graded
+# on is here.  What these pin is that it is not the dense route's value.
+
+#: One routed-expert record, verbatim from the first served census of a Tessera
+#: MoE checkpoint (``/mnt/shared/tessera-runs/ts5/served/census.json``: GB10,
+#: vLLM 0.28, eager, ``TESSERA_SERVE_MODE=resident``, a 16-expert cut of
+#: GLM-5.3-Flash-4layer, 3 of 3 stacks in both phases).
+SERVED_MOE_SYMBOL = "vllm.fused_moe.modular_kernel:TRITON"
+SERVED_MOE_DECODER = "torch_materialize_stock"
+
+
+def test_the_expert_route_publishes_one_launch_in_both_regimes():
+    """No lane, no kernel decode: one materialised launch at every M.
+
+    The window routes' two regimes admit different pairs because their
+    dispatch branches on M.  This one does not branch at all -- the stack is
+    materialised once at load -- so a regime split here would be a distinction
+    the code does not make.
+    """
+    from tessera.serving.telemetry import DECODER_TORCH_STOCK
+
+    expected = moe_route.census_expected(compiled=False)
+    assert set(expected) == {"decode", "batch"}
+    assert expected["decode"] == expected["batch"]
+    assert expected["decode"] == {(moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK)}
+    # A traced forward changes nothing: the combined ``a+b`` symbol the window
+    # routes stamp under compile exists because two launches share one graph.
+    assert moe_route.census_expected(compiled=True) == expected
+
+
+def test_the_served_records_symbol_reduces_into_the_expectation():
+    """The runtime's backend pick is recorded, not graded.
+
+    ``select_fp8_moe_backend`` is vLLM's predicate over the kernels it finds on
+    the box; the record keeps its answer so a receipt says which backend ran,
+    and the comparison is over the entry point, which is the part this route
+    promises.
+    """
+    expected = moe_route.census_expected(compiled=False)["batch"]
+    assert (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER) in expected
+    assert moe_route.census_symbol_base(SERVED_MOE_SYMBOL) == moe_route.GEMM_SYMBOL
+    # ...and a suffix is not a licence: another entry point still fails, with
+    # or without one.
+    for other in ("torch._scaled_mm", "torch._scaled_mm:TRITON", "tessera_window_gemv::gemv"):
+        assert (moe_route.census_symbol_base(other), SERVED_MOE_DECODER) not in expected
+
+
+def test_the_dense_fp8_expectation_would_refuse_every_served_stack():
+    """THE DEFECT THIS PINS, and it is a census defect rather than a route one.
+
+    An expert stack serves under ``TESSERA_FP8`` -- same family, same wire,
+    same activation contract -- so a census that resolves a record's
+    expectation from the FAMILY alone hands a stack the dense route's pair set.
+    Every one of the three stacks served in
+    ``/mnt/shared/tessera-runs/ts5/served/census.json`` reports the pair below,
+    in both phases, and none of those pairs is in that set: the census would
+    have refused a serve that did exactly what this route intends, six
+    problems on a correct receipt.  The structure decides the launch, so the
+    structure has to decide the expectation.
+    """
+    from tessera.serving import fp8_gemv
+
+    dense = fp8_gemv.census_expected(compiled=False)
+    served = (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER)
+    for regime in ("decode", "batch"):
+        assert served not in dense[regime]
+        assert (SERVED_MOE_SYMBOL, SERVED_MOE_DECODER) not in dense[regime]

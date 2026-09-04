@@ -1,5 +1,13 @@
 # Tessera: serving contract, MoE cell, and export gate
 
+**Status update, 2026-09-04:** the historical open census/KL item below is now
+superseded for the complete LFM2.5-8B-A1B artifact. Contract v16 attests only
+E4M3/q1024 routed MoE, resident/eager on sm_121 and the exact EUGR image, for
+decode and batch. Current scope and limitations are in
+[`ARCHITECTURE.md` §4.4](ARCHITECTURE.md#44d-the-expert-stack-is-a-structure-not-a-module)
+and the [campaign receipt §§7–9](measurements/tessera-lfm-campaign-2026-09-04.md#7-full-model-route-census-completed-at-2105-utc).
+The historical body remains intact; it is not the current release checklist.
+
 Status: **decisions**, 2026-09-01; sections 1 and 3 **superseded 2026-09-02**
 by the Tessera serving plugin (`docs/measurements/tessera-serving-plugin-2026-09-02.md`).
 The superseded text is kept: it is the decision the plugin replaced, and the
@@ -176,8 +184,11 @@ with that declaration, per principle 12.
    whether a serving backend is worth building. `validate_assignments_kl` needs
    no served artifact.
 3. **Small-scale first** — full chain on LFM2.5-8B-A1B (shipped, MoE, small
-   enough to iterate, exercises the packed-expert cell) before GLM. GLM-5.3 is
-   the campaign, not the testbed.
+   enough to iterate, and exercising the served routed-MoE path through its
+   unpacked per-expert `w1`/`w3`/`w2` tensors) before GLM. Packed-source layout
+   coverage is independent: Qwen3.8-Flash-Next supplies the real packed
+   `gate_up_proj`/`down_proj` population, and the exporter requires its
+   convention explicitly. GLM-5.3 is the campaign, not the testbed.
 4. **Export**, then **the serving backend**, in that order and only if (2) pays.
 
 Aqua merges at step 1/2 (the allocate step), not before. The disk-vs-resident
@@ -1086,13 +1097,12 @@ loader would have dropped silently.
    `offered_non_linear` naming `...mlp.experts` / `RoutedExperts` on
    GLM-5.3-Flash, and `classify_construction` now reads that list as well as
    `offered`, which is what the stack's construction gate needed.
-2. **The packed 3-D source layout** stays refused, and is blocked on **two**
-   unattested conventions rather than the one this list named. §9.3's
-   orientation ambiguity is the first. The second is the gate/up **split**: a
-   packed `gate_up_proj` carries both halves on one axis, and whether they are
-   chunked or interleaved is the producing library's convention, which the
-   tensor does not state. Getting either wrong transposes or interleaves every
-   expert in silence. The refusal names both.
+2. ~~**The packed 3-D source layout.**~~ **Landed 2026-09-04.** The plan now
+   states one closed convention: `out_first_chunked` or
+   `in_first_interleaved`. Exact config-derived shapes are checked before the
+   first encode, canonical per-expert wires are emitted, and the convention is
+   stamped into both scheme and manifest. Missing or invented conventions are
+   still refused; neither orientation nor gate/up split is guessed.
 3. **A served census and KL.** §0's encode table prices it: the E4M3 whole-expert
    rate is 1.611 Mparam/s on a held box, so one GLM-5.3-Flash-4layer MoE layer
    (288 experts x 3 projections) is ~72–75 min and all three are ~3.7 h, before
@@ -1197,10 +1207,11 @@ census, no KL.
 ### What §14's list looks like now
 
 1. ~~The exporter's write half~~ — **done**, unpacked source.
-2. **The packed 3-D source layout** — still refused, on **two** conventions:
-   §9.3's orientation ambiguity, and the gate/up split (chunked or
-   interleaved), which the tensor does not state either. GLM's source is
-   unpacked, so the target model is not blocked by this.
+2. ~~**The packed 3-D source layout**~~ — **done** under the two explicit
+   conventions in §14. A producer must name one; the tensor is never asked to
+   prove facts its dimensions cannot carry. LFM remains the independent
+   unpacked served-route target, while Qwen supplies the packed-source
+   ingestion population.
 3. **A served census and KL** — **still open, and it is the whole of what is
    left.** Costed in §0 and in the receipt: ~75 min of held-box GPU per
    288-expert stack, ~3.75 h for all three, plus a GLM teacher dump on the

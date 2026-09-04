@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Serve one checkpoint, dump its per-position logprobs, stop the serve.
 #
-# The two arms of a KL must not be resident at once: each is a 45 GB BF16
-# model and the box has ~121 GB of unified memory shared with the GPU, so a
-# concurrent pair is an OOM, not a measurement.  Sequential dumps also mean
+# The two arms of a KL must not be resident at once: model weights, caches
+# and GPU allocations share the box's unified-memory pool. Sequential dumps
+# keep the campaign inside its reserved memory envelope and also mean
 # each arm gets an identical, uncontended box -- which matters because the
 # reference arm's numbers are the denominator of everything downstream.
 #
@@ -12,8 +12,9 @@ set -euo pipefail
 
 MODEL="$1"; OUT="$2"; ROLE="$3"; LABEL="${4:-}"
 # The default is Mia's GLM image, which is a different runtime and carries no
-# pin: it is resolved and stamped, not refused.  A TESSERA_KL_IMAGE on the
-# PINNED repository is refused unless it is the pin (issue #100).
+# pin: it is resolved and stamped, not refused. The default repository must
+# use its contract pin; any explicit digest is verified against the local
+# image's RepoDigests, including images from other repositories (issue #100).
 IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
 PORT="${TESSERA_KL_PORT:-8000}"
 CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
@@ -98,6 +99,10 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # --kernel-config and its JSON arrive as two argv entries).  Globbing is not
 # wanted with them: JSON carries [ and ], and a file in cwd that happened to
 # match would silently rewrite a serve's configuration.
+# ``TESSERA_KL_DOCKER_EXTRA`` is Docker argv before the image (for example an
+# entrypoint override).  ``TESSERA_KL_IMAGE_COMMAND`` is image argv after it
+# (for example ``serve`` for the vLLM CLI image); those are distinct Docker
+# seams and neither can substitute for the other.
 set -f
 SERVE_REAPED=0
 docker run -d --name "$NAME" --gpus all --ipc=host \
@@ -108,6 +113,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   $(build_identity_docker_env) \
   ${TESSERA_KL_DOCKER_EXTRA:-} \
   "$IMAGE" \
+  ${TESSERA_KL_IMAGE_COMMAND:-} \
   "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 \
@@ -161,6 +167,7 @@ if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
 fi
 
 ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"
+      --top-k "${TESSERA_KL_TOPK:-1024}"
       --corpus-contract "$CORPUS" --role "$ROLE" --artifact-path "$MODEL")
 # The regime flags are added only when the regime is NOT the default, so a
 # prefill dump taken through this wrapper today records the same argv it

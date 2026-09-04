@@ -33,7 +33,7 @@ serves them at one declared residency.
 
 STRUCTURE.  ``structure`` names what kind of vLLM layer the target is:
 ``dense`` (a ``LinearBase``, one blob per module) or ``routed_moe`` (a
-``RoutedExperts`` stack, one blob per expert per projection group).  A dense
+``RoutedExperts`` stack, one blob per expert per projection).  A dense
 scheme declares one geometry and one exact ``wire_bytes``; a routed-MoE scheme
 declares an expert count and the two GROUPS vLLM's fused-MoE kernel reads --
 ``w13`` (gate then up, one matrix) and ``w2`` -- each with its own geometry,
@@ -79,11 +79,19 @@ __all__ = [
     "MOE_GROUPS",
     "MOE_GROUP_SHARDS",
     "MOE_GROUP_ROLES",
+    "MOE_SHARD_PROJECTIONS",
+    "MOE_GROUP_PROJECTIONS",
     "MOE_BUILDERS",
+    "MOE_SOURCE_UNPACKED",
+    "MOE_SOURCE_OUT_FIRST_CHUNKED",
+    "MOE_SOURCE_IN_FIRST_INTERLEAVED",
+    "MOE_SOURCE_LAYOUTS",
     "ROUTES",
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
     "WINDOW_GEMV_SYMBOL",
+    "MOE_GEMM_SYMBOL",
+    "moe_census_symbol_base",
     "regime_of_m",
     "route_launches",
     "launch_pairs",
@@ -125,7 +133,7 @@ TESSERA_BF16 = "TESSERA_BF16"
 TESSERA_SCHEME_KEY = "family"
 
 #: What kind of vLLM layer a scheme's target is.  ``dense`` is one blob per
-#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION GROUP on a
+#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION on a
 #: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
 #: a structure outside it is refused by name rather than served through a
 #: method that would read the wrong tensor rank.
@@ -137,17 +145,40 @@ STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
 #: (gate at rows ``[0:N]``, up at ``[N:2N]`` -- ``RoutedExperts._load_w13``
 #: narrows on ``shard_id``) and its down alone in ``w2``.  A Tessera MoE
-#: checkpoint therefore writes one fused container per group per expert: the
-#: group IS the tile the kernel reads, so the container and the tile have the
-#: same members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
+#: checkpoint therefore writes one fused container per projection per expert.
+#: The group's containers stack into the tile the kernel reads, with the same
+#: members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
 #: shard vocabulary for each group, in the row order the group stacks; a
 #: producer reads the order off this table instead of restating it.
 MOE_GROUPS = ("w13", "w2")
 MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2",)}
-#: How many roles each group's container holds.  DERIVED from the shard table,
+#: How many projection containers each group holds. DERIVED from the shard table,
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+#: The canonical wire role for each runtime shard. Source checkpoints may
+#: spell their tensors with either vocabulary, but wire roles are descriptive.
+#: The exporter and sidecar reader share this table so a self-consistent pair
+#: of sidecar and blobs cannot reinterpret the runtime's gate/up row order.
+MOE_SHARD_PROJECTIONS = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+MOE_GROUP_PROJECTIONS = {
+    group: tuple(MOE_SHARD_PROJECTIONS[shard] for shard in shards)
+    for group, shards in MOE_GROUP_SHARDS.items()
+}
+
+#: The checkpoint layouts the exporter can prove it interpreted.  This is
+#: provenance rather than a runtime layout: all three are normalised to the
+#: same canonical per-expert gate/up/down wires before vLLM sees them.  Old
+#: schemes predate the field and can only have come from the original
+#: per-expert writer, so their closed-world default is ``unpacked_per_expert``.
+MOE_SOURCE_UNPACKED = "unpacked_per_expert"
+MOE_SOURCE_OUT_FIRST_CHUNKED = "out_first_chunked"
+MOE_SOURCE_IN_FIRST_INTERLEAVED = "in_first_interleaved"
+MOE_SOURCE_LAYOUTS = (
+    MOE_SOURCE_UNPACKED,
+    MOE_SOURCE_OUT_FIRST_CHUNKED,
+    MOE_SOURCE_IN_FIRST_INTERLEAVED,
+)
 
 #: WHICH FAMILIES HAVE AN EXPERT ROUTE, and the one home for that rule.
 #: FAMILY = ROUTE holds on the expert stack exactly as it does on a Linear,
@@ -250,8 +281,8 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: THE LAUNCHES EACH ROUTE MAKES, and the conditions under which it makes one.
 #:
 #: ``ROUTES[...]["gemm_symbol"]`` answers "which GEMM does this route call",
-#: which was the whole answer while a route had exactly one launch.  The FP8
-#: and BF16 routes have three (issue #111): the materialised tile under the
+#: which was the whole answer while a route had exactly one launch. The dense
+#: FP8 and BF16 routes have three (issue #111): the materialised tile under the
 #: stock GEMM, the same GEMM over a tile the window-GEMV lane's kernel decoded,
 #: and -- where the lane prepared -- the lane's own ``gemv`` op.  Which one runs
 #: is a function of the token count M and of the RESIDENCY (``fp8_route`` and
@@ -262,8 +293,8 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: to get right (see :func:`regime_of_m`).  So the table is here, torch-free,
 #: and it is read by three sides that must not disagree about one runtime:
 #:
-#: * the ROUTES themselves -- ``fp8_route.census_expected`` and
-#:   ``bf16_route.census_expected`` are derived from it, and ``GEMV_SYMBOL`` is
+#: * the ROUTES themselves -- the dense and expert ``census_expected`` sets
+#:   are derived from it, and ``GEMV_SYMBOL`` is
 #:   read from it rather than spelled a third time beside the two dispatches;
 #: * the CONTRACT -- ``contract.validate_serving_contract`` refuses a
 #:   ``lane_eligibility`` cell whose ``executes`` list is not exactly the
@@ -272,12 +303,18 @@ TESSERA_FAMILIES = tuple(ROUTES)
 #: * the CENSUS -- ``census.cell_launch_agreement`` joins a served record to
 #:   the cell that covers it.
 #:
+#: ``structures`` separates a dense Linear from a routed-expert stack even
+#: when both serve the same payload family. The expert FP8 route materialises
+#: once at load and calls the runtime's modular fused-MoE kernel in resident
+#: mode; it never takes a dense GEMM or a window-GEMV lane. This table states
+#: dispatch capability, not attestation: it does not create a served cell.
+#:
 #: ``lane`` names the ``ext.NATIVE_EXTENSIONS`` entry a launch needs, or is
 #: ``None`` for a launch the route makes with no extension at all.  A lane
 #: launch is reachable only at a rung the lane reads -- the predicate the
 #: extension publishes at ``lane.requires`` -- and the contract validator ties
 #: the cell's rungs to it, so a GEMV cell cannot outlive the kernel's constants.
-LAUNCH_FIELDS = ("symbol", "decoder", "regimes", "modes", "lane",
+LAUNCH_FIELDS = ("symbol", "decoder", "regimes", "modes", "structures", "lane",
                  "when_lane_absent")
 
 
@@ -310,6 +347,9 @@ def regime_of_m(m: int) -> str:
 #: ``executes`` entry without importing the kernel -- the same reason
 #: ``gemm_symbol`` is a ``ROUTES`` field and not a literal in the route module.
 WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
+#: The entry point the expert route calls. Its recorded backend suffix is
+#: selected by vLLM at runtime and remains in the census receipt.
+MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 
 #: The decoder each launch stamps.  Strings rather than an import of
 #: ``telemetry``, which imports torch; ``tests/test_serving_contract.py`` ties
@@ -317,6 +357,7 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_WINDOW = "torch_window"
 _DECODER_WINDOW_GEMV = "window_gemv"
+_DECODER_TORCH_STOCK = "torch_materialize_stock"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -346,6 +387,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # what runs on a unit the lane did not prepare.  M does not enter it.
         {"symbol": gemm_symbol, "decoder": _DECODER_TORCH_WINDOW,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
         # The same GEMM over a tile the LANE's kernel decoded: the branch
         # ``decode_is_gemv`` refuses.  Every forward it can run on has M > 1 --
@@ -354,6 +396,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # at one row.
         {"symbol": gemm_symbol, "decoder": _DECODER_WINDOW_GEMV,
          "regimes": ("batch",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
         # The lane's own op, in BOTH regimes.  One row always takes it (the
         # rate-1 refusal starts at the 4-row tile), and so does the two-row
@@ -364,6 +407,7 @@ def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
         # wrong about the runtime.
         {"symbol": WINDOW_GEMV_SYMBOL, "decoder": _DECODER_WINDOW_GEMV,
          "regimes": _ALL_REGIMES, "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
     )
 
@@ -377,20 +421,27 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     TESSERA_NVFP4: (
         {"symbol": ROUTES[TESSERA_NVFP4]["gemm_symbol"], "decoder": _DECODER_NATIVE_SPAN2,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
     ),
-    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]),
+    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
+        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+    ),
     TESSERA_BF16: _window_launches(ROUTES[TESSERA_BF16]["gemm_symbol"]),
 }
 
 
-def route_launches(route: str, *, regime: str | None = None, mode: str | None = None,
+def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
+                   regime: str | None = None, mode: str | None = None,
                    lanes: "tuple[str, ...] | None" = None) -> tuple[dict, ...]:
-    """The launches ``route`` makes, narrowed by regime, residency and lanes.
+    """The launches ``route`` makes for a structure, narrowed by its conditions.
 
-    Every argument is OPTIONAL and ``None`` means "not narrowed on this axis",
-    so the unnarrowed call returns everything the route can launch -- which is
-    the admissive set a census compares a record against.  Narrowing all three
+    ``structure`` defaults to dense for existing Linear callers. Other axes
+    are optional and ``None`` means "not narrowed on this axis", so a call
+    specifying only structure returns all launches that structure can make --
+    the admissible set a census compares a record against. Narrowing all three
     is what a ``lane_eligibility`` cell does, and it is what makes the cell's
     ``executes`` a value rather than a disjunction.
 
@@ -411,8 +462,13 @@ def route_launches(route: str, *, regime: str | None = None, mode: str | None = 
         raise ValueError(
             f"{route!r} is not a route this package serves ({sorted(ROUTE_LAUNCHES)}); a "
             "launch set for an unknown route would read as 'this route launches nothing'")
+    if structure not in STRUCTURES:
+        raise ValueError(
+            f"{structure!r} is not a structure this package serves ({list(STRUCTURES)})")
     kept = []
     for launch in ROUTE_LAUNCHES[route]:
+        if structure not in launch["structures"]:
+            continue
         if regime is not None and regime not in launch["regimes"]:
             continue
         if mode is not None and mode not in launch["modes"]:
@@ -434,6 +490,17 @@ def route_launches(route: str, *, regime: str | None = None, mode: str | None = 
 def launch_pairs(route: str, **narrow) -> set:
     """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
     return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
+
+def moe_census_symbol_base(symbol: str) -> str:
+    """A routed launch entry point without the runtime-selected backend suffix.
+
+    Keep exact symbols in receipts. Only comparison removes the suffix; its
+    dependency-free home lets receipt replay run without importing torch or
+    the runtime route implementation.
+    """
+    return str(symbol).split(":", 1)[0]
+
 
 _BODIES = ("TCQ", "WINDOW")
 _REQUIRED = ("family", "grid", "body", "plane", "q256", "rows", "columns", "wire_bytes", "roles")
@@ -820,6 +887,10 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
     body = group.get("body")
     if body not in _BODIES:
         raise ValueError(f"tessera target {target!r}: body must be one of {_BODIES}, got {body!r}")
+    if body != route["body"]:
+        raise ValueError(
+            f"tessera target {target!r}: {family} serves {route['body']} bodies; body {body!r} "
+            f"has no {route['short']} tile")
     rows = _as_int(group, "rows", target)
     columns = _as_int(group, "columns", target)
     if columns % route["columns_multiple"]:
@@ -875,10 +946,7 @@ def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:
     if structure not in STRUCTURES:
         raise ValueError(
             f"tessera target {target!r}: structure {structure!r} is not served; this plugin "
-            f"serves {STRUCTURES} today. Routed-MoE expert stacks decode per-expert wires to "
-            "the stock packed layouts and run vLLM's own fused-MoE kernels; that route is not "
-            "built, carries no lane_eligibility cell and no served measurement, and is refused "
-            "here rather than mis-served through the dense method.")
+            f"serves {STRUCTURES} today. No method is registered for this structure.")
     if structure == STRUCTURE_ROUTED_MOE:
         return validate_tessera_moe_scheme(scheme, target)
     missing = [f for f in _REQUIRED if f not in scheme]
@@ -895,10 +963,10 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     """Resolve a routed-MoE scheme: E experts, two groups, one route.
 
     THE SHAPE, AND WHY IT IS NOT THE DENSE ONE.  A dense scheme describes one
-    module: one blob, one exact byte count.  An expert stack is E x 2 blobs --
-    a ``w13`` container (gate then up, the row order
-    ``RoutedExperts._load_w13`` narrows to) and a ``w2`` container -- whose
-    lengths differ expert by expert.  So the sidecar declares the two GROUPS
+    module: one blob, one exact byte count. An expert stack carries per-expert
+    gate, up and down containers: ``w13`` stacks gate then up in the row order
+    ``RoutedExperts._load_w13`` narrows to, and ``w2`` holds down. Their lengths
+    differ by projection and expert. So the sidecar declares the two GROUPS
     and the expert count, and per group a ``wire_stride`` (the parameter row
     width every expert's blob is copied into) rather than a ``wire_bytes``.
     The true length of a blob is the blob's own, carried beside it
@@ -916,6 +984,13 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     if family not in TESSERA_FAMILIES:
         raise ValueError(
             f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
+    source_layout = scheme.get("source_layout", MOE_SOURCE_UNPACKED)
+    if source_layout not in MOE_SOURCE_LAYOUTS:
+        raise ValueError(
+            f"tessera target {target!r}: source_layout must be one of "
+            f"{MOE_SOURCE_LAYOUTS}, got {source_layout!r}. The source convention "
+            "decides how packed expert weights are sliced before encoding; an "
+            "unknown value cannot be reconstructed safely from the emitted wires.")
     experts = _as_int(scheme, "experts", target)
     groups = scheme.get("groups")
     if not isinstance(groups, Mapping):
@@ -953,6 +1028,16 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
                 f"{[r[0] for r in declared['roles']]}, expected {MOE_GROUP_ROLES[name]} -- the "
                 f"group's members are exactly the shards the runtime loads into it "
                 f"({MOE_GROUP_SHARDS[name]}, scheme.MOE_GROUP_SHARDS), in that row order")
+        role_names = tuple(role for role, _ in declared["roles"])
+        if role_names != MOE_GROUP_PROJECTIONS[name]:
+            raise ValueError(
+                f"tessera target {target!r} group {name!r}: roles {role_names} must be "
+                f"{MOE_GROUP_PROJECTIONS[name]} in the runtime's row order")
+        if name == "w13" and len({rows for _, rows in declared["roles"]}) != 1:
+            raise ValueError(
+                f"tessera target {target!r} group 'w13': role rows "
+                f"{[rows for _, rows in declared['roles']]} must be equal halves; "
+                "the runtime splits gate and up at N in its [2N, K] tile")
         declared_groups[name] = declared
     if declared_groups["w13"]["rows"] != 2 * declared_groups["w2"]["columns"]:
         raise ValueError(
@@ -966,6 +1051,7 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
             "hidden size, so they are one number")
     return {
         "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        "source_layout": source_layout,
         "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
         "plane": declared_groups["w13"]["plane"],
         "hidden_size": declared_groups["w13"]["columns"],

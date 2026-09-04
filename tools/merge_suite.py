@@ -76,6 +76,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
+
 PBRUN = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py")
 SHARED_ROOT = Path("/mnt/shared")
 #: Surface reports are written OUTSIDE the checkout on purpose.  pbrun binds a
@@ -83,6 +86,16 @@ SHARED_ROOT = Path("/mnt/shared")
 #: the tree moves the action key of every later submission from it -- a cache
 #: miss dressed up as a different action.
 DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
+
+# Each arm has one reserved CPU per pytest process: the GPU arm is serial,
+# while xdist spends the x86 reservation as one process per core. Native math
+# threads and per-process extension builds must not multiply that reservation.
+PROCESS_THREAD_LIMITS = dict.fromkeys(
+    ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
+)
+# Cleanup backstop, matching the deployed PB worker's TERM grace. The inner
+# command needs its own deadline: deployed pbrun parses but ignores --timeout-s.
+TIMEOUT_KILL_AFTER_S = 5.0
 
 #: Where the pool publishes what it did.  A finished action's outcome record
 #: carries the exit status the worker actually saw; the CAS request beside it
@@ -104,7 +117,7 @@ ARMS = {
     "gpu": {
         "why": "the CUDA-gated surface; nothing else exercises it",
         "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
-        "pbrun_flags": ["--gpu"],
+        "pbrun_flags": ["--gpu", "--exclusive"],
         "strict_cuda": True,
         "fans_out": False,
         "serial_because": (
@@ -253,22 +266,38 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     return command + extra
 
 
+def _timed_command(command: list[str], timeout_s: float) -> list[str]:
+    """Per-attempt managed-process-group deadline, not a queue/descendant cap."""
+    deadline = _positive_seconds(timeout_s)
+    grace = _positive_seconds(TIMEOUT_KILL_AFTER_S)
+    # Use the arm's named interpreter, not a host's unverified timeout binary.
+    return [command[0], "tools/suite_deadline.py", "--timeout-s", str(deadline),
+            "--kill-after-s", str(grace), "--", *command]
+
+
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
     # The reservation is this ARM's, not the run's: an arm clamped to serial
     # must not hold the cores it was told to spend, or the ledger says the box
     # is busy while seven of its cores idle.
     cpus = _arm_cpus(arm, args.cpus)
-    command = _command(arm, surface_json, args.pytest_arg, cpus)
+    command = _timed_command(_command(arm, surface_json, args.pytest_arg, cpus),
+                             args.timeout_s)
+    flags = list(arm["pbrun_flags"])
+    if name == "gpu" and args.gpu_tag:
+        flags += ["--tag", args.gpu_tag]
     invocation = [
         sys.executable, str(PBRUN),
-        *arm["pbrun_flags"],
+        *flags,
         "--cpus", str(cpus),
-        "--demand", f"{'gpu=1,' if arm['pbrun_flags'][0] == '--gpu' else ''}"
-                    f"mem_gb={args.mem_gb}",
+        # --exclusive derives full GPU capacity from the selected worker's
+        # live offer through pbrun.exclusive_gpu_demand, never from a slot guess.
+        "--demand", f"mem_gb={args.mem_gb}",
         "--cwd", str(args.checkout),
         "--timeout-s", str(args.timeout_s),
         "--wait-s", str(args.wait_s),
+        *[part for key, value in PROCESS_THREAD_LIMITS.items()
+          for part in ("--env", f"{key}={value}")],
         "--", *command,
     ]
     record = {
@@ -284,6 +313,10 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         # failures on ``82f0047`` were an ``-n``-only defect.
         "cpus_requested": args.cpus,
         "cpus_used": cpus,
+        "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
+        "timeout_s": args.timeout_s,
+        "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
+        "timeout_scope": "per attempt; excludes queue time, retries and detached descendants",
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
     if cpus != args.cpus:
@@ -609,8 +642,8 @@ def _verdict(arms: list[dict]) -> str:
 def _commits_measured(arms: list[dict]) -> dict:
     """The trees the arms actually ran, and whether they agree.
 
-    Two arms that ran different commits are two measurements, not one merge
-    receipt, and a reader must be told that without having to diff the rows.
+    Snapshot IDs remain verbatim. PB embeds action-specific closure metadata,
+    so effective source agreement is a separate, independently verified fact.
 
     ``agree`` is ``True`` only when every arm said which tree it ran and they
     all said the same one.  One arm that cannot answer makes agreement
@@ -621,10 +654,28 @@ def _commits_measured(arms: list[dict]) -> dict:
     by_arm = {r["arm"]: (r.get("surface") or {}).get("commit") for r in arms}
     unstamped = sorted(a for a, c in by_arm.items() if not c)
     stamped = {c for c in by_arm.values() if c}
+    sources = {}
+    for record in arms:
+        surface = record.get("surface") or {}
+        source = surface.get("source_identity") or {}
+        digest = source.get("sha256")
+        verified = (source.get("schema") == "tessera.suite_source.v1"
+                    and source.get("verification") == "verified"
+                    and source.get("snapshot_commit") == surface.get("commit")
+                    and isinstance(digest, str) and len(digest) == 64
+                    and all(c in "0123456789abcdef" for c in digest))
+        sources[record["arm"]] = digest if verified else None
+    unknown_sources = sorted(arm for arm, digest in sources.items() if not digest)
     return {
         "by_arm": by_arm,
         "agree": None if (unstamped or not stamped) else (len(stamped) == 1),
         "unstamped_arms": unstamped,
+        "effective_source": {
+            "by_arm": sources,
+            "agree": (None if unknown_sources or not sources
+                      else len(set(sources.values())) == 1),
+            "unverified_arms": unknown_sources,
+        },
     }
 
 
@@ -671,8 +722,14 @@ master ref resolved in that checkout and the question was not answered.
 always the tree the receipt was assembled against: the arms are separate
 processes on separate boxes, and a queued arm can place after the checkout has
 moved. `(assumed)` marks a row whose run predates that field, where the
-receipt's own commit is the best available guess. Rows of one run with two
-commits are two measurements, not one merge receipt.
+receipt's own commit is the best available guess. PrismaBuild's parentless
+snapshot commits also differ when only its verified action-specific closure
+stamp differs. New populations retain that raw commit and independently hash
+the effective source; the JSON receipt's
+`commits_measured.effective_source.agree` distinguishes equivalent source from
+different source, and is unknown for legacy or unverifiable populations.
+`source <hash>` beside a row's snapshot commit names that verified source.
+Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
@@ -752,6 +809,9 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         commit, established = _arm_commit(record, population)
         commit_text = f"`{commit[:12]}`" if established \
             else f"`{commit[:12]}` (assumed)"
+        source = _commits_measured([record])["effective_source"]["by_arm"][record["arm"]]
+        if source:
+            commit_text += f"<br>source `{source[:12]}`"
         # ``master head?`` was answered against the population commit. If this
         # arm ran a different tree, that answer is not about this row.
         row_head = head_text if commit == population["commit"] else "unknown"
@@ -828,6 +888,10 @@ def main() -> int:
                     help="tree to test; the x86 arm needs it under /mnt/shared")
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
+    ap.add_argument("--gpu-tag", default="",
+                    help="explicit GPU worker tag (e.g. sparky or sparklina); "
+                         "required for live GPU submissions. pbrun --exclusive "
+                         "reserves that worker's advertised full GPU capacity")
     ap.add_argument("--cpus", type=int, default=1,
                     help="cores each arm that can use them will ACTUALLY use: "
                          "declared to the pool and, above 1, passed to pytest "
@@ -838,7 +902,9 @@ def main() -> int:
                          "so one number can submit an -n x86 arm and a serial "
                          "GPU arm in the same run. Default 1")
     ap.add_argument("--mem-gb", type=int, default=16)
-    ap.add_argument("--timeout-s", type=float, default=3600.0)
+    ap.add_argument("--timeout-s", type=_positive_seconds, default=3600.0,
+                    help="positive finite per-attempt inner deadline; TERM then KILL "
+                         "after 5s, not a queue/retry lifetime limit")
     ap.add_argument("--wait-s", type=float, default=5400.0)
     ap.add_argument("--out", default="",
                     help="receipt path; default is a timestamped file under "
@@ -879,6 +945,10 @@ def main() -> int:
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
+    if "gpu" in wanted and not args.gpu_tag and not (args.resume or args.dry_run):
+        print("merge_suite: live GPU submission requires --gpu-tag to select "
+              "the worker whose full GPU capacity pbrun reserves", file=sys.stderr)
+        return 2
 
     shared = str(args.checkout).startswith(str(SHARED_ROOT))
     for name in wanted:
@@ -931,7 +1001,9 @@ def main() -> int:
         "reading_note": (
             "Each arm's counts belong to that arm's device population and to "
             "no other. A pass count quoted without the device beside it is the "
-            "misreading tessera#112 is about."
+            "misreading tessera#112 is about. Snapshot commit IDs are preserved; "
+            "commits_measured.effective_source.agree separately establishes "
+            "whether the populations exercised equivalent verified source."
         ),
     }
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -111,7 +111,7 @@ census_one() {  # arm mode regime
   EXT=$EXT_A TESSERA_SERVE_MODE=$mode "$GPULOCK" experiments/tessera_plugin_run.sh \
     -e TESSERA_SERVE_MODE="$mode" \
     -v "$RUNS":"$RUNS" $extra -- \
-    "python3 tools/tessera_route_census.py '$RUNS/$arm' '$out' --tessera-commit $HEAD_COMMIT $flag" \
+    "python3 tools/tessera_route_census.py '$RUNS/$arm' '$out' --runtime-image \"\$TESSERA_CENSUS_RUNTIME_IMAGE\" --tessera-commit $HEAD_COMMIT $flag" \
     2>&1 | tee "$RUNS/census-$arm-$mode-$regime.log"
   # tee eats the exit status; read the verdict off the receipt instead.
   $PY -c "

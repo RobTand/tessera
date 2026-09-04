@@ -104,6 +104,41 @@ def _unpacked_checkpoint():
     return t
 
 
+def _lfm_checkpoint():
+    """The routed names in LiquidAI/LFM2.5-8B-A1B, in miniature."""
+    generator = torch.Generator().manual_seed(19)
+
+    def normal(*shape):
+        return torch.randn(*shape, generator=generator) * 0.02
+
+    stack = "model.layers.2.feed_forward.experts"
+    tensors = {
+        "model.layers.0.feed_forward.w1.weight": normal(2 * HIDDEN, HIDDEN),
+        "model.layers.0.feed_forward.w3.weight": normal(2 * HIDDEN, HIDDEN),
+        "model.layers.0.feed_forward.w2.weight": normal(HIDDEN, 2 * HIDDEN),
+        "model.layers.2.feed_forward.gate.weight": normal(EXPERTS, HIDDEN),
+        "model.layers.2.feed_forward.expert_bias": torch.zeros(EXPERTS),
+        "lm_head.weight": normal(HIDDEN, HIDDEN),
+        "model.embed_tokens.weight": normal(HIDDEN, HIDDEN),
+    }
+    for expert in range(EXPERTS):
+        tensors[f"{stack}.{expert}.w1.weight"] = normal(MOE_INTER, HIDDEN)
+        tensors[f"{stack}.{expert}.w3.weight"] = normal(MOE_INTER, HIDDEN)
+        tensors[f"{stack}.{expert}.w2.weight"] = normal(HIDDEN, MOE_INTER)
+    config = {
+        "architectures": ["Lfm2MoeForCausalLM"],
+        "hidden_size": HIDDEN,
+        "intermediate_size": 2 * HIDDEN,
+        "moe_intermediate_size": MOE_INTER,
+        "num_hidden_layers": 3,
+        "num_dense_layers": 2,
+        "num_experts": EXPERTS,
+        "num_experts_per_tok": 2,
+        "use_expert_bias": True,
+    }
+    return tensors, config
+
+
 def test_the_body_is_found_under_a_sub_model(tmp_path):
     """``model.language_model.layers.N.`` is a body; the old filter found none."""
     src = _write(tmp_path, _unpacked_checkpoint())
@@ -130,6 +165,40 @@ def test_a_routed_expert_is_never_a_dense_linear(tmp_path):
     # segment in ROUTED_EXPERT_2D is the only thing separating the two.
     shared = [n for n in shapes if "shared_experts" in n]
     assert len(shared) == 3, f"the shared experts must stay quantizable as dense Linears: {shared}"
+
+
+def test_lfm_expert_spellings_form_one_canonical_runtime_stack(tmp_path):
+    """LFM names the same runtime shards ``w1``/``w3``/``w2`` on disk.
+
+    The exporter must preserve those checkpoint spellings for vLLM's
+    per-parameter mapping while declaring the canonical gate/up/down roles the
+    Tessera container and routed-MoE scheme read.
+    """
+    tensors, config = _lfm_checkpoint()
+    src = _write(tmp_path, tensors, config)
+    _shards, shapes, packed, routed = export.quantizable(src)
+    stack = "model.layers.2.feed_forward.experts"
+
+    assert packed == {}
+    assert len(routed) == EXPERTS * 3, sorted(routed)
+    assert not [name for name in shapes if name.startswith(f"{stack}.")], (
+        "LFM experts reached the dense Linear plan")
+    stacks = export.expert_stacks(routed)
+    assert sorted(stacks) == [stack]
+    assert sorted(stacks[stack][0]) == sorted(export.EXPERT_PROJECTIONS)
+    assert stacks[stack][0]["gate_proj"][0].endswith(".0.w1.weight")
+    assert stacks[stack][0]["up_proj"][0].endswith(".0.w3.weight")
+    assert stacks[stack][0]["down_proj"][0].endswith(".0.w2.weight")
+
+    planned = export.plan_expert_stack(
+        stack, stacks[stack], export.grid_for("E4M3"), 1024
+    )
+    by_role = {unit["projection"]: unit for unit in planned["units"]
+               if unit["expert"] == 0}
+    assert by_role["gate_proj"]["wire"].endswith(".0.w1.wire")
+    assert by_role["up_proj"]["wire"].endswith(".0.w3.wire")
+    assert by_role["down_proj"]["wire"].endswith(".0.w2.wire")
+    assert export.MOE_ROUTER.match("model.layers.2.feed_forward.gate.weight")
 
 
 def test_a_conv1d_is_not_a_packed_expert_stack(tmp_path):
@@ -177,9 +246,10 @@ def test_planning_a_routed_expert_is_refused_before_any_encode(tmp_path, monkeyp
 
 
 # --------------------------------------------------------------------------
-# The packed 3-D layout.  SYNTHETIC: no packed-expert source is at hand, so
-# these fix the CONTRACT (which axis is the output, and when to refuse), not
-# agreement with a real transformers-5 checkpoint.
+# The packed 3-D layout.  The orientation edge cases below are synthetic so
+# both axis orders and the square ambiguity can be exercised; the real
+# transformers-5 Qwen source farther down pins the on-disk spelling and
+# population separately.
 # --------------------------------------------------------------------------
 
 def test_packed_orientation_is_read_off_the_config_both_ways():
@@ -235,6 +305,54 @@ def test_a_packed_stack_is_recognised_by_name(tmp_path):
     assert not any(".mlp.experts." in n for n in shapes), sorted(shapes)
 
 
+@pytest.mark.parametrize(
+    "source_layout,suffix",
+    [("out_first_chunked", ".weight"), ("in_first_interleaved", "")],
+)
+def test_explicit_packed_layouts_slice_to_canonical_expert_matrices(
+        source_layout, suffix):
+    """Both packed conventions become the same gate/up/down matrices.
+
+    The tensor dimensions alone are deliberately ambiguous here
+    (``hidden == 2 * intermediate``).  The plan's explicit convention—not a
+    dimension heuristic—must decide the axis order and gate/up split.
+    """
+    stack = "model.language_model.layers.1.mlp.experts"
+    gate = torch.arange(EXPERTS * MOE_INTER * HIDDEN, dtype=torch.float32).reshape(
+        EXPERTS, MOE_INTER, HIDDEN)
+    up = gate + gate.numel()
+    down = (torch.arange(EXPERTS * HIDDEN * MOE_INTER, dtype=torch.float32)
+            .reshape(EXPERTS, HIDDEN, MOE_INTER) + 2 * gate.numel())
+    if source_layout == "out_first_chunked":
+        gate_up_source = torch.cat((gate, up), dim=1)
+        down_source = down
+    else:
+        gate_up_source = torch.empty(EXPERTS, HIDDEN, 2 * MOE_INTER)
+        gate_up_source[:, :, 0::2] = gate.transpose(1, 2)
+        gate_up_source[:, :, 1::2] = up.transpose(1, 2)
+        down_source = down.transpose(1, 2).contiguous()
+    sources = {
+        f"{stack}.gate_up_proj{suffix}": gate_up_source,
+        f"{stack}.down_proj{suffix}": down_source,
+    }
+    packed = export.packed_expert_stacks(
+        {name: tuple(tensor.shape) for name, tensor in sources.items()})
+    planned = export.plan_packed_expert_stack(
+        stack, packed[stack], export.grid_for("E4M3"), 1024,
+        source_layout=source_layout, config=_config())
+
+    expected = {"gate_proj": gate, "up_proj": up, "down_proj": down}
+    assert planned["source_layout"] == source_layout
+    assert len(planned["units"]) == EXPERTS * 3
+    for unit in planned["units"]:
+        actual = export.packed_expert_weight(sources[unit["source_tensor"]], unit)
+        assert torch.equal(actual, expected[unit["projection"]][unit["expert"]])
+        assert unit["tensor"] == f"{stack}.{unit['expert']}.{unit['projection']}.weight"
+        assert unit["wire"] == f"{stack}.{unit['expert']}.{unit['projection']}.wire"
+        assert unit["source_layout"] == source_layout
+        assert unit["source_slice"]["expert"] == unit["expert"]
+
+
 # --------------------------------------------------------------------------
 # ``ignore`` must name the modules vLLM BUILDS.
 #
@@ -280,6 +398,19 @@ def test_a_routed_expert_leaf_is_never_fused_as_a_dense_pair():
     """
     routed = "model.language_model.layers.1.mlp.experts.7.gate_proj.weight"
     assert export.fused_module(routed) is None, export.fused_module(routed)
+
+
+@pytest.mark.parametrize("role", ["w1", "w3"])
+def test_lfm_dense_gate_up_names_the_constructed_w13(role):
+    prefix = "model.layers.0.feed_forward"
+    name = f"{prefix}.{role}.weight"
+    assert export.fused_module(name) == (
+        f"{prefix}.w13", (f"{prefix}.w1.weight", f"{prefix}.w3.weight"))
+    assert export.ignored_modules(name, (64, 128)) == (f"{prefix}.w13",)
+    routed = f"model.layers.2.feed_forward.experts.7.{role}.weight"
+    assert export.fused_module(routed) is None
+    assert export.ignored_modules(routed, (64, 128)) == (
+        "model.layers.2.feed_forward.experts",)
 
 
 @pytest.mark.parametrize("leaf", ["gate_proj", "up_proj", "down_proj"])
@@ -498,6 +629,27 @@ def test_planning_a_packed_stack_is_refused_before_any_encode(tmp_path, monkeypa
         "the refusal fired only after writing weights")
 
 
+@pytest.mark.parametrize("source_layout", [None, "guessed_from_shape"])
+def test_a_packed_stack_plan_requires_a_supported_source_layout(
+        tmp_path, monkeypatch, source_layout):
+    """Missing and invented packed conventions both fail before encoding."""
+    src = _write(tmp_path, _packed_checkpoint(""), _config(inter=PACKED_INTER))
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    stack = "model.language_model.layers.1.mlp.experts"
+    spec = {"grid": "E4M3", "q256": 1024}
+    if source_layout is not None:
+        spec["source_layout"] = source_layout
+    plan.write_text(json.dumps({stack: spec}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+                                     "--q256", "1024", "--plan-json", str(plan)])
+
+    with pytest.raises(SystemExit, match=(
+            "source_layout.*out_first_chunked.*in_first_interleaved")):
+        export.main()
+    assert not out.exists() or not list(out.glob("*.safetensors"))
+
+
 #: The one packed-expert source on this box.  Skipped rather than synthesised
 #: where it is absent: the point of this test is that the spelling on REAL
 #: disk is the one the classifier missed, and a fixture cannot say that.
@@ -558,3 +710,23 @@ def test_a_rank_2_bare_packed_name_is_refused_not_guessed(tmp_path):
     message = str(caught.value)
     assert bare in message, message
     assert "rank 2" in message, message
+
+
+@pytest.mark.parametrize("suffix", [".weight", ""])
+def test_a_packed_stack_is_found_under_a_feed_forward_owner(tmp_path, suffix):
+    """The owner is ``mlp`` on GLM and ``feed_forward`` on LFM -- the file says
+    so beside ``ROUTED_EXPERT_2D`` and ``MOE_ROUTER``, both of which accept
+    either.  ``PACKED_EXPERT_ND`` accepted only ``mlp``, so a transformers-5
+    packed stack under ``feed_forward`` landed in no bucket at all and could not
+    be refused by name at plan time."""
+    tensors = {name.replace(".mlp.experts.", ".feed_forward.experts."): value
+               for name, value in _packed_checkpoint(suffix).items()}
+    src = _write(tmp_path, tensors, _config(inter=PACKED_INTER))
+
+    _shards, shapes, packed, routed = export.quantizable(src)
+
+    assert sorted(packed) == [
+        f"model.language_model.layers.1.feed_forward.experts.down_proj{suffix}",
+        f"model.language_model.layers.1.feed_forward.experts.gate_up_proj{suffix}"], sorted(packed)
+    assert routed == {}, sorted(routed)
+    assert not any(".feed_forward.experts." in n for n in shapes), sorted(shapes)
