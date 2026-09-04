@@ -114,8 +114,11 @@ The wire column is not what these checkpoints hold; it is what the same units
 cost on `tessera.kernel`, and the manifest states both. The comparison that
 decides the issue is the resident one, where the two files are byte-for-byte
 the same size and the quantised parameter count is identical. Tessera is
-carrying 11% fewer bits of *information* into the same envelope, which is why
-losing 1.040x there is a narrower loss than it looks.
+carrying 11% fewer bits of *information* into the same envelope and spending
+the difference on the block scales the NVFP4 twin needs -- so the resident
+comparison is the fair one and the wire column is not a second, flattering
+score. It is quoted because the manifest quotes it, not because the verdict
+rests on it: the verdict rests on three files of 870,290,032 bytes each.
 
 ## The lever, and why the floor mattered
 
