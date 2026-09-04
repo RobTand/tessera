@@ -32,6 +32,7 @@ from tessera.serving.scheme import MOE_GROUP_SHARDS
 def headers(d):
     """``{tensor name: (dtype, shape, nbytes)}`` across every shard, header-only."""
     out = {}
+    owners = {}
     index = d / "model.safetensors.index.json"
     shards = (sorted({d / name for name in
                       json.loads(index.read_text())["weight_map"].values()})
@@ -43,8 +44,13 @@ def headers(d):
         for name, meta in hdr.items():
             if name == "__metadata__":
                 continue
+            if name in owners:
+                raise ValueError(
+                    f"duplicate tensor name {name!r} in {owners[name]} and {shard}; "
+                    "each checkpoint tensor must have exactly one shard owner")
             beg, end = meta["data_offsets"]
             out[name] = (meta["dtype"], meta["shape"], end - beg)
+            owners[name] = shard
     return out
 
 
