@@ -1,11 +1,9 @@
 # The pure half of the repo runs anywhere; the kernel half needs a GPU.
 #
-# Splitting them is the point.  Build items 1a/1b are stdlib-only by design --
-# S16 forbids pipeline wiring before 1b passes, and a job that needs no torch
-# proves that structurally rather than by discipline.  The kernel lane is
-# pre-gate research (S16 P1-6/P1-7) and cannot run here; it is gated on a GPU
-# runner and must never become a required check, because a green tick on a
-# screen is exactly the promotion this project refuses.
+# The bytes-only job proves the parser's dependency boundary without torch.
+# The coordinator separately dispatches GPU-visible and device-less suites
+# through PrismaBuild and records both populations. Hosted CI alone does not
+# cover the CUDA surface, and test success does not establish served quality.
 name: ci
 
 on:
