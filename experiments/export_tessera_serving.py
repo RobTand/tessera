@@ -402,7 +402,7 @@ def unrouted_modules(src_config, modules):
     bytes in its place that no loader maps: not a slow route, no route, and no
     refusal either.
 
-    Principle 14 says a claim about what a runtime DOES is derived from a
+    The runtime-attestation rule says what a runtime DOES is derived from a
     machine-readable table that runtime publishes.  The table is
     ``runtime_contract.json``'s ``construction`` block (contract v11), whose
     rows are generated from the census receipts under
