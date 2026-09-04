@@ -16,12 +16,31 @@ run that produced it; nothing is asserted about a runtime we have not read.
 | arity-2 body serialises | bit-exact round-trip | `132b46c`, `tests/test_ktuple.py` |
 | E2M1 k=2 R=7 body rate | **exactly 4.000000 bpp** | `terminal_rate`, both accountants agree |
 | built artifact at 512x256 | 4.031250 bpp (forest planes) | `built 66048 = calc 65536 + 512` |
-| encode throughput, GLM expert shape | **23.3 Mparam/s** (0.36 s per 2048x4096) | `experiments/encode_throughput_glm_expert.py` |
-| GLM routed-expert encode | **3.72 h one box / 1.86 h two** | same, over 311,653,564,416 params |
-| encode power | 47 W of ~140 W envelope | same; ~3x headroom, not a bottleneck |
+| encode throughput, GLM expert shape, **E2M1x2 R=7** | **23.3 Mparam/s** (0.36 s per 2048x4096) | `experiments/encode_throughput_glm_expert.py` (defaults `--arity 2 --rate 7`, `E2M1_GRID`) |
+| same shape, **E4M3 / CHANNEL / window L=14** | **0.844 Mparam/s** (9.94 s per 2048x4096, mean of 6) | `experiments/results/moe_encode_rate_profile_contended.json`, 2026-09-04 |
+| GLM routed-expert encode, **at the E2M1x2 rate above** | **3.72 h one box / 1.86 h two** | same, over 311,653,564,416 params |
+| the same campaign **at the E4M3 rate** | **~103 h one box / ~51 h two** | same param count, 0.844 Mparam/s |
+| encode power | 47 W of ~140 W envelope (E2M1x2); 72 W of 140 W (E4M3, contended) | neither is envelope-bound |
 
-The encode campaign is an afternoon. Encode cost is **not** what gates this
-work, which removes the main argument for building the serving backend first.
+> **Correction, 2026-09-04 — the grid was missing, and it is the whole number.**
+> The 23.3 Mparam/s row was measured on **E2M1x2 at rate 7**, which is the
+> script's default and was the default wire when this doc was written. It is
+> **not** the wire an expert route would encode at today: a GLM expert resolves
+> through `wire_recipe(E4M3, 1024)` to the `TESSERA_FP8` route -- E4M3 grid,
+> CHANNEL plane, window body L=14 -- and that encode is **27.6x slower per
+> parameter** on the identical shape and box.
+>
+> So the conclusion below inverts. The E4M3 campaign is **four days on one box,
+> two on two**, not an afternoon, and encode cost is back on the list of things
+> that gate a served expert route. The 9.94 s figure was measured under
+> contention (the file is named for it) and is therefore an **upper** bound on
+> the per-unit time; a quiet-box measurement would move it down by an unmeasured
+> amount and is the thing to run before anyone schedules the campaign.
+>
+> Original text, kept because it is the reasoning the correction overturns:
+> *"The encode campaign is an afternoon. Encode cost is **not** what gates this
+> work, which removes the main argument for building the serving backend
+> first."*
 
 ## 1. Serving contract (decided; loader deferred)
 
