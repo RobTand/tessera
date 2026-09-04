@@ -33,33 +33,63 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-#: Fields that define the ENCODING and must therefore be identical across every
-#: part.  Dotted paths, because the exporter nests them: eight of the thirteen
-#: names this tuple used to carry (``grid_digest``, ``code``, ``group``,
-#: ``half``, ``container``, ``superblock``, ``encoder_profile``, ``arity``)
-#: exist nowhere in the config the exporter writes, so they compared
-#: ``None == None`` and passed vacuously.  ``grid.digest`` and ``conv_memory``
-#: were among them -- precisely the two that catch encoder drift, which is the
-#: failure this merge exists to prevent.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+#: Which fields must be identical across parts is the EXPORTER's list, read
+#: from ``tessera.export`` rather than restated here.  A restatement is what
+#: this guard has been wrong about twice: eight of its first thirteen names
+#: existed nowhere in the config the exporter wrote, so they compared ``None``
+#: to ``None`` and passed vacuously (fixed in ``317c882``), and three of the
+#: replacements -- ``source_model``, ``prismaquant_plan``, ``inherits`` -- were
+#: one GLM driver's ``extra_config``, so the guard refused every pair of parts
+#: a plain ``export_checkpoint_streaming`` produced and blamed the exporter for
+#: it (tessera#137).  ``tessera.export`` checks its declaration against the
+#: config it just built on every export, so a name here is a name that was
+#: written.
 #:
-#: Excluded on purpose: ``accounting``, ``plan`` and ``rungs_q256`` are per-part
-#: by construction and are summed or unioned, not compared.
-SHARED = (
-    "quant_method", "container_version", "blob_suffix",
-    "grid.digest", "grid.name", "grid.base", "grid.partition",
-    "grid.arity", "grid.size", "grid.rate_cap",
-    "conv_memory", "conv_generators", "trellis.span", "trellis.weighting",
-    "body.kind", "body.window_bits", "body.seed", "body.sigma",
-    "scale.group", "scale.half", "scale.refit", "scale.schedule", "scale.plane",
-    "rotation", "with_diagonals", "tp_size",
-    "source_model", "prismaquant_plan", "route_status",
-    "requires_serve_flags", "inherits",
-)
+#: Two subtractions, each a decision rather than a list:
+#: ``SHARED_WHEN_WRITTEN`` is the pair older exporters legitimately lack, and
+#: the activation block has its own class below.  Everything else the exporter
+#: writes and does not sum -- ``accounting``, ``plan`` and ``rungs_q256`` are
+#: per-part by construction -- is compared.
+
+
+def shared_fields():
+    """The exporter's encoding fields: absent from a part means the guard is broken.
+
+    Imported lazily because the serving-part merge this script also dispatches
+    needs no tensor runtime (``tessera.serving_parts`` says so in its own
+    docstring) and ``tessera.export`` pulls in torch.
+    """
+    from tessera.export import CONFIG_ENCODING_FIELDS
+
+    return tuple(f for f in CONFIG_ENCODING_FIELDS if f not in SHARED_WHEN_WRITTEN)
+
+
+def driver_fields(configs):
+    """Top-level keys no exporter writes: a driver's ``extra_config``.
+
+    Found by subtracting the exporter's own fields rather than by naming one
+    driver's vocabulary, so a second driver's extras are guarded on the day it
+    is written.  ``export_glm53_tessera.py`` contributes ``source_model``,
+    ``prismaquant_plan`` and ``inherits``; the source model in particular is a
+    genuine encoding fact, and two halves that disagree about it are two
+    artifacts.  They are compared when every part carries them and refused when
+    the parts disagree about whether they exist, which means two drivers -- the
+    same rule ``SHARED_WHEN_WRITTEN`` states, for the same reason.
+    """
+    from tessera.export import (CONFIG_ACTIVATION_FIELD, CONFIG_ENCODING_FIELDS,
+                                CONFIG_PER_PART_FIELDS)
+
+    exporters = ({f.split(".")[0] for f in CONFIG_ENCODING_FIELDS}
+                 | set(CONFIG_PER_PART_FIELDS) | {CONFIG_ACTIVATION_FIELD})
+    return tuple(sorted(set().union(*(set(c) for c in configs)) - exporters))
+
 
 #: Fields that define the encoding when the exporter writes them, and that
-#: earlier exporters did not write at all: compared like ``SHARED`` when the
-#: first part carries them, refused when the parts disagree on whether they
-#: exist, skipped (and said so) when no part has them.  ``wire.recipes`` is
+#: earlier exporters did not write at all: compared like :func:`shared_fields`
+#: when the first part carries them, refused when the parts disagree on whether
+#: they exist, skipped (and said so) when no part has them.  ``wire.recipes`` is
 #: the per-rung recipe table (body, span, plane, window table parameters per
 #: q256 range) -- the flat ``body``/``scale.plane``/``trellis.span`` keys are
 #: its projection and read ``per-rung`` when it varies, so two parts that
@@ -85,7 +115,7 @@ PROJECTED_BY_TABLE = ("trellis.span", "body.kind", "body.window_bits", "body.see
 #: done with it.  Compared field by field so a refusal names the one that
 #: differs, and every one of them is written by ``_write_config`` -- a name
 #: here that the exporter does not write would compare ``_MISSING`` to
-#: ``_MISSING`` and pass, which is how eight of ``SHARED``'s thirteen went
+#: ``_MISSING`` and pass, which is how eight of the guard's first thirteen went
 #: unenforced.  ``tests/test_merge_guard.py`` asserts each name resolves in a
 #: config the exporter actually wrote, and gives each one its own failing case.
 #:
@@ -133,16 +163,20 @@ def check_configs(parts):
     single field that differs, because "the configs disagree" is not an
     actionable message when thirty fields are compared.
 
-    Three classes of field, and the difference between them is who wrote them:
+    Four classes of field, and the difference between them is who wrote them:
 
-      * ``SHARED`` -- written by every exporter that has ever run.  Absent from
-        the first part means the guard cannot do its job, so it refuses rather
-        than passing; that is the bug that once left eight of thirteen names
-        comparing ``None`` to ``None``.
+      * :func:`shared_fields` -- what the exporter declares it writes.  Absent
+        from the first part means the guard cannot do its job, so it refuses
+        rather than passing; that is the bug that once left eight of thirteen
+        names comparing ``None`` to ``None``.
       * ``SHARED_WHEN_WRITTEN`` -- written by later exporters only.  Compared
         when every part has them, refused when the parts disagree about
         whether they exist (different exporters), noted and skipped when none
         does.
+      * :func:`driver_fields` -- what a driver added through ``extra_config``,
+        found by subtracting the exporter's own fields.  Same presence rule as
+        ``SHARED_WHEN_WRITTEN``: a part that has one and a part that has not
+        were built by different drivers.
       * ``SHARED_ACTIVATION`` -- the activation-aware block, which is
         ``null`` on a weights-only export and a dict otherwise.  Null in every
         part is a consistent weights-only merge; a mix of null and dict is two
@@ -150,18 +184,19 @@ def check_configs(parts):
     """
     names = [name for name, _ in parts]
     base = dict(parts[0][1])
+    shared = shared_fields()
     # A guard that cannot find the field it guards is a bug, not a pass.  The
     # old ``if field in base`` skipped absent names silently, which is how
     # eight of them went unenforced without anyone noticing.
-    absent = [f for f in SHARED if dotted(base, f) is _MISSING]
+    absent = [f for f in shared if dotted(base, f) is _MISSING]
     if absent:
         raise SystemExit(
             f"{names[0]} has no {absent} -- these fields define the "
             f"encoding and cannot be compared across parts, so the merge "
             f"cannot certify the parts were encoded identically. Either the "
-            f"exporter stopped writing them or SHARED names them wrongly; "
-            f"fix that rather than merging unchecked.")
-    compared = list(SHARED)
+            f"exporter stopped writing them or tessera.export declares them "
+            f"wrongly; fix that rather than merging unchecked.")
+    compared = list(shared)
     for field in SHARED_WHEN_WRITTEN:
         present = [dotted(config, field) is not _MISSING for _, config in parts]
         if all(present):
@@ -181,6 +216,18 @@ def check_configs(parts):
             }[field]
             print(f"note: no part carries {field!r} (written by later "
                   f"exporters); {unchecked}")
+
+    # --- a driver's own fields --------------------------------------------
+    for field in driver_fields([config for _, config in parts]):
+        present = [field in config for _, config in parts]
+        if all(present):
+            compared.append(field)
+        else:
+            without = [n for n, seen in zip(names, present) if not seen]
+            raise SystemExit(
+                f"{without} carry no {field!r} while the others do -- no "
+                f"exporter writes that field, so the parts were built by "
+                f"different drivers; rebuild them with one")
 
     # --- the activation-aware block ---------------------------------------
     written = [dotted(config, "activation_aware") for _, config in parts]
@@ -232,7 +279,6 @@ def main():
     args = ap.parse_args()
 
     if any((Path(p) / "tessera_part_config.json").exists() for p in args.parts):
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
         from tessera.serving_parts import merge_serving_parts
         try:
             manifest = merge_serving_parts(args.parts, Path(args.out), Path(args.source), move=args.move)

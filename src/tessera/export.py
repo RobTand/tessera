@@ -1622,6 +1622,83 @@ def _used_recipes(table: "tuple[RecipeRange, ...]", rungs) -> "tuple[WireRecipe,
     return tuple(dict.fromkeys(recipe_at(table, q) for q in rungs))
 
 
+#: What ``_write_config`` writes, classified by whether two parts of ONE
+#: shard-split export may legitimately differ on it.  Dotted paths, because the
+#: config nests; ``accounting``, ``plan``, ``rungs_q256`` and
+#: ``activation_aware`` are named at their top level and not descended into,
+#: since their leaves are per-tensor or per-capture rather than fixed.
+#:
+#: This is not a roster beside the writer.  ``_check_config_fields`` compares it
+#: against the dict ``_write_config`` just built, on every export, and refuses
+#: when they disagree -- so a field added, renamed or dropped below shows up
+#: here or the export stops.  That is what lets a merge guard *read* this list
+#: instead of restating it: ``experiments/merge_tessera_parts.py`` used to name
+#: three fields (``source_model``, ``prismaquant_plan``, ``inherits``) that
+#: arrive through one GLM driver's ``extra_config`` and that no exporter
+#: writes, so it refused every pair of parts a plain export produced and blamed
+#: the exporter for it (tessera#137).
+#:
+#: ``CONFIG_ENCODING_FIELDS`` describe the ENCODING: identical across every
+#: part of one export, or the parts are two artifacts.
+CONFIG_ENCODING_FIELDS = (
+    "quant_method", "container_version", "encoder_fixture_id", "blob_suffix",
+    "grid.digest", "grid.name", "grid.base", "grid.partition", "grid.arity",
+    "grid.size", "grid.rate_cap",
+    "conv_memory", "conv_generators",
+    "trellis.span", "trellis.weighting",
+    "body.kind", "body.window_bits", "body.seed", "body.sigma",
+    "scale.group", "scale.half", "scale.refit", "scale.schedule", "scale.plane",
+    "scale.sigma",
+    "wire.recipes",
+    "rotation", "with_diagonals", "route_status", "requires_serve_flags",
+    "tp_size",
+)
+
+#: Per-part by construction: a shard subset has its own byte counts, its own
+#: slice of the plan and its own rungs, so a merge sums or unions these rather
+#: than comparing them.
+CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256")
+
+#: The activation-aware block: ``null`` on a weights-only export and a dict
+#: otherwise, so it is neither an encoding field that always resolves nor a
+#: per-part one.  A merge compares the fields inside it that decide whether two
+#: halves met the same Hessian.
+CONFIG_ACTIVATION_FIELD = "activation_aware"
+
+
+def _config_leaves(config: "dict", stop: "frozenset[str]") -> "set[str]":
+    """The dotted paths of ``config``, not descending into ``stop``."""
+    leaves = set()
+    for key, value in config.items():
+        if key in stop or not isinstance(value, dict):
+            leaves.add(key)
+            continue
+        leaves.update(f"{key}.{tail}" for tail in _config_leaves(value, frozenset()))
+    return leaves
+
+
+def _check_config_fields(config: "dict") -> None:
+    """Refuse a config whose fields are not the ones this module declares.
+
+    Run on the dict ``_write_config`` built, before a driver's ``extra_config``
+    is merged in -- those keys are the driver's and are not this module's to
+    declare.  A guard elsewhere decides what two parts must agree on by reading
+    the declaration above, and a list that can silently stop describing the
+    writer is the bug this check exists to make impossible.
+    """
+    stop = frozenset(CONFIG_PER_PART_FIELDS) | {CONFIG_ACTIVATION_FIELD}
+    declared = set(CONFIG_ENCODING_FIELDS) | stop
+    written = _config_leaves(config, stop)
+    if declared != written:
+        raise GrammarError(
+            "the exported config does not match what tessera.export declares "
+            f"it writes: undeclared {sorted(written - declared)}, declared but "
+            f"unwritten {sorted(declared - written)}. Update "
+            "CONFIG_ENCODING_FIELDS / CONFIG_PER_PART_FIELDS beside the field "
+            "you moved -- a merge guard reads them to decide which fields two "
+            "parts must agree on.")
+
+
 def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   report: "ExportReport", plan: "dict[str, int]",
                   extra_config: "dict | None", scale_refit: int = 0,
@@ -1739,6 +1816,7 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "plan": dict(plan),
         "rungs_q256": sorted({u.q256 for u in report.units}),
     }
+    _check_config_fields(config)
     if extra_config:
         config.update(extra_config)
     (out / "tessera_config.json").write_text(json.dumps(config, indent=2))
