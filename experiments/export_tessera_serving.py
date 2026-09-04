@@ -179,6 +179,10 @@ FUSED = (
     # load.  The lookahead keeps ROUTED experts out: their gate/up merge into
     # ``w13`` inside the FusedMoE, which is a different mechanism entirely.
     (re.compile(r"^(?!.*\.experts\.\d+\.)(.*\.)(gate_proj|up_proj)\.weight$"), "gate_up_proj", ("gate_proj", "up_proj")),
+    # Lfm2MoeMlp uses w1/w3 source leaves for its dense gate/up pair and
+    # constructs one w13 Linear. Routed experts have an intervening
+    # .experts.INDEX segment and remain owned by the expert stack rule.
+    (re.compile(r"^(.*\.feed_forward\.)(w1|w3)\.weight$"), "w13", ("w1", "w3")),
 )
 #: A body Linear, and WHICH decoder layer it belongs to.  Not
 #: ``startswith("model.layers.")``: a multimodal checkpoint roots its decoder
