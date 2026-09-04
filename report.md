@@ -249,14 +249,48 @@ taken today, with sparky at load 60 and 14 GB of 121 available.
 - a sweep over `experiments/**.py` fails on any reintroduced
   `"format": "mixed-precision"` literal — the rule, not today's call sites.
 
-## Suite result
+## Test evidence
 
-Run once, on **sparklina** (the quiet box), from a copy of this branch at
-`/home/rob/tmp/ts92-suite`:
+Targeted at the diff, per AGENTS.md `1f7836c`: a branch owes evidence for what it
+touched, and the whole-tree run belongs to the merge result. The set is every
+test file that imports `tessera.stock` or either exporter —
 
-    PYTHONPATH=. python -m pytest -q -p no:randomly
+```
+tests/test_bf16_route.py          tests/test_serving_fp8_gemv.py
+tests/test_export_moe_layouts.py  tests/test_serving_fp8_route.py
+tests/test_fused_member_rungs.py  tests/test_serving_nvfp4_route.py
+tests/test_fused.py               tests/test_slice_unit.py
+tests/test_lane_planes.py         tests/test_stock_declared_format.py
+tests/test_ldlq_lut_plane.py      tests/test_stock.py
+tests/test_plan_from_layer_config.py  tests/test_uniform_control.py
+tests/test_serving_export_gate.py
+```
 
-RESULT_PLACEHOLDER
+run against the **final tree** (`3693181`), on sparky:
+
+```
+$ PYTHONPATH=. python -m pytest -q -p no:randomly <the 15 files above>
+352 passed, 7 skipped, 15 warnings in 321.53s (0:05:21)
+exit=0
+```
+
+`uptime` either side, since load is what made the earlier whole-tree attempt
+worthless:
+
+```
+20:01:47 up 2 days,  9:57, load average: 25.48, 38.93, 47.78
+20:07:11 up 2 days, 10:03, load average: 33.69, 33.22, 42.43
+```
+
+Zero failures, so there is nothing to differentiate against master: the "was this
+already broken?" question has no instance to ask it of.
+
+**A whole-tree run was started and abandoned, deliberately.** It reached 28% on
+sparklina at load 74 before I killed it and its waiter. Two reasons it was not
+worth finishing: the rule above, and the copy it ran from carried `stock.py` at
+`a919062` — three commits of attestation prose behind the final tree — so its
+counts would not have described the branch I am handing over. The targeted set
+above runs on the actual final tree instead.
 
 ### How the GPU readings were taken, including where I went off the lock
 
@@ -270,6 +304,14 @@ host memory on a box that was in swap. Recording it rather than leaving it
 implicit. Both runs returned in seconds and neither took a timing number, so
 nothing here depends on the box being quiet. The now-redundant queued lock job
 was mine and I killed it, freeing its slot.
+
+There is now a legal path that removes the choice, and any further GPU read on
+this branch or after it should use it:
+
+    /usr/bin/python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py --gpu -- <cmd>
+
+which schedules through PrismaBuild's ledger across both boxes. The two readings
+above predate my knowing about it; they are not a precedent.
 
 No full master baseline was computed: fifteen agents were running one
 concurrently and that is what put sparky into swap. The question a baseline
