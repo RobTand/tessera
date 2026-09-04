@@ -152,6 +152,17 @@ person or agent — changing the code.
   under that load a suite went from minutes to a projected ninety on
   2026-09-03, and the merge queue stalled behind runs that were answering the
   wrong question. Integration risk is caught at the integration point, once.
+- **A suite count is meaningless without its device population, and the
+  CUDA-gated surface is covered by nothing automatic.** Master was red on three
+  CUDA-gated tests while GitHub Actions, the x86 pool suite and a local CPU run
+  all read green; not one of the three could collect or run them (tessera#112).
+  Every run now says which population it covered -- device, skip count,
+  uncollected modules, and the skip reasons verbatim -- so read that block
+  before believing a pass count, and quote it whenever you record one. A run
+  that must cover the CUDA-gated surface says `--strict-cuda` (or
+  `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
+  skipping some 450-480 tests and reporting green. `--surface-json PATH` writes
+  the same population as a table, which is what a receipt should read.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
