@@ -172,8 +172,13 @@ person or agent — changing the code.
   pool carries on, `--resume <receipt dir>` rebuilds the receipt from the
   populations the runs published -- with the exit status marked `not
   observed`, because published failures prove red while their absence does not
-  prove green. The merge run is still the coordinator's to launch, the way the
-  x86 one already is; nothing triggers it automatically.
+  prove green. Each row names the commit **that arm** reported measuring, not
+  the one the receipt was assembled against: the arms are separate processes
+  on separate boxes, and a GPU arm queued behind a held reservation can place
+  after the checkout has moved. Two commits in one run's rows are two
+  measurements, not a merge receipt. The merge run is still the coordinator's
+  to launch, the way the x86 one already is; nothing triggers it
+  automatically.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
