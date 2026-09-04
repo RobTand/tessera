@@ -167,6 +167,8 @@ pathname also excludes legacy directory-lock clients; old directories retain
 their stricter hour-old, dead-owner, no-container recovery rule. Publication
 treats the pathname as the exact destination (`ln -T`), so an existing legacy
 directory cannot turn acquisition into successful creation of a link inside it.
+Legacy owner liveness is `/proc/<pid>` existence: denial of permission to signal
+a process is never treated as evidence that it has died.
 
 `serve_and_dump_kl.sh` reaps its named container on every exit, including an
 unexpected shell failure. Successful removal is remembered so normal exit
