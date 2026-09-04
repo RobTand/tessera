@@ -31,8 +31,11 @@ its epilogue.  Applying
 ``a_scale`` on the fp32 output leaves fp32 summation order as the only
 difference this module can name, which is what the docstring always claimed --
 and that order is MEASURED, not asserted: the lane run twice on identical
-input differs by 1.6e-07 relative and changes no bf16 output word at any M
-(``experiments/gemv_a_side_precision.py``).
+input differs by 1.6e-07 relative, which moves 0-0.10% of bf16 output words
+across the three served K and four M (``experiments/gemv_a_side_precision.py``).
+An earlier reading of this line said it changes NO output word; that was four
+100.00% readings at one K, and widening the sweep falsified it.  The words it
+moves are what section 6d of the receipt then priced as served KL.
 
 THIS FIXES MOST OF #110, NOT ALL OF IT, AND THE SPLIT IS SERVED.  The lane and
 its published fallback disagreed as served at M = 1 -- mutual KL 0.012111,
@@ -46,16 +49,28 @@ positions -- and against the BF16 teacher the fixed arm moves from 0.436065
 onto the fallback's 0.432477, reading 0.432401.  So the fallback was the
 accurate arm and this lane has joined it.
 
-THE RESIDUAL 0.005947 IS NOT YET ATTRIBUTED.  Its leading explanation is
-measured rather than asserted, and it is not a second defect: at all three
-served K the fixed lane matches ``torch._scaled_mm`` on 99.85-100.00% of bf16
-output words, while matching ITSELF on a rerun on 99.90-100.00% -- the same
-size.  The residual may therefore be this kernel's own ``atomicAdd`` order
-rather than any difference between the arms, which no arm-vs-arm compare can
-separate because each arm was served once.  One serve decides it
-(``experiments/ts110_replicate_armA.sh``).  Until then, do not read
-"bit-exact" on this lane as a claim about the GEMM.
-``docs/measurements/tessera-gemv-a-side-2026-09-04.md`` holds every leg.
+THE RESIDUAL 0.005947 IS THIS KERNEL'S OWN RUN-TO-RUN SPREAD, AND THAT IS
+SERVED TOO.  Serving this lane a SECOND time, unchanged -- same tree, same
+bytes, same inode, same container digest -- and comparing the two decode dumps
+against each other reads **KL >= 0.005985 at 95.31% top-1**
+(``experiments/ts110_replicate_armA.sh``, pool action ``6921120b``).  That is
+the same size as, and if anything slightly larger than, the 0.005947 the fixed
+lane differs from ``torch._scaled_mm`` by.  So after the fold is gone the two
+arms agree to within this lane's own reproducibility, and no arm-vs-arm decode
+comparison on it can resolve anything finer.  The matched null is in the same
+run: the prefill regime, where the GEMV never executes on a scored forward,
+reads exactly KL >= 0.000000 / 100.00% over 4088 positions BOTH across arms and
+across the two serves -- so the serve around this kernel is exact and the spread
+is the kernel's fp32 reduction order, not the scheduler, the KV allocator or a
+recompile.
+
+WHAT THAT MEANS FOR "BIT-EXACT" ON THIS LANE, CONCRETELY.  The decoded tile is
+bit-exact (196/196).  The GEMM over it is NOT, and the magnitude a receipt
+should cite is the one above: **KL >= ~0.006 at ~95% top-1 in the decode
+regime** is this lane's reproducibility floor, and any served decode difference
+at or below it is noise, not signal.  Scope: 256 M=1 positions on one 0.6B
+checkpoint, one box.  ``docs/measurements/tessera-gemv-a-side-2026-09-04.md``
+section 6d holds every leg.
 
 THE DISPATCH LIVES INSIDE A FUNCTIONAL CUSTOM OP.  The token count is
 symbolic under vLLM's compiled forward, so a Python branch on it would

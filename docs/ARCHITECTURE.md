@@ -344,8 +344,9 @@ top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's.
 
-**That decode-regime gap is now half explained, and the explained half was a
-defect rather than accumulation order** (#110). One real term was found, fixed,
+**That decode-regime gap is now fully accounted for, and it was half a defect
+and half accumulation order** (#110) -- the issue offered those as alternatives
+and the answer was both. One real term was found, fixed,
 and re-served: the streamed lane handed the
 kernel `(a_q.float() * a_scale).to(bfloat16)`, folding the per-token fp32
 activation scale into a bf16 operand, where `torch._scaled_mm` multiplies the
@@ -383,16 +384,31 @@ top-1 flips.** Three controls hold it up -- the untouched arm B reproduces #102
 at `KL >= 0.000000` / 100.00%, and so does the prefill regime the fix does not
 touch, over 4088 positions -- and against the BF16 teacher the fixed arm A moves
 from `0.436065` onto arm B's `0.432477` (reading `0.432401`), so the fallback
-was the accurate arm and the lane has joined it. **#110 stays open on the
-residual `0.005947`, which is unattributed.** The leading hypothesis is
-measured, not asserted: at all three served K the fixed lane matches
-`torch._scaled_mm` on 99.85-100.00% of bf16 output words while matching
-*itself on a rerun* on 99.90-100.00%, so the residual may be the lane's own
-`atomicAdd` nondeterminism rather than a difference between the arms. One
-serve decides it (`experiments/ts110_replicate_armA.sh`).
-`docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt. Until the
-residual is attributed, treat the lane's "bit-exact" receipts as claims about
-the **decoded tile** only, never about the GEMM over it.
+was the accurate arm and the lane has joined it. **The residual `0.005947` is
+now attributed, and it is not a difference between the arms** (pool action
+`6921120b`): serving arm A a SECOND time, changing nothing, and comparing the
+two decode dumps reads `KL >= 0.005985` at 95.31% top-1 -- the same size as, and
+slightly larger than, the arm-vs-arm figure. What makes that an attribution
+rather than a coincidence of magnitudes is that the decode regime reproduces
+exactly on the *other* arm: arm B is served in the same regime -- same decode
+attention kernel, same scheduler, same KV-block allocation, same 256 scored
+M = 1 forwards -- differs from arm A in the GEMM alone, and a serve a day after
+#102's reads `0.000000` at 100.00%. So the decode pipeline minus this kernel is
+exact across serves, and the spread has one place left to live. Prefill, where
+the GEMV never executes on a scored forward, is a second and weaker null in the
+same direction (`0.000000` over 4088 positions, across arms and across serves),
+and a cold inductor cache changed nothing. It was also predicted from fp64 first: at `M = 1` the lane
+matches `torch._scaled_mm` on 99.90-100.00% of bf16 output words and matches
+*itself on a rerun* on the same 99.90-100.00%.
+
+**So the lane's reproducibility floor is a number a receipt can cite:
+`KL >= ~0.006` at `~95%` top-1 in the decode regime**, on 256 M=1 positions of
+one 0.6B checkpoint. A served decode difference at or below it is noise; the
+`0.012111` #110 filed was above it, and that excess was the fold. Read the
+lane's "bit-exact" receipts as claims about the **decoded tile** only, never
+about the GEMM over it -- the tile is bit-exact 196/196 and the GEMM is
+reproducible only to that floor.
+`docs/measurements/tessera-gemv-a-side-2026-09-04.md` section 6d is the receipt.
 
 ### 4.6 The stock twin isolates the wire from the kernel
 

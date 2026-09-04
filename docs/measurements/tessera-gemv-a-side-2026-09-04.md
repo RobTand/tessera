@@ -1,19 +1,26 @@
 # The window GEMV folded the activation scale into bf16, and that fold is the size of #110 (2026-09-04)
 
-> **STATUS: the served re-run has landed, and it is outcome 2 of the three
-> section 4 named in advance. The fold was MOST of the served disagreement and
-> not all of it: byte-identical bytes, same inode, same image, the two arms now
-> read `KL >= 0.005947` at 96.88% top-1 where #102 read `KL >= 0.012111` at
-> 91.02%.** So a real defect was found, fixed, and priced on the metric that
-> decides -- and a second term of `0.005947` survives it. The leading
-> explanation of that residual is measured but not yet decided, and section 6b
-> says what would decide it.
+> **STATUS: both serves have landed and #110 is fully accounted for.** The
+> re-run is outcome 2 of the three section 4 named in advance -- the fold was
+> MOST of the served disagreement and not all of it: byte-identical bytes, same
+> inode, same image, the two arms went from `KL >= 0.012111` at 91.02% top-1 to
+> **`KL >= 0.005947` at 96.88%**. The replicate (section 6d) is then outcome 1
+> of the two section 6b named: serving the fixed lane a SECOND time, changing
+> nothing, it disagrees with **itself** by **`KL >= 0.005985` at 95.31%** --
+> the same size. So the residual is not an arm-vs-arm difference at all.
+>
+> **The two answers #110 asked for.** It was a defect AND accumulation order,
+> in roughly equal halves; the issue offered them as alternatives. And the
+> magnitude it asked to be recorded: **`KL >= ~0.006` at `~95%` top-1 is this
+> lane's reproducibility floor in the decode regime**, so a served decode
+> difference at or below it is noise. The `0.012111` filed was above it.
 >
 > The rest of the branch is settled. The lane's accumulation order is worth
-> **1.6e-07** and moves no bf16 output word; the fold this document names was
-> worth **1.4e-03**, ten thousand times that; with it gone the lane's bf16
-> output matches `torch._scaled_mm`'s on **99.85-100.00%** of elements at all
-> three served K. The correction is now green on a GPU -- **86 passed, 0
+> **1.6e-07**, moving 0-0.10% of bf16 output words across the three served K;
+> the fold this document names was worth **1.4e-03**, ten thousand times that;
+> with it gone the lane's bf16 output matches `torch._scaled_mm`'s on
+> **99.85-100.00%** of elements at all three served K -- which is the same
+> fraction it matches ITSELF on. The correction is now green on a GPU -- **86 passed, 0
 > failed** -- which it was not when this receipt was last written. Every other
 > way the two served arms could have differed is closed by an artefact rather
 > than an assumption (section 2b), and three fresh controls close the rest
@@ -38,8 +45,12 @@ order (document it and close), or a defect (fix it)?
 **The answer, now served.** A defect, and it was worth about half of what was
 measured. Removing it takes the arms from `KL >= 0.012111` / 91.02% to
 `KL >= 0.005947` / 96.88% -- 2.04x on the bound, 2.88x on the top-1 flips
-(8.98% of positions to 3.12%). The remaining `0.005947` is not yet attributed,
-and section 6b names the one measurement that would attribute it.
+(8.98% of positions to 3.12%). The remaining `0.005947` is attributed in
+section 6d, and it is not a difference between the arms: served a second time
+with nothing changed, the fixed lane disagrees with itself by `0.005985`. So
+the answer to #110 is *both* of the things it offered -- a defect on the M = 1
+path, and accumulation order -- and the second is now a number a receipt can
+cite rather than a supposition.
 
 ---
 
@@ -91,7 +102,9 @@ fp64 reference of the product both claim to compute, at 1024 x 1024, per M
 Read the columns:
 
 * **The accumulation order #110 asked about is 1.6e-07 in fp32** -- the lane
-  run twice on identical input, its `atomicAdd` reduction free to land in a
+  run twice on identical input, its `atomicAdd` reduction (`window_gemv.cu:223`
+  into the shared reduction buffer, `:309` into the fp32 output -- read off the
+  source, not supposed) free to land in a
   different order. That is the magnitude the issue asked to have recorded
   somewhere a receipt can cite, and it is four orders below what was served.
   **The "and it changes no bf16 output word" that stood here was true of this
@@ -551,13 +564,21 @@ the BF16 teacher, decode regime, 256 positions:
 | new arm B, the same fallback re-served | **0.432477** | 62.11% |
 | **new arm A, fixed** | **0.432401** | 61.72% |
 
-Arm B reproduces to six decimal places, and the fixed arm A lands on it to
-`7.6e-05`. #110 called the direction of that pair surprising; under the fold it
-is the expected direction, and removing the fold removes the gap. The fp64 leg
+Arm B reproduces to six decimal places, and the fixed arm A lands within
+`7.6e-05` of it. **Do not read that `7.6e-05` as resolution** -- section 6d
+serves this same fixed lane a second time and it reads `0.434621`, so the
+run-to-run spread of this column on the GEMV lane is about `2.2e-03`, thirty
+times the gap just quoted. The honest statement is the coarser one: the fixed
+arm A and arm B are indistinguishable here, where the folded arm A was not.
+#110 called the direction of that pair surprising; under the fold it is the
+expected direction, and removing the fold removes the distinguishable gap. The fp64 leg
 had already said the fallback was the accurate arm (section 1); the serve now
 says the same thing on the metric that decides.
 
-### 6b. What the residual `0.005947` most likely is -- and the one run that would settle it
+### 6b. What the residual `0.005947` most likely is -- and the run that settled it
+
+> Section 6d ran that run. The hypothesis below was confirmed: read this
+> section for the reasoning and the controls, and 6d for the verdict.
 
 Section 6c ran the fp64-referenced kernel leg at all three served K. Two of its
 columns are the point:
@@ -599,7 +620,8 @@ than to the serve around it -- and it is why the replicate is worth a GPU at
 all.
 
 **This is a hypothesis with a number attached, not a conclusion, and it is
-falsifiable in one serve:** serve arm A a second time, unchanged, and compare
+falsifiable in one serve** -- and section 6d served it, and it was outcome one:
+serve arm A a second time, unchanged, and compare
 the two decode dumps. `experiments/ts110_replicate_armA.sh` does exactly that
 and names its two outcomes in its own header -- about `0.006` and the residual
 is the lane's own nondeterminism (which answers #110's item 2 with a magnitude:
@@ -628,6 +650,91 @@ Artefacts `/home/rob/tessera-runs/ts110/precision_k{1024,2048,3072}.json`. M = 1
 | 1024 | 1.397e-07 | 1.402e-03 | 1.640e-07 | 62.60% -> **100.00%** |
 | 2048 | 1.321e-07 | 1.754e-03 | 1.697e-07 | 52.44% -> **99.90%** |
 | 3072 | 1.481e-07 | 1.762e-03 | 1.815e-07 | 57.42% -> **100.00%** |
+
+### 6d. The replicate: the residual is the lane disagreeing with itself
+
+Pool action `6921120b`, `done`, run off this tree at `c6c9d99` on 2026-09-04.
+`experiments/ts110_replicate_armA.sh` serves **arm A a second time, changing
+nothing** -- the same worktree, the same `ts83/armA` bytes through inode
+`11665664`, the same corpus `076d33efc447`, the same tokenizer, and the same
+`vllm/vllm-openai@sha256:61fc8a896b0a...` -- and compares the two decode dumps
+against each other. The route trace confirms the fixed lane ran again:
+`tessera_window_gemv::gemv`, 7168 launches at `M1` on each of the four served
+shapes, `torch._scaled_mm` at `M512`.
+
+| pair | regime | positions | KL >= | p99 | max | top-1 |
+|---|---|---:|---:|---:|---:|---:|
+| **#110 after the fix** -- arm A (lane) vs arm B (fallback) | decode | 256 | 0.005947 | 0.042089 | 0.175416 | 96.88% |
+| **the replicate** -- arm A vs arm A, second serve, nothing changed | decode | 256 | **0.005985** | 0.070210 | 0.088356 | **95.31%** |
+| arm A vs arm B | prefill | 4088 | 0.000000 | 0.000000 | 0.000000 | 100.00% |
+| arm A vs arm A, second serve | prefill | 4088 | **0.000000** | 0.000000 | 0.000000 | **100.00%** |
+
+**This is outcome 1 of the two section 6b named in advance.** The fixed lane
+disagrees with *itself*, across two serves that differ in nothing, by
+`0.005985` -- the same size as, and very slightly larger than, the `0.005947`
+it disagrees with `torch._scaled_mm` by. The residual is therefore **not a
+difference between the two arms.** It is this kernel's own run-to-run spread,
+and after the fold is removed the two arms agree to within it.
+
+Three things make that attribution rather than a coincidence of magnitudes:
+
+* **The decode regime itself reproduces exactly on the other arm** -- and this
+  is the sharp control, sharper than the prefill null below it. Arm B is served
+  in the *same* regime: the same decode attention kernel, the same scheduler,
+  the same KV-block allocation, the same sampler, the same 256 M = 1 scored
+  forwards. It differs from arm A in exactly one thing, the GEMM. Section 6a's
+  first row serves arm B a second time a day after #102's and reads `0.000000`
+  at 100.00%. So the decode pipeline minus this kernel is exact across serves,
+  and an arm-A-against-arm-A spread has one place left to live.
+* **The materialised path is exact across serves too.** Prefill -- where the
+  GEMV never executes on a scored forward -- reads `0.000000` at 100.00% over
+  4088 positions both across arms *and* across the two serves. This is a
+  weaker control than the one above (it is a different regime, M = 512, a
+  different attention kernel, one large forward rather than 256 small ones),
+  but it is a second independent null and it agrees.
+* **The compile cache was cold and it did not matter.** The replicate built a
+  fresh `vllm-cache-ts110r-armA`, as arm B's cross-run control did before it --
+  and arm B's control read `0.000000`. An empty inductor cache is therefore not
+  a source of divergence here, which is what [[tessera-serves-itself]] found
+  when it chased the same question.
+* **It was predicted from fp64 before it was served.** Section 6c measured the
+  lane against itself at `1.6e-07` relative, moving 0-0.10% of bf16 output
+  words at `M = 1`; the arm-vs-arm identity at `M = 1` is the same 99.90-100.00%.
+  The serve priced those moved words and got the same number twice.
+
+**The magnitude #110 item 2 asked for, stated so a receipt can cite it:** on
+this lane, in the decode regime, **`KL >= ~0.006` at `~95%` top-1 is the
+reproducibility floor.** A served decode difference at or below that is noise.
+Above it -- as `0.012111` was -- something real is happening, and in #110's case
+it was the `a_scale` fold.
+
+**And the answer to #110 item 3, which offered two possibilities:** it was
+*both*. Half the filed disagreement was a kernel defect on the M=1 path (the
+fold, fixed here); the other half is accumulation order, now measured on the
+serving metric instead of assumed. The issue's own framing -- "consistent with
+different accumulation order rather than a defect" -- was half right, and only
+a serve could say which half.
+
+**Teacher-KL readings across the three serves of these arms**, which is the
+same fact seen from the other side:
+
+| serve | KL >= vs BF16 | top-1 |
+|---|---:|---:|
+| arm A, folded (#102 and this campaign's baseline) | 0.436065 | 63.67% |
+| arm B, fallback | 0.432477 | 62.11% |
+| arm A, fixed -- first serve | 0.432401 | 61.72% |
+| arm A, fixed -- second serve, nothing changed | 0.434621 | 63.28% |
+
+The two identical serves of the fixed lane differ by `2.2e-03` on this column,
+which is why section 6a's `7.6e-05` is corrected there rather than left to
+imply a resolution this lane does not have. The fold's `3.7e-03` displacement
+is above that spread; the fixed arm's distance from arm B is not.
+
+**Scope, stated because it bounds every number above.** 256 M=1 decode
+positions, one 0.6B checkpoint, one box (sparky), two serves. The floor is a
+floor *measured twice*, not a distribution: a third serve could widen it. What
+it already supports is the negative claim, which is the one #110 needs -- there
+is no arm-vs-arm difference left that this instrument can see.
 
 The fixed lane's fp32 error is flat in K at ~1.4e-07 and the fold's is flat at
 ~1.6e-03, so section 1's ratio holds at every served shape rather than at the
