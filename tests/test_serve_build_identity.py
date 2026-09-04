@@ -718,6 +718,16 @@ def test_the_serve_wrapper_greps_its_log_file_rather_than_a_pipe():
     assert 'grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"' in body
 
 
+def test_the_serve_wrapper_keeps_entrypoint_and_image_command_distinct():
+    """A CLI-style image needs ``vllm serve``, not only an entrypoint override."""
+    body = _WRAPPER.read_text()
+    assert ('"$IMAGE" \\\n'
+            '  ${TESSERA_KL_IMAGE_COMMAND:-} \\\n'
+            '  "$MODEL"') in body, (
+        "the image command must be an explicit token after the image; Docker options "
+        "such as --entrypoint belong before it and cannot spell `vllm serve`")
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 
