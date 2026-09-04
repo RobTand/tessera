@@ -158,6 +158,36 @@ That is a different claim from the issue's title, and it changes what a fix
 would be: the quantity that responds to the residue is the alternation's
 effectiveness, not the alphabet's fidelity.
 
+## 4b. Registered before `refitall` ran: is the default lucky?
+
+The gauge argument has a consequence the issue does not draw. If the residue is
+a rounding lattice rather than a curve, then **every** non-dyadic sigma is a
+draw from the same distribution, and #89's arms say what that distribution
+looks like on this unit: 0.013445, 0.013731, 0.013948, 0.013992, 0.014042,
+0.014448, 0.014924 — seven draws spanning 11%, against the dyadic class at
+0.010183–0.010238. The default is not 37% better than one alternative; it is
+27% better than *everything else measured*, and nothing in the derivation of
+`default_channel_sigma` asked for that.
+
+Two readings, and they differ in what ships:
+
+* **Structural.** Something about the default's residue is genuinely good, and
+  the dyadic class is better than the lattice everywhere. Then there IS a
+  per-grid question, but it is "which residue", not "which spread", and the
+  answer would have to hold across units.
+* **Luck.** The default's residue is one good draw on *this* unit's six
+  Hessian-dominant columns, and on another unit some other residue wins. Then
+  #89's framing inverts: the 1.367 is not a cost of moving sigma, it is the
+  size of a per-unit coin flip that the default happened to win here, and
+  reporting it as a property of the constant would be an error.
+
+`--units all` distinguishes them, and the prediction that separates the two is
+directional, not just in magnitude: **under Luck, at least one of the other
+seven units should read the ratio BELOW 1.0** — m=0.75 beating the default —
+because a coin flip has two sides. Under Structural, all eight ratios sit at or
+above 1.0. #89 reports the other seven moving 0.1–5.7% but does not report the
+sign, so this is not a fact already in hand.
+
 ## 5. What this says about `default_channel_sigma`
 
 The brief asked me to re-derive the constant against the table's actual use if
