@@ -97,7 +97,43 @@ def _export(export, work: pathlib.Path, name: str, tensors: dict, plan):
     return case / "out"
 
 
-def _read_back(out: pathlib.Path) -> None:
+def _value_check(prepared, source: pathlib.Path) -> None:
+    """The decoded tile IS the expert that went in, not merely well-formed bytes.
+
+    Shapes and a clean parse cannot tell a correct tile from a transposed or
+    interleaved one -- both are the right size.  A wrong orientation, a wrong
+    gate/up split or a wrong expert row would put the relative error near
+    ``sqrt(2)`` on independent weights, so the number below separates "the
+    layout is right" from "the layout is plausible".
+    """
+    with safe_open(str(source / "model.safetensors"), framework="pt") as handle:
+        original = {n: handle.get_tensor(n) for n in handle.keys() if n.startswith(STACK + ".")}
+
+    def leg(label, tile, scale, keys):
+        got = tile.to(torch.float32) * scale.to(torch.float32)
+        want = torch.cat([original[k].to(torch.float32) for k in keys], dim=0)
+        assert got.shape == want.shape, (got.shape, want.shape)
+        return label, (got - want).norm().item() / want.norm().item()
+
+    worst = 0.0
+    for expert in range(EXPERTS):
+        for label, rel in (
+            leg(f"expert {expert} w13", prepared.w13_weight[expert],
+                prepared.w13_weight_scale[expert],
+                [f"{STACK}.{expert}.gate_proj.weight", f"{STACK}.{expert}.up_proj.weight"]),
+            leg(f"expert {expert} w2", prepared.w2_weight[expert],
+                prepared.w2_weight_scale[expert], [f"{STACK}.{expert}.down_proj.weight"]),
+        ):
+            worst = max(worst, rel)
+    assert worst < 0.15, f"the decoded tile is not the source expert: rel_err {worst}"
+    assert prepared.w13_weight[0].to(torch.float32).abs().sum() > 0, "expert 0 decoded to zeros"
+    assert not torch.equal(prepared.w13_weight[0], prepared.w13_weight[1]), \
+        "every expert decoded to the same tile"
+    print(f"  value check: worst relative error against the source experts {worst:.6f} "
+          "(a transposed, interleaved or misrouted tile sits near 1.41)")
+
+
+def _read_back(out: pathlib.Path, source: pathlib.Path) -> None:
     from tessera.moe_layout import MoePacked, unpack_moe_wires
     from tessera.serving.moe_route import prepare_tessera_moe_experts
     from tessera.serving.scheme import (MOE_GROUPS, expert_role_declarations,
@@ -173,6 +209,7 @@ def _read_back(out: pathlib.Path) -> None:
     print("  prepare_tessera_moe_experts(cpu): w13", list(prepared.w13_weight.shape),
           prepared.w13_weight.dtype, "w2", list(prepared.w2_weight.shape),
           "scales", list(prepared.w13_weight_scale.shape), list(prepared.w2_weight_scale.shape))
+    _value_check(prepared, source)
 
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     routed = manifest["routed_moe"]
@@ -218,7 +255,7 @@ def main() -> int:
 
     print("[3/3] the write half, then the read-back")
     out = _export(export, args.work, "written", _checkpoint(generator, bad_geometry=False), plan)
-    _read_back(out)
+    _read_back(out, out.parent / "source")
     print("OK")
     return 0
 

@@ -68,6 +68,12 @@ a reading of the code:
 | `scheme.parse_tessera_expert_blob` per container | all 12 parse against their declared role — grid, body, plane, span, rung, geometry |
 | `moe_layout.unpack_moe_wires` | padded rows plus lengths round-trip to the written blobs **byte for byte** |
 | `moe_route.prepare_tessera_moe_experts(device="cpu")` | `w13_weight [4, 128, 128] float8_e4m3fn`, `w2_weight [4, 128, 64]`, scales `[4, 128, 1]` each — the stock per-channel FP8 stack |
+| the decoded tile **against the source experts** | worst relative error **0.077** over all 8 legs — a transposed, interleaved or misrouted tile sits near `sqrt(2)` ≈ 1.41 |
+
+That last row is the one that separates *right* from *plausible*: shapes and a
+clean parse cannot tell a correct tile from a transposed or interleaved one,
+because both are the right size. 0.077 is the quantization error of the rung;
+1.41 is what a layout mistake costs on independent weights.
 
 **The variable-length claim is now a number.** Inside `w13`, at one shape and
 one rung, the eight blobs run **21293..21297 bytes — a 4-byte spread** — and
@@ -160,11 +166,12 @@ packed-source model this repo can serve.
   plus `tests/test_export_moe_layouts.py`) and `2be23f3a9e9d`
   (`experiments/moe_route_load_probe.sh`, whose `positive_exported` leg is the
   matched pair: the same experts, shapes, rung, seed and weights, with only the
-  producer of the bytes varying). The CPU pytest of
-  `tests/test_export_moe_layouts.py` did land — `839b1b0a1bf4`, **22 passed, 2
-  skipped in 29.74 s**, the two skips being its CUDA cases. So the CUDA-gated
-  surface of this pass is *unmeasured*, not *passing*; §2 says which legs the
-  CPU run does and does not cover.
+  producer of the bytes varying). The CPU halves did land, both through the
+  pool on sparky: `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22
+  passed, 2 skipped in 29.74 s** — and `tests/test_export_moe_write.py` —
+  `cb8372740b1b`, **11 passed, 3 skipped in 0.78 s**. Every skip in both is a
+  `@cuda` case. So the CUDA-gated surface of this pass is *unmeasured*, not
+  *passing*; §2 says which legs the CPU run does and does not cover.
 * **The model-level load hop is still unmeasured.** The probe drives
   `RoutedExperts.load_weights`; in a serve
   `Glm5NextForConditionalGeneration.load_weights` runs first and decides what is

@@ -1172,7 +1172,11 @@ writes a stack and then reads it with the plugin's own functions:
 against their declared role, `unpack_moe_wires` round-trips them byte for byte
 off padded rows, and `prepare_tessera_moe_experts` decodes to
 `w13 [4, 128, 128] float8_e4m3fn` / `w2 [4, 128, 64]` with `[4, 128, 1]`
-scales — the stock per-channel FP8 stack. The `wire_stride` argument stops
+scales — the stock per-channel FP8 stack, whose worst relative error against
+the source experts is **0.077**, the rung's own quantization error; a
+transposed, interleaved or misrouted tile would sit near `sqrt(2)`, which is
+what makes this a layout check rather than a shape check. The `wire_stride`
+argument stops
 being an argument there: at ONE shape and ONE rung the eight `w13` blobs run
 21293..21297 bytes, a 4-byte spread, and the declared stride is the max. This
 is the plumbing and the reader's acceptance; the CUDA encoder and the fused-MoE
