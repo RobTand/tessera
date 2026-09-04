@@ -685,6 +685,11 @@ _TS113_CAMPAIGN = (
     / "experiments"
     / "ts113_sparklina_campaign.sh"
 )
+_TS113_PREFLIGHT = (
+    Path(__file__).resolve().parents[1]
+    / "experiments"
+    / "ts113_sparklina_preflight.sh"
+)
 _EAGER_WRAPPERS = [
     Path(__file__).resolve().parents[1] / "experiments" / name
     for name in (
@@ -832,6 +837,25 @@ def test_ts113_launch_gate_counts_source_roles_not_module_containers(tmp_path):
     assert derived["eligible_units"] == 5
     assert derived["expected_window_gemv_launches"] == 10
     assert derived["fallback_refusals"] == 2
+
+
+def test_ts113_preflight_defaults_to_the_campaign_population():
+    """The standalone preflight must guard the namespace the campaign writes."""
+    campaign = _TS113_CAMPAIGN.read_text().splitlines()
+    preflight = _TS113_PREFLIGHT.read_text().splitlines()
+
+    def literal(lines, name):
+        return next(line.split("=", 1)[1] for line in lines
+                    if line.startswith(f"{name}="))
+
+    def default(lines, name):
+        value = literal(lines, name)
+        return value.split(":-", 1)[1][:-1]
+
+    assert default(preflight, "POP_ROOT") == literal(
+        campaign, "PROMOTIONAL_POP_ROOT")
+    assert default(preflight, "LOCAL_ROOT") == literal(
+        campaign, "PROMOTIONAL_LOCAL_ROOT")
 
 
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
