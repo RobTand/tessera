@@ -1,0 +1,28 @@
+{
+ "schema": "tessera.ldlq_block_rerun_necessity/1",
+ "question": "was re-running the ldlq_block=32 default necessary, or was the 2026-09-02 ldlqH1 artifact's published 0.531028 usable as the bar?",
+ "method": "experiments/compare_stock_checkpoints.py between ldlqH1-stock-twin (2026-09-02) and b32-stock-twin (this run), same recipe, same wire, same block",
+ "result": {
+  "shared_quantized_tensors": 784,
+  "identical": 623,
+  "different": 161,
+  "different_pct": 20.5,
+  "only_in_one_side": 0,
+  "wire_bytes_both": 220301312,
+  "wire_bpp_both": 4.001822916666667
+ },
+ "verdict": "NECESSARY.  A fifth of the quantized tensors differ at identical byte counts and shapes, so the tree moved in a way that changes this wire's codes.  Quoting the old number as served_bar would have put a commit's worth of change inside a delta meant to hold only the block -- which is exactly what the brief's 'do not quote an old number' guards against.",
+ "b32_rerun": {
+  "elapsed_s": 12871,
+  "wall": "3:34:36",
+  "peak_rss_kb": 6021028,
+  "activation_aware": {
+   "ldlq_sigma": 1.0,
+   "ldlq_block": 32,
+   "refit_objective": "h^1.0"
+  },
+  "units": 196,
+  "modules": 112
+ },
+ "note_on_my_reasoning": "I justified the re-run from a mechanism (trellis weighting, the reach-aware per-row start) without measuring it, then over-corrected and called the justification wrong before this check existed.  The check says the conclusion was right.  'Unverified' was the honest label in between, not 'wrong'."
+}
