@@ -678,6 +678,36 @@ def test_a_cell_may_not_declare_a_structure_the_dispatch_refuses(contract):
         validate_serving_contract(bad)
 
 
+def test_a_new_dispatch_structure_is_not_attested_without_a_served_cell(
+        contract, monkeypatch):
+    """Dispatch capability cannot mint an attestation by itself.
+
+    A structure enters ``scheme.STRUCTURES`` when this build can execute it;
+    it enters ``lane_eligibility.structures`` only when a published cell says
+    which served receipt covers it.  Growing the former must therefore leave
+    the latter fail-closed until that cell exists.
+    """
+    from tessera.serving import scheme
+
+    future = "future_dispatch_structure"
+    monkeypatch.setattr(scheme, "STRUCTURES", (*scheme.STRUCTURES, future))
+    bad = _mutated(
+        contract, lambda c: c["lane_eligibility"]["structures"].append(future))
+
+    with pytest.raises(ValueError, match="no receipt-bearing cell"):
+        validate_serving_contract(bad)
+
+
+def test_the_attested_structure_axis_is_a_canonical_list(contract):
+    """Set-equivalent spellings are not equivalent published contracts."""
+    bad = _mutated(
+        contract, lambda c: c["lane_eligibility"].__setitem__(
+            "structures", ["dense", "dense"]))
+
+    with pytest.raises(ValueError, match="non-empty list of distinct strings"):
+        validate_serving_contract(bad)
+
+
 def test_an_expert_parallel_claim_is_refused(contract):
     bad = _mutated(contract, lambda c: c["expert_parallel"]["units"].append(
         {"unit": "TESSERA_E2M1_K2", "kind": "tessera_wire_family", "max_world_size": 2}))

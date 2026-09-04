@@ -129,6 +129,20 @@ def test_qwen_is_the_control():
         assert classify_construction(entry, f"model.layers.0.{leaf}")[0] == "offered"
 
 
+def test_lfm_routes_the_routed_expert_stack():
+    """The EUGR launch target offers LFM's non-Linear expert stack to the plugin."""
+    entry = construction_entry(["Lfm2MoeForCausalLM"])
+    assert entry is not None, "the pinned LFM census receipt is not in the contract"
+    assert entry["runtime"]["image"] == (
+        "eugr/spark-vllm@sha256:"
+        "0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c"
+    )
+    verdict, pattern = classify_construction(
+        entry, "model.layers.2.feed_forward.experts")
+    assert verdict == "offered", (verdict, pattern)
+    assert pattern == "model.layers.*.feed_forward.experts"
+
+
 def test_an_uncensused_architecture_answers_none_rather_than_yes():
     assert construction_entry(["NoSuchModelForCausalLM"]) is None
 

@@ -33,7 +33,7 @@ serves them at one declared residency.
 
 STRUCTURE.  ``structure`` names what kind of vLLM layer the target is:
 ``dense`` (a ``LinearBase``, one blob per module) or ``routed_moe`` (a
-``RoutedExperts`` stack, one blob per expert per projection group).  A dense
+``RoutedExperts`` stack, one blob per expert per projection).  A dense
 scheme declares one geometry and one exact ``wire_bytes``; a routed-MoE scheme
 declares an expert count and the two GROUPS vLLM's fused-MoE kernel reads --
 ``w13`` (gate then up, one matrix) and ``w2`` -- each with its own geometry,
@@ -79,7 +79,13 @@ __all__ = [
     "MOE_GROUPS",
     "MOE_GROUP_SHARDS",
     "MOE_GROUP_ROLES",
+    "MOE_SHARD_PROJECTIONS",
+    "MOE_GROUP_PROJECTIONS",
     "MOE_BUILDERS",
+    "MOE_SOURCE_UNPACKED",
+    "MOE_SOURCE_OUT_FIRST_CHUNKED",
+    "MOE_SOURCE_IN_FIRST_INTERLEAVED",
+    "MOE_SOURCE_LAYOUTS",
     "ROUTES",
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
@@ -125,7 +131,7 @@ TESSERA_BF16 = "TESSERA_BF16"
 TESSERA_SCHEME_KEY = "family"
 
 #: What kind of vLLM layer a scheme's target is.  ``dense`` is one blob per
-#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION GROUP on a
+#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION on a
 #: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
 #: a structure outside it is refused by name rather than served through a
 #: method that would read the wrong tensor rank.
@@ -137,17 +143,40 @@ STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
 #: (gate at rows ``[0:N]``, up at ``[N:2N]`` -- ``RoutedExperts._load_w13``
 #: narrows on ``shard_id``) and its down alone in ``w2``.  A Tessera MoE
-#: checkpoint therefore writes one fused container per group per expert: the
-#: group IS the tile the kernel reads, so the container and the tile have the
-#: same members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
+#: checkpoint therefore writes one fused container per projection per expert.
+#: The group's containers stack into the tile the kernel reads, with the same
+#: members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
 #: shard vocabulary for each group, in the row order the group stacks; a
 #: producer reads the order off this table instead of restating it.
 MOE_GROUPS = ("w13", "w2")
 MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2",)}
-#: How many roles each group's container holds.  DERIVED from the shard table,
+#: How many projection containers each group holds. DERIVED from the shard table,
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+#: The canonical wire role for each runtime shard. Source checkpoints may
+#: spell their tensors with either vocabulary, but wire roles are descriptive.
+#: The exporter and sidecar reader share this table so a self-consistent pair
+#: of sidecar and blobs cannot reinterpret the runtime's gate/up row order.
+MOE_SHARD_PROJECTIONS = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+MOE_GROUP_PROJECTIONS = {
+    group: tuple(MOE_SHARD_PROJECTIONS[shard] for shard in shards)
+    for group, shards in MOE_GROUP_SHARDS.items()
+}
+
+#: The checkpoint layouts the exporter can prove it interpreted.  This is
+#: provenance rather than a runtime layout: all three are normalised to the
+#: same canonical per-expert gate/up/down wires before vLLM sees them.  Old
+#: schemes predate the field and can only have come from the original
+#: per-expert writer, so their closed-world default is ``unpacked_per_expert``.
+MOE_SOURCE_UNPACKED = "unpacked_per_expert"
+MOE_SOURCE_OUT_FIRST_CHUNKED = "out_first_chunked"
+MOE_SOURCE_IN_FIRST_INTERLEAVED = "in_first_interleaved"
+MOE_SOURCE_LAYOUTS = (
+    MOE_SOURCE_UNPACKED,
+    MOE_SOURCE_OUT_FIRST_CHUNKED,
+    MOE_SOURCE_IN_FIRST_INTERLEAVED,
+)
 
 #: WHICH FAMILIES HAVE AN EXPERT ROUTE, and the one home for that rule.
 #: FAMILY = ROUTE holds on the expert stack exactly as it does on a Linear,
@@ -895,10 +924,10 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     """Resolve a routed-MoE scheme: E experts, two groups, one route.
 
     THE SHAPE, AND WHY IT IS NOT THE DENSE ONE.  A dense scheme describes one
-    module: one blob, one exact byte count.  An expert stack is E x 2 blobs --
-    a ``w13`` container (gate then up, the row order
-    ``RoutedExperts._load_w13`` narrows to) and a ``w2`` container -- whose
-    lengths differ expert by expert.  So the sidecar declares the two GROUPS
+    module: one blob, one exact byte count. An expert stack carries per-expert
+    gate, up and down containers: ``w13`` stacks gate then up in the row order
+    ``RoutedExperts._load_w13`` narrows to, and ``w2`` holds down. Their lengths
+    differ by projection and expert. So the sidecar declares the two GROUPS
     and the expert count, and per group a ``wire_stride`` (the parameter row
     width every expert's blob is copied into) rather than a ``wire_bytes``.
     The true length of a blob is the blob's own, carried beside it
@@ -916,6 +945,13 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     if family not in TESSERA_FAMILIES:
         raise ValueError(
             f"tessera target {target!r}: family must be one of {TESSERA_FAMILIES}, got {family!r}")
+    source_layout = scheme.get("source_layout", MOE_SOURCE_UNPACKED)
+    if source_layout not in MOE_SOURCE_LAYOUTS:
+        raise ValueError(
+            f"tessera target {target!r}: source_layout must be one of "
+            f"{MOE_SOURCE_LAYOUTS}, got {source_layout!r}. The source convention "
+            "decides how packed expert weights are sliced before encoding; an "
+            "unknown value cannot be reconstructed safely from the emitted wires.")
     experts = _as_int(scheme, "experts", target)
     groups = scheme.get("groups")
     if not isinstance(groups, Mapping):
@@ -953,6 +989,16 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
                 f"{[r[0] for r in declared['roles']]}, expected {MOE_GROUP_ROLES[name]} -- the "
                 f"group's members are exactly the shards the runtime loads into it "
                 f"({MOE_GROUP_SHARDS[name]}, scheme.MOE_GROUP_SHARDS), in that row order")
+        role_names = tuple(role for role, _ in declared["roles"])
+        if role_names != MOE_GROUP_PROJECTIONS[name]:
+            raise ValueError(
+                f"tessera target {target!r} group {name!r}: roles {role_names} must be "
+                f"{MOE_GROUP_PROJECTIONS[name]} in the runtime's row order")
+        if name == "w13" and len({rows for _, rows in declared["roles"]}) != 1:
+            raise ValueError(
+                f"tessera target {target!r} group 'w13': role rows "
+                f"{[rows for _, rows in declared['roles']]} must be equal halves; "
+                "the runtime splits gate and up at N in its [2N, K] tile")
         declared_groups[name] = declared
     if declared_groups["w13"]["rows"] != 2 * declared_groups["w2"]["columns"]:
         raise ValueError(
@@ -966,6 +1012,7 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
             "hidden size, so they are one number")
     return {
         "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        "source_layout": source_layout,
         "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
         "plane": declared_groups["w13"]["plane"],
         "hidden_size": declared_groups["w13"]["columns"],

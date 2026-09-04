@@ -96,6 +96,28 @@ def _checkpoint(experts=EXPERTS, projections=("gate_proj", "up_proj", "down_proj
     return tensors
 
 
+def _packed_checkpoint(source_layout):
+    """The same logical experts under either supported packed convention."""
+    tensors = _checkpoint()
+    gate = torch.stack([tensors.pop(f"{STACK}.{e}.gate_proj.weight")
+                        for e in range(EXPERTS)])
+    up = torch.stack([tensors.pop(f"{STACK}.{e}.up_proj.weight")
+                      for e in range(EXPERTS)])
+    down = torch.stack([tensors.pop(f"{STACK}.{e}.down_proj.weight")
+                        for e in range(EXPERTS)])
+    suffix = ".weight" if source_layout == "out_first_chunked" else ""
+    if source_layout == "out_first_chunked":
+        tensors[f"{STACK}.gate_up_proj{suffix}"] = torch.cat((gate, up), dim=1)
+        tensors[f"{STACK}.down_proj{suffix}"] = down
+    else:
+        packed = torch.empty(EXPERTS, HIDDEN, 2 * MOE_INTER)
+        packed[:, :, 0::2] = gate.transpose(1, 2)
+        packed[:, :, 1::2] = up.transpose(1, 2)
+        tensors[f"{STACK}.gate_up_proj{suffix}"] = packed
+        tensors[f"{STACK}.down_proj{suffix}"] = down.transpose(1, 2).contiguous()
+    return tensors
+
+
 def _write(tmp_path: Path, tensors, config=None) -> Path:
     src = tmp_path / "src"
     src.mkdir(exist_ok=True)
@@ -354,6 +376,38 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
     assert record["structure"] == "routed_moe"
     assert len(record["roles"]) == EXPERTS * 3
     assert record["wire_stride"]["w13"] == w13_stride
+
+
+@cuda
+@pytest.mark.parametrize("source_layout", ["out_first_chunked", "in_first_interleaved"])
+def test_a_packed_stack_is_written_as_canonical_per_expert_wires(
+        tmp_path, monkeypatch, source_layout):
+    out = _export(
+        tmp_path, monkeypatch, _packed_checkpoint(source_layout),
+        {STACK: {"grid": "E4M3", "q256": 1024, "source_layout": source_layout}})
+
+    config = json.loads((out / "config.json").read_text())["quantization_config"]
+    scheme = next(group["scheme"] for group in config["config_groups"].values()
+                  if group["targets"] == [STACK])
+    declared = validate_tessera_moe_scheme(scheme, STACK)
+    assert declared["source_layout"] == source_layout
+    with safetensors_torch.safe_open(
+            str(out / "model.safetensors"), framework="pt") as handle:
+        names = set(handle.keys())
+    assert sorted(n for n in names if n.startswith(f"{STACK}.") and n.endswith(".wire")) == \
+        sorted(f"{STACK}.{expert}.{projection}.wire" for expert in range(EXPERTS)
+               for projection in export.EXPERT_PROJECTIONS)
+    assert not any(n.startswith(f"{STACK}.gate_up_proj") or
+                   n.startswith(f"{STACK}.down_proj") for n in names)
+
+    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    assert manifest["routed_moe"]["quantized_source_tensors"] == 2
+    assert manifest["routed_moe"]["quantized_logical_units"] == EXPERTS * 3
+    record = manifest["modules"][STACK]
+    assert record["source_layout"] == source_layout
+    assert {role["source_layout"] for role in record["roles"]} == {source_layout}
+    assert all("source_tensor" in role and "source_slice" in role
+               for role in record["roles"])
 
 
 @cuda

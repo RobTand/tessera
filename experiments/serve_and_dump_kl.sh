@@ -98,6 +98,10 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # --kernel-config and its JSON arrive as two argv entries).  Globbing is not
 # wanted with them: JSON carries [ and ], and a file in cwd that happened to
 # match would silently rewrite a serve's configuration.
+# ``TESSERA_KL_DOCKER_EXTRA`` is Docker argv before the image (for example an
+# entrypoint override).  ``TESSERA_KL_IMAGE_COMMAND`` is image argv after it
+# (for example ``serve`` for the vLLM CLI image); those are distinct Docker
+# seams and neither can substitute for the other.
 set -f
 SERVE_REAPED=0
 docker run -d --name "$NAME" --gpus all --ipc=host \
@@ -108,6 +112,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   $(build_identity_docker_env) \
   ${TESSERA_KL_DOCKER_EXTRA:-} \
   "$IMAGE" \
+  ${TESSERA_KL_IMAGE_COMMAND:-} \
   "$MODEL" --served-model-name kl-target \
   --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 \

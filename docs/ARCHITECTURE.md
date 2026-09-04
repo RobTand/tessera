@@ -24,6 +24,25 @@ families) and stamping coverage and accounting into `<plan>.provenance.json`.
 The exporter encodes what the plan names and the manifest states what is on
 disk; the census checks every module serves on its declared family.
 
+### 2.1 Whole-layer export parts have one checked assembly
+
+`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
+validates the same full plan before selecting its work, so a fused module and
+an expert stack cannot be divided between workers. Each worker reads and writes
+only its owned source tensors. A part has `tessera_part_config.json`, never a
+loadable `config.json`; it is not a checkpoint until assembly.
+
+`merge_tessera_parts.py` recognizes these serving parts separately from the
+older shard-split wire exports. Before creating its output it requires every
+partition exactly once, exact source-tensor ownership and coverage, identical
+source/config/tokenizer hashes, encoder source and behavior fixture hashes, full plan/options and
+dispatch-pinned runtime digest, and an index matching the hashed output files.
+It copies the containers unchanged under unique shard names, unions the schemes
+and ignores, derives totals from the combined module records, and writes the
+final `config.json` last. The runtime digest here names what the dispatch was
+asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
+
 ## 3. Bytes: priced == served
 
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
@@ -282,6 +301,12 @@ blob's true length rides beside it and
 lengths imply -- the one check that catches a sidecar disagreeing with the
 bytes.
 
+`scheme.MOE_GROUP_PROJECTIONS` derives canonical role names from the runtime's
+shard order and is shared by the exporter and reader. The scheme refuses any
+other role names or order, even when the blobs agree with the sidecar; `w13`
+also requires equal gate/up row counts, because the runtime splits its tile
+at `N`. Matching total `[2N, K]` geometry alone does not prove that boundary.
+
 `tessera.serving.moe_route` decodes those containers into exactly the
 parameters vLLM's own per-channel FP8 MoE path reads (`w13_weight [E, 2N, K]`
 and `w2_weight [E, K, N]` in `float8_e4m3fn`, `w13_weight_scale [E, 2N, 1]`
@@ -340,22 +365,64 @@ ratio whose width follows its value. On the GPU,
 kernel, matching the arm the probe encoded itself digit for digit while the
 bytes on disk differ.
 
-The PACKED 3-D source layout has no export, and the reason is two conventions
-the tensor does not state: which axis is the output (the dims decide only when
-`hidden_size != 2 * moe_intermediate_size`, and on GLM-5.3-Flash they are
-equal), and whether a packed `gate_up_proj` chunks or interleaves its halves.
-Both are refused by name; neither is guessed.
+The unpacked source grammar has two attested spellings for that same route.
+GLM owns the stack at `mlp.experts` and calls its source leaves
+`gate_proj`/`up_proj`/`down_proj`; LFM2.5 owns it at
+`feed_forward.experts` and calls them `w1`/`w3`/`w2`. The exporter normalizes
+both to the scheme's canonical roles but keeps the source spelling in each
+emitted wire name, so the model's own `FusedMoEFactory(ckpt_names=...)` mapping
+supplies the shard id to the wire parameter's loader. Two source spellings for
+one canonical role are refused rather than resolved by checkpoint order.
+
+The LFM construction row is derived from
+`docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json`, taken on the
+exact EUGR 0.28.1rc1 image recorded in that receipt. It offers
+`model.layers.*.feed_forward.experts` as a non-Linear `RoutedExperts` stack;
+the `short_conv.conv1d` projection is never offered and remains source
+precision. This records construction eligibility only: the dense runtime
+attestation remains on its own pinned image, and this row does not promote a
+routed-MoE quality cell.
+
+The PACKED 3-D source layout is accepted only under an explicit plan
+convention. `out_first_chunked` is `gate_up [E, 2N, K]` with gate then up and
+`down [E, K, N]`; `in_first_interleaved` is `gate_up [E, K, 2N]` with gate/up
+alternating and `down [E, N, K]`. The exporter checks those exact shapes
+against `config.json`, slices canonical per-expert gate/up/down matrices, and
+stamps the convention as `source_layout` on the routed-MoE scheme and each
+manifest role. It does not infer either fact from dimensions: when `hidden_size
+== 2 * moe_intermediate_size` gate/up is square, and no dimension states
+chunked versus interleaved. A missing or unknown convention is refused before
+encoding. Old schemes default to `unpacked_per_expert`, the only source layout
+their writer supported.
 
 **What is NOT claimed.** There is no `routed_moe` cell in
-`runtime_contract.json` and there will not be one until a served census and KL
-cover it on a real artifact. This is the `loader_axes` precedent: what the
-loader *does* is a different published fact from what has been *served*.
+`runtime_contract.json`. A served GLM census covers three 16-expert stacks
+(§4.5), but that cut's reference has zero confident positions and changes
+routing, so it cannot support a quality verdict. The full LFM2.5 source now
+has construction and source-layout evidence; its encoded full-model served
+KL remains outstanding. The cell waits on that measurement. This is the
+`loader_axes` precedent: what the loader *does* is a different published fact
+from what has been *served*.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
+`experiments/ts5_moe_served.sh` requires success from all three arms: the
+teacher dump, the student comparison, and the route census. Successful KL
+arms cannot turn a failed census into a successful campaign action.
+Before serving, `experiments/ts5_sidecar_check.py` reads the indexed shards
+(or all safetensors files for an unindexed checkpoint), requires exactly one
+wire per declared expert and role under its canonical or runtime shard name,
+and recomputes each group's maximum wire length from those headers. A missing
+projection cannot pass merely because another wire has the declared stride.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
-module serves on its declared family. A clean census with exact bytes is
-necessary and, by tessera#1, not sufficient. It is also not sufficient
+module serves on its declared family. The join is made in MODULE space: the
+route records come off `named_modules()`, the declared targets come off
+`config_groups` in the checkpoint's namespace, and the model class's own
+`hf_to_vllm_mapper` is replayed over the targets before the two are matched --
+the same translation `TesseraConfig.apply_vllm_mapper` makes at load, and
+without it a mapped architecture joins nothing. A clean census with exact
+bytes is necessary and, by tessera#1, not sufficient. It is also not sufficient
 *within* a route: the per-module check is a check on agreement, and the
 streamed FP8 route's decode regime legitimately admits both the GEMV pair
 and the materialised one, so a serve in which the lane prepared for nothing
@@ -368,6 +435,51 @@ torch decode by design, and only zero modules in *every* phase is the void
 the field exists to catch. The per-phase counts stay in the block, and
 `all_required_engaged` is three-valued so "nobody said what to require" never
 reads as "everything required was engaged".
+
+**A routed expert stack joins by containment, and is graded by its structure.**
+vLLM builds one quant method for the declared stack prefix and attaches it to
+the `RoutedExperts` child it constructs underneath, so the route record lands
+at `<layer>.mlp.experts.routed_experts` while the checkpoint declares
+`<layer>.mlp.experts`. An exact-name join reads that as two faults at once --
+a served module nothing declared, and a declared module nothing served: eight
+problems over three stacks on the first served MoE census -- three records and
+one roll-up line in each of the two phases -- every one of them that single
+cause. So a record whose `kind` is `moe` joins to the one declared
+target that CONTAINS it, and to none if two do -- ambiguity is reported, never
+resolved by picking the longer prefix -- while a dense record still joins only
+to itself (`join_records_to_declared`,
+`tests/test_route_census_module_space.py`).
+
+The structure then decides what that record is graded against. A stack serves
+under `TESSERA_FP8` -- same family, same wire, same activation contract -- and
+a different dispatch: one materialised launch through vLLM's own modular
+fused-MoE kernel, at every M, with no GEMV lane and nothing for a compiled
+forward to combine. Resolving the expectation from the FAMILY alone hands the
+stack the dense route's pair set and refuses a serve that did exactly what the
+route intends, so it comes from the route that owns the dispatch
+(`moe_route.census_expected`, the same ownership rule as
+`fp8_gemv.census_expected`). Its symbol is compared without the backend suffix
+the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is
+vLLM's predicate over the kernels on the box, so which backend ran is kept in
+the receipt's histogram and is never pinned by an expectation of ours.
+
+And the stack stays **unattested** in the cell-agreement block.
+`census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
+`lane_eligibility` structure whose cells could cover it (`moe` ->
+`routed_moe`), and contract v14 publishes `dense` only -- so the block counts
+the stack and covers it with nothing, checked before the rung lookup rather
+than left to the accident that the record's name carries a suffix no
+declaration does. That is the same honest absence §4.4 records for the loader,
+and closing it is a document change: a structure axis in `ROUTE_LAUNCHES` and a
+`routed_moe` cell at the next contract version, derived from that table the way
+every dense cell is. The validator derives the positive
+`lane_eligibility.structures` set from those receipt-bearing cells, while
+`scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
+adding a future dispatch structure cannot attest it by omission from a
+hand-maintained "unserved" denylist: without a served cell, naming it in the
+structure axis is refused. The axis is a non-empty, duplicate-free string list
+and equals the cells' first-occurrence projection exactly; set-equivalent
+duplicate or reordered spellings are not a second form of the same contract.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
@@ -458,6 +570,14 @@ checked against the serve's own `usage.prompt_tokens_details.cached_tokens`
 The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.
+
+The BF16-reference gate derives its target population from that corpus's
+contract before it reads quality. With `prepends_bos: true`, the injected BOS
+conditions the first corpus token and every token in every chunk is scored;
+without it, each chunk's unconditioned first token is omitted. The derived
+count must equal the contract's `scored_positions` and the dump's position
+count. It is never inferred from the dump shape: a malformed pair cannot pick
+the interpretation that lets itself through.
 
 `TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
 compile it declines and counts nothing, which is enforced since #113 rather

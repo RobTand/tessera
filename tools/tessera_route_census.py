@@ -103,6 +103,75 @@ def census(model):
     return out
 
 
+def declared_in_module_space(model, targets):
+    """Runs inside the worker: the checkpoint's target names, in vLLM's namespace.
+
+    ``config_groups`` targets are written in the CHECKPOINT's namespace;
+    ``named_modules()`` -- where every route record is read from -- is the
+    namespace vLLM built.  For a model class that declares an
+    ``hf_to_vllm_mapper`` those are different strings for the same module,
+    which is why vLLM hands the quant config the mapper at load and why
+    ``TesseraConfig.apply_vllm_mapper`` exists.
+
+    Returns ``None`` when the class declares no mapper -- then checkpoint space
+    IS module space, which is the case for every census taken before this
+    (Qwen3-0.6B) and is why the omission never showed.  A target the mapper
+    DROPS maps to ``None``: the runtime builds no module for it, and the caller
+    reports that rather than passing the unmapped name through.
+
+    The mapper is the runtime's own table, replayed here, not restated.
+    """
+    mapper = getattr(model, "hf_to_vllm_mapper", None)
+    if mapper is None:
+        return None
+    unstacked = mapper.get_unstacked_mapper()
+    out = {}
+    for target in targets:
+        if "." not in target or target.startswith("re:"):
+            out[target] = target      # a module class name or a regex, not a path
+            continue
+        mapped = unstacked.apply_list([target])
+        out[target] = mapped[0] if mapped else None
+    return out
+
+
+def join_records_to_declared(records, declared):
+    """Which declared target each route record belongs to, and what is ambiguous.
+
+    A dense module carries its record where the checkpoint names it, so the
+    join is the identity.  A ROUTED EXPERT STACK does not: vLLM builds one
+    quant method for the stack's prefix and attaches it to the
+    ``RoutedExperts`` child it constructs underneath, so the record is read at
+    ``<declared>.routed_experts`` and an exact-name join reports the same
+    served stack TWICE -- once as a route the checkpoint declares nothing for,
+    once as a declaration nothing served.  That is what the first routed-MoE
+    census said: eight dense modules clean, three expert stacks served, and
+    ``REFUSED`` on six problems that were one name.
+
+    The join is by containment and only for an expert record: a record whose
+    ``kind`` is ``moe`` and whose module path lies under exactly one declared
+    target belongs to that target.  ``kind`` is the record's own word for what
+    it served, so the rule reads the runtime's statement rather than matching
+    the child's name; a second Tessera module nested under a declared one would
+    be AMBIGUOUS and is reported, never guessed.
+    """
+    owner, problems = {}, []
+    for name, record in records.items():
+        if name in declared:
+            owner[name] = name
+            continue
+        if record.get("kind") != "moe":
+            continue
+        parents = sorted(d for d in declared if name.startswith(d + "."))
+        if len(parents) == 1:
+            owner[name] = parents[0]
+        elif parents:
+            problems.append(
+                f"{name} is an expert record under {len(parents)} declared targets "
+                f"{parents}; a stack belongs to one declaration or to none")
+    return owner, problems
+
+
 def lane_refusals(model):
     """Runs inside the worker: every module whose LANE refused at load.
 
@@ -176,7 +245,7 @@ def main() -> int:
 
     import tessera
     import tessera.serving as serving
-    from tessera.serving import bf16_route, fp8_gemv, fp8_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_gemv, fp8_route, moe_route, nvfp4_route
     from tessera.serving.census import cell_launch_agreement, lane_engagement
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
@@ -213,8 +282,20 @@ def main() -> int:
     # second spelling here; every other family reports one pair.
     fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
     bf16_expected = bf16_route.census_expected(compiled=args.compiled)
+    # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
+    # under the same family (``TESSERA_FP8``, same wire, same activation
+    # contract) and a different dispatch: one materialised launch through
+    # vLLM's modular fused-MoE kernel, in both regimes, with no GEMV lane.
+    # Comparing it against the dense pair set reads a correct serve as a
+    # refusal on every stack, so the expectation is taken from the route that
+    # owns the dispatch -- ``moe_route.census_expected``, which also says why
+    # its symbol is compared without the runtime's backend suffix and why no
+    # contract cell publishes it yet.
+    moe_expected = moe_route.census_expected(compiled=args.compiled)
 
-    def _expected(family, regime):
+    def _expected(family, regime, kind):
+        if kind == "moe":
+            return moe_expected[regime]
         if family == TESSERA_FP8:
             return fp8_expected[regime]
         if family == TESSERA_BF16:
@@ -298,9 +379,35 @@ def main() -> int:
     declared_rungs = {t: _rung(g["scheme"])
                       for g in tessera_groups.values() for t in g.get("targets", [])}
 
+    problems = []
     t0 = time.time()
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
               gpu_memory_utilization=args.gpu_memory_utilization, seed=0)
+
+    # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
+    # space.  ``config_groups`` targets are written in the CHECKPOINT's
+    # namespace; ``named_modules()`` -- where every route record above is read
+    # from -- is the namespace vLLM built.  For a model class that declares an
+    # ``hf_to_vllm_mapper`` the two differ, and vLLM hands the quant config the
+    # mapper for exactly this reason (``TesseraConfig.apply_vllm_mapper``).
+    # This tool did not: on Qwen3-0.6B, which declares no mapper, the two
+    # spaces coincide and every census so far was taken there.  On
+    # ``Glm5NextForConditionalGeneration`` the mapper is
+    # ``{"model.language_model." -> "language_model.model.", ...}``, so without
+    # this NOTHING joins and every served module is reported as one the
+    # checkpoint declares no wire for -- a refusal that says the opposite of
+    # what is true.  The table is the RUNTIME's (the model class's own mapper),
+    # replayed here rather than restated.
+    name_map = llm.apply_model(
+        lambda model: declared_in_module_space(model, list(declared)))[0]
+    if name_map is not None:
+        dropped = sorted(t for t, m in name_map.items() if m is None)
+        if dropped:
+            problems.append(
+                f"the model's hf_to_vllm_mapper drops {len(dropped)} declared target(s), "
+                f"e.g. {dropped[:3]}; the runtime builds no module for them")
+        declared = {name_map[t] or t: f for t, f in declared.items()}
+        declared_rungs = {name_map[t] or t: r for t, r in declared_rungs.items()}
     tok = llm.get_tokenizer()
     text = ("The receipt names the route the serve took, for every module, "
             "in both the prefill and the decode shape. ") * 20
@@ -321,8 +428,8 @@ def main() -> int:
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
-    problems = []
     histogram = {}
+    record_owner = {}
     for phase, recs in phases.items():
         tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
         other = {n: r for n, r in recs.items() if n not in tess}
@@ -345,8 +452,11 @@ def main() -> int:
         }
         if not tess:
             problems.append(f"{phase}: no module reports a Tessera route")
+        owner, join_problems = join_records_to_declared(tess, declared)
+        record_owner[phase] = owner
+        problems.extend(f"{phase}: {m}" for m in join_problems)
         for name, r in tess.items():
-            family = declared.get(name)
+            family = declared.get(owner.get(name, name))
             if family is None:
                 problems.append(
                     f"{phase}: {name} took a Tessera route but the checkpoint declares none for it")
@@ -363,14 +473,20 @@ def main() -> int:
             # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
             # comparison would read either half as a refusal on every module
             # that legitimately took the other launch.
-            want = _expected(family, CENSUS_PHASE_REGIMES[phase])
-            if ((r["symbol"], r.get("decoder")) not in want
+            want = _expected(family, CENSUS_PHASE_REGIMES[phase], r.get("kind"))
+            # The expert route's symbol carries the backend the RUNTIME picked
+            # (``...modular_kernel:TRITON``), which no expectation of ours may
+            # pin; the entry point is what this compares and the histogram
+            # above keeps every exact string, backend and all.
+            got_symbol = (moe_route.census_symbol_base(r["symbol"])
+                          if r.get("kind") == "moe" else r["symbol"])
+            if ((got_symbol, r.get("decoder")) not in want
                     and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
                 problems.append(
                     f"{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
                     f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
                     "report a pair its route owns")
-        missing = sorted(set(declared) - set(tess))
+        missing = sorted(set(declared) - set(owner.values()))
         if missing:
             problems.append(
                 f"{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
@@ -441,6 +557,8 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "tessera_config_groups": len(tessera_groups),
+        "declared_names_mapped_to_module_space": name_map is not None,
+        "declared_name_mapping": name_map,
         "prompt_tokens": len(ids),
         "generated_text": generated,
         "declared_families": dict(sorted(collections.Counter(declared.values()).items())),
@@ -461,6 +579,11 @@ def main() -> int:
         "lane_engagement": engagement,
         "lane_refusals": refusals,
         "records": phases,
+        # Which declared target each record was joined to.  For a dense
+        # module that is the identity; for an expert stack it names the
+        # declaration the RoutedExperts child served, so the join is a
+        # value a reader can check rather than a rule they must trust.
+        "record_owner": record_owner,
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }

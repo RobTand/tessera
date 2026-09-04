@@ -37,6 +37,7 @@ from typing import Any, Mapping
 __all__ = [
     "CELL_AGREEMENT_SCHEMA",
     "LANE_ENGAGEMENT_SCHEMA",
+    "STRUCTURE_BY_RECORD_KIND",
     "cell_launch_agreement",
     "decoder_histogram",
     "lane_engagement",
@@ -44,6 +45,16 @@ __all__ = [
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
 LANE_ENGAGEMENT_SCHEMA = "tessera.lane-engagement/1"
+
+#: A route record's ``kind`` (``telemetry.ROUTE_FIELDS``) -> the
+#: ``lane_eligibility`` STRUCTURE whose cells could cover it.  Two vocabularies
+#: for one thing, and the join between them belongs in exactly one place: the
+#: record says what the layer IS ("dense" | "moe"), a cell says what it covers
+#: ("dense" | "routed_moe"), and :func:`cell_launch_agreement` is keyed to one
+#: structure per block.  A kind absent from this map is covered by nothing --
+#: the conservative direction, since the alternative is a block reporting
+#: agreement for a launch nobody published.
+STRUCTURE_BY_RECORD_KIND = {"dense": "dense", "moe": "routed_moe"}
 
 
 def decoder_histogram(records: Mapping[str, Mapping[str, Any]]) -> dict:
@@ -199,6 +210,20 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
         counts = collections.Counter()
         covered = unattested = 0
         for name, record in sorted(records.items()):
+            # THE RECORD'S OWN STRUCTURE, CHECKED BEFORE ITS RUNG.  This block
+            # is keyed to one structure and a record of another is not
+            # something its cells can cover.  Explicit rather than left to the
+            # accident that today a routed-expert stack's module name carries
+            # no rung: the record is written at ``<prefix>.routed_experts``
+            # while the checkpoint declares ``<prefix>``, and the day a caller
+            # resolves rungs across that join (the census's
+            # ``join_records_to_declared`` does exactly that join for the
+            # family lookup) a DENSE cell would begin "covering" a stack that
+            # executes vLLM's fused-MoE kernel -- reporting agreement, or a
+            # disagreement, about a launch no cell in this contract publishes.
+            if STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind"))) != structure:
+                unattested += 1
+                continue
             policy = str(record.get("policy", ""))
             route, _, mode = policy.partition(":")
             family = families_by_route.get(route)

@@ -31,9 +31,14 @@ PORT=${PORT:-${TESSERA_KL_PORT:-8000}}
 # container of MINE must never be a name another worker's `docker rm -f` matches.
 NAME=${TESSERA_KL_NAME:-tessera-plugin-serve-$ARM}
 CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
-TEACHER=$KLDIR/qwen_teacher_bf16_v028.json
-DUMP=$KLDIR/qwen_tessera_$ARM.json
-LOG=$RUNS/serve_qwen_tessera_$ARM.log
+# The three paths a NON-Qwen arm has to move, defaulted to what every arm
+# before them used so an existing command line records the same files.  The
+# corpus was already overridable; these were not, and a model with another
+# tokenizer needs all four to move together or it compares its logprobs to
+# another model's.
+TEACHER=${TESSERA_KL_TEACHER:-$KLDIR/qwen_teacher_bf16_v028.json}
+DUMP=${TESSERA_KL_DUMP:-$KLDIR/qwen_tessera_$ARM.json}
+LOG=${TESSERA_KL_LOG:-$RUNS/serve_qwen_tessera_$ARM.log}
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # GPU-MEMORY UTILISATION IS PASSED IN, NOT EXPANDED IN THE CONTAINER.  The
 # `vllm serve` line lives inside a single-quoted `bash -c` string, so

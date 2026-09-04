@@ -738,6 +738,16 @@ def test_the_serve_wrapper_greps_its_log_file_rather_than_a_pipe():
     assert 'grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"' in body
 
 
+def test_the_serve_wrapper_keeps_entrypoint_and_image_command_distinct():
+    """A CLI-style image needs ``vllm serve``, not only an entrypoint override."""
+    body = _WRAPPER.read_text()
+    assert ('"$IMAGE" \\\n'
+            '  ${TESSERA_KL_IMAGE_COMMAND:-} \\\n'
+            '  "$MODEL"') in body, (
+        "the image command must be an explicit token after the image; Docker options "
+        "such as --entrypoint belong before it and cannot spell `vllm serve`")
+
+
 def test_the_serve_wrapper_does_not_repeat_trust_remote_code_as_a_noop():
     """Inactive optional flags are empty; a real flag is never a placeholder."""
     body = _WRAPPER.read_text()

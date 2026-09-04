@@ -637,6 +637,78 @@
             "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
          },
          {
+            "architecture": "Lfm2MoeForCausalLM",
+            "runtime": {
+               "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+               "image_id": "sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+               "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+            },
+            "model": {
+               "model_type": "lfm2_moe",
+               "num_hidden_layers": 24,
+               "layer_types": [
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention",
+                  "full_attention",
+                  "linear_attention",
+                  "linear_attention"
+               ],
+               "mlp_layer_types": null
+            },
+            "supports_quant": true,
+            "hf_to_vllm_mapper_unstacked": {
+               "orig_to_new_substr": {
+                  ".conv.": ".short_conv."
+               }
+            },
+            "offered": [
+               "model.layers.*.feed_forward.gate",
+               "model.layers.*.feed_forward.w13",
+               "model.layers.*.feed_forward.w2",
+               "model.layers.*.self_attn.out_proj",
+               "model.layers.*.self_attn.qkv_proj",
+               "model.layers.*.short_conv.in_proj",
+               "model.layers.*.short_conv.out_proj"
+            ],
+            "never_offered": [
+               {
+                  "prefix_pattern": "model.layers.*.short_conv.conv1d",
+                  "class": "ColumnParallelLinear",
+                  "quant_method": "UnquantizedLinearMethod"
+               }
+            ],
+            "offered_non_linear": [
+               {
+                  "prefix_pattern": "lm_head",
+                  "class": "ParallelLMHead"
+               },
+               {
+                  "prefix_pattern": "model.layers.*.feed_forward.experts",
+                  "class": "RoutedExperts"
+               }
+            ],
+            "receipt": "docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json"
+         },
+         {
             "architecture": "Qwen3ForCausalLM",
             "runtime": {
                "image": "vllm/vllm-openai:latest",

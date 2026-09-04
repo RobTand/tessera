@@ -39,27 +39,32 @@ from tessera.serving.census import cell_launch_agreement
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
 
-#: Two modules of the R1024 census, both phases, verbatim.
+#: Two modules of the R1024 census, both phases, verbatim -- including
+#: ``kind``, which the first trim of this fixture dropped and the source
+#: receipt carries on every record.  It is not decoration: ``kind`` is what
+#: says a record is a DENSE layer, and a block keyed to one structure is only
+#: closed over the records whose structure it covers
+#: (``census.STRUCTURE_BY_RECORD_KIND``).
 _SERVED = {
     "decode": {
         "model.layers.0.mlp.down_proj": {
             "policy": "TESSERA_FP8:streamed", "symbol": "tessera_window_gemv::gemv",
             "decoder": "window_gemv", "contract": "fp8_per_token_dynamic",
-            "state": "served", "shape": "M1:N1024:K3072"},
+            "state": "served", "shape": "M1:N1024:K3072", "kind": "dense"},
         "model.layers.0.mlp.gate_up_proj": {
             "policy": "TESSERA_FP8:streamed", "symbol": "tessera_window_gemv::gemv",
             "decoder": "window_gemv", "contract": "fp8_per_token_dynamic",
-            "state": "served", "shape": "M1:N6144:K1024"},
+            "state": "served", "shape": "M1:N6144:K1024", "kind": "dense"},
     },
     "prefill": {
         "model.layers.0.mlp.down_proj": {
             "policy": "TESSERA_FP8:streamed", "symbol": "torch._scaled_mm",
             "decoder": "window_gemv", "contract": "fp8_per_token_dynamic",
-            "state": "served", "shape": "M64:N1024:K3072"},
+            "state": "served", "shape": "M64:N1024:K3072", "kind": "dense"},
         "model.layers.0.mlp.gate_up_proj": {
             "policy": "TESSERA_FP8:streamed", "symbol": "torch._scaled_mm",
             "decoder": "window_gemv", "contract": "fp8_per_token_dynamic",
-            "state": "served", "shape": "M64:N6144:K1024"},
+            "state": "served", "shape": "M64:N6144:K1024", "kind": "dense"},
     },
 }
 _RUNGS = {name: 1024 for name in _SERVED["decode"]}
@@ -190,3 +195,59 @@ def test_a_record_from_a_route_the_table_does_not_know_is_unattested(cells):
     block, problems = _agree(cells, records=records)
     assert problems == []
     assert block["agrees"] is None
+
+
+#: One routed-expert record, verbatim from the first served census of a Tessera
+#: MoE checkpoint (``/mnt/shared/tessera-runs/ts5/served/census.json``, GB10,
+#: vLLM 0.28, ``TESSERA_SERVE_MODE=resident``, eager, 16-expert cut of
+#: GLM-5.3-Flash-4layer).  Note the module name: the record is written at
+#: ``<prefix>.routed_experts`` while the checkpoint declares ``<prefix>``.
+_MOE_RECORD = {
+    "policy": "TESSERA_FP8:resident", "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "decoder": "torch_materialize_stock", "contract": "fp8_per_token_dynamic",
+    "state": "served", "shape": "M64:N4096:K4096", "kind": "moe", "tile_m": 0,
+    "reason": None}
+
+
+def test_a_routed_expert_record_is_unattested_under_a_dense_block(cells):
+    """A served MoE stack is counted, never covered, while no cell publishes one.
+
+    THE DEFECT THIS PINS.  Everything else about this record resolves: the
+    policy names a route the table knows, the residency is a cell's residency,
+    the regime is a cell's regime, and the rung below is the rung the E4M3
+    cells are attested at.  What does NOT match is the only thing that decides
+    the launch -- the structure.  The stack executes vLLM's modular fused-MoE
+    kernel over a materialised tile; every cell in this contract is
+    ``structure: "dense"`` and publishes ``torch._scaled_mm``.  So a join that
+    ignored ``kind`` would report a disagreement on a serve that did nothing
+    wrong, and a join that ignored it in the other direction (a dense cell
+    whose executes happened to match) would attest a launch no cell publishes.
+
+    Today the rung lookup misses anyway, because the record's name carries the
+    ``.routed_experts`` suffix the declaration does not -- which is an accident
+    of the join, not a check.  Passing the rung here is the point: it is what
+    a caller that resolved that join would supply.
+    """
+    records = {"prefill": {"model.layers.1.mlp.experts.routed_experts": dict(_MOE_RECORD)}}
+    block, problems = _agree(cells, records=records,
+                             rungs={"model.layers.1.mlp.experts.routed_experts": 1024})
+    assert problems == []
+    assert block["agrees"] is None
+    assert block["phases"]["prefill"]["unattested"] == 1
+    assert block["phases"]["prefill"]["covered_by_cell"] == 0
+
+
+def test_a_record_that_does_not_say_its_kind_is_not_covered(cells):
+    """A reader that lost the field leaves a hole, and a hole is not a dense layer.
+
+    The conservative direction on purpose: the cost of refusing to classify is
+    an ``unattested`` count a reader can see, and the cost of guessing is a
+    published agreement about a launch nobody observed the structure of.
+    """
+    records = {"decode": {name: {k: v for k, v in rec.items() if k != "kind"}
+                          for name, rec in _SERVED["decode"].items()}}
+    block, problems = _agree(cells, records=records)
+    assert problems == []
+    assert block["agrees"] is None
+    assert block["phases"]["decode"]["unattested"] == 2
+    assert block["phases"]["decode"]["covered_by_cell"] == 0

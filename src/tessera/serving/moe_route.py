@@ -1,8 +1,9 @@
 """The Tessera routed-MoE expert route: per-expert E4M3 wires as the stock FP8 stack.
 
-WHAT IT SERVES.  One ``tessera.fused`` container per expert per GROUP -- ``w13``
-(gate then up, the row order ``RoutedExperts._load_w13`` narrows to) and ``w2``
--- decoded at load into exactly the parameters vLLM's own fused-MoE kernels
+WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
+assembled into ``w13`` (gate then up, the row order
+``RoutedExperts._load_w13`` narrows to) and ``w2`` (down), then decoded at
+load into exactly the parameters vLLM's own fused-MoE kernels
 read for a per-channel FP8 checkpoint: ``w13_weight [E, 2N, K]`` and
 ``w2_weight [E, K, N]`` in ``float8_e4m3fn``, with ``w13_weight_scale
 [E, 2N, 1]`` and ``w2_weight_scale [E, K, 1]`` in fp32.  From
@@ -61,9 +62,11 @@ contract, and not claimed as served.  That measurement
 (``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
 once on the pin, once on the build that registers ``Glm5Next`` -- and every
 recorded field, backend selection and error number is identical, so the route
-does not depend on which of the two loads it.  What it still does not cover:
-the model-level ``load_weights`` hop above ``RoutedExperts``, the compiled
-forward, and any expert count past four.
+does not depend on which of the two loads it. Later served GLM census
+receipts cover 16-expert stacks, and the exact EUGR LFM construction receipt
+(``docs/measurements/tessera-lfm-construction-2026-09-04.md``) covers model-level
+wire delegation into a 32-expert stack without a forward. These receipts do
+not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
@@ -80,14 +83,70 @@ from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
+    "GEMM_SYMBOL",
     "SHARD_TO_GROUP",
     "PreparedTesseraMoeExperts",
+    "census_expected",
+    "census_symbol_base",
     "prepare_tessera_moe_experts",
     "build_tessera_moe_method",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
+
+
+def census_expected(*, compiled: bool = False) -> dict:
+    """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
+
+    Owned here for the same reason ``fp8_gemv.census_expected`` is owned there:
+    the dispatch is in this module, so a new path updates the expectation where
+    the path was added rather than in a second spelling inside the census tool.
+    Two things about this route are NOT the dense routes' shape.
+
+    ONE LAUNCH, BOTH REGIMES.  There is no GEMV lane and no kernel decode here.
+    ``process_weights_after_loading`` materialises the stack once and every
+    forward, at any M, hands the runtime's modular fused-MoE kernel the tile
+    that materialise produced -- so ``decode`` and ``batch`` admit the same
+    single pair, where the window routes' two regimes admit different ones.
+    ``compiled`` therefore changes nothing: the combined ``a+b`` symbol those
+    routes stamp under a traced forward exists because their dispatch BRANCHES
+    inside the graph, and one launch has nothing to combine.
+
+    THE SYMBOL CARRIES A SUFFIX THIS ROUTE DOES NOT CHOOSE.  ``_record`` stamps
+    ``vllm.fused_moe.modular_kernel:<backend>`` because which backend ran is a
+    fact about the serve a receipt must not lose -- but the backend is
+    ``select_fp8_moe_backend``'s answer, the RUNTIME's predicate over the
+    kernels it finds on this box, not a promise this route makes.  So the pair
+    below carries the entry point alone and a census compares
+    :func:`census_symbol_base`, keeping the exact string in its histogram.
+    Enumerating the backends we would accept would be a claim about vLLM's
+    kernel roster written in our own prose, which the runtime-attestation rule forbids;
+    pinning one would refuse a box whose runtime picked another.
+
+    NOT PUBLISHED, DELIBERATELY.  Unlike the dense routes' sets this one is not
+    derived from ``scheme.ROUTE_LAUNCHES`` and no ``lane_eligibility`` cell
+    carries it: ``runtime_contract.json`` is at v14 with ``structures:
+    ["dense"]``, so a served expert stack is ``unattested`` in a census's
+    cell-agreement block and honestly so.  This value is what the CENSUS
+    compares a record against -- code against machine.  Publishing it (a
+    structure axis in ``ROUTE_LAUNCHES`` and a ``routed_moe`` cell at the next
+    contract version) is the document half, with its own consumers, and it is
+    not made true by this function existing.
+    """
+    del compiled  # documented above: one launch has nothing to combine
+    pair = (GEMM_SYMBOL, DECODER_TORCH_STOCK)
+    return {"decode": {pair}, "batch": {pair}}
+
+
+def census_symbol_base(symbol: str) -> str:
+    """The entry point in a record's ``symbol``, without the runtime's backend pick.
+
+    ``"vllm.fused_moe.modular_kernel:TRITON" -> "vllm.fused_moe.modular_kernel"``.
+    A symbol with no suffix comes back unchanged, so a record that named some
+    other entry point still fails the comparison it is fed to.
+    """
+    return str(symbol).split(":", 1)[0]
 
 #: The runtime's shard name -> (group, row block).  DERIVED from
 #: ``MOE_GROUP_SHARDS``, so the loader's dispatch and the sidecar's group

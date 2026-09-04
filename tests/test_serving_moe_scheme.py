@@ -1,7 +1,8 @@
 """The routed-MoE sidecar scheme: two groups, E experts, one route.
 
 A dense scheme describes one module -- one container, one exact byte count.
-An expert stack is E x 2 containers whose lengths differ expert by expert
+An expert stack holds gate, up and down containers for each expert, whose
+lengths differ by projection and expert
 (``tessera.moe_layout`` says why: the manifest writes ``global_scale`` as an
 exact varint ratio, so the blob length follows the data even at fixed shape
 and rung).  So the MoE scheme declares the expert count, the two groups vLLM's
@@ -54,6 +55,16 @@ def test_a_moe_scheme_normalises_to_groups_and_the_two_sizes():
     assert norm["groups"]["w2"]["roles"] == [("down_proj", 128)]
 
 
+def test_the_source_layout_stamp_is_closed_and_old_wires_default_to_unpacked():
+    for layout in S.MOE_SOURCE_LAYOUTS:
+        assert S.validate_tessera_moe_scheme(
+            _moe(source_layout=layout), "m")["source_layout"] == layout
+    assert S.validate_tessera_moe_scheme(
+        _moe(), "old")["source_layout"] == S.MOE_SOURCE_UNPACKED
+    with pytest.raises(ValueError, match="source_layout"):
+        S.validate_tessera_moe_scheme(_moe(source_layout="guessed"), "m")
+
+
 def test_the_group_check_is_the_dense_check_so_a_route_fact_refuses_the_same_way():
     with pytest.raises(ValueError, match="scalar E4M3 grid"):
         S.validate_tessera_moe_scheme(_moe(grid="E2M1x2"), "m")
@@ -91,6 +102,31 @@ def test_a_group_holds_exactly_the_shards_the_runtime_loads_into_it():
     bad = _moe()
     bad["groups"]["w13"]["roles"] = [["gate_proj", 128]]
     with pytest.raises(ValueError, match="expected 2"):
+        S.validate_tessera_moe_scheme(bad, "m")
+
+
+@pytest.mark.parametrize("group,roles", [
+    ("w13", [["up_proj", 64], ["gate_proj", 64]]),
+    ("w13", [["gate_proj", 64], ["gate_proj", 64]]),
+    ("w13", [["w1", 64], ["w3", 64]]),
+    ("w2", [["gate_proj", 128]]),
+])
+def test_group_roles_must_name_the_runtime_projections_in_row_order(group, roles):
+    # A matching sidecar and blob could otherwise agree on the wrong role:
+    # the runtime still treats the first w13 half as gate and the second as up.
+    bad = _moe()
+    bad["groups"][group]["roles"] = roles
+    with pytest.raises(ValueError, match=rf"group '{group}': roles.*row order"):
+        S.validate_tessera_moe_scheme(bad, "m")
+
+
+@pytest.mark.parametrize("gate_rows,up_rows", [(32, 96), (63, 65)])
+def test_gate_and_up_boundaries_must_match_the_runtime_equal_halves(gate_rows, up_rows):
+    bad = _moe()
+    bad["groups"]["w13"]["roles"] = [["gate_proj", gate_rows], ["up_proj", up_rows]]
+    # Total rows and the cross-group geometry still agree. Only the role
+    # boundary is wrong: vLLM applies gate/up at N, not at the declared split.
+    with pytest.raises(ValueError, match="w13.*role rows.*equal halves"):
         S.validate_tessera_moe_scheme(bad, "m")
 
 
