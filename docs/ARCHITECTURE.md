@@ -307,6 +307,15 @@ emitted wire name, so the model's own `FusedMoEFactory(ckpt_names=...)` mapping
 supplies the shard id to the wire parameter's loader. Two source spellings for
 one canonical role are refused rather than resolved by checkpoint order.
 
+The LFM construction row is derived from
+`docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json`, taken on the
+exact EUGR 0.28.1rc1 image recorded in that receipt. It offers
+`model.layers.*.feed_forward.experts` as a non-Linear `RoutedExperts` stack;
+the `short_conv.conv1d` projection is never offered and remains source
+precision. This records construction eligibility only: the dense runtime
+attestation remains on its own pinned image, and this row does not promote a
+routed-MoE quality cell.
+
 The PACKED 3-D source layout is accepted only under an explicit plan
 convention. `out_first_chunked` is `gate_up [E, 2N, K]` with gate then up and
 `down [E, K, N]`; `in_first_interleaved` is `gate_up [E, K, 2N]` with gate/up
