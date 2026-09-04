@@ -156,7 +156,7 @@ REQUIRES_PLUGIN = "tessera"
 CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
     {"prefill": "batch", "decode": "decode"})
 
-_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked", "fallback"})
+_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked"})
 _QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
 
 

@@ -882,3 +882,15 @@ def test_a_row_whose_a_side_disagrees_with_its_route_is_refused():
     contract["formats"][0]["activation_contract"] = "fp8_per_token_dynamic"
     with pytest.raises(ValueError, match="route executes"):
         validate_serving_contract(contract)
+
+
+def test_a_route_status_nothing_defines_is_refused(contract):
+    """The accepted vocabulary equals the published one: backed,
+    backed_with_serve_flag, unbacked.  A fourth value no cell uses and no
+    consumer defines was accepted by the validator and would have reached
+    every reader's ``else`` branch."""
+    import copy
+    doc = copy.deepcopy(contract)
+    doc["lane_eligibility"]["cells"][0]["route_status"] = "fallback"
+    with pytest.raises(ValueError, match="route_status"):
+        validate_serving_contract(doc)
