@@ -160,3 +160,49 @@ before producing a result; the corrected verifier explicitly reads
 
 At this section's completion, half1 is still encoding. There is still no
 full-model merge, student serve, or positive MoE contract promotion to report.
+
+## 4. Fresh source-bound teacher, completed at 20:18 UTC
+
+The earlier reference in §2 is retained as historical/usability evidence,
+not used for the final student comparison. Review of its original action
+`10813df3832a1f84c7b30370bb12891907b014eea47ef278d22114994c4baa53`
+found a revision-string check but no pre/post check of the loaded source
+weight bytes. A current dump hash cannot supply that missing provenance.
+
+The replacement was produced by the tracked one-shot
+`experiments/ts5_lfm_teacher_bound.py` at source `c2e7227`, through PB action
+`ed0e0c4934d462cc4d503aef5ae82c046bda69b5c04c02e04046e35285474db3`.
+It reserved Sparky's whole GPU (`gpu=2`, `mem_gb=64`, `cpu=2`), capped the
+container at 64 GiB with no additional swap allowance, and ran under a
+1,500-second outer timeout with 120 seconds of cleanup grace. The original
+worker returned zero in 204 seconds. Receipt CAS:
+`817af390900fac3d27fa27190c24eecc5e52ccfbcafa13abfda439a3d4198b3e`.
+The actual parentless pool source snapshot was
+`9a1cabcb30c6fc06b1567277e456155e37773065`.
+
+`teacher-bound-r1/source-bound-result.json` records source identity before
+and after serving, both exactly equal to the encoder's sealed source. The
+model directory was explicitly mounted read-only. The exact EUGR image,
+unchanged corpus, tokenizer, eager prefill execution, top-K 1,024 request and
+4,096 scored positions are checked in the same action. The source model SHA
+is `c9b9e3c4b3be50b576e6da8c02de1b4223614ffe131d812abf92bb84421f6217`.
+
+| output under `teacher-bound-r1` | SHA256 |
+|---|---|
+| `teacher_bf16.json.npz` | `c5515a096078e059e8bf596f5284e017d64b365b512ad992da522da3b78838c2` |
+| `teacher_bf16.build.json` | `a16a82eeb19d300bd9d1c4c51cade42f84e617ef34c8e5003c533688150c5c12` |
+| `teacher_bf16.meta.json` | `f2797d6d63cb40121b7558112936e3345e3939b2fc3816552330589c66157e4c` |
+| `serve_teacher_bf16.log` | `d29648c1f1b58189678eeaa5f3355189583d6d2e18498c0898182f5f7bd2bf72` |
+| `teacher_reference_gate.json` | `19ac0a925912459105aff4c8cfe4c5939bb75a419c1acee78488cd23817036a2` |
+
+The unchanged usability gate reads the new payload and reports 4,096
+positions, 0.9903523325920105 mean support mass, 1,968 confident positions,
+0.36328125 next-token top-1, true-token support 1.0 and median true-token
+rank 2, with no refusals. These are reference-usability results, not a
+student quality result. Cleanup records the exact container absent, no GPU
+compute processes, and `safe_to_release=true` before the reservation ended.
+
+The driver was also syntax-checked through CPU-only PB action
+`b93997d6bb8dd237457f3a49464899ceb04944447bbb6496964f01c7f85c9e0d`,
+return code zero; this is a syntax check, not a test-suite population.
+The second encoder is still active at this point; no MoE cell is promoted.
