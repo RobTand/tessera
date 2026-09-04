@@ -177,9 +177,9 @@ def _parentless_direct_diff(ref: str, root: Path) -> tuple[list[str], str] | Non
     if left_commit is None or right_commit is None:
         return None
     out = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", left_commit, right_commit],
+        ["git", "-C", str(root), "diff", "--name-only", "-z", left_commit, right_commit],
         capture_output=True,
-        text=True,
+        text=True, errors="surrogateescape",
     )
     if out.returncode != 0:
         return None
@@ -187,13 +187,13 @@ def _parentless_direct_diff(ref: str, root: Path) -> tuple[list[str], str] | Non
         f"direct {left_commit}..{right_commit} "
         f"(no merge base; requested {left}...{right})"
     )
-    return out.stdout.splitlines(), comparison
+    return out.stdout.split("\0"), comparison
 
 
 def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
     out = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", ref],
-        capture_output=True, text=True,
+        ["git", "-C", str(root), "diff", "--name-only", "-z", ref],
+        capture_output=True, text=True, errors="surrogateescape",
     )
     if out.returncode != 0:
         fallback = _parentless_direct_diff(ref, root)
@@ -201,8 +201,10 @@ def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
             raise SystemExit(f"git diff {ref} failed: {out.stderr.strip()}")
         lines, comparison = fallback
     else:
-        lines, comparison = out.stdout.splitlines(), ref
-    changed = [line for line in lines if line.strip()]
+        lines, comparison = out.stdout.split("\0"), ref
+    # Display-quoted names are not paths: tabs/newlines must not hide a
+    # closure candidate (or split any other path) from classification.
+    changed = [line for line in lines if line]
     if any(PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(line).name) for line in changed):
         source = measured_source(root)
         verified = ({member["path"] for member in source["excluded_metadata"]}

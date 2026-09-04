@@ -125,6 +125,25 @@ def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeyp
     assert verified[0]["excluded_metadata"][0]["path"] == stamp
 
 
+@pytest.mark.parametrize("directory", ["tab\tname", "line\nname"])
+@pytest.mark.parametrize("parentless", [False, True])
+def test_quoted_path_cannot_evade_unverified_metadata_fallback(tmp_path, directory, parentless):
+    repo, base = _repo(tmp_path)
+    if parentless:
+        _git(repo, "checkout", "--orphan", "snapshot")
+    relative = f"{directory}/.pbrun-closure.0123456789abcdef.json"
+    path = repo / relative
+    path.parent.mkdir()
+    path.write_text("{}\n")
+    _git(repo, "add", relative)
+    _git(repo, "commit", "-qm", "metadata-shaped tracked input")
+    changed, _ = impacted.changed_files(f"{base}...HEAD", repo)
+    assert changed == [relative], "display-quoted Git paths are not filesystem paths"
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "full"
+    assert result["forces_full"] == [relative]
+
+
 @pytest.mark.parametrize(
     ("name", "reason"),
     [

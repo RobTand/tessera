@@ -39,8 +39,10 @@ separate; legacy populations cannot establish the latter. Population pass
 counts alone still do not establish a same-source merge check.
 `tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
-selection. Verified PB metadata still permits narrowed selection. A conftest
-change reaches its entire test population; a delegated runner-fix task records
+selection. Verified PB metadata still permits narrowed selection.
+Both normal and parentless diffs use Git's NUL-delimited path protocol, so
+display quoting cannot conceal metadata under tab/newline-containing paths.
+A conftest change reaches its entire test population; a delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
 
