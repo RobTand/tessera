@@ -201,6 +201,30 @@ Computed by running the exporter's own planner (`quantizable` → fused grouping
 | `absent` | 185 | 3 609.2 M (46.6%) |
 | **leaves the plan** | **335** | **6 205.5 M (80.2%)** |
 
+Which patterns, exactly (checkpoint names, count of modules):
+
+```
+absent         x   1  ...layers.*.eh_proj                        (MTP; see the caveat in §6)
+absent         x  34  ...layers.*.self_attn.b_proj
+absent         x  34  ...layers.*.self_attn.f_a_proj
+absent         x  34  ...layers.*.self_attn.g_a_proj
+absent         x  34  ...layers.*.self_attn.qkv_proj             -> vLLM builds in_proj_qkvbfg_a
+absent         x  12  ...layers.*.self_attn.q_a_proj             -> vLLM builds fused_qkv_a_proj
+absent         x  12  ...layers.*.self_attn.kv_a_proj_with_mqa   -> same
+absent         x  12  ...layers.*.self_attn.indexer.wk           -> vLLM builds indexer.wk_weights_proj
+absent         x  12  ...layers.*.self_attn.indexer.weights_proj -> same
+never_offered  x  46  ...layers.*.self_attn.o_proj               (every layer, both attention families)
+never_offered  x  34  ...layers.*.self_attn.f_b_proj
+never_offered  x  34  ...layers.*.self_attn.g_b_proj
+never_offered  x  12  ...layers.*.self_attn.q_b_proj
+never_offered  x  12  ...layers.*.self_attn.kv_b_proj
+never_offered  x  12  ...layers.*.self_attn.indexer.wq_b
+offered        x  43  ...layers.*.mlp.shared_experts.gate_up_proj
+offered        x  43  ...layers.*.mlp.shared_experts.down_proj
+offered        x   3  ...layers.*.mlp.gate_up_proj               (the dense MLP layers)
+offered        x   3  ...layers.*.mlp.down_proj
+```
+
 Priced at 4.0 bpp for what stays and 16 bpp for what reverts to BF16:
 
 * **dense body only** (today, routed experts still BF16): 4.0000 → **13.6202
