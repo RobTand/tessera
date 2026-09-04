@@ -2,6 +2,79 @@
 
 Status: **in progress.** This file is written as the run goes, not at the end.
 
+## The served answer
+
+**The arm served is b8, not b4.** b4 was still encoding; b8 was authorised as a
+substitute and is what these numbers describe. b4 has its own bracket pending.
+
+| arm | all-position KL | confident-position KL |
+|---|---|---|
+| `ldlq_block=32`, served **first** -- the bar | 0.5200805955 | 0.4282823138 |
+| `ldlq_block=8`, the candidate | **0.5099719526** | 0.4284178346 |
+| `ldlq_block=32`, served **last** -- drift control | 0.5200805955 | 0.4282823138 |
+
+**The drift control is 0.000e+00 on both metrics**, and every arm reads
+identically against a second, differently-boxed teacher. So the delta is a
+difference between two exactly reproducible numbers, not between two draws.
+
+| | |
+|---|---|
+| weight space predicted | 0.9373x (**-6.27%**), 6/6 unit wins |
+| served, all positions | 0.9806x (**-1.94%**) |
+| **carry fraction** | **0.31** |
+| served, confident positions | 1.0003x (**+0.03%**) |
+
+**The answer to the question this serve was reduced to -- does the weight-space
+win carry to served KL at all -- is: about a third of it does, and only on the
+all-position metric.** On confident positions it does not carry at all. Weight
+space is directionally right and quantitatively over-optimistic by 3x here.
+
+### Re-running the default rather than quoting it changed the answer's size
+
+The incumbent, had I quoted its 2026-09-02 number, would have been
+0.5310275686796917. Re-run on the current exporter it is 0.5200805955 --
+**2.06% better**. Quoting the old number would have made b8 look 3.96% better
+instead of 1.94%: the error would have been about as large as the effect. The
+161-of-784 differing tensors between the two exporter states is why, and the
+instruction to re-run was load-bearing rather than hygienic.
+
+### The gate, verbatim, including the leg it cannot evaluate
+
+`GLM_GATE = 1.0`, `LUT_LANDING_WIRE = 'table'`.
+
+Called with the input this campaign actually has:
+
+```
+glm_ratio=None
+TypeError: float() argument must be a string or a real number, not 'NoneType'
+```
+
+The gate has no default for a missing GLM leg; it fails rather than passes.
+There is no GLM measurement at block 8 or block 4 -- the lowest GLM block on
+disk is 16, because `choose_ldl_block` floors LUT/S6B callers at 16 and the
+GLM sweep inherited that floor.
+
+Called again with the block-16 GLM point substituted in -- **not the
+candidate's block, and recorded only to show which leg is blocking**:
+
+```
+PlanePromotion(candidate='ldlq_block=8', served_arm='ldlq_block=8',
+ unit_ratios=(0.9316, 0.8773, 0.9668, 0.9397, 0.9393, 0.9724),
+ geomean=0.9373291536531269, wins=6, glm_ratio=0.9993, glm_bar=1.0,
+ served_kl=0.5099719526, served_bar=0.5200805955, landing='table',
+ where='the per-plane promotion')
+```
+
+All five legs pass once the missing one is filled. **This is not a promotion**
+and I am not reporting one: the input that makes it pass is not a measurement
+of the candidate. Two things the gate does not look at are worth saying out
+loud, because a pass here would be read as more than it is -- it has no encode
+cost leg, and this lever is precisely a quality-for-encode-time trade; and it
+reads the all-position KL that moved, not the confident-position KL that
+didn't.
+
+Receipt: `experiments/results/ldlq_block_served_ab.json`.
+
 ## What this run settles, and what it no longer settles
 
 It was funded to decide whether `DEFAULT_LDLQ_BLOCK` flips 32 -> 4. **The
