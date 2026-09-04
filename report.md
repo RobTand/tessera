@@ -104,6 +104,55 @@ Three things follow, and the third was not the goal:
 None of this excuses reporting a delta as same-session. It says the delta does
 not need to be.
 
+### The bracket then had to move boxes, and that was measured too, not argued
+
+sparklina is tied up with the b4 encode for another six hours, so the serve
+bracket moved to **sparky**. Two standing objections had to be cleared before
+a sparky number could be read against the incumbent, and both are testable
+against artifacts that already have answers:
+
+**Teacher side, at no GPU cost.** The bracket scores students against
+`qwen_rot_teacher_lina.json.npz`, dumped on sparklina. Rather than assume the
+cross-box term is small, or spend a serve dumping a fresh teacher, the two
+BF16 teacher dumps already on disk were compared: `qwen_rot_teacher_lina`
+(host `gx10-6b77`, 2026-09-02T17:12Z) against `qwen_teacher_bf16_v028` (host
+`sparky`, 2026-09-02T05:32Z), same corpus hash, same tokenizer hash, twelve
+hours apart.
+
+> `KL >= 0.000000`, `top1_agree=100.00%`, 4,088 positions.
+
+**Student side, one serve.** A teacher does not exercise the quantised kernel
+path and a student does, so teacher agreement does not licence student
+agreement. The `ldlqH1` bytes were therefore re-served *on sparky* and read
+against both teachers:
+
+| reading | host | teacher | `kl_lower_mean` |
+|---|---|---|---|
+| published 2026-09-02 | gx10-6b77 | lina | 0.5310275686796917 |
+| re-serve, same box, +29 h | gx10-6b77 | lina | 0.5310275686796917 |
+| re-serve, **other box** | sparky | lina | **0.5310275686796917** |
+| re-serve, other box, **other teacher** | sparky | sparky | **0.5310275686796917** |
+
+`confident` is 0.44606594216118406 on both sparky readings, and the build
+fingerprint is `03b89d80124b6123` -- the sparklina re-serve's. Neither the
+session, nor the box, nor whose BF16 teacher the arm is scored against moves
+this number at all.
+
+Before running it I checked the thing that would have made this a comparison
+of *builds* rather than boxes: `vllm/vllm-openai:latest` is a floating tag,
+and it resolves to the same digest
+`sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14` on
+both boxes. Had it drifted, #100's `image_digest` in `identity` is exactly the
+field that would have refused the pairing.
+
+Scope, because this is easy to over-read: eager only, one image digest, one
+model, one corpus, one quantised family. It says nothing about a graph-mode
+arm, where inductor build nondeterminism is a known source of cross-container
+disagreement.
+
+Receipts: `experiments/results/kl_teacher_cross_box.json`,
+`experiments/results/ldlq_block_crossbox_control.json`.
+
 ## Box and lock decisions, stated rather than assumed
 
 - Both exports run on **sparklina** (at launch: load 3.1, 91 GB available).
