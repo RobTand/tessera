@@ -89,7 +89,9 @@ else
   rc_teacher=$?
 fi
 
-if [ "$rc_teacher" = 0 ]; then
+if [ -s "$OUT/student_tessera.json.npz" ]; then
+  echo "=== 2/3 student already dumped"; rc_student=0
+elif [ "$rc_teacher" = 0 ]; then
   echo "=== 2/3 student (Tessera cut) + KL  $(date -Is)"
   TESSERA_KL_NAME=ts5-plugin-student \
   TESSERA_KL_TEACHER="$OUT/teacher_bf16.json" \
@@ -102,13 +104,25 @@ fi
 # The census runs whatever the KL did: a route receipt is worth having even if
 # the comparison could not be made, and a census that refuses says why.
 echo "=== 3/3 route census  $(date -Is)"
+# THE CENSUS WRITES TO LOCAL DISK, NOT TO /mnt/shared.  /mnt/shared is NFSv4
+# with sec=sys and the export squashes root; the census runs as root inside the
+# container, so its receipt lands as `nobody` against a `drwxrwxr-x rob:rob`
+# directory and the open() is refused -- AFTER the model has loaded, generated
+# twice and the whole census has been gathered, which is the most expensive
+# place to discover a permission.  (Verified: container root gets
+# "Permission denied" on $OUT and "OK" on a bind mount of /home/rob/tmp.)  The
+# wrapper's own default RUNS is local for exactly this reason; this driver is
+# the caller that pointed it at NFS.  Write local, copy on the host.
+CENSUS_LOCAL=${TESSERA_CENSUS_LOCAL:-/home/rob/tmp/ts5-census}
+mkdir -p "$CENSUS_LOCAL"
 "$HERE/tessera_plugin_run.sh" \
   -e TESSERA_SERVE_MODE="$MODE" \
-  -v /mnt/shared:/mnt/shared -- \
-  "python3 tools/tessera_route_census.py '$WIRE' '$OUT/census.json' \
+  -v /mnt/shared:/mnt/shared -v "$CENSUS_LOCAL":/census -- \
+  "python3 tools/tessera_route_census.py '$WIRE' /census/census.json \
      --tessera-commit $COMMIT --gpu-memory-utilization ${CENSUS_MEM_UTIL} \
      --max-model-len 1024" 2>&1 | tee "$OUT/census.log"
 rc_census=${PIPESTATUS[0]}
+[ -s "$CENSUS_LOCAL/census.json" ] && cp "$CENSUS_LOCAL/census.json" "$OUT/census.json"
 
 echo "=== ts5_moe_served: teacher=$rc_teacher student=$rc_student census=$rc_census"
 echo "    teacher  $OUT/teacher_bf16.json"
