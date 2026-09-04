@@ -298,9 +298,48 @@ def main() -> int:
     declared_rungs = {t: _rung(g["scheme"])
                       for g in tessera_groups.values() for t in g.get("targets", [])}
 
+    problems = []
     t0 = time.time()
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
               gpu_memory_utilization=args.gpu_memory_utilization, seed=0)
+
+    # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
+    # space.  ``config_groups`` targets are written in the CHECKPOINT's
+    # namespace; ``named_modules()`` -- where every route record above is read
+    # from -- is the namespace vLLM built.  For a model class that declares an
+    # ``hf_to_vllm_mapper`` the two differ, and vLLM hands the quant config the
+    # mapper for exactly this reason (``TesseraConfig.apply_vllm_mapper``).
+    # This tool did not: on Qwen3-0.6B, which declares no mapper, the two
+    # spaces coincide and every census so far was taken there.  On
+    # ``Glm5NextForConditionalGeneration`` the mapper is
+    # ``{"model.language_model." -> "language_model.model.", ...}``, so without
+    # this NOTHING joins and every served module is reported as one the
+    # checkpoint declares no wire for -- a refusal that says the opposite of
+    # what is true.  The table is the RUNTIME's (the model class's own mapper),
+    # replayed here rather than restated.
+    def _module_space(model):
+        mapper = getattr(model, "hf_to_vllm_mapper", None)
+        if mapper is None:
+            return None
+        unstacked = mapper.get_unstacked_mapper()
+        out = {}
+        for target in list(declared):
+            if "." not in target or target.startswith("re:"):
+                out[target] = target      # a module class name or a regex, not a path
+                continue
+            mapped = unstacked.apply_list([target])
+            out[target] = mapped[0] if mapped else None
+        return out
+
+    name_map = llm.apply_model(_module_space)[0]
+    if name_map is not None:
+        dropped = sorted(t for t, m in name_map.items() if m is None)
+        if dropped:
+            problems.append(
+                f"the model's hf_to_vllm_mapper drops {len(dropped)} declared target(s), "
+                f"e.g. {dropped[:3]}; the runtime builds no module for them")
+        declared = {name_map[t] or t: f for t, f in declared.items()}
+        declared_rungs = {name_map[t] or t: r for t, r in declared_rungs.items()}
     tok = llm.get_tokenizer()
     text = ("The receipt names the route the serve took, for every module, "
             "in both the prefill and the decode shape. ") * 20
@@ -321,7 +360,6 @@ def main() -> int:
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
-    problems = []
     histogram = {}
     for phase, recs in phases.items():
         tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
@@ -441,6 +479,8 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "tessera_config_groups": len(tessera_groups),
+        "declared_names_mapped_to_module_space": name_map is not None,
+        "declared_name_mapping": name_map,
         "prompt_tokens": len(ids),
         "generated_text": generated,
         "declared_families": dict(sorted(collections.Counter(declared.values()).items())),

@@ -312,8 +312,13 @@ loader *does* is a different published fact from what has been *served*.
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every
-module serves on its declared family. A clean census with exact bytes is
-necessary and, by tessera#1, not sufficient. It is also not sufficient
+module serves on its declared family. The join is made in MODULE space: the
+route records come off `named_modules()`, the declared targets come off
+`config_groups` in the checkpoint's namespace, and the model class's own
+`hf_to_vllm_mapper` is replayed over the targets before the two are matched --
+the same translation `TesseraConfig.apply_vllm_mapper` makes at load, and
+without it a mapped architecture joins nothing. A clean census with exact
+bytes is necessary and, by tessera#1, not sufficient. It is also not sufficient
 *within* a route: the per-module check is a check on agreement, and the
 streamed FP8 route's decode regime legitimately admits both the GEMV pair
 and the materialised one, so a serve in which the lane prepared for nothing
