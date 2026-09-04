@@ -158,7 +158,12 @@ def origin_and_clone(tmp_path):
     full clone of it -- the shape a tag build sees."""
     origin = tmp_path / "origin"
     origin.mkdir()
-    _git(origin, "init", "-q", "-b", "master")
+    _git(origin, "init", "-q")
+    # Name the branch here rather than inheriting whatever the installation
+    # defaults to: the script under test takes the branch as an argument, so
+    # the fixture has to say which one it built, and `git init -b` is a newer
+    # spelling than `symbolic-ref` (the suite runs on two boxes).
+    _git(origin, "symbolic-ref", "HEAD", "refs/heads/master")
     first = _commit(origin, "one")
     tip = _commit(origin, "two")
     _git(origin, "checkout", "-q", "-b", "side")
