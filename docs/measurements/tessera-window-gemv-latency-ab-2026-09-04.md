@@ -501,9 +501,23 @@ monotonically to **260.5 s** before resetting to 3.6 s -- one announce every
 each cycle, and a submission naming it during that stretch is told "no live
 worker can run this action" while four of its own actions are running.
 
-This is a second, independent cause of the refusal §4 attributed to the
-two-runtime shape flicker, and it bites hardest exactly when a box is busy
-enough to be worth queueing behind. `experiments/ts109_submit.sh` retries the
+The load-dependence is not inferred: sampled again from 11:02Z with sparky's
+`load1` down to ~10, its offer age cycled between 3.8 s and 35 s -- an announce
+every ~30-40 s, comfortably inside the window. Same box, same runtime, a third
+of the load, and addressable throughout. So this is a second, independent cause
+of the refusal §4 attributed to the two-runtime shape flicker, and it bites
+hardest exactly when a box is busy enough to be worth queueing behind.
+
+**sparklina's staleness over the same hour has a different cause and should not
+be read as this one.** Its worker loops are alive (`worker_loop.py --tag
+sparklina --gpu-slots 3`, three of them) and print one
+`[gx10-6b77] offer {'gpu': 3, 'mem_gb': 80, 'cpu': 10}` per respawn, then go
+quiet for minutes although `queue.announce` is called every poll at
+`--poll-s 20`. Offer age reached 397 s at 11:04Z on a box at `load1 2.5`. A
+live loop that has stopped announcing is a hang, not a busy box, and while it
+lasts no `--tag gx10-6b77` submission can be made at all: `placeable` returns
+False -- not None -- because sparky's offer *is* live and does not match. That
+is a PrismaBuild finding and is filed as one, not worked around. `experiments/ts109_submit.sh` retries the
 submission for both; neither is routed around, and a refusal that survives the
 whole loop is reported rather than worked past.
 
