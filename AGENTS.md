@@ -166,8 +166,14 @@ person or agent — changing the code.
   `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
   one under `--strict-cuda`, the torch-free x86 one -- and writes **one**
   receipt holding both side by side, so neither can be quoted without the
-  other. The merge run is still the coordinator's to launch; nothing triggers
-  it automatically.
+  other, appending a row per arm to `docs/status/suite-populations.md` under
+  `--record`. That ledger is where a suite result is recorded; read the two
+  adjacent rows, not one of them. If the submitting session dies while the
+  pool carries on, `--resume <receipt dir>` rebuilds the receipt from the
+  populations the runs published -- with the exit status marked `not
+  observed`, because published failures prove red while their absence does not
+  prove green. The merge run is still the coordinator's to launch, the way the
+  x86 one already is; nothing triggers it automatically.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
