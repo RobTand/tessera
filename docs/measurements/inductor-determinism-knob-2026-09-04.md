@@ -140,8 +140,11 @@ survive to a second `torch.compile` entry in the same process.**  The second
 entry benchmarks, and in run 2 its choice flipped between two flag-on builds.
 
 **What that costs a *serve* depends on a layer this probe cannot see.**  The two
-compiles here are two `torch.compile` wrappers — two Dynamo entries, one inductor
-compile under each.  A vLLM backbone is the other shape: **one** Dynamo entry
+compiles here are two `torch.compile` wrappers — two Dynamo entries, with one
+inductor graph compile under each: every build's `fxgraph` cache directory holds
+exactly **two** entries, read off the run-2 cache roots
+(`probe3/off0/fxgraph`, `probe3/on0/fxgraph`).  A vLLM backbone is the other
+shape: **one** Dynamo entry
 whose `VllmBackend` splits the graph and runs several inductor compiles beneath
 it, which is the shape the compile-dispatch serve log reports when it says
 `num_submods=29 num_artifacts=3`
@@ -278,7 +281,12 @@ carry that receipt's provenance, not this one's.
 Tests touched by the change that carries this receipt: `tests/test_issue_refs.py
 tests/test_audit_doc_claims.py tests/test_serve_build_identity.py
 tests/test_inductor_determinism_knob.py` — **44 passed in 43.06 s** on sparky
-through the pool (`pbrun` action `189a47296cf3`), and **44 passed in 47.43 s**
-again on sparky against the final text of this file, run in-process with
+through the pool (`pbrun` action `189a47296cf3`), and **44 passed** again on
+sparky against the final text of this file, run in-process with
 `CUDA_VISIBLE_DEVICES=''` because the pooled re-run was still queued behind
-16 ready jobs after twenty minutes and this set claims no GPU.
+16 ready jobs after twenty minutes and this set claims no GPU.  A doc change
+touches every test that scans `docs/`, so that set was checked rather than
+assumed: of the sixteen test files that name a `docs/` path, only
+`test_issue_refs.py` reads the markdown this change edits
+(`test_serving_construction.py` globs `docs/measurements/construction/*.json`,
+untouched here, and was run anyway — **55 passed in 87.19 s** with it added).

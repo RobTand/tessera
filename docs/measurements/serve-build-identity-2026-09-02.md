@@ -139,8 +139,8 @@ their claim.
 > flag being *on* in a fingerprint does not mean the whole build was compiled
 > under it. Two consequences for what is written below: `deterministic_effective`
 > certifies on `fresh_compiles > 0`, and a build with more than one entry is
-> certified on the strength of its first; and the third bullet's "not measured:
-> whether two builds under the flag actually agree" now has a partial answer —
+> certified on the strength of its first; and the "Not measured: whether two
+> builds under the flag actually agree" bullet below now has a partial answer —
 > on a two-graph probe they did not. Whether a *serve* is affected turns on
 > whether vLLM's backbone compiles its submodules inside one Dynamo entry, which
 > that receipt states as open with the experiment that settles it.
