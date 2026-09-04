@@ -183,6 +183,42 @@ def test_an_unpinned_repository_is_stamped_not_refused():
     assert record["resolved_digest"] == mia.split("@", 1)[1]
 
 
+def test_an_explicit_digest_outside_the_default_repository_is_verified():
+    requested = "example/runtime@sha256:" + "f" * 64
+    record = require_pinned(requested, inspector=_inspector(repo_digests=[requested]))
+    assert record["gated"] is True
+    assert record["reason"] == "explicit_digest"
+    assert record["resolved_digest"] == requested.split("@", 1)[1]
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_an_explicit_digest_cannot_borrow_another_images_stamp(present):
+    requested = "example/runtime@sha256:" + "f" * 64
+    other = "example/runtime@sha256:" + "0" * 64
+    with pytest.raises(RuntimeImageError) as exc:
+        require_pinned(requested, inspector=_inspector(
+            repo_digests=[other] if present else [], present=present))
+    payload = exc.value.payload
+    assert payload["reason"] == ("image_digest_mismatch" if present else "image_absent")
+    assert payload["required"] == requested
+    assert payload["fix"] == f"docker pull {requested}"
+
+
+def test_explicit_digest_stamp_does_not_depend_on_repository_digest_order():
+    requested = "example/runtime@sha256:" + "f" * 64
+    other = "example/runtime@sha256:" + "0" * 64
+    for digests in ([other, requested], [requested, other]):
+        record = require_pinned(requested, inspector=_inspector(repo_digests=digests))
+        assert record["resolved_digest"] == requested.split("@", 1)[1]
+
+
+def test_explicit_requested_digest_is_stamped_even_when_the_default_pin_is_an_alias():
+    pin = pinned_reference()
+    requested = pin.split("@", 1)[0] + "@sha256:" + "f" * 64
+    record = require_pinned(requested, inspector=_inspector(repo_digests=[pin, requested]))
+    assert record["resolved_digest"] == requested.split("@", 1)[1]
+
+
 # ------------------------------------------------------------- the wiring ---
 
 def _cli(*args, env_extra=None):

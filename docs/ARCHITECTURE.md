@@ -164,8 +164,13 @@ manifest digest under the containerd snapshotter and the config digest under
 overlay2: the same image reads two ids on the two GB10s. Both KL wrappers
 stamp the resolved digest into the build sidecar's `identity`; the local id
 rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
-Images outside the pinned repository (Mia's GLM image) are resolved and
-stamped, not refused.
+An explicit digest reference on any repository must be present in that
+image's `RepoDigests`, and its requested digest is the stamp even when the
+local image has other aliases. Missing or mismatched explicit images refuse
+before a census or serve (#126). Floating tags outside the default pinned
+repository remain resolved and stamped without being compared to that
+unrelated pin; they cannot supply an exact-runtime census context. Scoped
+lane images do not change the existing dense default.
 
 `experiments/serve_lock.sh` is the one lock protocol for every serve and every
 GPU-only probe.  Acquisition publishes one symlink at the host-local

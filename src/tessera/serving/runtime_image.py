@@ -31,20 +31,20 @@ that.  :func:`require_pinned` raises; the CLI exits 2 and prints one JSON line
 on stdout so a *program* -- not only a human reading a log -- can read the
 refusal, the resolved digests, and the exact ``docker pull`` that fixes it.
 
-SCOPE.  The pin governs one repository: the vanilla vLLM image named by the
-packaged contract's ``versions.attested_on.image``.  A harness that runs some
-other image -- ``prismaquant/glm53-mia-sm121``, say, which is a different
-runtime and has no pin -- is *resolved and stamped* but not refused: gating it
-against a pin that does not exist would break GLM serves to enforce nothing.
-Widening the pinned set is a decision, not an inference; add repositories here
-only when someone has priced them.
+SCOPE. The default pin governs one repository: the vanilla vLLM image named
+by ``versions.attested_on.image``. An explicit digest reference for ANY
+repository is additionally checked against that exact reference's presence
+in ``RepoDigests``. Its caller has already selected bytes, so accepting an
+absent or differently stamped image would not preserve that selection.
+Other repositories' floating tags remain resolved and stamped, not gated
+against the unrelated default pin; they cannot establish an exact-runtime
+census context. This does not change the default image or its policy.
 
-ONE LITERAL.  The digest lives in ``runtime_contract.json`` and nowhere else.
-That is deliberate and it is principle 14's shape: the contract is where this
-package says what runtime it was attested on, so moving the pin means
-re-attesting, and a second copy of a 64-hex string is a second thing to forget
-to update.  Nothing else -- not a harness, not a test, not a doc -- may hold
-the digest; they read it from here.
+ONE DEFAULT. The default digest lives in ``runtime_contract.json`` at
+``versions.attested_on.image``. Runtime-scoped lane cells separately name the
+images their receipts cover; they do not move that default. Harness defaults
+read the contract, while an explicitly selected image is recorded as the
+measurement's identity rather than copied into another default.
 """
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ __all__ = [
 #: Where the one literal lives.  Read, never copied.
 PIN_CONTRACT_FIELD = ("versions", "attested_on", "image")
 
-#: A pull reference that names *bytes*: ``repo[:port]/name@sha256:<64 hex>``.
+#: A pull reference that names *bytes*: ``repo/name@sha256:<64 hex>``.
 #: A tag reference does not match, which is the entire point of the pin.
 _DIGEST_REFERENCE = re.compile(
     r"^(?P<repository>[a-z0-9][a-z0-9._/-]*[a-z0-9])@(?P<digest>sha256:[0-9a-f]{64})$")
@@ -183,7 +183,11 @@ def resolve(requested: str, *,
     # was actually asked for; an image can be a legitimate match on one of its
     # names and irrelevant under another.
     own = [ref for ref in repo_digests if parse_reference(ref)[0] == repository]
-    if pinned in own:
+    if digest is not None and requested in own:
+        # An explicit invocation names this manifest, even if the same local
+        # image carries other digests or aliases. Do not stamp another alias.
+        resolved_digest = digest
+    elif pinned in own:
         # When the pin is among them it IS the answer: an image re-tagged under
         # a second digest of the same repository must not report the other one
         # as what ran while passing the gate on the pin.
@@ -191,12 +195,14 @@ def resolve(requested: str, *,
     else:
         resolved_digest = parse_reference(own[0])[2] if own else None
 
-    gated = repository == pinned_repo
+    pinned_repository = repository == pinned_repo
+    gated = pinned_repository or digest is not None
     record: dict[str, Any] = {
         "schema": "tessera.runtime_image/1",
         "requested": requested,
         "requested_tag": tag,
         "pinned": pinned,
+        "required": pinned if pinned_repository else requested,
         "gated": gated,
         "present": bool(found.get("present")),
         "repo_digests": repo_digests,
@@ -206,6 +212,18 @@ def resolve(requested: str, *,
         "reason": None,
         "fix": None,
     }
+    if digest is not None:
+        if not found.get("present"):
+            record.update(refused=True, reason="image_absent", required=requested,
+                          fix=f"docker pull {requested}")
+            return record
+        if requested not in repo_digests:
+            record.update(refused=True, reason="image_digest_mismatch", required=requested,
+                          fix=f"docker pull {requested}")
+            return record
+        if not pinned_repository:
+            record["reason"] = "explicit_digest"
+            return record
     if not gated:
         # Stamped, not gated -- see SCOPE in the module docstring.
         record["reason"] = "not_pinned_repository"
@@ -239,8 +257,8 @@ def _message(record: Mapping[str, Any]) -> str:
         held = ("it holds " + ", ".join(record["repo_digests"])
                 if record["repo_digests"] else "it holds no manifest digest for it")
     return (
-        f"REFUSED: {record['requested']} is not the pinned serving image.\n"
-        f"  pinned:   {record['pinned']}\n"
+        f"REFUSED: {record['requested']} is not the required serving image.\n"
+        f"  required: {record.get('required', record['pinned'])}\n"
         f"  this box: {held}\n"
         f"  local id: {record['local_id']} (box-local; never compare it across boxes)\n"
         f"  fix:      {record['fix']}")
