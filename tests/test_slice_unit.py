@@ -160,11 +160,11 @@ def units():
     return {label: _case(label) for label, *_rest in CASES}
 
 
-def _s6b_unit(device=DEVICE):
+def _s6b_unit(device=DEVICE, rows=32):
     """A unit over the S6b plane: the older default, still a legal wire."""
     grid = GRIDS["E2M1"]
     torch.manual_seed(11)
-    weight = (torch.randn(32, 256) * 0.02).to(device)
+    weight = (torch.randn(rows, 256) * 0.02).to(device)
     q256 = tcq_cap_q256(grid)
     rates, forests = _plan_for(grid, q256, 256, BodyKind.TCQ, None)
     unit = encode_unit(
@@ -434,6 +434,183 @@ def test_reslice_equals_direct_slice(units, label):
         reconstruct_unit(composed, parsed.forests, parsed.code),
         reconstruct_unit(direct, parsed.forests, parsed.code),
     )
+
+
+# ------------------------------------------ the shard record's frame (#140)
+#
+# A shard record names the ORIGINAL -- the whole unit the exporter wrote --
+# whatever depth of re-slicing produced the shard.  The offsets already
+# composed into that frame (``test_reslice_equals_direct_slice`` asserts it)
+# and ``parent_digest`` already inherited it; ``parent_rows``/``parent_columns``
+# were read off the immediate parent instead, so a re-slice wrote a record
+# whose four fields described two units.  These run on CPU: the encoder is not
+# a CUDA path at this size, and the slicing surface above is gated on one.
+
+
+@pytest.fixture(scope="module")
+def cpu_units():
+    """CPU-built parents, 64 rows so a quarter cut lands on a super-symbol at
+    both depths: the shipping E4M3 window/CHANNEL wire (the one the serving
+    loader shards) and the S6b TCQ unit tessera#140 was reproduced on."""
+    e4m3 = _encode("e4m3-window-channel", GRIDS["E4M3"], 1024, 0,
+                   rows=64, cols=256, device="cpu")
+    s6b = _s6b_unit(device="cpu", rows=64)
+    return {"e4m3-window-channel": e4m3, "s6b-tcq": s6b}
+
+
+def _cpu_parse(blob):
+    return parse_unit_artifact(blob, device="cpu")
+
+
+def _build_shard(shard, forests, parsed, label):
+    return build_unit_artifact(
+        shard, label, forests, parsed.manifest.branch.root_q256, CODE,
+        fixture_id=None,
+    )
+
+
+def _origin_record(parsed, row_offset, col_offset, state_bits):
+    geometry = parsed.manifest.geometry
+    return ShardOrigin(
+        row_offset=row_offset, col_offset=col_offset,
+        parent_rows=geometry.rows, parent_columns=geometry.columns,
+        parent_digest=parsed.manifest.manifest_digest(), state_bits=state_bits,
+    )
+
+
+@pytest.mark.parametrize("label", ["e4m3-window-channel", "s6b-tcq"])
+@pytest.mark.parametrize("axis", ["row", "column"])
+def test_reslice_record_names_the_original(cpu_units, label, axis):
+    """A shard of a shard serialises the record the direct cut writes: the
+    composed offset, the ORIGINAL's extent and the ORIGINAL's digest -- and
+    the same bytes, because nothing else about the cut differs."""
+    _unit, forests, grid, blob = cpu_units[label]
+    parsed = _cpu_parse(blob)
+    geometry = parsed.manifest.geometry
+    extent = geometry.rows if axis == "row" else geometry.columns
+    half, quarter = extent // 2, extent // 4
+    cut = (lambda lo, hi: {"rows": (lo, hi)}) if axis == "row" else (
+        lambda lo, hi: {"cols": (lo, hi)})
+    upper = slice_unit(parsed, **cut(half, extent))
+    composed = slice_unit(
+        upper, **cut(quarter, 2 * quarter), arity=grid.arity, code=parsed.code,
+        grid=grid, superblock=geometry.superblock_columns,
+    )
+    direct = slice_unit(parsed, **cut(half + quarter, extent))
+    m_composed, _r, composed_blob = _build_shard(composed, forests, parsed, "q")
+    m_direct, _r, direct_blob = _build_shard(direct, forests, parsed, "q")
+    want = _origin_record(
+        parsed,
+        row_offset=half + quarter if axis == "row" else 0,
+        col_offset=half + quarter if axis == "column" else 0,
+        state_bits=m_direct.shard.state_bits,
+    )
+    assert m_composed.shard == want
+    assert m_direct.shard == want
+    assert composed_blob == direct_blob
+    full = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    back = _cpu_parse(composed_blob)
+    window = (full[half + quarter:] if axis == "row"
+              else full[:, half + quarter:])
+    assert torch.equal(reconstruct_unit(back.unit, back.forests, back.code), window)
+
+
+def test_the_reslice_the_issue_refused_builds(cpu_units):
+    """tessera#140, first reproduction: rows (32, 64) then (16, 32) is the
+    legal shard [48, 64) of a 64-row parent, and it was refused as running
+    past a parent of 32 rows -- the immediate parent's extent under the
+    original's offset."""
+    _unit, forests, grid, blob = cpu_units["s6b-tcq"]
+    parsed = _cpu_parse(blob)
+    assert parsed.manifest.geometry.rows == 64
+    half = slice_unit(parsed, rows=(32, 64))
+    sub = slice_unit(half, rows=(16, 32), code=parsed.code, grid=grid)
+    assert (sub.row_offset, sub.parent_rows) == (48, 64)
+    manifest, _r, _blob = _build_shard(sub, forests, parsed, "sub")
+    assert manifest.shard == _origin_record(parsed, 48, 0, manifest.shard.state_bits)
+    assert manifest.shard.state_bits == CODE.memory
+
+
+def test_the_reslice_the_issue_serialised_names_one_parent(cpu_units):
+    """tessera#140, second reproduction: rows (0, 32) then (0, 16) serialised
+    a record claiming a 32-row parent under the 64-row original's digest --
+    a lie no reader holding only the shard could catch.  Every field now
+    names the original."""
+    _unit, forests, grid, blob = cpu_units["s6b-tcq"]
+    parsed = _cpu_parse(blob)
+    top = slice_unit(parsed, rows=(0, 32))
+    sub = slice_unit(top, rows=(0, 16), code=parsed.code, grid=grid)
+    manifest, _r, sub_blob = _build_shard(sub, forests, parsed, "sub")
+    assert manifest.shard == _origin_record(parsed, 0, 0, 0)
+    assert _cpu_parse(sub_blob).manifest.shard == manifest.shard
+
+
+def test_a_parsed_shard_reslices_into_the_original_frame(cpu_units):
+    """Round trip through the reader: a shard written to bytes and parsed
+    back is a ``ParsedUnit`` whose manifest is the SHARD's, and cutting it
+    again must not take the shard's own geometry and digest for the parent's.
+    The composed shard rebuilds to the direct cut's bytes and decodes to the
+    original's window."""
+    _unit, forests, grid, blob = cpu_units["e4m3-window-channel"]
+    parsed = _cpu_parse(blob)
+    rows = parsed.manifest.geometry.rows
+    half = slice_unit(parsed, rows=(rows // 2, rows))
+    _m, _r, half_blob = _build_shard(half, forests, parsed, "half")
+    parsed_half = _cpu_parse(half_blob)
+    assert parsed_half.manifest.shard is not None
+    composed = slice_unit(parsed_half, rows=(rows // 4, rows // 2))
+    direct = slice_unit(parsed, rows=(3 * rows // 4, rows))
+    m_composed, _r, composed_blob = _build_shard(composed, forests, parsed, "q")
+    m_direct, _r, direct_blob = _build_shard(direct, forests, parsed, "q")
+    assert m_composed.shard == m_direct.shard == _origin_record(
+        parsed, 3 * rows // 4, 0, m_direct.shard.state_bits)
+    assert composed_blob == direct_blob
+    full = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    back = _cpu_parse(composed_blob)
+    assert torch.equal(
+        reconstruct_unit(back.unit, back.forests, back.code), full[3 * rows // 4:]
+    )
+
+
+def test_a_shard_refuses_a_parent_that_contradicts_its_record(cpu_units):
+    """An explicit ``parent_shape`` or ``parent_digest`` that disagrees with
+    the record a shard already carries is refused by name: the record names
+    the original, and a caller cannot rename it to the immediate parent."""
+    _unit, forests, grid, blob = cpu_units["s6b-tcq"]
+    parsed = _cpu_parse(blob)
+    half = slice_unit(parsed, rows=(32, 64))
+    with pytest.raises(GrammarError, match="parent_shape"):
+        slice_unit(half, rows=(16, 32), code=parsed.code, grid=grid,
+                   parent_shape=(32, 256))
+    with pytest.raises(GrammarError, match="parent_digest"):
+        slice_unit(half, rows=(16, 32), code=parsed.code, grid=grid,
+                   parent_digest=bytes(32))
+    # The original's own record, restated, is not a contradiction.
+    same = slice_unit(half, rows=(16, 32), code=parsed.code, grid=grid,
+                      parent_shape=(64, 256),
+                      parent_digest=parsed.manifest.manifest_digest())
+    assert (same.row_offset, same.parent_rows) == (48, 64)
+
+
+@pytest.mark.parametrize("label", ["e4m3-window-channel", "s6b-tcq"])
+def test_an_unsliced_unit_and_a_first_cut_do_not_move(cpu_units, label):
+    """The frame fix touches re-slices only: the identity slice is still the
+    unit, byte for byte and with no record, and a first cut's record is the
+    one every reader already assumes -- offsets into, extent of, and digest
+    of the unit it was cut from."""
+    _unit, forests, grid, blob = cpu_units[label]
+    parsed = _cpu_parse(blob)
+    whole = slice_unit(parsed)
+    _m, _r, again = build_unit_artifact(
+        whole, parsed.manifest.branch.unit_id, forests,
+        parsed.manifest.branch.root_q256, CODE)
+    assert again == blob
+    assert _cpu_parse(again).manifest.shard is None
+    rows = parsed.manifest.geometry.rows
+    manifest, _r, _blob = _build_shard(
+        slice_unit(parsed, rows=(rows // 2, rows)), forests, parsed, "half")
+    assert manifest.shard == _origin_record(
+        parsed, rows // 2, 0, manifest.shard.state_bits)
 
 
 # ------------------------------------------------------- the trellis oracle
