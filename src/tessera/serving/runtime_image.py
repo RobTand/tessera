@@ -50,14 +50,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from typing import Any, Callable, Mapping
 
 __all__ = [
+    "ATTESTATION_SCHEMA",
+    "ATTESTATION_SOURCE",
+    "CENSUS_ATTESTATION_ENV",
+    "CENSUS_IMAGE_ENV",
     "PIN_CONTRACT_FIELD",
     "RuntimeImageError",
+    "attested_reference",
+    "container_env",
     "docker_inspector",
     "parse_reference",
     "pinned_reference",
@@ -67,6 +74,19 @@ __all__ = [
 
 #: Where the one literal lives.  Read, never copied.
 PIN_CONTRACT_FIELD = ("versions", "attested_on", "image")
+
+#: The two variables a container launcher writes so a process INSIDE the
+#: container can check which image it is running in.  The names live here and
+#: are read by both sides -- the launcher through the ``container-env``
+#: subcommand, the census through :func:`attested_reference` -- so neither
+#: spells them a second time.
+CENSUS_IMAGE_ENV = "TESSERA_CENSUS_RUNTIME_IMAGE"
+CENSUS_ATTESTATION_ENV = "TESSERA_CENSUS_RUNTIME_IMAGE_ATTESTATION"
+
+#: What a receipt records about HOW its runtime scope was established.  A
+#: value a gate switches on, never prose.
+ATTESTATION_SCHEMA = "tessera.runtime-image-attestation/1"
+ATTESTATION_SOURCE = "launcher_repo_digests"
 
 #: A pull reference that names *bytes*: ``repo/name@sha256:<64 hex>``.
 #: A tag reference does not match, which is the entire point of the pin.
@@ -273,6 +293,101 @@ def _message(record: Mapping[str, Any]) -> str:
         f"  fix:      {record['fix']}")
 
 
+# --------------------------------------------------------- attestation ---
+#
+# WHY AN ENVIRONMENT VARIABLE AND NOT SOMETHING STRONGER (issue #132).  A
+# process inside a container cannot ask the daemon what image it is running:
+# there is no socket, and ``/proc/self/mountinfo`` names overlay layer paths --
+# spelled differently by the two snapshotters on the two GB10s -- which are not
+# manifest digests and cannot be turned into one.  So the strongest available
+# mechanism is the launcher transcribing ``docker image inspect``'s answer
+# VERBATIM into the environment, and the process inside checking its own claim
+# against that table rather than against its own command line.
+#
+# That is not unforgeable: a hand ``docker run -e`` can still lie.  It is
+# strictly better than what it replaces, where the census recorded whatever
+# string the operator typed with nothing to compare it to, and it is why the
+# receipt records WHICH mechanism attested the scope instead of stating the
+# image as a bare fact.  A reader who distrusts the mechanism can redo the join
+# from the record, which travels beside the name.
+
+
+def container_env(record: Mapping[str, Any]) -> dict[str, str]:
+    """The variables a launcher exports into the container it is starting.
+
+    Empty when the daemon holds no manifest digest for the image (a locally
+    built one).  An empty *variable* would read as a present-but-malformed
+    claim; exporting nothing lets the process inside refuse for the honest
+    reason -- nothing attested this image -- rather than for a parse error.
+    """
+    reference = record.get("resolved_reference")
+    if not reference:
+        return {}
+    return {CENSUS_IMAGE_ENV: str(reference),
+            CENSUS_ATTESTATION_ENV: json.dumps(dict(record), sort_keys=True)}
+
+
+def attested_reference(requested: str, *,
+                       env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Check ``requested`` against what the launcher recorded, or refuse.
+
+    Returns the attestation a receipt publishes: the mechanism, the image it
+    attests, the variables it was read from, and the launcher's record
+    verbatim.  Raises :class:`RuntimeImageError` when nothing attested the
+    image, when the pair disagrees with itself, or when the caller names other
+    bytes than the ones the container was started on.
+    """
+    env = os.environ if env is None else env
+    attested = (env.get(CENSUS_IMAGE_ENV) or "").strip()
+    raw = (env.get(CENSUS_ATTESTATION_ENV) or "").strip()
+    if not attested or not raw:
+        raise RuntimeImageError(
+            f"REFUSED: nothing inside this container attested its runtime image.\n"
+            f"  requested: {requested}\n"
+            f"  {CENSUS_IMAGE_ENV} / {CENSUS_ATTESTATION_ENV} are not both set, so the "
+            "image is an operator's assertion and a receipt scoped to it would name a "
+            "runtime nothing measured.\n"
+            "  fix:      run under experiments/tessera_plugin_run.sh, which resolves the "
+            "image through docker's RepoDigests and exports both",
+            {"refused": True, "reason": "image_attestation_missing",
+             "requested": requested, "env": [CENSUS_IMAGE_ENV, CENSUS_ATTESTATION_ENV]})
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        record = None
+    if not isinstance(record, Mapping) or record.get("schema") != "tessera.runtime_image/1":
+        raise RuntimeImageError(
+            f"REFUSED: {CENSUS_ATTESTATION_ENV} does not hold a tessera.runtime_image/1 "
+            "record, so there is no table to check the image against",
+            {"refused": True, "reason": "image_attestation_unreadable",
+             "requested": requested, "env": [CENSUS_ATTESTATION_ENV]})
+    if record.get("refused"):
+        raise RuntimeImageError(
+            f"REFUSED: the launcher's own record says it refused this image "
+            f"({record.get('reason')}); a container it refused to start attests nothing",
+            {"refused": True, "reason": "image_attestation_refused",
+             "requested": requested, "attested": attested})
+    if record.get("resolved_reference") != attested or attested not in (
+            record.get("repo_digests") or []):
+        raise RuntimeImageError(
+            f"REFUSED: {CENSUS_IMAGE_ENV} is {attested!r}, which the record beside it does "
+            f"not resolve to (it resolved {record.get('resolved_reference')!r} out of "
+            f"{record.get('repo_digests')!r}); half a forged pair is a forged pair",
+            {"refused": True, "reason": "image_attestation_inconsistent",
+             "requested": requested, "attested": attested})
+    if requested != attested:
+        raise RuntimeImageError(
+            f"REFUSED: this run was started on {attested}, not on {requested}.\n"
+            f"  the digest is a join key of the cell scope, so a receipt naming the other "
+            "image would be a covered verdict for a runtime nobody measured.\n"
+            f"  fix:      pass --runtime-image \"${CENSUS_IMAGE_ENV}\", the value the "
+            "launcher resolved from docker's RepoDigests",
+            {"refused": True, "reason": "image_attestation_mismatch",
+             "requested": requested, "attested": attested})
+    return {"schema": ATTESTATION_SCHEMA, "source": ATTESTATION_SOURCE, "image": attested,
+            "env": [CENSUS_IMAGE_ENV, CENSUS_ATTESTATION_ENV], "record": dict(record)}
+
+
 # ------------------------------------------------------------------- cli ---
 
 def main(argv: list[str] | None = None) -> int:
@@ -287,11 +402,20 @@ def main(argv: list[str] | None = None) -> int:
     res.add_argument("--allow-unpinned", action="store_true",
                      help="do not exit 2 for an image outside the pinned "
                           "repository (the default already permits it)")
+    sub.add_parser("container-env",
+                   help="read a resolve record on stdin; print the KEY=VALUE lines a "
+                        "launcher exports so the process inside can attest the image. "
+                        "Prints nothing for an image the daemon holds no manifest "
+                        "digest for.")
     args = parser.parse_args(argv)
 
     try:
         if args.command == "pin":
             print(pinned_reference())
+            return 0
+        if args.command == "container-env":
+            for key, value in sorted(container_env(json.load(sys.stdin)).items()):
+                print(f"{key}={value}")
             return 0
         record = resolve(args.image)
     except RuntimeImageError as exc:

@@ -18,6 +18,14 @@
 #   runtime_image_require IMAGE      -> enforce the default repository pin and
 #                                       verify any explicit digest reference;
 #                                       sets RUNTIME_IMAGE_{DIGEST,LOCAL_ID,JSON}
+#                                       and RUNTIME_IMAGE_CONTAINER_ENV
+#
+# RUNTIME_IMAGE_CONTAINER_ENV holds the KEY=VALUE lines a wrapper must export
+# into the container it starts, so a process INSIDE (the route census) can
+# check which image it is running in against docker's own answer instead of
+# believing its own command line (issue #132).  The names and the shape are
+# the module's, never spelled again here; it is empty for an image the daemon
+# holds no manifest digest for, and the process inside then refuses.
 #
 # The refusal happens BEFORE serve_lock_acquire in every caller: a wrapper that
 # is going to refuse must not first take the box's one serve lock and make
@@ -55,6 +63,7 @@ runtime_image_require() {
   fi
   RUNTIME_IMAGE_DIGEST="$(printf '%s' "$json" | _runtime_image_field resolved_digest)"
   RUNTIME_IMAGE_LOCAL_ID="$(printf '%s' "$json" | _runtime_image_field local_id)"
+  RUNTIME_IMAGE_CONTAINER_ENV="$(printf '%s' "$json" | _runtime_image_cli container-env)"
   echo "image $image -> ${RUNTIME_IMAGE_DIGEST:-<no manifest digest>} (local id ${RUNTIME_IMAGE_LOCAL_ID:-unknown})"
 }
 

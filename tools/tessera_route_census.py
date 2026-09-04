@@ -71,9 +71,13 @@ are not exactly that table's values.  So a per-(family, regime) expectation can
 join the two sides, and a rename or a third regime fails before the first model
 load rather than at a per-module ``KeyError`` after two.
 
-Run it inside the serving image with the plugin installed (the same container
-the KL dumps ran in); ``TESSERA_SERVE_MODE`` selects the residency exactly as
-it does for ``vllm serve``.
+Run it inside the serving image with the plugin installed, through
+``experiments/tessera_plugin_run.sh`` (the same container the KL dumps ran in);
+``TESSERA_SERVE_MODE`` selects the residency exactly as it does for ``vllm
+serve``.  Through that wrapper and no other: ``--runtime-image`` is checked
+against the reference the launcher resolved from docker's own ``RepoDigests``
+and exported into the container, and a run nothing attested refuses before the
+first model load (issue #132).
 """
 from __future__ import annotations
 
@@ -343,14 +347,17 @@ def _git_head(path):
         return None
 
 
-def parse_args(argv=None):
+def parse_args(argv=None, env=None):
     """Resolve the explicit runtime context before importing a serving runtime."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("model")
     ap.add_argument("out")
     ap.add_argument("--runtime-image", required=True,
-                    help="exact repository@sha256:digest checked by the outer container "
-                         "launcher; required to bind cell agreement to the runtime measured")
+                    help="exact repository@sha256:digest; cross-checked against the "
+                         "reference the container launcher resolved from docker's "
+                         "RepoDigests and exported into this container, so it binds cell "
+                         "agreement to the runtime actually measured rather than to a "
+                         "string that was typed")
     ap.add_argument("--expect-modules", type=int, default=None,
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -385,11 +392,25 @@ def parse_args(argv=None):
                          "receipt would carry None")
     args = ap.parse_args(argv)
     from tessera.serving.contract import require_runtime_image
+    from tessera.serving.runtime_image import RuntimeImageError, attested_reference
 
     try:
         args.runtime_image = require_runtime_image(args.runtime_image, "--runtime-image")
     except ValueError as exc:
         ap.error(str(exc))
+    # THE IMAGE IS A JOIN KEY, NOT A LABEL (issue #132).  It scopes every cell
+    # this census resolves, so an operator's string that named other bytes
+    # would produce a `covered` verdict for a runtime nobody measured, in a
+    # receipt shaped exactly like a correct one.  Nothing inside a container
+    # can ask the daemon what it is running, so the launcher transcribes
+    # `docker image inspect`'s RepoDigests into the environment and this is
+    # where the claim meets that table.  Before the first model load, and with
+    # no way to opt out: a stamped `operator_asserted` receipt would be the
+    # same defect wearing a field name.
+    try:
+        args.runtime_image_attestation = attested_reference(args.runtime_image, env=env)
+    except RuntimeImageError as exc:
+        ap.error(f"--runtime-image {args.runtime_image}: {exc}")
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 
@@ -694,6 +715,13 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
+        # WHERE THAT SCOPE CAME FROM.  The image above is a join key of every
+        # cell this receipt resolves; this says which mechanism established it
+        # and carries the launcher's record verbatim, so a reader can redo the
+        # join rather than trust the name.  Its ABSENCE is the discriminator
+        # for a receipt written before #132, when the value was whatever the
+        # operator typed.
+        "runtime_image_attestation": args.runtime_image_attestation,
         "checkpoint_sidecars": sidecars,
         "tessera_config_groups": len(tessera_groups),
         "declared_names_mapped_to_module_space": name_map is not None,
