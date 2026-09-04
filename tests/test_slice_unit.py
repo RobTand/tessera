@@ -15,8 +15,9 @@ assume:
     both axes, at tp in {2, 4, 8}, on synthetic units and on units cut out of
     the shipped Qwen3-0.6B E4M3 checkpoint;
   * a shard round-trips through the wire and decodes from **bytes alone**;
-  * nothing at offset 0 moved: the artifacts HEAD writes are byte-identical,
-    and the identity slice of any unit is that unit;
+  * nothing at offset 0 moved in the slicing wire: encoder-free artifacts keep
+    their schema-minor-4 baseline, and the identity slice of any unit is that
+    unit;
   * the trellis correction is checked against the scalar ``TCQ.decode``
     oracle, not against another vectorised path;
   * the RELEASE plane restricts consistently, and its per-superblock counts
@@ -69,16 +70,17 @@ from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 CODE = ConvCode(memory=6)
 GRIDS = {g.name: g for g in SERIALISABLE_GRIDS.values()}
 
-#: The bytes HEAD (3d419e7) writes for three small units, one per shipping
-#: wire recipe.  Recorded by encoding these exact weights against the HEAD
-#: tree; the point of the constants is that schema minor 4 moved none of them.
-HEAD_UNIT_DIGESTS = {
+#: The bytes the post-#87 encoder writes for three small units, one per shipping
+#: wire recipe.  The reach landing moved the behaviour-derived encoder identity,
+#: so these include that identity in the existing minor-6 envelope; their
+#: payload and envelope are pinned together because those are the bytes served.
+CURRENT_ENCODER_UNIT_DIGESTS = {
     "e4m3-window-channel": (
-        "bca30ebbc1687d1a753525ceb1148edd1469504d2cd2c18cbf9aa5f052dd802c", 21159),
+        "00fe4f529499a0731a3cf790039cd9b4fc9bfadfa020b6496e91d2f1b78d445e", 21194),
     "e2m1-tcq-lut-release": (
-        "1840b3f9dfe3929d9aa86006f207ad427658135d2d5c95fa5dc0b6ad0e532f31", 8398),
+        "5761de4132f951f526556ebac79aa2520c1b47badc559c8690223ed2f1998f67", 8435),
     "e2m1x2-subcap-window-lut": (
-        "ae0e675dc7b0fbf40a5cee88f22baf5bb74b650d07b6aaa30f6008a443196ec5", 8059),
+        "1573acfc0ac5ff28ae2be9f46d8a8123ac3a8fa4e8feb344272551843f1d3731", 8094),
 }
 
 #: The same, for the encoder-free artifact ``conftest.make_artifact`` builds --
@@ -197,10 +199,10 @@ def test_layout_bytes_are_what_head_wrote(key, digest):
 
 
 @needs_cuda
-@pytest.mark.parametrize("label", sorted(HEAD_UNIT_DIGESTS))
-def test_encoded_unit_bytes_are_what_head_wrote(label):
-    """A real unit at each shipping recipe is byte-identical to HEAD's."""
-    digest, size = HEAD_UNIT_DIGESTS[label]
+@pytest.mark.parametrize("label", sorted(CURRENT_ENCODER_UNIT_DIGESTS))
+def test_encoded_unit_bytes_match_encoder_identity_baseline(label):
+    """A real unit pins payload bytes together with its encoder identity."""
+    digest, size = CURRENT_ENCODER_UNIT_DIGESTS[label]
     _unit, _forests, _grid, blob = _case(label)
     assert (len(blob), hashlib.sha256(blob).hexdigest()) == (size, digest)
 
