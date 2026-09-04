@@ -31,13 +31,11 @@ fp32 reduction error of 1.7e-07.
 THIS IS A SCREEN, NOT A SERVED RESULT.  The lane's own served number is the
 decode-regime A/B (`experiments/decode_regime_campaign.sh`).
 
-CPU-only.  It runs locally rather than through the PrismaBuild pool: a CPU-only
-submission from a box-local checkout is pinned to that box, and on 2026-09-04
-sparky offered 10 cpu tokens but zero free mem_gb -- every one of its 48 was
-held by one long GPU action -- so `pbrun --demand cpu=2[,mem_gb=0]` queued and
-never placed (twice, 120 s and 150 s).  The earlier note here, that sparky's
-offer carried no cpu capacity at all, was true when it was written and is not
-the reason now.
+CPU-only, but still dispatched through the PrismaBuild pool.  A box-local
+checkout pins the action to that box; if no live worker there can satisfy the
+declared CPU and memory demand, the action waits rather than running outside
+the pool.  In particular, do not repeat the direct local execution used while
+diagnosing this control on 2026-09-04.
 """
 
 from __future__ import annotations
