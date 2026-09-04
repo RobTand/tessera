@@ -107,3 +107,59 @@ def test_the_kernel_sources_resolve_as_package_resources():
         ("tessera.serving", "csrc/tessera_nvfp4.cu"),
     ):
         assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
+
+
+def _declared_version() -> str:
+    """``pyproject.toml``'s ``[project] version`` -- the one declaration."""
+    return _pyproject()["project"]["version"]
+
+
+def _declared_entry_points() -> dict[str, str]:
+    return _pyproject()["project"]["entry-points"]["vllm.general_plugins"]
+
+
+def test_every_version_copy_derives_from_the_one_declaration():
+    """The version is declared in pyproject and read from there or from the
+    installed distribution's metadata -- never restated.  A literal in a
+    package is a copy a release bumps or forgets, and this string is not only
+    metadata: it is an input to the vLLM compile-cache key
+    (``serving/compile_identity.py``), so a stale one is a stale cache."""
+    import tessera
+    from tessera import serving
+
+    declared = _declared_version()
+    assert tessera.__version__ == declared, (
+        f"tessera.__version__ {tessera.__version__!r} != pyproject "
+        f"{declared!r}: the package restates the version instead of reading it")
+    assert serving.__version__ == declared, (
+        f"tessera.serving.__version__ {serving.__version__!r} != pyproject "
+        f"{declared!r}")
+
+
+def test_the_documentation_url_names_the_version_it_documents():
+    """``Documentation`` points at a tag, so it is a fifth copy of the version.
+    Nothing can derive it from a static table; this is what refuses the drift."""
+    url = _pyproject()["project"]["urls"]["Documentation"]
+    assert f"/blob/v{_declared_version()}/" in url, (
+        f"Documentation URL {url!r} does not name v{_declared_version()}")
+
+
+def test_the_contract_states_no_version_the_distribution_does_not_have():
+    """``runtime_contract.json`` is read by producers as an attestation about
+    this package.  Whatever it stores about the package's own identity must be
+    what the package has; a contract that may derive these instead of storing
+    them is covered too, because what is not stored cannot drift."""
+    from tessera.serving import contract
+
+    versions = contract.load_serving_contract()["versions"]
+    if "tessera" in versions:
+        assert versions["tessera"] == _declared_version(), (
+            f"runtime_contract versions.tessera {versions['tessera']!r} != "
+            f"pyproject {_declared_version()!r}")
+    if "plugin_entry_point" in versions:
+        expected = "\n".join(
+            f"{name} = {value}" for name, value in _declared_entry_points().items())
+        assert versions["plugin_entry_point"] == expected, (
+            f"runtime_contract versions.plugin_entry_point "
+            f"{versions['plugin_entry_point']!r} != the declared entry point "
+            f"{expected!r}")

@@ -6,8 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
-`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df`, release
-documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
+`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df` plus the
+version-derivation gate of #149, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -1309,6 +1309,25 @@ account can move, so what a job runs is decided after review, by someone
 else; a SHA is the code that was reviewed. `tests/test_ci_workflow.py` holds
 that rule over every workflow rather than over a list of actions.
 
-The version string appears in `pyproject.toml` and in the contract's
-`versions.tessera`; the publish job checks the tag against the first only.
-Reconciling the copies is an open issue.
+### 5.5 The version has one declaration
+
+`pyproject.toml`'s `[project] version` is the only place the version is
+written. `tessera.__version__` reads it rather than restating it: out of a
+checkout from that file, out of an installed wheel from
+`importlib.metadata` -- the checkout first, because installed metadata on
+`sys.path` can describe a different tree than the one being imported
+(`src/tessera/__init__.py`). `tessera.serving.__version__` re-exports the
+same object, so the string vLLM's compile-cache key folds in
+(`serving/compile_identity.py`) and the census publishes cannot disagree
+with the distribution, and a version neither reader can produce is refused
+rather than guessed.
+
+Two copies remain that no code here can derive: the `Documentation` URL's
+tag, and the contract's `versions.tessera` / `versions.plugin_entry_point`,
+which are bytes a producer's receipts bind to. Neither is left to review.
+`tests/test_packaging.py` fails when either disagrees with the declaration;
+`tools/check_wheel.py` reads the declaration too -- it restates neither the
+version nor the entry point -- and refuses a built wheel whose `Version`
+metadata, whose entry-point value, or whose installed `__version__` is not
+the declared one; and the publish job's tag check reads the same table
+(§5.4).

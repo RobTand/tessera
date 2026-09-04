@@ -33,9 +33,14 @@ The loader refuses unsupported structure, parallelism and residency by name;
 """
 from __future__ import annotations
 
-__all__ = ["__version__", "QUANT_METHOD", "register"]
+# The version is re-exported from the library, which reads it from the one
+# declaration in pyproject.toml (see tessera/__init__.py).  It is not a copy:
+# the route census publishes both names and compile_identity folds this one
+# into vLLM's compile-cache key, so they are the same string by construction
+# rather than by review.
+from .. import __version__ as __version__
 
-__version__ = "0.1.0"
+__all__ = ["__version__", "QUANT_METHOD", "register"]
 
 #: The ``quantization_config.quant_method`` value this plugin registers under.
 QUANT_METHOD = "tessera"
