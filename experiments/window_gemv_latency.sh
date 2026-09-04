@@ -67,7 +67,8 @@ TAG=${TAG:-$ARM-$MODE-$REGIME}
 PROF=${PROF:-$RUNS/prof-$TAG}
 LOG=${LOG:-$RUNS/lat-$TAG.log}
 OUT=${OUT:-$RUNS/latency-$TAG.json}
-EAGER_FLAG=--enforce-eager; [ "$REGIME" = compiled ] && EAGER_FLAG=--trust-remote-code
+# An inactive optional flag is empty; --trust-remote-code is appended once.
+EAGER_FLAG=--enforce-eager; [ "$REGIME" = compiled ] && EAGER_FLAG=
 
 source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS" "$PROF"

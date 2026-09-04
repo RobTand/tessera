@@ -213,6 +213,24 @@ def test_every_wrapper_that_starts_a_container_gates_and_names_no_digest():
             f"{path.name} still names the floating tag")
 
 
+def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
+    """A delegating campaign must preserve the leaf wrapper's exact pin."""
+    assignment = re.compile(
+        r"^\s*(?:export\s+)?(?:TESSERA_KL_IMAGE|IMAGE)="
+        r"[^\n]*vllm/vllm-openai:latest",
+        re.M,
+    )
+    offenders = [
+        str(path.relative_to(ROOT))
+        for path in sorted((ROOT / "experiments").rglob("*.sh"))
+        if assignment.search(path.read_text())
+    ]
+    assert offenders == [], (
+        "campaigns must derive the runtime contract pin, not override it: "
+        + ", ".join(offenders)
+    )
+
+
 def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path):
     """``experiments/runtime_image.sh`` is what the wrappers source.
 

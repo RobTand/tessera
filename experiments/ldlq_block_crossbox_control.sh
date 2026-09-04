@@ -33,7 +33,8 @@ export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.30}
 # Distinct from the sparklina bracket's name on purpose: a shared container
 # name is how one worker's `docker rm -f` reaps another worker's serve.
 export TESSERA_KL_NAME=${TESSERA_KL_NAME:-tessera-kl-ts60spk}
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+source "$REPO/experiments/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$RUNS
 cd "$REPO" || exit 1

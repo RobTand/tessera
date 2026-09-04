@@ -55,8 +55,9 @@ STAGE=${1:-all}
 export TS=$WT
 export RUNS
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
-# Image-matched teacher: the npz above was dumped on vllm/vllm-openai:latest.
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+# Image-matched teacher: the run uses the serving contract's exact image pin.
+source "$WT/experiments/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export TESSERA_KL_LOGDIR=$RUNS
 export TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache
 # A 0.6B model on a shared 121.6 GiB unified pool: 0.85 refuses to start the

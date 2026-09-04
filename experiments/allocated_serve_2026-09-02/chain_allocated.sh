@@ -20,6 +20,7 @@ export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 mkdir -p "$RUNS" "$EXT" "$VLLM_CACHE"
 COMMIT=${COMMIT:-unknown}
 source "$TS/experiments/serve_lock.sh"
+source "$TS/experiments/runtime_image.sh"
 
 ALLOC=$OUT/qwen3-0.6b-alloc-4.0
 UNIF=$OUT/qwen3-0.6b-uniform-R1006
@@ -78,7 +79,7 @@ kl "$ALLOC" alloc4-streamed        streamed 1
 # vLLM with no plugin at all.
 if [ -d "$TWIN" ] && [ ! -f "$KLDIR/qwen_tessera_alloc4-twin.json.npz" ]; then
   echo "== kl alloc4-twin (stock twin, vanilla vLLM, no plugin)"
-  TESSERA_KL_IMAGE=vllm/vllm-openai:latest TESSERA_KL_NAME=alloc-serve-twin \
+  TESSERA_KL_IMAGE="$(runtime_image_pin)" TESSERA_KL_NAME=alloc-serve-twin \
     "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
     "$KLDIR/qwen_tessera_alloc4-twin.json" student > "$RUNS/arm_alloc4-twin.log" 2>&1
   echo "   rc=$?"; tail -6 "$RUNS/arm_alloc4-twin.log"

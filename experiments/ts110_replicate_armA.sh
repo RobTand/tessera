@@ -29,7 +29,8 @@ cd "$(dirname "$0")/.."
 export RUNS=/home/rob/tessera-runs/ts110
 export TS=$PWD
 export TESSERA_KL_CORPUS=$KLD/corpus_qwen_n8_s512.json
-export TESSERA_KL_IMAGE=vllm/vllm-openai:latest
+source experiments/runtime_image.sh
+export TESSERA_KL_IMAGE=$(runtime_image_pin)
 export IMAGE=$TESSERA_KL_IMAGE
 export TESSERA_KL_LOGDIR=$RUNS
 export TESSERA_GPU_MEM_UTIL=0.2

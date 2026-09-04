@@ -41,7 +41,8 @@ export TRITON_CACHE_DIR=/home/rob/.triton-cache
 export TESSERA_KL_PORT=${TESSERA_KL_PORT:-8003}
 export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.30}
 export TESSERA_KL_NAME=${TESSERA_KL_NAME:-tessera-kl-ts60serve}
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+source "$REPO/experiments/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$RUNS
 cd "$REPO" || exit 1

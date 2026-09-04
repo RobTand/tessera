@@ -49,7 +49,8 @@ DP=$PREFIX
 export TESSERA_KL_DUMP_PREFIX=$PREFIX
 export TS=$WT RUNS
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
-export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
+source "$(dirname "$0")/runtime_image.sh"
+export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-$(runtime_image_pin)}
 export IMAGE=${IMAGE:-$TESSERA_KL_IMAGE}
 export TESSERA_KL_LOGDIR=$RUNS
 export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.45}
