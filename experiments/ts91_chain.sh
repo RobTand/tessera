@@ -13,14 +13,16 @@
 set -uo pipefail
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 SUF=${1:-before}
-# The slot runner, not the exclusive lock: this is a CORRECTNESS
-# measurement (which key does each arm compute), not a timing one, so it
-# needs the arms honestly separated -- separate cache roots and separate
-# extension dirs -- and not a quiet box.
-GPULOCK=${GPULOCK:-/home/rob/tmp/arb/gpuslot.sh}
+# GPU work is admitted by the PrismaBuild pool, not by a box-local lock: a
+# local flock cannot balance two boxes, and it starved this very experiment
+# for two hours.  Not --exclusive: this is a CORRECTNESS measurement (which
+# key does each arm compute), so it needs the arms honestly separated --
+# separate cache roots and separate extension dirs -- and not a quiet box.
+PBRUN=${PBRUN:-/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py}
+GPUWRAP=(/usr/bin/python3 "$PBRUN" --gpu --)
 export TS91_NO_LOCK=1
 run() { "$WT/experiments/ts91_cache_key_repro.sh" "$1" "$2" compiled "$SUF-$1-into-$2"; }
-exec "$GPULOCK" bash -c "
+exec "${GPUWRAP[@]}" bash -c "
 set -x
 '$WT/experiments/ts91_cache_key_repro.sh' A X-$SUF compiled '$SUF-A-into-X'
 '$WT/experiments/ts91_cache_key_repro.sh' B Y-$SUF compiled '$SUF-B-into-Y'
