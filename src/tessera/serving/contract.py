@@ -32,8 +32,9 @@ unreachable and false the moment a rate-constrained artifact was served, with
 the lane's own op on 112 of 112 modules.  The residency carries the condition
 because both window routes set ``layer.tessera_gemv = None`` in ``resident``
 -- the lane exists in ``streamed`` alone -- so two cells of one ``(platform,
-family, structure, regime)`` must cover DISJOINT residencies, and a cell
-``id`` is its scope and never a launch.
+family, structure, regime, runtime image, execution mode)`` must cover DISJOINT
+residencies. A cell ``id`` names its scope and never a launch; v5 permits a
+runtime-derived suffix for disjoint variants while retaining existing IDs.
 
 WHAT THE BYTES WERE.  A cell says a receipt covered a rung; it cannot say
 *which bytes* at that rung, and two encoders can write two byte strings at
@@ -738,8 +739,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         # the launch it claimed (``..._decode_scaled_mm_w8a8``) -- an assertion
         # in a string no gate parses, which went stale the day the window-GEMV
         # lane became reachable while the id went on saying ``scaled_mm``
-        # (#111).  The launch is ``executes`` now; the id is the five facts a
-        # cell is resolved by, so it cannot say anything the table does not.
+        # (#111). The launch is ``executes`` now. The id retains its base
+        # scope, optionally with the v5 runtime suffix; explicit cell fields
+        # remain the authority for matching either spelling.
         expected_id = "_".join(
             [cell["family"].lower(), cell["structure"], cell["platform"].replace("_", ""),
              cell["regime"]]
