@@ -165,6 +165,51 @@ def _verdict(arms: list[dict]) -> str:
     return "green on both populations"
 
 
+LEDGER_HEADER = """# Suite populations
+
+One row per arm per `tools/merge_suite.py` run. The two arms of a run are
+adjacent on purpose: a pass count means nothing without the device population
+it was measured on, and this file exists so neither can be read without the
+other (tessera#112).
+
+`master head?` is whether the commit under test was master's tip at submit
+time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
+master ref resolved in that checkout and the question was not answered.
+
+| when (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+"""
+
+
+def _record_markdown(path: Path, receipt: dict) -> None:
+    """Append this run's arms to a ledger a reader of the repo can check.
+
+    A receipt on shared storage is not a scrollback, but it is also not
+    somewhere anybody looks. This is.
+    """
+
+    population = receipt["population"]
+    head = population["is_master_head"]
+    head_text = "unknown" if head is None else ("yes" if head else "no")
+    rows = []
+    for record in receipt["arms"]:
+        surface = record.get("surface") or {}
+        counts = surface.get("counts") or {}
+        cell = lambda key: str(counts.get(key, "--"))          # noqa: E731
+        rows.append(
+            f"| {receipt['generated_utc']} | `{population['commit'][:12]}` | "
+            f"{head_text} | {record['arm']} | "
+            f"{surface.get('device', 'no population published')} | "
+            f"{cell('passed')} | {cell('failed')} | {cell('skipped')} | "
+            f"{len(surface.get('not_collected', []))} |"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(LEDGER_HEADER)
+    with path.open("a") as handle:
+        handle.write("\n".join(rows) + "\n")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -182,6 +227,10 @@ def main() -> int:
                          f"{DEFAULT_RECEIPT_ROOT}")
     ap.add_argument("--pytest-arg", action="append", default=[],
                     help="repeatable, passed through to pytest")
+    ap.add_argument("--record", default="",
+                    help="also append one row per arm to this markdown ledger; "
+                         "docs/status/suite-populations.md is the one a reader "
+                         "of the repo checks")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the pbrun invocations and submit nothing")
     args = ap.parse_args()
@@ -230,6 +279,8 @@ def main() -> int:
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(receipt, indent=2) + "\n")
+    if args.record:
+        _record_markdown(Path(args.record), receipt)
 
     print(f"merge_suite: {receipt['verdict']}")
     for record in arms:

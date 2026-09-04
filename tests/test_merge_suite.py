@@ -99,3 +99,58 @@ def test_the_receipt_states_which_tree_it_is_about(tmp_path):
     # Both arms' numbers live under one key, so quoting one without its device
     # means quoting it out of this object rather than out of a scrollback.
     assert "reading_note" in receipt
+
+
+def test_the_ledger_puts_the_two_arms_next_to_each_other(tmp_path):
+    """A row without its device is the misreading; there is no such row.
+
+    The markdown ledger is the "somewhere a reader checks" half of #112 item 1.
+    Its shape is the whole argument: one row per arm, the arms of a run
+    adjacent, and the device in the same row as the counts.
+    """
+
+    merge_suite = _module()
+    ledger = tmp_path / "suite-populations.md"
+    receipt = {
+        "generated_utc": "2026-09-04T00:00:00Z",
+        "population": {"commit": "0123456789abcdef", "is_master_head": True},
+        "arms": [
+            {"arm": "gpu", "surface": {
+                "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10",
+                "counts": {"passed": 1827, "failed": 0, "skipped": 10},
+                "not_collected": []}},
+            {"arm": "x86", "surface": {
+                "device": "torch 2.10.0+cpu reports no CUDA device",
+                "counts": {"passed": 1381, "failed": 0, "skipped": 497},
+                "not_collected": []}},
+        ],
+    }
+    merge_suite._record_markdown(ledger, receipt)
+    text = ledger.read_text()
+    assert "| when (UTC) |" in text
+    gpu_row = [line for line in text.splitlines() if "| gpu |" in line]
+    x86_row = [line for line in text.splitlines() if "| x86 |" in line]
+    assert len(gpu_row) == len(x86_row) == 1
+    assert "NVIDIA GB10" in gpu_row[0] and "1827" in gpu_row[0]
+    assert "no CUDA device" in x86_row[0] and "1381" in x86_row[0]
+
+    # A second run appends rather than replacing: the header is written once.
+    merge_suite._record_markdown(ledger, receipt)
+    assert ledger.read_text().count("| when (UTC) |") == 1
+    assert ledger.read_text().count("| gpu |") == 2
+
+
+def test_an_arm_with_no_population_says_so_in_the_ledger(tmp_path):
+    """Never a blank cell that reads as zero failures."""
+
+    merge_suite = _module()
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T00:00:00Z",
+        "population": {"commit": "deadbeefcafe", "is_master_head": None},
+        "arms": [{"arm": "gpu", "surface": None}],
+    })
+    row = [line for line in ledger.read_text().splitlines() if "| gpu |" in line][0]
+    assert "no population published" in row
+    assert "| -- | -- | -- |" in row
+    assert "| unknown |" in row
