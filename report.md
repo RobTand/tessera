@@ -311,7 +311,7 @@ want to take one.
 ## Issues filed
 
 **None.** Everything found was either fixed on this branch as a separate
-commit (the three listed above) or is a change of premise that is Rob's to
+commit (the four listed above) or is a change of premise that is Rob's to
 make, not a defect to file: making `refit_lut_exact` the default would move
 bytes, and both proposals in *What would be worth doing instead* change what
 the fit optimises. Those are recorded here rather than as issues so the
