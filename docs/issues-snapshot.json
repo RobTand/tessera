@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T19:53:39Z",
+ "generated": "2026-09-04T22:05:06Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -367,9 +367,53 @@
     "state": "CLOSED",
     "title": "Integrate reviewed Tessera admission and boundary-request fixes"
    },
+   "181": {
+    "state": "CLOSED",
+    "title": "Enforce explicit runtime scope throughout Tessera v5 admission"
+   },
+   "182": {
+    "state": "CLOSED",
+    "title": "Measure #87 BF16 boundary instrument A/B with frozen-source receipts"
+   },
+   "183": {
+    "state": "OPEN",
+    "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
+   },
+   "184": {
+    "state": "OPEN",
+    "title": "run-pipeline accepts COST_PATH_OVERRIDE for Tessera but never consumes the prepriced file"
+   },
+   "185": {
+    "state": "CLOSED",
+    "title": "Thread explicit Tessera runtime scope through campaign, allocator and export"
+   },
+   "186": {
+    "state": "OPEN",
+    "title": "Tessera campaign resume admits anchors without source/calibration/recipe identity"
+   },
+   "187": {
+    "state": "OPEN",
+    "title": "Refuse incomplete MoE campaigns and capture explicit packed expert inputs"
+   },
+   "188": {
+    "state": "OPEN",
+    "title": "Consume validated prepriced cost overrides without running cost builders"
+   },
+   "189": {
+    "state": "OPEN",
+    "title": "Bind Tessera raw census replay to priced runtime and artifact scope"
+   },
    "19": {
     "state": "CLOSED",
     "title": "register_qwen3() silently stops overriding on newer transformers (broken by 5.13.1; good on 5.6.0)"
+   },
+   "190": {
+    "state": "OPEN",
+    "title": "Add opt-in paired no-new-boundary-failures decision"
+   },
+   "191": {
+    "state": "OPEN",
+    "title": "Bind Tessera campaign resume to current inputs and exact priced wire"
    },
    "2": {
     "state": "CLOSED",
@@ -668,7 +712,7 @@
     "title": "FP8-source wrapped-MoE checkpoints build end to end (imatrix scale contract + live-namespace bridging in the codebook exporter)"
    },
    "87": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "shipgate: KL/PPL + greedy-smoke certify boundary-broken artifacts \u2014 three DSV4-Flash quants within ~3% PPL span a 6\u00d7 behavioral gap; proposal: add a sampled behavioral component"
    },
    "88": {
@@ -790,7 +834,7 @@
     "title": "The CUDA-gated test surface is covered by no automatic signal: master was red on 766033c while CI, the x86 suite and a CPU run all read green"
    },
    "113": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The window-GEMV lane has no served KL under a compiled forward, which is the configuration vLLM serves by default"
    },
    "114": {
@@ -854,8 +898,12 @@
     "title": "Integrate full-model MoE serving, partitioning, and coverage gates"
    },
    "128": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Close compiled KL measurement with fresh r6 controls and receipts"
+   },
+   "129": {
+    "state": "OPEN",
+    "title": "P1: impacted-test narrowing misses dynamically loaded Python script consumers"
    },
    "13": {
     "state": "CLOSED",
