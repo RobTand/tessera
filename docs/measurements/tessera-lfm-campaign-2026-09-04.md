@@ -286,3 +286,84 @@ dense pair declarations. No original config or seal was overwritten.
 
 At this section's completion, census attempt three is in flight against the
 corrected model and its explicit new seal. No positive MoE cell is yet claimed.
+
+## 7. Full-model route census, completed at 21:05 UTC
+
+After the observer API correction documented in
+`lfm-census-mapper-api-2026-09-04.md`, action
+`7685fdfd8dc5c9aa92545123979d66804c60c10c21ef0e90750e4411e6a9b6cc`
+completed on Sparky with original worker return code zero in 201.925 seconds.
+The controller source was frozen `dcd18b1`; its actual PB source snapshot was
+`a7bd2705062a83d953d0d8a68543913c68d1a7e5`. Receipt CAS:
+`e0334201733d90533c26aaf85d2efd1de3fbe967ae1ade9d1ccf9a084b8f22f4`.
+
+The actual result, preserved at `census-bound-r4/census.json`, has SHA256
+`825157292db88bd3791d59d867743ddf8e37e68dd24c63e93cfc919d927a2028`.
+It reports `verdict: served`, no problems, and all 22 declared expert stacks
+in both phases: decode `M1:N3584:K2048`, prefill `M64:N3584:K2048`. Every record
+names `vllm.fused_moe.modular_kernel:TRITON`, `torch_materialize_stock`,
+`fp8_per_token_dynamic`, and resident mode. Execution is eager on sm_121,
+using exactly the EUGR digest named in §1. The runtime versions are
+vLLM `0.28.1rc1.dev397+gfd4a15126.d20260904`, torch `2.13.0+cu130` and Python
+3.12.3. The raw record retains the TRITON suffix; agreement normalizes only
+the scheme-owned entry-point name.
+
+The same action's collector verifies the common plan, 2,112 projection units,
+exact owner bijection, every group/role rung, geometry and sidecar hashes.
+Full artifact identity before and after matches the selected corrected seal,
+whose SHA256 is `3208ca1e85ebcf2a512924789f1bacff3a22319cdbb67e81f4c3f36348dff634`.
+The model is explicitly mounted read-only. Cleanup reports the exact container
+absent, no GPU compute processes, measurement completed and safe to release.
+
+An independent CPU-only replay, action
+`7769fb00d89e6dc3db9528aba6276bfe70eca30888306b59f449a6929aa3ee2a`,
+checked the original worker/snapshot, raw hash, selected seal/path, pre/post
+binding and cleanup as well as all collector assertions. Receipt CAS:
+`7c56ab96606689aac51a26b9d3c332f20ab0d4236f8b6ed6812ff577bc0c2b98`.
+At capture time contract v15 honestly reports zero covered and 22 unattested
+owners in each phase. A later contract replay must not rewrite that history.
+
+## 8. Matched full-model student quality, completed at 21:10 UTC
+
+Student action
+`c5293606e22df3069cc5c8a4d3a7a1e622c544314c6ecea6d9fc6f38cb90c525`
+used the same frozen controller, corrected artifact/seal, image and eager
+execution as §7, and the fresh source-bound BF16 teacher from §4. Its actual
+source snapshot was `6246a1ecdc54ab50bfedc28de75751d6eeaac8a7`.
+The original worker returned zero in 285.542 seconds; receipt CAS:
+`4243c59cbe304834a3f7e679cfcd454c94871573c19c3f11aa537759317220a8`.
+Both metadata records agree on corpus/tokenizer, 4,096 prefill positions and
+requested top-K 1,024. Alignment is checked with no problems. Actual returned
+support can include the prompt token as a 1,025th entry; this is recorded,
+not mistaken for a different requested K.
+
+The comparison is a **top-1,024 intersection lower bound**, not full-vocabulary
+KL. All-position mean lower bound is **0.08316135646812599**, with upper bound
+1.1787049111897945 at the declared probability floor
+`3.720075976020836e-44`. Top-1 agreement is **85.107421875%**. Teacher mass outside
+the compared support averages 0.011342183808770109 and reaches
+0.6442256699132436. Among 1,968 confident positions (48.046875%), the mean lower
+bound is 0.04127552148969317 and upper bound 0.29772200627592027. The wide upper
+bounds and the missing tail remain limitations; the legacy floor-substituted
+score is not used as a bound or acceptance result.
+
+| student output | SHA256 |
+|---|---|
+| `student_tessera.json.npz` | `282270b9c80c387b2a9c3e25e4b681af27f5abfbd2bb64857e915351baa2aa6f` |
+| `student_tessera.meta.json` | `8a0a885845d698c23c1aa0e85b28bcd7eb37753876c61f9bc89cb3d18dd67b18` |
+| `student_tessera.build.json` | `1045d4277f13c7e976fbc5e700e125410a05d68ad6048f1bcd68ee81d33bb1e2` |
+| `serve_student.log` | `caac53bdc28a5ea3e39483b6cb208e32c899fbfd5279a415900a77bf8f2acd5c` |
+| `kl_tessera_ts5lfm.json` | `e87351070f93345d2a13e806e23ab6aee54c6b5d29243fea6cf69004e370d078` |
+
+The selected teacher binding hash is
+`5d122c2587d61d1af8a6cf28e5d8996c719f2897cb2605821948b31f4db606a8`.
+Every teacher output is rechecked against it before and after the student;
+the quantized artifact also matches its seal before and after. The student
+container and GPU processes are absent at verified cleanup.
+
+The generic greedy smoke prompt produced repetitive `France is` text. That
+observation is retained, not used as a quality verdict or attributed to
+quantization without a matched BF16 prompt. The measured comparison above is
+prefill quality only; the decode census proves dispatch, not decode KL.
+There is no general numeric student-KL cutoff in the current cell-promotion
+contract, so successful comparison execution is not called a quality pass.
