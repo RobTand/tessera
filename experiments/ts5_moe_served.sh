@@ -77,8 +77,15 @@ if [ -s "$OUT/teacher_bf16.json.npz" ]; then
   echo "=== 1/3 teacher already dumped"; rc_teacher=0
 else
   echo "=== 1/3 teacher (BF16 cut)  $(date -Is)"
+  # THE FOURTH ARGUMENT IS NOT OPTIONAL FOR A TEACHER.  kl_tool refuses a
+  # teacher dump with no --teacher-label in about two seconds, before it makes
+  # a single request -- the label travels into every compare line as
+  # "KL-vs-<label>", and it would rather refuse than let the reference identity
+  # be supplied by convention later.  Omitting it cost three pool attempts and
+  # about ten GPU-minutes on 2026-09-04, each of which stood a serve up for
+  # three minutes to be refused by a client-side check.
   TESSERA_KL_NAME=ts5-kl-teacher "$HERE/serve_and_dump_kl.sh" \
-    "$BF16" "$OUT/teacher_bf16.json" teacher
+    "$BF16" "$OUT/teacher_bf16.json" teacher BF16
   rc_teacher=$?
 fi
 
