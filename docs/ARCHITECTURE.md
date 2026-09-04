@@ -53,6 +53,12 @@ families) and stamping coverage and accounting into `<plan>.provenance.json`.
 The exporter encodes what the plan names and the manifest states what is on
 disk; the census checks every module serves on its declared family.
 
+The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
+constructed `feed_forward.w13`, for both quantized targets and explicit BF16
+passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
+owned by the MoE stack; no dense alias applies to them. This naming comes from
+the pinned LFM construction receipt, not a fallback in the serving plugin.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder

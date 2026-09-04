@@ -400,6 +400,19 @@ def test_a_routed_expert_leaf_is_never_fused_as_a_dense_pair():
     assert export.fused_module(routed) is None, export.fused_module(routed)
 
 
+@pytest.mark.parametrize("role", ["w1", "w3"])
+def test_lfm_dense_gate_up_names_the_constructed_w13(role):
+    prefix = "model.layers.0.feed_forward"
+    name = f"{prefix}.{role}.weight"
+    assert export.fused_module(name) == (
+        f"{prefix}.w13", (f"{prefix}.w1.weight", f"{prefix}.w3.weight"))
+    assert export.ignored_modules(name, (64, 128)) == (f"{prefix}.w13",)
+    routed = f"model.layers.2.feed_forward.experts.7.{role}.weight"
+    assert export.fused_module(routed) is None
+    assert export.ignored_modules(routed, (64, 128)) == (
+        "model.layers.2.feed_forward.experts",)
+
+
 @pytest.mark.parametrize("leaf", ["gate_proj", "up_proj", "down_proj"])
 def test_the_routed_ignore_entry_is_the_fused_moe_prefix(leaf):
     """One entry per LAYER at ``...mlp.experts``, not one per checkpoint leaf."""
