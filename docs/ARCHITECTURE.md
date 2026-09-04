@@ -1268,9 +1268,14 @@ refuses a tag that does not name the version in `pyproject.toml`, builds the
 sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
 `pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
 is no API token in the repository. The trigger is a bare tag match with no
-ancestry check and no GitHub `environment`, and the action is pinned to a
-branch, not a digest -- recorded as an open issue against #17, not a property
-this section claims.
+ancestry check and no GitHub `environment` -- recorded as an open issue
+against #17, not a property this section claims.
+
+Every `uses:` in the file names a commit SHA, with the version it was in a
+trailing comment. A tag or a branch (`@v4`, `@release/v1`) is a ref another
+account can move, so what a job runs is decided after review, by someone
+else; a SHA is the code that was reviewed. `tests/test_ci_workflow.py` holds
+that rule over every workflow rather than over a list of actions.
 
 The version string appears in `pyproject.toml` and in the contract's
 `versions.tessera`; the publish job checks the tag against the first only.
