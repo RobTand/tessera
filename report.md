@@ -98,7 +98,118 @@ on the pristine snapshot of `82cdf51` (`ts-94-before`), and it answers one
 question only — that the lever does nothing on the tree that has no plan cache.
 Nothing was rebased between legs.
 
-FILLED IN BELOW.
+### Where it was taken
+
+sparklina (`gx10-6b77`), through the PrismaBuild pool with `--exclusive`, on a
+quiet box. Netdata over the profile window (01:14:01-01:16:30Z) says so rather
+than my asserting it: **`system.load` 8.10-8.86**, **`mem.swapio` in max 13.8
+KiB/s and out 0**, **`nvidia_smi.gpu_power_draw` avg 32.7 W (min 29, max 45) =
+0.234 of the ~140 W envelope**. The harness's own `/proc/loadavg` per rep
+agrees: 8.09-8.65 across all 21 timings in leg C.
+
+This is the second pass. The first was taken while the box was swapping --
+Netdata caught `mem.swapio` in peaking at **108,076 KiB/s**, and one spike
+landed on the eager profile arm while the auto arm ran at 28 KiB/s, which is to
+say the contamination pointed in the direction that flattered the change. Its
+numbers (1.447x timing, 1.361x profile wall) are discarded, not averaged in.
+The in-process profiler could not see any of that, which is the whole reason
+principle 15 asks for both instruments.
+
+### The timing pair (leg C)
+
+Branch `ce811e8`, ONE process, ONE tree, 7 reps interleaved lever by lever.
+`model.layers.0.mlp.down_proj` [1024, 3072], E4M3, `q256=1042`, `ldl_block=32`,
+`sigma_reg=1.0`, `scale_refit` default.
+
+| lever | B (LDLQ+refit) per rep, s | median |
+|---|---|---|
+| `0` eager -- the pre-change machine | 31.30 29.00 30.32 27.13 26.30 23.03 29.02 | **29.00** |
+| unset -- the fix | 21.85 20.80 22.02 18.67 18.55 21.22 20.69 | **20.80** |
+| `1` force capture | 25.11 23.73 21.91 19.02 20.07 21.93 21.65 | 21.91 |
+
+**1.394x on the LDLQ arm.** Per-rep ratios 1.432 1.394 1.377 1.453 1.418
+**1.085** 1.402 -- six of seven inside 1.38-1.45 and one outlier, which is why
+the headline is a median and the outlier stays in the table.
+
+Two controls, both of which had to hold for the number to mean anything:
+
+* **A arm (weights-only, full width): eager/auto = 0.971.** Unchanged, as it
+  must be -- that call runs 96 batches and captured on master already. A change
+  here would have meant the lever was reaching something it should not.
+* **`auto` vs `1`: 0.950.** Both replay cached plans in steady state, so they
+  are the same machine and have to agree; they do, within a scatter that
+  overlaps heavily (auto 18.55-22.02, graph 19.02-25.11).
+
+### The master control (leg 1)
+
+Pristine `82cdf51`, same unit, 3 reps interleaved:
+
+| lever | B median | A median |
+|---|---|---|
+| `0` eager | 35.99 s | 12.26 s |
+| unset | 35.13 s | 11.62 s |
+
+**B ratio 1.02** -- on the tree with no plan cache, forcing eager and letting
+the default decide are the same machine on the LDLQ path, because `len(descs)
+== 1 < 6` either way. **A ratio 1.055** -- the lever is wired and does bite,
+just not on any call LDLQ makes. That asymmetry is issue #94 as data.
+
+### The profile (legs D and E), and where the time went
+
+`--crop 1024x1024`, run twice in opposite arm order so arm order cannot be
+doing the work. B arm (LDLQ+refit) both times:
+
+| | D: eager | D: auto | E: eager | E: auto |
+|---|---|---|---|---|
+| `cuLaunchKernelEx` | **262,912** | **0** | **262,912** | **0** |
+| `cudaGraphLaunch` | 0 | **256** | 0 | **256** |
+| wall | 13.41 s | 9.42 s | 12.09 s | 8.71 s |
+| device busy | 3.53 s | 3.01 s | 3.13 s | 2.75 s |
+| device fraction | 0.264 | 0.320 | 0.259 | 0.316 |
+| power | 31.6 W | 31.4 W | 33.6 W | 32.4 W |
+| envelope fraction | 0.226 | 0.224 | 0.240 | 0.231 |
+| **`gpu_utilization`** | **96.0%** | **96.0%** | **96.0%** | **96.0%** |
+| weights per joule | 2477.0 | 3550.0 | 2581.6 | 3718.9 |
+
+**262,912 individual kernel launches collapse to 256 graph launches**, byte for
+byte identical in both orders. That count is the claim: it is an API call
+tally inside one process, and no neighbour, no swap storm and no clock
+behaviour changes it.
+
+Wall **1.424x** forward and **1.388x** reversed; work per joule **1.433x**
+forward and **1.441x** reversed. In #13's units: **424 J -> 296 J** for the
+same 1,048,576 weights.
+
+**`gpu_utilization` reads 96.0% on all eight arms** -- before and after, LDLQ
+and not, in both orders -- across a 1.4x change. Power against the envelope is
+the instrument that says something: both arms sit near a quarter of ~140 W, so
+this is a launch-bound path throughout, and the fix shortens it rather than
+loading the board harder. The device fraction moving 0.26 -> 0.32 is the same
+fact from the other side: the device was idle three-quarters of the wall
+waiting for launches, and is now idle slightly less.
+
+The host breakdown names the mechanism directly. Eager: 262,912
+`cuLaunchKernelEx` and 782 `cudaStreamSynchronize`. Captured: zero
+`cuLaunchKernelEx`, 256 `cudaGraphLaunch`, 526 syncs. The remaining
+`cudaStreamSynchronize` (~8 s of a ~9 s host total) is the epilogue blocking on
+the device -- `sse += float(final.sum())` forces a sync per chunk -- and is
+untouched by this change, deliberately, because that is what keeps the returned
+`sse` float summed in the reference's order.
+
+### Residency, measured
+
+`peak_alloc_gib` 0.951 (master control) -> 1.024 (branch) = **+74.8 MiB**. The
+prediction from the buffers was ~74 MiB for the unit's four shapes (two rate-4
+plans at ~36 MiB, two rate-5 plans at ~1 MiB). The plan cache costs what it
+was priced at.
+
+### What this is not
+
+**1.394x, not #13's 3.22x, and that is the expected shape of the result.** A
+window step is ONE Triton kernel of a few microseconds; the coset trellis
+launches dozens of tiny ones per position. Same defect, same fix, smaller
+headroom in the step loop because there was less launch overhead per unit of
+work to remove. Reporting #13's factor here would have been borrowing a number.
 
 ## Review corrections (this branch's own code — not separable)
 
