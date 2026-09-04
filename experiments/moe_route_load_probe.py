@@ -39,6 +39,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 EXPERTS, HIDDEN, INTER, TOPK = 4, 512, 256, 2
 Q256 = 1024
 LAYER = "model.layers.0.mlp.experts"
+#: The same stack under the naming a REAL routed-MoE checkpoint carries, which
+#: is what the exporter walks: ``BODY_LAYER`` finds the decoder under a
+#: sub-model, and the construction gate resolves ``...mlp.experts`` through the
+#: censused GLM mapper.  The exported leg uses this name so that the checkpoint
+#: it writes is one the exporter would write for the real model, not a shape
+#: the gate happens not to cover.
+EXPORT_LAYER = "model.language_model.layers.1.mlp.experts"
 
 
 def _encode(weight, name, q256):
@@ -83,11 +90,91 @@ def build_stack(device, seed=0, q256=Q256):
     return wires, scheme, source, stock
 
 
-def quantization_config(scheme):
+def quantization_config(scheme, layer_name=LAYER):
     return {"quant_method": "tessera", "format": "tessera",
-            "config_groups": {"tessera_experts": {"format": "TESSERA", "targets": [LAYER],
+            "config_groups": {"tessera_experts": {"format": "TESSERA", "targets": [layer_name],
                                                   "scheme": scheme}},
             "ignore": []}
+
+
+def build_stack_from_export(device, workdir, seed=0, q256=Q256):
+    """The same stack, with the wires and the scheme WRITTEN BY THE EXPORTER.
+
+    THE MATCHED PAIR FOR ``build_stack``, and the seam it closes.  Everything
+    is pinned: the same expert count, shapes, rung, seed and weight values,
+    the same encoder call underneath, the same load-and-execute legs
+    downstream.  The ONE thing that varies is who produced the bytes and the
+    sidecar -- this script, or ``experiments/export_tessera_serving.py`` run
+    end to end over a checkpoint on disk.  Until 2026-09-04 only the first
+    existed, so every routed-MoE receipt was about a stack no exporter could
+    have written; a route that decodes wires nobody can produce serves nothing.
+
+    Returns ``build_stack``'s tuple, with ``stock`` derived from the EXPORTED
+    container rather than kept from the encode -- the reference the tile is
+    compared against is then read out of the artifact, which is the comparison
+    that matters here.
+    """
+    import importlib.util
+    import subprocess
+
+    from safetensors.torch import save_file
+    from tessera.fused import parse_fused
+    from tessera.export import DEFAULT_CODE
+    from tessera.stock import materialize_stock
+    from tessera.unit_artifact import parse_unit_artifact
+
+    workdir = Path(workdir)
+    src, out = workdir / "src", workdir / "out"
+    src.mkdir(parents=True, exist_ok=True)
+    generator = torch.Generator(device="cpu").manual_seed(seed)
+    source, tensors = {}, {}
+    for expert in range(EXPERTS):
+        for name, rows, cols in (("gate_proj", INTER, HIDDEN), ("up_proj", INTER, HIDDEN),
+                                 ("down_proj", HIDDEN, INTER)):
+            weight = (torch.randn(rows, cols, generator=generator) * 0.02)
+            tensors[f"{EXPORT_LAYER}.{expert}.{name}.weight"] = weight
+            source[(expert, name)] = weight.to(device, torch.float32)
+    # The router beside them: not a projection, passed through, and the reason
+    # the checkpoint is a routed-MoE layer rather than a bag of tensors.
+    tensors[f"{EXPORT_LAYER.rsplit('.', 1)[0]}.gate.weight"] = torch.zeros(EXPERTS, HIDDEN)
+    save_file({k: v.contiguous() for k, v in tensors.items()},
+              str(src / "model.safetensors"), metadata={"format": "pt"})
+    (src / "config.json").write_text(json.dumps({
+        "architectures": ["Glm5NextForConditionalGeneration"],
+        "text_config": {"hidden_size": HIDDEN, "moe_intermediate_size": INTER,
+                        "num_hidden_layers": 2, "n_routed_experts": EXPERTS}}))
+    plan = workdir / "plan.json"
+    plan.write_text(json.dumps({EXPORT_LAYER: {"grid": "E4M3", "q256": q256}}))
+
+    spec = importlib.util.spec_from_file_location(
+        "export_tessera_serving", Path(__file__).resolve().parent / "export_tessera_serving.py")
+    exporter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(exporter)
+    argv = sys.argv
+    sys.argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", str(q256),
+                "--plan-json", str(plan), "--device", str(device)]
+    try:
+        exporter.main()
+    finally:
+        sys.argv = argv
+
+    written = json.loads((out / "config.json").read_text())["quantization_config"]
+    groups = [g for g in written["config_groups"].values() if g["targets"] == [EXPORT_LAYER]]
+    if len(groups) != 1:
+        raise RuntimeError(f"the exporter declared {len(groups)} group(s) for {EXPORT_LAYER}")
+    scheme = groups[0]["scheme"]
+
+    from safetensors import safe_open
+    wires, stock = {}, {}
+    with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        for expert in range(EXPERTS):
+            for name in ("gate_proj", "up_proj", "down_proj"):
+                blob = handle.get_tensor(f"{EXPORT_LAYER}.{expert}.{name}.wire")
+                wires[f"{expert}.{name}.wire"] = blob.clone()
+                member, = parse_fused(bytes(blob.tolist()))
+                parsed = parse_unit_artifact(member.blob, device=str(device))
+                stock[(expert, name)] = materialize_stock(parsed.unit, parsed.forests, DEFAULT_CODE)
+    return wires, scheme, source, stock
 
 
 def vllm_config():
@@ -110,7 +197,7 @@ def init_parallel():
     init_workspace_manager(torch.device("cuda"))
 
 
-def build_layer(scheme, device):
+def build_layer(scheme, device, layer_name=LAYER):
     from vllm.model_executor.layers.fused_moe import RoutedExperts, RoutingMethodType
     from vllm.model_executor.layers.fused_moe.config import (
         FusedMoEConfig, FusedMoEParallelConfig, MoEActivation)
@@ -131,8 +218,8 @@ def build_layer(scheme, device):
         max_num_batched_tokens=64, top_k=TOPK, global_num_experts=EXPERTS,
         num_redundant_experts=0, num_expert_group=None, moe_parallel_config=parallel,
         placement_strategy="linear", enable_eplb=False)
-    config = TesseraConfig.from_config(quantization_config(scheme))
-    layer = RoutedExperts(layer_name=LAYER, params_dtype=torch.bfloat16, moe_config=moe,
+    config = TesseraConfig.from_config(quantization_config(scheme, layer_name))
+    layer = RoutedExperts(layer_name=layer_name, params_dtype=torch.bfloat16, moe_config=moe,
                           quant_config=config, expert_map_manager=manager)
     return layer.to(device)
 
@@ -222,11 +309,13 @@ def _err(got, want):
             "want_absmax": want.abs().max().item()}
 
 
-def positive_leg(device, tokens, q256):
+def positive_leg(device, tokens, q256, build=None, layer_name=LAYER):
+    """Load and execute one stack.  ``build`` says where its bytes came from."""
     from tessera.serving.telemetry import read_route
 
-    wires, scheme, source, stock = build_stack(device, q256=q256)
-    layer = build_layer(scheme, device)
+    build = build or (lambda: build_stack(device, q256=q256))
+    wires, scheme, source, stock = build()
+    layer = build_layer(scheme, device, layer_name)
     method = layer.quant_method
     record = {"method": type(method).__name__,
               "backend": str(getattr(getattr(method, "fp8_backend", None), "value", None)),
@@ -280,6 +369,7 @@ def positive_leg(device, tokens, q256):
     }
     record["wire_bytes_on_disk"] = int(sum(v.numel() for v in wires.values()))
     record["route_record"] = read_route(layer)
+    record["scheme"] = scheme
     return record
 
 
@@ -334,6 +424,11 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--tokens", type=int, default=17)
     ap.add_argument("--q256", type=int, default=Q256)
+    ap.add_argument("--export-workdir", type=Path, default=None,
+                    help="where the exported leg writes its checkpoint; a temporary directory "
+                         "under TMPDIR when unset. NEVER /tmp.")
+    ap.add_argument("--no-exported-leg", action="store_true",
+                    help="skip the leg whose wires the exporter wrote (the pair's B side)")
     args = ap.parse_args()
 
     os.environ.setdefault("TESSERA_SERVE_MODE", "resident")
@@ -355,6 +450,26 @@ def main() -> int:
         out["positive"] = positive_leg(device, args.tokens, args.q256)
     except Exception:  # noqa: BLE001 -- a failed probe is a recorded probe
         out["positive"] = {"raised": traceback.format_exc()[-4000:]}
+    # THE B SIDE OF THE PAIR: the same stack, from bytes the EXPORTER wrote.
+    # Everything but the producer is pinned -- shapes, rung, seed, weights,
+    # encoder, and every leg below -- so a difference between the two records
+    # is a difference between a synthesised sidecar and a written one, which is
+    # the only thing this leg is here to measure.
+    if not args.no_exported_leg:
+        workdir = args.export_workdir
+        try:
+            if workdir is None:
+                import tempfile
+                workdir = Path(tempfile.mkdtemp(prefix="moe_export_leg_",
+                                                dir=os.environ.get("TMPDIR", "/home/rob/tmp")))
+            workdir.mkdir(parents=True, exist_ok=True)
+            out["positive_exported"] = positive_leg(
+                device, args.tokens, args.q256,
+                build=lambda: build_stack_from_export(device, workdir, q256=args.q256),
+                layer_name=EXPORT_LAYER)
+            out["positive_exported"]["export_workdir"] = str(workdir)
+        except Exception:  # noqa: BLE001 -- a failed leg is a recorded leg
+            out["positive_exported"] = {"raised": traceback.format_exc()[-4000:]}
     out["negative"] = [
         negative_leg(name, mutate, expect, device, args.q256)
         for name, mutate, expect in (
@@ -371,6 +486,8 @@ def main() -> int:
     print(text)
     ok = bool(out.get("positive", {}).get("tile_is_materialize_stock_byte_for_byte"))
     ok = ok and all(row.get("matched") for row in out["negative"])
+    if "positive_exported" in out:
+        ok = ok and bool(out["positive_exported"].get("tile_is_materialize_stock_byte_for_byte"))
     return 0 if ok else 1
 
 

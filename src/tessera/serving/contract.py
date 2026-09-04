@@ -1057,9 +1057,22 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     is not a module the runtime builds at all (a fused role named at its leaf,
     a name from another architecture).  The last two are the same outcome for a
     producer and are told apart only so the refusal can say which it is.
+
+    ``offered`` IS TWO LISTS, because "was this prefix offered a quant config"
+    and "is this prefix a Linear" are different questions and the census
+    records them separately.  ``offered`` holds the ``LinearBase`` rows;
+    ``offered_non_linear`` holds every prefix the probe config WAS asked about
+    that is not one -- the LM head, and the ``RoutedExperts`` stack a routed
+    MoE layer builds.  An expert stack read only the first list resolved
+    ``absent``, which would have refused the one module the expert route
+    exists to serve while the census receipt said, in the same file, that the
+    runtime asks about it.  The census is the attestation either way
+    (principle 14); this reads all of what it wrote.
     """
     pattern = normalise_module(vllm_module_name(entry, checkpoint_module))
     if pattern in set(entry["offered"]):
+        return "offered", pattern
+    if pattern in {row["prefix_pattern"] for row in entry.get("offered_non_linear", ())}:
         return "offered", pattern
     if pattern in {row["prefix_pattern"] for row in entry["never_offered"]}:
         return "never_offered", pattern
