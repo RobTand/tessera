@@ -759,8 +759,9 @@ def main():
             f"{list(routed_shapes[first])}. A routed expert is not a dense Linear: vLLM builds "
             "one FusedMoE module per layer, not one Linear per expert, so a checkpoint declaring "
             f"{module_of(first)} in config_groups names a module vLLM never creates and the "
-            "plugin refuses it at load. Routed-MoE export is declared in its own `moe` block. "
-            "Remove them from the plan to pass them through as BF16.")
+            "plugin refuses it at load. There is no routed-MoE export yet -- it needs a `moe` "
+            "block this exporter does not write and an expert route the plugin does not have "
+            "(issue #5). Remove them from the plan to pass them through as BF16.")
     planned_routers = sorted(n for n in overrides if MOE_ROUTER.match(n))
     if planned_routers:
         raise SystemExit(

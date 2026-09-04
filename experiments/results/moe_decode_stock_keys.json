@@ -1,0 +1,18 @@
+{
+ "note": "stock_keys_leg of experiments/moe_decode_target_probe.py, run in the pinned image WITHOUT --gpus (inspect.getsource needs no device; the container reports cuda_available false, which is the honest scope for a source read).",
+ "image": "prismaquant/glm53-mia-sm121:487ecf187",
+ "pool_action_key": "3048463b506df8266e7bd1f367d8ac2f5ef2cecb59900384f48c1adb31b67c27",
+ "cuda_available": false,
+ "stock_keys": {
+  "__init__": {
+   "present": true,
+   "quant_keys_named": ["kFp8Dynamic128Sym", "kFp8DynamicTensorSym", "kFp8Static128BlockSym", "kFp8StaticTensorSym"],
+   "source_lines": 28
+  },
+  "get_fused_moe_quant_config": {
+   "present": true,
+   "quant_keys_named": [],
+   "source_lines": 30
+  }
+ }
+}

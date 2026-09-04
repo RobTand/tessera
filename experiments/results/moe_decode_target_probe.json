@@ -1,0 +1,1238 @@
+{
+    "vllm": "0.1.dev20051+g487ecf187",
+    "torch": "2.13.0+cu130",
+    "cuda_available": true,
+    "device": "NVIDIA GB10",
+    "dimensions": {
+        "experts": 8,
+        "hidden": 4096,
+        "intermediate": 2048,
+        "topk": 8
+    },
+    "vocabulary": {
+        "weight_scale_granularities_the_runtime_names": [
+            "tensor",
+            "channel",
+            "group",
+            "block"
+        ],
+        "fp8_quant_keys_published": [
+            "kFp8Dynamic128Sym",
+            "kFp8Dynamic64Sym",
+            "kFp8DynamicTensorSym",
+            "kFp8DynamicTokenSym",
+            "kFp8Static128BlockSym",
+            "kFp8StaticChannelSym",
+            "kFp8StaticTensorSym",
+            "kFp8StaticTokenSym"
+        ],
+        "pairs_asked": {
+            "per_channel_w_per_token_a": {
+                "weight_key": "QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)",
+                "activation_key": "QuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            "per_tensor_w_per_tensor_a": {
+                "weight_key": "QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)",
+                "activation_key": "QuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            "block128_w_block128_a": {
+                "weight_key": "QuantKey(f8e4m3fn,scale(f32,static,GroupShape(row=128, col=128)),symmetric)",
+                "activation_key": "QuantKey(f8e4m3fn,scale(f32,dynamic,GroupShape(row=1, col=128)),symmetric)"
+            }
+        }
+    },
+    "backends": {
+        "module": "vllm.model_executor.layers.fused_moe.oracle.fp8",
+        "declared": [
+            "NONE",
+            "FLASHINFER_TRTLLM",
+            "FLASHINFER_CUTLASS",
+            "DEEPGEMM",
+            "BATCHED_DEEPGEMM",
+            "MARLIN",
+            "HUMMING",
+            "TRITON",
+            "BATCHED_TRITON",
+            "AITER",
+            "VLLM_CUTLASS",
+            "BATCHED_VLLM_CUTLASS",
+            "XPU",
+            "CPU",
+            "HPC",
+            "EMULATION",
+            "TRITON_MXFP8",
+            "AITER_MXFP8"
+        ],
+        "available": [
+            "NONE",
+            "FLASHINFER_TRTLLM",
+            "FLASHINFER_CUTLASS",
+            "DEEPGEMM",
+            "BATCHED_DEEPGEMM",
+            "MARLIN",
+            "HUMMING",
+            "TRITON",
+            "BATCHED_TRITON",
+            "AITER",
+            "VLLM_CUTLASS",
+            "BATCHED_VLLM_CUTLASS",
+            "XPU",
+            "CPU",
+            "HPC",
+            "EMULATION",
+            "TRITON_MXFP8",
+            "AITER_MXFP8"
+        ],
+        "kernel_classes": {
+            "NONE": "ValueError: Unknown FP8 MoE backend: NONE",
+            "FLASHINFER_TRTLLM": [
+                "TrtLlmFp8ExpertsMonolithic",
+                "TrtLlmFp8ExpertsModular"
+            ],
+            "FLASHINFER_CUTLASS": [
+                "FlashInferExperts"
+            ],
+            "DEEPGEMM": [
+                "TritonOrDeepGemmExperts"
+            ],
+            "BATCHED_DEEPGEMM": [
+                "BatchedDeepGemmExperts"
+            ],
+            "MARLIN": [
+                "MarlinExperts"
+            ],
+            "HUMMING": [
+                "BatchedHummingGroupedExperts",
+                "HummingGroupedExperts",
+                "HummingIndexedExperts"
+            ],
+            "TRITON": [
+                "TritonExperts"
+            ],
+            "BATCHED_TRITON": [
+                "BatchedTritonExperts"
+            ],
+            "AITER": [
+                "AiterExperts"
+            ],
+            "VLLM_CUTLASS": [
+                "TritonOrCutlassExperts"
+            ],
+            "BATCHED_VLLM_CUTLASS": [
+                "CutlassBatchedExpertsFp8"
+            ],
+            "XPU": [
+                "XPUExpertsFp8",
+                "XPUExpertsMxFp8",
+                "XPUExpertsBlockFp8"
+            ],
+            "CPU": [
+                "CPUExpertsFp8"
+            ],
+            "HPC": [
+                "HPCExperts"
+            ],
+            "EMULATION": "ValueError: Unknown FP8 MoE backend: EMULATION",
+            "TRITON_MXFP8": "ValueError: Unknown FP8 MoE backend: TRITON_MXFP8",
+            "AITER_MXFP8": "ValueError: Unknown FP8 MoE backend: AITER_MXFP8"
+        }
+    },
+    "interface": {
+        "abstractmethods": [
+            "create_weights",
+            "get_fused_moe_quant_config"
+        ],
+        "methods": {
+            "apply": {
+                "signature": "(self, layer: 'RoutedExperts', x: torch.Tensor, topk_weights: torch.Tensor, topk_ids: torch.Tensor, shared_experts: 'SharedExperts | None', shared_experts_input: torch.Tensor | None) -> torch.Tensor",
+                "overridden_on_the_base": true,
+                "called_bare": "NotImplementedError -- a subclass must write it"
+            },
+            "create_weights": {
+                "signature": "(self, layer: 'RoutedExperts', num_experts: int, hidden_size: int, intermediate_size_per_partition: int, params_dtype: torch.dtype, **extra_weight_attrs)",
+                "overridden_on_the_base": false,
+                "called_bare": "TypeError: FusedMoEMethodBase.create_weights() takes 6 positional arguments but 7 were given"
+            },
+            "process_weights_after_loading": {
+                "signature": "(self, layer: torch.nn.modules.module.Module) -> None",
+                "overridden_on_the_base": true,
+                "called_bare": "returned"
+            },
+            "get_fused_moe_quant_config": {
+                "signature": "(self, layer: 'RoutedExperts') -> vllm.model_executor.layers.fused_moe.config.FusedMoEQuantConfig | None",
+                "overridden_on_the_base": false,
+                "called_bare": "NotImplementedError -- a subclass must write it"
+            },
+            "apply_monolithic": {
+                "signature": "(self, layer: 'RoutedExperts', x: torch.Tensor, router_logits: torch.Tensor, input_ids: torch.Tensor | None = None) -> torch.Tensor",
+                "overridden_on_the_base": true,
+                "called_bare": "NotImplementedError -- a subclass must write it"
+            }
+        }
+    },
+    "params": {
+        "per_tensor": {
+            "registered": {
+                "w13_weight": {
+                    "shape": [
+                        8,
+                        4096,
+                        4096
+                    ],
+                    "dtype": "torch.float8_e4m3fn",
+                    "loader_is_the_caller_s": true
+                },
+                "w2_weight": {
+                    "shape": [
+                        8,
+                        4096,
+                        2048
+                    ],
+                    "dtype": "torch.float8_e4m3fn",
+                    "loader_is_the_caller_s": true
+                },
+                "w13_weight_scale": {
+                    "shape": [
+                        8,
+                        2
+                    ],
+                    "dtype": "torch.float32",
+                    "loader_is_the_caller_s": true
+                },
+                "w2_weight_scale": {
+                    "shape": [
+                        8
+                    ],
+                    "dtype": "torch.float32",
+                    "loader_is_the_caller_s": true
+                }
+            },
+            "raised": null
+        },
+        "block128": {
+            "registered": {},
+            "raised": "AssertionError: tensor model parallel group is not initialized"
+        }
+    },
+    "quant_config": {
+        "per_out_channel_w_per_token_a": {
+            "asked": {
+                "w1_scale": [
+                    8,
+                    4096,
+                    1
+                ],
+                "w2_scale": [
+                    8,
+                    4096,
+                    1
+                ],
+                "per_out_ch_quant": true,
+                "per_act_token_quant": true
+            },
+            "reports": {
+                "config_name": "fp8_w8a8",
+                "quant_dtype": "torch.float8_e4m3fn",
+                "use_fp8_w8a8": true,
+                "per_out_ch_quant": true,
+                "per_act_token_quant": true,
+                "is_per_tensor": false,
+                "is_per_act_token": true,
+                "is_block_quantized": false,
+                "w1_scale_shape": [
+                    8,
+                    4096,
+                    1
+                ],
+                "w2_scale_shape": [
+                    8,
+                    4096,
+                    1
+                ]
+            }
+        },
+        "per_tensor_w_per_tensor_a": {
+            "asked": {
+                "w1_scale": [
+                    8,
+                    2
+                ],
+                "w2_scale": [
+                    8
+                ],
+                "per_out_ch_quant": false,
+                "per_act_token_quant": false
+            },
+            "reports": {
+                "config_name": "fp8_w8a8",
+                "quant_dtype": "torch.float8_e4m3fn",
+                "use_fp8_w8a8": true,
+                "per_out_ch_quant": false,
+                "per_act_token_quant": false,
+                "is_per_tensor": true,
+                "is_per_act_token": false,
+                "is_block_quantized": false,
+                "w1_scale_shape": [
+                    8,
+                    2
+                ],
+                "w2_scale_shape": [
+                    8
+                ]
+            }
+        }
+    },
+    "stock_keys": {
+        "__init__": {
+            "present": true,
+            "quant_keys_named": [
+                "kFp8Dynamic128Sym",
+                "kFp8DynamicTensorSym",
+                "kFp8Static128BlockSym",
+                "kFp8StaticTensorSym"
+            ],
+            "source_lines": 28
+        },
+        "get_fused_moe_quant_config": {
+            "present": true,
+            "quant_keys_named": [],
+            "source_lines": 30
+        }
+    },
+    "supported": {
+        "rows": [
+            {
+                "backend": "NONE",
+                "kernel_class": null,
+                "raised": "ValueError: Unknown FP8 MoE backend: NONE"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsMonolithic",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_TRTLLM",
+                "kernel_class": "TrtLlmFp8ExpertsModular",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,GroupShape(row=128, col=128)),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,GroupShape(row=1, col=128)),symmetric)"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "FLASHINFER_CUTLASS",
+                "kernel_class": "FlashInferExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,GroupShape(row=128, col=128)),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,GroupShape(row=1, col=128)),symmetric)"
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "DEEPGEMM",
+                "kernel_class": "TritonOrDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_channel),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_token),symmetric)"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "BATCHED_DEEPGEMM",
+                "kernel_class": "BatchedDeepGemmExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "MARLIN",
+                "kernel_class": "MarlinExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "preferred gemm type indexed != supported gemm type grouped_masked"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "BatchedHummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "preferred gemm type indexed != supported gemm type grouped_masked"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "preferred gemm type indexed != supported gemm type grouped_contiguous"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "preferred gemm type indexed != supported gemm type grouped_contiguous"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingGroupedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support quantization scheme QuantKey(f8e4m3fn,scale(f32,static,per_tensor),symmetric)xQuantKey(f8e4m3fn,scale(f32,dynamic,per_tensor),symmetric)"
+            },
+            {
+                "backend": "HUMMING",
+                "kernel_class": "HummingIndexedExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "TRITON",
+                "kernel_class": "TritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('batched_experts',) activation format"
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support ('standard',) activation format"
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "BATCHED_TRITON",
+                "kernel_class": "BatchedTritonExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": true,
+                "reason": null
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "AITER",
+                "kernel_class": "AiterExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda. AITER MoE is not enabled \u2014 set VLLM_ROCM_USE_AITER=1 and VLLM_ROCM_USE_AITER_MOE=1 to enable it"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "VLLM_CUTLASS",
+                "kernel_class": "TritonOrCutlassExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "BATCHED_VLLM_CUTLASS",
+                "kernel_class": "CutlassBatchedExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsMxFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "XPU",
+                "kernel_class": "XPUExpertsBlockFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "CPU",
+                "kernel_class": "CPUExpertsFp8",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "Standard",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "Standard",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "Standard",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_channel_w_per_token_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "per_tensor_w_per_tensor_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "HPC",
+                "kernel_class": "HPCExperts",
+                "activation_format": "BatchedExperts",
+                "pair": "block128_w_block128_a",
+                "supported": false,
+                "reason": "kernel does not support current device cuda"
+            },
+            {
+                "backend": "EMULATION",
+                "kernel_class": null,
+                "raised": "ValueError: Unknown FP8 MoE backend: EMULATION"
+            },
+            {
+                "backend": "TRITON_MXFP8",
+                "kernel_class": null,
+                "raised": "ValueError: Unknown FP8 MoE backend: TRITON_MXFP8"
+            },
+            {
+                "backend": "AITER_MXFP8",
+                "kernel_class": null,
+                "raised": "ValueError: Unknown FP8 MoE backend: AITER_MXFP8"
+            }
+        ]
+    }
+}

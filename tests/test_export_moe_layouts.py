@@ -27,8 +27,14 @@ expensive later:
    of every attention Linear in the layer -- into the checkpoint's ``ignore``
    list.
 
-The packed 3-D layout has no source at hand, so ITS tests are synthetic and
-say so; the unpacked tests are shaped exactly like the real checkpoint.
+The unpacked tests are shaped exactly like the real checkpoint.  The packed
+3-D tests are synthetic in their CONFIGS -- they fix when an orientation is
+decidable and when it must be refused, which needs dimension triples no one
+checkpoint carries -- but the layout itself is not hypothetical: Qwen3.8-Flash-Next
+on this box carries ``...mlp.experts.gate_up_proj [512, 1280, 2560]`` and
+``...down_proj [512, 2560, 640]`` with no ``.weight`` suffix, and
+``experiments/moe_plan_baseline.py`` classifies it as a real row beside
+GLM-5.3-Flash-4layer's unpacked one.
 """
 from __future__ import annotations
 
