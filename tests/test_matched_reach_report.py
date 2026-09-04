@@ -48,11 +48,16 @@ def test_the_three_verdicts_and_the_opposite_sign_case():
     assert "SPREAD" in report.read_split(A, A ** 0.8)
     assert "ENTRY COUNT" in report.read_split(A, A ** 0.05)
     assert "BOTH" in report.read_split(A, A ** 0.3)
-    # A win that the spread alone reverses is reported as the bundle it is,
-    # and never as a fraction: log B / log A would be negative and read as
+    # A win the spread alone reverses is reported as the sign it is, never as
+    # a fraction: log B / log A is negative there and would otherwise read as
     # "under 15% recovered", which is the opposite of what happened.
-    hurts = report.read_split(A, 1.04)
-    assert "HURTS" in hurts and "%" not in hurts
+    assert "OPPOSITE SIGNS" in report.read_split(A, 1.04)
+    # And the mirror, which the landed grids actually contain: dense L=16
+    # arms HURT (1.1655x to 1.1882x) while more reach at L=14 may help.
+    assert "OPPOSITE SIGNS" in report.read_split(1.1655, 0.99)
+    # Neither is filed as a band.
+    for said in (report.read_split(A, 1.04), report.read_split(1.1655, 0.99)):
+        assert "ENTRY COUNT" not in said and "SPREAD (" not in said, said
 
 
 def test_a_non_positive_ratio_is_refused_not_charted():

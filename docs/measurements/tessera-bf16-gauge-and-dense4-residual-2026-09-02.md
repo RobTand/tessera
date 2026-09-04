@@ -869,8 +869,13 @@ existed.**  For a (population, rung), `A` is the landed byte-matched effect
 of the L-arm on its gate and `B` the effect of the `L=14` arm at that width's
 reach; `recovered = log B / log A`.  At or above 0.5 the majority of the L
 win is reach and is free; at or below 0.15 it is entry count and costs bytes;
-between, both halves are real.  `B > 1 > A` would say the spread move alone
-*hurts* and the win exists only as the bundle.
+between, both halves are real.  A *negative* fraction is a different fact and
+is reported as one rather than as a band: the two axes moved the gate in
+opposite directions, so no part of one is recoverable from the other.  Both
+orientations of that occur -- an L win the spread alone reverses
+(`B > 1 > A`), and an L arm that hurts while the spread alone helps
+(`B < 1 < A`, which the landed dense `L=16` arms at 1.1655x-1.1882x can
+produce).
 
 **Where that reading applies was registered with it.**  `recovered` is a
 ratio of two logarithms, so wherever `A` sits near 1 it is dominated by its

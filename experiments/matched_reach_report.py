@@ -138,9 +138,19 @@ def read_split(A: float, B: float) -> str:
     if abs(math.log(A)) < LOG_A_FLOOR:
         return (f"NOT READ: the L arm moves {abs(A - 1) * 100:.2f}% < 1%, "
                 "below the registered conditioning floor")
-    if B > 1.0 > A:
-        return "the spread move alone HURTS -- the win exists only as the bundle"
     f = math.log(B) / math.log(A)
+    if f < 0:
+        # The two axes moved the gate in OPPOSITE directions, so there is no
+        # fraction of the L effect for the spread to have recovered: a
+        # negative f is not "under 15% recovered", it is a different fact.
+        # The header registers one orientation of it (`B > 1 > A`, the L win
+        # that the spread alone reverses); this is that test written as the
+        # sign it actually is, so the mirror -- an L arm that HURTS while the
+        # spread alone helps -- is not silently filed as "entry count".
+        worse, better = ("the spread", "more entries") if A < 1 else (
+            "more entries", "the spread")
+        return (f"OPPOSITE SIGNS: {better} helps and {worse} hurts, so no "
+                f"fraction of one is recoverable from the other (f={f:+.2f})")
     if f >= 0.5:
         return f"majority SPREAD ({f:.0%} of the L win), and spread is free"
     if f <= 0.15:

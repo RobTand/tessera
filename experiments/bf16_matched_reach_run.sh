@@ -39,8 +39,11 @@
 #              lives, and the earlier one-sided ratio grid (every PAIR_RATIO
 #              is >= 1.0) missed nothing.
 #   between    both halves are real and neither is dismissible.
-#   B > 1 > A  the spread move alone HURTS: the axes interact with opposite
-#              signs and the win exists only as the bundle.
+#   f < 0      the two axes moved the gate in OPPOSITE directions, so no
+#              fraction of one is recoverable from the other.  Both
+#              orientations count: `B > 1 > A` is an L win the spread alone
+#              reverses, and `B < 1 < A` an L arm that hurts while the spread
+#              alone helps.  Reported as the sign it is, never as a band.
 #
 # WHERE THAT READING APPLIES, also registered before the run.  f is a ratio of
 # two logarithms, so it is dominated by its own third digit wherever A is near
