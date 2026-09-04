@@ -101,7 +101,7 @@ reap() {
   if docker rm -f "$NAME" >/dev/null 2>&1; then SERVE_REAPED=1; fi
 }
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $ARM"; serve_lock_acquire
-trap 'reap; serve_lock_release' EXIT
+trap 'reap; if [ "$SERVE_REAPED" = 1 ]; then serve_lock_release; else echo "REFUSED: live serve cleanup unverified; retaining $SERVE_LOCK" >&2; fi' EXIT
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # --enable-prompt-tokens-details is what makes the decode regime a MEASUREMENT:
