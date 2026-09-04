@@ -446,6 +446,19 @@ unattested. A routed record retains its exact observed backend suffix; matching
 also accepts the route-owned base symbol when a cell publishes that entry point.
 An explicitly backend-specific cell still requires that exact backend.
 
+Lane eligibility schema v5 additionally requires each cell's `runtime` scope:
+an exact `image` manifest reference and a nonempty, distinct `execution_modes`
+list (`eager`, `compiled`). Image and execution mode participate in overlap
+and lookup alongside platform, family, structure, token-count regime and
+residency. A missing context or mismatched image/mode is unattested; the global
+`versions.attested_on` image is never an implicit cell fallback. Its existing
+dense pin remains unchanged. The eight dense cells preserve both measured
+execution modes on that pin; the migration receipt records the historical
+headers and their contemporaneous global image binding separately, because
+those older census files did not each record a digest. Existing cell IDs stay
+stable, with an optional hash of canonical runtime scope to distinguish
+disjoint variants; IDs must be unique, and explicit fields decide eligibility.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the
 route records come off `named_modules()`, the declared targets come off

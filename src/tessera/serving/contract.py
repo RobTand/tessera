@@ -7,7 +7,8 @@ its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
 ``importlib.resources`` rather than hard-coding a route claim.
 
 WHAT A CELL MEANS.  A ``lane_eligibility`` cell says: on this platform, for
-this payload family, at these rungs, in this regime, at this residency, the
+this payload family, at these rungs, in this regime, at this residency, on
+this exact runtime image and measured execution mode, the
 plugin executes these LAUNCHES under this activation contract on a route with
 this status.  A cell exists only where a container receipt covers it; absence
 resolves ``unattested``, which is the honest status and not a refusal.  Today
@@ -88,6 +89,7 @@ on a machine with no GPU.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from types import MappingProxyType
@@ -95,6 +97,7 @@ from typing import Any, Mapping
 
 __all__ = [
     "CENSUS_PHASE_REGIMES",
+    "EXECUTION_MODES",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
     "classify_construction",
@@ -111,6 +114,9 @@ __all__ = [
     "contract_path",
     "cell_executes",
     "cell_residency_modes",
+    "cell_runtime_scope",
+    "cell_runtime_id_suffix",
+    "require_runtime_image",
     "extension_lane",
     "lane_decoder",
     "lane_requirements",
@@ -121,7 +127,10 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v4"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v5"
+#: Execution is a separate axis from token-count regime and residency. These
+#: are the two modes selected by a serving invocation's enforce_eager flag.
+EXECUTION_MODES = ("eager", "compiled")
 #: The ``formats[]`` discriminator for a family addressed by a RATE (body bits
 #: per 256 weights), not by a codebook size.  Every Tessera family is one.
 FORMAT_KIND = "tessera_wire"
@@ -179,6 +188,44 @@ def _require_keys(payload: Mapping[str, Any], where: str, required: set[str],
     unknown = sorted(set(payload) - required - set(optional))
     if unknown:
         raise ValueError(f"{where} carries unknown field(s) {unknown}")
+
+
+def require_runtime_image(value: Any, where: str = "runtime.image") -> str:
+    """An exact manifest reference, using the serving image parser's grammar."""
+    from .runtime_image import parse_reference
+
+    if isinstance(value, str):
+        repository, tag, digest = parse_reference(value)
+        if digest is not None and tag is None and value == f"{repository}@{digest}":
+            return value
+    raise ValueError(
+        f"{where} must be an exact digest reference (repository@sha256:<64 lowercase hex>), "
+        f"got {value!r}; a floating tag or local image id does not identify an attested runtime")
+
+
+def cell_runtime_scope(cell: Mapping[str, Any],
+                       where: str = "lane_eligibility cell") -> tuple[str, tuple[str, ...]]:
+    """The explicit runtime scope a cell attests; no global image fallback."""
+    runtime = cell.get("runtime")
+    at = f"{where}.runtime"
+    _require_keys(runtime, at, required={"image", "execution_modes"})
+    image = require_runtime_image(runtime["image"], f"{at}.image")
+    modes = runtime["execution_modes"]
+    if (not isinstance(modes, list) or not modes
+            or any(not isinstance(mode, str) or mode not in EXECUTION_MODES for mode in modes)
+            or len(set(modes)) != len(modes)):
+        raise ValueError(
+            f"{at}.execution_modes must be a non-empty list of distinct modes from "
+            f"{list(EXECUTION_MODES)}, got {modes!r}")
+    return image, tuple(mode for mode in EXECUTION_MODES if mode in modes)
+
+
+def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
+    """An optional scope-derived suffix when multiple runtimes need distinct ids."""
+    image, modes = cell_runtime_scope(cell)
+    encoded = json.dumps({"image": image, "execution_modes": list(modes)},
+                         sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "_runtime_" + hashlib.sha256(encoded).hexdigest()
 
 
 def _validate_loader_axes(axes: Any, family: str, where: str) -> None:
@@ -617,6 +664,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
     _cell_scope: dict = {}
+    cell_ids: set[str] = set()
     cell_structures: list[str] = []
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
@@ -624,7 +672,13 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                       required={"id", "platform", "family", "structure", "regime",
                                 "rungs_q256", "activation_contract", "executes",
                                 "route_status", "qualification", "requires_plugin",
-                                "requires_serve_flags", "predicates"})
+                                "requires_serve_flags", "predicates", "runtime"})
+        if not isinstance(cell["id"], str) or not cell["id"]:
+            raise ValueError(f"{where}.id must be a non-empty string")
+        if cell["id"] in cell_ids:
+            raise ValueError(f"{where} repeats cell id {cell['id']!r}; every cell has one identity")
+        cell_ids.add(cell["id"])
+        runtime_image, execution_modes = cell_runtime_scope(cell, where)
         if cell["platform"] not in block["platforms"]:
             raise ValueError(f"{where}.platform {cell['platform']!r} is not declared")
         if cell["regime"] not in block["regimes"]:
@@ -675,7 +729,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         _validate_cell_executes(cell, _FAMILY_TO_ROUTE[cell["family"]],
                                 families[cell["family"]], contract, where)
         # THE RESIDENCY IS A CONDITION, so two cells of one (platform, family,
-        # structure, regime) must not both claim one mode: a reader resolving
+        # structure, regime, runtime image, execution mode) must not both claim
+        # one residency: a reader resolving
         # "what runs here" would otherwise get whichever cell it read first,
         # and that is the failure this schema version exists to close.
         modes = cell_residency_modes(cell, where)
@@ -689,22 +744,26 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             [cell["family"].lower(), cell["structure"], cell["platform"].replace("_", ""),
              cell["regime"]]
             + ([] if len(modes) == len(_all_modes()) else list(modes)))
-        if cell["id"] != expected_id:
+        scoped_id = expected_id + cell_runtime_id_suffix(cell)
+        if cell["id"] not in (expected_id, scoped_id):
             raise ValueError(
                 f"{where}.id is {cell['id']!r}; a cell id is its SCOPE and must be "
-                f"{expected_id!r} (family, structure, platform, regime, plus the residency "
-                "where the cell covers only some). An id that names a launch is a second, "
+                f"{expected_id!r}, optionally followed by its derived runtime suffix "
+                "(family, structure, platform, regime, plus the residency where the cell "
+                "covers only some). An id that names a launch is a second, "
                 "unparsed spelling of `executes` -- exactly the one that went stale.")
-        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"])
+        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"], runtime_image)
         for mode in modes:
-            clash = _cell_scope.get((scope, mode))
-            if clash is not None:
-                raise ValueError(
-                    f"{where} ({cell['id']!r}) and {clash!r} both cover "
-                    f"{scope} at residency {mode!r}. A cell is resolved by those five facts "
-                    "plus the rung, so two cells claiming one of them is a table whose answer "
-                    "depends on the order it was written in.")
-            _cell_scope[(scope, mode)] = cell["id"]
+            for execution_mode in execution_modes:
+                key = (scope, mode, execution_mode)
+                clash = _cell_scope.get(key)
+                if clash is not None:
+                    raise ValueError(
+                        f"{where} ({cell['id']!r}) and {clash!r} both cover "
+                        f"{scope} at residency {mode!r} and execution mode {execution_mode!r}. "
+                        "A cell is resolved by these facts plus the rung, so two cells "
+                        "claiming one of them would make the answer depend on table order.")
+                _cell_scope[key] = cell["id"]
 
     # The structure axis is a projection of the receipt-bearing cells, never
     # of the dispatch roster.  This is intentionally positive authority: when

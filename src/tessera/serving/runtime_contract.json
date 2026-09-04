@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 14,
+  "contract_version": 15,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -190,7 +190,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v4",
+  "schema": "tessera.lane-eligibility.v5",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -209,6 +209,10 @@
   "cells": [
    {
     "id": "tessera_e2m1_k2_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -233,6 +237,10 @@
    },
    {
     "id": "tessera_e2m1_k2_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -257,6 +265,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -281,6 +293,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -305,6 +321,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -329,6 +349,10 @@
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -357,6 +381,10 @@
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -381,6 +409,10 @@
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager", "compiled"]
+    },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -777,7 +809,12 @@
          }
       ]
    },
-   "changelog": [
+ "changelog": [
+  {
+   "contract_version": 15,
+   "date": "2026-09-04",
+   "change": "lane_eligibility v5 requires an explicit runtime scope on each cell: exact image manifest digest and measured execution_modes. The eight existing dense cells preserve their eager and compiled scope on the existing vLLM 0.28.0 digest; versions.attested_on and all wire, activation, launch, residency, rung, TP and EP claims remain unchanged. Their historical census headers and the contemporaneous global image attestation supply that migration evidence, not newly fabricated per-census image stamps (docs/measurements/runtime-scope-migration-2026-09-04.md). Cell lookup and overlap include image and execution mode; missing runtime context resolves unattested. Existing ids remain stable, with an optional canonical-runtime hash suffix for disjoint variants and unique ids required. Old v4 readers must refuse this schema because ignoring runtime scope would widen the attestation. No routed-MoE cell is added by this schema change."
+  },
     {
      "contract_version": 14,
      "date": "2026-09-04",
