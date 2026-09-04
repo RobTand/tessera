@@ -367,12 +367,12 @@ one-variable matched pair says why: same regime, same arm, same 256 positions,
 same relative rms, the route's per-token E4M3 activation quantiser in the loop
 or out of it, reads `KL >= 0.007788` against `KL >= 0.000113` -- **68.9x** from
 that variable alone. The screen had priced a W8A8 term on a trajectory carrying
-no W8A8 activation rounding. The emulation is still CPU, with RTN weights and
-an fp32 residual stream; those plausibly make it quieter than the serve but
-only the weight axis has a run against it and that run has not finished, so
-0.007160 is a measurement at a named operating point rather than an established
-floor. The served re-run after the fix is what closes the issue. #110 stays
-open.
+no W8A8 activation rounding. The residual 1.69x is the emulation's weight
+operating point: degrading the weights toward the served arms' distance from
+BF16 (`--weight-bits 4`, same regime, arm and chunks) reads `KL >= 0.012073`
+against 0.012111 served, a factor of 1.48 in the right direction. The emulation
+is still CPU, HF rather than vLLM, with an fp32 residual stream, so the served
+re-run after the fix is what closes the issue. #110 stays open.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
 which of its legs did not get a GPU. Until it closes, treat the lane's
 "bit-exact" receipts as claims about the **decoded tile** only, never about the

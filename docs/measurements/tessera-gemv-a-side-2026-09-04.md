@@ -28,14 +28,20 @@
 > priced a W8A8 term on a trajectory that was not carrying W8A8's own
 > activation rounding.
 >
-> **This is still a screen** -- CPU, RTN weights rather than the Tessera wire,
-> fp32 rather than bf16 residual. All three substitutions plausibly push the
-> same way, but only one of them has a run behind it and it has not finished,
-> so 0.007160 is a measurement at a named operating point and **not yet an
-> established floor**. The served re-run (`6c90ba1b`, queued and `ready` since
-> this branch began) is confirmation now rather than adjudication, and section
-> 4 names the three outcomes it can have. Nothing below is a placeholder for a
-> number that was taken and disliked.
+> The remaining 1.69x is the emulation's **weight operating point**, and that
+> is measured too rather than asserted: degrade the weights toward the served
+> arms' distance from BF16 (`--weight-bits 4`, same regime, same arm, same
+> chunks) and the fold reads **0.012073**, a factor of 1.48, against a served
+> 0.012111 -- agreement to three digits that is a coincidence of magnitude at
+> 128 positions, but the right direction and the right size.
+>
+> **This is still a screen** -- CPU, HF rather than vLLM, fp32 rather than bf16
+> residual, RTN rather than the Tessera wire -- and the served re-run
+> (`6c90ba1b`, queued and `ready` since this branch began) is confirmation now
+> rather than adjudication; section 4 names the three outcomes it can have.
+> Nothing below is a placeholder for a number that was taken and disliked, and
+> section 3a records a mechanism I proposed for the 68.9x, tested, and could
+> not confirm.
 
 **What #110 asked.** Two serves of one checkpoint through one inode, differing
 only in whether `prepare_fp8_gemv` could build, disagreed in the decode regime:
@@ -231,6 +237,7 @@ regime.
 | the fold, all 512 rows perturbed (over-applied) | prefill | 0.012576 | 0.013138 | 93.75% |
 | independent Gaussian of the same rms | prefill | 0.009766 | 0.010261 | 95.70% |
 | the first pass's screen (BF16 teacher, no quantiser) | prefill | 0.000318 | -- | 98.44% |
+| the fold at a degraded WEIGHT rung (int4, 128 pos) | decode | 0.012073 | 0.012917 | 96.09% |
 | control: one arm against itself | either | 0.000000 | 0.000000 | 100.00% |
 
 Read the rows:
@@ -262,31 +269,50 @@ Read the rows:
   Perturbing all 512 rows reads 0.012576 and happens to sit on top of the
   served number; it is an over-application and is reported as one.
 
-Why a step quantiser amplifies a small term at all: E4M3 per-token
-quantisation is a **step function** of local width `u`. A relative perturbation
-`d` upstream of it does not shrink the output error to `O(d)` of the signal --
-it flips a fraction of order `d/u` of the downstream codes by one whole step
-`u`, so the added error goes as `sqrt(d*u)` in amplitude and `d*u` in variance:
-**linear in `d`, not quadratic.** With `u/d` of order 50-100 here, that is the
-right order for the gap the first pass could not explain, and it predicts a
-falsifiable thing -- halving the perturbation should halve the KL with the
-quantiser in the loop and quarter it with the quantiser removed. Those two
-pairs are queued (`lin_*.json`) and **have not read out**, so the mechanism is
-offered as a mechanism consistent with a measured 68.9x, not as a measured law.
-What is measured is the 68.9x itself.
+Why a step quantiser amplifies a small term at all -- **a mechanism I
+proposed, tested, and could not confirm.** E4M3 per-token quantisation is a
+step function of local width `u`, so a relative perturbation `d` upstream of it
+should flip a fraction of order `d/u` of the downstream codes by one whole step
+and give variance `~d*u`: linear in `d`, not quadratic. That predicts halving
+`d` halves the KL with the quantiser on and quarters it with the quantiser off.
+Both pairs were run (prefill, Gaussian arm, one shared generator so the noise
+field is literally `rel` times a fixed realisation, paired chunk by chunk) and
+**neither holds**:
+
+| pair, 128 positions, paired by chunk | full rel | half rel | ratio | predicted |
+|---|---:|---:|---:|---:|
+| quantiser ON | 0.010631 | 0.016021 | **0.66** | 2.0 |
+| quantiser OFF | 0.000229 | 0.000196 | **1.17** | 4.0 |
+
+The ON leg is not noise -- all four chunks agree in sign, and halving the
+perturbation made the two arms disagree *more*. Something in the harness's
+`--rel` leg does not behave the way scaling a fixed noise field should, and I
+do not know what; it is written down here as an open question rather than
+guessed at. **It does not touch the 68.9x**, because that pair holds `rel`
+fixed (1.3329e-03 against 1.3398e-03) and varies only the quantiser flag, and
+it does not touch the 0.007160 headline, which uses the deterministic fold and
+no `--rel` at all. What survives is that the variable was *located*, not that
+its mechanism was explained.
 
 ### 3b. What is still substituted, and which way it points
 
 This is a screen and it says so. Three substitutions remain:
 
-* **The weights are RTN, not the Tessera wire.** The weight-side *arithmetic*
-  is the served one -- per-output-row E4M3 codes plus a per-channel scale is
-  exactly what the TESSERA_FP8 route decodes the window wire to -- but the
-  codes are RTN's, so the emulated model sits far closer to the BF16 teacher
-  than the served arms' 0.436 nats. `--weight-bits 4` prices this axis and is
-  queued (`decode_wb4.json`); it has **not** read out, so the first pass's
-  ~1.5x for a weight degradation is the only figure available and it was taken
-  at a different operating point.
+* **The weights are RTN, not the Tessera wire -- and this axis is now
+  measured, and it covers the residual.** The weight-side *arithmetic* is the
+  served one (per-output-row E4M3 codes plus a per-channel scale is exactly
+  what the TESSERA_FP8 route decodes the window wire to), but the codes are
+  RTN's, so the emulated model sits far closer to the BF16 teacher than the
+  served arms' 0.436 nats. `--weight-bits 4` moves it toward the served
+  operating point: decode regime, folded arm, chunks 0-3 in both, only the
+  weight rung differs, **0.008159 -> 0.012073, a factor of 1.48**, at an
+  unchanged 96.09% top-1 (`decode_wb4.json`). For scale, the served headline is
+  0.012111. Two cautions against reading that agreement as more than it is: at
+  128 positions the per-chunk ratios run 0.73 to 2.23, so 1.48 is a mean and
+  not a tight one; and int4 RTN is not the Tessera wire, so landing on 0.012111
+  to three digits is a coincidence of magnitude, not a reproduction. What it
+  does establish is the *direction and rough size* the first pass had to guess
+  at.
 * **The residual stream is fp32; vLLM's is bf16.** Both arms share it, so it
   cannot manufacture a difference, but a bf16 trajectory is the noisier one and
   this axis is unmeasured.
@@ -294,9 +320,10 @@ This is a screen and it says so. Three substitutions remain:
   bits. Shared by both arms; unmeasured as an amplifier.
 
 All three plausibly point the same way -- they make the emulation *quieter*
-than the serve -- but only one of the three has a run behind it, and it has not
-finished. So **0.007160 is not established as a floor**; it is a measurement at
-a named operating point, and the served re-run is what turns it into a number.
+than the serve -- and now one of the three has a run behind it and confirms the
+direction, worth 1.48x on its own. So 0.007160 reads as a floor **on the weight
+axis specifically**; the other two axes are still asserted, and the served
+re-run is what turns any of it into a number.
 
 Two provenance notes for anyone reconciling the JSONs: `exact_fold_served_set.
 json` and `exact_fold_gaussian_control.json` predate the `regime` and `arm_a`
