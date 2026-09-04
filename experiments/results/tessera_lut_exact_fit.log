@@ -1,0 +1,76 @@
+wire: E2M1x2 q256=896 -> body TCQ plane LUT span 2 L=0
+H from wikitext-2-raw-v1/train (local datasets cache)  fit 16384 tok  eval 8192 tok (sha 30ec7255e693)
+
+== model.layers.0.self_attn.q_proj (2048, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.04382   0.10151   0.09878   0.04286  133.6
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.04382   0.10151   0.09878   0.04286  142.5
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.04516   0.10078   0.09942   0.04418   70.2
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.04382   0.10151   0.09878   0.04286  135.6
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.1.self_attn.k_proj (1024, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.04552   0.09842   0.08852   0.04464   76.5
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.04552   0.09842   0.08852   0.04464   75.3
+    !! IDENTICAL RECONSTRUCTION: 'LDLQ 1.0/32 + refit h^1.0 + exact-16 fit' == 'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]' -- that lever did nothing on this unit
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.04552   0.09842   0.08852   0.04464   37.5
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.04552   0.09842   0.08852   0.04464   74.8
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.13.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.08348   0.09788   0.10063   0.07793  138.6
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.08348   0.09788   0.10063   0.07793  135.6
+    !! IDENTICAL RECONSTRUCTION: 'LDLQ 1.0/32 + refit h^1.0 + exact-16 fit' == 'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]' -- that lever did nothing on this unit
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.08348   0.09788   0.10063   0.07793   94.1
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.08348   0.09788   0.10063   0.07793  120.2
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.14.mlp.gate_proj (3072, 1024)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.05304   0.09862   0.09010   0.05093  119.3
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.05304   0.09862   0.09010   0.05093  119.0
+    !! IDENTICAL RECONSTRUCTION: 'LDLQ 1.0/32 + refit h^1.0 + exact-16 fit' == 'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]' -- that lever did nothing on this unit
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.05304   0.09862   0.09010   0.05093   95.3
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.05304   0.09862   0.09010   0.05093  137.2
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.2.mlp.down_proj (1024, 3072)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.02686   0.10643   0.04534   0.02677  227.2
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.02686   0.10643   0.04534   0.02677  222.3
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.02688   0.10643   0.04535   0.02680   72.6
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.02686   0.10643   0.04534   0.02677  202.0
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== model.layers.27.self_attn.o_proj (1024, 2048)  eval rows 8192
+    arm                                                    out     plain       hwt      hfit      s
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.07512   0.09731   0.09802   0.06424   69.9
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.07512   0.09731   0.09802   0.06424   70.9
+    !! IDENTICAL RECONSTRUCTION: 'LDLQ 1.0/32 + refit h^1.0 + exact-16 fit' == 'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]' -- that lever did nothing on this unit
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.07512   0.09731   0.09802   0.06424   52.0
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.07512   0.09731   0.09802   0.06424   66.0
+    -- drift control: reconstruction IDENTICAL  out +0.0000%  hfit +0.0000%
+
+== geomeans over 6 units
+    arm                                                    out      hfit   out/ctl  hfit/ctl
+    drift control FIRST [LDLQ 1.0/32 + refit h^1.0]    0.05111   0.04853    1.0000    1.0000
+    LDLQ 1.0/32 + refit h^1.0 [triplicate MID]         0.05111   0.04853    1.0000    1.0000
+    LDLQ 1.0/32 + refit h^1.0 + exact-16 fit           0.05137   0.04878    1.0052    1.0052
+    drift control LAST [LDLQ 1.0/32 + refit h^1.0]     0.05111   0.04853    1.0000    1.0000
+
+== issue #50 stop rule, read against the step-1 ceiling
+    control  'drift control FIRST [LDLQ 1.0/32 + refit h^1.0]'
+    arm      'LDLQ 1.0/32 + refit h^1.0 + exact-16 fit'   landing=table (the wire)
+      model.layers.0.self_attn.q_proj               1.03056x
+      model.layers.1.self_attn.k_proj               1.00000x
+      model.layers.13.mlp.down_proj                 1.00000x
+      model.layers.14.mlp.gate_proj                 1.00000x
+      model.layers.2.mlp.down_proj                  1.00075x
+      model.layers.27.self_attn.o_proj              1.00000x
+    six-unit out geomean ratio  1.00515x  (-0.5155% against the control)
+    control triplicate spread   0.0000%  (3 identical encodes)
+    step-1 ceiling unreadable ([Errno 2] No such file or directory: 'experiments/results/tessera_lut_landing_ceiling.json'); verdict not stamped
+
+wrote experiments/results/tessera_lut_exact_fit.json
