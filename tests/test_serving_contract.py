@@ -1,6 +1,6 @@
 """The runtime contract this plugin packages, and what it may not be made to say.
 
-Principle 14: a claim about what a serving runtime DOES is derived from a
+Runtime attestation: a claim about what a serving runtime DOES is derived from a
 machine-readable table the runtime publishes.  This package IS that runtime for
 Tessera bytes, so the table travels inside it and a producer reads it through
 ``importlib.resources``.  Two layers of test, because one alone is not enough:
@@ -9,7 +9,7 @@ Tessera bytes, so the table travels inside it and a producer reads it through
   family does not publish, an activation contract that is not the route's, a
   cell with no serve flag, a cell that forgets it is plugin-gated, a structure
   the dispatch refuses;
-* a LAWS TABLE below pins the six cells field for field, because no generic
+* a LAWS TABLE below pins the measured cells field for field, because no generic
   rule knows which rungs a receipt covered.  ``rungs_q256: [512]`` is a
   perfectly well-formed cell and a false claim.
 """
