@@ -55,11 +55,22 @@ the gate, so the writer is held to it at write time rather than at load.
 ### It was run, and read back — **on the CPU**
 
 `experiments/moe_write_readback_check.py`, through the pool on sparky
-(`260e2bcba0d5`), no GPU (`CUDA_VISIBLE_DEVICES=`), on a miniature of the real
-checkpoint: 4 experts,
+(`260e2bcba0d5`) and re-run directly with the exporter's own verify left on
+(`/home/rob/tmp/wf5_verify_on.log`), no GPU either time
+(`CUDA_VISIBLE_DEVICES=`), on a miniature of the real checkpoint: 4 experts,
 `hidden_size` 128, `moe_intermediate_size` 64, `E4M3` at `q256=1024`, the
-default `WINDOW`/`CHANNEL` wire. Everything below is the run's own output, not
-a reading of the code:
+default `WINDOW`/`CHANNEL` wire.
+
+**Which flags, and why.** The export runs `--passthrough-unrouted` because this
+fixture's attention is `never_offered` by the construction census and the
+exporter refuses to quantize what the runtime never builds; that flag is about
+the *fixture*, not the MoE path. It does **not** pass `--no-verify`: every one
+of the 18 units goes through `encode_linear_planes(verify=True)`, which decodes
+each written blob and compares it to the encoder's own reconstruction, and
+raises `GrammarError` on any disagreement. So the bytes were re-read twice —
+once by the exporter against the encoder, once by this script against the
+plugin's reader. Both runs print the numbers below identically, to the byte.
+Everything below is a run's own output, not a reading of the code:
 
 | Read back with | Result |
 |---|---|
@@ -173,6 +184,15 @@ packed-source model this repo can serve.
   `cb8372740b1b`, **11 passed, 3 skipped in 0.78 s**. Every skip in both is a
   `@cuda` case. So the CUDA-gated surface of this pass is *unmeasured*, not
   *passing*; §2 says which legs the CPU run does and does not cover.
+* **The whole suite ran only in part, on CPU.** After merging `master`, the six
+  files this branch touches or that `master` touched —
+  `test_serve_build_identity` (the merged-in one), `test_export_moe_write`,
+  `test_export_moe_layouts`, `test_serving_moe_route`, `test_serving_moe_scheme`,
+  `test_moe_wire_layout` — run **89 passed, 5 skipped in 160.7 s** on CPU
+  (`CUDA_VISIBLE_DEVICES=`, all 5 skips `@cuda`). The full `tests/` suite was
+  submitted to the pool's CPU lane and had not been claimed when this was
+  written, so "the suite is green" is a claim about those six files, not about
+  the tree.
 * **The model-level load hop is still unmeasured.** The probe drives
   `RoutedExperts.load_weights`; in a serve
   `Glm5NextForConditionalGeneration.load_weights` runs first and decides what is

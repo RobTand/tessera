@@ -84,8 +84,15 @@ def _export(export, work: pathlib.Path, name: str, tensors: dict, plan):
         "architectures": ["Glm5NextForConditionalGeneration"],
         "text_config": {"hidden_size": HIDDEN, "moe_intermediate_size": INTER,
                         "num_hidden_layers": 2, "n_routed_experts": EXPERTS}}))
+    # ``--passthrough-unrouted`` because this fixture's attention is
+    # ``never_offered`` by the runtime census and the exporter refuses to
+    # quantise what the runtime never builds.  The exporter's own per-unit
+    # round-trip check (``encode_linear_planes(verify=True)``, which decodes
+    # each written blob and compares it to the encoder's reconstruction) is
+    # left ON: it is the cheap half of the guarantee this script measures, and
+    # a run that skipped it would only be checking bytes it never re-read.
     argv = ["export", str(source), str(case / "out"), "--grid", "E4M3", "--q256", "1024",
-            "--device", "cpu", "--no-verify", "--passthrough-unrouted"]
+            "--device", "cpu", "--passthrough-unrouted"]
     if plan is not None:
         (case / "plan.json").write_text(json.dumps(plan))
         argv += ["--plan-json", str(case / "plan.json")]
