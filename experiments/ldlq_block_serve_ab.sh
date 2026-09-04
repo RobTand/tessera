@@ -50,7 +50,13 @@ run () {   # dump-label, twin-name
       --out "$RUNS/kl_$label.json" 2>&1 | tee "$RUNS/kl_$label.log" | tail -8
 }
 
-run b32a b32 || exit 1
-run b4   b4   || exit 1
-run b32b b32 || exit 1
-echo "SERVE_AB_DONE $(date -u +%FT%TZ)"
+# usage: ldlq_block_serve_ab.sh <candidate-arm> [more candidates...]
+# Every candidate named goes inside ONE pair of default readings, so two
+# candidates are compared against the same bracket rather than against two.
+CANDS=("$@")
+[ ${#CANDS[@]} -gt 0 ] || { echo "usage: $0 <candidate-arm> [more...]"; exit 64; }
+SUF=$(IFS=_; echo "${CANDS[*]}")
+run "b32a_$SUF" b32 || exit 1
+for c in "${CANDS[@]}"; do run "$c" "$c" || exit 1; done
+run "b32b_$SUF" b32 || exit 1
+echo "SERVE_AB_DONE ${CANDS[*]} $(date -u +%FT%TZ)"
