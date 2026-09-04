@@ -400,16 +400,22 @@ def test_rate1_columns_fall_back_inside_the_decode_regime():
     # The reference runs the SAME quantised activations the dispatch consumed
     # (``_reference_fp8_quant`` records the values it represents): raw-x would
     # charge the test the quantiser's own error.  Each path is referenced in
-    # the rounding IT consumes: the GEMV path rounds the dequant to bf16
-    # before the kernel reads it, while ``_scaled_mm`` multiplies the fp8
-    # values directly -- half a bf16 ulp per element either way, which
-    # cancellation amplifies past any accumulation bound.
-    cases = ((y2, (a_q.float() * a_scale).to(torch.bfloat16)),
-             (y4, b_q.float() * b_scale))
-    for y, a_val in cases:
-        ref = ((w.double() * expected[1].double()[:, None]) @ a_val.double().t()).t()
-        assert bool(((y.double() - ref).abs()
-                     <= _bf16_tol(_fp32_bound(w, expected[1], a_val), ref)).all())
+    # the rounding IT consumes, and since #110 those are DIFFERENT roundings.
+    # The M = 2 GEMV path hands the kernel the E4M3 CODES rounded to bf16 --
+    # exact, an E4M3 code has 4 significand bits -- and multiplies ``a_scale``
+    # into the fp32 output; referencing it against ``bf16(a_q * a_scale)``
+    # instead would pin the folded arithmetic the fix removed, which is what
+    # this assertion did until the first GPU run of the fixed lane caught it.
+    # The M = 4 case falls to ``_scaled_mm``, which multiplies the fp8 values
+    # directly and applies both scales in its own fp32 epilogue.  The
+    # ``a_scale`` on the GEMV row scales the accumulation bound with the
+    # result, so the tolerance travels with it.
+    cases = ((y2, a_q.float().to(torch.bfloat16), a_scale.double()),
+             (y4, b_q.float() * b_scale, 1.0))
+    for y, a_val, post in cases:
+        ref = ((w.double() * expected[1].double()[:, None]) @ a_val.double().t()).t() * post
+        bound = _fp32_bound(w, expected[1], a_val) * post
+        assert bool(((y.double() - ref).abs() <= _bf16_tol(bound, ref)).all())
 
 
 @requires_cuda
