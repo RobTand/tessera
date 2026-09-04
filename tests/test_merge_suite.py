@@ -598,6 +598,92 @@ def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
             assert line.count("|") == columns, line
 
 
+def test_the_ledger_names_the_run_mode_of_each_row(tmp_path):
+    """Two rows of one commit can differ by the mode and not by the device.
+
+    The five failures on `82f0047` were an `-n`-only defect: the same commit,
+    the same box and the same two files were green run serially. A ledger that
+    sets a GPU population beside an x86 one and omits how each ran invites the
+    reader to attribute that difference to the device -- the misreading #112 is
+    about, one column over. The header used to explain the absence in prose,
+    which is a footnote a tired reader has to remember to apply.
+
+    `--` stays available and means "nobody recorded it": a resumed row can name
+    a mode only when exactly one finished pool action wrote its population, and
+    every row written before this column existed has none.
+
+    Before this test::
+
+        >       assert row.count("|") == columns, row
+        E       AssertionError: | ... | gpu | serial | ... |
+        (and, on the header, `mode` absent from LEDGER_HEADER)
+    """
+
+    merge_suite = _module()
+    ledger = tmp_path / "l.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T10:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [
+            {"arm": "gpu", "cpus_used": 1, "returncode": 0,
+             "measured_utc": "2026-09-04T10:00:00Z",
+             "surface": {"commit": "a" * 40, "device": "a GB10",
+                         "counts": {"passed": 3}}},
+            {"arm": "x86", "cpus_used": 8, "returncode": 0,
+             "measured_utc": "2026-09-04T10:00:00Z",
+             "surface": {"commit": "a" * 40, "device": "no CUDA device",
+                         "counts": {"passed": 3}}},
+        ],
+    })
+    text = ledger.read_text()
+    assert "| mode |" in text, text
+    gpu = [l for l in text.splitlines() if "| gpu |" in l][0]
+    x86 = [l for l in text.splitlines() if "| x86 |" in l][0]
+    assert "| serial |" in gpu, gpu
+    assert "| -n 8 |" in x86, x86
+
+    # An arm with no recorded mode says so rather than defaulting to serial.
+    silent = tmp_path / "s.md"
+    merge_suite._record_markdown(silent, {
+        "generated_utc": "2026-09-04T10:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [{"arm": "gpu", "surface": None,
+                  "exit_status_observed": False, "returncode": None}],
+    })
+    row = [l for l in silent.read_text().splitlines() if "| gpu |" in l][0]
+    assert row.split("|")[5].strip() == "--", row
+
+    # Every row this tool writes is a row of the header it writes.
+    columns = merge_suite.LEDGER_HEADER.strip().splitlines()[-2].count("|")
+    for line in text.splitlines():
+        if line.startswith("| 2026-") or line.startswith("| -- |"):
+            assert line.count("|") == columns, line
+
+
+def test_a_resumed_row_reads_the_run_mode_out_of_the_pools_command(tmp_path):
+    """The mode is in the command the pool ran, which outlives the submitter.
+
+    A resumed receipt is assembled after the process that chose `-n` is gone,
+    so it cannot know the mode from itself. It can read it from the same table
+    it already reads the exit status out of: the action's own command in the
+    CAS request, found by the `--surface-json` path.
+
+    Before this test::
+
+        >       assert record["cpus_used"] == 8
+        E       KeyError: 'cpus_used'
+    """
+
+    merge_suite = _module()
+    assert merge_suite._cpus_of_command(
+        ["python", "-m", "pytest", "tests", "-n", "8", "--dist", "loadfile"]) == 8
+    assert merge_suite._cpus_of_command(
+        ["python", "-m", "pytest", "tests", "--strict-cuda"]) == 1
+    # Not recorded is not serial.
+    assert merge_suite._cpus_of_command([]) is None
+    assert merge_suite._cpus_of_command(["python", "-m", "pytest", "-n"]) is None
+
+
 def test_an_arm_that_measured_nothing_carries_no_measurement_time(tmp_path):
     """No population means no measurement, so no date for one.
 

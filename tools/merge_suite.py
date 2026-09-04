@@ -412,8 +412,35 @@ def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
                 "attempts": outcome.get("attempts"),
                 "host": outcome.get("claimed_host"),
                 "elapsed_s": detail.get("elapsed_s"),
+                # The command is what says whether that run fanned out, which
+                # a resumed receipt otherwise cannot know: the process that
+                # chose the mode is gone.
+                "command": [str(part) for part in command],
             })
     return found
+
+
+def _cpus_of_command(command: list) -> int | None:
+    """The run mode a recorded command actually ran under.
+
+    ``-n N`` or nothing.  ``None`` where the command is unavailable -- a
+    resumed row with no single pool action behind it -- because "not recorded"
+    and "serial" are different answers and collapsing them is how a row comes
+    to claim a mode nobody observed.
+    """
+
+    if not command:
+        return None
+    parts = [str(part) for part in command]
+    if "-n" not in parts:
+        return 1
+    index = parts.index("-n")
+    if index + 1 >= len(parts):
+        return None
+    try:
+        return int(parts[index + 1])
+    except ValueError:
+        return None
 
 
 def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
@@ -445,6 +472,11 @@ def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
             f"{pool['action_key'][:12]} on {pool['host']} -- read from the "
             "pool's own outcome record, not inferred from the population."
         )
+        # Same source, same reason: the run mode is in the command that action
+        # ran, so a resumed row can name it instead of leaving it blank.
+        mode = _cpus_of_command(pool.get("command") or [])
+        if mode is not None:
+            record["cpus_used"] = mode
         return
     if matches:
         record["pool_actions_matching"] = [m["action_key"] for m in matches]
@@ -632,22 +664,43 @@ single finished pool action behind it -- and there the failure count is still a
 fact while a zero in it does not make the row green, because a suite can exit
 non-zero after a clean summary.
 
-The run mode is not in the table and changes what a row means. The GPU arm
-runs serially -- its CUDA venv has no xdist -- while the x86 arm runs `-n
-<cpus>`, so two rows of one commit can differ by more than the device. On
-`d11dc01` the gpu row is green and the x86 row is red at 5 failed, and those
-five are a `-n`-only defect in the suite's own conftest, not a CUDA one. Match
-a pair by `commit`, then read the failures before attributing the difference to
-the device.
+`mode` is how that arm ran, and it changes what the row means as much as the
+device does. The GPU arm is always `serial` -- its workers would share one
+device and its CUDA venv has no xdist -- while the x86 arm runs `-n <cpus>`, so
+two rows of one commit can differ by more than the box. On `d11dc01` the gpu
+row is green and the x86 row is red at 5 failed, and those five are an
+`-n`-only defect in the suite's own conftest, not a CUDA one. Match a pair by
+`commit`, then read `mode` and the failures before attributing the difference
+to the device. `--` is a row whose mode was not recorded: rows above
+2026-09-04T10:30 predate the column, and a resumed row can only name a mode
+when exactly one finished pool action wrote its population, since the mode is
+read out of that action's own command.
 
 `device` distinguishes three absences that are not the same thing. `not
 submitted in this run` is an arm nobody asked for. `no population published`
 is an arm that was submitted and returned nothing -- refused, never placed, or
 dead before its summary. A device string is a measurement.
 
-| measured (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected | exit |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| measured (UTC) | commit | master head? | arm | mode | device | passed | failed | skipped | not collected | exit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 """
+
+
+def _mode_cell(record: dict) -> str:
+    """How this arm ran, or `--` where nobody recorded it.
+
+    The five failures on ``82f0047`` were an ``-n``-only defect: the same
+    commit, the same box and the same files were green run serially.  A ledger
+    that puts two populations side by side and omits the mode therefore invites
+    the reader to attribute a difference to the device that the device did not
+    cause -- which is the misreading tessera#112 is about, one column over.
+    Its own header used to say so in prose and leave the column out.
+    """
+
+    cpus = record.get("cpus_used")
+    if not isinstance(cpus, int):
+        return "--"
+    return "serial" if cpus <= 1 else f"-n {cpus}"
 
 
 def _record_markdown(path: Path, receipt: dict) -> None:
@@ -694,7 +747,7 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         rows.append(
             f"| {when} | "
             f"{commit_text} | "
-            f"{row_head} | {record['arm']} | "
+            f"{row_head} | {record['arm']} | {_mode_cell(record)} | "
             f"{surface.get('device', 'no population published')} | "
             f"{cell('passed')} | {cell('failed')} | {cell('skipped')} | "
             f"{len(surface.get('not_collected', []))} | {exit_text} |"
@@ -712,7 +765,7 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         if name in covered:
             continue
         rows.append(
-            f"| -- | -- | -- | {name} | not submitted in this run "
+            f"| -- | -- | -- | {name} | -- | not submitted in this run "
             "| -- | -- | -- | -- | -- |")
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
