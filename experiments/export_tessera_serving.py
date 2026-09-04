@@ -347,7 +347,7 @@ def unrouted_modules(src_config, modules):
 
     Principle 14 says a claim about what a runtime DOES is derived from a
     machine-readable table that runtime publishes.  The table is
-    ``runtime_contract.json``'s ``construction`` block (contract v10), whose
+    ``runtime_contract.json``'s ``construction`` block (contract v11), whose
     rows are generated from the census receipts under
     ``docs/measurements/construction/`` -- and the census itself
     (``tools/tessera_construction_census.py``) OBSERVES the answer by building

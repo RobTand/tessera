@@ -948,7 +948,7 @@ and failing rather than skipping when it cannot.
 
 ---
 
-## Contract v10 — which Linears the runtime offers a quant config at all
+## Contract v11 — which Linears the runtime offers a quant config at all
 
 Every other block in this contract answers *what the plugin executes*. This one
 answers a question that comes earlier and that the plugin structurally cannot

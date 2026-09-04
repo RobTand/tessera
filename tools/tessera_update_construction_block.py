@@ -59,13 +59,49 @@ def build_block() -> dict:
     return {"schema": CONSTRUCTION_SCHEMA, "note": NOTE, "architectures": entries}
 
 
+def splice(raw: str, block: dict) -> str:
+    """The block, written into ``raw`` without reformatting anything else.
+
+    ``runtime_contract.json`` is hand-formatted and several branches edit it at
+    once; a whole-file ``json.dumps`` would reformat hundreds of lines it does
+    not change and turn every concurrent edit into a conflict.  So the block is
+    rendered at the indent its siblings use and spliced in place.
+    """
+    lines = raw.splitlines(keepends=True)
+    anchor = next((i for i, l in enumerate(lines)
+                   if l.lstrip().startswith('"changelog"')), None)
+    if anchor is None:
+        raise SystemExit("runtime_contract.json has no changelog key to anchor on")
+    at = next((i for i, l in enumerate(lines)
+               if l.lstrip().startswith('"construction"')), None)
+    if at is None:
+        at = end = anchor                  # first write: insert before changelog
+    else:
+        depth = 0
+        end = None
+        for i in range(at, len(lines)):
+            depth += lines[i].count("{") - lines[i].count("}")
+            if depth == 0:
+                end = i + 1      # also the one-line case, where depth never rises
+                break
+        if end is None:
+            raise SystemExit("runtime_contract.json's construction block does not close")
+    pad = lines[anchor][: len(lines[anchor]) - len(lines[anchor].lstrip())]
+    n = len(pad) or 1
+    inner = json.dumps({"construction": block}, indent=n).splitlines()[1:-1]
+    rendered = [pad + l[n:] + "\n" for l in inner]
+    rendered[-1] = rendered[-1].rstrip("\n") + ",\n"
+    return "".join(lines[:at] + rendered + lines[end:])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if the committed block is not what the receipts derive")
     args = ap.parse_args()
 
-    contract = json.loads(CONTRACT.read_text())
+    raw = CONTRACT.read_text()
+    contract = json.loads(raw)
     block = build_block()
     if args.check:
         if contract.get("construction") == block:
@@ -77,8 +113,9 @@ def main() -> int:
     if contract.get("construction") == block:
         print("construction block already current; nothing written")
         return 0
-    contract["construction"] = block
-    CONTRACT.write_text(json.dumps(contract, indent=1) + "\n")
+    out = splice(raw, block)
+    assert json.loads(out)["construction"] == block, "the splice did not produce the block"
+    CONTRACT.write_text(out)
     print("wrote", CONTRACT, "architectures",
           [e["architecture"] for e in block["architectures"]])
     return 0
