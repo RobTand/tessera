@@ -536,3 +536,31 @@ have left, so the exporter's MoE half writes what the reader reads. Receipt:
 `experiments/results/moe_wire_weight_error.cpu.json` (CPU arm, pool action
 `263d23d60564`); the 3-row GPU smoke that preceded it agrees to the third digit
 (0.0696 / 0.1057 / 0.658).
+
+### The census runner defaults to an image that cannot parse this model
+
+Pass 2 of the census died before vLLM reached the plugin:
+
+    Error parsing config for .../glm53-4layer-e16-tessera: The checkpoint you
+    are trying to load has model type `glm5_next` but Transformers does not
+    recognize this architecture.
+
+`experiments/tessera_plugin_run.sh` takes its image from `runtime_image_pin`,
+which is the stock vLLM 0.28 pin — correct for every dense Tessera arm and
+wrong for this one, because GLM-5.3-Flash is served here by
+`prismaquant/glm53-mia-sm121:487ecf187`, the build that registers `Glm5Next`.
+`experiments/ts5_moe_served.sh` exports `IMAGE`/`IMG`/`TESSERA_KL_IMAGE` to that
+pin; the census-only wrapper written to re-run one step of it did not, and
+inherited the default.
+
+Cost: one GPU placement, waited ~40 minutes for. Recorded because the failure
+mode is silent by construction — a wrapper that names no image gets a valid,
+pinned, *reproducible* runtime that simply cannot load the model, and the error
+it raises is a `transformers` config message with nothing in it about images.
+The tests in the same action still ran and passed (48), which is what made the
+log readable rather than a single traceback.
+
+The durable form of this is the same shape as principle 14: which runtime can
+load an architecture is a fact about that runtime, and a wrapper that defaults
+one is asserting it. Naming the image next to the model — as the ts5 driver
+does — is the honest spelling.
