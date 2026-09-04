@@ -145,12 +145,19 @@ def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see(tmp_path):
     The skip is decided BEFORE the tool runs, not after.  Deciding it after
     still ran a dry run, and a dry run with no ``--out`` writes its receipt
     under ``DEFAULT_RECEIPT_ROOT`` -- so every full suite run on a shared
-    checkout left a directory in the store that holds the real ones.  Sixteen
-    of them were there when this was found, fourteen written by pool runs on
-    dl380g10, each holding one arm with ``"status": "not submitted
-    (--dry-run)"``.  Nothing read them, but a reader of the store cannot tell
-    a run that measured nothing from one that has not finished, which is the
-    reading tessera#112 is about.
+    checkout left a directory in the store that holds the real ones, each
+    holding one arm with ``"status": "not submitted (--dry-run)"``.  Seventeen
+    were there when this was found and eighteen twenty-five minutes later;
+    the count is not a constant, it grows with the suite, which is the point.
+    Of the eighteen, sixteen were written by pool runs on dl380g10, one by the
+    GPU arm's own suite on sparky, and one is a deliberate ``--dry-run`` from a
+    terminal.  Nothing read them, but a reader of the store cannot tell a run
+    that measured nothing from one that has not finished, which is the reading
+    tessera#112 is about.
+
+    Counted by opening every ``receipt.json`` under the store and taking those
+    whose single arm carries that status; the first count said "fourteen on
+    dl380g10", which was wrong before it was stale.
     """
 
     if str(ROOT).startswith("/mnt/shared"):
@@ -932,10 +939,13 @@ def test_no_test_here_can_write_into_the_receipt_store_the_real_runs_use():
     ``--out`` defaults to a timestamped directory under
     ``DEFAULT_RECEIPT_ROOT`` -- the shared store the real receipts live in.  A
     test that omits it publishes into that store from every box that runs the
-    suite, which is how sixteen one-arm ``not run`` directories came to sit
-    beside the four real ones.  Read statically rather than by watching the
+    suite, which is how eighteen one-arm ``not run`` directories came to sit
+    beside the four real ones -- a count that rises with every suite run, not
+    a fixed number.  Read statically rather than by watching the
     store: watching it would be a race against every other run on the fleet,
     and the property being pinned is about this file, not about a placement.
+    (The store's count of them is not stable enough to assert on for the same
+    reason -- it rises whenever any box runs the suite.)
 
     Before this test, run over ``1cdeee0~1:tests/test_merge_suite.py``::
 
