@@ -276,3 +276,43 @@ def test_dense_resume_uses_same_record_and_wire_validation(encoded):
                                           E4M3_GRID, 1280)
     with pytest.raises(ValueError, match="recipe"):
         api.verify_cached_unit(encoded[1], record, changed)
+
+
+def test_cached_record_refuses_reach_disagreeing_with_profile(encoded):
+    from dataclasses import replace
+    from tessera.container import parse, serialize
+    from tessera.manifest import ReachParams
+
+    api = _api()
+    _record_, expected = _record(encoded)
+    artifact = parse(encoded[1])
+    changed = replace(artifact.manifest, reach=ReachParams(window_seed=1))
+    blob = serialize(changed, artifact.plane_region)
+    with pytest.raises(ValueError, match="profile|reach"):
+        api.make_unit_record(blob, expected, filename="changed-reach.tessera")
+
+
+def test_cached_record_refuses_single_incomplete_terminal(encoded):
+    from dataclasses import replace
+    from fractions import Fraction
+    import hashlib
+    from tessera.container import parse, serialize
+    from tessera.footprint import plane_region_bytes
+
+    api = _api()
+    _record_, expected = _record(encoded)
+    artifact = parse(encoded[1])
+    counts = list(artifact.terminal.plane_elements)
+    last = max(index for index, count in enumerate(counts) if count)
+    counts[last] = 0
+    terminal = replace(artifact.terminal, plane_elements=tuple(counts))
+    length = plane_region_bytes(artifact.manifest, terminal)
+    prefix = artifact.plane_region[:length]
+    digest = hashlib.sha256(prefix).digest()
+    terminal = replace(terminal, exact_bytes=length,
+                       exact_bpp=Fraction(8 * length, artifact.manifest.geometry.quantizable_params),
+                       payload_digest=digest)
+    manifest = replace(artifact.manifest, terminals=(terminal,), payload_digest=digest)
+    blob = serialize(manifest, prefix)
+    with pytest.raises(ValueError, match="complete|prefix"):
+        api.make_unit_record(blob, expected, filename="prefix.tessera")

@@ -180,7 +180,8 @@ export boundary still requires the projected identity and exact field equality.
 `export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
-wire geometry/rates/profile/encoder identity, and wraps accepted blobs in
+wire geometry/rates/profile/reach/encoder identity and complete plane extents,
+and wraps accepted blobs in
 `pack_fused` unchanged. Their original unit-id spelling is preserved. A
 missing selected rung, including an interpolated rate with no measured blob,
 refuses; this intake has no encode fallback. The ordinary dense encode path

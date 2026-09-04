@@ -21,7 +21,7 @@ from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF
                      HESSIAN_IDENTITY, wire_recipe)
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, ContainerClass, RotationState
-from .unit_artifact import build_unit_artifact, encoder_profile_id
+from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
 CACHE_SCHEMA = "tessera.cached_units.v1"
 INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
@@ -167,6 +167,10 @@ def _check_wire(blob: bytes, identity: dict):
     geometry = manifest.geometry
     if manifest.shard is not None or len(manifest.terminals) != 1:
         raise ValueError("cached unit must be one complete, unsharded terminal")
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
+    if any(artifact.terminal.plane_elements[order[plane.kind]] != plane.element_count
+           for plane in manifest.planes):
+        raise ValueError("cached unit must carry complete planes, not a terminal prefix")
     if (geometry.rows, geometry.columns, geometry.quantizable_params) != (
             rows, columns, rows * columns):
         raise ValueError("cached unit wire geometry disagrees with source projection")
@@ -186,6 +190,11 @@ def _check_wire(blob: bytes, identity: dict):
                                  recipe.window_sigma, recipe.channel_sigma)
     if manifest.encoder_profile_id != profile or manifest.rates != rates:
         raise ValueError("cached unit wire encoder profile/rate schedule differs from recipe")
+    wire_profile = encoder_profile_id(
+        code, manifest.rates, grid, manifest.span, manifest.scale_plane.kind,
+        manifest.body, manifest.window_bits, *_reach_attrs(manifest))
+    if manifest.encoder_profile_id != wire_profile:
+        raise ValueError("cached unit wire recipe/reach fields disagree with encoder profile")
     if (manifest.body, manifest.span, manifest.scale_plane.kind, manifest.window_bits) != (
             recipe.body, recipe.span, recipe.scale_plane, recipe.window_bits):
         raise ValueError("cached unit wire recipe fields differ from requested recipe")
