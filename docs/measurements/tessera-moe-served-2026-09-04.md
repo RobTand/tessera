@@ -150,3 +150,43 @@ teacher's own startup accounting says 8.34 GiB of weights plus 4.42 GiB of peak
 activation, so 12.76 GiB is the floor and 0.15 clears it by 5.5 GiB of KV. The
 pool action declares `mem_gb=20` to match. The earlier draft's 0.35 would have
 reserved a third of a shared box for a 7 GiB model.
+
+## The load hop is closed: vLLM read the routed-MoE checkpoint back
+
+This is the result the branch's two docs named as unknown, and it is now
+measured. From `served/census.log`, on the pinned Mia GLM image
+(`prismaquant/glm53-mia-sm121:487ecf187`, digest `sha256:75ea13ed…`, vLLM
+`0.1.dev20051+g487ecf187`):
+
+```
+[tsrun] ... plugin ['tessera', 'lora_filesystem_resolver', 'lora_hf_hub_resolver']
+INFO ... Initializing a V1 LLM engine ... quantization=tessera, quantization_config=None
+Loading safetensors checkpoint shards: 100% Completed | 11/11
+INFO ... [model_runner.py:374] Model loading took 5.81 GiB and 29.296122 seconds
+WARNING ... [fused_moe.py:1161] Using default MoE config ... E=16,N=2048,device_name=NVIDIA_GB10,dtype=fp8_w8a8
+```
+
+Four things in those five lines, none of which had a receipt before:
+
+- **The checkpoint chose the plugin.** `quantization=tessera` with
+  `quantization_config=None` on the command line: nothing enabled it, the
+  sidecar did.
+- **Every shard loaded.** 11/11, no `KeyError`. The model-level hop —
+  `Glm5NextModel.load_weights` handing 144 `.wire` names through
+  `expert_params_mapping` to the expert loader — is the hop both
+  `tessera-moe-export-seam` and `tessera-moe-route-load` left open, and it
+  carries weight.
+- **5.81 GiB of weights**, against 4.9 GB of Tessera bytes on disk plus the
+  BF16 remainder.
+- **The expert method was built and configured**: vLLM looked for a fused-MoE
+  tuning config at `E=16,N=2048,…,dtype=fp8_w8a8` — E=16 is the cut's expert
+  count reaching the runtime's own MoE machinery, and `fp8_w8a8` is the
+  `TESSERA_FP8` family's A-side.
+
+**What it did not do is serve a token.** The load was followed by
+`Available KV cache memory: -2.02 GiB` and vLLM refused to build a cache. That
+is not a Tessera failure: the census drives `LLM(...)` under vLLM's default
+chunked-prefill budget of 8192 batched tokens, so its profiling peak is several
+times a `--max-num-seqs 8` serve's, and the 18.24 GiB the *serve* needed is not
+enough for the *census*. One number was doing two jobs; the driver now has
+`TESSERA_CENSUS_MEM_UTIL` (0.35) separate from `TESSERA_GPU_MEM_UTIL` (0.15).
