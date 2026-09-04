@@ -381,9 +381,9 @@ table.
    free control did read `0.000000` at 100.00%, and so did the prefill regime.
 2. **RAN AND PASSED on attempt 2: 86 passed, 0 failed, 115.6 s.** The account
    below is of attempt 1 and is kept because the defect it found was real and
-   was this branch's own. **The CUDA leg HAS now executed, and it failed --
-   because the fix was
-   never run on a GPU.** Action `6c90ba1b` placed at 05:49 on 2026-09-04 and
+   was this branch's own. **The CUDA leg's first execution failed because the
+   fix had never run on a GPU before that attempt.** Action `6c90ba1b` placed
+   at 05:49 on 2026-09-04 and
    its step-2 gate ran both modules with a device: **1 failed, 85 passed** in
    210 s, and the gate refused to spend the serve, which is the gate doing its
    job. The failure is this branch's own.
@@ -409,8 +409,9 @@ table.
    `test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand`
    are both among the 85. So the specific worry is answered, and the general
    one was righter than it was put: the problem was never two thresholds, it
-   was that **no CUDA test had run against the fix at all**, and the first run
-   that did found a defect. Not yet verified on a GPU: the correction itself.
+   was that **no CUDA test had run against the fix before attempt 1**, and that
+   first run found a defect. Attempt 2 and `eaedecfd` then verified the
+   correction on a GPU, 86/86 both times.
 
    For completeness, on CPU on this tree:
    `pytest tests/test_serving_fp8_gemv.py tests/test_kernel_window_gemv.py` =
@@ -451,8 +452,8 @@ waited 35 minutes as the oldest of fifteen GPU-needing items, then ran. The
 served campaign (`6c90ba1b`, gpu=1 mem_gb=24) reached a worker once, died in
 its first seconds on a permission fault -- `ts83/ext-A` holds root-owned JIT
 lock files written by the serve container, so a host-side extension load there
-gets EACCES -- was fixed with its own writable `TORCH_EXTENSIONS_DIR`, and has
-been `ready` ever since. It has never served.
+gets EACCES -- was fixed with its own writable `TORCH_EXTENSIONS_DIR`; at the
+05:55 snapshot it was back in `ready/` and had not yet served.
 
 **The first pass reported that as a leaked reservation, and that reading does
 not survive a second look.** Action `66266919` from `/home/rob/tmp/wf109` does
@@ -744,4 +745,3 @@ K run **99.85-100.00%** for the fixed lane against the fallback and
 section 6b turns on, and the reason section 1's "changes no bf16 output word"
 had to be corrected: at K = 1024 alone it read 100.00% four times out of four,
 and a wider sweep says that was luck, not a property.
-
