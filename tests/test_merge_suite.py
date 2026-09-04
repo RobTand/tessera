@@ -75,6 +75,13 @@ def test_the_declared_cores_are_the_cores_the_command_uses():
     Serial stays the default on purpose: ``-n`` needs pytest-xdist in the
     TARGET venv, and sparky's CUDA venv inherits a system interpreter that has
     pytest 9.0.3 and no xdist, so a hardcoded ``-n`` would abort that arm.
+
+    And an arm that cannot fan out spends one core whatever ``--cpus`` says,
+    which is why this asks the arm rather than assuming the number.  Before
+    that existed::
+
+        >       assert merge_suite._arm_cpus(merge_suite.ARMS[name], 6) == 6
+        E       AttributeError: module '_merge_suite' has no attribute '_arm_cpus'
     """
 
     merge_suite = _module()
@@ -84,12 +91,80 @@ def test_the_declared_cores_are_the_cores_the_command_uses():
         assert "-n" not in serial, "one declared core must not fan out"
 
         parallel = merge_suite._command(merge_suite.ARMS[name], surface, [], 6)
-        assert parallel[parallel.index("-n") + 1] == "6"
-        # A module's tests share fixtures, and on the GPU arm device state.
-        assert parallel[parallel.index("--dist") + 1] == "loadfile"
         # The gate survives the fan-out: it is asserted on the controller,
         # which is the process that has -- or has not -- the device.
         assert ("--strict-cuda" in parallel) == merge_suite.ARMS[name]["strict_cuda"]
+        if not merge_suite.ARMS[name].get("fans_out", True):
+            # An arm that cannot fan out spends one core whatever is asked.
+            assert "-n" not in parallel, parallel
+            assert merge_suite._arm_cpus(merge_suite.ARMS[name], 6) == 1
+            continue
+        assert parallel[parallel.index("-n") + 1] == "6"
+        # A module's tests share fixtures, and on the GPU arm device state.
+        assert parallel[parallel.index("--dist") + 1] == "loadfile"
+        assert merge_suite._arm_cpus(merge_suite.ARMS[name], 6) == 6
+
+
+def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_path):
+    """One ``--cpus`` for two arms that cannot spend it the same way.
+
+    ``--cpus 8`` composed ``-n 8`` for BOTH arms, and the GPU arm's
+    interpreter has no pytest-xdist: it would have exited on an unrecognised
+    argument before collecting a test.  So the tool could submit its two arms
+    together only at ``--cpus 1``, and every ``-n`` run this branch made was a
+    lone ``--arm x86`` submission -- a row with `not submitted in this run`
+    beside it, which is the half-a-result its own ledger header warns about.
+
+    Running both arms serially would keep them in one invocation and lose the
+    thing that matters: the five failures on ``82f0047`` were an ``-n``-only
+    defect in the suite's own conftest, invisible to a serial run of the same
+    commit.  A merge check that cannot fan out cannot see that class.
+
+    So the clamp is per arm, and it reaches the pool as well as pytest: the
+    GPU arm must not RESERVE eight cores it will not spend.
+
+    Before this test::
+
+        >       assert " -n " not in gpu, (
+        E       AssertionError: the gpu arm was submitted with -n, and its
+                interpreter has no xdist: ... pbrun.py --gpu --cpus 8 ...
+                -- .../prismaquant-cu130/bin/python -m pytest tests -q ...
+                -n 8 --dist loadfile --strict-cuda
+    """
+
+    merge_suite = _module()
+    # A checkout under the shared root, because the x86 arm refuses one only a
+    # single box can see; named from the module's own constant rather than
+    # spelled out, and never created -- a dry run composes paths and writes
+    # nothing but the receipt named by --out.
+    checkout = merge_suite.SHARED_ROOT / "ts112-no-such-checkout"
+    assert not checkout.exists(), checkout
+
+    out = tmp_path / "receipt.json"
+    subprocess.run(
+        [sys.executable, str(TOOL), "--dry-run", "--cpus", "8",
+         "--checkout", str(checkout), "--out", str(out)],
+        capture_output=True, text=True, timeout=180, check=False,
+    )
+    arms = {record["arm"]: record for record in json.loads(out.read_text())["arms"]}
+    assert set(arms) == {"gpu", "x86"}, sorted(arms)
+
+    gpu = arms["gpu"]["pbrun"]
+    assert " -n " not in gpu, (
+        "the gpu arm was submitted with -n, and its interpreter has no "
+        "xdist: " + gpu)
+    assert "--cpus 1" in gpu, ("a serial arm must not reserve cores it will "
+                               "not spend: " + gpu)
+    assert arms["gpu"]["cpus_requested"] == 8
+    assert arms["gpu"]["cpus_used"] == 1
+    # Why it was clamped travels with the record, so a reader of the receipt
+    # does not have to know the arm table.
+    assert "xdist" in arms["gpu"]["cpus_note"], arms["gpu"]
+
+    x86 = arms["x86"]["pbrun"]
+    assert " -n 8 " in x86, x86
+    assert "--cpus 8" in x86, x86
+    assert arms["x86"]["cpus_used"] == 8
 
 
 def test_the_default_submission_declares_one_core(tmp_path):

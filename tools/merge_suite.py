@@ -56,7 +56,13 @@ Everything about scheduling is PrismaBuild's: this composes ``pbrun``
 invocations and reads what they return.  It never runs a suite itself, never
 sshes anywhere, and a refused placement comes back as the refusal it is.
 ``--cpus N`` is spent as well as declared: above 1 it becomes pytest's ``-n``,
-so the reservation and the command cannot disagree.
+so the reservation and the command cannot disagree.  It is clamped **per
+arm**: the GPU arm runs serially whatever is asked, because its workers would
+share one device and its interpreter has no xdist.  Without that clamp the two
+arms could only be submitted together at ``--cpus 1`` -- every ``-n`` run on
+this branch was a lone ``--arm x86`` submission for exactly that reason, which
+is the half-a-result the ledger header warns about, produced by the tool that
+warns about it.
 """
 from __future__ import annotations
 
@@ -89,12 +95,23 @@ POOL_CAS_REQUESTS = SHARED_ROOT / "prismabuild-fleet" / "cas" / "requests"
 #: The two arms, and why each is spelled the way it is.  The interpreter is
 #: named rather than inherited: a pool action runs in a sealed environment, so
 #: ``sys.executable`` here is a fact about the submitting box, not the target.
+#:
+#: ``fans_out`` is a property of the ARM, not of the submission.  ``--cpus`` is
+#: one number for a run and the two arms cannot spend it the same way, so an
+#: arm that must run serially says so here and clamps its own share.
 ARMS = {
     "gpu": {
         "why": "the CUDA-gated surface; nothing else exercises it",
         "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
         "pbrun_flags": ["--gpu"],
         "strict_cuda": True,
+        "fans_out": False,
+        "serial_because": (
+            "this arm runs serially whatever --cpus says: its workers would "
+            "share one device, and pytest-xdist is absent from the CUDA venv's "
+            "interpreter, so -n would abort the run on an unrecognised "
+            "argument rather than fan it out"
+        ),
     },
     "x86": {
         "why": "the device-less population: torch present, no CUDA device, "
@@ -103,8 +120,33 @@ ARMS = {
         "pbrun_flags": ["--tag", "x86"],
         "strict_cuda": False,
         "needs_shared_checkout": True,
+        "fans_out": True,
     },
 }
+
+
+def _arm_cpus(arm: dict, requested: int) -> int:
+    """The cores THIS arm will spend, which is not always the cores asked for.
+
+    ``--cpus`` is one number and a run has two arms, and until this existed
+    both got it: ``--cpus 8`` composed ``-n 8`` for the GPU arm too, whose
+    interpreter has no xdist and aborts on the argument.  So the tool could
+    submit both arms together only at ``--cpus 1``, and every ``-n`` run on
+    this branch was therefore a lone ``--arm x86`` submission -- which is
+    exactly the half-a-result the ledger's own header warns about, produced by
+    the tool that warns about it.  The five failures on ``82f0047`` were an
+    ``-n``-only defect, so "run both arms serially to keep them in one
+    invocation" would have been a merge check blind to the class of bug this
+    branch's own worst regression belonged to.
+
+    Clamping here rather than at the call sites is deliberate: the number that
+    reaches pytest as ``-n`` and the number declared to the pool as ``--cpus``
+    must be the same one, and one function is how they cannot drift.
+    """
+
+    if arm.get("fans_out", True):
+        return max(1, requested)
+    return 1
 
 
 # A checkout on /mnt/shared is on NFS, and `git status --porcelain` there
@@ -189,8 +231,14 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     workers share one device, so fanning out is a memory risk, not a speedup.
     An operator who knows the target venv passes ``--cpus N`` and gets both
     halves at once.
+
+    Which is why the number is passed through ``_arm_cpus`` here rather than
+    used as given: an arm that cannot fan out clamps to serial, so one
+    ``--cpus 8`` can submit an ``-n 8`` x86 arm and a serial GPU arm in the
+    same run.  Before that, ``--cpus 8`` composed ``-n 8`` for both.
     """
 
+    cpus = _arm_cpus(arm, cpus)
     command = [arm["python"], "-m", "pytest", "tests", "-q",
                "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
@@ -206,11 +254,15 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
 
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
-    command = _command(arm, surface_json, args.pytest_arg, args.cpus)
+    # The reservation is this ARM's, not the run's: an arm clamped to serial
+    # must not hold the cores it was told to spend, or the ledger says the box
+    # is busy while seven of its cores idle.
+    cpus = _arm_cpus(arm, args.cpus)
+    command = _command(arm, surface_json, args.pytest_arg, cpus)
     invocation = [
         sys.executable, str(PBRUN),
         *arm["pbrun_flags"],
-        "--cpus", str(args.cpus),
+        "--cpus", str(cpus),
         "--demand", f"{'gpu=1,' if arm['pbrun_flags'][0] == '--gpu' else ''}"
                     f"mem_gb={args.mem_gb}",
         "--cwd", str(args.checkout),
@@ -226,8 +278,15 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         # verdict can check the population against it without reaching back
         # into a table the receipt does not contain.
         "requires_cuda": bool(arm["strict_cuda"]),
+        # The run mode, on the record, because a pass count of one arm read
+        # against the other's differs by more than the device: the five
+        # failures on ``82f0047`` were an ``-n``-only defect.
+        "cpus_requested": args.cpus,
+        "cpus_used": cpus,
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
+    if cpus != args.cpus:
+        record["cpus_note"] = arm.get("serial_because", "")
     if args.dry_run:
         record["status"] = "not submitted (--dry-run)"
         return record
@@ -699,12 +758,14 @@ def main() -> int:
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
     ap.add_argument("--cpus", type=int, default=1,
-                    help="cores this run will ACTUALLY use: declared to the "
-                         "pool and, above 1, passed to pytest as -n so the "
-                         "reservation and the command cannot disagree. Above 1 "
-                         "needs pytest-xdist in the target venv, which is a "
-                         "fact about that box -- the CUDA venv on sparky has "
-                         "none. Default 1, which is honest everywhere")
+                    help="cores each arm that can use them will ACTUALLY use: "
+                         "declared to the pool and, above 1, passed to pytest "
+                         "as -n so the reservation and the command cannot "
+                         "disagree. Clamped to 1 for any arm that cannot fan "
+                         "out -- the GPU arm always, since its workers share "
+                         "one device and the CUDA venv has no pytest-xdist -- "
+                         "so one number can submit an -n x86 arm and a serial "
+                         "GPU arm in the same run. Default 1")
     ap.add_argument("--mem-gb", type=int, default=16)
     ap.add_argument("--timeout-s", type=float, default=3600.0)
     ap.add_argument("--wait-s", type=float, default=5400.0)
