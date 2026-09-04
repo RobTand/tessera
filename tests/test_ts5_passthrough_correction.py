@@ -25,5 +25,5 @@ def test_tied_head_and_other_unrelated_ignores_survive():
 
 @pytest.mark.parametrize("derived", [{"unrelated"}, {"m.feed_forward.w13"}])
 def test_unrelated_or_incomplete_rewrites_refuse(derived):
-    with pytest.raises(AssertionError):
+    with pytest.raises(SystemExit):
         _correct()({"m.feed_forward.w1"}, derived)

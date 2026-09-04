@@ -26,24 +26,29 @@ SEAL = CAMPAIGN / "merge-action-r1/artifact-seal.json"
 
 def corrected_ignore(old_ignored, derived):
     added = set(derived) - set(old_ignored)
-    assert added, "no passthrough correction was derived"
-    assert all(name.endswith(".feed_forward.w13") for name in added)
+    if not (added):
+        raise SystemExit("no passthrough correction was derived")
+    if not (all(name.endswith(".feed_forward.w13") for name in added)):
+        raise SystemExit('refused: all(name.endswith(".feed_forward.w13") for name in added)')
     removed = {name[:-len("w13")] + role for name in added for role in ("w1", "w3")}
-    assert removed <= set(old_ignored), "dense gate/up declaration is incomplete"
+    if not (removed <= set(old_ignored)):
+        raise SystemExit("dense gate/up declaration is incomplete")
     return (set(old_ignored) - removed) | added
 
 
 def main():
     original_seal = json.loads(SEAL.read_text())
     before = source_identity(ORIGINAL)
-    assert before == original_seal["checkpoint_identity"]
+    if not (before == original_seal["checkpoint_identity"]):
+        raise SystemExit('refused: before == original_seal["checkpoint_identity"]')
     original_config = json.loads((ORIGINAL / "config.json").read_text())
     config = copy.deepcopy(original_config)
     ignored = set()
     for shard in before["files"]:
         with (ORIGINAL / shard).open("rb") as handle:
             length = struct.unpack("<Q", handle.read(8))[0]
-            assert length <= (ORIGINAL / shard).stat().st_size - 8
+            if not (length <= (ORIGINAL / shard).stat().st_size - 8):
+                raise SystemExit('refused: length <= (ORIGINAL / shard).stat().st_size - 8')
             header = json.loads(handle.read(length))
         for name, info in header.items():
             if name != "__metadata__":
@@ -52,22 +57,29 @@ def main():
     ignored = corrected_ignore(old_ignored, ignored)
     added, removed = sorted(ignored - old_ignored), sorted(old_ignored - ignored)
     print(json.dumps({"ignore_added": added, "ignore_removed": removed}), flush=True)
-    assert added and removed, "no passthrough correction was derived"
+    if not (added and removed):
+        raise SystemExit("no passthrough correction was derived")
     # Only the observed dense gate/up naming defect may change here.
-    assert all(name.endswith(".feed_forward.w13") for name in added)
+    if not (all(name.endswith(".feed_forward.w13") for name in added)):
+        raise SystemExit('refused: all(name.endswith(".feed_forward.w13") for name in added)')
     expected_removed = {name[:-len("w13")] + role for name in added for role in ("w1", "w3")}
-    assert set(removed) == expected_removed
-    assert all(name + ".weight" in before["tensors"] for name in removed)
+    if not (set(removed) == expected_removed):
+        raise SystemExit('refused: set(removed) == expected_removed')
+    if not (all(name + ".weight" in before["tensors"] for name in removed)):
+        raise SystemExit('refused: all(name + ".weight" in before["tensors"] for name in removed)')
     declared = {target for group in config["quantization_config"]["config_groups"].values()
                 for target in group["targets"]}
-    assert not declared & ignored
+    if not (not declared & ignored):
+        raise SystemExit('refused: not declared & ignored')
     config["quantization_config"]["ignore"] = sorted(ignored)
     check = copy.deepcopy(config)
     check["quantization_config"]["ignore"] = original_config["quantization_config"]["ignore"]
-    assert check == original_config, "a field other than ignore changed"
+    if not (check == original_config):
+        raise SystemExit("a field other than ignore changed")
     MODEL.mkdir()
     for path in ORIGINAL.iterdir():
-        assert path.is_file() and not path.is_symlink()
+        if not (path.is_file() and not path.is_symlink()):
+            raise SystemExit('refused: path.is_file() and not path.is_symlink()')
         if path.name != "config.json":
             os.link(path, MODEL / path.name)
     with (MODEL / "config.json").open("x") as handle:
@@ -78,10 +90,12 @@ def main():
                         "--plan-json", str(CAMPAIGN / "plan.json")], check=True,
                        stdout=log, stderr=subprocess.STDOUT, timeout=180)
     after = source_identity(MODEL)
-    assert after["files"] == before["files"] and after["tensors"] == before["tensors"]
-    assert {name: sha for name, sha in after["auxiliary_sha256"].items() if name != "config.json"} == {
-        name: sha for name, sha in before["auxiliary_sha256"].items() if name != "config.json"}
-    assert source_identity(ORIGINAL) == before, "the original artifact changed"
+    if not (after["files"] == before["files"] and after["tensors"] == before["tensors"]):
+        raise SystemExit('refused: after["files"] == before["files"] and after["tensors"] == before["tensors"]')
+    if not ({name: sha for name, sha in after["auxiliary_sha256"].items() if name != "config.json"} == { name: sha for name, sha in before["auxiliary_sha256"].items() if name != "config.json"}):
+        raise SystemExit("an auxiliary file other than config.json changed")
+    if not (source_identity(ORIGINAL) == before):
+        raise SystemExit("the original artifact changed")
     correction = {
         "schema": "tessera.lfm-passthrough-correction/1",
         "original_checkpoint": str(ORIGINAL), "original_seal_sha256": sha256_file(SEAL),
