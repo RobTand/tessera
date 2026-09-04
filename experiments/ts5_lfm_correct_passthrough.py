@@ -20,8 +20,17 @@ from tessera.serving_parts import source_identity, sha256_file
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 ORIGINAL = CAMPAIGN / "full-model"
 MODEL = CAMPAIGN / "full-model-r3"
-OUT = CAMPAIGN / "passthrough-correction-r2"
+OUT = CAMPAIGN / "passthrough-correction-r3"
 SEAL = CAMPAIGN / "merge-action-r1/artifact-seal.json"
+
+
+def corrected_ignore(old_ignored, derived):
+    added = set(derived) - set(old_ignored)
+    assert added, "no passthrough correction was derived"
+    assert all(name.endswith(".feed_forward.w13") for name in added)
+    removed = {name[:-len("w13")] + role for name in added for role in ("w1", "w3")}
+    assert removed <= set(old_ignored), "dense gate/up declaration is incomplete"
+    return (set(old_ignored) - removed) | added
 
 
 def main():
@@ -40,6 +49,7 @@ def main():
             if name != "__metadata__":
                 ignored.update(ignored_modules(name, info["shape"]))
     old_ignored = set(config["quantization_config"]["ignore"])
+    ignored = corrected_ignore(old_ignored, ignored)
     added, removed = sorted(ignored - old_ignored), sorted(old_ignored - ignored)
     print(json.dumps({"ignore_added": added, "ignore_removed": removed}), flush=True)
     assert added and removed, "no passthrough correction was derived"
