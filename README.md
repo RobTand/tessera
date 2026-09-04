@@ -137,15 +137,18 @@ parallelism, and any platform but sm_121.
 
 The exhaustive tests are the point. Four results worth naming:
 
-- **A truncated artifact is now verifiable.** Truncation is this format's
-  headline feature, and until the 1a review it was the one case with *no*
-  integrity check: the whole-artifact digest covers only untruncated bytes, and
+- **A truncated artifact is now verifiable.** Truncation is one of this
+  format's design features, and until the 1a review it was the one case with
+  *no* integrity check: the whole-artifact digest covers only untruncated bytes, and
   the per-plane `content_digest` held `sha256(b"")` for seven of nine planes.
   The fixture shipped a plane region contradicting its own declared digests and
   all 101 tests passed. Every terminal now carries a digest of its own byte
   prefix, plane digests cover real bytes, padding is forced zero, and a terminal
   must be a genuine *prefix* — the property the truncation contract rested on
-  and nothing checked.
+  and nothing checked. Scope: this is the layout and container layer. The
+  encoder declares one terminal per unit, so no artifact Tessera ships is
+  truncatable today; the ladder is exercised by artifacts the tests lay out
+  directly (tessera#144).
 
 - **All 65,536 §6b words classified**, legal-set digest frozen at
   `da398624…a1b3`. The codec reaches **all seven** positive E4M3FN subnormals

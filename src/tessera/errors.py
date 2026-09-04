@@ -33,6 +33,15 @@ class TruncationError(TesseraError):
     Per-superblock quota-boundary truncations within a plane are legal and
     enumerate their own terminal_id; arbitrary interleaved byte-prefixes are
     not terminals (doc S9).
+
+    What that means on an *encoded* artifact today: ``build_unit_artifact``
+    writes ``terminals=(terminal,)`` -- one rung, the T-nvfp4 class -- so a
+    unit has exactly one legal length and this refuses short or corrupt bytes.
+    It never selects a shorter reading, because there is no shorter reading to
+    select.  The multi-terminal ladder is a capability of the layout and
+    container layers (``layout.build_terminal``, and the terminal match in
+    ``container.parse``), exercised by artifacts the tests lay out directly;
+    no encoder in this tree produces one.  See tessera#144.
     """
 
 

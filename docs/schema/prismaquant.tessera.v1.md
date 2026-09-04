@@ -646,8 +646,16 @@ read different bytes:
 ## 3c. Truncation, integrity, and canonical bytes
 
 Three rules that together make a *truncated* artifact as trustworthy as a
-complete one. Truncation is this format's headline feature, so the common case
-must not be the unverified one.
+complete one. Truncation is one of this format's design features, so if the
+case arises it must not be the unverified one.
+
+**What the encoder writes.** `unit_artifact.build_unit_artifact` declares one
+terminal per unit, of the T-nvfp4 class, so every artifact this tree writes has
+exactly one legal length and the rules below are exercised only by artifacts
+laid out directly (`layout.build_terminal`). A truncatable *encode* needs a
+second change as well: `parse_unit_artifact` reads the scale and body planes at
+counts derived from the geometry rather than at the terminal's declared counts.
+Whether truncatable encodes are a planned capability is tessera#144.
 
 1. **Every terminal is a prefix.** In canonical plane order a terminal declares
    full planes, then at most one partially-present plane, then nothing. A
