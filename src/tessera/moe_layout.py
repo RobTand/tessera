@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import torch
 
 from .errors import GrammarError
+from .serving.scheme import MOE_GROUP_ROLES
 
 __all__ = [
     "W13_PROJECTIONS",
@@ -46,7 +47,8 @@ __all__ = [
 #: inside the FusedMoE (the exporter's fused rule keeps routed experts out of
 #: the dense gate/up merge for exactly this reason), while down rides ``w2``
 #: alone.  A group that is not a pair is a different mechanism, not a wider one.
-W13_PROJECTIONS = 2
+#: DERIVED from the runtime's own shard table rather than restated beside it.
+W13_PROJECTIONS = MOE_GROUP_ROLES["w13"]
 
 
 @dataclass(frozen=True)
