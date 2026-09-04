@@ -522,10 +522,23 @@ COMPILED_DISPATCH_LOG = _CFG.format(
 # The arm this issue's fix makes possible: compiled, with the dispatch pinned
 # back to the kernels the eager arm ran (--kernel-config ir_op_priority,
 # --compilation-config custom_ops).
-PINNED_DISPATCH_LOG = _CFG.format(
-    eager="False", mode="VLLM_COMPILE", lvl=3, ops="'all'",
-    ir="'vllm_c', 'native'") + (
-    "INFO 09-02 08:01:33 [decorators.py:708] saved AOT compiled function to "
+#
+# TWO config lines, because that is what a pinned arm actually logs.  vLLM
+# prints the request the CLI made and then the config it resolved, and only
+# the second says what ran: on the real compiled-both arm the first line reads
+# ``ir_op_priority=['vllm_c']`` and the second ``['vllm_c', 'native']``,
+# identical to the eager arm's single line -- which is why its served KL
+# against eager is exactly 0.000000 at 100.00% top-1.  The one-line fixture
+# this replaces asserted the resolved values on the *first* line, a shape no
+# serve produces, and so it certified a gate that refused three pairs the
+# serve says agree.  See docs/measurements/serving-compile-dispatch-2026-09-03.md
+# and /home/rob/tessera-runs/compile-dispatch/.
+PINNED_DISPATCH_LOG = (
+    _CFG.format(eager="False", mode="VLLM_COMPILE", lvl=3, ops="'all'",
+                ir="'vllm_c'")
+    + _CFG.format(eager="False", mode="VLLM_COMPILE", lvl=3, ops="'all'",
+                  ir="'vllm_c', 'native'")
+    + "INFO 09-02 08:01:33 [decorators.py:708] saved AOT compiled function to "
     f"/root/.cache/vllm/torch_compile_cache/torch_aot_compile/{AOT_KEY}/rank_0_0/model\n")
 
 
@@ -560,6 +573,69 @@ def test_pinning_the_dispatch_makes_a_compiled_arm_comparable_to_an_eager_one(tm
     pinned = _stamp(PINNED_DISPATCH_LOG, tmp_path, "pinned", cache_root=root, eager=False)
     require_same_dispatch(eager, pinned, why="pinned-dispatch A/B")
     assert compare(eager, pinned)["same_build"] is False
+
+
+def test_the_resolved_config_line_wins_over_the_requested_one():
+    """A pinned arm logs its ask and then vLLM's answer; only the answer ran.
+
+    The first line is the CLI request.  Reading it made ``require_same_dispatch``
+    compare an ask against a resolution, and the gate then answered "different
+    implementations" for arms whose served logits were bit-identical.
+    """
+
+    record = read_serve_log(PINNED_DISPATCH_LOG)
+    assert record["dispatch"] == read_serve_log(EAGER_DISPATCH_LOG)["dispatch"]
+    assert record["dispatch_requested"] == {
+        "custom_ops": ["all"],
+        "ir_op_priority": {"rms_norm": ["vllm_c"],
+                           "fused_add_rms_norm": ["vllm_c"]}}
+    # An arm that was never pinned logs one line and has nothing to disagree
+    # with -- the field must stay None rather than echo the resolution.
+    assert read_serve_log(EAGER_DISPATCH_LOG)["dispatch_requested"] is None
+
+
+#: The seven arms of the 2026-09-03 dispatch campaign and the served KL each
+#: measured against the eager arm.  ``True`` means the serve says the two arms
+#: ran the same program -- 0.000000 KL at 100.00% top-1 over 4088 positions --
+#: and so the gate must PASS the pair; ``False`` means it moved 0.244-0.249 KL
+#: and ~30% of top-1, and the gate must REFUSE it.  This is the ground truth
+#: the gate exists to reproduce, and the fixtures above cannot check it.
+_SERVED_AGAINST_EAGER = {
+    "compiled-both": True,             # KL 0.0,       top-1 100.00%
+    "compiled-both-noauto": True,      # KL 0.0,       top-1 100.00%
+    "compiled-eagerbackend": True,     # KL 0.0,       top-1 100.00%
+    "compiled": False,                 # KL 0.24730,   top-1  70.43%
+    "compiled-ir": False,              # KL 0.24393,   top-1  69.45%
+    "compiled-ops": False,             # KL 0.24892,   top-1  70.06%
+}
+_DISPATCH_RUN = Path("/home/rob/tessera-runs/compile-dispatch")
+
+
+@pytest.mark.parametrize("arm,agrees", sorted(_SERVED_AGAINST_EAGER.items()))
+def test_the_gate_answers_what_the_serve_measured(arm, agrees):
+    """Every arm of the campaign, gate verdict against served ground truth.
+
+    The gate's whole claim is that it can tell "these two arms ran the same
+    program" from the serve log alone.  That claim is checkable, because six
+    of these pairs were actually served and their KL is on disk -- so this
+    compares the gate's answer with the runtime's, arm by arm, rather than
+    with a fixture written to agree with it.
+
+    It is what the one-line ``PINNED_DISPATCH_LOG`` could not check: with the
+    first config line read, three of these six answers were wrong, and every
+    fixture-based test still passed.
+    """
+
+    eager_log = _DISPATCH_RUN / "serve_qwen_dispatch_eager.log"
+    arm_log = _DISPATCH_RUN / f"serve_qwen_dispatch_{arm}.log"
+    if not (eager_log.is_file() and arm_log.is_file()):
+        pytest.skip(f"{_DISPATCH_RUN} is not on this box")
+    a = read_serve_log(eager_log.read_text(errors="replace"))["dispatch"]
+    b = read_serve_log(arm_log.read_text(errors="replace"))["dispatch"]
+    assert a is not None and b is not None
+    assert (a == b) is agrees, (
+        f"eager vs {arm}: the log says same_dispatch={a == b}, the serve "
+        f"says {agrees} (a={a}, b={b})")
 
 
 def test_a_log_that_does_not_record_the_dispatch_certifies_nothing(tmp_path):
