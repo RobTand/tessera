@@ -1931,10 +1931,12 @@ def encode_unit(
             )
         if channel_sigma is None:
             channel_sigma = default_channel_sigma(grid)
-        # The body's reach in grid units, so the initial plane keeps every
-        # row's largest weight inside what the trellis can emit
-        # (``initial_channel_scale``): the window table's extreme entry, or
-        # the largest anchor the forests reach.
+        # The body's reach in grid units, so the initial plane starts every
+        # row's largest weight on what the trellis can emit, to within one
+        # fp16 word (``initial_channel_scale``, and see #87 -- the landing
+        # rounds to nearest, so a third of the raised rows start one ulp
+        # low): the window table's extreme entry, or the largest anchor the
+        # forests reach.
         if body is BodyKind.WINDOW:
             reach_sigma = channel_sigma if window_sigma is None else window_sigma
             reach_codes = window_table(

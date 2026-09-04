@@ -18,3 +18,7 @@ build/
 
 # Worker scaffolding: reports and captured logs stay local.
 /.claude/
+
+# Agent working reports: local evidence, not tree artifacts (four branches
+# committed one at the root before this was added).
+/report.md

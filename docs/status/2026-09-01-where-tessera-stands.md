@@ -731,7 +731,8 @@ cross-checked element for element against `tessera.decode.materialize_bf16` at
 load. The contract publishes the family (`TESSERA_BF16_K1`, reader rate range
 [256, 4096] derived by loading 25 rungs, TP `max_world_size 1`).
 
-**And it is served (contract v5).** Four route censuses on the pinned image --
+**And it is served (contract v5).** Four route censuses on the stock vLLM 0.28
+image --
 `resident`/`streamed` crossed with the eager and the compiled forward -- each
 record **112 of 112** declared modules on the `TESSERA_BF16` route, in both the
 prefill and the decode shape, zero problems, all four emitting the identical

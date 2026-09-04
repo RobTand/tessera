@@ -23,6 +23,10 @@
 #   build_identity_docker_env       -> the -e flags to splice into `docker run`
 #   build_identity_stamp LOG OUT [CACHE_ROOT] [IMAGE] [SERVE_MODE] [EAGER] [ARTIFACT]
 #
+# The resolved image digest reaches the stamp through RUNTIME_IMAGE_DIGEST /
+# RUNTIME_IMAGE_LOCAL_ID, which experiments/runtime_image.sh sets (issue #100).
+# A receipt naming only a floating tag has recorded nothing about what ran.
+#
 # TESSERA_SERVE_DETERMINISTIC=1 forwards TORCHINDUCTOR_DETERMINISTIC=1 into the
 # container (torch/_inductor/config.py: "skips any on device benchmarking in
 # Inductor if we know they affect numerics.  WARNING: Expect perf hit") and
@@ -49,6 +53,11 @@ build_identity_stamp() {
               --deterministic "${TESSERA_SERVE_DETERMINISTIC:-0}")
   [ -n "$cache_root" ] && args+=(--cache-root "$cache_root")
   [ -n "$image" ] && args+=(--image "$image")
+  # Issue #100: what RAN, not what was asked for.  runtime_image_require sets
+  # these; a wrapper that gated its image therefore stamps the digest with no
+  # change to this function's signature, and one that did not stamps neither.
+  [ -n "${RUNTIME_IMAGE_DIGEST:-}" ] && args+=(--image-digest "$RUNTIME_IMAGE_DIGEST")
+  [ -n "${RUNTIME_IMAGE_LOCAL_ID:-}" ] && args+=(--image-local-id "$RUNTIME_IMAGE_LOCAL_ID")
   [ -n "$mode" ] && args+=(--serve-mode "$mode")
   [ -n "$eager" ] && args+=(--eager "$eager")
   [ -n "$artifact" ] && args+=(--artifact-path "$artifact")

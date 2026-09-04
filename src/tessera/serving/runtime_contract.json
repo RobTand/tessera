@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 9,
+  "contract_version": 10,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -14,7 +14,7 @@
   "attested_on": {
    "vllm": "0.28.0",
    "torch": "2.13.0",
-   "image": "vllm/vllm-openai:latest",
+   "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
    "device": "NVIDIA GB10 (sm_121)"
   }
  },
@@ -375,6 +375,11 @@
   "mixed_rung_receipt_note": "Whether a CONTAINER RECEIPT covers a served module whose members took different rungs. It is false: the relaxation is proven by a decode identity (a real Qwen3-0.6B q/k/v at three rungs decodes element-for-element to what the three roles decode alone -- experiments/fused_member_rung_identity.py, tests/test_fused_member_rungs.py), not by a vLLM serve. This is the same distinction loader_axes draws against max_world_size: what the loader accepts is not what a receipt has covered. lane_eligibility is UNCHANGED by this version, so a mixed-rung module's cells resolve exactly as its members' rungs do individually -- unattested where no cell names the rung, which is the honest status and not a refusal."
  },
    "changelog": [
+    {
+     "contract_version": 10,
+    "date": "2026-09-03",
+    "change": "versions.attested_on.image becomes a DIGEST reference (vllm/vllm-openai@sha256:61fc8a89...) instead of the floating tag vllm/vllm-openai:latest, and that one string is now the serve-image PIN every harness in experiments/ reads through tessera.serving.runtime_image (issue #100). A tag is a name upstream can repoint: two boxes can hold two builds under it while every receipt records the same four words, which is the same defect one level down from the one issue #92 is about. The value is unchanged in what it denotes -- both GB10s were measured on 2026-09-03 to carry exactly this manifest digest -- so nothing that was attested is re-attested here; what changes is that the attestation now NAMES BYTES. Read the pin from this field; it exists nowhere else. NOTE for a reader that compares images: the check is membership in docker's RepoDigests, never .Id, which is the manifest digest under the containerd snapshotter and the config digest under overlay2 -- the same image reads 61fc8a896b0a on one box and 89154ef00dd1 on the other. ADDITIVE for a reader that reads keys by name: the key and its type are unchanged."
+   },
     {
      "contract_version": 9,
     "date": "2026-09-03",

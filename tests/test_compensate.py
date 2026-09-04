@@ -10,7 +10,9 @@ import pytest
 import torch
 
 from tessera.alphabet import E2M1_GRID, build_forest, tuple_grid
-from tessera.compensate import block_ldl, compensated_targets, regularize_hessian
+from tessera.compensate import (block_ldl, block_penalty, choose_ldl_block,
+                                compensated_targets, regularize_hessian)
+from tessera.errors import GrammarError
 from tessera.decode import reconstruct_unit
 from tessera.encode import encode_unit
 from tessera.grammar import bresenham_rate_schedule
@@ -161,6 +163,42 @@ def test_encoding_a_slice_equals_the_span_of_a_whole_encode(arity, rotation):
         stop = start + block
         piece = run(weight[:, start:stop].contiguous(), rates[start:stop])
         assert torch.equal(piece, whole[:, start:stop])
+
+
+@cuda
+def test_the_stitching_path_floors_at_the_encoders_own_scale_group():
+    """Whose floor ``choose_ldl_block`` has to be told (tessera#95).
+
+    This path hands the encoder one slice at a time, so a block narrower than
+    the encoder's scale group asks it to fit a group's scale to part of a
+    group -- and the encoder refuses outright rather than building something
+    no whole-matrix pass would produce.  That refusal *is* the floor, so the
+    floor is read off the encoder the caller holds (its ``group``, and its
+    rotation block) and handed to the chooser, which never guesses it.  The
+    production path, ``encode_unit(ldl=...)``, shares one plane across the
+    blocks and has no such floor -- see ``test_ldlq_lut_plane.py``.
+    """
+    cols, group = 128, 32
+    weight = torch.randn(16, cols, device="cuda") * 0.02
+    grid, rates, forests = _plan(cols, 2)
+    raw, count = _hessian(cols)
+    H = regularize_hessian(raw, count=count).cuda()
+
+    def encode(w, start, stop):
+        unit = encode_unit(w, forests, rates[start:stop], CC,
+                           rotation=RotationState.NONE, with_diagonals=False,
+                           completion=0, group=group, half=16)
+        return reconstruct_unit(unit, forests, CC)
+
+    # at the encoder's own group the slices are legal ...
+    compensated_targets(weight, block_ldl(H.clone(), group), encode, block=group)
+    # ... and below it the encoder itself refuses
+    with pytest.raises(GrammarError, match="scale groups"):
+        compensated_targets(weight, block_ldl(H.clone(), group // 2), encode,
+                            block=group // 2)
+    # so that is the floor this caller states, and the chooser holds it
+    b = choose_ldl_block(H, max_penalty=block_penalty(H, group), floor=group)
+    assert b >= group and b % group == 0
 
 
 def test_block_ldl_solves_without_forming_an_inverse(monkeypatch):

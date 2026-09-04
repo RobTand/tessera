@@ -129,12 +129,29 @@ person or agent — changing the code.
 - Targeted tests for every touched module, plus the byte-baseline audit if
   anything about rendering, planes or layout moved.
 - **Never compute the master baseline suite to prove your branch is clean.**
-  Run your *branch* suite once; for each test that fails there -- and only
-  those -- run that one file against a pristine master checkout. That answers
-  the only question a baseline was ever asked ("was this already broken?") in
+  Run the test files your diff touches; for each that fails -- and only those
+  -- run that one file against a pristine master checkout. That answers the
+  only question a baseline was ever asked ("was this already broken?") in
   seconds instead of a full suite. A delegating coordinator states the known
   baseline in the brief; fifteen agents recomputing one number in parallel put
   a 121 GB box into swap on 2026-09-03.
+- **The full suite is the coordinator's, run once on the merge result -- not
+  yours, run in isolation.** A branch owes its own targeted evidence, and
+  `tools/impacted_tests.py --ref master...HEAD` computes which tests those
+  are rather than leaving it to judgement: it walks the import graph, inverts
+  the edges, and returns everything reverse-reachable from what you changed.
+  Run it **in your own worktree** -- it reads the tree it is standing in, and
+  a branch analysed from elsewhere has unreadable edges, which it says. Trust
+  its `verdict`: `narrowed` means run the listed files, `full` means it found
+  a changed path it cannot reason about and you run everything. It fails open
+  by construction, because a selector that silently drops a test is worse
+  than no selector. Add the pre-fix failure line for every test you added. It does not owe a whole-tree run.
+  Fifteen branches each proving the whole tree green *in isolation* is
+  fifteen runs that cannot see the one risk that matters -- what the branches
+  do to each other -- while making every one of them slow enough to matter:
+  under that load a suite went from minutes to a projected ninety on
+  2026-09-03, and the merge queue stalled behind runs that were answering the
+  wrong question. Integration risk is caught at the integration point, once.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it

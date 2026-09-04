@@ -71,7 +71,8 @@ mode the family is a product in.
 WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json`` v5
 publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
 ``sm_121`` dense cells (``decode`` and ``batch``), because a container receipt
-covers exactly that: four route censuses on the pinned image -- both residency
+covers exactly that: four route censuses on the stock vLLM 0.28 image -- both
+residency
 modes crossed with the eager and the compiled forward -- each recording all 112
 declared modules on this route in both the prefill and the decode shape, plus a
 served KL in both modes against the folded twin vanilla vLLM serves.  Nothing

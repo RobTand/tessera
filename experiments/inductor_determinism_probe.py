@@ -38,7 +38,8 @@ SCOPE.  This measures the knob on **torch**, on whatever torch runs it.  Run it
 inside the serving image to measure the pinned one (2.13.0+cu130)::
 
     docker run --rm --gpus all -v /home/rob/tmp/x:/w --entrypoint bash \\
-      vllm/vllm-openai:latest -c 'cd /w && python3 inductor_determinism_probe.py --out r.json'
+      "$(PYTHONPATH=src python3 -m tessera.serving.runtime_image pin)" \
+      -c 'cd /w && python3 inductor_determinism_probe.py --out r.json'
 
 It does **not** measure two vLLM serves of a real checkpoint.  The graph here is
 a handful of reduction kernels; the served backbone autotuned 196.  So an

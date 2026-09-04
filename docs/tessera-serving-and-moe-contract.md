@@ -396,7 +396,12 @@ Three faults, all at plan time, all silent (fixed; see
   matched **nothing**: an export would have quantized zero Linears and reported
   success. `BODY_LAYER` matches `model.<...>.layers.<N>.`; the vision tower is
   `model.visual.blocks.N.` and stays BF16 by the same rule rather than by a
-  second exclusion list.
+  second exclusion list. Staying BF16 is not the same fact as being *named*,
+  though, and the plugin reads the second one: `ignore` was assembled from
+  three `BODY_LAYER`-gated sources, so every vision Linear was passed through
+  and never named, and a `LinearBase` that is neither declared nor ignored is
+  refused (#86). `ignored_modules` now derives the name from each tensor the
+  export **writes**, body or not — one rule, no roster to keep beside it.
 * Routed experts here are **unpacked per-expert 2-D**
   (`...mlp.experts.{e}.{gate,up,down}_proj.weight`, 2592 of them across layers
   1–3; layer 0 is dense). Being 2-D, nothing separated them from ordinary
@@ -410,9 +415,69 @@ Three faults, all at plan time, all silent (fixed; see
   model's attention carries `k_conv1d.weight [8192, 1, 4]`. Its ignore entry —
   module minus leaf — is `...self_attn`, the parent of every attention Linear
   in the layer. `PACKED_EXPERT_ND` identifies a stack by where it sits.
+* **A fourth, found 2026-09-03 and fixed here.** `quantizable` tested
+  `name.endswith(".weight")` before it looked at anything else, and
+  transformers-5 stores a packed stack as an `nn.Parameter` on the experts
+  module — so the tensor on disk is `...mlp.experts.gate_up_proj`, with no
+  suffix at all. Those names were classified as **nothing**: not dense, not
+  packed, not routed, so `expert_shapes` was empty on a model with 96 stacks.
+  The classifier is what the PLAN is built from, so what survives here is the
+  plan-time half: a `--plan-json` naming such a stack fell through to the
+  generic "unknown tensor" check instead of the packed-expert refusal that says
+  what is missing and why. The fix reads the name through its `.weight`
+  spelling (`probe`), the same idiom `ignored_modules` uses, so one convention
+  decides what a name means and the suffix decides nothing.
+
+  The *load-time* half of this fault — the FusedMoE module never reaching
+  `ignore`, so the plugin refuses a layer it cannot find there after the dense
+  body has encoded for hours — was closed independently by #86, which replaced
+  the three `BODY_LAYER`-gated ignore sources with one rule over the tensors
+  actually written. Recorded because the two look like one bug and are not: the
+  classifier decides the plan, `ignored_modules` decides the ignore list, and
+  only the first is still this section's.
+
+  Making `.weight` optional **widens** the classifier, and the widened edge is
+  pinned rather than assumed. `<moe>.experts.<projection>` with no suffix is
+  admitted *before* the suffix test, so its rank is no longer checked by the
+  `len(shape) >= 3` branch; "nothing else in a decoder layer is called
+  `experts.<projection>`" would be an assertion about every checkpoint yet to
+  exist, and that is the same shape as the rank assumption the third fault
+  above already retired. A bare name of rank < 3 therefore **refuses at plan
+  time**, by name and rank: a packed stack stacks experts, so it carries an
+  expert axis, and both available guesses are wrong in the expensive direction
+  (as an expert stack it leaves the module BF16 and named in `ignore`; as a
+  dense Linear it declares a module vLLM never builds). No checkpoint on this
+  box triggers it — it is the guard that keeps the *next* layout from being
+  filed silently.
 
 Measured after the fix: **49 dense Linears (was 0), 2592 routed expert leaves
-across layers [1, 2, 3], 0 packed stacks.**
+across layers [1, 2, 3], 0 packed stacks** on GLM-5.3-Flash-4layer; and on
+`/mnt/shared/models/Qwen3.8-Flash-Next`, **96 packed stacks over 48 FusedMoE
+modules (was 0)**, the remaining two being the MTP sidecar's, which `BODY_LAYER`
+does not match by the same rule that keeps the vision tower out.
+
+`experiments/moe_plan_baseline.py --diff --no-export`, master `cf5d0e6` against
+this change, over the seven expert layouts it builds plus the real Qwen
+checkpoint: **5 rows of 36 move, and every one of them is a classification or a
+plan-time refusal.**
+
+* `classify/<case>/packed` goes `[]` -> 96 on `Qwen3.8-Flash-Next`, `[]` -> 2 on
+  `qwen38_packed_nosuffix`, `[]` -> 4 on `gptoss_packed`. Nothing else moves in
+  any bucket, so no tensor changed which kind of layer owns it.
+* The two packed plan refusals stop reading "plan names tensors that are not 2-D
+  body weights" and start naming the stack, its shape and its orientation.
+* `ignore` and `quantization_config` do **not** move, which is the point of
+  running this against the new base: they moved in the pre-#86 measurement of
+  the same change, and #86's one rule over the tensors written now reaches those
+  modules by its own path.
+
+The export rows (`tensors`, `manifest`, `ignore`, `quantization_config` sha256
+per case) were **not** re-taken against `cf5d0e6`: they need a CPU encode per
+case, and the box was at load 131. What can be said without them is mechanical
+rather than measured, and is labelled as such — the exporter diff against master
+is three hunks, in `PACKED_EXPERT_ND`'s comment, in `quantizable`, and in the
+manifest dict in `main`; no encode, render, pack or write path is touched. The
+one manifest field this adds is `routed_moe`, below.
 
 ### 9.3 A packed expert stack cannot always be oriented, and this model is the case
 
@@ -427,8 +492,13 @@ That refusal is not defensive programming. This model has
 would be `[E, 4096, 4096]` — square — and no comparison of dims orients it. A
 default axis order there transposes every expert in silence.
 
-The packed path's tests are therefore **synthetic**: no packed-expert source is
-at hand, so they fix the contract, not agreement with a real checkpoint.
+The packed path's **orientation** tests are therefore synthetic: they fix the
+contract, not agreement with a real checkpoint. Its **classification** tests are
+not, as of 2026-09-03: `/mnt/shared/models/Qwen3.8-Flash-Next` is a packed
+source on this box, and `test_the_real_packed_source_is_classified_as_experts`
+reads its 96 body stacks off disk. That distinction is not pedantry — the
+spelling the classifier missed (§9.2's fourth fault) is one only a real
+checkpoint carried, and every synthetic packed fixture had written `.weight`.
 
 ### 9.4 The encode budget is real, and the fused path is already taken
 
@@ -449,6 +519,37 @@ So the encoder is fused but roughly half-loaded, and utilization would have
 said nothing — on GB10 it reads "a kernel is resident", not "the SMs are
 working". That headroom is real and unspent: `src/tessera/encode.py` is
 out of scope here, and the budget above is workable without it.
+
+### 9.6 A wire parameter routes through the expert mapping and is then dropped by the loader
+
+Issue #5's item 3 records `RoutedExperts.build_expert_params_mapping` as
+suffix-agnostic, "so custom suffixes route fine". The mapping is; the loader is
+not, and the difference is silent.
+
+Measured on the pinned build, no GPU
+(`experiments/moe_wire_loader_probe.py`,
+`docs/measurements/tessera-moe-wire-loader-2026-09-03.md`): `load_weights`
+rewrites the checkpoint name to the parameter's before it calls the loader, so
+`...experts.0.gate_proj.wire` arrives as `...experts.w13_wire` — a string
+containing neither `weight` nor `scale`, which are the substrings
+`RoutedExperts.weight_loader`'s dispatch tests. It falls off the end and returns
+`False`, writing nothing and raising nothing. `w13_wire`, `w2_wire` and
+`w13_wire_len` all do; `w13_weight` and `w2_weight`, the same call through the
+same stand-in, return `True` and are written.
+
+The remedy is a value the route sets anyway: `load_weights` calls
+`param.weight_loader`, so a wire parameter registered with a loader of its own
+is loaded by that loader and the dispatch is never in the path. Driven through
+`load_weights` itself, it is invoked, the name is yielded and the parameter is
+written. It is also the only form that can work: a wire row is variable-length
+at a declared stride, and `_load_w13` narrows by half the shard dimension and
+then copies shape-for-shape, so a short blob into a padded row is a size
+mismatch rather than a short write.
+
+This constrains `create_weights` for the expert route. It says nothing about
+the forward: no `ROUTES` entry, no `apply`, no `routed_moe` in
+`scheme.STRUCTURES`, no `lane_eligibility` cell, and no served measurement to
+justify one.
 
 ### 9.5 The serving image could not build the streamed decoder
 

@@ -381,3 +381,44 @@ def test_the_initial_plane_keeps_every_row_inside_the_reach():
     assert initial_channel_scale(work, sigma, reach=None)[1].equal(plain_eff)
     with pytest.raises(GrammarError):
         initial_channel_scale(work, sigma, reach=0.0)
+
+
+def test_a_raised_row_lands_within_one_ulp_of_the_reach():
+    """Issue #87, the contract as the code actually holds it.
+
+    ``initial_channel_scale`` raises a row whose loudest weight would land past
+    the body's reach to ``scale = amax / reach``, and lands that with
+    ``land_channel_scale`` -- round to **nearest**.  ``amax / reach`` is a lower
+    bound, so a third of the raised rows land one fp16 ulp under it and are
+    clipped anyway: 29609 of 87870 raised rows over 196 dense Qwen3-0.6B
+    Linears at E4M3/L=14, 16-44% per unit (``experiments/reach_land_census.py``).
+
+    This pins what that means, so nothing downstream reads the start as an
+    exact guarantee: a raised row's largest weight lands inside the reach **to
+    within one fp16 ulp** (4.9e-4 relative), and never further out than that.
+    ``refit_channel_scale``'s ``floor`` lands the same bound with
+    ``land_at_least``, which rounds up and is exact; the difference is one ulp
+    and it is deliberate here, not an oversight.
+    """
+    from tessera.encode import grid_vector_table, window_table
+
+    torch.manual_seed(87)
+    rows, cols = 1024, 256
+    w = torch.randn(rows, cols)
+    w[torch.arange(rows), torch.randint(cols, (rows,))] *= torch.linspace(1.0, 40.0, rows)
+    sigma = default_channel_sigma(E4M3_GRID)
+    table = window_table(E4M3_GRID, 14, sigma=sigma, seed=0, half=16)
+    reach = float(grid_vector_table(E4M3_GRID)[table.long()].abs().max())
+
+    amax = w.abs().amax(dim=1)
+    rms = w.pow(2).mean(dim=1).sqrt()
+    over = amax * sigma > reach * rms
+    assert 0 < int(over.sum()) < rows, "the fixture must raise some rows and not others"
+
+    _stored, effective, _g = initial_channel_scale(w, sigma, reach=reach)
+    landed = amax[over] / effective[over]
+    # Not "inside": some rows land past the reach, by at most one ulp.
+    assert bool((landed > reach).any()), "the fixture must exercise the shortfall"
+    assert bool((landed <= reach * (1 + 2.0 ** -10)).all()), (
+        f"worst landing is {float(landed.max()) / reach - 1:.3e} past the reach, "
+        f"which is more than one fp16 ulp")
