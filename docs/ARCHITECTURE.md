@@ -43,6 +43,19 @@ and ignores, derives totals from the combined module records, and writes the
 final `config.json` last. The runtime digest here names what the dispatch was
 asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
 
+Source coverage alone does not prove that a plan was fulfilled: an omitted
+expert stack can remain internally consistent BF16. Before publication the
+merger therefore reads the sealed `identity.options.plan` and requires every
+explicit quantized target to have its emitted roles at the requested grid and
+rung. Planned expert-stack names must equal both manifest and config stack
+sets, including each stack's complete expert/projection population and source
+projection coverage. Implicit dense defaults have no complete plan roster and
+are outside this additional check. `ts5_sidecar_check.py` repeats the same
+validator before serving, using the merged `export_identity.options.plan` or
+an explicit `--plan-json` that must agree with it; its routed-MoE summary must
+name the same population too. Existing version-one parts remain readable and
+their containers do not change.
+
 ## 3. Bytes: priced == served
 
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
