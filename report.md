@@ -302,7 +302,8 @@ lives in runtime_contract.json and is read from there
 both places), so master is red on it today and this branch does not touch it.
 Someone put the pin digest back into `src/tessera/stock.py` after #100's test
 landed. Not mine to fix — it is #100's invariant and #92's file.
-PLACEHOLDER_SWEEP3
+
+That sweep: `1 failed, 126 passed, 14 warnings in 174.01s`, `PYTEST_EXIT=1`.
 
 New tests and the pre-fix failure line each one asserts:
 
