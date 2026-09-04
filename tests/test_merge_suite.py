@@ -32,7 +32,7 @@ def test_the_gpu_arm_carries_the_gate_and_the_cpu_arm_does_not():
 
     Without it the GPU arm placed on a device-less box returns a green tick for
     a population it never touched -- the exact shape of tessera#112.  The x86
-    arm must NOT carry it: that box has no torch by design, and refusing there
+    arm must NOT carry it: that box has no CUDA device, and refusing there
     would make an honest population unreportable.
     """
 

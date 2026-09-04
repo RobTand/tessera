@@ -84,7 +84,8 @@ ARMS = {
         "strict_cuda": True,
     },
     "x86": {
-        "why": "the torch-free population: what a box with no torch collects",
+        "why": "the device-less population: torch present, no CUDA device, "
+               "which is what dl380g10 actually reports",
         "python": "/home/rob/venvs/pb-cpu/bin/python",
         "pbrun_flags": ["--tag", "x86"],
         "strict_cuda": False,
