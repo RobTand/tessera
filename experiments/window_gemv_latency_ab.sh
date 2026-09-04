@@ -74,6 +74,17 @@ echo "arms share inode $INO_A ($(stat -c %s "$SRC/armA/model.safetensors") bytes
 # and run anyway; the receipt still says what the box was doing, and the ratio
 # tool still reads each arm's own contention fields.
 IDLE_S=${IDLE_S:-600}
+# SETTLE FIRST, AND DO NOTHING WHILE SETTLING.  The idle window has to describe
+# a box nobody is using, and this job's own claim is what makes that true -- but
+# only from the moment the previous holder's work has drained.  Sleeping under
+# the claim is not queueing: the reading taken afterwards IS one of #109's
+# deliverables, and #5's whole problem was not having it.
+SETTLE_S=${SETTLE_S:-0}
+if [ "$SETTLE_S" -gt 0 ]; then
+  echo "--- settling $SETTLE_S s under the box claim, so the idle window below"
+  echo "--- describes this box with nothing on it  $(date -u +%FT%TZ)"
+  sleep "$SETTLE_S"
+fi
 echo "--- idle baseline, $IDLE_S s before any serve of this run ---"
 $PY "$(dirname "$0")/box_power_window.py" --label "idle-before-$REGIME" \
   --window="-$IDLE_S:0" --out "$RUNS/power-idle-before-$REGIME.json"
