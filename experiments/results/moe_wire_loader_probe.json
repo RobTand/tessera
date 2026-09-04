@@ -1,0 +1,178 @@
+{
+    "vllm": "0.1.dev20051+g487ecf187",
+    "torch": "2.13.0+cu130",
+    "mapping": {
+        "rows": [
+            [
+                "experts.w13_",
+                "experts.0.gate_proj.",
+                0,
+                "w1"
+            ],
+            [
+                "experts.w2_",
+                "experts.0.down_proj.",
+                0,
+                "w2"
+            ],
+            [
+                "experts.w13_",
+                "experts.0.up_proj.",
+                0,
+                "w3"
+            ],
+            [
+                "experts.w13_",
+                "experts.1.gate_proj.",
+                1,
+                "w1"
+            ],
+            [
+                "experts.w2_",
+                "experts.1.down_proj.",
+                1,
+                "w2"
+            ],
+            [
+                "experts.w13_",
+                "experts.1.up_proj.",
+                1,
+                "w3"
+            ]
+        ],
+        "param_name_prefixes": [
+            "experts.w13_",
+            "experts.w2_"
+        ]
+    },
+    "rewrite": {
+        "weight": {
+            "checkpoint_tensor": "model.language_model.layers.1.mlp.experts.0.gate_proj.weight",
+            "matched": true,
+            "param_attribute": "w13_weight",
+            "weight_name_seen_by_loader": "model.language_model.layers.1.mlp.experts.w13_weight",
+            "contains_weight": true,
+            "contains_scale": false,
+            "shard_id": "w1",
+            "expert_id": 0
+        },
+        "weight_scale": {
+            "checkpoint_tensor": "model.language_model.layers.1.mlp.experts.0.gate_proj.weight_scale",
+            "matched": true,
+            "param_attribute": "w13_weight_scale",
+            "weight_name_seen_by_loader": "model.language_model.layers.1.mlp.experts.w13_weight_scale",
+            "contains_weight": true,
+            "contains_scale": true,
+            "shard_id": "w1",
+            "expert_id": 0
+        },
+        "wire": {
+            "checkpoint_tensor": "model.language_model.layers.1.mlp.experts.0.gate_proj.wire",
+            "matched": true,
+            "param_attribute": "w13_wire",
+            "weight_name_seen_by_loader": "model.language_model.layers.1.mlp.experts.w13_wire",
+            "contains_weight": false,
+            "contains_scale": false,
+            "shard_id": "w1",
+            "expert_id": 0
+        },
+        "wire_len": {
+            "checkpoint_tensor": "model.language_model.layers.1.mlp.experts.0.gate_proj.wire_len",
+            "matched": true,
+            "param_attribute": "w13_wire_len",
+            "weight_name_seen_by_loader": "model.language_model.layers.1.mlp.experts.w13_wire_len",
+            "contains_weight": false,
+            "contains_scale": false,
+            "shard_id": "w1",
+            "expert_id": 0
+        }
+    },
+    "execute": {
+        "w13_wire": {
+            "shard_id": "w1",
+            "param_shape": [
+                2,
+                2,
+                64
+            ],
+            "loaded_shape": [
+                40
+            ],
+            "returned": false,
+            "raised": null,
+            "parameter_written": false
+        },
+        "w2_wire": {
+            "shard_id": "w2",
+            "param_shape": [
+                2,
+                48
+            ],
+            "loaded_shape": [
+                40
+            ],
+            "returned": false,
+            "raised": null,
+            "parameter_written": false
+        },
+        "w13_wire_len": {
+            "shard_id": "w1",
+            "param_shape": [
+                2,
+                2
+            ],
+            "loaded_shape": [
+                1
+            ],
+            "returned": false,
+            "raised": null,
+            "parameter_written": false
+        },
+        "w13_weight": {
+            "shard_id": "w1",
+            "param_shape": [
+                2,
+                128,
+                16
+            ],
+            "loaded_shape": [
+                64,
+                16
+            ],
+            "returned": true,
+            "raised": null,
+            "parameter_written": true
+        },
+        "w2_weight": {
+            "shard_id": "w2",
+            "param_shape": [
+                2,
+                16,
+                48
+            ],
+            "loaded_shape": [
+                16,
+                48
+            ],
+            "returned": true,
+            "raised": null,
+            "parameter_written": true
+        }
+    },
+    "remedy": {
+        "yielded": [
+            "w13_wire"
+        ],
+        "calls": [
+            {
+                "weight_name": "model.language_model.layers.1.mlp.experts.w13_wire",
+                "shard_id": "w1",
+                "expert_id": 0,
+                "loaded_shape": [
+                    40
+                ]
+            }
+        ],
+        "parameter_written": true
+    }
+}
