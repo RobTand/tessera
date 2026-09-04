@@ -39,8 +39,12 @@ export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/home/rob/.triton-cache}
 # default of $OUT/ext puts it on NFS and the census dies at model inspection
 # with "PermissionError: '/ext/triton'", which surfaces as vLLM failing to
 # inspect Glm5NextForConditionalGeneration and looks like a model problem.
-# (The first census run survived only because $EXT happened to be inherited
-# from the environment as a local path, so this was luck, not design.)
+# (The first census run survived because its pbrun command line exported
+# EXT=/home/rob/tmp/ts5-ext by hand and the re-run's wrapper script did not --
+# the difference was between two submissions of mine, not inside this file.
+# The default below is what removes that difference: a caller who forgets is
+# now correct, and a caller who wants a different scratch dir must name a
+# LOCAL one.)
 export TS RUNS=${RUNS:-$OUT} EXT=${EXT:-/home/rob/tmp/ts5-ext}
 mkdir -p "$OUT" "$EXT"
 # EVERYTHING THIS SCRIPT SAYS GOES TO A FILE AS IT SAYS IT.  Under the

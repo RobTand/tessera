@@ -360,3 +360,56 @@ which is how that gate came to be there.
 Both cuts and the uncut base are refused by it. Qwen3-0.6B passes. Running it
 on the teacher costs a second and would have said, before either serve tonight,
 that the KL at the end was not going to be a number.
+
+### The re-run died on the same permission one directory over
+
+The fix above moved `census.json` to a local mount. The re-run failed anyway,
+before loading anything, with vLLM reporting
+
+```
+Model architectures ['Glm5NextForConditionalGeneration'] failed to be inspected.
+```
+
+which reads like a model problem and is not one. Underneath it:
+`PermissionError: '/ext/triton'`. `tessera_plugin_run.sh` forces
+`TRITON_CACHE_DIR=/ext/triton` inside the container, `/ext` is whatever `$EXT`
+the caller supplies, and this driver's default was `$OUT/ext` — NFS again, root
+squash again, one directory over from the file I had just moved.
+
+The first census run had survived it because *that* submission's pbrun command
+line exported `EXT=/home/rob/tmp/ts5-ext` by hand, and the wrapper script I
+re-submitted from did not. So the two runs differed in their submissions, not
+in their code, which is the least visible way for two runs to differ. The
+driver now defaults `EXT` to a local path, so the scratch directory is correct
+for a caller who never thinks about it.
+
+The recurring shape, twice in one night: **the container writes as root, and
+every path handed to it must be one root can write.** `/mnt/shared` cannot be,
+for any of them — output, `TMPDIR`, `TORCH_EXTENSIONS_DIR`, or the Triton
+cache.
+
+### A withdrawn action leaves its container running
+
+Worth recording because it is a pool fact, not a Tessera one, and it cost GPU
+minutes twice tonight.
+
+`pbrun --withdraw` on action `975a7b593f73` reported
+`withdrew ... from claimed; released 39 token(s); signalled TERM -2958554`. The
+process group was gone a second later — and a `docker run` that group had
+started at 08:04:52 was **still running**, holding roughly 45 GB of the box's
+one GPU with no pool token behind it, because a container is a child of
+`dockerd` and not of the process group the TERM reached. Nothing in the pool
+knew it existed; the tokens it had been using were already back in the free
+pool for another action to claim.
+
+The same shape, earlier in the night, left a serve *lock* behind instead of a
+container: the TERM landed inside `serve_lock_release`, between the `rm -f
+owner` and the `rmdir`, and every later arm on the box blocked on a lock
+directory with no owner. That one is fixed on our side —
+`experiments/serve_lock.sh` now reaps an ownerless lock after a full poll and a
+dead-owner lock immediately, with `tests/test_serve_lock.py` holding both rules
+plus the case that matters more than either (a *live* owner still blocks).
+
+The container half is not ours to fix. Reported upward as a pool defect: a
+withdraw that releases an action's tokens must also reap the containers the
+action started, or the release is a lie.
