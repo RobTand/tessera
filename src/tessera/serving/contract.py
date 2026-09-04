@@ -20,7 +20,11 @@ THE LAUNCH IS A VALUE, AND THE RESIDENCY IS A CONDITION (schema v4, #111).
 ``scheme.ROUTE_LAUNCHES`` -- the table the routes' own ``census_expected`` is
 built from -- narrowed by the cell's regime, by the residency its
 ``TESSERA_SERVE_MODE`` flag names, and by the lanes each of its rungs reaches
-under ``native_extensions[].lane.requires``.  Before v4 the launch appeared
+under ``native_extensions[].lane.requires``.  The REGIME there is this
+module's (``CENSUS_PHASE_REGIMES`` below: ``decode`` is the one-row forward
+and ``batch`` is every M > 1), never the kernel's word for M <= its GEMV max
+-- reading the second into a cell is how the batch cell first published the
+prefill launch alone and left out the GEMV the same regime runs at two rows.  Before v4 the launch appeared
 only in the cell's ``id``, so an E4M3 decode published the materialised FP8
 pair in every case; that was accidentally true while the window-GEMV lane was
 unreachable and false the moment a rate-constrained artifact was served, with
@@ -923,8 +927,7 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
         rates = rate_set(root_from_q256(int(rung)), cap=cap)
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates)
         for mode in modes:
-            want |= launch_pairs(route, regime=cell["regime"], mode=mode,
-                                 lanes=lanes, rate_set=rates)
+            want |= launch_pairs(route, regime=cell["regime"], mode=mode, lanes=lanes)
     got = cell_executes(cell)
     if got != want:
         raise ValueError(

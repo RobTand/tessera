@@ -14,10 +14,11 @@ It exits non-zero unless every Tessera module, in both shapes, reports
 ``state == "served"``, a ``<family>:<mode>`` policy equal to the family the
 checkpoint declares for that module, that route's activation contract, and a
 ``(symbol, decoder)`` pair the route owns for the driven regime (the streamed
-FP8 route reports the window-GEMV pair in the decode regime and the
-materialised pair in batch, and the streamed BF16 route the same shape over
-``torch.mm``) -- so the JSON it writes is a receipt only when
-the run also passed.
+FP8 route reports the window-GEMV pair wherever the lane prepared, and the
+materialised tile under the stock GEMM in the batch regime alone -- the shapes
+above the lane's max M, which no one-row forward can be -- with the streamed
+BF16 route the same shape over ``torch.mm``) -- so the JSON it writes is a
+receipt only when the run also passed.
 
 AND WHAT THE CONTRACT SAYS IT EXECUTES.  Since ``lane_eligibility`` schema v4
 a cell publishes ``executes`` -- the ``(symbol, decoder)`` launches the route
@@ -35,9 +36,9 @@ because one graph serves every M, so a compiled run writes ``agrees: null``
 with a reason rather than reading a traced record as a disagreement.
 
 AND ONE QUESTION THE PER-MODULE CHECK CANNOT ASK.  Everything above is a check
-on AGREEMENT, and agreement is what a void experiment produces: the streamed
-FP8 route's decode regime legitimately admits the window-GEMV pair OR the
-materialised one, so a serve in which the GEMV lane prepared for *nothing*
+on AGREEMENT, and agreement is what a void experiment produces: every regime
+of the streamed FP8 route legitimately admits the window-GEMV pair OR the
+torch window decode, so a serve in which the GEMV lane prepared for *nothing*
 passes module by module.  Issue #104 is what that cost -- four censuses logged
 112 of 112 modules refusing the lane at load, every receipt recorded one route
 and ``problems: []``, and the two arms of the experiment were one lane state
@@ -200,15 +201,16 @@ def main() -> int:
     # scale is an epilogue), and a hardcoded symbol read that as a refusal on
     # every module of a route it had simply never been told about.
     symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
-    # The streamed FP8 route serves two launches: the window GEMV in the
-    # decode regime, the materialised tile under ``_scaled_mm`` in batch (and
-    # wherever the GEMV lane did not prepare).  The streamed BF16 route is the
-    # same shape over ``torch.mm``: the window GEMV in the decode regime where
-    # the lane prepared, the kernel-decoded tile above it, the torch decode
-    # where it did not.  The pairs each regime may report live where the
-    # dispatch lives (``fp8_gemv.census_expected``, ``bf16_route.
-    # census_expected``), not in a second spelling here; every other family
-    # reports one pair.
+    # The streamed FP8 route serves two launches where the lane prepared: the
+    # window GEMV, which BOTH regimes may report (the one-row forward always
+    # takes it, and so does the two-row tile), and the kernel-decoded tile
+    # under ``_scaled_mm``, which only the batch regime can -- it is the
+    # branch ``decode_is_gemv`` refuses, and every M that refuses is above one
+    # row.  Where the lane did not prepare, the torch window decode, at any M.
+    # The streamed BF16 route is the same shape over ``torch.mm``.  The pairs
+    # each regime may report live where the dispatch lives
+    # (``fp8_gemv.census_expected``, ``bf16_route.census_expected``), not in a
+    # second spelling here; every other family reports one pair.
     fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
     bf16_expected = bf16_route.census_expected(compiled=args.compiled)
 
@@ -356,10 +358,11 @@ def main() -> int:
             if r["policy"] != f"{family}:{mode}":
                 problems.append(f"{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
             # The (symbol, decoder) pair, not each half alone: the streamed FP8
-            # route reports the GEMV pair in the decode regime and the
-            # materialised pair in batch (``fp8_gemv.census_expected`` owns the
-            # sets), and a half-wise comparison would read either half as a
-            # refusal on every module of the other regime.
+            # route reports the GEMV pair wherever the lane prepared and the
+            # kernel-decoded tile under the stock GEMM above the lane's max M
+            # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
+            # comparison would read either half as a refusal on every module
+            # that legitimately took the other launch.
             want = _expected(family, CENSUS_PHASE_REGIMES[phase])
             if ((r["symbol"], r.get("decoder")) not in want
                     and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):

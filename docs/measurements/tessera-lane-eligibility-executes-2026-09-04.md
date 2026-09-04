@@ -1,7 +1,9 @@
 # The contract names the launch, and the census it was attested from agrees
 
 **Issue #111.** 2026-09-04. Branch `wf/ts-111`, base master `766033c`.
-`lane_eligibility` schema **v4**, `contract_version` **13**.
+`lane_eligibility` schema **v4**, which lands as changelog entry **13**; the
+branch ships `contract_version` **14** (entry 14 is the separate fix that the
+window GEMV is loaded by *both* window routes, not only the FP8 one).
 
 ## What was wrong
 
@@ -90,7 +92,7 @@ The shipped table:
 | `tessera_e4m3_k1_dense_sm121_decode_resident` | 1024 | resident | `torch._scaled_mm` / `torch_window` |
 | **`tessera_e4m3_k1_dense_sm121_decode_streamed`** | **1024** | **streamed** | **`tessera_window_gemv::gemv` / `window_gemv`** |
 | `tessera_e4m3_k1_dense_sm121_batch_resident` | 1024 | resident | `torch._scaled_mm` / `torch_window` |
-| `tessera_e4m3_k1_dense_sm121_batch_streamed` | 1024 | streamed | `torch._scaled_mm` / `window_gemv` |
+| `tessera_e4m3_k1_dense_sm121_batch_streamed` | 1024 | streamed | **both** `tessera_window_gemv::gemv` and `torch._scaled_mm`, / `window_gemv` |
 | `tessera_bf16_k1_dense_sm121_decode` | 1792 | both | `torch.mm` / `torch_window` |
 | `tessera_bf16_k1_dense_sm121_batch` | 1792 | both | `torch.mm` / `torch_window` |
 
@@ -99,6 +101,41 @@ into the JSON and believed. Note the `batch_streamed` row: the prefill decoder
 is `window_gemv`, not `torch_window` -- with the lane prepared the tile comes
 off the lane's own kernel decode -- so the old batch cell's `id` was stale on
 the decoder half too, at the same rung, for the same reason.
+
+### The same defect, one regime over
+
+The first cut of this table gave `batch_streamed` the materialised launch
+alone and conditioned a dead decode launch on a rate set. Both came from
+reading one word two ways.
+
+**The kernel's `decode` is `M <= GEMV_MAX_M`** -- eight token counts, which is
+what `fp8_gemv.decode_is_gemv` decides. **This contract's `decode` is the
+one-row forward**, and its `batch` is *every* M > 1: `CENSUS_PHASE_REGIMES`
+says so in its own words ("a regime is a *problem shape* and the batch cell
+covers every M > 1 forward, not only a first prefill"), and a census record is
+stamped in that vocabulary. Run the dispatch over every M it distinguishes
+(`range(1, GEMV_MAX_M + 2)`, both values of `rate_one`) and bucket by the
+contract's regime:
+
+| regime | what the dispatch launches, lane prepared |
+|---|---|
+| `decode` (M = 1) | `tessera_window_gemv::gemv`, always -- the rate-1 refusal starts at the 4-row tile, so no rate reaches this regime |
+| `batch` (M > 1) | the `gemv` **and** the kernel-decoded tile under the stock GEMM: M = 2 is a GEMV, M > 8 is not |
+
+So the batch cell publishes two launches, the decode cell one, and no cell
+anywhere carries a rate condition. The version that shipped a single batch
+launch was true of the 64-row prefill the census drives and false of the
+runtime -- **#111's own failure, in the regime the issue did not name**, and
+found only because the correction had to answer "which M does this cover".
+
+`tests/test_serving_contract.py::test_the_launch_tables_regimes_are_the_routes_own_dispatch`
+is the tie that closes it: it derives both `regimes` fields from the routes'
+own `decode_is_gemv` and asserts exact equality per regime, so a launch the
+dispatch cannot make fails as loudly as one it can. Put the old table back and
+it reports `batch: dispatch=[gemv, _scaled_mm] table=[_scaled_mm] -> MISMATCH`.
+The routes' `census_expected` moves with it: `batch` gains the GEMV pair (a
+census driven at 4 rows would have been falsely refused) and `decode` loses
+the kernel-decoded-tile pair (impossible at one row).
 
 **Two more rules, both closing a way for the table to lie.**
 
@@ -132,16 +169,21 @@ covering its `(platform, family, structure, regime, residency, rung)`, and
 `tools/tessera_route_census.py` writes the block into the receipt and refuses
 a disagreement.
 
-Replayed offline over all 224 records of the R1024 census -- no GPU, the
+Replayed offline over all 224 records of the R1024 census by
+`experiments/ts111_replay_cell_agreement.py` -- no GPU, no re-serve, and the
 receipt is on disk (`/home/rob/tessera-runs/ts111/replay-R1024.txt`):
+
+Abridged from that file (the script prints the whole
+`cell_launch_agreement` block as JSON):
 
 ```
 receipt      : /home/rob/tessera-runs/ts104/census-R1024-readable.json
 checkpoint   : /mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024
 mode / eager : streamed / compiled = False
+device       : NVIDIA GB10 (sm_121)
 modules      : {'decode': 112, 'prefill': 112}
 
-=== the shipped v4 table ===
+=== the shipped table ===
  decode : 112 modules, 112 covered, 0 unattested -> tessera_e4m3_k1_dense_sm121_decode_streamed: 112
  prefill: 112 modules, 112 covered, 0 unattested -> tessera_e4m3_k1_dense_sm121_batch_streamed : 112
  agrees : true      problems: []

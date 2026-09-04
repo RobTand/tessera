@@ -99,15 +99,20 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [],
     },
-    # The batch regime is ``torch._scaled_mm`` in BOTH residencies and the
-    # DECODER is what differs: with the lane prepared the prefill tile comes
-    # off the lane's own kernel decode, which is what the R1024 census records
-    # (``decoder window_gemv``, symbol ``torch._scaled_mm``, 112 of 112).
+    # TWO LAUNCHES, because the batch regime is every M > 1 forward and not
+    # only a first prefill (``contract.CENSUS_PHASE_REGIMES`` says so in its
+    # own words).  The census drives a 64-row prefill, where the tile comes
+    # off the lane's kernel decode under ``torch._scaled_mm`` (112 of 112 in
+    # the R1024 receipt) -- but the same regime holds the 2-to-8-row forwards,
+    # where the lane serves its own ``gemv`` exactly as it does at one row.
+    # Publishing the prefill launch alone was #111's defect one regime over:
+    # true of the shape the census drove, false of the runtime.
     "tessera_e4m3_k1_dense_sm121_batch_streamed": {
         "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
         "regime": "batch", "rungs_q256": [1024],
         "activation_contract": "fp8_per_token_dynamic",
-        "executes": [{"symbol": "torch._scaled_mm", "decoder": "window_gemv"}],
+        "executes": [{"symbol": "tessera_window_gemv::gemv", "decoder": "window_gemv"},
+                     {"symbol": "torch._scaled_mm", "decoder": "window_gemv"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
@@ -453,6 +458,12 @@ def test_the_routes_census_expectation_is_the_launch_table():
     the contract came to disagree about one runtime.  Both sides read
     ``scheme.ROUTE_LAUNCHES`` now, so this asserts the derivation rather than
     a copy of the answer.
+
+    The lane's op is in BOTH regimes.  It used to be pinned to ``decode``
+    alone, which is the KERNEL's word for M <= ``GEMV_MAX_M`` read into a
+    table written in the CONTRACT's, where ``decode`` is the one-row forward
+    and ``batch`` is every M > 1 -- so the two-row tile, which the lane serves,
+    fell in a regime the table said the lane never touched.
     """
     pytest.importorskip("torch")
     from tessera.serving import bf16_route, fp8_gemv
@@ -462,10 +473,55 @@ def test_the_routes_census_expectation_is_the_launch_table():
         eager = module.census_expected(compiled=False)
         for regime in ("decode", "batch"):
             assert eager[regime] == launch_pairs(route, regime=regime), (route, regime)
-        # The GEMV lane owns the decode regime and nothing else; the batch
-        # regime never reports the lane's op.
-        assert (module.GEMV_SYMBOL, "window_gemv") in eager["decode"]
-        assert not any(sym == module.GEMV_SYMBOL for sym, _ in eager["batch"])
+            assert (module.GEMV_SYMBOL, "window_gemv") in eager[regime], (route, regime)
+        # ...and the launch only the materialised path makes is batch-only:
+        # ``decode_is_gemv`` is unconditionally true at one row, so a one-row
+        # forward on a prepared lane cannot report the kernel-decoded tile
+        # under the stock GEMM.
+        assert (module.GEMM_SYMBOL, "window_gemv") in eager["batch"]
+        assert (module.GEMM_SYMBOL, "window_gemv") not in eager["decode"]
+
+
+def test_the_launch_tables_regimes_are_the_routes_own_dispatch():
+    """``ROUTE_LAUNCHES`` regimes, derived from ``decode_is_gemv`` and nothing else.
+
+    THE DEFECT THIS PINS.  The table is hand-written and the dispatch does not
+    read it, so until this test the only thing tying the two together was a
+    serve -- and a serve only ever drove two shapes, one row and sixty-four.
+    Both of the table's first errors lived in the gap: a launch conditioned on
+    a rate set (unreachable at one row, so dead) and a batch regime published
+    without the GEMV (unreachable at sixty-four rows, so invisible).  Both are
+    the failure #111 is about, and both are ruled out by quantifying over
+    every M the dispatch distinguishes rather than the two anyone drove.
+
+    ``decode_is_gemv`` depends on M only through ``_m_tile(M)`` (1, 2, 4, 8)
+    and the ``M > GEMV_MAX_M`` test, so ``range(1, GEMV_MAX_M + 2)`` visits
+    every class it has.  ``rate_one`` is the unit's other axis and both values
+    are tried; the assertion is EXACT equality per regime, so a launch the
+    dispatch cannot make fails as loudly as one it can.
+    """
+    pytest.importorskip("torch")
+    import types
+
+    from tessera.serving import bf16_route, ext, fp8_gemv, telemetry
+    from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8, launch_pairs,
+                                        regime_of_m)
+
+    for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
+        seen: dict[str, set] = {"decode": set(), "batch": set()}
+        for m in range(1, module.GEMV_MAX_M + 2):
+            for rate_one in (False, True):
+                holder = types.SimpleNamespace(rate_one=rate_one)
+                # The two pairs ``apply``'s lane branch stamps, by the same
+                # predicate it stamps them on.
+                pair = ((module.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV)
+                        if module.decode_is_gemv(holder, m)
+                        else (module.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV))
+                seen[regime_of_m(m)].add(pair)
+        for regime, pairs in seen.items():
+            assert pairs == launch_pairs(
+                route, regime=regime, mode="streamed",
+                lanes=(ext.WINDOW_GEMV_MODULE_NAME,)), (route, regime)
 
 
 def test_every_cell_executes_a_launch_its_route_can_make(contract):

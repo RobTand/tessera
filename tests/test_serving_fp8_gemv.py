@@ -420,13 +420,30 @@ def test_the_gemv_fallback_the_table_publishes_is_the_one_the_route_takes():
 
 
 def test_the_census_expectations_come_from_the_route():
-    """The decode phase can report either path the dispatch takes; batch only one."""
+    """What each REGIME may report, in the contract's words for a regime.
+
+    ``decode`` is the one-row forward and ``batch`` is every M > 1
+    (``contract.CENSUS_PHASE_REGIMES``), which is the vocabulary a census
+    record is stamped in.  So:
+
+    * both regimes may report the lane's own ``gemv`` -- one row always takes
+      it, and so does the two-row tile on any unit the lane prepared;
+    * both may report the torch window decode, which is what a unit the lane
+      did not prepare runs at any M;
+    * only ``batch`` may report the kernel-decoded tile under the stock GEMM,
+      the branch ``decode_is_gemv`` refuses -- above the lane's max M, or from
+      three rows up on a rate-1 column.  Neither can happen at one row.
+
+    ``batch`` used to be pinned WITHOUT the GEMV, which was the kernel's word
+    for decode (M <= ``GEMV_MAX_M``) read into the contract's: true of the
+    64-row prefill the census drives, false of the regime it stands for.
+    """
     go = fp8_gemv.census_expected(compiled=False)
-    assert (fp8_gemv.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go["decode"]
-    assert (route.GEMM_SYMBOL, telemetry.DECODER_TORCH_WINDOW) in go["decode"]
-    assert (route.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go["decode"]
-    assert go["batch"] == {(route.GEMM_SYMBOL, telemetry.DECODER_TORCH_WINDOW),
-                           (route.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV)}
+    for regime in ("decode", "batch"):
+        assert (fp8_gemv.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go[regime]
+        assert (fp8_gemv.GEMM_SYMBOL, telemetry.DECODER_TORCH_WINDOW) in go[regime]
+    assert (fp8_gemv.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go["batch"]
+    assert (fp8_gemv.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV) not in go["decode"]
     gc = fp8_gemv.census_expected(compiled=True)
     assert (fp8_gemv.COMPILED_SYMBOL, fp8_gemv.COMPILED_DECODER) in gc["decode"]
     assert (fp8_gemv.COMPILED_SYMBOL, fp8_gemv.COMPILED_DECODER) in gc["batch"]

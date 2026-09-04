@@ -201,6 +201,19 @@ Three things follow, and each is a rule rather than a value:
   cell naming the GEMV cannot outlive `kernel_window_gemv.SUPPORTED_RATES`:
   drop rate 4 from the published predicate and the document stops validating
   (`tests/test_lane_reachability.py`).
+- **The regime is *this* contract's, and two vocabularies say "decode".** Here
+  `decode` is the one-row forward and `batch` is every M > 1
+  (`contract.CENSUS_PHASE_REGIMES`, which is also what stamps a census
+  record); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
+  counts. Reading the second into a cell is how the batch cell first published
+  the prefill launch alone -- true of the 64-row shape the census drives, false
+  of the 2-to-8-row forwards the same regime covers, where the lane serves its
+  own `gemv` exactly as it does at one row. So the E4M3 batch/streamed cell
+  executes **both** launches and the decode/streamed cell executes the GEMV
+  alone, and neither is conditioned on a rate.
+  `tests/test_serving_contract.py::test_the_launch_tables_regimes_are_the_routes_own_dispatch`
+  derives both regime sets from the routes' own `decode_is_gemv`, over every M
+  the dispatch distinguishes rather than the two anyone drove.
 - **The residency is a condition, not a label.** Both window routes set
   `layer.tessera_gemv = None` in `resident`, so the lane exists in `streamed`
   alone and one rung's decode regime has two answers. The E4M3 family
@@ -216,6 +229,10 @@ Three things follow, and each is a rule rather than a value:
   refuses a disagreement, and `tools/tessera_route_census.py` writes the block
   into the receipt. It is eager-only and says so: a compiled record stamps
   both launches as one `a+b` pair because one graph serves every M.
+  `experiments/ts111_replay_cell_agreement.py` replays a receipt offline, so
+  the R1024 evidence is reproducible without a GPU
+  (`/home/rob/tessera-runs/ts111/replay-R1024.txt`: 112 of 112 in both phases,
+  and 112 refusals when the pre-#111 value is put back).
 
 `TESSERA_BF16_K1` gains `executes` and **no** GEMV cell -- its attested rung
 1792 is root 7, outside `SUPPORTED_RATES`, so the derivation returns the torch

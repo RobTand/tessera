@@ -106,6 +106,39 @@ def test_the_pre_111_claim_would_have_been_caught_by_these_records(cells):
     assert "torch._scaled_mm" in problems[0]
 
 
+def test_a_small_batch_gemv_record_is_covered_by_the_batch_cell(cells):
+    """The 2-to-8-row forward: batch regime, lane's own op, and NOT a problem.
+
+    This record is CONSTRUCTED, and says so -- no census we hold drove a
+    four-row forward, because the tool drives one prompt and a 64-row prefill.
+    That is exactly why the cell was wrong: the batch cell published the
+    materialised launch alone, which is what a 64-row prefill takes, while the
+    contract's batch regime is every M > 1 and the lane serves its own ``gemv``
+    from two rows up.  The DISPATCH fact behind this record is not constructed:
+    ``test_the_launch_tables_regimes_are_the_routes_own_dispatch`` derives it
+    from the routes' own ``decode_is_gemv`` over every M.
+
+    Before the correction this record was a refusal on a serve that had done
+    nothing wrong, which is worse than the stale value #111 was filed on.
+    """
+    records = {"prefill": {name: dict(rec, symbol="tessera_window_gemv::gemv",
+                                      shape=rec["shape"].replace("M64", "M4"))
+                           for name, rec in _SERVED["prefill"].items()}}
+    block, problems = _agree(cells, records=records)
+    assert problems == []
+    assert block["agrees"] is True
+    assert block["phases"]["prefill"]["cells"] == {
+        "tessera_e4m3_k1_dense_sm121_batch_streamed": 2}
+
+    # ...and the pre-correction cell refuses it, once per module.
+    stale = copy.deepcopy(cells)
+    cell = next(c for c in stale if c["id"] == "tessera_e4m3_k1_dense_sm121_batch_streamed")
+    cell["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "window_gemv"}]
+    stale_block, stale_problems = _agree(stale, records=records)
+    assert stale_block["agrees"] is False
+    assert len(stale_problems) == 2
+
+
 def test_a_rung_no_cell_covers_is_unattested_and_not_a_problem(cells):
     """Absence is the only negative signal a closed-world table has.
 

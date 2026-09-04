@@ -296,11 +296,26 @@ def test_require_lane_is_stamped_into_the_artifact():
 # ``kernel_window_gemv``'s own constants.
 
 
-def _gemv_cell(contract):
-    """The one cell whose ``executes`` names the lane's own op."""
+def _gemv_cells(contract):
+    """Every cell whose ``executes`` names the lane's own op.
+
+    There are TWO, one per regime, and that is the correction #111's first
+    pass needed: the lane serves the one-row forward and the 2-to-8-row tile
+    alike, and the contract's ``batch`` regime is every M > 1 forward and not
+    only a first prefill (``contract.CENSUS_PHASE_REGIMES``).  A helper that
+    asserted one cell was reading the census's 64-row prefill as the whole of
+    the batch regime.
+    """
     cells = [c for c in contract["lane_eligibility"]["cells"]
              if any(e["decoder"] == telemetry_decoder() for e in c["executes"])
              and any(e["symbol"] == kg_symbol() for e in c["executes"])]
+    assert {c["regime"] for c in cells} == {"decode", "batch"}, [c["id"] for c in cells]
+    return cells
+
+
+def _gemv_cell(contract, regime="decode"):
+    """The one GEMV cell of ``regime``."""
+    cells = [c for c in _gemv_cells(contract) if c["regime"] == regime]
     assert len(cells) == 1, [c["id"] for c in cells]
     return cells[0]
 
@@ -318,38 +333,45 @@ def kg_symbol():
 
 
 def test_a_cell_names_the_lane_the_census_observed():
-    """The shipped table says the E4M3 decode regime runs the GEMV, in streamed.
+    """The shipped table says the E4M3 streamed route runs the GEMV, in both regimes.
 
     The positive half.  Without it every refusal below would pass on a table
-    that named the lane nowhere, which is the state #111 was filed on.
+    that named the lane nowhere, which is the state #111 was filed on.  The
+    decode cell executes the GEMV and NOTHING else -- one row is always the
+    lane's own op -- while the batch cell holds both launches, because "every
+    M > 1" spans the 2-to-8-row tiles the GEMV serves and the wider ones only
+    the materialised path can.
     """
-    from tessera.serving.contract import cell_residency_modes
+    from tessera.serving.contract import cell_executes, cell_residency_modes
 
-    cell = _gemv_cell(load_serving_contract())
-    assert cell["family"] == "TESSERA_E4M3_K1"
-    assert cell["regime"] == "decode"
-    assert cell["rungs_q256"] == [1024]
-    assert cell_residency_modes(cell) == ("streamed",)
-    # The lane exists in streamed alone -- both window routes set
-    # ``layer.tessera_gemv = None`` in resident -- so a cell claiming it in
-    # both residencies would be claiming a launch the resident path cannot make.
-    assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=streamed"]
+    for cell in _gemv_cells(load_serving_contract()):
+        assert cell["family"] == "TESSERA_E4M3_K1"
+        assert cell["rungs_q256"] == [1024]
+        assert cell_residency_modes(cell) == ("streamed",)
+        # The lane exists in streamed alone -- both window routes set
+        # ``layer.tessera_gemv = None`` in resident -- so a cell claiming it in
+        # both residencies claims a launch the resident path cannot make.
+        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=streamed"]
+    assert cell_executes(_gemv_cell(load_serving_contract(), "decode")) == {
+        (kg_symbol(), telemetry_decoder())}
+    assert cell_executes(_gemv_cell(load_serving_contract(), "batch")) == {
+        (kg_symbol(), telemetry_decoder()), ("torch._scaled_mm", telemetry_decoder())}
 
 
 def test_every_rung_a_gemv_cell_claims_is_one_the_lane_actually_reads():
     """Straight through ``refuse_unreachable_lane``, not through a restated set."""
     contract = load_serving_contract()
-    cell = _gemv_cell(contract)
-    wires = {int(w["q256"]): w
-             for entry in contract["formats"] if entry["family"] == cell["family"]
-             for w in entry["attested_wire"]}
-    for rung in cell["rungs_q256"]:
-        wire = wires[int(rung)]
-        assert refuse_unreachable_lane(
-            LANE, grid="E4M3", q256=int(rung), rate_cap=E4M3.rate_cap,
-            body=wire_recipe(E4M3, int(rung)).body.name,
-            plane=wire_recipe(E4M3, int(rung)).scale_plane.name,
-            window_bits=int(wire["window_bits"]), target=f"cell {cell['id']}")
+    for cell in _gemv_cells(contract):
+        wires = {int(w["q256"]): w
+                 for entry in contract["formats"] if entry["family"] == cell["family"]
+                 for w in entry["attested_wire"]}
+        for rung in cell["rungs_q256"]:
+            wire = wires[int(rung)]
+            assert refuse_unreachable_lane(
+                LANE, grid="E4M3", q256=int(rung), rate_cap=E4M3.rate_cap,
+                body=wire_recipe(E4M3, int(rung)).body.name,
+                plane=wire_recipe(E4M3, int(rung)).scale_plane.name,
+                window_bits=int(wire["window_bits"]), target=f"cell {cell['id']}")
 
 
 def test_a_lane_that_stops_reading_the_rung_invalidates_the_cell(monkeypatch):
