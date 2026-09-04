@@ -1,0 +1,66 @@
+{
+  "label": "master-control",
+  "unit": "model.layers.0.mlp.down_proj",
+  "shape": [
+    1024,
+    3072
+  ],
+  "grid": "E4M3",
+  "q256": 1042,
+  "block": 32,
+  "segments": 96,
+  "sigma": 1.0,
+  "lever_env": "TESSERA_WINDOW_GRAPH",
+  "envelope_w": 140,
+  "torch": "2.11.0+cu130",
+  "load_at_start": [
+    "78.54",
+    "54.90",
+    "51.71"
+  ],
+  "pairs": {
+    "eager": {
+      "A_weights_only": [
+        12.973,
+        12.255,
+        11.759
+      ],
+      "B_ldlq_h": [
+        35.769,
+        35.992,
+        37.329
+      ],
+      "load": [
+        "80.98",
+        "64.24",
+        "46.08"
+      ],
+      "h_factor": 2.94
+    },
+    "auto": {
+      "A_weights_only": [
+        12.466,
+        11.615,
+        11.377
+      ],
+      "B_ldlq_h": [
+        32.8,
+        35.127,
+        35.798
+      ],
+      "load": [
+        "69.78",
+        "61.31",
+        "42.47"
+      ],
+      "h_factor": 3.02
+    }
+  },
+  "arms": [],
+  "peak_alloc_gib": 0.951,
+  "load_at_end": [
+    "42.47",
+    "56.96",
+    "55.31"
+  ]
+}

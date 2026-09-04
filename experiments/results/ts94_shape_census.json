@@ -1,0 +1,17 @@
+{
+  "cols": 3072,
+  "q256": 1042,
+  "block": 32,
+  "root": "521/128",
+  "global_rate_histogram": {
+    "4": 2856,
+    "5": 216
+  },
+  "call_shapes": {
+    "rate4_cols29": 24,
+    "rate4_cols30": 72,
+    "rate5_cols2": 72,
+    "rate5_cols3": 24
+  },
+  "distinct_plan_keys": 4
+}

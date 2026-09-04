@@ -1,0 +1,405 @@
+{
+  "label": "prof-fwd",
+  "unit": "model.layers.0.mlp.down_proj",
+  "shape": [
+    1024,
+    1024
+  ],
+  "grid": "E4M3",
+  "q256": 1042,
+  "block": 32,
+  "segments": 32,
+  "sigma": 1.0,
+  "lever_env": "TESSERA_WINDOW_GRAPH",
+  "envelope_w": 140,
+  "torch": "2.11.0+cu130",
+  "load_at_start": [
+    "8.11",
+    "8.33",
+    "10.75"
+  ],
+  "pairs": {},
+  "arms": [
+    {
+      "arm": "A weights-only [eager]",
+      "epoch_start": 1788484444.18,
+      "epoch_end": 1788484449.54,
+      "wall_s": 5.365,
+      "device_busy_s": 3.426,
+      "host_s": 3.029,
+      "device_frac": 0.6387,
+      "host_gap_frac": 0.3613,
+      "device_kernel_launches": 272063,
+      "power_mean_w": 36.3,
+      "power_max_w": 40.6,
+      "envelope_frac": 0.259,
+      "util_mean_pct": 96.0,
+      "weights_per_joule": 5388.2,
+      "top_device": [
+        {
+          "op": "_step",
+          "n": 135168,
+          "s": 3.383
+        },
+        {
+          "op": "aten::copy_",
+          "n": 220,
+          "s": 0.013
+        },
+        {
+          "op": "Memcpy DtoD (Device -> Device)",
+          "n": 135,
+          "s": 0.009
+        },
+        {
+          "op": "_traceback",
+          "n": 12,
+          "s": 0.007
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "n": 12,
+          "s": 0.003
+        },
+        {
+          "op": "aten::min",
+          "n": 13,
+          "s": 0.001
+        },
+        {
+          "op": "void at::native::reduce_kernel<128, 4, at::native::ReduceOp<float, at::native::MinOps<float>, unsigned int, float, 4, 4> >(at::native::ReduceOp<float, at::native::MinOps<float>, unsigned int, float, 4, 4>)",
+          "n": 12,
+          "s": 0.001
+        },
+        {
+          "op": "_init",
+          "n": 132,
+          "s": 0.001
+        },
+        {
+          "op": "aten::index",
+          "n": 32,
+          "s": 0.001
+        },
+        {
+          "op": "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1}>(long, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1})",
+          "n": 24,
+          "s": 0.001
+        }
+      ],
+      "top_host": [
+        {
+          "op": "Command Buffer Full",
+          "n": 366,
+          "s": 2.108
+        },
+        {
+          "op": "cudaStreamSynchronize",
+          "n": 41,
+          "s": 0.549
+        },
+        {
+          "op": "cuLaunchKernelEx",
+          "n": 135444,
+          "s": 0.313
+        },
+        {
+          "op": "Activity Buffer Request",
+          "n": 19,
+          "s": 0.026
+        },
+        {
+          "op": "cudaMalloc",
+          "n": 5,
+          "s": 0.022
+        }
+      ]
+    },
+    {
+      "arm": "B LDLQ+refit [eager]",
+      "epoch_start": 1788484455.89,
+      "epoch_end": 1788484469.29,
+      "wall_s": 13.406,
+      "device_busy_s": 3.532,
+      "host_s": 9.605,
+      "device_frac": 0.2635,
+      "host_gap_frac": 0.7365,
+      "device_kernel_launches": 277716,
+      "power_mean_w": 31.6,
+      "power_max_w": 33.9,
+      "envelope_frac": 0.226,
+      "util_mean_pct": 96.0,
+      "weights_per_joule": 2477.0,
+      "top_device": [
+        {
+          "op": "_step",
+          "n": 262144,
+          "s": 3.351
+        },
+        {
+          "op": "_traceback",
+          "n": 256,
+          "s": 0.121
+        },
+        {
+          "op": "aten::index",
+          "n": 904,
+          "s": 0.006
+        },
+        {
+          "op": "aten::copy_",
+          "n": 1960,
+          "s": 0.005
+        },
+        {
+          "op": "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1}>(long, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1})",
+          "n": 648,
+          "s": 0.004
+        },
+        {
+          "op": "aten::_index_put_impl_",
+          "n": 768,
+          "s": 0.004
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float> >(at::TensorIteratorBase&, at::native::CUDAFunctor_add<float> const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float> >(at::TensorIteratorBase&, at::native::CUDAFunctor_add<float> const&)::{lambda(int)#1})",
+          "n": 249,
+          "s": 0.004
+        },
+        {
+          "op": "aten::sub",
+          "n": 134,
+          "s": 0.003
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "n": 636,
+          "s": 0.003
+        },
+        {
+          "op": "aten::min",
+          "n": 257,
+          "s": 0.003
+        }
+      ],
+      "top_host": [
+        {
+          "op": "cudaStreamSynchronize",
+          "n": 782,
+          "s": 8.871
+        },
+        {
+          "op": "cuLaunchKernelEx",
+          "n": 262912,
+          "s": 0.608
+        },
+        {
+          "op": "Activity Buffer Request",
+          "n": 35,
+          "s": 0.032
+        },
+        {
+          "op": "cudaLaunchKernel",
+          "n": 6402,
+          "s": 0.021
+        }
+      ]
+    },
+    {
+      "arm": "A weights-only [auto]",
+      "epoch_start": 1788484482.63,
+      "epoch_end": 1788484487.08,
+      "wall_s": 4.449,
+      "device_busy_s": 3.097,
+      "host_s": 3.961,
+      "device_frac": 0.6961,
+      "host_gap_frac": 0.3039,
+      "device_kernel_launches": 140752,
+      "power_mean_w": 33.5,
+      "power_max_w": 36.1,
+      "envelope_frac": 0.24,
+      "util_mean_pct": 96.0,
+      "weights_per_joule": 7026.8,
+      "top_device": [
+        {
+          "op": "_step",
+          "n": 139264,
+          "s": 3.006
+        },
+        {
+          "op": "aten::copy_",
+          "n": 232,
+          "s": 0.037
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "n": 12,
+          "s": 0.036
+        },
+        {
+          "op": "_traceback",
+          "n": 12,
+          "s": 0.007
+        },
+        {
+          "op": "aten::min",
+          "n": 13,
+          "s": 0.002
+        },
+        {
+          "op": "void at::native::reduce_kernel<128, 4, at::native::ReduceOp<float, at::native::MinOps<float>, unsigned int, float, 4, 4> >(at::native::ReduceOp<float, at::native::MinOps<float>, unsigned int, float, 4, 4>)",
+          "n": 12,
+          "s": 0.001
+        },
+        {
+          "op": "aten::index",
+          "n": 32,
+          "s": 0.001
+        },
+        {
+          "op": "_init",
+          "n": 136,
+          "s": 0.001
+        },
+        {
+          "op": "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1}>(long, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1})",
+          "n": 24,
+          "s": 0.001
+        },
+        {
+          "op": "_copy_front",
+          "n": 136,
+          "s": 0.001
+        }
+      ],
+      "top_host": [
+        {
+          "op": "cudaStreamSynchronize",
+          "n": 37,
+          "s": 3.274
+        },
+        {
+          "op": "Command Buffer Full",
+          "n": 23,
+          "s": 0.424
+        },
+        {
+          "op": "cudaDeviceSynchronize",
+          "n": 6,
+          "s": 0.087
+        },
+        {
+          "op": "cudaGraphLaunch",
+          "n": 132,
+          "s": 0.071
+        },
+        {
+          "op": "cudaMalloc",
+          "n": 16,
+          "s": 0.034
+        },
+        {
+          "op": "cudaGraphInstantiateWithFlags",
+          "n": 4,
+          "s": 0.028
+        },
+        {
+          "op": "cuLaunchKernelEx",
+          "n": 8220,
+          "s": 0.013
+        }
+      ]
+    },
+    {
+      "arm": "B LDLQ+refit [auto]",
+      "epoch_start": 1788484491.02,
+      "epoch_end": 1788484500.44,
+      "wall_s": 9.418,
+      "device_busy_s": 3.013,
+      "host_s": 8.608,
+      "device_frac": 0.3199,
+      "host_gap_frac": 0.6801,
+      "device_kernel_launches": 278736,
+      "power_mean_w": 31.4,
+      "power_max_w": 32.0,
+      "envelope_frac": 0.224,
+      "util_mean_pct": 96.0,
+      "weights_per_joule": 3550.0,
+      "top_device": [
+        {
+          "op": "_step",
+          "n": 262144,
+          "s": 2.831
+        },
+        {
+          "op": "_traceback",
+          "n": 256,
+          "s": 0.12
+        },
+        {
+          "op": "aten::copy_",
+          "n": 2472,
+          "s": 0.006
+        },
+        {
+          "op": "aten::index",
+          "n": 904,
+          "s": 0.006
+        },
+        {
+          "op": "void at::native::index_elementwise_kernel<128, 4, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1}>(long, at::native::gpu_index_kernel<at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1}>(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>, at::native::index_kernel_impl<at::native::OpaqueType<4> >(at::TensorIteratorBase&, c10::ArrayRef<long>, c10::ArrayRef<long>)::{lambda(char*, char const*, long)#1} const&, bool)::{lambda(int)#1})",
+          "n": 648,
+          "s": 0.004
+        },
+        {
+          "op": "aten::_index_put_impl_",
+          "n": 768,
+          "s": 0.004
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float> >(at::TensorIteratorBase&, at::native::CUDAFunctor_add<float> const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::CUDAFunctor_add<float> >(at::TensorIteratorBase&, at::native::CUDAFunctor_add<float> const&)::{lambda(int)#1})",
+          "n": 249,
+          "s": 0.004
+        },
+        {
+          "op": "aten::sub",
+          "n": 134,
+          "s": 0.003
+        },
+        {
+          "op": "void at::native::elementwise_kernel<128, 2, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1}>(at::TensorIteratorBase&, at::native::direct_copy_kernel_cuda(at::TensorIteratorBase&)::{lambda()#3}::operator()() const::{lambda()#7}::operator()() const::{lambda(float)#1} const&)::{lambda(int)#1})",
+          "n": 636,
+          "s": 0.003
+        },
+        {
+          "op": "aten::min",
+          "n": 257,
+          "s": 0.003
+        }
+      ],
+      "top_host": [
+        {
+          "op": "cudaStreamSynchronize",
+          "n": 526,
+          "s": 8.371
+        },
+        {
+          "op": "cudaGraphLaunch",
+          "n": 256,
+          "s": 0.145
+        },
+        {
+          "op": "cudaLaunchKernel",
+          "n": 6402,
+          "s": 0.026
+        }
+      ]
+    }
+  ],
+  "peak_alloc_gib": 0.894,
+  "load_at_end": [
+    "8.15",
+    "8.29",
+    "10.52"
+  ]
+}

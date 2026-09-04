@@ -47,12 +47,14 @@ merely the same number to a tolerance.
 """
 from __future__ import annotations
 
+import collections
+import functools
 import os
 import threading
 
 import torch
 
-__all__ = ["fused_available", "viterbi_window_fused"]
+__all__ = ["fused_available", "viterbi_window_fused", "window_plan_cache_clear"]
 
 #: The step loop's working set is two fronts of ``width`` columns; this is the
 #: byte budget that sets ``width``.  GB10's L2 is 24 MB and a sixth of it is
@@ -71,22 +73,121 @@ _L2_BUDGET = int(os.environ.get("TESSERA_WINDOW_L2_BYTES", "0")) or None
 # barriers twice a step, where the tiled kernel's scan is thread-local --
 # holding the front costs more than moving it through L2.
 
-#: Whether the batch is captured as a CUDA graph: unset lets the break-even in
-#: ``viterbi_window_fused`` decide, 0 forces the eager loop, 1 forces capture.
-#: Principle 10 asks for graphs where they apply, and here they do: the
-#: profiler puts a step at 4.8-4.9 us of kernel while the eager loop takes
-#: 9.9 us of wall for it, and replay takes 6.3 us.  Whole-tensor, that is 2x
-#: at L=14 and L=16 (2.74 -> 1.34 s, 10.88 -> 5.30 s).
+#: Whether the batch is captured as a CUDA graph: unset lets the rules in
+#: ``_plan_for_call`` decide, 0 forces the eager loop, 1 captures as soon as a
+#: shape is asked for.  Principle 10 asks for graphs where they apply, and here
+#: they do: the profiler puts a step at 4.8-4.9 us of kernel while the eager
+#: loop takes 9.9 us of wall for it, and replay takes 6.3 us.  Whole-tensor,
+#: that is 2x at L=14 and L=16 (2.74 -> 1.34 s, 10.88 -> 5.30 s).
 #:
 #: An earlier reading here said graphs did not help.  It was wrong and the
 #: mistake is worth keeping: it compared a ``cudaEvent`` span against wall,
 #: and an event span measures the *stream*, launch gaps included, so it read
 #: 19.1 ms of "pure board time" for 21.7 ms of wall and hid exactly the gap
 #: the graph closes.  Only the per-kernel profiler number exposes it.
-_GRAPH = ({"0": False, "1": True}.get(os.environ.get("TESSERA_WINDOW_GRAPH", ""))
-          if os.environ.get("TESSERA_WINDOW_GRAPH") else None)
-#: Captures are serialised per process; see the capture block below.
+#:
+#: Read per CALL, not once at import.  It used to be a module constant, which
+#: made it unsweepable from inside one process -- a matched pair could not put
+#: the two spellings on one tensor seconds apart, which is the only way to
+#: measure either of them on a shared box.  ``encode``'s own graph knob was
+#: already per call.
+_GRAPH_ENV = "TESSERA_WINDOW_GRAPH"
+#: Captures are serialised per process; see ``_WindowPlan.capture``.
 _CAPTURE_LOCK = threading.Lock()
+#: How many batches one call must carry before capturing inside that call pays
+#: for itself.  Capture costs about 17 us a node and replay saves about 3.6 us
+#: a node, so a call that runs the loop five times over cannot get its capture
+#: back and a call that runs it six times can.  This is the break-even the
+#: module has always used; what changed in issue #94 is that falling below it
+#: no longer means "run eager forever" (see ``_WINDOW_GRAPH_MIN_CALLS``).
+_GRAPH_MIN_BATCHES = 6
+#: How many times one shape must be asked for before a PERSISTENT plan is
+#: built for it and captured.  A capture is paid once per shape and saves on
+#: every call after it, so the only question is whether a shape recurs at all;
+#: one is the case that must not pay, since a shape seen once would buy a
+#: capture it never replays.  This is the half issue #94 was about: LDLQ hands
+#: this function ``ldl_block`` columns at a time, which is ONE batch, so
+#: ``_GRAPH_MIN_BATCHES`` refused the capture on every one of the hundreds of
+#: identical calls a pass makes -- while the same tensor encoded in one call
+#: captured and replayed 96 times.  The eager and captured spellings were
+#: split by whether the caller was compensating, which is not a property the
+#: launch stream has any business reading.
+_WINDOW_GRAPH_MIN_CALLS = 2
+#: How many shapes hold buffers at once, per thread.  Plans are only kept for
+#: calls below ``_GRAPH_MIN_BATCHES``, which bounds what one holds: its front
+#: and traceback cover fewer than six batches of columns.  A full-width call
+#: keeps today's behaviour -- per-call buffers, captured and dropped inside the
+#: call -- because persisting one would pin the whole tensor's traceback (at
+#: L=14, R=4 over 3072 columns, 545 MiB) to buy nothing but the one capture
+#: that call already amortises over its own 96 batches.
+#:
+#: The shipping schedule asks for few shapes.  Bresenham spreads a fractional
+#: rate over the columns, so at the served rung (E4M3, q256=1042) every one of
+#: the 96 LDLQ blocks of ``model.layers.0.mlp.down_proj`` carries the same two
+#: rates ({4: 2856, 5: 216} columns) and therefore the same two widths -- four
+#: keys for the whole unit, each recurring in every block, so each earns the
+#: capture it is given.  Eight leaves margin for a mixed unit without letting
+#: residency run.  A plan's traceback is ``nmax * steps * low`` bytes and
+#: dominates it, so at that wire the two rate-4 plans are ~36 MiB each and the
+#: two rate-5 plans ~1 MiB -- ~74 MiB for the unit, and a bound of eight of
+#: the larger kind rather than an unbounded map.
+_WINDOW_PLAN_CACHE = 8
+#: Plans are **per thread**, and that is a correctness requirement rather than
+#: a tuning choice: a plan owns the fronts and the traceback its Viterbi
+#: writes, so two threads sharing one would overwrite each other's states, and
+#: PrismaBuild's workers encode units concurrently in one process.  The kernel
+#: cache above is shared because it is read-only; these are not.
+_WINDOW_LOCAL = threading.local()
+
+
+def _resolve_graph():
+    """``True`` to capture, ``False`` to stay eager, ``None`` to let the rules decide."""
+    raw = os.environ.get(_GRAPH_ENV, "")
+    if raw == "":
+        return None
+    if raw in ("0", "1"):
+        return raw == "1"
+    raise ValueError(
+        f"{_GRAPH_ENV}={raw!r} is not 0 (eager), 1 (capture) or unset (auto)"
+    )
+
+
+def _window_maps():
+    plans = getattr(_WINDOW_LOCAL, "plans", None)
+    if plans is None:
+        plans = _WINDOW_LOCAL.plans = collections.OrderedDict()
+        _WINDOW_LOCAL.seen = collections.OrderedDict()
+    return plans, _WINDOW_LOCAL.seen
+
+
+def window_plan_cache_clear() -> None:
+    """Drop this thread's cached plans and their graphs.
+
+    For tests, and for a caller that wants the residency back.  It clears the
+    calling thread's maps only, which is the same scope they are built in.
+    """
+    plans, seen = _window_maps()
+    plans.clear()
+    seen.clear()
+
+
+def _l2_budget(device) -> int:
+    """The byte budget the column width is sized to."""
+    return _L2_BUDGET if _L2_BUDGET is not None else _device_l2_budget(device)
+
+
+@functools.lru_cache(maxsize=8)
+def _device_l2_budget(device) -> int:
+    """A sixth of this board's L2, memoised.
+
+    ``torch.cuda.get_device_properties`` is a real query and this module was
+    making one per call -- which under LDLQ is once per column block per refit
+    pass, for a number that is a property of the board and nothing else.  The
+    override above is deliberately left OUT of the memo so a test that rebinds
+    it is not answered from a cache keyed on the device alone.
+    """
+    return getattr(torch.cuda.get_device_properties(device),
+                   "L2_cache_size", 24 << 20) // 6
 
 
 def fused_available() -> bool:
@@ -336,6 +437,242 @@ def _tile(fan: int, low: int, n: int):
     return bl, bc, warps
 
 
+def _layout(device, size: int, cols: int, chunk: int):
+    """``(nmax, width, descs)`` for one shape: how the columns are batched.
+
+    ``width`` is set so both fronts stay in L2 across the step loop, which is
+    what turns the front traffic from DRAM into cache; ``descs`` is one triple
+    per batch -- its first column in the tensor, its first column inside the
+    chunk, and its width -- which the kernels read from the device so that one
+    captured graph replays for every batch.
+    """
+    budget = _l2_budget(device)
+    nmax = min(chunk, cols)
+    width = max(1, min(budget // (2 * size * 4), nmax))
+    descs = []
+    for start in range(0, cols, chunk):
+        n = min(chunk, cols - start)
+        for c0 in range(0, n, width):
+            descs.append((start + c0, c0, min(width, n - c0)))
+    return nmax, width, descs
+
+
+class _WindowPlan:
+    """One window Viterbi's tensors, and the graph that replays its batch.
+
+    ``one_batch`` is **the definition** of the fused window trellis -- the
+    per-call path and the persistent path both execute this method, so they
+    cannot drift.  What differs between them is only where the tensors come
+    from: a per-call plan points straight at the caller's targets and throws
+    its scratch away, and a persistent plan owns both so the addresses are
+    stable enough to capture once and replay for every later call.
+
+    Why a persistent plan at all (issue #94): every batch is the same
+    ``2 + steps`` launches at the same pointers, with only the three-integer
+    descriptor moving, and the descriptor lives on the device so one capture
+    covers every batch.  A call wide enough to run six batches therefore
+    captures inside itself and always did.  LDLQ makes the calls narrow
+    instead of few -- ``ldl_block`` columns is ONE batch -- so the same tensor,
+    same table, same rate ran captured when it was encoded in one call and
+    eager when it was encoded in ``cols / ldl_block`` of them, hundreds of
+    times a pass, plus a fresh allocate and a fresh board query each time.
+    """
+
+    __slots__ = ("device", "rows", "cols", "arity", "size", "rate", "chunk",
+                 "steps", "fan", "low", "back_u8", "nmax", "width",
+                 "bl", "bc", "warps", "scan_unroll", "grid", "cgrid", "bs",
+                 "cbc", "owns_input", "tuples", "wrows", "table", "front_all",
+                 "back", "cur", "nxt", "ctl", "desc", "batches", "graph")
+
+    def __init__(self, *, device, rows, cols, arity, size, rate, chunk,
+                 has_weights, owns_input):
+        import triton
+
+        self.device, self.rows, self.cols = device, rows, cols
+        self.arity, self.size, self.rate, self.chunk = arity, size, rate, chunk
+        self.owns_input = owns_input
+        self.steps = steps = rows // arity
+        self.fan = fan = 1 << rate
+        self.low = low = size >> rate
+        self.back_u8 = back_u8 = fan <= 256
+
+        nmax, width, descs = _layout(device, size, cols, chunk)
+        self.nmax, self.width = nmax, width
+
+        self.front_all = torch.empty(nmax, size, dtype=torch.float32, device=device)
+        self.back = torch.empty(nmax, steps, low,
+                                dtype=torch.uint8 if back_u8 else torch.int32,
+                                device=device)
+        self.cur = torch.empty(width, size, dtype=torch.float32, device=device)
+        self.nxt = torch.empty(width, size, dtype=torch.float32, device=device)
+
+        self.bl, self.bc, self.warps = _tile(fan, low, width)
+        self.scan_unroll = _resolve_scan_unroll(fan, self.bl, self.bc, self.warps)
+        self.grid = (triton.cdiv(low, self.bl), triton.cdiv(width, self.bc))
+        self.bs = bs = min(size, 1024)
+        self.cbc = cbc = max(1, 2048 // bs)
+        self.cgrid = (triton.cdiv(size, bs), triton.cdiv(width, cbc))
+
+        # A persistent plan ships the descriptors to the device once instead
+        # of once per call: ``torch.tensor(descs, device=...)`` is a host
+        # allocation, a walk over a Python list and a copy over the bus, and
+        # under LDLQ it was one of those per column block per refit pass.
+        self.batches = len(descs)
+        self.ctl = torch.empty(3, dtype=torch.int32, device=device)
+        self.desc = torch.tensor(descs, dtype=torch.int32, device=device)
+
+        # A captured graph reads its inputs from fixed addresses, so a
+        # persistent plan owns them and ``bind`` copies in; a per-call plan
+        # points at the caller's tensors and copies nothing beyond the
+        # ``.float().contiguous()`` the kernels need anyway.
+        if owns_input:
+            self.tuples = torch.empty(steps, arity, cols, dtype=torch.float32,
+                                      device=device)
+            self.wrows = (torch.empty(steps, arity, cols, dtype=torch.float32,
+                                      device=device) if has_weights else None)
+            self.table = torch.empty(size, arity, dtype=torch.float32, device=device)
+        else:
+            self.tuples = self.wrows = self.table = None
+        self.graph = None
+
+    def bind(self, targets, vectors, weights):
+        """Point the plan at this call's inputs, copying only if it owns them.
+
+        The copy is exact: ``copy_`` into an fp32 buffer rounds a wider source
+        the way ``.float()`` does, and an fp32 source is moved unchanged.  So
+        both spellings hand the kernels the identical bits, which is what lets
+        ``tests/test_window_graph`` demand byte equality rather than a
+        tolerance.
+        """
+        steps, arity, cols = self.steps, self.arity, self.cols
+        if self.owns_input:
+            self.tuples.copy_(targets.reshape(steps, arity, cols))
+            if self.wrows is not None:
+                self.wrows.copy_(weights.reshape(steps, arity, cols))
+            self.table.copy_(vectors)
+        else:
+            self.tuples = targets.float().reshape(steps, arity, cols).contiguous()
+            self.wrows = (None if weights is None else
+                          weights.float().reshape(steps, arity, cols).contiguous())
+            self.table = vectors.float().to(self.device).contiguous()
+
+    def one_batch(self):
+        """The exact batch: init the front, run the step loop, keep the last front."""
+        step_kernel, _, init_kernel, copy_kernel = _kernels()
+        init_kernel[self.cgrid](self.cur, self.ctl, SIZE=self.size, BS=self.bs,
+                                BC=self.cbc, num_warps=4)
+        a, b = self.cur, self.nxt
+        for step in range(self.steps):
+            step_kernel[self.grid](
+                a, b, self.back, self.tuples,
+                self.tuples if self.wrows is None else self.wrows, self.table,
+                self.ctl, self.cols, self.steps, step, self.low,
+                ARITY=self.arity, FAN=self.fan, SIZE=self.size,
+                HAS_W=self.wrows is not None, BACK_U8=self.back_u8,
+                BL=self.bl, BC=self.bc, SCAN_UNROLL=self.scan_unroll,
+                num_warps=self.warps, enable_fp_fusion=False,
+            )
+            a, b = b, a
+        copy_kernel[self.cgrid](a, self.front_all, self.ctl, SIZE=self.size,
+                                BS=self.bs, BC=self.cbc, num_warps=4)
+
+    def capture(self):
+        """Warm on a side stream, then capture ``one_batch`` as one graph.
+
+        One capture at a time, per process.  A capture is a few milliseconds
+        and the replays are the long pole, so serialising the captures costs
+        nothing; running them concurrently costs the graph.  Two things break
+        a concurrent capture: under CUDA's default ``global`` error mode any
+        CUDA call from *another* thread while a capture is open faults it (an
+        allocator call from a second worker encoding its own unit is enough),
+        and even ``thread_local`` mode leaves the two captures' begin/end
+        bookkeeping -- ``torch.cuda.graph`` synchronises the device and empties
+        the cache on entry -- to invalidate each other.  PrismaBuild's workers
+        encode units concurrently in one process, so the capture takes the lock
+        and stays thread-local; replays, eager launches, allocations and
+        stream-level syncs (``.item()``, ``.cpu()``) on the other threads
+        proceed.  The lock is shared with ``encode``'s coset-trellis capture so
+        a window capture and a TCQ capture cannot overlap either.  The one call
+        no mode permits while a capture is open anywhere is a device-wide
+        ``torch.cuda.synchronize()``: nothing in this package makes one, and a
+        threaded caller must not either.
+        """
+        with _CAPTURE_LOCK:
+            self.ctl.copy_(self.desc[0])
+            warm = torch.cuda.Stream()
+            warm.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(warm):
+                self.one_batch()             # compiles and warms; capture runs nothing
+            torch.cuda.current_stream().wait_stream(warm)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
+                self.one_batch()
+        self.graph = graph
+
+    def replay(self):
+        if self.graph is None:
+            self.one_batch()
+        else:
+            self.graph.replay()
+
+
+def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights):
+    """The plan this call runs on, and whether it should be captured.
+
+    Three rules, and the first two are the ones the module has always had:
+
+    * ``TESSERA_WINDOW_GRAPH=0`` is the eager loop on a per-call plan -- the
+      spelling that owns nothing, so it is also the control an A/B measures
+      against.
+    * a call carrying ``_GRAPH_MIN_BATCHES`` batches or more captures inside
+      itself, on a per-call plan, exactly as before.  It amortises its own
+      capture and persisting its buffers would pin the whole tensor's
+      traceback to save a capture worth 3% of the call.
+    * anything narrower is the issue #94 case.  It gets a PERSISTENT plan the
+      second time its shape is asked for, so the capture is paid once and
+      replayed by every call after -- which is what turns LDLQ's hundreds of
+      one-batch calls from hundreds of eager step loops into hundreds of
+      replays.  The first call of a shape stays eager on a per-call plan, so
+      a shape seen once never buys a capture it cannot use.
+    """
+    forced = _resolve_graph()
+    plans, seen = _window_maps()
+    key = (device, rows, cols, arity, size, rate, chunk, has_weights,
+           _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""))
+
+    def fresh(owns):
+        return _WindowPlan(device=device, rows=rows, cols=cols, arity=arity,
+                           size=size, rate=rate, chunk=chunk,
+                           has_weights=has_weights, owns_input=owns)
+
+    if forced is False:
+        # Ahead of the lookup on purpose: ``0`` is the eager control, and a
+        # plan cached earlier under ``auto`` must not replay a graph behind it.
+        return fresh(False), False
+
+    plan = plans.get(key)
+    if plan is not None:
+        plans.move_to_end(key)
+        return plan, True
+
+    count = seen.get(key, 0) + 1
+    seen[key] = count
+    seen.move_to_end(key)
+    while len(seen) > 64:
+        seen.popitem(last=False)
+
+    batches = len(_layout(device, size, cols, chunk)[2])
+    if batches >= _GRAPH_MIN_BATCHES:
+        return fresh(False), True                         # captures inside this call
+    if forced is None and count < _WINDOW_GRAPH_MIN_CALLS:
+        return fresh(False), False
+    plan = fresh(True)
+    plans[key] = plan
+    while len(plans) > _WINDOW_PLAN_CACHE:
+        plans.popitem(last=False)
+    return plan, True
+
+
 def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
                          weights=None, chunk: int = 512):
     """The fused CUDA path behind ``encode.viterbi_window``.
@@ -343,122 +680,46 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     Same arguments, same returns, identical states and identical sse.
     Callers go through ``viterbi_window``; this entry point exists so the
     tests can pin the implementation.
+
+    The machine is picked by ``_plan_for_call`` and is never the answer: a
+    per-call plan and a persistent one run the same ``one_batch`` over the same
+    values in the same order, and the epilogue below -- the final ``min`` over
+    states, ``sse += float(final.sum())`` and the traceback -- runs on the host
+    stream either way, so the ``sse`` float is summed in the reference's order
+    whichever plan produced the front.
     """
     import triton
 
-    step_kernel, traceback_kernel, init_kernel, copy_kernel = _kernels()
+    _, traceback_kernel, _, _ = _kernels()
     device = targets.device
     rows, cols = targets.shape
     size, arity = vectors.shape
     steps = rows // arity
-    fan = 1 << rate
     low = size >> rate
-    back_u8 = fan <= 256
 
-    tuples = targets.float().reshape(steps, arity, cols).contiguous()
-    wrows = None if weights is None else \
-        weights.float().reshape(steps, arity, cols).contiguous()
-    table = vectors.float().to(device).contiguous()
+    plan, wants_graph = _plan_for_call(
+        device=device, rows=rows, cols=cols, arity=arity, size=size, rate=rate,
+        chunk=chunk, has_weights=weights is not None)
+    plan.bind(targets, vectors, weights)
+    if wants_graph and plan.graph is None:
+        plan.capture()
 
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
     sse = 0.0
-
-    budget = _L2_BUDGET
-    if budget is None:
-        budget = getattr(torch.cuda.get_device_properties(device),
-                         "L2_cache_size", 24 << 20) // 6
-    nmax = min(chunk, cols)
-    width = max(1, min(budget // (2 * size * 4), nmax))
-
-    front_all = torch.empty(nmax, size, dtype=torch.float32, device=device)
-    back = torch.empty(nmax, steps, low,
-                       dtype=torch.uint8 if back_u8 else torch.int32, device=device)
-    cur = torch.empty(width, size, dtype=torch.float32, device=device)
-    nxt = torch.empty(width, size, dtype=torch.float32, device=device)
-
-    bl, bc, warps = _tile(fan, low, width)
-    scan_unroll = _resolve_scan_unroll(fan, bl, bc, warps)
-    grid = (triton.cdiv(low, bl), triton.cdiv(width, bc))
-    bs = min(size, 1024)
-    cgrid = (triton.cdiv(size, bs), triton.cdiv(width, max(1, 2048 // bs)))
-    cbc = max(1, 2048 // bs)
-
-    # Every batch is the same 2 + steps launches with the same pointers; only
-    # the descriptor moves.  So the whole batch is captured once and replayed,
-    # which is what principle 10 asks for and what the clock agrees with:
-    # measured on this board, a step is 5.0-5.5 us of kernel (profiler,
-    # ``_step`` self CUDA) against 9.9 us of wall eager and 6.3 us replayed.
-    # Capture costs about 17 us a node and replay saves about 3.6 us, so the
-    # break-even is five batches; below that the eager loop is cheaper.
-    ctl = torch.empty(3, dtype=torch.int32, device=device)
-    descs = []
-    for start in range(0, cols, chunk):
-        n = min(chunk, cols - start)
-        for c0 in range(0, n, width):
-            descs.append((start + c0, c0, min(width, n - c0)))
-    desc = torch.tensor(descs, dtype=torch.int32, device=device)
-
-    def one_batch():
-        init_kernel[cgrid](cur, ctl, SIZE=size, BS=bs, BC=cbc, num_warps=4)
-        a, b = cur, nxt
-        for step in range(steps):
-            step_kernel[grid](
-                a, b, back, tuples, tuples if wrows is None else wrows, table,
-                ctl, cols, steps, step, low,
-                ARITY=arity, FAN=fan, SIZE=size, HAS_W=wrows is not None,
-                BACK_U8=back_u8, BL=bl, BC=bc, SCAN_UNROLL=scan_unroll,
-                num_warps=warps, enable_fp_fusion=False,
-            )
-            a, b = b, a
-        copy_kernel[cgrid](a, front_all, ctl, SIZE=size, BS=bs, BC=cbc,
-                           num_warps=4)
-
-    graph = None
-    if _GRAPH if _GRAPH is not None else len(descs) >= 6:
-        # One capture at a time, per process.  A capture is a few milliseconds
-        # and the replays are the long pole, so serialising the captures costs
-        # nothing; running them concurrently costs the graph.  Two things
-        # break a concurrent capture: under CUDA's default ``global`` error
-        # mode any CUDA call from *another* thread while a capture is open
-        # faults it (an allocator call from a second worker encoding its own
-        # unit is enough), and even ``thread_local`` mode leaves the two
-        # captures' begin/end bookkeeping -- ``torch.cuda.graph`` synchronises
-        # the device and empties the cache on entry -- to invalidate each
-        # other.  PrismaBuild's workers encode units concurrently in one
-        # process, so the capture takes the lock and stays thread-local;
-        # replays, eager launches, allocations and stream-level syncs
-        # (``.item()``, ``.cpu()``) on the other threads proceed.  The one
-        # call no mode permits while a capture is open anywhere is a
-        # device-wide ``torch.cuda.synchronize()``: nothing in this package
-        # makes one, and a threaded caller must not either.
-        with _CAPTURE_LOCK:
-            ctl.copy_(desc[0])
-            warm = torch.cuda.Stream()
-            warm.wait_stream(torch.cuda.current_stream())
-            with torch.cuda.stream(warm):
-                one_batch()                  # compiles and warms; capture runs nothing
-            torch.cuda.current_stream().wait_stream(warm)
-            graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, capture_error_mode="thread_local"):
-                one_batch()
-
     b = 0
     for start in range(0, cols, chunk):
         n = min(chunk, cols - start)
-        for _ in range(0, n, width):
-            ctl.copy_(desc[b])
+        for _ in range(0, n, plan.width):
+            plan.ctl.copy_(plan.desc[b])
             b += 1
-            if graph is None:
-                one_batch()
-            else:
-                graph.replay()
+            plan.replay()
 
-        cost = front_all[:n].t().contiguous()                 # [size, n]
+        cost = plan.front_all[:n].t().contiguous()            # [size, n]
         final, state = cost.min(dim=0)                        # [n]
         sse += float(final.sum())
         tb = 128
         traceback_kernel[(triton.cdiv(n, tb),)](
-            back, state.to(torch.int32), states, n, cols, steps, low, start,
+            plan.back, state.to(torch.int32), states, n, cols, steps, low, start,
             RATE=rate, SHIFT=window_bits - rate, BC=tb,
             num_warps=4, enable_fp_fusion=False,
         )
