@@ -59,3 +59,5 @@ dead before its summary. A device string is a measurement.
 | -- | -- | -- | gpu | -- | not submitted in this run | -- | -- | -- | -- | -- |
 | 2026-09-04T09:24:38Z | `82f004772b8f` | no | x86 | -- | torch 2.11.0+cpu reports no CUDA device | 1536 | 5 | 503 | 0 | not observed |
 | -- | -- | -- | gpu | -- | not submitted in this run | -- | -- | -- | -- | -- |
+| 2026-09-04T14:34:06Z | `66f648017f44` | yes | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2121 | 0 | 13 | 0 | 0 (pool) |
+| 2026-09-04T14:35:57Z | `66f648017f44` | yes | x86 | -n 8 | torch 2.11.0+cpu reports no CUDA device | 1604 | 0 | 517 | 0 | 0 (pool) |
