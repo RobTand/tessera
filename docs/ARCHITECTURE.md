@@ -342,6 +342,11 @@ from what has been *served*.
 `experiments/ts5_moe_served.sh` requires success from all three arms: the
 teacher dump, the student comparison, and the route census. Successful KL
 arms cannot turn a failed census into a successful campaign action.
+Before serving, `experiments/ts5_sidecar_check.py` reads the indexed shards
+(or all safetensors files for an unindexed checkpoint), requires exactly one
+wire per declared expert and role under its canonical or runtime shard name,
+and recomputes each group's maximum wire length from those headers. A missing
+projection cannot pass merely because another wire has the declared stride.
 
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the

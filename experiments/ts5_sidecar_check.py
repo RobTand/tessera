@@ -9,8 +9,9 @@ already been paid for:
   1. ``wire_stride`` is the MAXIMUM blob length in its group.  The exporter
      derives it from the lengths it wrote and ``unpack_moe_wires`` re-derives it
      at load, so this recomputes it a THIRD time, from the shard headers alone,
-     with no code in common with either.  A stride below any real blob is a
-     truncated read; above, wasted bytes nothing complains about.
+     with no decoder code in common with either. Every expert projection must
+     be present exactly once. A stride below or above the real maximum would
+     be refused by the loader.
   2. every module left in BF16 is in ``ignore``.  A module that is neither
      declared nor ignored is a ``TesseraConfig`` refusal at load.
   3. the serving manifest asks for no kernel lane.  A stamped GEMV lane makes
@@ -24,16 +25,18 @@ import struct
 import sys
 from pathlib import Path
 
-#: Which projections ride which group, spelled the way the exporter spells it
-#: (``SHARD_PROJECTION`` over ``MOE_GROUP_SHARDS``).  Duplicated deliberately:
-#: this script must not import the writer it is checking.
-GROUP_PROJECTIONS = {"w13": ("gate_proj", "up_proj"), "w2": ("down_proj",)}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.serving.scheme import MOE_GROUP_SHARDS
 
 
 def headers(d):
     """``{tensor name: (dtype, shape, nbytes)}`` across every shard, header-only."""
     out = {}
-    for shard in sorted(d.glob("model-*.safetensors")):
+    index = d / "model.safetensors.index.json"
+    shards = (sorted({d / name for name in
+                      json.loads(index.read_text())["weight_map"].values()})
+              if index.exists() else sorted(d.glob("*.safetensors")))
+    for shard in shards:
         with open(shard, "rb") as fh:
             n = struct.unpack("<Q", fh.read(8))[0]
             hdr = json.loads(fh.read(n))
@@ -70,18 +73,31 @@ def main(path):
               f"grid={scheme.get('grid')} body={scheme.get('body')} "
               f"plane={scheme.get('plane')}")
         for gname, spec in sorted((scheme.get("groups") or {}).items()):
-            projections = GROUP_PROJECTIONS.get(gname)
-            if projections is None:
+            shards = MOE_GROUP_SHARDS.get(gname)
+            if shards is None:
                 problems.append(f"{key}: unknown group {gname!r}")
                 continue
-            lens = [nb for name, (_dt, _sh, nb) in tensors.items()
-                    if name.startswith(f"{stack}.")
-                    and name.endswith(".wire")
-                    and name.rsplit(".", 2)[-2] in projections]
+            roles = spec.get("roles") or []
+            if len(roles) != len(shards):
+                problems.append(f"{key}/{gname}: roles do not match runtime shards {shards}")
+                continue
+            lens = []
+            for expert in range(scheme["experts"]):
+                for shard, (role, _rows) in zip(shards, roles):
+                    # LFM preserves w1/w3/w2; other checkpoints spell the
+                    # same runtime shards gate_proj/up_proj/down_proj.
+                    candidates = {f"{stack}.{expert}.{name}.wire"
+                                  for name in (role, shard)}
+                    found = sorted(candidates.intersection(tensors))
+                    if len(found) != 1:
+                        problems.append(
+                            f"{key}/{gname}: expert {expert} role {role} requires exactly "
+                            f"one wire from {sorted(candidates)}, found {found}")
+                        continue
+                    lens.append(tensors[found[0]][2])
             stride = spec.get("wire_stride")
             if not lens:
-                problems.append(f"{key}/{gname}: no wires found under {stack} for "
-                                f"{projections}")
+                problems.append(f"{key}/{gname}: no wires found under {stack}")
                 continue
             hi, lo = max(lens), min(lens)
             ok = stride == hi
