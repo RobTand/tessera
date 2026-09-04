@@ -5,6 +5,23 @@
 # does not: which lane the streamed FP8 route takes (arm A prepares the window
 # GEMV holder, arm B cannot -- a read-only TORCH_EXTENSIONS_DIR is the "cold
 # toolchain" refusal #91 names) and which vLLM compile-cache root it writes to.
+#
+# PRECONDITION, and it is not satisfied by any checkpoint under
+# /mnt/shared/tessera-runs/allocated as of 2026-09-03.  Arm A is only the GEMV
+# lane if the GEMV lane PREPARES, and it prepares only when EVERY column rate
+# of the unit is in kernel_window_gemv.SUPPORTED_RATES = (1, 2, 4).  Measured
+# over the first eight fused units of each:
+#
+#   uniform-R750 {2,3}   uniform-R1006 {3,4}   uniform-R1262 {4,5}
+#   alloc-3.0 {1,2,3,4}  alloc-4.0 {2,3,4,5}   alloc-5.0 {3,4,5,6}
+#
+# Every one carries a rate outside the set, so prepare_fp8_gemv refuses all 112
+# units in BOTH arms ("GrammarError: rates [3] have no lane here") and the two
+# arms are one lane state wearing two names.  The 2026-09-03 run of this script
+# read as e79b5d50 == e79b5d50 on the pre-fix tree, which looks exactly like the
+# collision and is not: two identical graphs SHOULD share a key.  The check at
+# the end of this file is what makes that visible instead of silent; do not
+# read a key comparison from a run it fails.
 # Both arms serve the SAME checkpoint in the SAME residency mode
 # (TESSERA_SERVE_MODE=streamed), so serve_mode -- the only fact
 # ``declare_compile_identity`` publishes on master -- is equal across them.
@@ -68,4 +85,19 @@ set -e
 after=$( { ls -1 "$CACHE/torch_compile_cache/torch_aot_compile" 2>/dev/null || true; } | tr '\n' ' ')
 echo "AOT keys after:  [$after]"
 echo "census exit: $status  receipt: $([ -f "$out" ] && echo present || echo absent)"
+
+# Did this arm serve the lane its name claims?  A refusal on arm A means the
+# checkpoint has no GEMV-eligible unit, so arm A and arm B traced the same
+# graph and the key comparison this script exists to make is void.
+# `grep -c` exits 1 when it matches nothing and still prints its 0, so the
+# `|| echo 0` fallback appends a second one: the variable becomes the
+# two-line string "0\n0", `!= 0` is true, and the guard below cries
+# ARM SEPARATION FAILED on precisely the run where separation held.
+refused=$(grep -c "window GEMV lane did not prepare" "$log" 2>/dev/null) || refused=0
+echo "gemv refusals: $refused"
+if [ "$ARM" = A ] && [ "$refused" != 0 ]; then
+  echo "ARM SEPARATION FAILED: arm A refused the GEMV lane on $refused units."
+  echo "  Both arms are the torch window decode, so the two keys SHOULD match."
+  echo "  Serve a checkpoint whose every column rate is in SUPPORTED_RATES."
+fi
 exit 0
