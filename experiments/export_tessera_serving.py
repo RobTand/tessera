@@ -166,7 +166,7 @@ from tessera.stock import (  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
-    partition_owner, sha256_file)
+    partition_owner, sha256_file, summarize_modules)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -1806,33 +1806,9 @@ def main():
             if twin is not None:
                 shutil.copy2(aux, twin / aux.name)
 
-    by_family = {}
-    for fam in (NVFP4, FP8, BF16):
-        recs = [m for m in module_records.values() if m["family"] == fam]
-        if not recs:
-            continue
-        params = sum(r["rows"] * r["cols"] for m in recs for r in m["roles"])
-        wire = sum(m["wire_bytes"] for m in recs)
-        resident = sum(m["resident_bytes_resident_mode"] for m in recs)
-        by_family[fam] = {
-            "modules": len(recs), "units": sum(len(m["roles"]) for m in recs), "quantized_params": params,
-            "wire_bytes": wire, "wire_bpp": float(Fraction(wire * 8, params)),
-            "resident_mode_bytes": resident, "resident_mode_bpp": float(Fraction(resident * 8, params)),
-        }
-    params = sum(r["rows"] * r["cols"] for r in units.values())
-    wire = sum(r["wire_bytes"] for r in units.values())
-    on_disk = sum(m["container_bytes"] for m in module_records.values())
-    resident = sum(m["resident_bytes_resident_mode"] for m in module_records.values())
-    totals = {
-        "quantized_params": params, "modules": len(module_records), "units": len(units),
-        "wire_bytes": wire, "wire_bpp": float(Fraction(wire * 8, params)) if params else None,
-        "on_disk_bytes": on_disk, "on_disk_bpp": float(Fraction(on_disk * 8, params)) if params else None,
-        "resident_mode_bytes": resident, "resident_mode_bpp": float(Fraction(resident * 8, params)) if params else None,
-        "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one transient decoded tile per forward",
-        "by_family": by_family,
-        "passthrough_bytes": passthrough_bytes,
-        "checkpoint_bytes": sum((args.out / s).stat().st_size for s in shards),
-    }
+    totals = summarize_modules(module_records, passthrough_bytes,
+                               sum((args.out / s).stat().st_size for s in shards))
+    params = totals["quantized_params"]
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {
         "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
