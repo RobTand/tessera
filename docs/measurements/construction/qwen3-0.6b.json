@@ -1,0 +1,253 @@
+{
+ "schema": "tessera.construction-census.v1",
+ "taken": "2026-09-03T23:51:55Z",
+ "seconds": 20.5,
+ "runtime": {
+  "vllm": "0.28.0",
+  "torch": "2.13.0+cu130",
+  "python": "3.12.3",
+  "image": "vllm/vllm-openai:latest",
+  "image_id": "sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+  "vllm_file": "/usr/local/lib/python3.12/dist-packages/vllm/__init__.py"
+ },
+ "model": {
+  "path": "/models/Qwen3-0.6B",
+  "architectures": [
+   "Qwen3ForCausalLM"
+  ],
+  "model_type": "qwen3",
+  "num_hidden_layers": 28,
+  "layer_types": [
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention",
+   "full_attention"
+  ],
+  "mlp_layer_types": null,
+  "first_k_dense_replace": null
+ },
+ "model_class": "vllm.model_executor.models.qwen3.Qwen3ForCausalLM",
+ "construction_device": "meta",
+ "packed_modules_mapping": {
+  "qkv_proj": [
+   "q_proj",
+   "k_proj",
+   "v_proj"
+  ],
+  "gate_up_proj": [
+   "gate_proj",
+   "up_proj"
+  ]
+ },
+ "hf_to_vllm_mapper_unstacked": {},
+ "supports_quant": false,
+ "linears": [
+  {
+   "prefix_pattern": "model.layers.*.mlp.down_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27
+   ],
+   "examples": [
+    "model.layers.0.mlp.down_proj",
+    "model.layers.1.mlp.down_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "model.layers.*.mlp.gate_up_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27
+   ],
+   "examples": [
+    "model.layers.0.mlp.gate_up_proj",
+    "model.layers.1.mlp.gate_up_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "model.layers.*.self_attn.o_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27
+   ],
+   "examples": [
+    "model.layers.0.self_attn.o_proj",
+    "model.layers.1.self_attn.o_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "model.layers.*.self_attn.qkv_proj",
+   "class": "QKVParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "layers": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27
+   ],
+   "examples": [
+    "model.layers.0.self_attn.qkv_proj",
+    "model.layers.1.self_attn.qkv_proj"
+   ]
+  }
+ ],
+ "offered_non_linear": [
+  {
+   "prefix_pattern": "lm_head",
+   "class": "ParallelLMHead"
+  },
+  {
+   "prefix_pattern": "model.embed_tokens",
+   "class": "VocabParallelEmbedding"
+  },
+  {
+   "prefix_pattern": "model.layers.*.self_attn.attn",
+   "class": "Attention"
+  }
+ ],
+ "summary": {
+  "linear_patterns": 4,
+  "offered": 4,
+  "never_offered": 0
+ }
+}

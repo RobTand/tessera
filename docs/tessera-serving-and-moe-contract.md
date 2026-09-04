@@ -945,3 +945,59 @@ import graph from `tessera.serving` (function-local imports included — 40
 first-party modules today) and refuses any native-load site reachable from it
 that the table does not declare, reading each site's module name out of the AST
 and failing rather than skipping when it cannot.
+
+---
+
+## Contract v11 — which Linears the runtime offers a quant config at all
+
+Every other block in this contract answers *what the plugin executes*. This one
+answers a question that comes earlier and that the plugin structurally cannot
+answer for itself: **is it asked about this module?**
+
+`LinearBase.__init__` takes `UnquantizedLinearMethod()` in the
+`quant_config is None` branch **without calling** `get_quant_method`
+(vLLM 0.28, `model_executor/layers/linear.py:258`). A model implementation that
+builds a projection with `quant_config=None` therefore takes vLLM's own BF16
+method, and no quantization plugin can refuse it, warn about it, or even see the
+prefix. On the pinned GLM build (`prismaquant/glm53-mia-sm121:487ecf187`) that
+is four sites: MLA at `models/glm5next/nvidia/model.py:331`, the whole KDA layer
+at `kda.py:171-174`, the indexer's `wk_weights_proj` at `attention.py:263`, and
+the entire vision tower at `model.py:1082`. Twenty of twenty-four Linear
+patterns; four are offered.
+
+The exporter planned all of them — 2-D, under `BODY_LAYER` — so it wrote wires
+into modules the runtime never routes, and deleted the `<module>.weight` each
+one wanted. Unlike issue #86's case that does not even end in a refusal.
+
+**The table is derived, not typed.** `tools/tessera_construction_census.py`
+builds the model exactly as the loader does (`initialize_model` under
+`set_current_vllm_config`) on the `meta` device, so nothing is read and nothing
+is allocated, with a probe `QuantizationConfig` that records every `(prefix,
+layer class)` vLLM offers it; then it walks `named_modules()` for every
+`LinearBase` and records the class, `quant_config is None`, and whether the
+probe was offered that prefix. The receipts live under
+`docs/measurements/construction/`; `contract.construction_entry_from_receipt`
+generates the contract rows from them and
+`tests/test_serving_construction.py` re-derives and compares, the same rule
+`native_extensions` follows.
+
+**It also publishes the naming bridge.** A row carries the model class's
+`hf_to_vllm_mapper` (unstacked) and `packed_modules_mapping` — the very tables
+`configure_quant_config` hands this plugin — because a producer writing
+`config_groups` in the *checkpoint's* namespace has to apply them to know which
+vLLM module it named. On GLM they are load-bearing:
+`model.language_model.` → `language_model.model.`, and a KDA layer's
+`q/k/v/b/f_a/g_a` merge into **one** `self_attn.in_proj_qkvbfg_a`, an MLA
+layer's `q_a`/`kv_a` into `fused_qkv_a_proj`, and the indexer's
+`wk`/`weights_proj` into `wk_weights_proj`. So the `qkv_proj` the exporter's
+fused rule produced there named nothing at all — the `absent` verdict, a
+different failure from `never_offered` and reported as one.
+
+**Qwen is the control and the reason this went unseen.** `Qwen3ForCausalLM` on
+`vllm/vllm-openai:latest` offers 4 of 4 Linear patterns, and every Tessera
+artifact served so far is Qwen.
+
+**An uncensused architecture is a gap, not a clearance.** `construction_entry`
+returns `None`, and the exporter treats that as a refusal (`uncensused`) rather
+than as permission — the honest direction, and the fix is to run the census in
+the serving image and commit the receipt.

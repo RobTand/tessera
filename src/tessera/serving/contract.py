@@ -69,11 +69,19 @@ on a machine with no GPU.
 from __future__ import annotations
 
 import json
+import re
 from types import MappingProxyType
 from typing import Any, Mapping
 
 __all__ = [
     "CENSUS_PHASE_REGIMES",
+    "CONSTRUCTION_SCHEMA",
+    "CONSTRUCTION_CENSUS_SCHEMA",
+    "classify_construction",
+    "construction_entry",
+    "construction_entry_from_receipt",
+    "normalise_module",
+    "vllm_module_name",
     "CONTRACT_FILENAME",
     "CONTRACT_SCHEMA",
     "LANE_ELIGIBILITY_SCHEMA",
@@ -393,7 +401,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
                             "native_extensions", "formats", "lane_eligibility",
-                            "tensor_parallel", "expert_parallel", "fused_module"},
+                            "tensor_parallel", "expert_parallel", "fused_module",
+                            "construction"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -407,6 +416,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
 
     _validate_native_extensions(contract["native_extensions"],
                                 "runtime_contract.native_extensions")
+    _validate_construction(contract["construction"], "runtime_contract.construction")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):
@@ -734,3 +744,189 @@ def _validate_attested_wire(entry: Mapping[str, Any], route: str, where: str) ->
                     f"{at}.{field} is {value!r}; a modelled source spread in grid units is a "
                     "number, or null for the pinned wire (sigma unset). A stamp that spells "
                     "neither is nothing a preflight can compare")
+
+
+# ---------------------------------------------------------------------------
+# construction: which Linears the runtime OFFERS to a quant config at all
+# ---------------------------------------------------------------------------
+#
+# The rest of this file answers "what does the plugin EXECUTE".  This block
+# answers a question that comes earlier and that the plugin structurally cannot
+# answer for itself: **is the plugin asked about this module at all**.
+#
+# ``LinearBase.__init__`` takes ``UnquantizedLinearMethod()`` in the
+# ``quant_config is None`` branch *without calling* ``get_quant_method``
+# (vLLM 0.28, ``model_executor/layers/linear.py:258``).  A model implementation
+# that builds a projection with ``quant_config=None`` therefore takes vLLM's own
+# BF16 method, and no plugin can refuse, warn, or even see the prefix.  On
+# ``Glm5NextForConditionalGeneration`` that is every attention projection, the
+# whole KDA layer, the sparse indexer and the entire vision tower.
+#
+# A producer that writes a wire there deletes the ``<module>.weight`` the
+# runtime wants and puts bytes in its place that nothing decodes.  So the
+# producer needs this fact BEFORE it encodes -- and principle 14 says it is
+# derived from the runtime, never hand-kept beside it.  ``tools/
+# tessera_construction_census.py`` derives it, by building the model the way the
+# loader does with a probe quant config that records every prefix it is offered;
+# the receipts it writes live in ``docs/measurements/construction/`` and this
+# block is generated from them by :func:`construction_entry_from_receipt`,
+# which ``tests/test_serving_construction.py`` re-derives and compares -- the
+# same "table DERIVED from the code path, not typed beside it" rule
+# ``native_extensions`` follows.
+
+CONSTRUCTION_SCHEMA = "tessera.construction.v1"
+CONSTRUCTION_CENSUS_SCHEMA = "tessera.construction-census.v1"
+
+#: Any purely numeric path segment in a module prefix.  Must match
+#: ``tools/tessera_construction_census.py``'s ``NUMERIC_SEGMENT``: a repeated
+#: block is a repeated block whether the model spells its stack ``layers.N`` or
+#: ``blocks.N``, and the census and the lookup have to normalise identically or
+#: the join is silently empty.
+_NUMERIC_SEGMENT = re.compile(r"(?<=\.)\d+(?=\.|$)")
+
+
+def normalise_module(prefix: str) -> str:
+    """A module prefix with its repeat indices collapsed to ``*``."""
+    return _NUMERIC_SEGMENT.sub("*", prefix)
+
+
+def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """The contract row a construction census receipt implies.
+
+    Generated, not transcribed: the receipt is the observation, this is the
+    subset a gate reads, and the test that compares them is what keeps the two
+    from drifting.
+    """
+    if receipt.get("schema") != CONSTRUCTION_CENSUS_SCHEMA:
+        raise ValueError(
+            f"construction census must declare schema {CONSTRUCTION_CENSUS_SCHEMA!r}, "
+            f"got {receipt.get('schema')!r}")
+    architectures = list(receipt["model"].get("architectures") or ())
+    if len(architectures) != 1:
+        raise ValueError(
+            f"a construction census covers exactly one architecture; {architectures} "
+            "does not say which module tree was walked")
+    linears = receipt["linears"]
+    return {
+        "architecture": architectures[0],
+        "runtime": {key: receipt["runtime"][key] for key in ("image", "image_id", "vllm")},
+        "model": {key: receipt["model"][key] for key in
+                  ("model_type", "num_hidden_layers", "layer_types", "mlp_layer_types")},
+        "supports_quant": bool(receipt["supports_quant"]),
+        "hf_to_vllm_mapper_unstacked": receipt["hf_to_vllm_mapper_unstacked"] or {},
+        "offered": sorted(row["prefix_pattern"] for row in linears
+                          if row["offered_to_quant_config"]),
+        "never_offered": [
+            {"prefix_pattern": row["prefix_pattern"], "class": row["class"],
+             "quant_method": row["quant_method"]}
+            for row in sorted(linears, key=lambda r: r["prefix_pattern"])
+            if not row["offered_to_quant_config"]],
+        "offered_non_linear": [dict(row) for row in receipt["offered_non_linear"]],
+    }
+
+
+def _validate_construction(block: Any, where: str) -> None:
+    """Refuse a construction block a gate could misread."""
+    _require_keys(block, where, required={"schema", "architectures"}, optional={"note"})
+    if block["schema"] != CONSTRUCTION_SCHEMA:
+        raise ValueError(f"{where}.schema must be {CONSTRUCTION_SCHEMA!r}")
+    seen: set[str] = set()
+    for i, entry in enumerate(block["architectures"]):
+        row = f"{where}.architectures[{i}]"
+        _require_keys(entry, row,
+                      required={"architecture", "runtime", "model", "supports_quant",
+                                "hf_to_vllm_mapper_unstacked", "offered", "never_offered",
+                                "offered_non_linear"},
+                      optional={"receipt"})
+        name = entry["architecture"]
+        if name in seen:
+            raise ValueError(
+                f"{row}: {name!r} is censused twice. Two censuses of one architecture are two "
+                "claims about one runtime; merge them or drop the stale one")
+        seen.add(name)
+        overlap = sorted(set(entry["offered"]) &
+                         {r["prefix_pattern"] for r in entry["never_offered"]})
+        if overlap:
+            raise ValueError(
+                f"{row}: {overlap} are both offered and never offered; a census cannot say both")
+        for key in ("image", "image_id", "vllm"):
+            if not entry["runtime"].get(key):
+                raise ValueError(
+                    f"{row}.runtime.{key} is empty: a construction answer is a property of the "
+                    "image it was observed in, and an unstamped one cannot be checked against "
+                    "the image a serve actually runs")
+
+
+def construction_entry(architectures, contract: Mapping[str, Any] | None = None):
+    """The censused entry for a checkpoint's ``architectures``, or ``None``."""
+    payload = contract if contract is not None else load_serving_contract()
+    block = payload.get("construction")
+    if not block:
+        return None
+    wanted = [architectures] if isinstance(architectures, str) else list(architectures or ())
+    for entry in block["architectures"]:
+        if entry["architecture"] in wanted:
+            return entry
+    return None
+
+
+def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
+    """A checkpoint module name in the namespace the runtime builds it under.
+
+    The same three rename kinds vLLM's ``WeightsMapper`` applies, in its order,
+    and only the unstacked ones -- which is exactly what
+    ``configure_quant_config`` hands a quant config, and therefore exactly what
+    ``TesseraConfig.apply_vllm_mapper`` will apply to this name at load.
+    """
+    table = entry.get("hf_to_vllm_mapper_unstacked") or {}
+    name = checkpoint_module
+
+    def _dropped() -> None:
+        # vLLM's WeightsMapper spells "discard this weight" as a None
+        # replacement (``_map_name`` returns None and ``apply_list`` drops the
+        # entry).  A module the runtime maps away is a module it never builds,
+        # so a wire written there is dead -- the same refusal
+        # ``TesseraConfig.apply_vllm_mapper`` raises at load, taken here at
+        # export instead.
+        raise ValueError(
+            f"the runtime's hf_to_vllm_mapper DROPS {checkpoint_module!r}, so it builds no "
+            "module for this name at all. A wire written here is dead weight; that is a "
+            "refusal, not a warning.")
+
+    for old, new in (table.get("orig_to_new_substr") or {}).items():
+        if old in name:
+            if new is None:
+                _dropped()
+            name = name.replace(old, new)
+    for old, new in (table.get("orig_to_new_prefix") or {}).items():
+        if name.startswith(old):
+            if new is None:
+                _dropped()
+            name = new + name[len(old):]
+            break
+    for old, new in (table.get("orig_to_new_suffix") or {}).items():
+        if name.endswith(old):
+            if new is None:
+                _dropped()
+            name = name[: -len(old)] + new
+            break
+    return name
+
+
+def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> tuple[str, str]:
+    """``(verdict, vllm module pattern)`` for one checkpoint module name.
+
+    ``offered`` -- the runtime builds this module and offers it to the quant
+    config, so a wire written here is executed.  ``never_offered`` -- it builds
+    it with ``quant_config=None``, so the plugin is never asked and the wire is
+    dead.  ``absent`` -- the census walked the whole module tree and this name
+    is not a module the runtime builds at all (a fused role named at its leaf,
+    a name from another architecture).  The last two are the same outcome for a
+    producer and are told apart only so the refusal can say which it is.
+    """
+    pattern = normalise_module(vllm_module_name(entry, checkpoint_module))
+    if pattern in set(entry["offered"]):
+        return "offered", pattern
+    if pattern in {row["prefix_pattern"] for row in entry["never_offered"]}:
+        return "never_offered", pattern
+    return "absent", pattern

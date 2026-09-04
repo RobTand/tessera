@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T03:50:04Z",
+ "generated": "2026-09-04T04:00:28Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -326,7 +326,7 @@
     "title": "The served-KL harness cannot reach any decode-only kernel (M=1); #83's two-arm KL measured the prefill path instead"
    },
    "103": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "ActivationSource cannot record a trailing refit objective, so no exportable artifact can carry one"
    },
    "104": {
@@ -336,6 +336,18 @@
    "105": {
     "state": "OPEN",
     "title": "The LUT landing's loss is in the assignment: rescue the coupled landing and measure it in the encoder"
+   },
+   "106": {
+    "state": "OPEN",
+    "title": "_fit_lut's eps stop test moved wire bytes on master, undeclared"
+   },
+   "107": {
+    "state": "OPEN",
+    "title": "refit_gauss_seidel is per-source where refit_objective is per-plane, so it refuses every mixed-plane export"
+   },
+   "108": {
+    "state": "OPEN",
+    "title": "contract.vllm_module_name reimplements vLLM's WeightsMapper and diverges from it in three places"
    },
    "11": {
     "state": "CLOSED",
@@ -678,7 +690,7 @@
     "title": "The A-side doc forbids the dispatch master already ships: window-gemv-a-side.md \u00a75 item 1 vs 6c521ea"
    },
    "89": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "At R=8 a non-dyadic window-table sigma costs one dense unit 1.36x h error, at identical reach"
    },
    "9": {
