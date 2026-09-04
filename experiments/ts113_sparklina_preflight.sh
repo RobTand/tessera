@@ -2,10 +2,12 @@
 # Refuse #113 unless the staged population and exact serving image are present.
 set -euo pipefail
 
+WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 STAGE_ROOT=${TS113_STAGE_ROOT:-/mnt/shared/tessera-runs/ts113-fresh-sparklina-aa6-r1}
-POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r1}
-LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r1}
-IMAGE=vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14
+POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r2}
+LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r2}
+source "$WT/experiments/runtime_image.sh"
+IMAGE=$(runtime_image_pin)
 CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
 EXPECTED_CORPUS_SHA=cf96c4744a58e925f62673b6fc09c3bd584b5d7a49c00b901d7f0bce0ab57002
 EXPECTED_UNIQUE_BYTES=2398074295
