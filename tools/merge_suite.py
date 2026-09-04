@@ -281,14 +281,20 @@ def _commits_measured(arms: list[dict]) -> dict:
 
     Two arms that ran different commits are two measurements, not one merge
     receipt, and a reader must be told that without having to diff the rows.
+
+    ``agree`` is ``True`` only when every arm said which tree it ran and they
+    all said the same one.  One arm that cannot answer makes agreement
+    *unestablished*, not true: a single stamped commit next to a silent arm is
+    exactly the shape of the mistake this field exists to catch.
     """
 
     by_arm = {r["arm"]: (r.get("surface") or {}).get("commit") for r in arms}
+    unstamped = sorted(a for a, c in by_arm.items() if not c)
     stamped = {c for c in by_arm.values() if c}
     return {
         "by_arm": by_arm,
-        "agree": (len(stamped) <= 1) if stamped else None,
-        "unstamped_arms": sorted(a for a, c in by_arm.items() if not c),
+        "agree": None if (unstamped or not stamped) else (len(stamped) == 1),
+        "unstamped_arms": unstamped,
     }
 
 

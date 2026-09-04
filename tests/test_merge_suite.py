@@ -453,6 +453,15 @@ def test_the_receipt_says_whether_the_arms_ran_one_tree():
     assert silent["agree"] is None
     assert silent["unstamped_arms"] == ["gpu", "x86"]
 
+    # One arm stamped and one silent is NOT agreement. Reporting `True` here
+    # -- one commit in the set, so they "match" -- would be this file's own
+    # error in miniature: an unanswered question rendered as an answer.
+    half = merge_suite._commits_measured([
+        {"arm": "gpu", "surface": {"commit": "a" * 40}},
+        {"arm": "x86", "surface": {}}])
+    assert half["agree"] is None, "a silent arm cannot agree with anything"
+    assert half["unstamped_arms"] == ["x86"]
+
 
 def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
     """The ledger in the repo must be readable by its own header.
