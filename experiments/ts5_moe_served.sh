@@ -54,6 +54,13 @@ export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s
 # the pool action that runs this.
 export TESSERA_GPU_MEM_UTIL=${TESSERA_GPU_MEM_UTIL:-0.15}
 MODE=${TESSERA_SERVE_MODE:-resident}
+# THE CENSUS NEEDS MORE THAN THE SERVES DO, and for a reason that is not
+# about the model: it drives ``LLM(...)`` with vLLM's default chunked-prefill
+# budget of 8192 batched tokens, so its profiling peak is several times the
+# serve's at --max-num-seqs 8.  On the first run 0.15 (18.24 GiB) left
+# "Available KV cache memory: -2.02 GiB" AFTER the model had loaded, which
+# reads like a Tessera failure and is not one.  One knob per consumer.
+CENSUS_MEM_UTIL=${TESSERA_CENSUS_MEM_UTIL:-0.35}
 
 rc_teacher=skipped rc_student=skipped rc_census=skipped
 
@@ -83,7 +90,7 @@ echo "=== 3/3 route census  $(date -Is)"
   -e TESSERA_SERVE_MODE="$MODE" \
   -v /mnt/shared:/mnt/shared -- \
   "python3 tools/tessera_route_census.py '$WIRE' '$OUT/census.json' \
-     --tessera-commit $COMMIT --gpu-memory-utilization ${TESSERA_GPU_MEM_UTIL} \
+     --tessera-commit $COMMIT --gpu-memory-utilization ${CENSUS_MEM_UTIL} \
      --max-model-len 1024" 2>&1 | tee "$OUT/census.log"
 rc_census=${PIPESTATUS[0]}
 
