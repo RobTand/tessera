@@ -166,18 +166,62 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     record["elapsed_s"] = round(time.monotonic() - started, 1)
     record["stderr_tail"] = proc.stderr.strip().splitlines()[-6:]
     record["stdout_tail"] = proc.stdout.strip().splitlines()[-6:]
+    _attach_surface(record, surface_json)
+    return record
+
+
+def _attach_surface(record: dict, surface_json: Path) -> None:
+    """Put this arm's published population on the record, or say it has none."""
+
     if surface_json.exists():
         record["surface"] = json.loads(surface_json.read_text())
-    else:
-        # The distinction that matters: a suite that ran and failed published a
-        # surface; one that was never placed, or was refused before collection,
-        # did not.  Saying which is the whole value of a receipt.
-        record["surface"] = None
-        record["no_surface_means"] = (
-            "the suite published no population: it was refused, never placed, "
-            "or died before the terminal summary. This is not a pass and not a "
-            "fail; it is an absent measurement."
-        )
+        record["surface_path"] = str(surface_json)
+        return
+    # The distinction that matters: a suite that ran and failed published a
+    # surface; one that was never placed, or was refused before collection,
+    # did not.  Saying which is the whole value of a receipt.
+    record["surface"] = None
+    record["no_surface_means"] = (
+        "the suite published no population: it was refused, never placed, "
+        "or died before the terminal summary. This is not a pass and not a "
+        "fail; it is an absent measurement."
+    )
+
+
+def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
+    """Assemble an arm's record from the population it already published.
+
+    The receipt was the one part of this tool that only existed while the
+    submitting terminal did.  When that process dies -- an interrupted session,
+    a dropped connection -- the suite keeps running on the pool and writes its
+    surface to shared storage, and the receipt that was supposed to hold the
+    two populations together is simply never written.  A result that survives
+    only in a live scrollback is what #112 item 1 asks us to stop producing, so
+    the tool should not have that shape itself.
+
+    What a resumed record honestly cannot have is the exit status: this process
+    never watched the action, so it did not see it.  That is recorded as
+    unobserved rather than guessed, and never reconstructed from
+    ``counts.failed`` -- a run can exit non-zero after a clean summary (a crash
+    in teardown, an internal error, a timeout kill), so failures in the surface
+    prove red while their absence does not prove green.
+    """
+
+    record = {
+        "arm": name,
+        "why": arm["why"],
+        "python": arm["python"],
+        "resumed": True,
+        "exit_status_observed": False,
+        "returncode": None,
+        "exit_status_note": (
+            "assembled after the fact from the population this run published; "
+            "the submitting process did not survive to observe an exit status. "
+            "Failures in the surface below are conclusive; their absence is "
+            "not, so this arm cannot be called green from this receipt alone."
+        ),
+    }
+    _attach_surface(record, receipt_dir / f"surface.{name}.json")
     return record
 
 
@@ -195,8 +239,24 @@ def _verdict(arms: list[dict]) -> str:
         return "not run"
     if any(record.get("surface") is None for record in arms):
         return "incomplete: an arm published no population"
-    if any(record.get("returncode") != 0 for record in arms):
-        return f"red on one of: {names}"
+    # Evidence for red and evidence for green are not symmetric, and a resumed
+    # receipt is where that stops being pedantry.  A failure the run itself
+    # published is conclusive whether or not anybody watched the exit status; a
+    # clean summary is not, because a run can still exit non-zero after it (a
+    # crash in teardown, an internal error, a timeout kill).  So: count
+    # failures from the surface, and refuse "green" for any arm whose exit
+    # status nobody observed.
+    for record in arms:
+        counts = (record.get("surface") or {}).get("counts") or {}
+        if counts.get("failed") or counts.get("error"):
+            return f"red on one of: {names}"
+        if record.get("returncode") not in (0, None):
+            return f"red on one of: {names}"
+    unobserved = [record["arm"] for record in arms
+                  if not record.get("exit_status_observed", True)]
+    if unobserved:
+        return (f"published {len(arms)} population(s) with no failure: {names} "
+                f"-- exit status not observed for: {', '.join(unobserved)}")
     return f"green on {len(arms)} population(s): {names}"
 
 
@@ -271,6 +331,12 @@ def main() -> int:
                     help="also append one row per arm to this markdown ledger; "
                          "docs/status/suite-populations.md is the one a reader "
                          "of the repo checks")
+    ap.add_argument("--resume", default="",
+                    help="submit nothing; assemble the receipt from the "
+                         "surface.<arm>.json files already in this directory. "
+                         "For a run whose submitting process died while the "
+                         "pool kept going -- the exit status is recorded as "
+                         "unobserved rather than guessed")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the pbrun invocations and submit nothing")
     args = ap.parse_args()
@@ -280,6 +346,10 @@ def main() -> int:
 
     shared = str(args.checkout).startswith(str(SHARED_ROOT))
     for name in wanted:
+        # A resume submits nothing, so a placement constraint has nothing to
+        # constrain: the run it is reading already happened somewhere.
+        if args.resume:
+            break
         if ARMS[name].get("needs_shared_checkout") and not shared:
             print(
                 f"merge_suite: the {name} arm needs a checkout under "
@@ -291,23 +361,33 @@ def main() -> int:
             return 2
 
     stamp = time.strftime("%Y%m%dT%H%M%S")
-    receipt_dir = DEFAULT_RECEIPT_ROOT / stamp
+    receipt_dir = Path(args.resume).resolve() if args.resume \
+        else DEFAULT_RECEIPT_ROOT / stamp
+    if args.resume and not receipt_dir.is_dir():
+        print(f"merge_suite: --resume {receipt_dir} is not a directory",
+              file=sys.stderr)
+        return 2
     # A dry run composes paths and creates nothing: littering shared storage
     # with an empty directory per invocation is how a receipt root stops being
     # readable.
-    if not args.dry_run:
+    if not args.dry_run and not args.resume:
         receipt_dir.mkdir(parents=True, exist_ok=True)
     out = Path(args.out) if args.out else receipt_dir / "receipt.json"
 
-    with ThreadPoolExecutor(max_workers=len(wanted)) as pool:
-        futures = {name: pool.submit(_submit, name, ARMS[name], args, receipt_dir)
-                   for name in wanted}
-        arms = [futures[name].result() for name in wanted]
+    if args.resume:
+        arms = [_resume(name, ARMS[name], receipt_dir) for name in wanted]
+    else:
+        with ThreadPoolExecutor(max_workers=len(wanted)) as pool:
+            futures = {name: pool.submit(_submit, name, ARMS[name], args,
+                                         receipt_dir)
+                       for name in wanted}
+            arms = [futures[name].result() for name in wanted]
 
     receipt = {
         "schema": "tessera.merge_suite.v1",
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "submitted_from": os.uname().nodename,
+        "assembled_by": "resume" if args.resume else "submit",
         "population": _population_of(args.checkout),
         "verdict": _verdict(arms),
         "arms": arms,

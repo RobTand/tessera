@@ -229,3 +229,74 @@ def test_an_arm_with_no_population_says_so_in_the_ledger(tmp_path):
     assert "no population published" in row
     assert "| -- | -- | -- |" in row
     assert "| unknown |" in row
+
+
+def test_a_resumed_receipt_reports_failures_but_never_declares_green(tmp_path):
+    """The asymmetry is the point: red is provable from a surface, green is not.
+
+    A run whose submitting process died still finished on the pool and still
+    published its population. Assembling the receipt from those files is what
+    makes the result survive the terminal (#112 item 1); pretending the exit
+    status was observed is not. A suite can exit non-zero after a clean
+    summary -- a crash in teardown, an internal error, a timeout kill -- so
+    failures in the surface prove red while their absence proves nothing.
+    """
+
+    merge_suite = _module()
+    clean = {"counts": {"passed": 10, "failed": 0, "error": 0, "skipped": 1},
+             "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10"}
+    broken = {"counts": {"passed": 9, "failed": 1, "error": 0, "skipped": 1},
+              "device": "torch 2.11.0+cpu reports no CUDA device"}
+
+    (tmp_path / "surface.gpu.json").write_text(json.dumps(clean))
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], tmp_path)
+    assert record["exit_status_observed"] is False
+    assert record["returncode"] is None
+    verdict = merge_suite._verdict([record])
+    assert "green" not in verdict
+    assert "exit status not observed" in verdict and "gpu" in verdict
+
+    # A failure the run published is conclusive even unobserved.
+    (tmp_path / "surface.x86.json").write_text(json.dumps(broken))
+    both = [record, merge_suite._resume("x86", merge_suite.ARMS["x86"], tmp_path)]
+    assert merge_suite._verdict(both) == "red on one of: gpu, x86"
+
+    # An arm that published nothing is still an absent measurement, not a pass.
+    assert merge_suite._verdict(
+        [merge_suite._resume("gpu", merge_suite.ARMS["gpu"], tmp_path / "nope")]
+    ) == "incomplete: an arm published no population"
+
+
+def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
+    """The refusal that guards a submission must not block reading a result.
+
+    The x86 arm refuses a checkout only one box can see, because pbrun would
+    pin the action to this box. A resume submits nothing, so there is no
+    placement to constrain -- and the run it reads already happened.
+    """
+
+    surfaces = tmp_path / "surfaces"
+    surfaces.mkdir()
+    for arm, device in (("gpu", "1 CUDA device(s), device 0 = NVIDIA GB10"),
+                        ("x86", "torch 2.11.0+cpu reports no CUDA device")):
+        (surfaces / f"surface.{arm}.json").write_text(json.dumps(
+            {"device": device,
+             "counts": {"passed": 5, "failed": 0, "skipped": 2},
+             "not_collected": []}))
+    out = tmp_path / "receipt.json"
+    ledger = tmp_path / "ledger.md"
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--resume", str(surfaces),
+         "--checkout", str(ROOT), "--out", str(out), "--record", str(ledger)],
+        capture_output=True, text=True, timeout=120,
+    )
+    # Not green: nobody watched either exit status.
+    assert result.returncode == 1, result.stdout + result.stderr
+    receipt = json.loads(out.read_text())
+    assert receipt["assembled_by"] == "resume"
+    assert [arm["arm"] for arm in receipt["arms"]] == ["gpu", "x86"]
+    assert "exit status not observed" in receipt["verdict"]
+    # Both populations still land side by side in the ledger, which is the
+    # whole reason to assemble a receipt at all.
+    text = ledger.read_text()
+    assert "NVIDIA GB10" in text and "no CUDA device" in text
