@@ -26,6 +26,17 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 # store_true flag is a no-op stand-in so the argv shape does not change.
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
 
+# TESSERA_KL_REGIME=decode dumps in the DECODE regime (issue #102): every
+# scored position comes from an M=1 forward instead of one 512-row prefill.
+# It is a different metric, not a better one, and it needs one serve flag --
+# `--enable-prompt-tokens-details`, without which vLLM omits the cached-token
+# accounting kl_tool checks the M=1 claim against, and the dump refuses rather
+# than assert it.  A teacher must be re-dumped in the student's regime; that
+# is what this knob is for.
+REGIME="${TESSERA_KL_REGIME:-prefill}"
+DETAILS_FLAG=--trust-remote-code
+[ "$REGIME" = "prefill" ] || DETAILS_FLAG=--enable-prompt-tokens-details
+
 # Which image, and which compiled build, served this dump -- both recorded
 # beside it (issues #100 and #30).  The image gate runs first and BEFORE the
 # serve lock: a refusal must not make the rest of the box queue behind it.
@@ -68,7 +79,7 @@ docker run -d --name "$NAME" --gpus all --ipc=host \
   --max-model-len 4096 --max-num-seqs 8 \
   --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.85}" \
   --max-logprobs "${TESSERA_KL_TOPK:-1024}" \
-  $EAGER_FLAG --trust-remote-code \
+  $EAGER_FLAG $DETAILS_FLAG --trust-remote-code \
   >/dev/null
 
 # The serve is the long pole; give it room but fail rather than hang forever.
@@ -96,6 +107,11 @@ fi
 
 ARGS=(dump --model kl-target --out "$OUT" --url "http://127.0.0.1:${PORT}/v1/completions"
       --corpus-contract "$CORPUS" --role "$ROLE" --artifact-path "$MODEL")
+# The regime flags are added only when the regime is NOT the default, so a
+# prefill dump taken through this wrapper today records the same argv it
+# recorded before this knob existed.
+[ "$REGIME" = "prefill" ] || ARGS+=(--regime "$REGIME"
+      --decode-stride "${TESSERA_KL_DECODE_STRIDE:-16}")
 [ -n "$LABEL" ] && ARGS+=(--teacher-label "$LABEL")
 # A dump that fails mid-way must still leave the serve log behind and take the
 # container down: under `set -e` the failure used to exit here, keeping the GPU

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-03T23:38:21Z",
+ "generated": "2026-09-04T03:30:16Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -314,8 +314,28 @@
     "title": "Wire the window GEMV into the streamed route's forward"
    },
    "100": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The \"pinned\" vLLM is a floating tag, and the two boxes hold different images under it"
+   },
+   "101": {
+    "state": "OPEN",
+    "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
+   },
+   "102": {
+    "state": "OPEN",
+    "title": "The served-KL harness cannot reach any decode-only kernel (M=1); #83's two-arm KL measured the prefill path instead"
+   },
+   "103": {
+    "state": "OPEN",
+    "title": "ActivationSource cannot record a trailing refit objective, so no exportable artifact can carry one"
+   },
+   "104": {
+    "state": "OPEN",
+    "title": "No allocated checkpoint can serve the window-GEMV lane: every one carries a rate outside SUPPORTED_RATES"
+   },
+   "105": {
+    "state": "OPEN",
+    "title": "The LUT landing's loss is in the assignment: rescue the coupled landing and measure it in the encoder"
    },
    "11": {
     "state": "CLOSED",
@@ -490,7 +510,7 @@
     "title": "MoE: the plugin has no expert route, and the exporter mis-plans this model silently"
    },
    "50": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The LUT table fit gives back 24-91% of the refit's step, and it is separable by construction"
    },
    "51": {
@@ -638,7 +658,7 @@
     "title": "Serve the window-GEMV lane: census, two-arm KL and latency, none of which #10 measured"
    },
    "84": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "E4M3's window table saturates at 1.167x reach: a 4x spread request delivers 1.167x, silently"
    },
    "85": {
@@ -670,11 +690,11 @@
     "title": "#81's sibling: under a CHANNEL plane, window_sigma equal to the resolved channel_sigma is the same encoder and gets a different id, a bigger artifact and minor 5"
    },
    "91": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"
    },
    "92": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A uniformly-NVFP4 export declares \"mixed-precision\" and loses vLLM's FP4 fusion"
    },
    "93": {
@@ -682,11 +702,11 @@
     "title": "A dropped arm is invisible: the pair stage's byte-match audit counts survivors, not the grid"
    },
    "94": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
    },
    "95": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "choose_ldl_block floors LUT/S6B at 16 on a constraint the production LDLQ path does not have"
    },
    "96": {
