@@ -115,7 +115,12 @@ the fallback arm reports `torch._scaled_mm` in both regimes, so the shape is
 the discriminator and a symbol-only record cannot tell two lane states from
 one wearing two names. `experiments/decode_regime_kl.sh` takes both regimes
 off one serve with a trace snapshot per stage;
-`docs/measurements/tessera-decode-regime-kl-2026-09-03.md` is the receipt.
+`docs/measurements/tessera-decode-regime-kl-2026-09-03.md` is the receipt. It
+measures the gap: over byte-identical bytes with the GEMV lane on in one arm
+and refused in the other, the prefill regime reads `KL >= 0.000000` at 100.00%
+top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
+the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
+decode dump's scored forwards, zero on the prefill dump's.
 
 ### 4.6 The stock twin isolates the wire from the kernel
 
