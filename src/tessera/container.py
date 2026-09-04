@@ -25,6 +25,15 @@ Truncation is fail-closed: a byte length that does not match a declared
 terminal's plane-region size is rejected.  Per-superblock quota-boundary
 truncations within a plane are legal and enumerate their own ``terminal_id``;
 arbitrary interleaved byte-prefixes are not terminals.
+
+The ladder that makes a *shorter* length legal is the writer's to declare, and
+``unit_artifact.build_unit_artifact`` declares one terminal: an encoded unit
+has exactly one legal length, and every truncation of one is refused here.
+Multi-terminal artifacts are laid out directly in the tests.  Making an encode
+truncatable is not a writer change alone -- ``parse_unit_artifact`` reads the
+scale and body planes at counts derived from the geometry, not at the
+terminal's declared counts, so a short rung would fail in ``unpack_uniform``
+after passing this match (tessera#144).
 """
 
 from __future__ import annotations

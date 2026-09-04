@@ -19,7 +19,7 @@ import torch
 from tessera import calculator, container, wire
 from tessera.codebook import _hoist
 from tessera.container import HEADER_BYTES, parse, serialize
-from tessera.errors import GrammarError, PlaneLayoutError
+from tessera.errors import GrammarError, PlaneLayoutError, TruncationError
 from tessera.planes import (
     BitOrder,
     CountGranularity,
@@ -240,6 +240,35 @@ def test_hoist_breaks_ties_left():
     order = _hoist(points, assign, leaves, depth=1)
     assert torch.equal(order, torch.tensor([0, 1]))
     assert "tie" in _hoist.__doc__.lower()
+
+
+# --- tessera#144: what the terminal ladder actually is on an encode --------
+
+
+def test_an_encoded_artifact_declares_exactly_one_terminal():
+    """A pin on current behaviour, not a fail-before test.
+
+    Four modules described the multi-terminal truncation ladder as live.  It is
+    a capability of the layout and container layers -- ``layout.build_terminal``
+    prices a rung, ``container.parse`` resolves a byte length against the
+    declared rungs -- and the tests that exercise a legal truncation lay their
+    three-rung artifact out directly (``tests/conftest.py::make_artifact``).
+    No **encode** produces one: ``build_unit_artifact`` writes
+    ``terminals=(terminal,)``, so a written unit has exactly one legal length
+    and every truncation of it is refused.
+
+    This pins that, so the day a writer emits a ladder it also has to answer
+    the second half: ``parse_unit_artifact`` reads the scale and body planes at
+    counts derived from the geometry, not at the terminal's declared counts, so
+    a short rung would fail in ``unpack_uniform`` after passing the match in
+    ``container.parse``.  Whether truncatable encodes are a planned capability
+    is tessera#144 and is not decided here.
+    """
+    manifest, region, blob = _toy_artifact()
+    assert [t.slot_id for t in manifest.terminals] == ["t-nvfp4"]
+    assert manifest.terminals[0].exact_bytes == len(region)
+    with pytest.raises(TruncationError, match="match no declared terminal"):
+        parse(blob[:-1])
 
 
 # --- G2c: the boundary, now that both sides have landed --------------------

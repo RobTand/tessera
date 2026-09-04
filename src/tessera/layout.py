@@ -493,10 +493,17 @@ def build_terminal(
     """Compute a terminal's exact per-plane counts, bytes, bpp, and digest.
 
     `plane_region` is the artifact's full region; the terminal's digest covers
-    its own byte prefix of it.  Without a per-terminal digest, every legal
-    truncation -- this format's headline case -- would carry no integrity check
-    at all, because the whole-artifact digest only covers the untruncated
-    bytes (review finding F9).
+    its own byte prefix of it.  Without a per-terminal digest, a legal
+    truncation would carry no integrity check at all, because the
+    whole-artifact digest only covers the untruncated bytes (review finding
+    F9).
+
+    "Legal truncation" is the layout's capability, not something an encoded
+    artifact currently offers: ``unit_artifact.build_unit_artifact`` declares
+    one terminal per unit, so every artifact this tree writes has exactly one
+    legal length and the per-terminal digest is, for now, a second digest over
+    the whole region.  It is kept because the ladder is the wire's (doc S6,
+    §3c) and a writer that emits one is what tessera#144 is about.
     """
     if len(spec.completion_bits) != len(rates):
         raise GrammarError(

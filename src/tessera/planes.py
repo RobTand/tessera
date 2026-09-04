@@ -60,6 +60,10 @@ class PlaneKind(IntEnum):
 #: of doc S6: T-po2 is body + po2 base + partial completion, T-C3 adds C-full,
 #: and T-nvfp4-class adds the refinement and release planes on top.  The two
 #: blob planes lead because nothing else decodes without them.
+#:
+#: The classes are what the order makes *possible*, not what an encode carries:
+#: ``unit_artifact.build_unit_artifact`` declares one terminal, of the
+#: T-nvfp4 class, so a written unit has a single legal length (tessera#144).
 CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
     PlaneKind.ALPHABET,
     PlaneKind.DESCENDANT,
