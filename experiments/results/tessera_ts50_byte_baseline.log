@@ -1,0 +1,37 @@
+wrote /home/rob/tmp/ts50_bytes_master.json: 15 encodes
+{
+  "qwen-q_proj/LDLQ + refit full-H": "4adccebecabf103141dab7413e8eb97fa865b5965532ee5648e1a1c21683c069",
+  "qwen-q_proj/LDLQ + refit h^1.0": "d3342118a495e4ae0ca899767f7a410b72005f9e921bc9383ff5f131e8461bf8",
+  "qwen-q_proj/plain": "08976381e114b98662dcdb643578c3845de51ea809ac80ced085f32b642a1d4a",
+  "qwen-q_proj/refit full-H": "b2e3a4fd271dcb844ddf2e0908de8ba5804c37684d3204eb6234e2878655d3e4",
+  "qwen-q_proj/refit h^1.0": "9d50d28a65f23f9e468e4f085555159556dfd24c9bde7878d430ed11c1d663de",
+  "synth-32x384/LDLQ + refit full-H": "7b0e7dc036e658c719a138c21a5e67881f05f2b4dbe25ac92719e57fe68c246a",
+  "synth-32x384/LDLQ + refit h^1.0": "9da60b15ee1e3ee97110a642ae7696089a23ea31f978d29b3aaafc7d5eecef5d",
+  "synth-32x384/plain": "29552b1d0d44da7915983293ff1fc72a085e851675ab944a99291fca98a18b7c",
+  "synth-32x384/refit full-H": "0375ec52eb03e93db22821cbd3545ee608c421c621881eea7e6f0d382c5258b8",
+  "synth-32x384/refit h^1.0": "1035881ac6eedf23086133ec800f7d208583d7f25688f0553ff289ee1a313834",
+  "synth-64x512/LDLQ + refit full-H": "2e24e8a7e4a3612c01d4793607eb3a0a7b1da343ac4cb4a801069832d01ce944",
+  "synth-64x512/LDLQ + refit h^1.0": "84349ca23f312acc85cf5d6101edb622b7ab1816b40da956567334c2c9ee95ae",
+  "synth-64x512/plain": "663614c432da1737f358d46f01cd02c55cdec302d1819da1b0b57fc0aa0f79be",
+  "synth-64x512/refit full-H": "7ab5db1d360c628b2bebb0ac532a72b0c418145a90311d484e72088cb24824e4",
+  "synth-64x512/refit h^1.0": "2b1ef3400c7486bc575f6817c740a27ae3da8cb500b840b1c32b398c04e117a9"
+}
+wrote /home/rob/tmp/ts50_bytes_branch.json: 15 encodes
+{
+  "qwen-q_proj/LDLQ + refit full-H": "4adccebecabf103141dab7413e8eb97fa865b5965532ee5648e1a1c21683c069",
+  "qwen-q_proj/LDLQ + refit h^1.0": "d3342118a495e4ae0ca899767f7a410b72005f9e921bc9383ff5f131e8461bf8",
+  "qwen-q_proj/plain": "08976381e114b98662dcdb643578c3845de51ea809ac80ced085f32b642a1d4a",
+  "qwen-q_proj/refit full-H": "b2e3a4fd271dcb844ddf2e0908de8ba5804c37684d3204eb6234e2878655d3e4",
+  "qwen-q_proj/refit h^1.0": "9d50d28a65f23f9e468e4f085555159556dfd24c9bde7878d430ed11c1d663de",
+  "synth-32x384/LDLQ + refit full-H": "7b0e7dc036e658c719a138c21a5e67881f05f2b4dbe25ac92719e57fe68c246a",
+  "synth-32x384/LDLQ + refit h^1.0": "9da60b15ee1e3ee97110a642ae7696089a23ea31f978d29b3aaafc7d5eecef5d",
+  "synth-32x384/plain": "29552b1d0d44da7915983293ff1fc72a085e851675ab944a99291fca98a18b7c",
+  "synth-32x384/refit full-H": "0375ec52eb03e93db22821cbd3545ee608c421c621881eea7e6f0d382c5258b8",
+  "synth-32x384/refit h^1.0": "1035881ac6eedf23086133ec800f7d208583d7f25688f0553ff289ee1a313834",
+  "synth-64x512/LDLQ + refit full-H": "2e24e8a7e4a3612c01d4793607eb3a0a7b1da343ac4cb4a801069832d01ce944",
+  "synth-64x512/LDLQ + refit h^1.0": "84349ca23f312acc85cf5d6101edb622b7ab1816b40da956567334c2c9ee95ae",
+  "synth-64x512/plain": "663614c432da1737f358d46f01cd02c55cdec302d1819da1b0b57fc0aa0f79be",
+  "synth-64x512/refit full-H": "7ab5db1d360c628b2bebb0ac532a72b0c418145a90311d484e72088cb24824e4",
+  "synth-64x512/refit h^1.0": "2b1ef3400c7486bc575f6817c740a27ae3da8cb500b840b1c32b398c04e117a9"
+}
+0 changed of 15
