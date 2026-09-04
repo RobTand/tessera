@@ -39,5 +39,57 @@
  },
  "what_survives": "nothing quantitative.  The segment-count RATIOS are geometry and stand (8x from b32 to b4, 4x to b8); the seconds do not.  The LUT receipt's 0.694 s/segment remains the only clean per-segment figure and it was measured elsewhere, on a GLM expert and the CHANNEL plane.",
  "how_it_gets_measured": "the sequential matched pair this run has always planned: b32 -> b4 -> b32 back to back, with the repeat control.  Agreement between the two b32 arms is what certifies the window, and that works under steady load without needing an idle box.  Not yet run.",
- "lesson": "this is the LUT-plane receipt's retraction repeated in a new dress.  That receipt withdrew 9.2x, 1.72x and 1.34x because each divided two runs taken at different times under different load.  I avoided that trap and fell into its neighbour: two runs taken at the SAME time, over different DURATIONS, under a load that was itself moving.  Simultaneity does not pin conditions; only a repeated control does."
+ "lesson": "this is the LUT-plane receipt's retraction repeated in a new dress.  That receipt withdrew 9.2x, 1.72x and 1.34x because each divided two runs taken at different times under different load.  I avoided that trap and fell into its neighbour: two runs taken at the SAME time, over different DURATIONS, under a load that was itself moving.  Simultaneity does not pin conditions; only a repeated control does.",
+ "load_evidence": {
+  "source": "Netdata on gx10-6b77 (sparklina), system.load load1, 5-minute averages",
+  "range_over_run": {
+   "min": 3.3,
+   "max": 82.6,
+   "swing": "25x"
+  },
+  "series_utc": {
+   "23:20": 3.3,
+   "23:25": 16.4,
+   "23:30": 14.7,
+   "23:35": 46.5,
+   "23:40": 82.6,
+   "23:45": 80.2,
+   "23:50": 79.1,
+   "23:55": 57.2,
+   "00:00": 74.0,
+   "00:05": 63.3,
+   "00:10": 28.5,
+   "00:15": 31.1,
+   "00:20": 71.1,
+   "00:25": 62.4,
+   "00:30": 30.2,
+   "00:35": 14.8,
+   "00:40": 9.2,
+   "00:45": 12.3,
+   "00:50": 9.2,
+   "00:55": 7.7,
+   "01:00": 7.5,
+   "01:05": 7.9,
+   "01:10": 8.4,
+   "01:15": 8.4
+  },
+  "windows": {
+   "b32 first 20 units": {
+    "utc": "23:26-23:41",
+    "s": 930,
+    "mean_load1": 40.0
+   },
+   "b8 first 20 units": {
+    "utc": "23:40-00:48",
+    "s": 4070,
+    "mean_load1": 49.7
+   },
+   "b4 first 20 units": {
+    "utc": "23:23-00:58",
+    "s": 5721,
+    "mean_load1": 39.7
+   }
+  },
+  "reading": "this is what makes the three arms incomparable, and it is now a measurement rather than my recollection.  b8's window carried the highest mean load (the spike sat almost entirely inside it) which is exactly why b8 fell above the line the other two define.  No ratio among these three arms is a cost measurement."
+ }
 }
