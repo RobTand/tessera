@@ -291,12 +291,26 @@ that folding the plane away would cost is not a price this route has to pay,
 and the constraint that would have decided against a Tessera expert route
 before it was written does not exist on this build.
 
-**What it does not say.** A kernel that *would* take a per-channel scale is
-never handed one unless a method asks, and the stock `Fp8MoEMethod` fixes its
-`weight_key` at construction. So a Tessera expert route cannot inherit the
-stock selection — it must call `select_fp8_moe_backend` itself with the
-channel key. That is §6 item 3. And none of this is a route: there is still no
-`ROUTES` entry, no `apply`, no `routed_moe` in `scheme.STRUCTURES`.
+**What it does not say — and this half is read off the runtime's source, not
+recalled.** A kernel that *would* take a per-channel scale is never handed one
+unless some method asks for it. The `stock_keys` leg records which `QuantKey`
+constants `Fp8MoEMethod`'s own functions name, in the pinned image
+(`experiments/results/moe_decode_stock_keys.json`, run without `--gpus` because
+`inspect.getsource` needs no device):
+
+```
+__init__                     -> ["kFp8Dynamic128Sym", "kFp8DynamicTensorSym",
+                                 "kFp8Static128BlockSym", "kFp8StaticTensorSym"]
+get_fused_moe_quant_config   -> []
+```
+
+**`kFp8StaticChannelSym` is absent.** The stock method asks for per-tensor or
+128-block and nothing else, so a Tessera expert route cannot inherit the stock
+selection: it must call `select_fp8_moe_backend` itself with the channel key.
+That is §6 item 3, and it is now a quotation rather than a belief.
+
+And none of this is a route: there is still no `ROUTES` entry, no `apply`, no
+`routed_moe` in `scheme.STRUCTURES`.
 
 ---
 
