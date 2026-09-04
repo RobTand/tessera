@@ -380,29 +380,37 @@ fail. It is stated as layer 0's wire, not as the checkpoint's.
 `tests/test_ldlq_block_budget.py`, 20 cases, all on the PrismaBuild pool
 (`20 passed in 0.83s`, sparky). They split into two halves on purpose.
 
-**Five are regression guards** and pass on the pre-change tree as well -- that
+**Four are regression guards** and pass on the pre-change tree as well -- that
 is what they are for: `the_default_is_still_the_measured_constant`,
 `a_stated_block_writes_the_int_it_always_wrote`,
-`for_unit_at_a_stated_block_is_bit_identical_to_the_old_expression`,
-`a_stated_block_below_one_is_still_refused`, and
-`the_segment_count_a_budget_implies_is_what_the_encode_time_tracks` (pure
-`block_penalty` arithmetic, which the change does not touch). A guard that
-went red on the old tree would be describing a behaviour change the branch is
-claiming not to make.
+`for_unit_at_a_stated_block_is_bit_identical_to_the_old_expression`, and
+`a_stated_block_below_one_is_still_refused`. A guard that went red on the old
+tree would be describing a behaviour change the branch is claiming not to make.
 
-**The rest exercise machinery that does not exist without the change** --
-`block_for`, a mapping-valued `ldlq_block`, the `floor=1` derivation, the
-refusals for a budget with LDLQ off or a malformed spec, the frozen budget and
-the guarded config field. On the pre-change tree `ActivationSource.ldlq_block`
-is a bare `int` (`ts12-pre/src/tessera/export.py:276`) and `block_for` is
-absent. **Pre-registered, pending the run:** they should fail on
-`AttributeError` for the missing `block_for` and on `TypeError` from the old
-`if self.ldlq_block < 1` comparing a dict to an int -- which would mean the
-refusal tests fail *on the type error* rather than on their expected
-`GrammarError`. That distinction is worth naming rather than reporting a bare
-"would fail", and it is written here before the counterfactual run lands so
-the run can contradict it. The pre-change split is expected to be 5 passed /
-15 failed; the actual split replaces this paragraph.
+**The other sixteen fail there**, measured, not predicted: `16 failed, 4
+passed in 0.79s` with the test file run out of the pre-change checkout
+(`ts12-pre`, whose `export.py:276` still reads `ldlq_block: int =
+DEFAULT_LDLQ_BLOCK`). The failure modes, tallied from that run:
+
+| failure | count | what it says |
+|---|---|---|
+| `TypeError: '<' not supported between instances of 'dict' and 'int'` | 14 | the old `if self.ldlq_block < 1` meets a budget spec |
+| `AttributeError: 'ActivationSource' object has no attribute 'block_for'` | 1 | the derivation does not exist there |
+| `Failed: DID NOT RAISE tessera.errors.GrammarError` | 1 | `ldlq_block=1.02` is **silently accepted** by the old field |
+
+Two of these are worth more than a count. The refusal tests fail on the *type
+error* rather than on their expected `GrammarError`, which is a real failure
+and not the one their name implies -- worth saying rather than reporting a bare
+"would fail". And the single `DID NOT RAISE` is a small find of its own: on the
+pre-change tree a float `ldlq_block=1.02` passes construction, because
+`1.02 < 1` is `False`, and would reach the encoder as a block width. The new
+validation refuses it by name.
+
+One pre-registered expectation was wrong and is corrected rather than quietly
+dropped: the split was predicted 5/15, on the guess that
+`the_segment_count_a_budget_implies_is_what_the_encode_time_tracks` was pure
+`block_penalty` arithmetic. It is not -- it builds a budget-bearing
+`ActivationSource` first, so it fails on the old tree too. The split is 4/16.
 
 The counterfactual run itself is recorded below under its own heading, because
 the obvious way to take it does not work in this suite.
