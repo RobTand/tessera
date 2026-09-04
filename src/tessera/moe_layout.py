@@ -219,7 +219,17 @@ def unpack_moe_wires(packed: MoePacked) -> "tuple[list[list[bytes]], list[bytes]
             "is the max over the packed blobs, so a declared stride beside it is a wrong "
             "tensor, not room")
 
-    back13 = [[bytes(packed.w13_wire[e, p, :w13_lengths[e][p]].tolist()) for p in range(W13_PROJECTIONS)]
+    back13 = [[_blob_bytes(packed.w13_wire[e, p, :w13_lengths[e][p]]) for p in range(W13_PROJECTIONS)]
               for e in range(experts)]
-    back2 = [bytes(packed.w2_wire[e, :w2_lengths[e]].tolist()) for e in range(experts)]
+    back2 = [_blob_bytes(packed.w2_wire[e, :w2_lengths[e]]) for e in range(experts)]
     return back13, back2
+
+
+def _blob_bytes(wire: torch.Tensor) -> bytes:
+    """One uint8 row as the container bytes it holds, copied once.
+
+    ``bytes(t.tolist())`` boxed every byte as a Python int first -- tens of
+    millions of them on a 22-stack x 32-expert x 3-projection load -- for the
+    same bytes a single contiguous copy yields.
+    """
+    return wire.detach().cpu().contiguous().numpy().tobytes()
