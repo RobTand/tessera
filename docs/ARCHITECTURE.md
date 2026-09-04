@@ -116,7 +116,7 @@ reports as a served module. All six allocated checkpoints under
 `/mnt/shared/tessera-runs/allocated` carried a rate outside the set, so no
 artifact we held could exercise the lane at all.
 
-The predicate is therefore published (`runtime_contract.json` v11,
+The predicate is therefore published (`runtime_contract.json` v12,
 `native_extensions[].lane.requires`, which *is*
 `kernel_window_gemv.SUPPORTED_RATES` and `WINDOW_BITS_SUPPORTED` --
 `tests/test_lane_reachability.py` ties the two ends) and read on both sides:
