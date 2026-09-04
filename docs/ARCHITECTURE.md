@@ -465,6 +465,14 @@ The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.
 
+The BF16-reference gate derives its target population from that corpus's
+contract before it reads quality. With `prepends_bos: true`, the injected BOS
+conditions the first corpus token and every token in every chunk is scored;
+without it, each chunk's unconditioned first token is omitted. The derived
+count must equal the contract's `scored_positions` and the dump's position
+count. It is never inferred from the dump shape: a malformed pair cannot pick
+the interpretation that lets itself through.
+
 `TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
 compile it declines and counts nothing, which is enforced since #113 rather
 than described) makes the
@@ -748,4 +756,3 @@ that artifact and `82cdf513` closed a further 2.1% with no recipe change, and
 the block is worth 1.94% against its own session's control. Quoting the
 published incumbent instead of re-running it would have credited the block
 with twice its size.
-

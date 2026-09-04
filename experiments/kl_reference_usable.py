@@ -44,7 +44,26 @@ def load_targets(corpus_path: str) -> tuple[np.ndarray, dict]:
     """The corpus's own next tokens, in the order the dump scores them."""
     contract = json.load(open(corpus_path))
     chunks = contract["chunks"]
-    return np.concatenate([np.asarray(c[1:], dtype=np.int64) for c in chunks]), contract
+    prepends_bos = contract.get("prepends_bos", False)
+    if not isinstance(prepends_bos, bool):
+        raise SystemExit(
+            f"corpus prepends_bos must be a boolean, got {prepends_bos!r}"
+        )
+    # Without an injected BOS the first token in each chunk has no predecessor,
+    # so prompt-logprob dumping begins at c[1].  With one, BOS is that
+    # predecessor and the runtime returns a score for every corpus token.  This
+    # is a property of the corpus contract, not something to infer from a dump's
+    # shape: inference would let a malformed pair choose its own interpretation.
+    targets = np.concatenate([
+        np.asarray(c if prepends_bos else c[1:], dtype=np.int64) for c in chunks
+    ])
+    declared = contract.get("scored_positions")
+    if declared is not None and declared != targets.shape[0]:
+        raise SystemExit(
+            f"corpus declares {declared} scored positions, but prepends_bos="
+            f"{prepends_bos} and its chunks define {targets.shape[0]}"
+        )
+    return targets, contract
 
 
 def require_same_contract(dump_meta: dict, contract: dict) -> None:

@@ -22,23 +22,28 @@ N_POS = N_CHUNKS * (SEQLEN - 1)
 K = 6
 
 
-def write_corpus(path: Path, contract_sha: str, tokenizer_path: str) -> np.ndarray:
+def write_corpus(path: Path, contract_sha: str, tokenizer_path: str, *,
+                 prepends_bos: bool = False) -> np.ndarray:
     rng = np.random.default_rng(0)
     chunks = [rng.integers(0, 500, size=SEQLEN).tolist() for _ in range(N_CHUNKS)]
+    targets = np.concatenate([
+        np.asarray(c if prepends_bos else c[1:], dtype=np.int64) for c in chunks
+    ])
     path.write_text(
         json.dumps(
             {
                 "schema": "prismaquant.kl_corpus_contract/1",
                 "n_chunks": N_CHUNKS,
                 "seqlen": SEQLEN,
-                "scored_positions": N_POS,
+                "scored_positions": len(targets),
                 "chunks": chunks,
+                "prepends_bos": prepends_bos,
                 "contract_sha256": contract_sha,
                 "tokenizer": {"path": tokenizer_path, "identity_sha256": contract_sha},
             }
         )
     )
-    return np.concatenate([np.asarray(c[1:], dtype=np.int64) for c in chunks])
+    return targets
 
 
 def write_dump(path: Path, targets: np.ndarray, *, peaked: bool, contract_sha: str,
@@ -89,6 +94,30 @@ def test_a_peaked_reference_is_usable(toy):
     proc = run(dump, corpus, "--min-support-mass", "0.5")
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "usable as a KL reference" in proc.stdout
+    assert "next-token top-1 accuracy                      100.00%" in proc.stdout
+
+
+def test_a_prepended_bos_reference_scores_every_corpus_token(tmp_path):
+    """A corpus that prepends BOS has a predecessor for its first token.
+
+    ``kl_tool dump`` therefore emits one scored position per corpus token,
+    rather than dropping the first token of every chunk as an unconditioned
+    position.  The reference gate must construct the same target population.
+    """
+    corpus = tmp_path / "bos_corpus.json"
+    targets = write_corpus(
+        corpus, "bos11111", "/models/toy-bos", prepends_bos=True
+    )
+    dump = tmp_path / "good_bos.npz"
+    write_dump(
+        dump, targets, peaked=True, contract_sha="bos11111",
+        tokenizer_path="/models/toy-bos",
+    )
+
+    proc = run(dump, corpus, "--min-support-mass", "0.5")
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"positions {N_CHUNKS * SEQLEN}" in proc.stdout
     assert "next-token top-1 accuracy                      100.00%" in proc.stdout
 
 
