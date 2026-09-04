@@ -5,3 +5,4 @@ h-weighted sse {'s1.00': 3.585548162460327, 's0.75': 3.854710578918457}; h ratio
   graft top      0 entries -> h ratio 1.0369 (reach 288.0)
   graft top      1 entries -> h ratio 1.0369 (reach 288.0)
   graft top      2 entries -> h ratio 1.0369 (reach 288.0)
+  graft top      4 entries -> h ratio 1.0368 (reach 288.0)
