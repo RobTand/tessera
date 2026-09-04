@@ -56,3 +56,33 @@ echo "output dir after the refusal: $(ls -d "$REFUSED_OUT" 2>&1)"
   --lane tessera_window_gemv --json "$RUNS/preflight-allocated.json" 2>&1 | tail -40
 
 WT="$WT" RUNS="$RUNS" bash "$WT/experiments/ts104_gemv_census.sh"
+
+# --- (g): the served pair, same session, same box, same corpus -------------
+# NOT byte-matched: R1024 is +1.8% wire over R1006 (root 4.0 vs 3.93), which is
+# the price of the constraint at this rung and is stated as such.  Served
+# through Tessera's own plugin, streamed (the residency in which the GEMV lane
+# exists at all), eager.
+export TS=$WT RUNS
+for arm in "R1024:$NEW" "R1006:$ALLOC/qwen3-0.6b-uniform-R1006"; do
+  name=${arm%%:*}; model=${arm#*:}
+  echo "=== served KL $name  $model  $(date -Is)"
+  bash "$WT/experiments/tessera_plugin_served.sh" "$model" "ts104-$name-streamed" streamed \
+    2>&1 | tail -30
+  echo "served KL $name exit: ${PIPESTATUS[0]}"
+done
+
+# --- (e): the tests, and their FAIL-BEFORE on a pristine master -------------
+NEWTESTS="tests/test_lane_reachability.py tests/test_census_engagement.py"
+echo "=== new tests on this branch"
+(cd "$WT" && "$PY" -m pytest -q $NEWTESTS 2>&1 | tail -25)
+echo "=== impacted tests (tools/impacted_tests.py --ref master...HEAD)"
+(cd "$WT" && "$PY" tools/impacted_tests.py --ref master...HEAD 2>&1 | tee "$RUNS/impacted.txt" | tail -20)
+IMPACTED=$(grep -oE 'tests/[A-Za-z0-9_./-]+\.py' "$RUNS/impacted.txt" | sort -u | tr '\n' ' ')
+echo "impacted: $IMPACTED"
+if [ -n "$IMPACTED" ]; then (cd "$WT" && "$PY" -m pytest -q $IMPACTED 2>&1 | tail -25); fi
+echo "=== FAIL-BEFORE: the same two files against master 42615e4 (AGENTS.md rule 8)"
+MASTER=/home/rob/tmp/ts104-master
+cp $NEWTESTS "$MASTER/tests/"
+(cd "$MASTER" && "$PY" -m pytest -q tests/test_lane_reachability.py tests/test_census_engagement.py 2>&1 | tail -30)
+rm -f "$MASTER/tests/test_lane_reachability.py" "$MASTER/tests/test_census_engagement.py"
+echo "CHAIN DONE $(date -Is)"
