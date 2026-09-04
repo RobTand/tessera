@@ -131,7 +131,11 @@ def table(path: Path):
         # ``continuous`` still agrees to 1e-6, which is the same like-for-like
         # test pass 1 passes trivially.  Without this a unit reads 0.00% above
         # while its held-out ``out`` moved, and the two look contradictory.
-        print(f"\n    first pass whose tables differ, per unit "
+        # Named for what the loop below tests: ``landed`` is the pass's cost
+        # after landing, not its table.  Two different tables can land the same
+        # cost, so this finds the first pass whose landed *cost* moves, which
+        # is the quantity the columns then decompose.
+        print(f"\n    first pass whose landed cost differs, per unit "
               f"(reported only while both arms still share ``continuous``)")
         print(f"\n{'unit':<40} {'pass':>5} {'control':>10} {'arm':>10} "
               f"{'removed':>9}")

@@ -101,7 +101,22 @@ def verdict(ceiling_doc, gm, ceiling_json, alpha, log):
     fired = not ((1.0 - gm) >= bar)
     log(f"    step-1 ceiling (table -> grid, h^{alpha}) {ceiling:.4%}"
         f"   half of it {bar:.4%}")
-    log(f"    VERDICT: {'STOP -- under half the ceiling' if fired else 'CONTINUE -- clears half the ceiling'}")
+    # "Under half the ceiling" reads like a small win that missed a bar, and
+    # a reader who assumes that reads the exact-16 result backwards: its gain
+    # is -0.52%, so the arm is *worse* than the arm it is measured against and
+    # the ceiling never enters the decision.  Say which of the two it is --
+    # a STOP that does not depend on the ceiling does not inherit the
+    # ceiling's own caveats, and here the ceiling arms carry no
+    # ``sink_vs_wire_bit_identical`` at all.
+    gain = 1.0 - gm
+    if not fired:
+        verdict = f"CONTINUE -- {gain:+.4%} clears half the ceiling"
+    elif gain <= 0:
+        verdict = (f"STOP -- the arm is WORSE than its control ({gain:+.4%}); "
+                   "the ceiling does not enter this decision")
+    else:
+        verdict = f"STOP -- {gain:+.4%} is under half the ceiling"
+    log(f"    VERDICT: {verdict}")
     return {"ceiling_json": ceiling_json, "ceiling": ceiling, "bar": bar,
             "fired": bool(fired)}
 
