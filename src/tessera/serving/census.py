@@ -167,7 +167,8 @@ CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/1"
 
 
 def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
-                          rungs_by_module, families_by_route, structure="dense"):
+                          rungs_by_module, families_by_route, structure="dense",
+                          symbol_alias=None):
     """Every served record's launch against the CELL that covers it (#111).
 
     The lane-engagement block above asks whether a lane took any modules.  This
@@ -237,7 +238,12 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             pair = (str(record.get("symbol")), str(record.get("decoder")))
             allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
-            if pair not in allowed:
+            # The route may carry an observed backend suffix while a cell
+            # publishes the runtime entry point. Preserve exact matching too:
+            # a cell that explicitly pins a backend must not accept another.
+            alias_pair = ((str(symbol_alias(pair[0])), pair[1])
+                          if symbol_alias is not None else pair)
+            if pair not in allowed and alias_pair not in allowed:
                 problems.append(
                     f"{phase}: {name} executed {pair!r}, which cell {cell['id']!r} does not "
                     f"publish (it executes {sorted(allowed)!r}). The cell is what a producer "

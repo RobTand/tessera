@@ -172,6 +172,64 @@ def join_records_to_declared(records, declared):
     return owner, problems
 
 
+def declared_rung(scheme):
+    """One cell rung only when every declared group and role has that rung."""
+    if scheme.get("structure") == "routed_moe":
+        groups = list((scheme.get("groups") or {}).values())
+    else:
+        groups = [scheme]
+    rates = []
+    for group in groups:
+        value = group.get("q256")
+        values = value if isinstance(value, (list, tuple)) else [value]
+        if not values or any(v is None for v in values):
+            return None
+        rates.extend(int(v) for v in values)
+    distinct = set(rates)
+    return next(iter(distinct)) if len(distinct) == 1 else None
+
+
+def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
+                            declared_rungs, record_owners, families_by_route):
+    """Check each observed structure against its own cells, using declared owners.
+
+    This aggregates existing per-structure checks; it publishes no new cells.
+    Missing ownership, mixed rungs, and structures with no cells remain
+    unattested. Exact recorded symbols remain in the census records.
+    """
+    from tessera.serving.census import (
+        CELL_AGREEMENT_SCHEMA, STRUCTURE_BY_RECORD_KIND, cell_launch_agreement)
+    from tessera.serving.moe_route import census_symbol_base
+
+    structures = sorted({STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind")), "unknown")
+                         for records in records_by_phase.values()
+                         for record in records.values()})
+    blocks, problems = {}, []
+    for structure in structures:
+        phases, verdicts = {}, []
+        for phase, records in sorted(records_by_phase.items()):
+            selected = {name: record for name, record in records.items()
+                        if STRUCTURE_BY_RECORD_KIND.get(str(record.get("kind")), "unknown")
+                        == structure}
+            owners = record_owners.get(phase, {})
+            rungs = {name: declared_rungs.get(owners.get(name)) for name in selected}
+            block, failures = cell_launch_agreement(
+                {phase: selected}, cells=cells, phase_regimes=phase_regimes,
+                platform=platform, structure=structure, rungs_by_module=rungs,
+                families_by_route=families_by_route,
+                symbol_alias=census_symbol_base if structure == "routed_moe" else None)
+            phases.update(block["phases"])
+            verdicts.append(block["agrees"])
+            problems.extend(failures)
+        agrees = (False if False in verdicts else True if True in verdicts else None)
+        blocks[structure] = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform,
+                             "structure": structure, "phases": phases, "agrees": agrees}
+    verdicts = [block["agrees"] for block in blocks.values()]
+    return {"schema": "tessera.cell-launch-agreement/2", "platform": platform,
+            "structures": blocks,
+            "agrees": False if False in verdicts else True if True in verdicts else None}, problems
+
+
 def lane_refusals(model):
     """Runs inside the worker: every module whose LANE refused at load.
 
@@ -246,7 +304,7 @@ def main() -> int:
     import tessera
     import tessera.serving as serving
     from tessera.serving import bf16_route, fp8_gemv, fp8_route, moe_route, nvfp4_route
-    from tessera.serving.census import cell_launch_agreement, lane_engagement
+    from tessera.serving.census import lane_engagement
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
     from tessera.serving.lane import TESSERA_MODE_ENV
@@ -369,14 +427,7 @@ def main() -> int:
     # LIST since contract v6; a group whose members disagree resolves to no
     # rung, so its modules land in the honest ``unattested`` bucket rather than
     # borrowing one member's cell.
-    def _rung(scheme):
-        value = scheme.get("q256")
-        if isinstance(value, list):
-            distinct = {int(v) for v in value}
-            return distinct.pop() if len(distinct) == 1 else None
-        return None if value is None else int(value)
-
-    declared_rungs = {t: _rung(g["scheme"])
+    declared_rungs = {t: declared_rung(g["scheme"])
                       for g in tessera_groups.values() for t in g.get("targets", [])}
 
     problems = []
@@ -543,12 +594,13 @@ def main() -> int:
                         "launches; cells publish launches, so there is nothing to join"},
             [])
     else:
-        agreement, agreement_problems = cell_launch_agreement(
+        agreement, agreement_problems = all_structure_agreement(
             tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
             phase_regimes=CENSUS_PHASE_REGIMES,
             platform=f"sm_{torch.cuda.get_device_capability(0)[0]}"
                      f"{torch.cuda.get_device_capability(0)[1]}",
-            rungs_by_module=declared_rungs, families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
+            declared_rungs=declared_rungs, record_owners=record_owner,
+            families_by_route=PAYLOAD_FAMILY_BY_ROUTE)
     problems.extend(agreement_problems)
 
     receipt = {
