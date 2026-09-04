@@ -201,6 +201,13 @@ packed-source model this repo can serve.
     caught it because the case is `@cuda`-gated and every CPU run skipped it —
     the exact shape of "unmeasured, not passing" this section warned about, in
     this section's own tests. Fixed here, and re-run.
+
+    What it was *not* is a defect in the write half: the probe's exported arm
+    ran `export_tessera_serving.main()` with `--device cuda` and without
+    `--no-verify` in the same GPU session, so the CUDA encoder wrote the
+    containers, the exporter's own per-unit round-trip check passed on them,
+    and the plugin then loaded and executed them. The red was one test reading
+    `parsed.unit.geometry` instead of `parsed.manifest.geometry`.
   * The CPU halves had landed earlier, both through the pool on sparky:
     `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22 passed, 2 skipped
     in 29.74 s** — and `tests/test_export_moe_write.py` — `cb8372740b1b`,
