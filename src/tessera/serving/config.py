@@ -14,10 +14,11 @@ them degrade to BF16:
   ``UnquantizedLinearMethod`` there would serve a BF16 tensor for a module the
   producer believed it had quantized -- a typo in one target name would be a
   silently different artifact, and the KL would look merely disappointing.
-* a routed-MoE experts layer.  vLLM's own MoE layer takes
+* a routed-MoE experts layer the checkpoint neither declares nor ignores, and
+  one it declares with a DENSE scheme.  vLLM's own MoE layer takes
   ``UnquantizedFusedMoEMethod`` when a config returns ``None``, so ``None``
   here would serve uninitialised or BF16 expert memory rather than say no.
-  The expert route is designed (below) and not built.
+  A stack declared ``structure: routed_moe`` is served by ``moe_route``.
 * tensor parallelism in a build with no unit slicer.  Not because the artifact
   is per-rank -- it is deliberately TP-agnostic, one whole unit per role, and
   the loader cuts it at load (``sharding``) -- but because the cut needs
@@ -35,19 +36,22 @@ them degrade to BF16:
 
 WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s MoE branch is the seam
 (derived from vLLM's MoE layer module, never a hand-kept name list, so a
-version rename cannot slip it into the silent unquantized fallback).
-A Tessera MoE method would: parse one ``tessera.fused`` container
-per expert group, decode the per-expert wires into the STOCK packed expert
-layouts vLLM's fused-MoE kernels read (NVFP4: the packed w13/w2 triple, served
-through the build's own fused-MoE oracle --
-``docs/measurements/nvfp4-moe-oracle-2026-09-02.md`` records what the pinned
-build's oracle resolves on a clamped config; FP8: the per-channel
-compressed-tensors MoE path), and dispatch through vLLM's own fused-MoE
-kernels exactly as the dense routes dispatch through ``torch._scaled_mm``.  The
-scheme already carries ``structure`` for it (``scheme.STRUCTURES``); adding the
-route is a new value there, a route module, and -- only once a served census
-and KL exist -- a ``routed_moe`` cell in ``runtime_contract.json``.  No cell
-today, because no measurement.
+version rename cannot slip it into the silent unquantized fallback).  A stack
+whose scheme declares ``structure: routed_moe`` goes to ``moe_route``, which
+decodes one container per expert PROJECTION into the stock per-channel FP8
+expert parameters and dispatches through vLLM's own fused-MoE kernel -- the
+same ``select_fp8_moe_backend`` / ``convert_to_fp8_moe_kernel_format`` /
+``make_fp8_moe_kernel`` path ``CompressedTensorsW8A8Fp8MoEMethod`` takes at
+``strategy: channel``.  Which families have an expert route is
+``scheme.MOE_BUILDERS``, and it says why the other two do not: the NVFP4 arm
+resolves only under a ``swiglu_limit`` clamp on this build
+(``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), and a BF16 expert
+stack is the passthrough ``ignore`` already gives.
+
+There is still no ``routed_moe`` cell in ``runtime_contract.json``, and there
+will not be one until a served census and KL cover it on a real artifact.
+That is the ``loader_axes`` precedent again: this is what the loader DOES,
+which is a different published fact from what has been served.
 
 MoE AND PARALLELISM.  Expert parallelism needs no slicing at all: its
 granularity is one whole expert unit per rank, which is the case
@@ -68,7 +72,8 @@ from vllm.model_executor.layers.quantization.base_config import (
 
 from .compile_identity import declare_compile_identity
 from .lane import TESSERA_MODE_ENV, build_tessera_method, serve_mode
-from .scheme import is_tessera_scheme, validate_tessera_scheme
+from .scheme import (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, is_tessera_scheme,
+                     validate_tessera_scheme)
 from .sharding import require_a_cutter
 
 __all__ = ["TesseraConfig", "QUANT_METHOD"]
@@ -346,17 +351,26 @@ class TesseraConfig(QuantizationConfig):
                 # unquantized MoE method is the right answer and saying so is
                 # not a silent fallback.
                 return None
+            scheme = self.target_scheme.get(prefix)
+            if scheme is not None and scheme.get("structure") == STRUCTURE_ROUTED_MOE:
+                self._declare_once()
+                from .moe_route import build_tessera_moe_method
+
+                return build_tessera_moe_method(scheme, prefix, self._mode, layer)
+            if scheme is not None:
+                raise ValueError(
+                    f"tessera target {prefix!r}: this is a routed-MoE expert stack but its "
+                    f"scheme declares structure "
+                    f"{scheme.get('structure', STRUCTURE_DENSE)!r}. A dense scheme names one "
+                    "blob per module and the expert route reads one per expert per group; "
+                    "serving one through the other would read the wrong tensor rank.")
             raise ValueError(
-                f"tessera target {prefix!r}: routed-MoE experts are not served by this plugin "
-                "yet, and vLLM would silently fall back to UnquantizedFusedMoEMethod if this "
-                "returned None, so the refusal is here. The expert route will decode per-expert "
-                "wires into the stock packed expert layouts and run vLLM's own fused-MoE "
-                "kernels (NVFP4 W4A4 through the build's own fused-MoE oracle -- "
-                "docs/measurements/nvfp4-moe-oracle-2026-09-02.md records what the pinned "
-                "build's oracle resolves on a clamped config; per-channel "
-                "FP8 W8A8 is the compressed-tensors MoE path); it carries no lane_eligibility "
-                "cell because no served measurement covers it. Export the experts to a format "
-                "the pinned runtime serves, or wait for the expert route.")
+                f"tessera checkpoint declares no wire for the routed-MoE expert stack "
+                f"{prefix!r} and does not ignore it. Returning None here would hand vLLM "
+                "UnquantizedFusedMoEMethod -- uninitialised or BF16 expert memory served in "
+                "silence -- so the refusal is here. Declare the stack with a routed_moe "
+                "scheme, or name it in quantization_config.ignore to pass the experts "
+                "through at their source precision.")
         if isinstance(layer, LinearBase):
             scheme = self.target_scheme.get(prefix)
             if scheme is not None:

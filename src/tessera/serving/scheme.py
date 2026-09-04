@@ -79,6 +79,7 @@ __all__ = [
     "MOE_GROUPS",
     "MOE_GROUP_SHARDS",
     "MOE_GROUP_ROLES",
+    "MOE_BUILDERS",
     "ROUTES",
     "GROUP_SIZE",
     "FUSED_MODULE_FIELDS",
@@ -93,6 +94,7 @@ __all__ = [
     "validate_tessera_scheme",
     "validate_tessera_moe_scheme",
     "parse_tessera_blob_for_scheme",
+    "expert_role_declarations",
     "parse_tessera_expert_blob",
 ]
 
@@ -123,7 +125,7 @@ TESSERA_SCHEME_KEY = "family"
 #: method that would read the wrong tensor rank.
 STRUCTURE_DENSE = "dense"
 STRUCTURE_ROUTED_MOE = "routed_moe"
-STRUCTURES = (STRUCTURE_DENSE,)
+STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
 
 #: THE TWO EXPERT GROUPS, AND WHY THERE ARE EXACTLY TWO.  vLLM's
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
@@ -140,6 +142,25 @@ MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2"
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
+
+#: WHICH FAMILIES HAVE AN EXPERT ROUTE, and the one home for that rule.
+#: FAMILY = ROUTE holds on the expert stack exactly as it does on a Linear,
+#: so this is ``ROUTES``' shape again -- a builder per family -- and a family
+#: absent from it is refused by name rather than served through another
+#: family's decode.
+#:
+#: Only ``TESSERA_FP8`` is here, and the absences are measured rather than
+#: preferred.  ``TESSERA_NVFP4``: the pinned build's fused-MoE oracle resolves
+#: an NVFP4 expert arm only under a ``swiglu_limit`` clamp
+#: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), which changes the
+#: arithmetic the experts execute, so there is no NVFP4 expert tile to decode
+#: to that is the same object the dense NVFP4 route serves.  ``TESSERA_BF16``:
+#: a 16-bit expert stack is the passthrough vLLM already serves through
+#: ``ignore``, and a route that decoded a wire to it would spend the wire's
+#: bytes to arrive where no wire is needed.
+MOE_BUILDERS: dict[str, tuple[str, str]] = {
+    TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
+}
 
 #: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
 #: ``ScalePlaneKind.name``).  NVFP4: grids whose codes are E2M1 nibbles (arity
@@ -827,20 +848,43 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
     return _parse_container(blob, declared, target, device, expect_bytes=declared["wire_bytes"])
 
 
-def parse_tessera_expert_blob(blob: bytes, declared_group: Mapping, target: str,
-                              device="cpu") -> list:
-    """One expert's group container against the group the sidecar declared.
+def expert_role_declarations(declared_group: Mapping) -> "list[dict]":
+    """One single-member declaration per projection, in the group's row order.
 
-    ``declared_group`` is one entry of ``validate_tessera_moe_scheme``'s
-    ``groups``.  The length check is the group's stride rather than an exact
-    byte count -- an expert's blob is as long as its own manifest made it --
-    and ``fused.parse_fused`` is what refuses a blob that does not END where
-    the caller said it does, which is the check that matters.
+    A routed-MoE checkpoint stores ONE container per expert PROJECTION.  That
+    is the granularity of the checkpoint's tensors, of ``RoutedExperts``' shard
+    ids (``w1``/``w3``/``w2``, one call each) and of ``tessera.moe_layout``'s
+    cells; the GROUP is how those containers stack into the tile the fused-MoE
+    kernel reads, not a container of its own.  So the group's role list indexes
+    containers, and each is checked as the single-member container it is --
+    same ``_parse_container``, same refusals, one role at a time.
     """
-    stride = int(declared_group["wire_stride"])
+    out = []
+    for (name, rows), rung in zip(declared_group["roles"], declared_group["role_q256"]):
+        out.append({
+            "family": declared_group["family"], "grid": declared_group["grid"],
+            "body": declared_group["body"], "plane": declared_group["plane"],
+            "columns": declared_group["columns"], "rows": int(rows),
+            "roles": [(str(name), int(rows))], "role_q256": [int(rung)],
+            "q256": int(rung), "wire_stride": declared_group["wire_stride"],
+        })
+    return out
+
+
+def parse_tessera_expert_blob(blob: bytes, declared_role: Mapping, target: str,
+                              device="cpu") -> list:
+    """One expert projection's container against the role the sidecar declared.
+
+    ``declared_role`` is one entry of :func:`expert_role_declarations`.  The
+    length check is the group's stride rather than an exact byte count -- an
+    expert's blob is as long as its own manifest made it -- and
+    ``fused.parse_fused`` is what refuses a blob that does not END where the
+    caller said it does, which is the check that matters.
+    """
+    stride = int(declared_role["wire_stride"])
     if len(blob) > stride:
         raise ValueError(
             f"tessera target {target!r}: the expert blob is {len(blob)} bytes, longer than the "
             f"group's declared wire_stride={stride} -- the parameter row it was copied into "
             "ends before the blob does, so this is truncated data rather than a shorter read")
-    return _parse_container(blob, declared_group, target, device, expect_bytes=None)
+    return _parse_container(blob, declared_role, target, device, expect_bytes=None)

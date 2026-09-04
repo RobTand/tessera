@@ -160,6 +160,23 @@ def _bf16_scheme(**over):
             "roles": [["down_proj", 1024]], **over}
 
 
+MOE_TARGET = "model.layers.0.mlp.experts"
+
+
+def _moe_scheme(experts=4, hidden=128, inter=64, family=TESSERA_FP8, grid="E4M3",
+                body="WINDOW", plane="CHANNEL", q256=1024, **over):
+    """A routed-MoE scheme at the shape ``validate_tessera_moe_scheme`` reads."""
+    return {"family": family, "structure": "routed_moe", "grid": grid, "body": body,
+            "plane": plane, "experts": experts,
+            "groups": {
+                "w13": {"rows": 2 * inter, "columns": hidden, "q256": q256,
+                        "wire_stride": 4096,
+                        "roles": [["gate_proj", inter], ["up_proj", inter]]},
+                "w2": {"rows": hidden, "columns": inter, "q256": q256, "wire_stride": 4096,
+                       "roles": [["down_proj", hidden]]}},
+            **over}
+
+
 def _config(scheme=None, targets=(TARGET,), ignore=(), extra_groups=None, quant_method="tessera"):
     groups = {"tessera": {"format": "TESSERA", "targets": list(targets),
                           "scheme": _scheme() if scheme is None else scheme}}
@@ -259,7 +276,10 @@ def test_a_routed_moe_layer_refuses_and_never_returns_none(monkeypatch, build):
     with pytest.raises(ValueError) as excinfo:
         config.get_quant_method(layer, "model.layers.0.mlp.experts")
     message = str(excinfo.value)
-    assert "compressed-tensors" in message and "flashinfer_b12x" not in message
+    # The route exists now, so the remedy is the checkpoint's own vocabulary --
+    # declare the stack or ignore it -- and never a fallback.
+    assert "routed_moe" in message and "ignore" in message
+    assert "flashinfer_b12x" not in message
 
 
 @pytest.mark.parametrize("build", ["real", "named"])
@@ -297,6 +317,12 @@ def test_a_routed_moe_refusal_points_at_the_measured_oracle_receipt(monkeypatch,
     backend.  A pointer at a missing receipt is as bad as an asserted flag, so
     this resolves it: the file must exist, and its companion result JSON must
     record both the refusal and the resolution.
+
+    The refusal MOVED when the FP8 expert route landed: an undeclared stack is
+    now refused for being undeclared, and the family question is asked of a
+    stack that IS declared -- with the family whose expert arm the receipt is
+    about.  Same fact, same receipt, at the gate that now owns it
+    (``scheme.MOE_BUILDERS``).
     """
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     if build == "real":
@@ -304,9 +330,11 @@ def test_a_routed_moe_refusal_points_at_the_measured_oracle_receipt(monkeypatch,
         layer = object.__new__(RoutedExperts)
     else:
         layer = object.__new__(type("RoutedExperts", (), {}))
-    config = _resolved()
-    with pytest.raises(ValueError, match="routed-MoE") as excinfo:
-        config.get_quant_method(layer, "model.layers.0.mlp.experts")
+    config = _resolved(_config(_moe_scheme(family=TESSERA_NVFP4, grid="E2M1x2", body="TCQ",
+                                           plane="LUT", q256=896),
+                               targets=(MOE_TARGET,)))
+    with pytest.raises(ValueError, match="no expert route") as excinfo:
+        config.get_quant_method(layer, MOE_TARGET)
     message = str(excinfo.value)
     match = re.search(r"docs/measurements/[\w.\-]+\.md", message)
     assert match is not None, f"the refusal points at no measurement receipt: {message!r}"
@@ -423,12 +451,24 @@ def test_a_malformed_scheme_is_refused_at_config_parse(monkeypatch):
         _resolved(_config(_scheme(grid="E4M3")))
 
 
-def test_a_routed_moe_structure_is_refused_by_name_at_parse(monkeypatch):
-    """The field exists so that adding the expert route is a value, not a
-    schema change -- and until it is built, the value is refused here rather
-    than mis-served through the dense method."""
+def test_a_dense_scheme_on_an_expert_stack_is_refused_rather_than_mis_read(monkeypatch):
+    """The structure is what selects the METHOD, so the two shapes cannot be
+    served through each other: a dense scheme names one blob per module and the
+    expert route reads one per expert per projection."""
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    with pytest.raises(ValueError, match="routed_moe"):
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+    layer = object.__new__(RoutedExperts)
+    config = _resolved(_config(_fp8_scheme(), targets=(MOE_TARGET,)))
+    with pytest.raises(ValueError, match="structure 'dense'"):
+        config.get_quant_method(layer, MOE_TARGET)
+
+
+def test_a_routed_moe_scheme_that_is_shaped_dense_is_refused_at_parse(monkeypatch):
+    """A structure value is not a licence to keep the dense fields: the MoE
+    shape declares an expert count and two groups, and a scheme carrying
+    neither is refused at config parse, before a parameter exists."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match="experts must be an integer"):
         _resolved(_config(_scheme(structure="routed_moe")))
 
 
