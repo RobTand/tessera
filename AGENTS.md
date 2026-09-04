@@ -152,6 +152,61 @@ person or agent — changing the code.
   under that load a suite went from minutes to a projected ninety on
   2026-09-03, and the merge queue stalled behind runs that were answering the
   wrong question. Integration risk is caught at the integration point, once.
+- **A suite count is meaningless without its device population, and the
+  CUDA-gated surface is covered by nothing automatic.** Master was red on three
+  CUDA-gated tests while GitHub Actions, the x86 pool suite and a local CPU run
+  all read green; not one of the three could collect or run them (tessera#112).
+  Every run now says which population it covered -- device, skip count,
+  uncollected modules, and the skip reasons verbatim -- so read that block
+  before believing a pass count, and quote it whenever you record one. A run
+  that must cover the CUDA-gated surface says `--strict-cuda` (or
+  `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
+  skipping the surface and reporting green. **That surface is 467 tests** on
+  `d11dc01`, measured on one commit by both arms: the device-less x86 arm's
+  own histogram there names 467 skips whose verbatim reason is a CUDA or GPU
+  path, and the GPU arm on the same commit skipped 13, none device-shaped.
+  Quote that, not the issue's 450-480, which subtracted two runs of two
+  commits on two boxes. Quote the run mode with it -- the GPU arm ran serially
+  (the cu130 venv has no xdist) and was green at 1910 / 0 / 13; the x86 arm ran
+  `-n 8` and was **red** at 1406 / 5 / 499, all five failures in
+  `tests/test_cuda_surface.py` and caused by `-n`, not by the device. That red
+  is the point: it is the first regression on this branch that any signal
+  caught, and only the population caught it -- the same files run serially, and
+  as a targeted subset on the same box, were green.
+  `--surface-json PATH` writes the same population as a table, which is what a receipt should read; under `-n` each
+  worker writes its own `surface.<arm>.<workerid>.json` share and only the
+  controller writes the population, so a shard can never be read as a run.
+  `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
+  one under `--strict-cuda`, the device-less x86 one (torch, no CUDA device)
+  -- and writes **one** receipt holding both side by side, so neither can be quoted without the
+  other, appending a row per arm to `docs/status/suite-populations.md` under
+  `--record`. That ledger is where a suite result is recorded; read the two
+  adjacent rows, not one of them -- an arm a run did not submit is written as
+  `not submitted in this run`, so a lone row cannot be read as a whole result
+  -- and read each row's `mode` beside its `device`, because two rows of one
+  commit can differ by how they ran and not by the box they ran on. `--cpus N`
+  is clamped per arm: the GPU arm is always `serial` (its workers would share
+  one device and its CUDA venv has no xdist) while the x86 arm takes `-n N`,
+  which is what lets one submission carry both arms at all.
+  If the submitting session dies while the pool carries on -- which is how
+  every GPU submission on this branch has gone -- `--resume <receipt dir>`
+  rebuilds the receipt from the populations the runs published. Its exit
+  status is then the one **PrismaBuild's worker** recorded for the action that
+  wrote that population, found by the `--surface-json` path in the action's
+  own command and shown as `0 (pool)` so a status nobody here watched is not
+  mistaken for one this process saw. When no single finished action wrote the
+  path -- still in flight, requeued, or two of them did -- the row stays `not
+  observed` and no status is borrowed, because published failures prove red
+  while their absence does not prove green. **The pool requeues on any
+  non-zero exit**, so a red arm reads `not observed` for as long as its
+  retries last; the `failed` column is what carries the verdict there, and
+  both red rows on `d11dc01` and `82f0047` are exactly that case. Each row names the commit **that arm** reported measuring, not
+  the one the receipt was assembled against: the arms are separate processes
+  on separate boxes, and a GPU arm queued behind a held reservation can place
+  after the checkout has moved. Two commits in one run's rows are two
+  measurements, not a merge receipt. The merge run is still the coordinator's
+  to launch, the way the x86 one already is; nothing triggers it
+  automatically.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
