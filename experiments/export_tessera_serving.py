@@ -1164,8 +1164,8 @@ def main():
                     help="write wires this plugin build publishes no decode for (see check_recipe). "
                          "The checkpoint is then a RESEARCH artifact that will not load under this "
                          "plugin; every refusal is stamped verbatim into the manifest's "
-                         "serving_gate block. Needed today by --grid BF16, whose wire has no "
-                         "plugin route and whose --stock-twin is what gets served.")
+                         "serving_gate block. Admission depends on the selected recipe's "
+                         "published runtime contract, including BF16 recipes.")
     args = ap.parse_args()
     if args.partition:
         if args.stock_twin is not None:
