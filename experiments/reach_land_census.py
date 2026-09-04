@@ -88,6 +88,14 @@ def census(w: torch.Tensor, h: "torch.Tensor | None", grid, window_bits: int,
     floor = amax / reach                       # the bound the raise computes
     stored, eff, g = initial_channel_scale(w, sigma, reach=reach)
     short = over & (eff < floor)
+    # The rows the ``over`` mask does not cover.  Such a row clears the bound
+    # in exact arithmetic, but its plain start is landed to nearest too, so one
+    # sitting within half an ulp *above* the bound lands one word under it and
+    # is past the reach by that same ulp.  It is the identical defect, in rows
+    # a fix aimed at raised rows would not touch -- so a census that counts
+    # only ``short`` reads zero after such a fix because it looked only where
+    # the fix repaired.  Counting these is what keeps that reading honest.
+    boundary = (~over) & (eff < floor)
     rel = torch.where(short, (floor - eff) / floor.clamp_min(1e-30),
                       torch.zeros_like(eff))
     out = {
@@ -99,6 +107,10 @@ def census(w: torch.Tensor, h: "torch.Tensor | None", grid, window_bits: int,
         "short_of_over": (float(short.sum()) / float(over.sum())
                           if int(over.sum()) else 0.0),
         "worst_rel_shortfall": float(rel.max()),
+        "rows_short_unraised": int(boundary.sum()),
+        "worst_rel_shortfall_unraised": (
+            float((((floor - eff) / floor.clamp_min(1e-30))[boundary]).max())
+            if bool(boundary.any()) else 0.0),
         "max_z": float((amax / rms.clamp_min(1e-30)).max()),
     }
     # The clip the shortfall causes, at the one weight the bound is about.
@@ -153,8 +165,12 @@ def main() -> None:
            "base_channel_sigma": sigma0, "mults": a.mult, "units": {}}
     print(f"{a.grid} L={bits} sigma0={sigma0:.6g} reach on "
           f"{len(names)} {a.source} units", flush=True)
+    # ``short!`` is the same defect in rows the raise never touched, and it is
+    # in the table rather than only the JSON because that is the column a fix
+    # aimed at raised rows would leave standing -- a census printing only
+    # ``short`` would read clean and be wrong.
     print(f"{'unit':<44}{'m':>5}{'rows':>7}{'over':>8}{'short':>8}"
-          f"{'/over':>8}{'worst':>11}{'clip_h':>12}", flush=True)
+          f"{'/over':>8}{'short!':>8}{'worst':>11}{'clip_h':>12}", flush=True)
     for name in names:
         t = idx[name + ".weight"].get_tensor(name + ".weight")
         if t.ndim != 2:
@@ -173,6 +189,7 @@ def main() -> None:
             rec[f"x{m:g}"] = r
             print(f"{name:<44}{m:>5g}{r['rows']:>7d}{r['over']:>8.4f}"
                   f"{r['rows_short']:>8d}{r['short_of_over']:>8.3f}"
+                  f"{r['rows_short_unraised']:>8d}"
                   f"{r['worst_rel_shortfall']:>11.3e}"
                   f"{r.get('clip_h', float('nan')):>12.3e}", flush=True)
         doc["units"][name] = rec
