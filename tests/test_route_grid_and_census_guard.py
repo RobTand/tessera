@@ -9,14 +9,14 @@ wins the iteration order. The tests below inject a second holder for E4M3
 question -- naming both holders -- while the export gate takes the family
 alongside the grid so the caller that knows the answer gets it.
 
-#53: ``tools/tessera_route_census.py`` hand-writes ``contract_for`` and
-``decoder_for`` but its ``missing = ...`` guard only covers ``contract_for``,
-so a family added to one map but not the other passes the guard and KeyErrors
-at the per-module ``decoder_for[family]`` lookup mid-run. The test requires
-the guard line to cover every hand-written expectation map the file defines.
+#53: the census's family-map guard historically covered ``contract_for``
+but not ``decoder_for``, allowing an incomplete decoder map through to a
+mid-run KeyError. These tests require that guard to cover every hand-written
+expectation map, independently of unrelated census population guards.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -132,8 +132,7 @@ def _hand_written_expectation_maps(source: str) -> list:
 
 def test_census_guard_covers_every_hand_written_expectation_map():
     source = CENSUS.read_text()
-    guard = next(
-        line for line in source.splitlines() if re.match(r"^\s*missing\s*=", line))
+    guard = _expectation_guard(source)
     for name in _hand_written_expectation_maps(source):
         assert name in guard, (
             f"census guard {guard!r} does not cover {name}; "
@@ -146,8 +145,7 @@ def test_census_guard_would_catch_a_decoder_short_map():
     """The guarded semantics: a family known to contract_for but missing from
     decoder_for is reported before any serve is stood up."""
     source = CENSUS.read_text()
-    guard = next(
-        line for line in source.splitlines() if re.match(r"^\s*missing\s*=", line))
+    guard = _expectation_guard(source)
     assert "decoder_for" in guard
     families = ("TESSERA_NVFP4", "TESSERA_FP8", "TESSERA_BF16", "TESSERA_NEW")
     contract_for = {f: f"contract-{f}" for f in families}
@@ -158,3 +156,24 @@ def test_census_guard_would_catch_a_decoder_short_map():
                  "TESSERA_FAMILIES": families}
     missing = eval(guard.split("=", 1)[1].strip(), dict(namespace))  # noqa: S307
     assert "TESSERA_NEW" in missing
+
+
+def _expectation_guard(source):
+    """Read the unique direct family guard in main, not another function's local."""
+    main = next(node for node in ast.parse(source).body
+                if isinstance(node, ast.FunctionDef) and node.name == "main")
+    guards = [node for node in main.body if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "missing"
+                      for target in node.targets)]
+    assert len(guards) == 1, "census main must expose one unambiguous family-map guard"
+    return ast.unparse(guards[0])
+
+
+def test_expectation_guard_ignores_an_unrelated_population_helper():
+    source = '''def population_guard():
+    missing = sorted(set(batch) ^ set(decode))
+
+def main():
+    missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
+'''
+    assert "TESSERA_FAMILIES" in _expectation_guard(source)
