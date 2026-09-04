@@ -41,9 +41,10 @@ geomean                                       1.0055   |                        
 ```
 
 On Qwen the same lever is **0.9081x** on `out` and 0.8719x on `hfit`. So the
-mechanism is not broken and its sign has not flipped on the objective: it
-minimises the coupled quadratic better on both populations, by about the same
-1.5--13% margin. What flips is whether that buys anything off the fit rows.
+mechanism is not broken and its sign has not flipped on its own objective: it
+minimises the coupled quadratic better on both populations. What differs is
+how much (12.8% on Qwen against 1.6% here) and, decisively, whether any of it
+survives off the fit rows.
 
 ## What the split means, and why it is the reading that matters
 
@@ -132,8 +133,9 @@ about that here.
 ## What this settles for #105, and what it does not
 
 - **`refit_coupled_landing` stays opt-in and stays research.** Its Qwen
-  numbers are not withdrawn --- they are a real 0.9081x on that population,
-  reproduced by two implementations --- but a Qwen-only win is precisely the
+  numbers are not withdrawn --- 0.9081x is real on that population, and the
+  0.8037x composite it sits inside was predicted to 0.4% by a frozen-codes
+  oracle written separately --- but a Qwen-only win is precisely the
   shape every prior Tessera lever had that inverted, and this one inverts on
   the first cross-population read. No default moves; the flag is off, and with
   it off the encode is byte for byte what it was (#105 proved that by
