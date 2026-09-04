@@ -62,11 +62,11 @@ PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 KL=${KL:-/home/rob/dq-runs/kl_tool.py}
 # TESSERA_LANE_EAGER=0 serves under vLLM's default compiled forward + CUDA
 # graphs, which is the configuration vLLM serves by default and the one #113
-# has no KL for.  The repeated store_true flag is the no-op stand-in the other
-# wrappers use, so the argv shape does not change between the two.  NOTE the
-# route trace cannot attest shapes in that arm: under compile the dispatch's
-# Python body runs at trace time and ``route_shape`` yields ``M*``.
-EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
+# has no KL for.  Compiled mode contributes no optional flag; the one required
+# --trust-remote-code below remains exactly one argv entry.  NOTE the route
+# trace cannot attest shapes in that arm: under compile the dispatch's Python
+# body runs at trace time and ``route_shape`` yields ``M*``.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=
 
 source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}

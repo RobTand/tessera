@@ -679,6 +679,15 @@ def test_the_real_serve_logs_of_the_measured_pair(log, expected):
 # A gate that refuses on a match (#16)
 
 _WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
+_EAGER_WRAPPERS = [
+    Path(__file__).resolve().parents[1] / "experiments" / name
+    for name in (
+        "decode_regime_kl.sh",
+        "gridbook_lane_served.sh",
+        "tessera_plugin_served.sh",
+        "window_gemv_latency.sh",
+    )
+]
 
 
 def test_a_matching_pattern_returns_zero_only_when_the_producer_is_not_piped():
@@ -723,6 +732,13 @@ def test_the_serve_wrapper_does_not_repeat_trust_remote_code_as_a_noop():
     body = _WRAPPER.read_text()
     assert "EAGER_FLAG=--trust-remote-code" not in body
     assert "DETAILS_FLAG=--trust-remote-code" not in body
+
+
+@pytest.mark.parametrize("wrapper", _EAGER_WRAPPERS, ids=lambda path: path.name)
+def test_serve_wrappers_do_not_repeat_trust_remote_code_as_a_noop(wrapper):
+    """Compiled mode contributes no flag before the one required copy."""
+    body = wrapper.read_text()
+    assert "EAGER_FLAG=--trust-remote-code" not in body
 
 
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
