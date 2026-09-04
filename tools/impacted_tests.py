@@ -270,27 +270,14 @@ def _selection_reason(
     return "; ".join(parts) or "no changed path requires a test"
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Tests reverse-reachable from a change, or a full-run verdict."
-    )
-    ap.add_argument(
-        "--ref",
-        default="master...HEAD",
-        help=("git diff spec naming the change (default master...HEAD); a "
-              "parentless snapshot with valid endpoints falls back from "
-              "BASE...HEAD to a direct BASE..HEAD tree comparison"),
-    )
-    ap.add_argument("--root", default=".")
-    ap.add_argument("--json", action="store_true")
-    args = ap.parse_args()
+def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
+    """The receipt for a changed-file list: a verdict, a selection and a reason.
 
-    root = Path(args.root).resolve()
-    changed, comparison = changed_files(args.ref, root)
-    if not changed:
-        print("no changes", file=sys.stderr)
-        return 0
-
+    Separated from ``main`` so a caller -- a test, above all -- can drive the
+    classification without a git checkout to diff.  The tool's own regression
+    could not reach this code before: it went through ``changed_files``, so
+    every case had to be a synthetic repository.
+    """
     forced = [
         f for f in changed
         if Path(f).suffix not in INERT
@@ -389,6 +376,34 @@ def main() -> int:
     }
     if unresolved:
         result["reason"] += "; unresolved file loaders conservatively select their consumers"
+    return result
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="Tests reverse-reachable from a change, or a full-run verdict."
+    )
+    ap.add_argument(
+        "--ref",
+        default="master...HEAD",
+        help=("git diff spec naming the change (default master...HEAD); a "
+              "parentless snapshot with valid endpoints falls back from "
+              "BASE...HEAD to a direct BASE..HEAD tree comparison"),
+    )
+    ap.add_argument("--root", default=".")
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args()
+
+    root = Path(args.root).resolve()
+    changed, comparison = changed_files(args.ref, root)
+    if not changed:
+        print("no changes", file=sys.stderr)
+        return 0
+
+    result = select(root, changed, comparison=comparison)
+    verdict = result["verdict"]
+    tests = result["tests"]
+    forced = result["forces_full"]
     if args.json:
         print(json.dumps(result, indent=1))
     else:
