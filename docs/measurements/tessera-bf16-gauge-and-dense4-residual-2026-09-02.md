@@ -4,13 +4,27 @@ Two issues, one session. **#18**: the BF16 route's `(L, sigma)` was stated
 rather than searched, and its GLM expert evidence was one tensor. **#12**: the
 dense 4-bit route loses to NVFP4 GPTQ+JSO at equal residency by 1.254x.
 
+> **Read the banner before the claims.** The `#18` claims below were written
+> from two **one-axis** sweeps -- one over `L`, one over the reach ratio -- and
+> a one-axis sweep over `L` prices a wider window table at **nothing**. The
+> joint grid at the end of this document byte-matches every cell, and three of
+> the statements below do not survive it: the `L` claim at 4 bpp, the `transfer`
+> claim's out-space comparison, and the "no such conflict at 4 bpp" line in the
+> dense-`L` section. Each is marked in place. Where they disagree, **the
+> byte-matched sections are the reading**; the claims here are kept because the
+> shape of the mistake is the finding.
+
 **Claim (#18, sigma).** `BF16_CHANNEL_SIGMA` is a **gauge, not a knob**. On four
 dense Qwen Linears, dyadic shifts over a 16x range decode **bit-identically**;
 the file hash moves and the tensor does not. There is no dyadic value left to
 find. The identical shift on E4M3 costs +5 to +19% at x2 and +70 to +98% at x4.
 
 **Claim (#18, L).** At 4 bpp the default `L = 14` is on both the `wt` and the
-`h` frontier and nothing here argues with it. **At 8 bpp `wt` is the wrong gate
+`h` frontier of *this* sweep -- **superseded**, and by the harder direction:
+byte-matched, `L = 12` beats it on **8 of 8** dense units at R=4 (0.9333x `wt`,
+0.8916x `h`) at bytes the two provably share, and `L = 16`, which this sweep
+liked, is the worst of the three widths there. What follows is what an unpriced
+`L` axis says. **At 8 bpp `wt` is the wrong gate
 for L**: `wt` decreases monotonically in L on 4 of 4 units at both rungs, so a
 `wt`-gated sweep always answers "deeper", while `h` is non-monotone on 4 of 4 at
 R=8 and its optimum is unit-dependent (L = 8, 10, 16, 16 on the four). In the
@@ -41,6 +55,16 @@ per-column relative error is, which is what makes the two metrics the same
 number. The L question is a dense-model question. At `L=16` the BF16 route also beats EXL3 K=8 in out-space
 (0.902x / 0.922x at +1.5% bytes), so the "level in out-space" above is a
 property of the `L=14` constant, not of the route.
+
+**Superseded, both halves.** "Every L is on all three frontiers, deeper is
+monotonically better" and the `L=16`-vs-K8 out-space number are the same
+unpriced comparison: the wider table is paid for with `+1.5%` bytes and nothing
+is given back. Byte-matched on six experts, deeper is *not* free at R=4 --
+`L=16 r=1` is 1.0105x `out` against the shipped pair at equal bytes, and the
+shipped `(14, 1.0)` is the best of all twelve cells. The direction survives at
+R=8, where `L=16 r=1.25` wins 6/6 at 0.9001x byte-matched; the `+1.5%`
+comparison against EXL3 does not survive at all, and no matched
+BF16-vs-K8 number at `L=16` exists yet.
 
 **Claim (#12).** The 1.254x premise **does not reproduce**. It is **1.039x**
 served on master, moved by the LDLQ-on-LUT work at byte-identical bytes -- and
@@ -162,6 +186,13 @@ gets worse because the extra depth buys reach the H-heavy columns do not want.
 At 4 bpp there is no such conflict: L=16 minimises both metrics on three of the
 four units, `down_proj` ties L=14 with L=16 on `h` to five digits, and the
 default L=14 is on both frontiers everywhere.
+
+**And that is the sweep's own artifact, not a property of 4 bpp.** Nothing on
+this axis charges for the table, so "deeper is at least as good" is close to
+tautological. Byte-matched on eight dense units (below), `L=16` is the **worst**
+of the three widths at R=4 -- **0 of 8** wins and **1.1882x** on `h` -- and the
+shipped `L=14` is beaten 8 of 8 by `L=12`. The conflict at 4 bpp is not absent
+here; it is hidden by a free table.
 
 **Proposal, not a flip.** This is weight space on four dense units. Principle 3
 says a screen does not promote, and there is no BF16 lane to serve on, so
@@ -534,3 +565,264 @@ compared against are the gate.
   out-space measurement (1.035x) disagree by 4%.
 * A `q_proj`/`k_proj`-only served A/B, since a per-role decision is what the
   concentration argues for and no served number yet separates the roles.
+## #18, part 1: the *pair*, byte-matched -- what two one-axis sweeps could not say
+
+Everything above sweeps `L` at ratio 1 (`--stage dense-l`, `glm-l`) or the
+ratio at `L=14` (`--stage reach`).  Neither says whether the two axes interact,
+and both price a wider table by *slope* -- "L=16 costs +0.094 bpp, and the rate
+axis buys 1.903x error per bpp, so compare against that" -- rather than by
+building the arm that spends the same bytes.  `--stage pair-dense` /
+`pair-glm` close both gaps:
+
+* **The grid is joint.** L in {12, 14, 16} x ratio in {1.0, 1.25, sqrt(2), 1.75},
+  every cell run, at three rungs (R = 4, 6, 8 bits/weight).
+* **The axes are named in every row.**  Ratio 1.0 is `window_sigma=None` --
+  the value the recipe stores, so the reference arm exercises the shipped path
+  rather than a re-spelling of it.  Every other ratio is
+  `window_sigma = ratio * channel_sigma` with `channel_sigma` pinned at the
+  shipped 1.0: this is the **ratio** axis (reach), never the tracking axis, and
+  it costs no bytes.
+* **The reference is built, not priced.**  `q256` accepts any positive integer
+  (`grammar.py`), so for each `L` the harness solves for the rung at which the
+  shipped `(L=14, r=1)` recipe spends *exactly* the candidate's bytes, encodes
+  that arm, and asserts `|bpp_candidate - bpp_ref| < 1e-9` before any ratio is
+  formed.  A row that does not find an exact-bpp reference is dropped, loudly.
+* **Per-unit rows and a win count, then the geomean.**  Never the geomean alone
+  -- that is what #65 closed.
+* **Drift control first and last** at every (unit, rung): the shipped pair is
+  encoded again as the last arm and asserted byte-identical *and*
+  tensor-identical to the first.
+
+**Pre-registered before the numbers** (committed in `c35f56c`, ahead of any
+GPU run):
+
+* Gate: `h` on dense Qwen, `out` on GLM experts.  `wt` is **disqualified in
+  advance** as a gate -- it is monotone in `L` by construction, so it cannot
+  distinguish "deeper table helps" from "deeper table costs bytes".
+* ADOPT-WORTHY = a strict majority of per-unit wins **and** a geomean below
+  1.00 **and** the six-expert GLM cross-check no worse than 1.00x.  All three,
+  or nothing is proposed.
+* CONFIRMED = the shipped `(14, 1.0)` is on the frontier at matched bytes.
+* Anything else is INCONCLUSIVE and is reported as such.
+* **No default flips out of this stage regardless of the outcome.**  Both axes
+  change bytes and `encoder_profile_id`, and there is no BF16 serving lane, so
+  every number here is a weight-space (dense: H-weighted) screen, not a
+  promotion.  House principle 3.
+
+**Scope of every number in this section**: grid `bf16`, weight space (dense `h`
+is the captured activation second moment, GLM `out` is held-out-row output
+error), no LDLQ, `scale_refit=4`, ratio axis (not tracking).  Populations and
+counts are stated per table.
+
+### The six GLM experts, joint grid, byte-matched
+
+`--stage pair-glm --layers 5 20 42 --projs gate_proj up_proj --experts 0
+--rungs 1024 1536 2048`, 2048x4096 tensors, `out` scored on 1024 **held-out**
+capture rows, ratio axis, weight space. `pair_glm.json`, encoded on sparklina.
+
+Every ratio below is against the **byte-matched** shipped pair: for `L=12` the
+reference is the shipped `(14, r=1)` recipe run at `R1018/R1530/R2042`, for
+`L=16` at `R1048/R1560/R2072`, so the two arms weigh the same to 1e-9. All
+**12 of 12** cells present at every (unit, rung); **18 of 18** repeat controls
+byte- *and* tensor-identical.
+
+| rung | arm | wins | win@1% | `wt` geo | `h` geo | `out` geo | bpp |
+|---|---|---|---|---|---|---|---|
+| R=4 | L=14 r=1 **(shipped)** | - | - | 1.0000 | 1.0000 | **1.0000** | 4.0352 |
+| R=4 | L=16 r=1 | 1/6 | 0/6 | 1.0079 | 1.0081 | 1.0029 | 4.1289 |
+| R=4 | L=12 r=1 | 0/6 | 0/6 | 1.0152 | 1.0149 | 1.0134 | 4.0117 |
+| R=4 | L=14 r=1.25 | 0/6 | 0/6 | 1.0142 | 1.0141 | 1.0135 | 4.0352 |
+| R=4 | L=14 r=1.75 | 0/6 | 0/6 | 1.1886 | 1.1883 | 1.1882 | 4.0352 |
+| R=6 | L=14 r=1 **(shipped)** | - | - | 1.0000 | 1.0000 | 1.0000 | 6.0352 |
+| R=6 | **L=16 r=1** | **6/6** | **6/6** | 0.9806 | 0.9806 | **0.9801** | 6.1289 |
+| R=6 | L=16 r=1.25 | 6/6 | 6/6 | 0.9875 | 0.9873 | 0.9855 | 6.1289 |
+| R=6 | L=14 r=1.25 | 5/6 | 1/6 | 0.9931 | 0.9929 | 0.9940 | 6.0352 |
+| R=8 | L=14 r=1 **(shipped)** | - | - | 1.0000 | 1.0000 | 1.0000 | 8.0352 |
+| R=8 | **L=16 r=1.25** | **6/6** | **6/6** | 0.9037 | 0.9033 | **0.9056** | 8.1289 |
+| R=8 | L=16 r=1 | 6/6 | 6/6 | 0.9331 | 0.9330 | 0.9332 | 8.1289 |
+| R=8 | L=14 r=1.25 | 6/6 | 6/6 | 0.9408 | 0.9404 | 0.9375 | 8.0352 |
+| R=8 | L=16 r=1.41 | 6/6 | 6/6 | 0.9417 | 0.9413 | 0.9405 | 8.1289 |
+
+Per-unit `out` for the two arms that matter, in file order (`L20.gate`,
+`L20.up`, `L42.gate`, `L42.up`, `L5.gate`, `L5.up`):
+
+* R=6 `L=16 r=1`: 0.982 0.975 0.980 0.984 0.979 0.981 -- six of six, spread 0.9%.
+* R=8 `L=16 r=1.25`: 0.907 0.911 0.901 0.901 0.896 0.918 -- six of six, spread 2.2%.
+* R=4 `L=16 r=1`: 1.007 1.002 1.011 0.990 1.005 1.003 -- one of six, and that
+  one by 1.0%.
+
+**The shipped `(14, 1.0)` is the best cell of twelve at R=4 and is not on the
+frontier at R=6 or R=8.** At R=4 no alternative wins a majority of units on
+any axis; at R=6 and R=8 `L=16` wins 6/6 with a winning geomean, byte-matched.
+
+### The two axes are not separable, and the reason is in the encoder
+
+`separable?` in the reader means: is the best ratio the same at every `L`, and
+the best `L` the same at every ratio. R=4 yes/yes, **R=6 no/no** (best ratio is
+1.25 at L=12 and L=14 but 1.0 at L=16), R=8 yes/yes. So separability is itself
+rung-dependent, and a sweep of one axis at a fixed value of the other cannot
+be trusted to have found the joint optimum -- which is what the two earlier
+one-axis stages did.
+
+The mechanism is not subtle once the diagnostic is printed. At ratio 1 the
+table's reach is **not** a constant of the recipe; it moves with `L`:
+
+| L | reach (row-RMS) | rows over reach (`L5.e0.gate_proj`) | same, across all six | bpp at R=4 |
+|---|---|---|---|---|
+| 12 | 3.672 | 0.868 | 0.680-0.868 | 4.0117 |
+| **14** | **4.000** | **0.515** | **0.374-0.515** | **4.0352** |
+| 16 | 4.312 | 0.146 | 0.125-0.157 | 4.1289 |
+
+The third column is **one** unit (`L5.e0.gate_proj`, which happens to be the
+highest of the six at `L=12` and is not at `L=16`); the fourth is the range over
+all six, so the column cannot be read as a maximum.
+
+A wider table has more quantiles, and its extreme quantiles sit further out.
+So `L` is not a resolution knob with a reach knob beside it: **`L` buys
+resolution *and* reach at once, and only `L` costs bytes.** Two axes that
+move the same physical quantity cannot be searched one at a time.
+
+That also names the one comparison this grid cannot make.  `L=16` at ratio 1
+has reach 4.312, which is the reach `L=14` would have at ratio 1.078 -- a
+value the grid does not contain (its ratios are 1.0, 1.25, sqrt(2), 1.75).
+So every `L` comparison here moves resolution *and* reach together, and the
+grid cannot say which of the two the winning cell is buying.  A matched-reach
+arm (`L=16 r=1`, vs `L=14 r=1.078`) would separate them; it is a follow-up,
+not a correction, because the shipped path is ratio 1 and the verdict below
+is about the pair as it would actually be spelled.
+
+The second thing the diagnostic says is that **rows-over-reach is not the
+objective**. At the shipped pair, 37-52% of GLM expert rows exceed the window
+table's reach; ratio 1.25 takes that to 0.2-0.9% -- and at R=4 it makes the
+error *worse* on 6 of 6 units. Clipping half the rows is the right trade when
+codes are scarce and the wrong one when they are not: the ratio's optimum
+walks from 1.0 at R=4 to 1.25 at R=8. Any rule that minimised `over` would
+have picked 1.75 everywhere, which is 19% worse at R=4 and 6% worse at R=8.
+
+### Eight dense Qwen Linears, same grid -- and the opposite answer
+
+`--stage pair-dense`, the same eight units the `dense-l` sweep used, gate `h`
+(the captured activation second moment), same three rungs, same byte matching.
+`pair_dense.json`, encoded on sparky through the PrismaBuild pool. **12 of 12**
+cells at every (unit, rung); **24 of 24** controls byte- *and*
+tensor-identical.
+
+| rung | best pair at matched bytes | wins | `wt` geo | `h` geo | shipped `h` |
+|---|---|---|---|---|---|
+| R=4 | **L=12 r=1** | **8/8** (8 at >1%) | 0.9333 | **0.8916** | 1.0000 |
+| R=6 | **L=12 r=1.25** | 7/8 | 0.9164 | **0.8879** | 1.0000 |
+| R=8 | **L=12 r=1.41** | 5/8 | 0.8760 | **0.8395** | 1.0000 |
+
+and `L=16`, which won 6/6 on the experts, is the *worst* width here: 0/8 wins
+and **1.1882x** at R=4, 1.1720x at R=6.
+
+**The two populations want opposite directions from the same default.** GLM
+experts want a *deeper* table (L=16, 6/6, 0.98-0.91x); dense Qwen wants a
+*shallower* one (L=12, 8/8, 0.89x). The shipped `L=14` is on neither
+frontier except at R=4 on the experts, where it is exactly right.
+
+Two reasons, both measurable and both in the tables above:
+
+* **The table's byte price is a per-unit quantity, not a constant.** A
+  2^L x 2-byte table amortised over a 2048x4096 expert costs 0.031 bpp at
+  L=14; over the dense set it costs 0.089 bpp, and over a 1024x1024
+  `k_proj` 0.25 bpp. Byte-matching prices that honestly for the first time
+  -- the earlier stages compared `L=16` against the shipped rung and paid for
+  the wider table with nothing.
+* **Dense Qwen has the outlier rows the experts do not.** At the shipped pair,
+  rows over reach span **0.175-0.844** across the eight dense units against
+  **0.374-0.515** across the six experts, and the dense spread is the point:
+  one recipe is serving units whose reach demand differs by 5x.
+
+### The axis disqualified in advance was disqualified for the wrong reason
+
+`wt` was ruled out as a gate before the run because it is monotone in `L` --
+a wider table can only fit the weights better.  That is true *unmatched*.
+**Byte matching retires the premise**, because at matched bytes the wider
+table is paid for out of the rung.  All three figures below are at ratio 1,
+L = 12 / 14 / 16:
+
+* dense Qwen, R=4: `wt` **rises** with `L` (0.9333 / 1.0000 / 1.1724);
+* six GLM expert-0 units, R=8: `wt` **falls** (1.1154 / 1.0000 / 0.9331);
+* dense Qwen, R=8: `wt` is **non-monotone within one population**
+  (1.0351 / 1.0000 / 1.0743).
+
+So `wt` at matched bytes is a real axis rather than a foregone one.  It is
+**not**, however, a second gate that happens to agree.  Stated exactly, over
+the six (population, rung) points:
+
+* **The gate's winning cell is also below 1.00 on `wt` wherever it is below
+  1.00 on the gate** -- 5 of 6 points; the sixth is GLM R=4, where the winner
+  *is* the reference (1.0000 on both).
+* **The best `L` under `wt` is the gate's best `L` at 5 of 6 points.**  The
+  exception is dense R=8: the gate `h` picks `L=12 r=sqrt(2)` (0.8395) and
+  `wt` picks `L=14 r=sqrt(2)` (0.8557).  Both beat the shipped pair; they
+  disagree about which width.
+* **Cell by cell they do disagree in sign, and only on dense** -- one cell at
+  R=4 (`L=14 r=1.25`: `wt` 0.9967, `h` 1.0279), one at R=6, four at R=8
+  (e.g. `L=12 r=1`: `wt` 1.0351, `h` 0.9565).  On the GLM experts there is no
+  sign disagreement at any rung, on any cell.
+
+The verdict below therefore does not rest on the choice of gate -- ADOPT-WORTHY
+fails under `wt` too, and for the same reason, that the two populations want
+opposite `L` -- but "the metrics agree" would be too strong a way to say it.
+
+### The reading, against the criteria registered before the run
+
+* **ADOPT-WORTHY** required a strict majority of per-unit wins **and** a
+  geomean below 1.00 **and** the six-expert GLM cross-check no worse than
+  1.00x. **Nothing clears all three.** `L=12` clears the first two on dense
+  (8/8, 0.8916x at R=4) and fails the cross-check (1.0134x on the experts).
+  `L=16 r=1.25` clears the first two on the experts (6/6, 0.9056x at R=8) and
+  fails on dense (0/8, 1.1882x at R=4). So, as pre-registered: **nothing is
+  proposed, and the default does not move.**
+* **CONFIRMED, and only here:** at R=4 on GLM experts the shipped
+  `(L=14, ratio 1.0)` is the best of all twelve cells. That is the rung the
+  4-bit wire ships at, and on that population the inherited pair is not merely
+  defensible, it is optimal on the grid searched.
+* **The rest is INCONCLUSIVE by design, not by accident.** Above R=4, and on
+  dense at every rung, the default is beaten -- but every candidate that beats
+  it changes bytes and therefore `encoder_profile_id`, there is no BF16
+  serving lane, and these are weight-space and H-weighted screens. Under
+  principle 3 that is a screen, not a result.
+
+What the search does close is the framing in the issue. `(L, sigma)` is not
+"two numbers nobody looked at": `sigma` is a gauge at the dyadic multipliers
+(part 1, above), the ratio is a real axis that costs no bytes, `L` is a real
+axis that does, and **the two are entangled through reach**, so the pair had
+to be searched jointly and now has been. The finding is not that the constant
+is wrong; it is that **a single constant is the wrong shape** -- the frontier
+moves with the rung and with the population, and `_window_bits_for` already
+has the rate in hand (`max(14, R)`) if Rob ever wants to spend it.
+
+### What this did not measure
+
+* **No served number.** Weight space and H-weighted columns only; there is no
+  BF16 lane, so nothing here is promotable and nothing is proposed.
+* **Three rungs, not five.** R = 4, 6, 8. R = 5 and 7 (q256 1280, 1792) are
+  the obvious fill-in and would say whether the R=4 optimum walks or jumps.
+* **The expert-index widening has finished, and it reproduces the expert-0
+  pattern exactly.** `pair_glm_experts.json` (`--experts 1 2`, layers 5/20/42,
+  `gate_proj`, R = 4 and 8) is **6 of 6** units, each with 12 of 12 cells at
+  both rungs, and **12 of 12** controls byte- *and* tensor-identical. **R=4:
+  the shipped `(14, 1.0)` is the best of all twelve cells, 0/6 wins for every
+  other arm** (nearest is `L=16 r=1` at 1.0105x, then `L=12 r=1` at 1.0178x).
+  **R=8: `L=16 r=1.25` wins 6/6 at 0.9001x** `out`, against 0.9056x on the six
+  expert-0 units -- the same arm, the same margin to within 0.6%. So the R=4
+  CONFIRMED reading stands on **twelve** expert units drawn from three layers
+  and three expert indices, and the R=8 result on twelve as well. The re-read
+  is
+  `PYTHONPATH=experiments python experiments/pair_report.py /mnt/shared/tessera-runs/reach/pair_glm_experts.json`.
+* **The dense pair artifact is being overwritten as this lands, and that is a
+  tooling defect, not a doubt about the numbers.** `pair_dense.json` is a
+  single fixed path with no per-run identity, so a re-run of the same sweep
+  truncates the completed file it is reproducing: at the time of writing it
+  holds 4 of its 8 requested units, mid-re-derivation, with its `args` still
+  naming all eight. The eight-unit numbers above were read off the complete
+  file; a reader arriving now would see a file that looks finished and is not.
+  `pair_report.py` now checks the unit set against `args` and refuses rather
+  than summarising, which is the half of this that belongs in the repo -- the
+  other half is a per-action result path, which is PrismaBuild's.
+* **Wall times in these runs are not a measurement.** Three sweeps shared two
+  boxes with a dozen other agents' jobs; the controls are byte- and
+  tensor-identity, which is unaffected, and the seconds column is not a claim.
