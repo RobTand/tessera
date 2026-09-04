@@ -70,6 +70,40 @@ disagree, that disagreement is the error bar on the delta and is reported as
 one. `experiments/ldlq_block_serve_ab.sh` is that chain. The two default
 readings are reported separately and never averaged.
 
+### And the substitute turns out not to be a compromise: drift is zero, measured
+
+Before the A/B depended on the serve chain, the **2026-09-02 `ldlqH1` bytes
+were re-served** -- an artifact whose answer is already published -- on the
+same box, against the same teacher, on the same corpus, eager, in a different
+container on a different day:
+
+| | KL-vs-BF16, `kl_lower_mean` |
+|---|---|
+| published 2026-09-02 | 0.5310275686796917 |
+| re-served 2026-09-04 | **0.5310275686796917** |
+| delta | **0.0** |
+
+`confident` (0.44606594216118406) and top-1 agreement (62.52446183953033%) are
+identical to the last digit too, over the same 4,088 positions.
+
+Three things follow, and the third was not the goal:
+
+1. The serve chain is proved before the A/B rests on it, rather than debugged
+   at hour fourteen with three exports finished and waiting.
+2. **Cross-session drift on this lane is exactly zero for an eager serve.**
+   That is measured, on bytes with a known answer, not assumed. The 4-8x
+   cross-session drift this repo warns about is a PrismaQuant-era fact about a
+   live-model path; it does not describe this one. So the A/B/A bracket is
+   confirmatory rather than load-bearing -- which is the right order to find
+   that out in.
+3. The `identity`/`image_digest` fingerprint change that landed in #100 moved
+   nothing observable on these bytes. Build fingerprint
+   `03b89d80124b6123...`, vLLM 0.28.0, `vllm/vllm-openai:latest`, eager,
+   `compiled_forward: false`.
+
+None of this excuses reporting a delta as same-session. It says the delta does
+not need to be.
+
 ## Box and lock decisions, stated rather than assumed
 
 - Both exports run on **sparklina** (at launch: load 3.1, 91 GB available).

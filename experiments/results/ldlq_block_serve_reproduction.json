@@ -1,0 +1,14 @@
+{
+ "schema": "tessera.ldlq_block_serve_reproduction/1",
+ "what": "the 2026-09-02 ldlqH1-stock-twin bytes re-served on 2026-09-04, same box (gx10-6b77/sparklina), same teacher (qwen_rot_teacher_lina), same corpus contract, eager, a different container on a different day",
+ "published_2026_09_02": 0.5310275686796917,
+ "reserved_2026_09_04": 0.5310275686796917,
+ "delta": 0.0,
+ "confident_kl_lower_mean": 0.44606594216118406,
+ "top1_agree_pct": 62.52446183953033,
+ "positions": 4088,
+ "build_fingerprint": "03b89d80124b612306b9c13170b380e7ca0c7a0e3b2ad208919d46e1ccb581bb",
+ "vllm_version": "0.28.0",
+ "image": "vllm/vllm-openai:latest",
+ "reading": "cross-SESSION drift on this lane is exactly zero for an eager serve, measured rather than assumed.  The 4-8x cross-session drift this repo warns about is a PrismaQuant-era fact about a live-model path and does not describe this one."
+}
