@@ -456,21 +456,28 @@ across layers [1, 2, 3], 0 packed stacks** on GLM-5.3-Flash-4layer; and on
 modules (was 0)**, the remaining two being the MTP sidecar's, which `BODY_LAYER`
 does not match by the same rule that keeps the vision tower out.
 
-`experiments/moe_plan_baseline.py --diff` over the seven expert layouts it
-builds plus the real Qwen checkpoint (85 rows, 2026-09-03) says exactly this and
-nothing more:
+`experiments/moe_plan_baseline.py --diff --no-export`, master `cf5d0e6` against
+this change, over the seven expert layouts it builds plus the real Qwen
+checkpoint: **5 rows of 36 move, and every one of them is a classification or a
+plan-time refusal.**
 
-* `tensors` — the sha256 over every written tensor's name and bytes — is
-  **unchanged in all seven cases**. No encode moved.
-* `ignore` and `quantization_config` move in **two** cases, both packed and
-  suffix-less (`qwen38_packed_nosuffix`, `gptoss_packed`): each gains its
-  `<moe>.experts` entry, which is the fix.
-* `manifest` moves in all seven, for one reason: the new `routed_moe` block. It
-  is a statement about what *this producer wrote* — layout counts and the
-  modules passed through — never about what a runtime executes.
-* The two plan-time refusals stop reading "plan names tensors that are not 2-D
-  body weights" and start naming the packed stack, its shape and its orientation.
-* `classify/Qwen3.8-Flash-Next/packed` goes `[]` -> 96.
+* `classify/<case>/packed` goes `[]` -> 96 on `Qwen3.8-Flash-Next`, `[]` -> 2 on
+  `qwen38_packed_nosuffix`, `[]` -> 4 on `gptoss_packed`. Nothing else moves in
+  any bucket, so no tensor changed which kind of layer owns it.
+* The two packed plan refusals stop reading "plan names tensors that are not 2-D
+  body weights" and start naming the stack, its shape and its orientation.
+* `ignore` and `quantization_config` do **not** move, which is the point of
+  running this against the new base: they moved in the pre-#86 measurement of
+  the same change, and #86's one rule over the tensors written now reaches those
+  modules by its own path.
+
+The export rows (`tensors`, `manifest`, `ignore`, `quantization_config` sha256
+per case) were **not** re-taken against `cf5d0e6`: they need a CPU encode per
+case, and the box was at load 131. What can be said without them is mechanical
+rather than measured, and is labelled as such — the exporter diff against master
+is three hunks, in `PACKED_EXPERT_ND`'s comment, in `quantizable`, and in the
+manifest dict in `main`; no encode, render, pack or write path is touched. The
+one manifest field this adds is `routed_moe`, below.
 
 ### 9.3 A packed expert stack cannot always be oriented, and this model is the case
 

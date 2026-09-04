@@ -186,17 +186,17 @@ MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
 #: checkpoint's ``ignore`` list.  A tensor is a packed expert stack because of
 #: where it sits, not because it has three axes.
 #:
-#: ``.weight`` IS OPTIONAL, and that is the whole point of the suffix group.
-#: transformers-5 stores a packed stack as an ``nn.Parameter`` on the experts
-#: module rather than as a child Linear's ``weight``, so the tensor on disk is
-#: ``...mlp.experts.gate_up_proj`` with no suffix at all -- 98 of them on
-#: ``/mnt/shared/models/Qwen3.8-Flash-Next``, which is the one packed-source
+#: THE SUFFIX IS NOT WHAT MAKES A STACK, so callers match this pattern against
+#: the name in its ``.weight`` spelling rather than against the name as it sits
+#: on disk.  transformers-5 stores a packed stack as an ``nn.Parameter`` on the
+#: experts module rather than as a child Linear's ``weight``, so the tensor on
+#: disk is ``...mlp.experts.gate_up_proj`` with no suffix at all -- 98 of them
+#: on ``/mnt/shared/models/Qwen3.8-Flash-Next``, the one packed-source
 #: checkpoint on this box.  ``quantizable`` used to require the suffix before
-#: it looked at anything, so those tensors were classified as NOTHING: absent
-#: from ``expert_shapes``, so absent from ``ignore``, so the plugin refused
-#: the MoE layer at load -- after the dense body had been encoded.
-#: ``packed_expert_orientation`` already read both spellings, which is how far
-#: the inconsistency reached before it was found.
+#: it looked at anything, so those tensors were classified as NOTHING and no
+#: plan-time refusal could name them; ``ignored_modules`` reads them through
+#: the same probe (#86).  ``packed_expert_orientation`` already read both
+#: spellings, which is how far the inconsistency reached before it was found.
 PACKED_EXPERT_ND = re.compile(
     r"^(?P<moe>.*\.mlp)\.experts\.(?P<proj>gate_up_proj|down_proj|gate_proj|up_proj)\.weight$")
 
