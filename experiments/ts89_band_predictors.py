@@ -28,7 +28,8 @@ from pathlib import Path
 
 import torch
 
-from tessera.encode import (E4M3_GRID, _window_points_cpu, grid_vector_table,
+from tessera.alphabet import E4M3_GRID
+from tessera.encode import (_window_points_cpu, grid_vector_table,
                             window_table, window_table_reach)
 
 WINDOW_BITS = 14
