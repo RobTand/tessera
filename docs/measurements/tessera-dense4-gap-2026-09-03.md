@@ -1,18 +1,27 @@
 # The dense 4-bit gap, and the block that closes it (2026-09-03)
 
-**Read this first: the number in issue #12's title is two revisions stale.**
-The issue says Tessera W4A4 **0.640** against PrismaQuant NVFP4 GPTQ+JSO
-**0.511**, a gap of 1.254x. That was the *weights-only* wire. LDLQ plus the
-`h^1.0` row-scale refit landed on 2026-09-02 and took the same bytes to
-**0.5310275686796917** served (`tessera-ldlq-lut-plane-served-2026-09-02.md`),
-so the live gap this document is about is **1.0400549849009113x**, not
-1.254x.
+**Answer first: closed. At equal residency the 4.0-bpp Tessera wire now serves
+at 0.5099719526415252 against PrismaQuant NVFP4 GPTQ+JSO's
+0.5105764371970046 -- 1.0011853290212303x ahead**, on identical 870,290,032-byte
+files, one corpus, one teacher, with the control served either side of the
+candidate and agreeing to sixteen digits. The lever is the LDLQ block: 32 -> 8,
+no wire change, no schema bump, no byte change at unchanged arguments.
 
-| what | served KL-vs-BF16 | teacher dump | wire bpp | resident bpp |
+**And the number in issue #12's title is three revisions stale.** It says
+Tessera W4A4 **0.640** against **0.511**, a gap of 1.254x. That was the
+weights-only wire. LDLQ plus the `h^1.0` row-scale refit took the same bytes to
+0.5310275686796917 on 2026-09-02; commits since then took the same recipe to
+0.5200805955385711 with no recipe change at all; and the block takes it to
+0.5099719526415252. Only the last of those three is this branch's, and the
+document says so where each number appears.
+
+| what | served KL-vs-BF16 | wire bpp | resident bpp | whose |
 |---|---|---|---|---|
-| Tessera E2M1x2 q896, weights-only | 0.640404 | -- | 4.0018 | 4.500 |
-| Tessera + LDLQ 1.0/32 + refit `h^1.0`, 2026-09-02 artifact | 0.5310275686796917 | `qwen_rot_teacher_lina` | 4.0018 | 4.500 |
-| PrismaQuant NVFP4 GPTQ+JSO | 0.5105764371970046 | `qwen_teacher_bf16_v028` | -- | 4.500 |
+| Tessera E2M1x2 q896, weights-only | 0.640404 | 4.0018 | 4.500 | the issue's number |
+| Tessera + LDLQ 1.0/32 + refit `h^1.0`, 2026-09-02 artifact | 0.5310275686796917 | 4.0018 | 4.500 | tessera#95's LDLQ work |
+| the same recipe re-exported at `82cdf513` -- this bracket's control | 0.5200805955385711 | 4.0018 | 4.500 | the merges between |
+| **Tessera at `ldlq_block=8`** | **0.5099719526415252** | 4.0018 | 4.500 | **this branch's lever** |
+| PrismaQuant NVFP4 GPTQ+JSO | 0.5105764371970046 | -- | 4.500 | the comparator |
 
 ### Which control the served delta is taken against, and why not that one
 
@@ -39,7 +48,12 @@ a reason measured rather than assumed. Two facts, in tension:
   of hashing rather than reading it.
 
 So quoting the published number as the control would put a commit's worth of
-encoder change inside a delta meant to carry only the LDLQ block. The control
+encoder change inside a delta meant to carry only the LDLQ block -- and the
+serve says exactly how much: the fresh `b=32` arm serves
+**0.5200805955385711** against the published **0.5310275686796917**, so those
+merges are worth **2.1%** on their own. Against the published number the block
+would have looked worth 3.96%; against its own control it is worth 1.94%. Half
+the apparent win would have been someone else's. The control
 is the bracket's **own** re-run of `b=32` at its own commit, served in the same
 session as the candidates. The #60 driver brackets the sweep `b32 -> b8 -> b4
 -> b32`, so there are two control serves; both are quoted separately below and
@@ -77,9 +91,10 @@ comparator on the bracket's teacher.
   that this route is for residency, not quality, with the tercile table as the
   reason.
 
-**The served candidate is pending at the time of writing** and is named
-explicitly wherever it appears below rather than assumed. It is being produced
-by `muse/ts-60-serve`, not rebuilt here; see "Arms that were not run".
+**Outcome: zone A.** `b8` = 0.5099719526415252, `C` = 0.5105764371970046,
+`b32a` = `b32b` = 0.5200805955385711. Resolved by
+`experiments/dense4_read_bracket.py`, which refuses to name a zone until a
+control from the same session is present.
 
 ## The byte accounting, shown rather than asserted
 
@@ -289,26 +304,64 @@ which is one agreement, not a derivation.
 
 ## The served leg
 
-**Not yet landed at the time of this commit.** The bracket
-`b32 -> b8 -> b4 -> b32` is being encoded by `muse/ts-60-serve` at `82cdf513`;
-at the last read `b8` stood at `[120/196]` after 15,380 s and `b4` at
-`[60/196]` after 14,226 s, so the first control-plus-candidate pair is hours
-out and the second is most of a day out. This section is filled from
-`/mnt/shared/tessera-runs/ldlq-block-serve/kl_*.json` when they land, read
-against the zones pre-registered at the top of this document.
+The bracket `b32 -> b8 -> b32` ran to completion on `muse/ts-60-serve`'s
+driver: one image, one corpus, one teacher, three serves, the control first and
+last. Every arm is the same 196 Linears at the same wire and the same file
+size; the only field that differs between control and candidate is
+`activation_aware.ldlq_block`.
 
-What is settled without them, and does not change when they arrive:
+| arm | served KL-vs-BF16 | confident (n=1709) | top-1 agree | file bytes | wire bytes | `ldlq_block` |
+|---|---|---|---|---|---|---|
+| PrismaQuant NVFP4 GPTQ+JSO (comparator) | 0.5105764371970046 | 0.43577152088957055 | 62.573% | 870,290,032 | -- | -- |
+| Tessera control `b32a` | 0.5200805955385711 | 0.4282823138245397 | 63.601% | 870,290,032 | 220,301,312 | 32 |
+| **Tessera candidate `b8`** | **0.5099719526415252** | 0.4284178346307528 | 62.818% | 870,290,032 | 220,301,312 | **8** |
+| Tessera control `b32b` | 0.5200805955385711 | 0.4282823138245397 | 63.601% | 870,290,032 | 220,301,312 | 32 |
 
-* the gap the issue is about is **1.0400549849009113x**, not the 1.254x in
-  its title; both ends are quoted at full precision from their own compare
-  files, and the two teacher dumps behind them were scored against each other
-  and agree exactly (KL 0.0, top-1 100%), so it is a one-teacher ratio;
-* the control for the delta is the bracket's own `b32`, not the published
-  0.5310275686796917, because a fresh export of the same recipe at the same
-  block moves 161 of 784 tensors;
-* the lever is priced across 196 units and two models, and the mechanism that
-  spends it is wired, tested and byte-neutral at a stated block.
+**The session's error bar is exactly zero.** `b32a` and `b32b` -- the same
+bytes served in two separate containers either side of the candidate -- agree
+to all sixteen digits, spread `0.0`. There is no noise band to shelter a
+verdict in, and none is claimed. Each arm was additionally scored against the
+*second* BF16 teacher dump; all three cross-checks reproduce their primary
+value exactly, which is the third independent confirmation that the two
+teachers are one distribution.
 
+### The verdict, read against the zones registered above
+
+**Zone A: closed.** `b8` at 0.5099719526415252 is at or below the comparator's
+0.5105764371970046, so at equal residency the 4.0-bpp Tessera wire is
+**1.0011853290212303x ahead** of the PrismaQuant NVFP4 GPTQ+JSO encoder --
+level, with the sign now on Tessera's side. The arc of the number the issue was
+opened on:
+
+| what is being compared | ratio to the comparator |
+|---|---|
+| the issue's weights-only wire (0.640404) | 1.2542764478434043x behind |
+| the 2026-09-02 artifact (0.5310275686796917) | 1.0400549849009113x behind |
+| this bracket's own control `b32` (0.5200805955385711) | 1.0186145651251417x behind |
+| **`b8`, the block this branch makes reachable** | **1.0011853290212303x ahead** |
+
+Two of those three steps are not this branch's. The 2026-09-02 LDLQ+refit work
+closed most of the gap; the merges between that artifact and `82cdf513` closed
+another 2.1% (0.5310275686796917 -> 0.5200805955385711) with no recipe change
+at all, which is exactly why the published number could not be used as the
+control. What the LDLQ block is worth, measured against its own session's
+control, is **0.9805633146405358x** -- 1.94%.
+
+**The weight-space screen over-promised, and by how much is now a number.**
+The 49-unit census predicted `b8/b32 = 0.9496` (5.04%); the serve delivered
+0.9806 (1.94%). On a log scale **38% of the weight-leg gain transferred**. The
+pre-registered prediction -- `1.040 x 0.9496 = 0.988` of the comparator -- was
+therefore optimistic: the measured landing is 0.9988. It called the *direction*
+and the *side of 1.0* correctly and the magnitude wrongly, which is the
+honest reading of a screen that has now been checked once rather than a
+licence to trust the next one.
+
+**One thing that moved the wrong way.** `b8` has *lower* top-1 agreement than
+the control it beats (62.818% against 63.601%) while having lower KL. Top-1
+agreement is not the metric and does not veto anything here, but the two
+disagreeing is worth recording: the block redistributes probability mass in a
+way that improves the full distribution while flipping some arg-maxes, and a
+downstream task that only reads the arg-max would not see this win.
 
 ## Arms that were not run, and why
 
