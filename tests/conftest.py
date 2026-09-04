@@ -391,5 +391,42 @@ def _write_surface_json(path, terminalreporter, present, detail, reasons, strict
         "not_collected": list(collect_ignore),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
+    superseded = _keep_any_previous(path)
     path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
     terminalreporter.write_line(f"tessera surface: population written to {path}")
+    if superseded:
+        terminalreporter.write_line(
+            f"tessera surface: a previous population was here; kept at {superseded}")
+
+
+def _keep_any_previous(path):
+    """Move an existing population aside instead of writing over it.
+
+    The path is fixed per arm, so a pool retry -- a lease that expired, a
+    worker that died, an action on its second attempt -- runs the suite again
+    and lands on the same filename.  That happened: the population at
+    ``20260904T025044/surface.x86.json`` (1389 passed / 1 failed, on e61974c)
+    was overwritten at 07:28:49Z by a retry that ran a different tree and
+    reported 1388/2.  The first measurement survived only because someone
+    happened to have copied it.
+
+    A measurement is evidence, and the second one does not disprove the first
+    -- they are two populations, possibly of two trees.  Keep both.  The reader
+    is unchanged: it still opens the plain name, which is always the newest.
+    """
+
+    import time
+
+    if not path.exists():
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(path.stat().st_mtime))
+    kept = path.with_name(f"{path.stem}.superseded-{stamp}{path.suffix}")
+    # Two retries within one second, or a re-run of an already-kept file: do
+    # not clobber the thing we are here to preserve.
+    index = 0
+    while kept.exists():
+        index += 1
+        kept = path.with_name(
+            f"{path.stem}.superseded-{stamp}-{index}{path.suffix}")
+    path.rename(kept)
+    return kept

@@ -314,3 +314,39 @@ def test_the_population_names_the_tree_it_was_measured_on(tmp_path):
     assert payload["commit"] == head, payload["commit"]
     # Not a guess dressed as a fact: an interpreter that cannot answer says so.
     assert payload["commit"] is None or len(payload["commit"]) == 40
+
+
+def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):
+    """A retry must not erase the measurement it is retrying.
+
+    ``--surface-json`` names one path per arm, and the pool retries an action
+    in place: an expired lease or a dead worker sends the same action back
+    through a worker, which runs the suite again and writes the same filename.
+    That happened here -- the population at
+    ``20260904T025044/surface.x86.json`` (1389 passed / 1 failed) was replaced
+    at 07:28:49Z by a retry reporting 1388/2, from a checkout that had moved in
+    between.  Two populations, possibly of two trees, and the first was gone.
+
+    Before this the last assertion read
+    ``AssertionError: assert 0 == 1`` -- no superseded file, because the first
+    one had been written over.
+    """
+
+    pytest.importorskip("torch")
+    probe = _write_synthetic(tmp_path)
+    surface = tmp_path / "surface.json"
+    for _ in range(2):
+        result = _run(
+            [str(probe), "-q", "-p", "conftest", "--surface-json", str(surface)],
+            CUDA_VISIBLE_DEVICES="",
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    import json
+
+    # The plain name is always the newest, so nothing that reads it changes.
+    assert json.loads(surface.read_text())["schema"] == "tessera.test_surface.v1"
+    kept = sorted(tmp_path.glob("surface.superseded-*.json"))
+    assert len(kept) == 1, sorted(p.name for p in tmp_path.iterdir())
+    assert json.loads(kept[0].read_text())["counts"]["passed"] == 1
+    assert "kept at" in (result.stdout + result.stderr)

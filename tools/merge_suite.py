@@ -376,8 +376,15 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         # ``master head?`` was answered against the population commit. If this
         # arm ran a different tree, that answer is not about this row.
         row_head = head_text if commit == population["commit"] else "unknown"
+        # An arm that published nothing measured nothing, so it has no
+        # measurement time. Falling through to the receipt's own clock put a
+        # timestamp in that cell that dated the bookkeeping and looked exactly
+        # like a measurement -- the same confusion as the resumed row, in the
+        # one case where there is no measurement at all.
+        when = record.get("measured_utc") or (
+            receipt["generated_utc"] if surface else "--")
         rows.append(
-            f"| {record.get('measured_utc', receipt['generated_utc'])} | "
+            f"| {when} | "
             f"{commit_text} | "
             f"{row_head} | {record['arm']} | "
             f"{surface.get('device', 'no population published')} | "

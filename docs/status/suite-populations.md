@@ -23,5 +23,5 @@ the row green, because a suite can exit non-zero after a clean summary.
 
 | measured (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected | exit |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 2026-09-04T07:14:07Z | `e61974c0c40c` (assumed) | no | gpu | no population published | -- | -- | -- | 0 | not observed |
+| -- | `e61974c0c40c` (assumed) | no | gpu | no population published | -- | -- | -- | 0 | not observed |
 | 2026-09-04T07:04:59Z | `e61974c0c40c` (assumed) | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1389 | 1 | 499 | 0 | not observed |

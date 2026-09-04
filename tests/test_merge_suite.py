@@ -490,3 +490,29 @@ def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
     for line in text.splitlines():
         if line.startswith("| 2026-") or line.startswith("| 20"):
             assert line.count("|") == columns, line
+
+
+def test_an_arm_that_measured_nothing_carries_no_measurement_time():
+    """No population means no measurement, so no date for one.
+
+    The cell fell through to the receipt's own clock, which put a plausible
+    timestamp beside `no population published` -- a row that had measured
+    nothing, wearing the time something was measured. Before this the last
+    assertion read
+    ``AssertionError: assert '2026-09-04T09:00:00Z' == '--'``.
+    """
+
+    import tempfile
+
+    merge_suite = _module()
+    ledger = Path(tempfile.mkdtemp(dir="/home/rob/tmp")) / "l.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "e" * 40, "is_master_head": False},
+        "arms": [{"arm": "gpu", "surface": None,
+                  "exit_status_observed": False, "returncode": None}],
+    })
+    row = [l for l in ledger.read_text().splitlines() if "| gpu |" in l][0]
+    assert "no population published" in row, row
+    assert "2026-09-04T09:00:00Z" not in row, row
+    assert row.split("|")[1].strip() == "--", row
