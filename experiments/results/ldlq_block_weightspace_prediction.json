@@ -1,0 +1,31 @@
+{
+  "schema": "tessera.ts60.weightspace_prediction.v1",
+  "purpose": "State, BEFORE the served numbers land, exactly what the serve is being asked to confirm or refute. A prediction recorded after the result is not a prediction.",
+  "provenance": {
+    "dense_source": "/mnt/shared/tessera-runs/ldlq-block/dense4_below16.json",
+    "glm_source": "/mnt/shared/tessera-runs/ldlq-block/glm_block_{16,32,64,128,256}.json",
+    "note": "Both files are another agent's output, read read-only and not modified. The dense file is the ts#12/#60 dense-4 sweep; the GLM files are the routed-expert block sweep."
+  },
+  "dense_qwen3_0p6b_weight_space": {
+    "metric": "out (output-space error) at 4.001953125 bpp, 6 attention units over layers 0-1",
+    "geomean_b8_over_b32": 0.9373, "b8_unit_wins": "6/6",
+    "geomean_b4_over_b32": 0.9240, "b4_unit_wins": "6/6",
+    "geomean_b8_over_nvfp4": 0.9768,
+    "geomean_b4_over_nvfp4": 0.9629,
+    "drift_control": "the sweep's own 'control FIRST b32' and 'control LAST b32' arms are bit-identical to its b32 arm on all 6 units, so the sweep's own conditions did not move under it",
+    "prediction_under_test": "If weight-space output error is the quantity that governs served KL on this lane, a b8 twin should serve about 6% better than a b32 twin at identical bytes, and b4 about 8%."
+  },
+  "glm_routed_experts_weight_space": {
+    "metric": "out, arm 'E2M1x2 TCQ q896 (exporter default) LDLQ1.0 refit-hessian', 6 experts (L5/L20/L42 gate+up)",
+    "ratios_vs_block_32": {"16": 0.9993, "64": 1.0006, "128": 1.0027, "256": 1.0064},
+    "unit_wins_vs_32": {"16": "4/6", "64": "1/6", "128": "0/6", "256": "0/6"},
+    "reading": "GLM's block axis is FLAT. A sixteen-fold range of block sizes moves it 0.7% end to end, and the best available point below the default is worth 0.07%. Dense Qwen moves 6-8% over a four-fold range.",
+    "consequence_for_the_default": "This is why a GLOBAL flip of DEFAULT_LDLQ_BLOCK from 32 to 4 is not the decision on offer even if the dense serve confirms. It would charge every GLM expert roughly eight times the encode for an effect indistinguishable from zero on that model. The live question is a DERIVED per-unit block, not a new round number."
+  },
+  "gate_input_that_does_not_exist": {
+    "missing": "a GLM leg at the candidate block",
+    "detail": "The lowest GLM block measured is 16. The served candidate is 8. There is no GLM measurement at block 8 or block 4, so assert_plane_promotion's glm_ratio leg cannot be supplied for this candidate from anything on disk.",
+    "why_it_is_missing_is_itself_a_finding": "choose_ldl_block floors LUT/S6B callers at block 16, a constraint that belongs to the slice-stitching path only, and that floor excludes every block the dense sweep finds winning. The GLM sweep inherited the floor.",
+    "handling": "The promotion record is NOT synthesised with a substitute ratio. A missing GLM ratio is not 1.0, and the gate is asked to refuse rather than told what it wants to hear."
+  }
+}
