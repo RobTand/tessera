@@ -6,7 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
-`b83fd17`, CI at `94e8289`, packaging metadata at `54cd1df`, release
+`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df`, release
 documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
