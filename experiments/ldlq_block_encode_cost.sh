@@ -13,6 +13,21 @@
 #
 #   ldlq_block_encode_cost.sh [layers]     (default 1 -- seven units)
 #
+# Run it through the pool's EXCLUSIVE demand, which is what makes the window
+# quiet:
+#   pbrun.py --gpu --exclusive -- experiments/ldlq_block_encode_cost.sh 1
+# The old box-local flock is retired and a refusing stub stands at its path.
+# The ledger's all-or-nothing acquire gives exclusion, and it ages, so a large
+# demand is not leapfrogged forever by small ones the way the flock allowed.
+#
+# WHY THE REPEAT IS NOT OPTIONAL, learned the hard way inside this very run.
+# An earlier attempt read a cost ratio off two arms that ran CONCURRENTLY on one
+# box and called them matched by construction.  They were not: their windows had
+# different durations over a load that moved 3.3 to 82.6, so each averaged a
+# different stretch of it, and a third arm landed 36% off the line the first two
+# defined.  Simultaneity does not pin conditions.  Only running the control
+# again, after the treatment, and finding it unchanged does.
+#
 # uptime and GPU power are sampled either side of every arm, because on GB10
 # `gpu_utilization` reads the same for a stalled and a saturated kernel and
 # power against the ~140 W envelope is what separates them.
