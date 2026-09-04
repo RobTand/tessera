@@ -42,6 +42,19 @@
 #   B > 1 > A  the spread move alone HURTS: the axes interact with opposite
 #              signs and the win exists only as the bundle.
 #
+# WHERE THAT READING APPLIES, also registered before the run.  f is a ratio of
+# two logarithms, so it is dominated by its own third digit wherever A is near
+# 1: at GLM R=4 the landed L arms are 1.0029x and 1.0134x, and splitting a
+# 0.3% effect into halves would report precision the quantity does not have.
+# So f is COMPUTED and printed for every cell -- nothing is hidden -- but the
+# verdict above is only READ where |log A| >= log 1.01, i.e. where the
+# byte-matched L arm moves its gate by at least 1%.  Applied to the landed
+# grids that admits all six dense cells (0.8916x to 1.1882x) and five of the
+# six GLM ones, excluding exactly one: GLM R=4 `L=16` at 1.0029x.  This is
+# a reporting convention chosen before the numbers, not a derived constant and
+# not a noise floor: the encoder is deterministic and the repeat control is
+# byte-identity, so there is no noise here to clear -- only conditioning.
+#
 # A physical check comes free: `rows_over_reach` at (14, r*) must equal it at
 # (L, 1.0) exactly, on every unit -- the same reach clips the same rows.  A
 # run where those disagree has not matched anything.

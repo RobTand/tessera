@@ -872,6 +872,23 @@ win is reach and is free; at or below 0.15 it is entry count and costs bytes;
 between, both halves are real.  `B > 1 > A` would say the spread move alone
 *hurts* and the win exists only as the bundle.
 
+**Where that reading applies was registered with it.**  `recovered` is a
+ratio of two logarithms, so wherever `A` sits near 1 it is dominated by its
+own third digit: the landed GLM `R=4` arms are 1.0029x and 1.0134x, and
+splitting a 0.3% effect into halves would report precision the quantity does
+not have.  So the fraction is computed and printed for every cell and the
+*verdict* is read only where `|log A| >= log 1.01` -- where the byte-matched
+L arm moves its gate by at least 1%.  Applied to the grids already landed
+that admits all six dense cells (0.8916x to 1.1882x) and five of the six GLM
+ones, excluding exactly one, `R=4 L=16` at 1.0029x.  It is a reporting
+convention and is labelled as one, not a noise floor: the encoder is
+deterministic and the repeat control is byte identity, so there is no noise
+here to clear -- only conditioning.  It lives in
+`matched_reach_report.read_split`, with the threshold pinned by
+`tests/test_matched_reach_report.py` against those same landed numbers,
+because a threshold that lives only in a comment is one the report can
+quietly ignore.
+
 The physical check comes free and is reported: at a matched reach the same
 rows are clipped, so `rows_over_reach` at `(14, r*)` must equal it at
 `(L, 1.0)` on every unit.  The controls are the sweep's own in-process repeat

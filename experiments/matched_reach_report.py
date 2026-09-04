@@ -119,6 +119,35 @@ def cells(doc) -> dict:
     return out
 
 
+
+#: The conditioning floor the run script registers before any number exists:
+#: ``f = log B / log A`` is dominated by its third digit wherever the
+#: byte-matched L arm barely moves, so the verdict is READ only where that arm
+#: moves its gate by at least 1%.  It is a reporting convention, not a noise
+#: floor -- the encoder is deterministic and the repeat control is byte
+#: identity, so there is no noise here to clear.  ``f`` is printed either way;
+#: what the floor gates is the sentence, not the number.
+LOG_A_FLOOR = math.log(1.01)
+
+
+def read_split(A: float, B: float) -> str:
+    """The verdict the run script's header registered, applied to one cell."""
+
+    if A <= 0 or B <= 0:
+        return "unreadable (a non-positive ratio)"
+    if abs(math.log(A)) < LOG_A_FLOOR:
+        return (f"NOT READ: the L arm moves {abs(A - 1) * 100:.2f}% < 1%, "
+                "below the registered conditioning floor")
+    if B > 1.0 > A:
+        return "the spread move alone HURTS -- the win exists only as the bundle"
+    f = math.log(B) / math.log(A)
+    if f >= 0.5:
+        return f"majority SPREAD ({f:.0%} of the L win), and spread is free"
+    if f <= 0.15:
+        return f"ENTRY COUNT ({f:.0%} recovered by spread); it costs bytes"
+    return f"BOTH halves are real ({f:.0%} spread)"
+
+
 def geo(values) -> float:
     return math.exp(sum(math.log(v) for v in values) / len(values))
 
@@ -217,9 +246,11 @@ def report(paths, *, gate=None) -> None:
                 continue
             A, B = bundle[0], free[0]
             frac = math.log(B) / math.log(A) if A not in (0, 1.0) else float("nan")
+            verdict = read_split(A, B)
             print(f"  L={L} at its own reach {reach:g}: bundle {A:.4f}x "
                   f"({bundle[1]}/{len(units)}), spread-only at L=14 {B:.4f}x "
-                  f"({free[1]}/{len(units)}), recovered {frac:+.3f}")
+                  f"({free[1]}/{len(units)}), recovered {frac:+.3f}"
+                  f"  -> {verdict}")
             if diag:
                 print(f"      (the shipped cell reads {diag[0]:.4f}x, which is "
                       "1.0000 by construction -- it IS the reference)")
