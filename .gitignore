@@ -22,3 +22,9 @@ build/
 # Agent working reports: local evidence, not tree artifacts (four branches
 # committed one at the root before this was added).
 /report.md
+
+# PrismaBuild pool artifacts: pbrun writes these into the submitting
+# checkout, so every box that submits a job leaves them behind and the next
+# `git add -A` sweeps them into someone else's commit.
+.pbrun-closure.*.json
+pbrun_result.*.txt

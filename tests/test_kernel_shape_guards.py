@@ -33,6 +33,13 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+#: The shape grammar these tests pin lives in ``tessera.kernel``, which imports
+#: Triton at module scope.  Triton is a CUDA-only dependency, so on an x86 CI
+#: box the import is an *absence*, not a failure -- but at module level it
+#: aborts collection for the whole file and the run reports an error where it
+#: should report a skip.  Skip here so the same suite is runnable everywhere.
+pytest.importorskip("triton", reason="tessera.kernel imports Triton (CUDA-only)")
+
 from tessera import kernel                                             # noqa: E402
 from tessera.errors import GrammarError                                # noqa: E402
 
