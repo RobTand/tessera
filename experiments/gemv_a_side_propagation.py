@@ -5,9 +5,11 @@ SUPERSEDED AS AN ANSWER, KEPT AS A CONTROL.  This script prices the fold with
 a noise MODEL -- independent Gaussians of the measured relative size -- on a
 trajectory that carries NO per-token FP8 activation quantiser, because it
 perturbs the BF16 teacher (or a weight-degraded copy of it).  Both of those
-choices matter, and the second one dominates: on the served W8A8 trajectory
-the same perturbation is worth about eighty times more KL
-(`gemv_a_side_exact_fold.py --act-quant on|off`).  So the "factor of forty"
+choices matter, and the second one dominates: put the route's per-token E4M3
+quantiser back and the SAME Gaussian, same rms, same regime, same 256
+positions, goes from KL >= 0.000113 at 99.22% top-1 to the 0.0xx band -- one
+to two orders of magnitude, measured by
+`gemv_a_side_exact_fold.py --act-quant on|off`.  So the "factor of forty"
 this script contributed to the #110 receipt was an artefact of pricing the
 term off the operating point, not evidence of a second term.  Read it as the
 control it now is; read `gemv_a_side_exact_fold.py` for the number.

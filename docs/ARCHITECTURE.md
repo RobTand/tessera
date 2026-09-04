@@ -362,12 +362,17 @@ branch is the only place a difference can live, and inside it the fold is the
 only term above 1.6e-07. Priced as the deterministic rounding it is, on the
 served position set and in the served decode regime, the fold reads
 `KL >= 0.007160` at 95.70% top-1 against the measured 0.012111 at 91.02%: the
-same size, within 1.69x. (An earlier Gaussian screen read 1/38 of that; the
-gap was the screen pricing a W8A8 term on a trajectory carrying no per-token
-FP8 activation quantiser, and it reproduces on demand.) The emulation is CPU
-with RTN weights and an fp32 residual stream, all of which make it quieter than
-the serve, so its number is a floor and the served re-run after the fix is what
-closes the issue. #110 stays open.
+same size, within 1.69x. An earlier Gaussian screen read 1/38 of that, and a
+one-variable matched pair says why: same regime, same arm, same 256 positions,
+same relative rms, the route's per-token E4M3 activation quantiser in the loop
+or out of it, reads `KL >= 0.007788` against `KL >= 0.000113` -- **68.9x** from
+that variable alone. The screen had priced a W8A8 term on a trajectory carrying
+no W8A8 activation rounding. The emulation is still CPU, with RTN weights and
+an fp32 residual stream; those plausibly make it quieter than the serve but
+only the weight axis has a run against it and that run has not finished, so
+0.007160 is a measurement at a named operating point rather than an established
+floor. The served re-run after the fix is what closes the issue. #110 stays
+open.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` is the receipt, and says
 which of its legs did not get a GPU. Until it closes, treat the lane's
 "bit-exact" receipts as claims about the **decoded tile** only, never about the

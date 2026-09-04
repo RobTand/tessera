@@ -42,6 +42,25 @@ TESSERA_KL_ARM_TAG=ts110 TESSERA_KL_DUMP_PREFIX=qwen_ts110 \
   RUNS=/home/rob/tessera-runs/ts110 TESSERA_GPU_MEM_UTIL=0.2 \
   experiments/decode_regime_campaign.sh arms 2>&1 | tee /home/rob/tessera-runs/ts110/campaign.log | tail -60
 
+echo "=== 3b. the two free cross-run controls (CPU, non-fatal) ==="
+# Each new arm against #102's SAME arm, byte-identical bytes through the same
+# inode.  New-B vs #102-B must read ~0 (nothing on arm B changed); new-A vs
+# #102-A is the size of the fix on the A side.  Both are compares of dumps
+# that already exist, so they cost no serve.
+KLD=/mnt/shared/tessera-kl
+for ARM in armA armB; do
+  NEW=$KLD/qwen_ts110_ts110-$ARM\_decode.json.npz
+  OLD=$KLD/qwen_ts102_ts102-$ARM\_decode.json.npz
+  if [ -f "$NEW" ] && [ -f "$OLD" ]; then
+    $PY /home/rob/dq-runs/kl_tool.py compare "$OLD" "$NEW" \
+      --teacher-label-override "ts102-$ARM-decode" \
+      --out /home/rob/tessera-runs/ts110/cross_$ARM.json 2>&1 | tail -4 \
+      || echo "  $ARM cross-compare failed -- non-fatal"
+  else
+    echo "  $ARM: no cross-run pair (looked for $NEW / $OLD)"
+  fi
+done
+
 echo "=== 4. the kernel leg at the SERVED shapes (non-fatal, after the serve) ==="
 # The first precision leg ran at 1024x1024 only.  Qwen3-0.6B's served Linears
 # have K = 1024 (qkv, gate_up), 2048 (o_proj: 16 heads x 128) and 3072

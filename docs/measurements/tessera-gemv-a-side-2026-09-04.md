@@ -22,16 +22,20 @@
 > 38. A matched pair says where the 38 came from, and it is not correlation:
 > replacing the fold with independent Gaussians of the same rms *in this
 > harness* moves the number by 1.29x, while removing the route's per-token FP8
-> **activation quantiser** and nothing else collapses it by about eighty, back
-> onto the first pass's reading. The screen had priced a W8A8 term on a
-> trajectory that was not carrying W8A8's own activation rounding.
+> **activation quantiser** -- one variable, same regime, same arm, same 256
+> positions, same rms to within 0.5% -- moves it **68.9x**, from 0.007788 down
+> to 0.000113, landing on the first pass's independent 0.000318. The screen had
+> priced a W8A8 term on a trajectory that was not carrying W8A8's own
+> activation rounding.
 >
 > **This is still a screen** -- CPU, RTN weights rather than the Tessera wire,
-> fp32 rather than bf16 residual -- and all three substitutions push the same
-> way, so 0.007160 is a floor. The served re-run (`6c90ba1b`, queued and
-> `ready` since this branch began) is confirmation now rather than
-> adjudication, and section 4 names the three outcomes it can have. Nothing
-> below is a placeholder for a number that was taken and disliked.
+> fp32 rather than bf16 residual. All three substitutions plausibly push the
+> same way, but only one of them has a run behind it and it has not finished,
+> so 0.007160 is a measurement at a named operating point and **not yet an
+> established floor**. The served re-run (`6c90ba1b`, queued and `ready` since
+> this branch began) is confirmation now rather than adjudication, and section
+> 4 names the three outcomes it can have. Nothing below is a placeholder for a
+> number that was taken and disliked.
 
 **What #110 asked.** Two serves of one checkpoint through one inode, differing
 only in whether `prepare_fp8_gemv` could build, disagreed in the decode regime:
@@ -210,18 +214,24 @@ imported from `kl_estimator`, beside the full-vocab number).
 
 ### 3a. The reading
 
-All rows are 256 positions -- the served set, 8 chunks x stride 16 -- on
-Qwen3-0.6B, CPU, `/home/rob/tessera-runs/ts110/`:
+Every row is 256 positions -- the served set, 8 chunks x stride 16 -- on
+Qwen3-0.6B, CPU-only, `/home/rob/tessera-runs/ts110/`. The **regime** column
+matters and is not decoration: `decode` is the served one (a clean prefill
+fills the KV cache, then each scored prefix is one M = 1 forward), `prefill`
+perturbs all 512 rows of a single forward and so also perturbs cached keys and
+values the serve builds clean in both arms. Rows are only comparable within a
+regime.
 
-| what was priced | KL >= (served-shape) | full-vocab KL | top-1 |
-|---|---:|---:|---:|
-| **#110, as served** | **0.012111** | -- | **91.02%** |
-| **the fold, exactly, decode regime** | **0.007160** | 0.007572 | **95.70%** |
-| the fold, all 512 rows perturbed (over-applied) | 0.012576 | 0.013138 | 93.75% |
-| independent Gaussian of the same rms, same harness | 0.009766 | 0.010261 | 95.70% |
-| the same Gaussian with the FP8 activation quantiser removed | ACTOFF | ACTOFFFULL | ACTOFFTOP |
-| the first pass's screen (BF16 teacher, no quantiser) | 0.000318 | -- | 98.44% |
-| control: one arm against itself | 0.000000 | 0.000000 | 100.00% |
+| what was priced | regime | KL >= (served-shape) | full-vocab KL | top-1 |
+|---|---|---:|---:|---:|
+| **#110, as served** | decode | **0.012111** | -- | **91.02%** |
+| **the fold, exactly** | decode | **0.007160** | 0.007572 | **95.70%** |
+| independent Gaussian, same rms, same point | decode | 0.007788 | 0.008105 | 96.09% |
+| the same Gaussian, FP8 activation quantiser removed | decode | **0.000113** | 0.000125 | 99.22% |
+| the fold, all 512 rows perturbed (over-applied) | prefill | 0.012576 | 0.013138 | 93.75% |
+| independent Gaussian of the same rms | prefill | 0.009766 | 0.010261 | 95.70% |
+| the first pass's screen (BF16 teacher, no quantiser) | prefill | 0.000318 | -- | 98.44% |
+| control: one arm against itself | either | 0.000000 | 0.000000 | 100.00% |
 
 Read the rows:
 
@@ -231,43 +241,69 @@ Read the rows:
   produces is 4.30% against a served 8.98%.
 * **The missing factor was never the noise MODEL.** Replacing the fold's
   deterministic rounding with independent Gaussians of the same measured
-  relative rms, at the same point, in the same harness, changes the reading by
-  1.29x -- not 38x. The correlation the first pass worried about is worth
-  almost nothing.
-* **It was the operating point of the ACTIVATION path.** Remove the route's
-  per-token E4M3 quantiser from both arms and nothing else, and the same
-  perturbation collapses to ACTOFF -- reproducing the first pass's 0.000318 /
-  0.000155 to within the substitution. The screen priced a W8A8 term on a
-  trajectory that was not carrying W8A8's own activation rounding. The first
-  pass's operating-point control degraded the **weights** (int4 RTN) and found
-  1.5x, which is why it read as adequate; the axis that mattered was the other
-  one.
+  relative rms, at the same point, in the same harness and the same regime,
+  changes the reading by **1.09x** in the served decode regime
+  (0.007160 -> 0.007788) and 1.29x in prefill (0.012576 -> 0.009766) -- not
+  38x, in either direction. The correlation the first pass worried about is
+  worth almost nothing.
+* **It was the operating point of the ACTIVATION path, and the pair that says
+  so varies one thing.** Decode regime, Gaussian arm, same 256 positions, same
+  relative rms to within 0.5% (1.3329e-03 against 1.3398e-03); the only
+  difference is whether the route's per-token E4M3 activation quantiser is in
+  the loop. Quantiser on: **0.007788 / 96.09%**. Quantiser off: **0.000113 /
+  99.22%**. That is **68.9x from one variable**, and the off arm lands on the
+  first pass's independent 0.000318 / 98.44%. The screen priced a W8A8 term on
+  a trajectory that was not carrying W8A8's own activation rounding.
+* **The first pass's operating-point control moved the wrong axis.** It
+  degraded the **weights** (int4 RTN) and found 1.5x, which is why the screen
+  read as adequate. The axis that mattered was the activation quantiser, and
+  nothing in the first pass moved it.
 * **The regime is worth 1.76x, in the direction that flatters the fold.**
-  Perturbing all 512 rows of one forward -- which also perturbs the cached keys
-  and values the serve builds *clean*, in both arms -- reads 0.012576. That is
-  the number the naive emulation gives and it happens to sit on top of the
-  served one; it is an over-application and is reported as one.
+  Perturbing all 512 rows reads 0.012576 and happens to sit on top of the
+  served number; it is an over-application and is reported as one.
+
+Why a step quantiser amplifies a small term at all: E4M3 per-token
+quantisation is a **step function** of local width `u`. A relative perturbation
+`d` upstream of it does not shrink the output error to `O(d)` of the signal --
+it flips a fraction of order `d/u` of the downstream codes by one whole step
+`u`, so the added error goes as `sqrt(d*u)` in amplitude and `d*u` in variance:
+**linear in `d`, not quadratic.** With `u/d` of order 50-100 here, that is the
+right order for the gap the first pass could not explain, and it predicts a
+falsifiable thing -- halving the perturbation should halve the KL with the
+quantiser in the loop and quarter it with the quantiser removed. Those two
+pairs are queued (`lin_*.json`) and **have not read out**, so the mechanism is
+offered as a mechanism consistent with a measured 68.9x, not as a measured law.
+What is measured is the 68.9x itself.
 
 ### 3b. What is still substituted, and which way it points
 
-This is a screen and it says so. Three substitutions remain, and all three are
-named because two of them plausibly cover the residual 1.69x:
+This is a screen and it says so. Three substitutions remain:
 
 * **The weights are RTN, not the Tessera wire.** The weight-side *arithmetic*
   is the served one -- per-output-row E4M3 codes plus a per-channel scale is
   exactly what the TESSERA_FP8 route decodes the window wire to -- but the
   codes are RTN's, so the emulated model sits far closer to the BF16 teacher
-  than the served arms' 0.436 nats. The first pass measured weight degradation
-  as worth ~1.5x on this sensitivity. `--weight-bits` prices it here: WB4LINE
+  than the served arms' 0.436 nats. `--weight-bits 4` prices this axis and is
+  queued (`decode_wb4.json`); it has **not** read out, so the first pass's
+  ~1.5x for a weight degradation is the only figure available and it was taken
+  at a different operating point.
 * **The residual stream is fp32; vLLM's is bf16.** Both arms share it, so it
   cannot manufacture a difference, but a bf16 trajectory is the noisier one and
   this axis is unmeasured.
 * **HF, not vLLM.** Attention kernels, RoPE and norms differ in their last
   bits. Shared by both arms; unmeasured as an amplifier.
 
-The direction of all three is the same: they make the emulation *quieter* than
-the serve. So 0.007160 is a floor on what the fold is worth as served, and the
-served re-run is what turns it into a number.
+All three plausibly point the same way -- they make the emulation *quieter*
+than the serve -- but only one of the three has a run behind it, and it has not
+finished. So **0.007160 is not established as a floor**; it is a measurement at
+a named operating point, and the served re-run is what turns it into a number.
+
+Two provenance notes for anyone reconciling the JSONs: `exact_fold_served_set.
+json` and `exact_fold_gaussian_control.json` predate the `regime` and `arm_a`
+fields and are both prefill/folded and prefill/gaussian respectively; and the
+first pass's 0.000318 comes from `experiments/gemv_a_side_propagation.py`, a
+different harness, so it is a corroborating reading and not a row of this
+table.
 
 ## 4. What remains, and the state of the queue that holds it
 
