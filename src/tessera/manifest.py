@@ -124,8 +124,8 @@ class BranchIdentity:
         return cls(
             unit_id=reader.text(),
             root_q256=reader.uint(),
-            rotation=RotationState(reader.uint()),
-            container=ContainerClass(reader.uint()),
+            rotation=reader.enum(RotationState),
+            container=reader.enum(ContainerClass),
         )
 
 
@@ -343,11 +343,7 @@ class ScalePlane:
 
     @classmethod
     def decode(cls, reader: Reader) -> "ScalePlane":
-        raw = reader.uint()
-        try:
-            kind = ScalePlaneKind(raw)
-        except ValueError:
-            raise ManifestError(f"unknown scale-plane kind {raw}") from None
+        kind = reader.enum(ScalePlaneKind)
         if kind is ScalePlaneKind.S6B:
             return cls(kind)
         if kind is ScalePlaneKind.CHANNEL:
@@ -1004,7 +1000,7 @@ class Manifest:
         profile_id = reader.digest32()
         branch = BranchIdentity.decode(reader)
         geometry = Geometry.decode(reader)
-        arrangement = ArrangementMode(reader.uint())
+        arrangement = reader.enum(ArrangementMode)
         if arrangement is ArrangementMode.STORED:
             rates = reader.uint_seq()
         else:
@@ -1034,7 +1030,7 @@ class Manifest:
                     f"a CHANNEL scale plane needs schema minor 3; the header says {schema_minor}"
                 )
         if schema_minor >= 2:
-            body = BodyKind(reader.uint())
+            body = reader.enum(BodyKind)
             window_bits = reader.uint()
         shard = None
         if schema_minor >= 4:

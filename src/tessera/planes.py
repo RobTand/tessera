@@ -341,15 +341,15 @@ class PlaneDescriptor:
     @classmethod
     def decode(cls, reader: Reader) -> "PlaneDescriptor":
         return cls(
-            kind=PlaneKind(reader.uint()),
-            index_domain=IndexDomain(reader.uint()),
-            storage=Storage(reader.uint()),
+            kind=reader.enum(PlaneKind),
+            index_domain=reader.enum(IndexDomain),
+            storage=reader.enum(Storage),
             element_bits=reader.uint(),
-            bit_order=BitOrder(reader.uint()),
+            bit_order=reader.enum(BitOrder),
             alignment_bytes=reader.uint(),
-            count_granularity=CountGranularity(reader.uint()),
+            count_granularity=reader.enum(CountGranularity),
             counts=reader.uint_seq(),
             restart_offsets=reader.uint_seq(),
-            payload_dtype=PayloadDtype(reader.uint()),
+            payload_dtype=reader.enum(PayloadDtype),
             content_digest=reader.digest32(),
         )
