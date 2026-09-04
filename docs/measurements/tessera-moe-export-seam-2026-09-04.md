@@ -207,7 +207,11 @@ packed-source model this repo can serve.
     `--no-verify` in the same GPU session, so the CUDA encoder wrote the
     containers, the exporter's own per-unit round-trip check passed on them,
     and the plugin then loaded and executed them. The red was one test reading
-    `parsed.unit.geometry` instead of `parsed.manifest.geometry`.
+    `parsed.unit.geometry` instead of `parsed.manifest.geometry`. The fix is
+    attested on the CPU against bytes already on disk — the new path reads
+    `columns 128`, matching the sidecar, and the old path raises the same
+    `AttributeError` the GPU run printed — and the `@cuda` case itself is
+    re-queued as `ac602404b092`, still unclaimed at the time of writing.
   * The CPU halves had landed earlier, both through the pool on sparky:
     `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22 passed, 2 skipped
     in 29.74 s** — and `tests/test_export_moe_write.py` — `cb8372740b1b`,
