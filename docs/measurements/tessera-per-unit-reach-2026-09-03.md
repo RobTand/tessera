@@ -212,6 +212,48 @@ What is worth carrying forward from the sweep is not the lever:
   0.3% while its `h` moves 37%, the codebook's own one-step RTN distortion moves
   1%, and clipped energy falls rather than rises. Filed separately; it means the
   R2048 column for that unit is not measuring reach.
+
+### #89, answered: it is a band, the default sits at the bottom of it, and the rung it ships at does not see it
+
+The paragraph above is right that the effect is not reach and wrong that it is
+"independently of reach". #89's ladder measures the residue as a **single
+periodic curve in the snapped reach**, not a dyadic/non-dyadic dichotomy. The
+controlling variable is `reach = snap_E4M3(c * sigma)` and, specifically, the
+**E4M3 mantissa** it snaps to: 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0 -- seven
+admissible bands. Twenty-one sigmas across one binade put `h` at
+**1.35 / 1.37 / 1.18 / 1.09 / 1.00 / 1.08 / 1.32** across those seven, `h` flat
+to ~1% *inside* a band and stepping *between* them. The dyadic framing is the
+special case where an arm lands back in the default's own band. The
+"independently of reach" clause is superseded by the ladder that varies it:
+320 -> 1.18, 352 -> 1.09, 384 -> 1.00, 416 -> 1.08, 448 -> 1.32.
+
+Three things follow, and together they are why nothing moves:
+
+* **The shipped default is at the minimum of that curve**, worse in both
+  directions. A constant sitting at an arbitrary point of a curve it does not
+  model would be a defect; this one is at the bottom of it.
+* **The 37% is an 8-bit-rung effect.** At R1024 -- 4 b/wt, where the E4M3
+  window wire actually ships -- the same unclamped sigmas read
+  **1.000 / 1.001 / 0.985**. The residue is worth **0.1%** there.
+* **Under production's own refit objective the sign changes.**
+  `DEFAULT_REFIT_OBJECTIVE["channel"]` is `"hessian"`, which under an
+  `ActivationSource` means the full `[cols, cols]` matrix rather than a
+  diagonal; on that arm the ratio is **0.9677** -- the alternative is *better*
+  than the default. **Caveat, and it is the load-bearing one: that is one
+  pair at one `scale_refit`, not a ladder.** The seven-band curve was measured
+  without the full-H refit; nobody has walked the bands under it. Read 0.9677
+  as "the production objective moves this, direction included" and not as a
+  measured optimum.
+* **And it is one unit.** Across eight dense units seven move <=1.4%; the
+  outlier is the only one whose error concentrates on six massive-activation
+  columns (top-6 `h` share 0.999, 99% of the error).
+
+Receipts: `experiments/results/ts89_bands.json` (the ladder),
+`ts89_fullh.json` (the 2x2 including the full-H arm), `ts89_refit2.json` (the
+refit walk), `ts89_repro.json`, `ts89_ladder.json`; harnesses
+`experiments/ts89_dyadic_reach.py` and `experiments/ts89_band_predictors.py`
+(CPU, no encode -- it replays the table build and scores four candidate
+predictors against the measured ratio).
 * **The reach start lands with round-to-nearest.** `initial_channel_scale`
   computes `reach * rms / amax` as a *lower bound* on a row's scale and lands it
   with `land_channel_scale`, which rounds to nearest; 166 of 1024 rows of

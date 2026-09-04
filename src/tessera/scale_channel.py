@@ -56,11 +56,42 @@ _FP16_MAX = 65504.0
 def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
     """The RTN-optimal Gaussian spread on the grid's scalar values, in grid units.
 
-    Derived from the objective rather than chosen: over a dyadic ladder of
-    spreads below the grid's peak, the one whose nearest-value error on a
-    unit Gaussian is smallest, relative to the variance quantised.  On E2M1
-    this lands near ``peak / 2.7``; on E4M3, whose values are log-spaced, the
-    error is flat over a wide band and the ladder picks one point in it.
+    Derived from the objective rather than chosen: over a **quarter-binade**
+    ladder of spreads below the grid's peak (``peak * 2^(-k/4)``, forty rungs,
+    ten binades), the one whose nearest-value error on a unit Gaussian is
+    smallest, relative to the variance quantised.  On E2M1 this lands near
+    ``peak / 2.7``; on E4M3, whose values are log-spaced, the objective is
+    periodic in the binade and nearly flat across it: the four rungs of one
+    binade span 1.1% and the winner -- ``448 * 2^-2.25 = 94.18`` -- beats the
+    runner-up by 0.11%, so the ladder is choosing between near-equals.
+
+    The step is a quarter binade and **is not dyadic**, which is worth saying
+    plainly because the docstring said the opposite: the four rungs of a
+    binade sit in four different residue classes of ``log2(sigma)``, and which
+    class the ladder lands in is decided by that 0.11%.  Where the table's
+    outermost entry then *snaps* is a different question from the one this
+    objective asks -- a scalar RTN quantiser is not how the window body uses
+    the table (issue #89).
+
+    Measured, and recorded because the margin is so thin.  Under
+    ``sigma -> 2^k sigma`` this plane's encode is *exactly* invariant (every
+    stored fp16 row word is bit-identical and the whole table scales by
+    ``2^k``), so on E4M3 the forty rungs are four residues, not forty spreads.
+    A window-body sweep across one binade at 8 b/wt on a massive-activation
+    unit puts the Hessian-weighted error of those four at 1.00 / 1.18 / 1.32 /
+    1.35 -- and the residue this objective picks by 0.11% is the 1.00.  The two
+    objectives agree on the winner and the loser and swap the middle pair, so
+    the constant is right here for a reason it cannot see, on a margin that
+    could not have justified it.  Do not read that as licence to re-derive the
+    constant against the window body: the effect is 0.1% at 4 b/wt, where the
+    E4M3 wire ships, and it inverts -- the alternative measures 0.9677, better
+    than the default -- once the refit is given the full Hessian production
+    uses.  That inversion is **one pair at one refit count, not a ladder**:
+    nobody has walked the seven bands under the full-H objective, so it says
+    the production objective moves this and does not say where the optimum is.
+    Evidence: ``experiments/results/ts89_ladder.json``,
+    ``ts89_residue_ladder.json``, ``ts89_fullh.json``.
+
     Deterministic: the source is ``GAUSSIAN_SOURCE``'s fixed quantile sample.
     """
     scalar = torch.tensor(sorted(set(values)), dtype=torch.float64)

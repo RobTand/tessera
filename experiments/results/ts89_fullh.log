@@ -1,0 +1,18 @@
+
+== model.layers.2.mlp.down_proj (1024, 3072)  R=2048  (8 b/wt)   h top-6 share 0.9990  h_max/med 2.18e+06
+     refit      m     sigma   reach reach_rms        wt         h  h ratio  rows@clip  moved  top6%      s
+         4   1.00   94.1804   384.0    4.0972   0.02646   0.01024   1.0000        222      0  99.06      6
+         4   0.75   70.6353   288.0    4.1002   0.02653   0.01399   1.3667        219      0  99.50      6
+
+    at scale_refit=4, the two refit knobs, both sigmas
+    refit arm                  m        wt         h  h ratio  rows@clip  moved  top6%      s
+    metric=h                1.00   0.02796   0.00983   1.0000        340    996  98.87      6
+    metric=h                0.75   0.02817   0.00969   0.9853        388   1003  98.83      6
+    metric=H(full)          1.00   0.04804   0.01074   1.0000        428   1009  97.17      6
+    metric=H(full)          0.75   0.04549   0.01039   0.9677        426   1009  97.33      6
+    reach_floor             1.00   0.02649   0.01394   1.0000          0    154  99.48      6
+    reach_floor             0.75   0.02655   0.01399   1.0035          0    138  99.50      6
+    metric=h+floor          1.00   0.02718   0.01378   1.0000          0    878  99.45      6
+    metric=h+floor          0.75   0.02720   0.01369   0.9940          0    870  99.45      6
+
+wrote /home/rob/tmp/musefix/out/ts89_fullh.json

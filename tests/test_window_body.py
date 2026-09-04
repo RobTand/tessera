@@ -30,11 +30,23 @@ from fractions import Fraction
 import pytest
 import torch
 
-from tessera.alphabet import E2M1_GRID, E4M3_GRID, build_forest, tuple_grid
+from tessera.alphabet import (
+    BF16_GRID,
+    E2M1_GRID,
+    E4M3_GRID,
+    build_forest,
+    tuple_grid,
+)
 from tessera.calculator import terminal_rate
 from tessera.container import parse, serialize
 from tessera.decode import decode_codes_mixed, reconstruct_unit, replay_window
-from tessera.encode import encode_unit, viterbi_window, window_table
+from tessera.encode import (
+    encode_unit,
+    grid_vector_table,
+    viterbi_window,
+    window_table,
+    window_table_reach,
+)
 from tessera.errors import GrammarError, ManifestError, TesseraError
 from tessera.export import (
     DEFAULT_BODY,
@@ -45,6 +57,7 @@ from tessera.export import (
     read_checkpoint_config,
 )
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
+from tessera.scale_channel import default_channel_sigma, initial_channel_scale
 from tessera.manifest import WINDOW_BITS_MAX, BodyKind, ScalePlaneKind
 from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
 from tessera.trellis import ConvCode
@@ -172,6 +185,60 @@ def test_window_table_is_deterministic_snapped_and_cached():
         assert window_table(K2, bits, sigma=1.0).numel() == 1 << bits
     with pytest.raises(GrammarError, match="sigma"):
         window_table(K2, 8, sigma=0.0)
+
+
+def test_the_table_says_what_spread_the_grid_actually_delivered():
+    """#84: a grid has a peak, so past a point the table stops widening.
+
+    The clamp is not a defect -- an alphabet is allowed to end -- but it was
+    silent, and a sweep that reports only the realised reach reads the flat
+    curve past the clamp as "the axis stopped mattering".  It has not: on
+    ``L2.mlp.down_proj`` at R2048 the h error runs 1.41x at ratio 1.75 and
+    1.99x at 4.0 with the realised reach pinned at 4.7568 row-RMS throughout.
+    What moves there is the table's *interior*, and ``saturated`` is the
+    number that shows it.
+    """
+    base = default_channel_sigma(E4M3_GRID)
+    inside = window_table_reach(E4M3_GRID, 14, sigma=base, seed=0)
+    assert inside.realised == 384.0 and inside.saturated == 0
+    # Snapping can round the outermost quantile *up*, so "delivered" sits
+    # just above 1 while nothing has clamped.
+    assert 1.0 < inside.delivered < 1.05
+
+    wide = [window_table_reach(E4M3_GRID, 14, sigma=r * base, seed=0)
+            for r in (1.25, 1.5, 2.0, 4.0)]
+    # Realised reach saturates at the grid's peak and never moves again ...
+    assert [w.realised for w in wide] == [448.0] * 4
+    # ... while the request keeps growing, so what was delivered keeps falling
+    assert [round(w.delivered, 3) for w in wide] == [0.949, 0.791, 0.593, 0.297]
+    # ... and the interior keeps deforming, which is the part the reach hides.
+    assert [w.saturated for w in wide] == [4, 36, 358, 4120]
+    assert all(a.saturated < b.saturated for a, b in zip(wide, wide[1:]))
+
+    # BF16 has ~120 binades of margin at each end, so nothing clamps there.
+    bf16 = [window_table_reach(BF16_GRID, 14, sigma=s, seed=0) for s in (1.0, 4.0)]
+    assert [b.saturated for b in bf16] == [0, 0]
+    assert all(0.99 < b.delivered <= 1.0 for b in bf16)
+
+
+def test_the_encoder_records_the_spread_the_grid_delivered():
+    """The clamp happens in the encoder, so the encoder is what records it."""
+    w = _weights()
+    base = default_channel_sigma(E4M3_GRID)
+    rates = (4,) * w.shape[1]
+    common = dict(body=WINDOW, window_bits=10,
+                  scale_plane=ScalePlaneKind.CHANNEL, scale_refit=1)
+    honoured = encode_unit(w, E4M3_GRID, rates, CODE, **common)
+    assert honoured.table_reach is not None
+    assert honoured.table_reach.saturated == 0
+    clamped = encode_unit(w, E4M3_GRID, rates, CODE, **common,
+                          window_sigma=4.0 * base)
+    assert clamped.table_reach.realised == 448.0
+    assert clamped.table_reach.delivered < 0.4
+    assert clamped.table_reach.saturated > 0
+    # Diagnostic, never wire: the field decides no byte, so a table that
+    # clamped and one that did not are told apart only by their contents.
+    assert honoured.table_reach != clamped.table_reach
 
 
 # --------------------------------------------------------------- the seam
@@ -430,3 +497,97 @@ def test_the_window_body_beats_the_trellis_below_the_cap():
                       body=WINDOW, window_bits=10, trellis_weighting="scale")
     err = lambda unit, f: float(((reconstruct_unit(unit, f, CODE if f is forests else None) - w) ** 2).sum())
     assert err(win, K2) < 0.92 * err(tcq, forests)
+
+
+def test_the_channel_sigma_is_a_gauge_up_to_powers_of_two():
+    """Halving the table sigma changes nothing the encoder can see.
+
+    Both legs of the CHANNEL start scale with ``1/sigma`` -- a row inside the
+    reach starts at ``rms/sigma``, a row past it at ``reach*rms/amax``, and the
+    reach is itself proportional to sigma -- and ``channel_global`` returns a
+    power of two.  So under ``sigma -> sigma/2`` every stored fp16 row word is
+    *bit-identical*, only the global's exponent moves, and every table value
+    halves exactly.  The encode is gauge-equivalent, not approximately so.
+
+    This is why #89's two dyadic arms agree to twelve decimals in ``wt``, and
+    why its non-dyadic arms cannot be compared to them as if sigma were a
+    continuous knob: off the dyadic lattice, three quarters of the rows land on
+    a different fp16 word and the E4M3 snap in the table moves too.
+
+    The gauge only runs **downward** without further argument.  Upward it holds
+    until the table clamps on the grid's peak, which is exactly why #89 flags
+    ``m=2`` as not a clean gauge arm.
+    """
+    torch.manual_seed(0)
+    w = torch.randn(97, 512)
+    w[3] *= 40.0                                    # a row that needs the reach
+    base = default_channel_sigma(E4M3_GRID)
+    gv = grid_vector_table(E4M3_GRID).squeeze(-1).float()
+
+    def leg(sigma):
+        codes = window_table(E4M3_GRID, 10, sigma=sigma, seed=0, half=16)
+        vals = gv[codes.long()]
+        reach = float(vals.abs().max())
+        stored, effective, glob = initial_channel_scale(w, sigma, reach=reach)
+        return vals, reach, stored, effective, glob
+
+    ref = leg(base)
+    for k in (0.5, 0.25):
+        arm = leg(base * k)
+        assert torch.equal(ref[2], arm[2]), f"the fp16 row words moved at k={k}"
+        assert arm[4] == ref[4] / k                 # only the exponent moved
+        torch.testing.assert_close(arm[3], ref[3] / k, rtol=0, atol=0)
+        torch.testing.assert_close(arm[0], ref[0] * k, rtol=0, atol=0)
+        assert arm[1] == ref[1] * k
+
+    # The gauge runs out where the table does.  Scaled far enough down, the
+    # innermost quantiles reach the grid's smallest magnitude and snap onto it
+    # instead of halving through it, so a few entries stop scaling -- 2 of 1024
+    # at k=1/8 here, both within eight steps of the floor, and 1.4e-11 of the
+    # table's energy.  This is the whole of the "about 2 of 16384" caveat.
+    deep = leg(base * 0.125)
+    off_by = (deep[0] - ref[0] * 0.125).abs()
+    stuck = off_by > 0
+    assert 0 < int(stuck.sum()) <= 8
+    floor = min(abs(float(v)) for v in E4M3_GRID.values if v != 0)
+    assert float(deep[0].abs()[stuck].max()) <= 8 * floor
+    assert float((off_by ** 2).sum() / ((ref[0] * 0.125) ** 2).sum()) < 1e-9
+
+    # Off the lattice both quantities move, and neither moves by much: the
+    # words shift by an ulp and the table's snap by well under a percent.
+    off = leg(base * 0.75)
+    moved = int((off[2].float() * off[4] * 0.75 != ref[2].float() * ref[4]).sum())
+    assert moved > w.shape[0] // 2, "expected most rows to land on another word"
+    rel = ((off[0] / 0.75 - ref[0]) ** 2).sum() / (ref[0] ** 2).sum()
+    assert float(rel) < 1e-2, "the snap should move by well under a percent"
+
+
+def test_the_reach_report_counts_table_entries_not_grid_vectors():
+    """#89's ``size`` and ``saturated_fraction`` are per *entry*.
+
+    ``_window_table_cpu`` returns the code array -- one code per table slot,
+    shape ``[size]`` -- and it is ``grid_vector_table(grid)[codes]`` that
+    carries the arity, shape ``[size, arity]``.  ``saturated`` is already
+    counted over that array's per-entry ``amax``, so dividing the denominator
+    by the arity halved ``size`` and *doubled* the fraction on every arity>1
+    grid, where it could then exceed 1.0 and read as "more entries saturated
+    than exist".
+
+    Live path, not a corner: ``E2M1X2_SUBCAP_RECIPE`` is a WINDOW body on the
+    arity-2 grid, and ``wire_recipe`` returns it for every rung below the
+    E2M1x2 cap.  Both arities must report the same ``2^L``.
+    """
+    from tessera.alphabet import E2M1_GRID, tuple_grid
+    from tessera.encode import window_table_reach
+
+    pair = tuple_grid(E2M1_GRID, 2)
+    assert pair.arity == 2
+    for grid in (E2M1_GRID, pair):
+        assert window_table_reach(grid, 12, sigma=1.0).size == 4096
+
+    # A spread wide enough to clamp: the fraction is a fraction of the table,
+    # so it stays in [0, 1] and its numerator is the reported count.
+    wide = window_table_reach(pair, 12, sigma=8.0)
+    assert 0.0 < wide.saturated_fraction <= 1.0
+    assert wide.saturated == round(wide.saturated_fraction * wide.size)
+    assert window_table_reach(pair, 12, sigma=1.0).saturated_fraction == 0.0

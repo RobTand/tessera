@@ -35,7 +35,7 @@ bf16 value, so the table snap **is** bf16 rounding (nearest-value; it differs
 from round-to-nearest-even only on exact midpoints, counted by ``--checks``).
 
 **Why sigma is passed explicitly on BF16.**  ``scale_channel._default_sigma``
-searches a dyadic ladder for the spread whose nearest-value error is
+searches a quarter-binade ladder for the spread whose nearest-value error is
 smallest.  On a floating-point grid with 8 exponent bits that error is
 scale-free over ~30 binades, so the search is degenerate -- it is choosing
 between equals.  sigma=1.0 is stated instead: it puts the table inside the
