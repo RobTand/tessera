@@ -476,6 +476,23 @@ on sparky:
 1331 passed, 6 skipped, 15 warnings in 932.83s   (=== TARGETED exit 0)
 ```
 
+**That receipt was taken at `6a7c68e`**, because the pool pins its closure at
+submit. Four commits landed after it, and one (`751302b`) touches
+`src/tessera/scale_channel.py` — a docstring that now carries numbers, in a file
+the doc-audit tests read. So a second pool action reran, at `f279926`, every
+test file that references `scale_channel` plus every doc/audit test:
+
+```
+211 passed in 85.15s   (=== CONFIRM exit 0)
+```
+
+covering `test_audit_byte_baseline`, `test_bf16_route`, `test_channel_plane`,
+`test_ldlq_window`, `test_math_audit_scale_and_trellis`, `test_profile_reach`,
+`test_window_body`, `test_audit_container_accounting`, `test_audit_doc_claims`,
+`test_audit_sec2`, `test_audit_type_discipline`, `test_doc_alphabet_70`,
+`test_doc_route_71`, `test_doc_scope_69`. Commits after `f279926` are report
+prose and this paragraph.
+
 Pre-fix failure line for the two tests added with the #84 reporting fix, captured
 on a detached `master` worktree before the change:
 
