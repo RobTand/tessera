@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T22:05:06Z",
+ "generated": "2026-09-04T23:18:14Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -909,13 +909,113 @@
     "state": "CLOSED",
     "title": "H-aware encode costs 19.2x (matched-pair control); mechanism is ~28% device work, ~72% launch/host"
    },
+   "130": {
+    "state": "OPEN",
+    "title": "serving: NVFP4 route does not cross-check its decode against the reference"
+   },
+   "131": {
+    "state": "OPEN",
+    "title": "serving: versions.attested_on does double duty and is wrong for two cells"
+   },
+   "132": {
+    "state": "OPEN",
+    "title": "serving: census --runtime-image is operator-asserted, verified out of band"
+   },
+   "133": {
+    "state": "OPEN",
+    "title": "serving: routed_moe cells carry dense status with screen-grade evidence"
+   },
+   "134": {
+    "state": "OPEN",
+    "title": "serving: contract hygiene - unread predicates, duplicated kernel source"
+   },
+   "135": {
+    "state": "OPEN",
+    "title": "export: a routed-MoE rung is gated against the dense route's range"
+   },
+   "136": {
+    "state": "OPEN",
+    "title": "export: the packed 3-D expert write path is checked at name level only"
+   },
+   "137": {
+    "state": "OPEN",
+    "title": "export: the legacy merge guard requires three fields no exporter writes"
+   },
+   "138": {
+    "state": "OPEN",
+    "title": "export: the streaming index prices total_size on wire regions, not disk"
+   },
+   "139": {
+    "state": "OPEN",
+    "title": "export: the ignore roster's embedding name is wrong for nested layouts"
+   },
    "14": {
     "state": "CLOSED",
     "title": "PrismaQuant: ANCHOR_BUDGET_BITS must become body-aware or BF16 is unallocatable"
    },
+   "140": {
+    "state": "OPEN",
+    "title": "core: slice_unit writes a shard record mixing two coordinate frames"
+   },
+   "141": {
+    "state": "OPEN",
+    "title": "core: enum decoding escapes the Tessera error taxonomy"
+   },
+   "142": {
+    "state": "OPEN",
+    "title": "core: release placement ranks by a hardcoded E2M1 table whatever the grid"
+   },
+   "143": {
+    "state": "OPEN",
+    "title": "core: encoder identity and the byte-proof matrix miss the same surfaces"
+   },
+   "144": {
+    "state": "OPEN",
+    "title": "core: the truncation-terminal ladder is unreachable on encoded artifacts"
+   },
+   "145": {
+    "state": "OPEN",
+    "title": "core: the kernel lane's supported set is a roster tied to the .cu by nothing"
+   },
+   "146": {
+    "state": "OPEN",
+    "title": "core: the bit-exactness gates are gated on CUDA and on one box's paths"
+   },
+   "147": {
+    "state": "OPEN",
+    "title": "core: assorted P3s in wire, decode, container and fused"
+   },
+   "148": {
+    "state": "OPEN",
+    "title": "tools: impacted_tests always returns full, and drops package __init__ edges"
+   },
+   "149": {
+    "state": "OPEN",
+    "title": "tools: the version string and entry point are hand-copied into four places"
+   },
    "15": {
     "state": "CLOSED",
     "title": "mink (per-member) rates have no converter path: refuse or round"
+   },
+   "150": {
+    "state": "OPEN",
+    "title": "tools: the publish trigger is a bare tag match, no ancestry or environment"
+   },
+   "151": {
+    "state": "OPEN",
+    "title": "tools: the sdist ships tests without conftest, and dev code ships in wheel"
+   },
+   "152": {
+    "state": "OPEN",
+    "title": "tools: --strict-cuda asserts a device, not that the CUDA surface ran"
+   },
+   "153": {
+    "state": "OPEN",
+    "title": "tools: test_kl_tool_decode_regime pins a file outside every checkout"
+   },
+   "154": {
+    "state": "OPEN",
+    "title": "tools: test-infra P3s - conftest exec probe, own names, unbounded wait"
    },
    "16": {
     "state": "CLOSED",

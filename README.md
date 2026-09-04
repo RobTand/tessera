@@ -204,7 +204,8 @@ the arm, mode, device, skips and uncollected modules. Neither arm alone
 describes the tree, and there is no timeless test count.
 
 PrismaQuant's release admission stays fail-closed until its pin names this
-release.
+release. The release audit and its open items are recorded in
+[docs/reports/tessera-release-audit-2026-09-04.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/reports/tessera-release-audit-2026-09-04.md).
 
 ## Layout
 
