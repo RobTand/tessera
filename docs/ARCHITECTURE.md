@@ -459,14 +459,22 @@ chunked versus interleaved. A missing or unknown convention is refused before
 encoding. Old schemes default to `unpacked_per_expert`, the only source layout
 their writer supported.
 
-**What is NOT claimed.** There is no `routed_moe` cell in
-`runtime_contract.json`. A served GLM census covers three 16-expert stacks
-(§4.5), but that cut's reference has zero confident positions and changes
-routing, so it cannot support a quality verdict. The full LFM2.5 source now
-has construction and source-layout evidence; its encoded full-model served
-KL remains outstanding. The cell waits on that measurement. This is the
-`loader_axes` precedent: what the loader *does* is a different published fact
-from what has been *served*.
+Contract v16 adds exactly two `routed_moe` cells: E4M3/q1024, resident, eager,
+sm_121, on the exact EUGR image, for decode and batch. The full LFM2.5 receipt
+has all 22 planned stacks / 2,112 projection containers and observes M1 decode
+and M64 prefill on the modular TRITON route. Its source-bound usable BF16
+teacher comparison covers 4,096 prefill positions: top-1024 KL lower bound
+0.0831613565, top-1 agreement 85.1074%, with the recorded tail/upper-bound
+limitations. This is not full-vocabulary KL or decode-quality evidence, and
+no new numeric quality threshold is implied. Exact identities and results are
+in `docs/measurements/tessera-lfm-campaign-2026-09-04.md` §§7–8.
+
+**What is NOT claimed.** The eight dense cells and their default image remain
+unchanged. Compiled/streamed MoE, other MoE rungs/images, TP>1 and expert
+parallelism remain unattested. The historical three-stack GLM cut's unusable
+reference still cannot support a quality verdict. Construction capability is
+not itself attestation; the full LFM artifact, census and quality receipts
+supply the narrower served claim.
 
 The full-model LFM teacher campaign uses
 `experiments/ts5_lfm_teacher_bound.py`: the encoder's sealed source identity
@@ -607,16 +615,12 @@ The suffix comparison lives in dependency-free
 Receipt agreement therefore needs neither torch nor a vLLM import, including
 when comparing routed-MoE records in the pure CI population.
 
-And the stack stays **unattested** in the cell-agreement block.
 `census.STRUCTURE_BY_RECORD_KIND` maps a record's `kind` to the
 `lane_eligibility` structure whose cells could cover it (`moe` ->
-`routed_moe`), and contract v15 publishes `dense` only -- so the block counts
-the stack and covers it with nothing, checked before the rung lookup rather
-than left to the accident that the record's name carries a suffix no
-declaration does. That is the same honest absence §4.4 records for the loader,
-and closing it requires a receipt-bearing `routed_moe` cell at the next
-contract version, derived from the structure-aware launch table the way
-every dense cell is. The validator derives the positive
+`routed_moe`). Contract v15 counted those records but left all unattested.
+Contract v16 covers only the measured LFM scope in §4.4, using the owner-to-rung
+join and explicit runtime context; the historical GLM receipt does not borrow
+the EUGR image attestation. The validator derives the positive
 `lane_eligibility.structures` set from those receipt-bearing cells, while
 `scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
 adding a future dispatch structure cannot attest it by omission from a

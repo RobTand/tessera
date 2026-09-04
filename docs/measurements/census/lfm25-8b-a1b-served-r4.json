@@ -1,0 +1,721 @@
+{
+ "cell_launch_agreement": {
+  "agrees": null,
+  "platform": "sm_121",
+  "runtime": {
+   "execution_mode": "eager",
+   "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c"
+  },
+  "schema": "tessera.cell-launch-agreement.by-structure/1",
+  "structures": {
+   "routed_moe": {
+    "agrees": null,
+    "phases": {
+     "decode": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 22,
+      "regime": "decode",
+      "unattested": 22,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 22,
+      "regime": "batch",
+      "unattested": 22,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "routed_moe"
+   }
+  }
+ },
+ "checkpoint": "/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2/full-model-r3",
+ "checkpoint_sidecars": {
+  "config.json": "cbc35c8148399ce2c84e49016077a749d11ac3999110039a1d2024814ec0c795",
+  "tessera_serving_manifest.json": "174419177bed97bebadb05c77b47f0a7d831af7d5c681135a01ab7a1640f28b5"
+ },
+ "compiled": false,
+ "declared_families": {
+  "TESSERA_FP8": 22
+ },
+ "declared_name_mapping": {
+  "model.layers.10.feed_forward.experts": "model.layers.10.feed_forward.experts",
+  "model.layers.11.feed_forward.experts": "model.layers.11.feed_forward.experts",
+  "model.layers.12.feed_forward.experts": "model.layers.12.feed_forward.experts",
+  "model.layers.13.feed_forward.experts": "model.layers.13.feed_forward.experts",
+  "model.layers.14.feed_forward.experts": "model.layers.14.feed_forward.experts",
+  "model.layers.15.feed_forward.experts": "model.layers.15.feed_forward.experts",
+  "model.layers.16.feed_forward.experts": "model.layers.16.feed_forward.experts",
+  "model.layers.17.feed_forward.experts": "model.layers.17.feed_forward.experts",
+  "model.layers.18.feed_forward.experts": "model.layers.18.feed_forward.experts",
+  "model.layers.19.feed_forward.experts": "model.layers.19.feed_forward.experts",
+  "model.layers.2.feed_forward.experts": "model.layers.2.feed_forward.experts",
+  "model.layers.20.feed_forward.experts": "model.layers.20.feed_forward.experts",
+  "model.layers.21.feed_forward.experts": "model.layers.21.feed_forward.experts",
+  "model.layers.22.feed_forward.experts": "model.layers.22.feed_forward.experts",
+  "model.layers.23.feed_forward.experts": "model.layers.23.feed_forward.experts",
+  "model.layers.3.feed_forward.experts": "model.layers.3.feed_forward.experts",
+  "model.layers.4.feed_forward.experts": "model.layers.4.feed_forward.experts",
+  "model.layers.5.feed_forward.experts": "model.layers.5.feed_forward.experts",
+  "model.layers.6.feed_forward.experts": "model.layers.6.feed_forward.experts",
+  "model.layers.7.feed_forward.experts": "model.layers.7.feed_forward.experts",
+  "model.layers.8.feed_forward.experts": "model.layers.8.feed_forward.experts",
+  "model.layers.9.feed_forward.experts": "model.layers.9.feed_forward.experts"
+ },
+ "declared_names_mapped_to_module_space": true,
+ "device": {
+  "capability": [
+   12,
+   1
+  ],
+  "name": "NVIDIA GB10"
+ },
+ "elapsed_s": 183.6,
+ "env": {
+  "TESSERA_SERVE_MODE": "resident",
+  "VLLM_DISABLED_KERNELS": null
+ },
+ "generated_text": " and the decode shape. The receipt names",
+ "histogram": {
+  "decode": {
+   "other_route_modules": 0,
+   "regime": "decode",
+   "routes": [
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "torch_materialize_stock",
+     "kind": "moe",
+     "modules": 22,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "vllm.fused_moe.modular_kernel:TRITON"
+    }
+   ],
+   "shapes": [
+    "M1:N3584:K2048"
+   ],
+   "tessera_modules": 22,
+   "tessera_modules_by_family": {
+    "TESSERA_FP8": 22
+   }
+  },
+  "prefill": {
+   "other_route_modules": 0,
+   "regime": "batch",
+   "routes": [
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "torch_materialize_stock",
+     "kind": "moe",
+     "modules": 22,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "vllm.fused_moe.modular_kernel:TRITON"
+    }
+   ],
+   "shapes": [
+    "M64:N3584:K2048"
+   ],
+   "tessera_modules": 22,
+   "tessera_modules_by_family": {
+    "TESSERA_FP8": 22
+   }
+  }
+ },
+ "lane_engagement": {
+  "all_required_engaged": null,
+  "declared_by_artifact": [],
+  "engaged_modules_max": {},
+  "phases": {
+   "decode": {
+    "decoders": {
+     "torch_materialize_stock": 22
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 22,
+    "unengaged_required_lanes": []
+   },
+   "prefill": {
+    "decoders": {
+     "torch_materialize_stock": 22
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 22,
+    "unengaged_required_lanes": []
+   }
+  },
+  "required_decoders": {},
+  "required_lanes": [],
+  "schema": "tessera.lane-engagement/1"
+ },
+ "lane_refusals": {},
+ "problems": [],
+ "prompt_tokens": 64,
+ "quant_method": "tessera",
+ "record_owner": {
+  "decode": {
+   "model.layers.10.feed_forward.experts.routed_experts": "model.layers.10.feed_forward.experts",
+   "model.layers.11.feed_forward.experts.routed_experts": "model.layers.11.feed_forward.experts",
+   "model.layers.12.feed_forward.experts.routed_experts": "model.layers.12.feed_forward.experts",
+   "model.layers.13.feed_forward.experts.routed_experts": "model.layers.13.feed_forward.experts",
+   "model.layers.14.feed_forward.experts.routed_experts": "model.layers.14.feed_forward.experts",
+   "model.layers.15.feed_forward.experts.routed_experts": "model.layers.15.feed_forward.experts",
+   "model.layers.16.feed_forward.experts.routed_experts": "model.layers.16.feed_forward.experts",
+   "model.layers.17.feed_forward.experts.routed_experts": "model.layers.17.feed_forward.experts",
+   "model.layers.18.feed_forward.experts.routed_experts": "model.layers.18.feed_forward.experts",
+   "model.layers.19.feed_forward.experts.routed_experts": "model.layers.19.feed_forward.experts",
+   "model.layers.2.feed_forward.experts.routed_experts": "model.layers.2.feed_forward.experts",
+   "model.layers.20.feed_forward.experts.routed_experts": "model.layers.20.feed_forward.experts",
+   "model.layers.21.feed_forward.experts.routed_experts": "model.layers.21.feed_forward.experts",
+   "model.layers.22.feed_forward.experts.routed_experts": "model.layers.22.feed_forward.experts",
+   "model.layers.23.feed_forward.experts.routed_experts": "model.layers.23.feed_forward.experts",
+   "model.layers.3.feed_forward.experts.routed_experts": "model.layers.3.feed_forward.experts",
+   "model.layers.4.feed_forward.experts.routed_experts": "model.layers.4.feed_forward.experts",
+   "model.layers.5.feed_forward.experts.routed_experts": "model.layers.5.feed_forward.experts",
+   "model.layers.6.feed_forward.experts.routed_experts": "model.layers.6.feed_forward.experts",
+   "model.layers.7.feed_forward.experts.routed_experts": "model.layers.7.feed_forward.experts",
+   "model.layers.8.feed_forward.experts.routed_experts": "model.layers.8.feed_forward.experts",
+   "model.layers.9.feed_forward.experts.routed_experts": "model.layers.9.feed_forward.experts"
+  },
+  "prefill": {
+   "model.layers.10.feed_forward.experts.routed_experts": "model.layers.10.feed_forward.experts",
+   "model.layers.11.feed_forward.experts.routed_experts": "model.layers.11.feed_forward.experts",
+   "model.layers.12.feed_forward.experts.routed_experts": "model.layers.12.feed_forward.experts",
+   "model.layers.13.feed_forward.experts.routed_experts": "model.layers.13.feed_forward.experts",
+   "model.layers.14.feed_forward.experts.routed_experts": "model.layers.14.feed_forward.experts",
+   "model.layers.15.feed_forward.experts.routed_experts": "model.layers.15.feed_forward.experts",
+   "model.layers.16.feed_forward.experts.routed_experts": "model.layers.16.feed_forward.experts",
+   "model.layers.17.feed_forward.experts.routed_experts": "model.layers.17.feed_forward.experts",
+   "model.layers.18.feed_forward.experts.routed_experts": "model.layers.18.feed_forward.experts",
+   "model.layers.19.feed_forward.experts.routed_experts": "model.layers.19.feed_forward.experts",
+   "model.layers.2.feed_forward.experts.routed_experts": "model.layers.2.feed_forward.experts",
+   "model.layers.20.feed_forward.experts.routed_experts": "model.layers.20.feed_forward.experts",
+   "model.layers.21.feed_forward.experts.routed_experts": "model.layers.21.feed_forward.experts",
+   "model.layers.22.feed_forward.experts.routed_experts": "model.layers.22.feed_forward.experts",
+   "model.layers.23.feed_forward.experts.routed_experts": "model.layers.23.feed_forward.experts",
+   "model.layers.3.feed_forward.experts.routed_experts": "model.layers.3.feed_forward.experts",
+   "model.layers.4.feed_forward.experts.routed_experts": "model.layers.4.feed_forward.experts",
+   "model.layers.5.feed_forward.experts.routed_experts": "model.layers.5.feed_forward.experts",
+   "model.layers.6.feed_forward.experts.routed_experts": "model.layers.6.feed_forward.experts",
+   "model.layers.7.feed_forward.experts.routed_experts": "model.layers.7.feed_forward.experts",
+   "model.layers.8.feed_forward.experts.routed_experts": "model.layers.8.feed_forward.experts",
+   "model.layers.9.feed_forward.experts.routed_experts": "model.layers.9.feed_forward.experts"
+  }
+ },
+ "records": {
+  "decode": {
+   "model.layers.10.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.11.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.12.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.13.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.14.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.15.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.16.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.17.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.18.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.19.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.2.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.20.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.21.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.22.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.23.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.3.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.4.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.5.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.6.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.7.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.8.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.9.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   }
+  },
+  "prefill": {
+   "model.layers.10.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.11.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.12.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.13.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.14.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.15.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.16.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.17.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.18.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.19.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.2.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.20.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.21.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.22.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.23.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.3.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.4.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.5.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.6.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.7.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.8.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   },
+   "model.layers.9.feed_forward.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "torch_materialize_stock",
+    "kind": "moe",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N3584:K2048",
+    "state": "served",
+    "symbol": "vllm.fused_moe.modular_kernel:TRITON",
+    "tile_m": 0
+   }
+  }
+ },
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c"
+ },
+ "schema": "tessera.serving.route_census/2",
+ "tessera_config_groups": 22,
+ "verdict": "served",
+ "versions": {
+  "python": "3.12.3",
+  "tessera": "0.1.0",
+  "tessera_commit": "a7bd2705062a83d953d0d8a68543913c68d1a7e5",
+  "tessera_serving": "0.1.0",
+  "torch": "2.13.0+cu130",
+  "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+ }
+}

@@ -367,3 +367,37 @@ quantization without a matched BF16 prompt. The measured comparison above is
 prefill quality only; the decode census proves dispatch, not decode KL.
 There is no general numeric student-KL cutoff in the current cell-promotion
 contract, so successful comparison execution is not called a quality pass.
+
+A bounded read-only source comparison against the exact EUGR image found no
+concrete disagreement in gate/up order, stock FP8 conversion/quant config,
+kernel arguments, sigmoid routing, normalization, scaling or expert-bias
+handling. Inspection actions `bd068bb6e28a` and `1a9cf5051b74` were CPU-only;
+their receipt CAS values are
+`ce1399e7b9b3340cbeac7a6e972794188d946021f34c7a6ce5b06dda96b43091`
+and `7fe42bcfe2be4c699bac59c3ab2eb904ad812d905f6eb4e5569ae6fcb9c04362`.
+Static agreement does not prove output equality or assign a cause to the smoke.
+
+## 9. Scoped contract promotion tests
+
+The proposed v16 cells are only E4M3/q1024 routed MoE, sm_121, resident/eager,
+the exact EUGR image, decode and batch. The raw r4 census is preserved under
+`docs/measurements/census/lfm25-8b-a1b-served-r4.json` with one repository
+trailing newline added; the test removes exactly that newline and checks its
+original SHA256 before replay. The recorded v15 unattested result is untouched.
+
+All 13 new measured-cell tests first failed in CPU action `1d0dcc90e27e` at
+`tests/test_lfm_measured_cells.py:48`: `measured LFM routes have no matching
+promoted cells` (`None is True`). Each scope/disagreement negative first checks
+the same real positive control, so absent cells cannot make that matrix pass.
+An earlier fixture-transfer attempt caught only the added trailing newline;
+that failure is not the promotion's red proof.
+
+After adding the exact measured cells, action
+`759eb7313e9c864bcf2ceca46d8a802a54333cbcd35ae5ef9f3360defe49693d`
+returned zero: 180 passed in 2.34 seconds across measured-cell replay, serving
+contract, runtime scope, attested wire, census agreement/runtime scope and
+the campaign collector. Population: serial CPU, torch 2.11.0+cpu, no CUDA
+device, zero skipped and zero uncollected modules. Receipt CAS:
+`c59c516c06effd80538a19c330f12f05bf2c389d527575110411a59b44959209`.
+This does not replace the full artifact-bound `--require-attested` replay or
+the coordinator's dual-population integration run.

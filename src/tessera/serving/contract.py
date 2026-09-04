@@ -1,6 +1,6 @@
 """The runtime contract this plugin packages, and what it is allowed to say.
 
-Principle 14: a claim about what a serving runtime DOES is derived from a
+Runtime attestation: a claim about what a serving runtime DOES is derived from a
 machine-readable table the runtime publishes, never asserted in prose a gate
 cannot read.  This package IS that runtime for Tessera bytes, so it publishes
 its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
@@ -11,10 +11,10 @@ this payload family, at these rungs, in this regime, at this residency, on
 this exact runtime image and measured execution mode, the
 plugin executes these LAUNCHES under this activation contract on a route with
 this status.  A cell exists only where a container receipt covers it; absence
-resolves ``unattested``, which is the honest status and not a refusal.  Today
-the table is DENSE-ONLY on sm_121, at one rung per family -- exactly the axes
-the served receipts cover.  Routed-MoE experts, TP>1 and any other rung are
-not in it.
+resolves ``unattested``, which is the honest status and not a refusal. The table
+preserves the measured dense cells and adds routed-MoE E4M3/q1024 resident eager
+on its own exact EUGR image. TP>1, expert parallelism and unmeasured runtime,
+residency or rung combinations are not attested.
 
 THE LAUNCH IS A VALUE, AND THE RESIDENCY IS A CONDITION (schema v4, #111).
 ``executes`` is a list of ``{symbol, decoder}`` and it is DERIVED here from
@@ -807,7 +807,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     if contract["expert_parallel"]["units"]:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "
-            "routed-MoE experts, so the contract makes no expert-parallel claim")
+            "expert-parallel execution, so the contract makes no expert-parallel claim")
     _validate_fused_module(contract["fused_module"], "runtime_contract.fused_module")
 
 

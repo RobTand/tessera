@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 15,
+ "contract_version": 16,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -204,7 +204,8 @@
    "batch"
   ],
   "structures": [
-   "dense"
+   "dense",
+   "routed_moe"
   ],
   "cells": [
    {
@@ -433,6 +434,44 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "runtime": {
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "execution_modes": ["eager"]
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regime": "decode",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
+    "runtime": {
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "execution_modes": ["eager"]
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regime": "batch",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
     "predicates": []
    }
   ]
@@ -810,6 +849,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 16,
+   "date": "2026-09-04",
+   "change": "Two scoped routed_moe E4M3/q1024 resident eager sm121 cells, from the complete LFM2.5-8B-A1B artifact and exact EUGR digest. The full 22-stack/2112-projection census observed the modular TRITON FP8 route in decode M1 and prefill M64; the source-bound usable BF16 teacher/student comparison covers 4096 prefill positions, top-K1024 KL lower bound0.0831613565 and top1 agreement85.1074% (not full-vocabulary KL or decode-quality evidence). Exact artifact, runtime, source, tail limitations and cleanup receipts: docs/measurements/tessera-lfm-campaign-2026-09-04.md sections7-8. Launches derive from the existing structure-aware ROUTE_LAUNCHES. Lane schema stays v5; all eight dense cells, their default image, encoder bytes, rungs and TP/EP bounds remain unchanged. No compiled or streamed MoE claim is added."
+  },
   {
    "contract_version": 15,
    "date": "2026-09-04",
