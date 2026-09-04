@@ -6,16 +6,25 @@ the x86 pool suite and a local CPU run all read green.  Not one of those three
 signals could have seen the failure, and none of them said so.  The CUDA-gated
 surface is exercised by nothing automatic.
 
-*How big is that surface?*  Not stated here, because it has not been measured.
-The issue's "450-480" is a subtraction between two runs of two different
-commits on two different boxes, which is an estimate, not a population.  What
-IS measured is one arm of one commit: on ``dee1aa9`` the torch-free x86 arm
-published 1406 passed / 0 failed / 499 skipped and 0 modules uncollected, with
-its skip reasons verbatim in that run's ``surface.x86.json``.  The GPU arm has
-never placed, so the difference between the two populations -- the thing the
-estimate is estimating -- is still unmeasured.  A run of this tool with both
-arms on one commit is what would answer it, and until one exists no number
-belongs in this sentence.
+*How big is that surface?*  **467 tests**, on ``d11dc01``, measured rather
+than estimated.  The device-less x86 arm's own skip histogram on that commit
+names 467 skips whose verbatim reason is a CUDA or GPU path; the GPU arm on
+the same commit skipped 13, none of them device-shaped.  The issue's "450-480"
+was a subtraction between two runs of two different commits on two different
+boxes, which is an estimate; this is one commit, two arms, each arm publishing
+its own population.
+
+Read the two arms with their run modes attached, because they are not
+otherwise comparable.  The GPU arm ran serially -- the cu130 venv has no xdist
+-- under ``--strict-cuda`` on an NVIDIA GB10, and published 1910 passed / 0
+failed / 13 skipped.  The x86 arm ran ``-n 8`` on dl380g10 and published 1406
+passed / **5 failed** / 499 skipped.  All five failures are in
+``tests/test_cuda_surface.py`` -- exactly that file's five tests that read back
+a surface a child pytest wrote -- and they failed because
+``PYTEST_XDIST_WORKER`` is inherited by a nested run (see
+``tests/conftest.py::_worker_id``).  Green against red here is a run-mode
+difference, not a device one.  The arms also collected 1923 and 1910 items;
+that 13-item gap is not chased here and is not the surface figure.
 
 Two facts shape what this tool is.
 
@@ -35,9 +44,13 @@ device now fails loudly; before, it would have returned a green tick.
 to ``docs/status/suite-populations.md``, which is where a reader of the repo
 looks; and if the submitting session dies while the pool carries on -- which is
 how the first real run went -- ``--resume <receipt dir>`` rebuilds the receipt
-from the populations the runs published.  A resumed arm's exit status is marked
-unobserved rather than guessed: published failures prove red, their absence
-does not prove green.
+from the populations the runs published, and takes the exit status from the
+pool's own outcome record for the action that wrote that population -- shown
+as ``0 (pool)``, so a status nobody here watched is not mistaken for one this
+process saw.  Where no single finished action wrote the path -- still in
+flight, requeued after a non-zero exit, or two of them did -- the row stays
+``not observed`` and nothing is borrowed: published failures prove red, their
+absence does not prove green.
 
 Everything about scheduling is PrismaBuild's: this composes ``pbrun``
 invocations and reads what they return.  It never runs a suite itself, never
@@ -394,12 +407,16 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
     only in a live scrollback is what #112 item 1 asks us to stop producing, so
     the tool should not have that shape itself.
 
-    What a resumed record honestly cannot have is the exit status: this process
-    never watched the action, so it did not see it.  That is recorded as
-    unobserved rather than guessed, and never reconstructed from
-    ``counts.failed`` -- a run can exit non-zero after a clean summary (a crash
-    in teardown, an internal error, a timeout kill), so failures in the surface
-    prove red while their absence does not prove green.
+    The exit status this process never watched is read from the one runtime
+    that did: PrismaBuild's worker records it in the action's outcome record,
+    and the action is found by the ``--surface-json`` path in its own command.
+    It is never reconstructed from ``counts.failed`` -- a run can exit non-zero
+    after a clean summary (a crash in teardown, an internal error, a timeout
+    kill), so failures in the surface prove red while their absence does not
+    prove green.  Where no single finished action wrote the path, the record
+    says ``not observed`` and borrows nothing; a requeued action is one such
+    case, and the pool requeues on any non-zero exit, so a red suite spends a
+    while with no status at all.
     """
 
     record = {
@@ -555,6 +572,14 @@ that population. `not observed` is the remaining case -- a resumed row with no
 single finished pool action behind it -- and there the failure count is still a
 fact while a zero in it does not make the row green, because a suite can exit
 non-zero after a clean summary.
+
+The run mode is not in the table and changes what a row means. The GPU arm
+runs serially -- its CUDA venv has no xdist -- while the x86 arm runs `-n
+<cpus>`, so two rows of one commit can differ by more than the device. On
+`d11dc01` the gpu row is green and the x86 row is red at 5 failed, and those
+five are a `-n`-only defect in the suite's own conftest, not a CUDA one. Match
+a pair by `commit`, then read the failures before attributing the difference to
+the device.
 
 `device` distinguishes three absences that are not the same thing. `not
 submitted in this run` is an arm nobody asked for. `no population published`

@@ -161,17 +161,24 @@ person or agent — changing the code.
   before believing a pass count, and quote it whenever you record one. A run
   that must cover the CUDA-gated surface says `--strict-cuda` (or
   `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
-  skipping the surface and reporting green. Do not quote a size for that
-  surface: the issue's 450-480 is a subtraction between two runs of two
-  commits on two boxes. One arm of one commit is measured -- on `dee1aa9` the
-  torch-free x86 arm published 1406 passed / 0 failed / 499 skipped, 0 modules
-  uncollected -- and the GPU arm has never placed, so the difference between
-  the populations is still unmeasured. `--surface-json PATH` writes the same
+  skipping the surface and reporting green. **That surface is 467 tests** on
+  `d11dc01`, measured on one commit by both arms: the device-less x86 arm's
+  own histogram there names 467 skips whose verbatim reason is a CUDA or GPU
+  path, and the GPU arm on the same commit skipped 13, none device-shaped.
+  Quote that, not the issue's 450-480, which subtracted two runs of two
+  commits on two boxes. Quote the run mode with it -- the GPU arm ran serially
+  (the cu130 venv has no xdist) and was green at 1910 / 0 / 13; the x86 arm ran
+  `-n 8` and was **red** at 1406 / 5 / 499, all five failures in
+  `tests/test_cuda_surface.py` and caused by `-n`, not by the device. That red
+  is the point: it is the first regression on this branch that any signal
+  caught, and only the population caught it -- the same files run serially, and
+  as a targeted subset on the same box, were green. `--surface-json PATH` writes the same
   population as a table, which is what a receipt should read; under `-n` each
   worker writes its own `surface.<arm>.<workerid>.json` share and only the
   controller writes the population, so a shard can never be read as a run.
   `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
-  one under `--strict-cuda`, the torch-free x86 one -- and writes **one**
+  one under `--strict-cuda`, the device-less x86 one (torch, no CUDA
+  device) -- and writes **one**
   receipt holding both side by side, so neither can be quoted without the
   other, appending a row per arm to `docs/status/suite-populations.md` under
   `--record`. That ledger is where a suite result is recorded; read the two

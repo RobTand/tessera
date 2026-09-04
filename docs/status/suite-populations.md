@@ -30,6 +30,14 @@ single finished pool action behind it -- and there the failure count is still a
 fact while a zero in it does not make the row green, because a suite can exit
 non-zero after a clean summary.
 
+The run mode is not in the table and changes what a row means. The GPU arm
+runs serially -- its CUDA venv has no xdist -- while the x86 arm runs `-n
+<cpus>`, so two rows of one commit can differ by more than the device. On
+`d11dc01` the gpu row is green and the x86 row is red at 5 failed, and those
+five are a `-n`-only defect in the suite's own conftest, not a CUDA one. Match
+a pair by `commit`, then read the failures before attributing the difference to
+the device.
+
 `device` distinguishes three absences that are not the same thing. `not
 submitted in this run` is an arm nobody asked for. `no population published`
 is an arm that was submitted and returned nothing -- refused, never placed, or
@@ -41,3 +49,9 @@ dead before its summary. A device string is a measurement.
 | 2026-09-04T07:04:59Z | `e61974c0c40c` (assumed) | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1389 | 1 | 499 | 0 | not observed |
 | 2026-09-04T07:40:15Z | `fbac91b496dd` (assumed) | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1398 | 0 | 499 | 0 | 0 |
 | 2026-09-04T08:11:37Z | `dee1aa975212` | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1406 | 0 | 499 | 0 | 0 |
+| 2026-09-04T09:13:34Z | `d11dc014f02a` | no | gpu | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 1910 | 0 | 13 | 0 | 0 (pool) |
+| -- | -- | -- | x86 | not submitted in this run | -- | -- | -- | -- | -- |
+| 2026-09-04T09:36:04Z | `d11dc014f02a` | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1406 | 5 | 499 | 0 | not observed |
+| -- | -- | -- | gpu | not submitted in this run | -- | -- | -- | -- | -- |
+| 2026-09-04T09:24:38Z | `82f004772b8f` | no | x86 | torch 2.11.0+cpu reports no CUDA device | 1536 | 5 | 503 | 0 | not observed |
+| -- | -- | -- | gpu | not submitted in this run | -- | -- | -- | -- | -- |
