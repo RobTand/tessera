@@ -298,6 +298,15 @@ ratio whose width follows its value. On the GPU,
 kernel, matching the arm the probe encoded itself digit for digit while the
 bytes on disk differ.
 
+The unpacked source grammar has two attested spellings for that same route.
+GLM owns the stack at `mlp.experts` and calls its source leaves
+`gate_proj`/`up_proj`/`down_proj`; LFM2.5 owns it at
+`feed_forward.experts` and calls them `w1`/`w3`/`w2`. The exporter normalizes
+both to the scheme's canonical roles but keeps the source spelling in each
+emitted wire name, so the model's own `FusedMoEFactory(ckpt_names=...)` mapping
+supplies the shard id to the wire parameter's loader. Two source spellings for
+one canonical role are refused rather than resolved by checkpoint order.
+
 The PACKED 3-D source layout has no export, and the reason is two conventions
 the tensor does not state: which axis is the output (the dims decide only when
 `hidden_size != 2 * moe_intermediate_size`, and on GLM-5.3-Flash they are

@@ -187,12 +187,22 @@ FUSED = (
 #: different facts and the plugin reads the second one (#86).
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
 
+#: The checkpoint spelling for each runtime shard.  GLM writes the descriptive
+#: names on the right; LFM writes the shard ids on the left.  The route and its
+#: sidecar use the descriptive role, while the emitted wire keeps the source
+#: spelling so the model's own FusedMoE mapping can hand it the shard id.
+SHARD_PROJECTION = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+EXPERT_SOURCE_PROJECTIONS = tuple(
+    dict.fromkeys((*SHARD_PROJECTION.values(), *SHARD_PROJECTION.keys())))
+
 #: A ROUTED expert leaf in the unpacked (per-expert 2-D) source layout.  The
 #: ``\d+`` segment is load-bearing: it is what distinguishes a routed expert
 #: from ``mlp.shared_experts.gate_proj``, which is an ordinary dense Linear and
-#: is quantized as one.
+#: is quantized as one.  The owner is named ``mlp`` by GLM and ``feed_forward``
+#: by LFM; its source projections are respectively gate/up/down and w1/w3/w2.
 ROUTED_EXPERT_2D = re.compile(
-    r"^(?P<moe>.*\.mlp)\.experts\.(?P<expert>\d+)\.(?P<proj>gate_proj|up_proj|down_proj)\.weight$")
+    r"^(?P<moe>.*\.(?:mlp|feed_forward))\.experts\.(?P<expert>\d+)\."
+    rf"(?P<proj>{'|'.join(map(re.escape, EXPERT_SOURCE_PROJECTIONS))})\.weight$")
 
 #: The MoE ROUTER.  ``mlp.gate`` is not a projection (a dense MLP has
 #: ``gate_proj``, never ``gate``); it is the little Linear that decides which
@@ -212,9 +222,13 @@ ROUTED_EXPERT_2D = re.compile(
 #:
 #: That is a route status, not a taste: on the pinned build the runtime has no
 #: path that executes these bytes for this module, which is the one carve-out
-#: principle 9 allows.  Attested against
-#: ``prismaquant/glm53-mia-sm121:487ecf187``.
-MOE_ROUTER = re.compile(r"^(?P<moe>.*\.mlp)\.(?:gate|router)\.weight$")
+#: principle 9 allows.  Attested against the GLM pin
+#: ``prismaquant/glm53-mia-sm121:487ecf187`` and LFM's exact derived image
+#: ``sha256:337dae6b...``: ``Lfm2MoeSparseMoeBlock`` constructs the same
+#: ``ReplicatedLinear`` at ``<feed_forward>.gate`` and the expert factory at
+#: its sibling ``.experts`` (PrismaBuild action ``e3f322afb4ab...``).
+MOE_ROUTER = re.compile(
+    r"^(?P<moe>.*\.(?:mlp|feed_forward))\.(?:gate|router)\.weight$")
 
 #: A PACKED expert stack: one rank-3 tensor holding every expert of a layer.
 #: Rank alone does NOT identify one -- GLM-5.3-Flash's attention carries
@@ -706,12 +720,10 @@ def packed_expert_orientation(name: str, shape, config: dict):
         f"hidden_size={hidden} moe_intermediate_size={inter} (expected out={out_dim}, in={in_dim})")
 
 
-#: The checkpoint's name for each shard the runtime loads into an expert
-#: group.  ``MOE_GROUP_SHARDS`` is the runtime's table -- which shards a group
-#: holds, in the row order ``RoutedExperts._load_w13`` narrows to -- and this
-#: is the only thing the producer adds: what that shard is CALLED on disk.
-#: Two tables, one fact each, so a group's row order is never spelled twice.
-SHARD_PROJECTION = {"w1": "gate_proj", "w3": "up_proj", "w2": "down_proj"}
+#: ``MOE_GROUP_SHARDS`` is the runtime's table -- which shards a group holds,
+#: in the row order ``RoutedExperts._load_w13`` narrows to.  ``SHARD_PROJECTION``
+#: above adds only what each shard means in the wire's canonical role
+#: vocabulary; a group's row order is therefore never spelled twice.
 MOE_GROUP_PROJECTIONS = {group: tuple(SHARD_PROJECTION[s] for s in shards)
                          for group, shards in MOE_GROUP_SHARDS.items()}
 EXPERT_PROJECTIONS = tuple(p for g in MOE_GROUPS for p in MOE_GROUP_PROJECTIONS[g])
@@ -735,8 +747,16 @@ def expert_stacks(routed_shapes):
     for name, shape in routed_shapes.items():
         match = ROUTED_EXPERT_2D.match(name)
         stack = match.group("moe") + ".experts"
-        stacks.setdefault(stack, {}).setdefault(int(match.group("expert")), {})[
-            match.group("proj")] = (name, tuple(shape))
+        expert = stacks.setdefault(stack, {}).setdefault(int(match.group("expert")), {})
+        source_projection = match.group("proj")
+        projection = SHARD_PROJECTION.get(source_projection, source_projection)
+        if projection in expert:
+            other = expert[projection][0]
+            raise SystemExit(
+                f"the expert stack {stack} supplies canonical projection {projection!r} twice: "
+                f"{other} and {name}. They are two source spellings for one runtime shard; "
+                "refusing rather than letting checkpoint order choose which bytes are served.")
+        expert[projection] = (name, tuple(shape))
     return stacks
 
 

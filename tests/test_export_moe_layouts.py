@@ -104,6 +104,41 @@ def _unpacked_checkpoint():
     return t
 
 
+def _lfm_checkpoint():
+    """The routed names in LiquidAI/LFM2.5-8B-A1B, in miniature."""
+    generator = torch.Generator().manual_seed(19)
+
+    def normal(*shape):
+        return torch.randn(*shape, generator=generator) * 0.02
+
+    stack = "model.layers.2.feed_forward.experts"
+    tensors = {
+        "model.layers.0.feed_forward.w1.weight": normal(2 * HIDDEN, HIDDEN),
+        "model.layers.0.feed_forward.w3.weight": normal(2 * HIDDEN, HIDDEN),
+        "model.layers.0.feed_forward.w2.weight": normal(HIDDEN, 2 * HIDDEN),
+        "model.layers.2.feed_forward.gate.weight": normal(EXPERTS, HIDDEN),
+        "model.layers.2.feed_forward.expert_bias": torch.zeros(EXPERTS),
+        "lm_head.weight": normal(HIDDEN, HIDDEN),
+        "model.embed_tokens.weight": normal(HIDDEN, HIDDEN),
+    }
+    for expert in range(EXPERTS):
+        tensors[f"{stack}.{expert}.w1.weight"] = normal(MOE_INTER, HIDDEN)
+        tensors[f"{stack}.{expert}.w3.weight"] = normal(MOE_INTER, HIDDEN)
+        tensors[f"{stack}.{expert}.w2.weight"] = normal(HIDDEN, MOE_INTER)
+    config = {
+        "architectures": ["Lfm2MoeForCausalLM"],
+        "hidden_size": HIDDEN,
+        "intermediate_size": 2 * HIDDEN,
+        "moe_intermediate_size": MOE_INTER,
+        "num_hidden_layers": 3,
+        "num_dense_layers": 2,
+        "num_experts": EXPERTS,
+        "num_experts_per_tok": 2,
+        "use_expert_bias": True,
+    }
+    return tensors, config
+
+
 def test_the_body_is_found_under_a_sub_model(tmp_path):
     """``model.language_model.layers.N.`` is a body; the old filter found none."""
     src = _write(tmp_path, _unpacked_checkpoint())
@@ -130,6 +165,40 @@ def test_a_routed_expert_is_never_a_dense_linear(tmp_path):
     # segment in ROUTED_EXPERT_2D is the only thing separating the two.
     shared = [n for n in shapes if "shared_experts" in n]
     assert len(shared) == 3, f"the shared experts must stay quantizable as dense Linears: {shared}"
+
+
+def test_lfm_expert_spellings_form_one_canonical_runtime_stack(tmp_path):
+    """LFM names the same runtime shards ``w1``/``w3``/``w2`` on disk.
+
+    The exporter must preserve those checkpoint spellings for vLLM's
+    per-parameter mapping while declaring the canonical gate/up/down roles the
+    Tessera container and routed-MoE scheme read.
+    """
+    tensors, config = _lfm_checkpoint()
+    src = _write(tmp_path, tensors, config)
+    _shards, shapes, packed, routed = export.quantizable(src)
+    stack = "model.layers.2.feed_forward.experts"
+
+    assert packed == {}
+    assert len(routed) == EXPERTS * 3, sorted(routed)
+    assert not [name for name in shapes if name.startswith(f"{stack}.")], (
+        "LFM experts reached the dense Linear plan")
+    stacks = export.expert_stacks(routed)
+    assert sorted(stacks) == [stack]
+    assert sorted(stacks[stack][0]) == sorted(export.EXPERT_PROJECTIONS)
+    assert stacks[stack][0]["gate_proj"][0].endswith(".0.w1.weight")
+    assert stacks[stack][0]["up_proj"][0].endswith(".0.w3.weight")
+    assert stacks[stack][0]["down_proj"][0].endswith(".0.w2.weight")
+
+    planned = export.plan_expert_stack(
+        stack, stacks[stack], export.grid_for("E4M3"), 1024
+    )
+    by_role = {unit["projection"]: unit for unit in planned["units"]
+               if unit["expert"] == 0}
+    assert by_role["gate_proj"]["wire"].endswith(".0.w1.wire")
+    assert by_role["up_proj"]["wire"].endswith(".0.w3.wire")
+    assert by_role["down_proj"]["wire"].endswith(".0.w2.wire")
+    assert export.MOE_ROUTER.match("model.layers.2.feed_forward.gate.weight")
 
 
 def test_a_conv1d_is_not_a_packed_expert_stack(tmp_path):
