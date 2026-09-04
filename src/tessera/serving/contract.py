@@ -880,14 +880,34 @@ def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
     """
     table = entry.get("hf_to_vllm_mapper_unstacked") or {}
     name = checkpoint_module
+
+    def _dropped() -> None:
+        # vLLM's WeightsMapper spells "discard this weight" as a None
+        # replacement (``_map_name`` returns None and ``apply_list`` drops the
+        # entry).  A module the runtime maps away is a module it never builds,
+        # so a wire written there is dead -- the same refusal
+        # ``TesseraConfig.apply_vllm_mapper`` raises at load, taken here at
+        # export instead.
+        raise ValueError(
+            f"the runtime's hf_to_vllm_mapper DROPS {checkpoint_module!r}, so it builds no "
+            "module for this name at all. A wire written here is dead weight; that is a "
+            "refusal, not a warning.")
+
     for old, new in (table.get("orig_to_new_substr") or {}).items():
-        name = name.replace(old, new)
+        if old in name:
+            if new is None:
+                _dropped()
+            name = name.replace(old, new)
     for old, new in (table.get("orig_to_new_prefix") or {}).items():
         if name.startswith(old):
+            if new is None:
+                _dropped()
             name = new + name[len(old):]
             break
     for old, new in (table.get("orig_to_new_suffix") or {}).items():
         if name.endswith(old):
+            if new is None:
+                _dropped()
             name = name[: -len(old)] + new
             break
     return name
