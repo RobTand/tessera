@@ -219,6 +219,42 @@ def test_explicit_requested_digest_is_stamped_even_when_the_default_pin_is_an_al
     assert record["resolved_digest"] == requested.split("@", 1)[1]
 
 
+# ----------------------------------------------- the reference it resolved ---
+
+def test_the_record_names_the_resolved_reference_not_only_its_digest():
+    """A caller that must NAME the bytes downstream should not rebuild it.
+
+    ``resolved_digest`` is half a reference.  Every consumer that has to hand
+    the identity to another process -- a container launcher writing it into the
+    environment the census reads -- would otherwise concatenate repository and
+    digest itself, which is the second spelling rule 4 exists to prevent.
+    """
+    pin = pinned_reference()
+    record = resolve(pin, inspector=_inspector(repo_digests=[pin]))
+    repository, _, digest = parse_reference(pin)
+    assert record["resolved_digest"] == digest
+    assert record["resolved_reference"] == f"{repository}@{digest}" == pin
+
+
+def test_a_tag_resolves_to_the_reference_a_launcher_must_pass_on():
+    """The caller spelled a tag; what ran is a digest, and that is the value.
+
+    A launcher that passed its own ``IMG`` string into the container would
+    export a floating tag, which identifies no runtime at all.
+    """
+    pin = pinned_reference()
+    record = resolve("vllm/vllm-openai:latest", inspector=_inspector(repo_digests=[pin]))
+    assert record["requested_tag"] == "latest"
+    assert record["resolved_reference"] == pin
+
+
+def test_an_image_with_no_manifest_digest_names_no_reference():
+    """A locally built image carries no ``RepoDigests``; say so, do not invent."""
+    record = resolve("local/built:dev", inspector=_inspector(repo_digests=[]))
+    assert record["refused"] is False and record["resolved_digest"] is None
+    assert record["resolved_reference"] is None
+
+
 # ------------------------------------------------------------- the wiring ---
 
 def _cli(*args, env_extra=None):

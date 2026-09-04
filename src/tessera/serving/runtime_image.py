@@ -207,6 +207,15 @@ def resolve(requested: str, *,
         "present": bool(found.get("present")),
         "repo_digests": repo_digests,
         "resolved_digest": resolved_digest,
+        # The digest half names no image on its own.  A caller that must hand
+        # this identity to another process -- the launcher writing it into the
+        # environment a census reads -- would otherwise rebuild the reference
+        # from two fields, which is a second spelling of a rule this module
+        # owns.  ``None`` when the daemon holds no manifest digest for it: a
+        # locally built image is unattestable, and inventing a name for it is
+        # the failure mode this whole module exists to refuse.
+        "resolved_reference": (None if resolved_digest is None
+                               else f"{repository}@{resolved_digest}"),
         "local_id": found.get("local_id"),
         "refused": False,
         "reason": None,
