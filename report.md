@@ -284,9 +284,25 @@ PYTEST_EXIT=0
 ```
 
 That set is: the two files this branch adds, plus every test file that imports
-what it changed (`tessera.serving.contract` / `tessera.serving`). The one skip
-is pre-existing and unrelated (a CUDA-gated case). No failures, so nothing
-needed re-running against master.
+what it changed (`tessera.serving.contract`). The one skip is pre-existing and
+unrelated (a CUDA-gated case). No failures, so nothing needed re-running
+against master.
+
+A second, wider sweep over every file importing anything from
+`tessera.serving` (7 more, mostly kernel/route tests that do not touch the
+contract) found exactly one failure:
+
+```
+FAILED tests/test_runtime_image_pin.py::test_the_pin_is_the_contract_field_and_nothing_else_holds_it
+AssertionError: the pin digest is copied into ['src/tessera/stock.py']; it
+lives in runtime_contract.json and is read from there
+```
+
+**It fails identically on a pristine master checkout** (`1 failed, 11 passed`
+both places), so master is red on it today and this branch does not touch it.
+Someone put the pin digest back into `src/tessera/stock.py` after #100's test
+landed. Not mine to fix — it is #100's invariant and #92's file.
+PLACEHOLDER_SWEEP3
 
 New tests and the pre-fix failure line each one asserts:
 
