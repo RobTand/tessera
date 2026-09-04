@@ -224,8 +224,14 @@ def test_the_config_records_the_budget_so_the_guard_can_compare_it():
     assert json.loads(json.dumps(block))["ldlq_block"] == {"max_penalty": 1.02}
 
 
-def test_the_guard_refuses_two_parts_that_derived_from_different_budgets():
-    """The failing case for the field, through the guard itself."""
+def test_the_budget_lands_in_the_field_the_guard_already_compares():
+    """Not a refusal test -- ``check_configs`` needs whole exported configs and
+    ``tests/test_merge_guard.py`` owns that.  What is pinned here is the join:
+    the field the guard walks is the field a budget is written into, and two
+    budgets resolve to values that compare unequal through the guard's own
+    ``dotted``.  Without that, a budget could be recorded somewhere the guard
+    never looks, which is exactly how eight of its thirteen names went
+    vacuous."""
     import importlib.util
     from pathlib import Path
 
