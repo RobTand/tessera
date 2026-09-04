@@ -620,7 +620,7 @@ def materialize_nvfp4(
     half: int = 16,
     scale_lut: "torch.Tensor | None" = None,
     scale_global: float = 1.0,
-) -> "tuple[torch.Tensor, torch.Tensor]":
+) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """Pack to the standard NVFP4 layout: 2 nibbles/byte + one E4M3 per 16.
 
     Returns ``(packed[rows, cols//2] uint8, scales[rows, cols//half] uint8,
