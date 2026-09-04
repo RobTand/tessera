@@ -498,8 +498,9 @@ the same container TMPDIR. A postprocessing continuation preserves the original
 campaign identity and records each stage's actual source; its gate allows only
 controller/test/documentation changes and refuses any serving, plugin, encoder
 or wire difference. Its late completion power sample is labelled recovery-time.
-The
-first arm taken for #113 read: compiled, the
+Recovery refuses when either stage-seal marker exists but fails verification;
+only a stage whose two seal markers are absent can be postprocessed and sealed.
+The first arm taken for #113 read: compiled, the
 same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
 and that decode number is **below** the same-artifact rebuild delta measured

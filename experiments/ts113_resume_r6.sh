@@ -96,6 +96,12 @@ fi
 [ "${1:-resume}" != preflight ] || { echo TS113_RESUME_PREFLIGHT_OK; exit 0; }
 
 if ! verify_stage "$POP_ROOT/stages/A1"; then
+  for seal in STAGE_SHA256 STAGE_COMPLETE; do
+    if [ -e "$POP_ROOT/stages/A1/$seal" ] || [ -L "$POP_ROOT/stages/A1/$seal" ]; then
+      echo "REFUSED: existing A1 seal does not verify; recovery may not replace it" >&2
+      exit 2
+    fi
+  done
   inventory=$POP_ROOT/stages/A1/extension-files.sha256
   if [ -f "$inventory" ] && [ ! -e "$inventory.pre-recovery" ]; then
     cp "$inventory" "$inventory.pre-recovery"
