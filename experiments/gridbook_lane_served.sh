@@ -15,7 +15,8 @@ MODEL="$1"; ARM="$2"; MODE="${3:-resident}"
 GB=${GB:-/home/rob/gb-tessera-family}
 TS=${TS:-/home/rob/tessera}
 EXT=${EXT:-/home/rob/tmp/gb-ext-028}
-IMAGE=${IMAGE:-vllm/vllm-openai:latest}
+source "$(dirname "$0")/runtime_image.sh"
+IMAGE=${IMAGE:-$(runtime_image_pin)}
 KLDIR=/mnt/shared/tessera-kl
 R=/home/rob/tessera-runs/gbfam
 PORT=${PORT:-8000}
@@ -30,9 +31,12 @@ PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # TESSERA_LANE_DOCKER_EXTRA adds docker-run arguments (e.g. -e CUDA_LAUNCH_BLOCKING=1
 # to make an asynchronous kernel fault name its kernel instead of the next cuBLAS call).
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code  # repeated store_true = no-op: graph mode is vLLM's default
+# Refuse a floating image BEFORE the serve lock: a wrapper that is going to
+# refuse must not first make every other agent on the box queue behind it.
+runtime_image_require "$IMAGE" || exit 2
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
-echo "serving $MODEL via gridbook ($IMAGE, mode=$MODE)"
+echo "serving $MODEL via gridbook ($IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved}, mode=$MODE)"
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0"; serve_lock_acquire
 trap serve_lock_release EXIT
 docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \

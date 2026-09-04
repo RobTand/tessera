@@ -22,7 +22,8 @@ TS=${TS:-/home/rob/tessera}
 RUNS=${RUNS:-/home/rob/tessera-runs/tsplugin}
 EXT=${EXT:-$RUNS/ext}
 VLLM_CACHE=${VLLM_CACHE:-$RUNS/vllm-cache}
-IMAGE=${IMAGE:-vllm/vllm-openai:latest}
+source "$(dirname "$0")/runtime_image.sh"
+IMAGE=${IMAGE:-$(runtime_image_pin)}
 KLDIR=/mnt/shared/tessera-kl
 PORT=${PORT:-${TESSERA_KL_PORT:-8000}}
 # Per-arm container name (overridable, like serve_and_dump_kl.sh's TESSERA_KL_NAME):
@@ -56,6 +57,10 @@ source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
+# Refuse a floating image BEFORE the serve lock (issue #100): a wrapper that
+# is going to refuse must not first take the box's one serve lock.  The
+# resolved digest reaches this arm's build sidecar through build_identity.sh.
+runtime_image_require "$IMAGE" || exit 2
 # One serve at a time on this box: the GPU and host share one 128 GB pool.
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $ARM"; serve_lock_acquire
 trap serve_lock_release EXIT

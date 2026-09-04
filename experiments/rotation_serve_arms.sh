@@ -9,7 +9,8 @@ W=/home/rob/tmp/wt-rotation
 R=/mnt/shared/tessera-runs/rotation
 KLDIR=/mnt/shared/tessera-kl
 PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
-export TESSERA_KL_IMAGE=vllm/vllm-openai:latest
+source "$(dirname "$0")/runtime_image.sh"
+export TESSERA_KL_IMAGE=$(runtime_image_pin)
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$R/logs
 export TESSERA_KL_PORT=8002

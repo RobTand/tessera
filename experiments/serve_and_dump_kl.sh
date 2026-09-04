@@ -11,6 +11,9 @@
 set -euo pipefail
 
 MODEL="$1"; OUT="$2"; ROLE="$3"; LABEL="${4:-}"
+# The default is Mia's GLM image, which is a different runtime and carries no
+# pin: it is resolved and stamped, not refused.  A TESSERA_KL_IMAGE on the
+# PINNED repository is refused unless it is the pin (issue #100).
 IMAGE="${TESSERA_KL_IMAGE:-prismaquant/glm53-mia-sm121:487ecf187}"
 PORT="${TESSERA_KL_PORT:-8000}"
 CORPUS="${TESSERA_KL_CORPUS:-/mnt/shared/tessera-kl/corpus_n8_s512.json}"
@@ -23,7 +26,11 @@ LOG="${TESSERA_KL_LOGDIR:-/mnt/shared/tessera-kl}/serve_$(basename "$OUT" .json)
 # store_true flag is a no-op stand-in so the argv shape does not change.
 EAGER_FLAG=--enforce-eager; [ "${TESSERA_KL_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
 
-# Which compiled build served this dump, recorded beside it (issue #30).
+# Which image, and which compiled build, served this dump -- both recorded
+# beside it (issues #100 and #30).  The image gate runs first and BEFORE the
+# serve lock: a refusal must not make the rest of the box queue behind it.
+source "$(dirname "$0")/runtime_image.sh"
+runtime_image_require "$IMAGE" || exit 2
 source "$(dirname "$0")/build_identity.sh"
 # This wrapper does NOT pin a compile-cache root by default -- every arm gets
 # the container's own ephemeral ~/.cache/vllm, which is what the eager arms it
@@ -38,7 +45,7 @@ if [ -n "${TESSERA_KL_VLLM_CACHE:-}" ]; then
   VLLM_CACHE_ARG="-v ${TESSERA_KL_VLLM_CACHE}:/root/.cache/vllm"
 fi
 
-echo "serving $MODEL  ($IMAGE)"
+echo "serving $MODEL  ($IMAGE -> ${RUNTIME_IMAGE_DIGEST:-unresolved})"
 # Mount the model's own directory, not just /mnt/shared: a path the container
 # cannot see is not reported as a missing file, it is reported as a malformed
 # HuggingFace repo id, which sends you looking in entirely the wrong place.

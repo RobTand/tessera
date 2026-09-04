@@ -218,7 +218,8 @@ def _empty_slots(aot_keys: Iterable[str], backbone_keys: Iterable[str]) -> dict:
 # ----------------------------------------------------------------- build ---
 
 def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = None,
-                   image: str | None = None, serve_mode: str | None = None,
+                   image: str | None = None, image_digest: str | None = None,
+                   image_local_id: str | None = None, serve_mode: str | None = None,
                    eager: bool | None = None, deterministic: bool = False,
                    artifact_path: str | None = None) -> dict:
     """The record a measurement run writes beside its dump.
@@ -243,6 +244,17 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
         "serve_mode": serve_mode,
         "eager": None if eager is None else bool(eager),
         "image": image,
+        # WHAT RAN, not what was asked for (issue #100).  ``image`` is the
+        # reference the wrapper passed to ``docker run``; under a floating tag
+        # that names no bytes, so a receipt carrying only it has recorded
+        # nothing about the runtime.  ``image_digest`` is the manifest digest
+        # the local daemon resolved that reference to, and it is what belongs
+        # in the fingerprint.  The local ``.Id`` deliberately does NOT: it is
+        # the manifest digest under the containerd snapshotter and the config
+        # digest under overlay2, so identical bytes fingerprint differently on
+        # the two GB10s and every cross-box comparison would refuse itself.
+        # It rides in provenance instead.  See tessera.serving.runtime_image.
+        "image_digest": image_digest,
         "vllm_version": parsed["vllm_version"],
         "aot": slots["aot"],
     }
@@ -268,6 +280,7 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
             "cache_root": slots["root"],
             "backbone": slots["backbone"],
             "artifact_path": artifact_path,
+            "image_local_id": image_local_id,
             "fresh_compiles": parsed["fresh_compiles"],
             "reload_failures": parsed["reload_failures"],
             "aot_keys_loaded": parsed["aot_keys_loaded"],
@@ -410,7 +423,12 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--out", required=True, help="sidecar to write (<dump>.build.json)")
     st.add_argument("--cache-root", default=None,
                     help="host path mounted at the container's /root/.cache/vllm")
-    st.add_argument("--image", default=None)
+    st.add_argument("--image", default=None,
+                    help="the reference passed to docker run (may be a tag)")
+    st.add_argument("--image-digest", default=None,
+                    help="the manifest digest that reference resolved to")
+    st.add_argument("--image-local-id", default=None,
+                    help="this daemon's image id; provenance only, never compared")
     st.add_argument("--serve-mode", default=None)
     st.add_argument("--eager", default=None)
     st.add_argument("--deterministic", default="0")
@@ -428,6 +446,8 @@ def main(argv: list[str] | None = None) -> int:
             serve_log=args.log,
             cache_root=args.cache_root or None,
             image=args.image,
+            image_digest=args.image_digest or None,
+            image_local_id=args.image_local_id or None,
             serve_mode=args.serve_mode,
             eager=None if args.eager is None else _bool(args.eager),
             deterministic=_bool(args.deterministic),

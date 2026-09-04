@@ -13,7 +13,11 @@ set -eu
 TS=${TS:-/home/rob/tessera}
 RUNS=${RUNS:-/home/rob/tessera-runs/tsplugin}
 EXT=${EXT:-$RUNS/ext}                 # the NVFP4 decoder's JIT build cache
-IMG=${IMG:-vllm/vllm-openai:latest}
+source "$(cd "$(dirname "$0")" && pwd)/runtime_image.sh"
+IMG=${IMG:-$(runtime_image_pin)}
+# Refuse a floating image (issue #100); the echo is this wrapper's receipt,
+# since it writes no build sidecar of its own.
+runtime_image_require "$IMG" || exit 2
 extra=()
 while [ $# -gt 0 ] && [ "$1" != "--" ]; do extra+=("$1"); shift; done
 [ "${1:-}" = "--" ] && shift

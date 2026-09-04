@@ -31,7 +31,8 @@ export TRITON_CACHE_DIR=/home/rob/.triton-cache
 export TESSERA_KL_PORT=8001
 export TESSERA_GPU_MEM_UTIL=0.30
 export TESSERA_KL_NAME=tessera-kl-ldlqlut
-export TESSERA_KL_IMAGE=vllm/vllm-openai:latest
+source "$(dirname "$0")/runtime_image.sh"
+export TESSERA_KL_IMAGE=$(runtime_image_pin)
 export TESSERA_KL_CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
 export TESSERA_KL_LOGDIR=$RUNS
 TEACHER=/mnt/shared/tessera-kl/qwen_rot_teacher_lina.json.npz
