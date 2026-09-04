@@ -40,6 +40,26 @@ def blobs(path: Path) -> "dict[str, str]":
     return out
 
 
+#: Where the ``activation_aware`` block actually lives.  It is written into the
+#: serving manifest, not into a ``tessera_config.json`` -- an earlier draft of
+#: this script looked only at the latter, found neither side had one, and would
+#: have reported ``activation_aware_equal: true`` from ``None == None``.  A
+#: comparison that passes because it compared nothing is worse than no
+#: comparison, so the source file is reported alongside the verdict and an
+#: empty side is called ``NOT COMPARED``.
+_AWARE_FILES = ("tessera_serving_manifest.json", "tessera_config.json")
+
+
+def activation_aware(path: Path) -> "tuple[dict | None, str | None]":
+    for name in _AWARE_FILES:
+        f = path / name
+        if f.exists():
+            block = json.loads(f.read_text()).get("activation_aware")
+            if block is not None:
+                return block, name
+    return None, None
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("reference", type=Path, help="the existing arm")
@@ -52,12 +72,8 @@ def main() -> None:
     same = [k for k in shared if ref[k] == new[k]]
     differ = [k for k in shared if ref[k] != new[k]]
 
-    cfg_ref = json.loads((args.reference / "tessera_config.json").read_text()) \
-        if (args.reference / "tessera_config.json").exists() else {}
-    cfg_new = json.loads((args.fresh / "tessera_config.json").read_text()) \
-        if (args.fresh / "tessera_config.json").exists() else {}
-    aware_ref = cfg_ref.get("activation_aware")
-    aware_new = cfg_new.get("activation_aware")
+    aware_ref, src_ref = activation_aware(args.reference)
+    aware_new, src_new = activation_aware(args.fresh)
 
     result = {
         "schema": "tessera.dense4_block_byte_identity/1",
@@ -69,10 +85,16 @@ def main() -> None:
         "only_in_reference": len(set(ref) - set(new)),
         "only_in_fresh": sorted(set(new) - set(ref)),
         "activation_aware_reference": aware_ref,
+        "activation_aware_reference_from": src_ref,
         "activation_aware_fresh": aware_new,
+        "activation_aware_fresh_from": src_new,
         "activation_aware_equal": aware_ref == aware_new,
+        "activation_aware_compared": bool(aware_ref) and bool(aware_new),
         "verdict": ("BYTE-IDENTICAL" if shared and not differ else
                     "DIFFERS" if differ else "NOTHING COMPARED"),
+        "config_verdict": (
+            "EQUAL" if aware_ref and aware_new and aware_ref == aware_new else
+            "UNEQUAL" if aware_ref and aware_new else "NOT COMPARED"),
     }
     print(json.dumps(result, indent=1))
     if args.out:
