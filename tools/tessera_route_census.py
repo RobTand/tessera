@@ -103,6 +103,38 @@ def census(model):
     return out
 
 
+def declared_in_module_space(model, targets):
+    """Runs inside the worker: the checkpoint's target names, in vLLM's namespace.
+
+    ``config_groups`` targets are written in the CHECKPOINT's namespace;
+    ``named_modules()`` -- where every route record is read from -- is the
+    namespace vLLM built.  For a model class that declares an
+    ``hf_to_vllm_mapper`` those are different strings for the same module,
+    which is why vLLM hands the quant config the mapper at load and why
+    ``TesseraConfig.apply_vllm_mapper`` exists.
+
+    Returns ``None`` when the class declares no mapper -- then checkpoint space
+    IS module space, which is the case for every census taken before this
+    (Qwen3-0.6B) and is why the omission never showed.  A target the mapper
+    DROPS maps to ``None``: the runtime builds no module for it, and the caller
+    reports that rather than passing the unmapped name through.
+
+    The mapper is the runtime's own table, replayed here, not restated.
+    """
+    mapper = getattr(model, "hf_to_vllm_mapper", None)
+    if mapper is None:
+        return None
+    unstacked = mapper.get_unstacked_mapper()
+    out = {}
+    for target in targets:
+        if "." not in target or target.startswith("re:"):
+            out[target] = target      # a module class name or a regex, not a path
+            continue
+        mapped = unstacked.apply_list([target])
+        out[target] = mapped[0] if mapped else None
+    return out
+
+
 def lane_refusals(model):
     """Runs inside the worker: every module whose LANE refused at load.
 
@@ -317,21 +349,8 @@ def main() -> int:
     # checkpoint declares no wire for -- a refusal that says the opposite of
     # what is true.  The table is the RUNTIME's (the model class's own mapper),
     # replayed here rather than restated.
-    def _module_space(model):
-        mapper = getattr(model, "hf_to_vllm_mapper", None)
-        if mapper is None:
-            return None
-        unstacked = mapper.get_unstacked_mapper()
-        out = {}
-        for target in list(declared):
-            if "." not in target or target.startswith("re:"):
-                out[target] = target      # a module class name or a regex, not a path
-                continue
-            mapped = unstacked.apply_list([target])
-            out[target] = mapped[0] if mapped else None
-        return out
-
-    name_map = llm.apply_model(_module_space)[0]
+    name_map = llm.apply_model(
+        lambda model: declared_in_module_space(model, list(declared)))[0]
     if name_map is not None:
         dropped = sorted(t for t, m in name_map.items() if m is None)
         if dropped:
