@@ -14,10 +14,15 @@ and that is the correct proportion for this night.
 - `master` is at **`808b95f`**, 425 commits on since 2026-09-03 00:00.
 - **93 issues closed** since 2026-09-03 00:00; **17 open** (list in §4).
 - Local suite green: **1404 passed / 487 skipped**.
-- The x86 CPU suite is running **through the pool** on merged master
-  (`0c588fe`), pool action `4ddf06e57495`, on dl380g10 — claimed and
-  heartbeating at the time of writing. **That receipt is not in yet.** If it
-  went red, it will be in `pb-queue/failed/4ddf06e57495*.json`.
+- **The x86 CPU suite is green on merged master**, and this is the receipt
+  that matters: it is the only run that covers the *merge* rather than the
+  branches. Pool action `4ddf06e57495`, `checkout_root /mnt/shared/tessera-x86`
+  at `0c588fe`, on dl380g10 through `pbrun --cpus 24`:
+  **1381 passed, 497 skipped, 0 failed**, rc 0, 16m54s. Attested in
+  `pb-queue/done/4ddf06e57495*.json` (receipt sha `5834ec21ae04…`).
+  The GB10 run of the same commit reads 1404 passed / 487 skipped; the two
+  boxes collect 13 tests differently (GPU-gated collection), which is expected
+  and not investigated at this hour.
 
 Merges landed tonight after the compaction point:
 
