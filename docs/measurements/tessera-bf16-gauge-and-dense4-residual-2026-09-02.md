@@ -699,22 +699,38 @@ Two reasons, both measurable and both in the tables above:
   **0.374-0.515** across the six experts, and the dense spread is the point:
   one recipe is serving units whose reach demand differs by 5x.
 
-### The gate held, and the axis disqualified in advance came back agreeing
+### The axis disqualified in advance was disqualified for the wrong reason
 
 `wt` was ruled out as a gate before the run because it is monotone in `L` --
-a wider table can only fit the weights better.  **Byte matching retired that
-premise.**  At matched bytes a wider table is paid for out of the rung, and
-`wt` is no longer monotone: on dense Qwen at R=4 it *rises* with `L`
-(0.9333 / 1.0000 / 1.1724 at L = 12 / 14 / 16), on GLM experts at R=8 it
-*falls* (1.1015 / 1.0000 / 0.9290).  Opposite directions on the same axis is
-not something a monotone quantity does.
+a wider table can only fit the weights better.  That is true *unmatched*.
+**Byte matching retires the premise**, because at matched bytes the wider
+table is paid for out of the rung.  All three figures below are at ratio 1,
+L = 12 / 14 / 16:
 
-And with the premise gone, all three axes agree on direction at every rung on
-both populations -- dense R=4 picks `L=12` on `wt` (0.9333) and on the gate
-`h` (0.8916); GLM R=8 picks `L=16 r=1.25` on `wt` (0.8997) and on the gate
-`out` (0.8964).  Three metrics that disagree about magnitude and agree about
-sign is a stronger reading than one gate alone, and it means the verdict below
-does not rest on the choice of gate.
+* dense Qwen, R=4: `wt` **rises** with `L` (0.9333 / 1.0000 / 1.1724);
+* six GLM expert-0 units, R=8: `wt` **falls** (1.1154 / 1.0000 / 0.9331);
+* dense Qwen, R=8: `wt` is **non-monotone within one population**
+  (1.0351 / 1.0000 / 1.0743).
+
+So `wt` at matched bytes is a real axis rather than a foregone one.  It is
+**not**, however, a second gate that happens to agree.  Stated exactly, over
+the six (population, rung) points:
+
+* **The gate's winning cell is also below 1.00 on `wt` wherever it is below
+  1.00 on the gate** -- 5 of 6 points; the sixth is GLM R=4, where the winner
+  *is* the reference (1.0000 on both).
+* **The best `L` under `wt` is the gate's best `L` at 5 of 6 points.**  The
+  exception is dense R=8: the gate `h` picks `L=12 r=sqrt(2)` (0.8395) and
+  `wt` picks `L=14 r=sqrt(2)` (0.8557).  Both beat the shipped pair; they
+  disagree about which width.
+* **Cell by cell they do disagree in sign, and only on dense** -- one cell at
+  R=4 (`L=14 r=1.25`: `wt` 0.9967, `h` 1.0279), one at R=6, four at R=8
+  (e.g. `L=12 r=1`: `wt` 1.0351, `h` 0.9565).  On the GLM experts there is no
+  sign disagreement at any rung, on any cell.
+
+The verdict below therefore does not rest on the choice of gate -- ADOPT-WORTHY
+fails under `wt` too, and for the same reason, that the two populations want
+opposite `L` -- but "the metrics agree" would be too strong a way to say it.
 
 ### The reading, against the criteria registered before the run
 
@@ -757,7 +773,7 @@ has the rate in hand (`max(14, R)`) if Rob ever wants to spend it.
   both rungs and 6 of 6 controls byte- and tensor-identical. On those three:
   **R=4, the shipped `(14, 1.0)` is best of all twelve cells, 0/3 wins for
   every other arm**; R=8, `L=16 r=1.25` wins **3/3** at 0.8964x (the six
-  expert-0 units gave 0.8965x). So the R=4 CONFIRMED reading now stands on
+  expert-0 units gave 0.9056x). So the R=4 CONFIRMED reading now stands on
   nine expert units drawn from three layers and three expert indices, and the
   R=8 result on nine as well. `L20.e2`, `L42.e1`, `L42.e2` are in flight; the
   re-read is
