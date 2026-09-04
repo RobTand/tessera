@@ -22,10 +22,13 @@ moved. `(assumed)` marks a row whose run predates that field, where the
 receipt's own commit is the best available guess. Rows of one run with two
 commits are two measurements, not one merge receipt.
 
-`exit` is the status the submitting process observed. `not observed` means the
-receipt was assembled after the fact from what the run published (`--resume`):
-the failure count in that row is still a fact, but a zero in it does not make
-the row green, because a suite can exit non-zero after a clean summary.
+`exit` is the status the submitting process observed. `0 (pool)` is a status
+this program did not watch and did not guess: the run was resumed, and the
+number is the one PrismaBuild's own worker recorded for the action that wrote
+that population. `not observed` is the remaining case -- a resumed row with no
+single finished pool action behind it -- and there the failure count is still a
+fact while a zero in it does not make the row green, because a suite can exit
+non-zero after a clean summary.
 
 `device` distinguishes three absences that are not the same thing. `not
 submitted in this run` is an arm nobody asked for. `no population published`

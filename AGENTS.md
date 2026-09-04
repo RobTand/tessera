@@ -176,11 +176,17 @@ person or agent — changing the code.
   other, appending a row per arm to `docs/status/suite-populations.md` under
   `--record`. That ledger is where a suite result is recorded; read the two
   adjacent rows, not one of them -- an arm a run did not submit is written as
-  `not submitted in this run`, so a lone row cannot be read as a whole result. If the submitting session dies while the
-  pool carries on, `--resume <receipt dir>` rebuilds the receipt from the
-  populations the runs published -- with the exit status marked `not
-  observed`, because published failures prove red while their absence does not
-  prove green. Each row names the commit **that arm** reported measuring, not
+  `not submitted in this run`, so a lone row cannot be read as a whole result.
+  If the submitting session dies while the pool carries on -- which is how
+  every GPU submission on this branch has gone -- `--resume <receipt dir>`
+  rebuilds the receipt from the populations the runs published. Its exit
+  status is then the one **PrismaBuild's worker** recorded for the action that
+  wrote that population, found by the `--surface-json` path in the action's
+  own command and shown as `0 (pool)` so a status nobody here watched is not
+  mistaken for one this process saw. When no single finished action wrote the
+  path -- still in flight, or two of them did -- the row stays `not observed`
+  and no status is borrowed, because published failures prove red while their
+  absence does not prove green. Each row names the commit **that arm** reported measuring, not
   the one the receipt was assembled against: the arms are separate processes
   on separate boxes, and a GPU arm queued behind a held reservation can place
   after the checkout has moved. Two commits in one run's rows are two

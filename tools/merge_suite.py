@@ -65,6 +65,14 @@ SHARED_ROOT = Path("/mnt/shared")
 #: miss dressed up as a different action.
 DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 
+#: Where the pool publishes what it did.  A finished action's outcome record
+#: carries the exit status the worker actually saw; the CAS request beside it
+#: carries the command that action ran.  Reading those two is how a resumed
+#: receipt can state an exit status instead of declining to -- derived from a
+#: table PrismaBuild publishes, never inferred from the population's contents.
+POOL_QUEUE = SHARED_ROOT / "prismabuild-fleet" / "pb-queue"
+POOL_CAS_REQUESTS = SHARED_ROOT / "prismabuild-fleet" / "cas" / "requests"
+
 #: The two arms, and why each is spelled the way it is.  The interpreter is
 #: named rather than inherited: a pool action runs in a sealed environment, so
 #: ``sys.executable`` here is a fact about the submitting box, not the target.
@@ -252,6 +260,103 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
     )
 
 
+def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
+    """The finished pool actions whose command wrote this population.
+
+    A resumed receipt used to have no exit status at all: the submitting
+    process died, so nobody in this program watched the run.  But somebody
+    did.  PrismaBuild's worker waits on the child, records the status it saw
+    in the action's outcome record, and leaves that record in
+    ``pb-queue/done`` or ``pb-queue/failed`` -- a machine-readable table the
+    pool publishes about its own execution.  Reading it is not guessing, and
+    it is not the forbidden move either: the number comes from the runtime
+    that ran the thing, not from this program's opinion about what a clean
+    summary implies.
+
+    The join is the ``--surface-json`` path.  It appears verbatim in the
+    action's command in the CAS request, so "the action that wrote this
+    population" is answerable exactly rather than by matching prose.  The
+    stdout in the outcome record would also contain it, but stdout can be
+    truncated and a command cannot.
+
+    Returns every match, because the caller must be able to tell one from
+    several: a receipt directory that two actions wrote to (a retry, or the
+    polluted ``20260904T025044``) has no single exit status, and picking one
+    would be exactly the overclaim the rest of this file refuses.
+    """
+
+    wanted = str(surface_json)
+    found = []
+    for state in ("done", "failed"):
+        folder = POOL_QUEUE / state
+        if not folder.is_dir():
+            continue
+        for outcome_path in sorted(folder.glob("*.json")):
+            key = outcome_path.stem
+            request = POOL_CAS_REQUESTS / key[:2] / f"{key}.json"
+            try:
+                request_payload = json.loads(request.read_text())
+            except (OSError, ValueError):
+                continue
+            command = (request_payload.get("params") or {}).get("command") or []
+            if wanted not in [str(part) for part in command]:
+                continue
+            try:
+                outcome = json.loads(outcome_path.read_text())
+            except (OSError, ValueError):
+                continue
+            detail = outcome.get("detail") or {}
+            found.append({
+                "action_key": key,
+                "queue_state": state,
+                "returncode": detail.get("returncode"),
+                "worker_status": detail.get("status"),
+                "attempts": outcome.get("attempts"),
+                "host": outcome.get("claimed_host"),
+                "elapsed_s": detail.get("elapsed_s"),
+            })
+    return found
+
+
+def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
+    """Let the pool answer the question this process cannot.
+
+    Three outcomes, and the two that are not "one action" both leave the row
+    unobserved rather than borrowing a number:
+
+    * exactly one finished action wrote this path, and its record carries an
+      integer status -- that status is the exit status, and the row says where
+      it came from;
+    * no finished action wrote it -- the run may still be in flight, or its
+      record may have been reaped, and either way nobody here saw an exit;
+    * several did -- a retried action or a receipt directory two runs shared.
+      There is no single status to report, so none is reported and the row
+      says how many wrote it.
+    """
+
+    matches = _pool_actions_that_wrote(surface_json)
+    if len(matches) == 1 and isinstance(matches[0].get("returncode"), int):
+        pool = matches[0]
+        record["returncode"] = pool["returncode"]
+        record["exit_status_observed"] = True
+        record["exit_status_source"] = "pool"
+        record["pool_action"] = pool
+        record["exit_status_note"] = (
+            "the submitting process did not survive to watch this run, so the "
+            "exit status is the one PrismaBuild's worker recorded for action "
+            f"{pool['action_key'][:12]} on {pool['host']} -- read from the "
+            "pool's own outcome record, not inferred from the population."
+        )
+        return
+    if matches:
+        record["pool_actions_matching"] = [m["action_key"] for m in matches]
+        record["exit_status_note"] += (
+            f" {len(matches)} finished pool actions wrote this population's "
+            "path, so there is no single exit status to read and none is "
+            "borrowed."
+        )
+
+
 def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
     """Assemble an arm's record from the population it already published.
 
@@ -286,7 +391,9 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
             "not, so this arm cannot be called green from this receipt alone."
         ),
     }
-    _attach_surface(record, receipt_dir / f"surface.{name}.json")
+    surface_json = receipt_dir / f"surface.{name}.json"
+    _attach_surface(record, surface_json)
+    _attach_pool_exit_status(record, surface_json)
     return record
 
 
@@ -415,10 +522,13 @@ moved. `(assumed)` marks a row whose run predates that field, where the
 receipt's own commit is the best available guess. Rows of one run with two
 commits are two measurements, not one merge receipt.
 
-`exit` is the status the submitting process observed. `not observed` means the
-receipt was assembled after the fact from what the run published (`--resume`):
-the failure count in that row is still a fact, but a zero in it does not make
-the row green, because a suite can exit non-zero after a clean summary.
+`exit` is the status the submitting process observed. `0 (pool)` is a status
+this program did not watch and did not guess: the run was resumed, and the
+number is the one PrismaBuild's own worker recorded for the action that wrote
+that population. `not observed` is the remaining case -- a resumed row with no
+single finished pool action behind it -- and there the failure count is still a
+fact while a zero in it does not make the row green, because a suite can exit
+non-zero after a clean summary.
 
 `device` distinguishes three absences that are not the same thing. `not
 submitted in this run` is an arm nobody asked for. `no population published`
@@ -447,6 +557,12 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         cell = lambda key: str(counts.get(key, "--"))          # noqa: E731
         if record.get("exit_status_observed", True):
             exit_text = str(record.get("returncode", "--"))
+            # Whose observation it is stays on the row.  A status this process
+            # watched and a status read out of the pool's outcome record are
+            # both facts, and they are not the same fact -- one of them is
+            # about a run nobody here was present for.
+            if record.get("exit_status_source") == "pool":
+                exit_text += " (pool)"
         else:
             # Never a bare number here: this process did not watch the run, and
             # a row that looks watched when it was not is the same overclaim

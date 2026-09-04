@@ -738,3 +738,136 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     appended = ledger.read_text()[len(before):]
     assert "not submitted in this run" not in appended, appended
     assert appended.count("no population published") == 2, appended
+
+
+def _fake_pool(root, surface_json, actions):
+    """A pb-queue and a CAS request tree holding exactly these actions.
+
+    The layout is the fleet's, not an invention: an outcome record per action
+    in ``pb-queue/<state>/<key>.json`` carrying ``detail.returncode``, and the
+    command that action ran in ``cas/requests/<key[:2]>/<key>.json``. Built
+    here rather than read from ``/mnt/shared`` so the test states its own
+    population -- a test whose verdict depends on what the live fleet happens
+    to hold is the box-dependence this file already fixed twice.
+    """
+
+    queue, requests = root / "pb-queue", root / "cas" / "requests"
+    for state in ("done", "failed"):
+        (queue / state).mkdir(parents=True, exist_ok=True)
+    for key, state, returncode, host in actions:
+        (requests / key[:2]).mkdir(parents=True, exist_ok=True)
+        (requests / key[:2] / f"{key}.json").write_text(json.dumps({
+            "params": {"command": ["python", "-m", "pytest", "tests",
+                                   "--surface-json", str(surface_json),
+                                   "--strict-cuda"]}}))
+        (queue / state / f"{key}.json").write_text(json.dumps({
+            "attempts": 1, "claimed_host": host, "status": state,
+            "detail": {"returncode": returncode, "status": "executed",
+                       "elapsed_s": 511.4}}))
+    return queue, requests
+
+
+def _gpu_population(path, commit="a" * 40):
+    path.write_text(json.dumps({
+        "schema": "tessera.test_surface.v2",
+        "role": "population",
+        "worker_id": None,
+        "commit": commit,
+        "cuda": True,
+        "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = GB10",
+        "strict_cuda": True,
+        "counts": {"passed": 1827, "failed": 0, "error": 0, "skipped": 10,
+                   "xfailed": 0, "xpassed": 0},
+        "skip_reasons": {},
+        "not_collected": [],
+    }))
+
+
+def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
+    """The run nobody here watched was watched by the worker that ran it.
+
+    A resumed receipt declined to state an exit status at all, on the correct
+    ground that this process never saw one -- and that ground stops being
+    correct one directory over. PrismaBuild's worker waits on the child and
+    writes the status it saw into the action's outcome record; the CAS request
+    beside it holds the command, so "the action that wrote this population" is
+    answerable by the ``--surface-json`` path rather than by matching prose.
+    Reading that is a derivation from a table the pool publishes about its own
+    execution, not an inference from a clean summary -- which is the thing
+    ``_verdict`` refuses, and still refuses.
+
+    It matters because it is the only shape the GPU arm has: both real GPU
+    submissions on this branch outlived their submitting session, so a receipt
+    that can only be resumed can only ever say ``not observed``, and an arm
+    that can never be green is a gate that can never pass.
+
+    Before this test, on this box under ``/usr/bin/python3`` (torch
+    2.10.0+cpu, no device)::
+
+        >       assert record["returncode"] == 0, record
+        E       AssertionError: {'arm': 'gpu', 'exit_status_note': ...}
+        E       assert None == 0
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    _gpu_population(surface)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky")])
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["returncode"] == 0, record
+    assert record["exit_status_observed"] is True, record
+    # Whose observation it is, on the record and on the row.
+    assert record["exit_status_source"] == "pool", record
+    assert record["pool_action"]["host"] == "sparky", record
+    assert "PrismaBuild" in record["exit_status_note"], record
+
+    # An arm that ran the surface it was submitted to cover, with a status
+    # somebody saw, is the one thing this tool exists to be able to say.
+    assert merge_suite._verdict([record]).startswith("green on"), \
+        merge_suite._verdict([record])
+
+    ledger = tmp_path / "l.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "a" * 40, "is_master_head": True},
+        "arms": [record],
+    })
+    row = [l for l in ledger.read_text().splitlines() if "| gpu |" in l][0]
+    assert "0 (pool)" in row, row
+    assert "1827" in row, row
+
+
+def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
+    """Several exit statuses is not one exit status.
+
+    A retried action, or a receipt directory two runs shared -- and
+    ``20260904T025044`` on this branch is one -- has no single status behind
+    the file. Picking the newest, or the zero, would be the overclaim the rest
+    of this file refuses, so the row stays unobserved and says how many wrote
+    it.
+
+    Before this test::
+
+        >       assert len(record["pool_actions_matching"]) == 2, record
+        E       KeyError: 'pool_actions_matching'
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    _gpu_population(surface)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky"),
+                            ("cafe" + "0" * 60, "failed", 1, "sparky")])
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["returncode"] is None, record
+    assert record["exit_status_observed"] is False, record
+    assert len(record["pool_actions_matching"]) == 2, record
+    assert "no single exit status" in record["exit_status_note"], record
+    assert not merge_suite._verdict([record]).startswith("green on")
