@@ -31,7 +31,10 @@ that inherits a warm process inherits the wrong answer.
 
 Each child does **two** `torch.compile`s in one process: an rms-norm-shaped block
 at hidden 8192, then the same block at hidden 4096.  That second compile is the
-whole point, because a vLLM serve compiles many graphs in one process.
+whole point, because a vLLM serve compiles more than one graph in one process.
+Note the shape of this probe, because section 3 finds it matters: two graphs
+reached through **two `torch.compile` entries**, which is not the only way a
+serve gets to more than one graph.
 
 | arm | what differs |
 |---|---|
@@ -182,11 +185,18 @@ Picking a threshold before knowing which is true is guessing.  Named here and in
 ## 5. What was not measured
 
 - **No serve.**  Two vLLM serves of one checkpoint from **empty** compile-cache
-  roots under `TESSERA_SERVE_DETERMINISTIC=1`, compared at 0.000000 — the receipt
-  #16's third bullet asks for — still does not exist.  The pool refused the GPU
-  placement for it (`pbrun: no live worker can run this action … demand {'gpu':
-  1, 'mem_gb': 16}`) and then queued 38–42 deep for an hour on the only box that
-  can see this worktree; a serve taken under that would have measured the queue.
+  roots under `TESSERA_SERVE_DETERMINISTIC=1`, compared at 0.000000, still does
+  not exist.  Being exact about why, since "the box was busy" is the kind of
+  excuse this project distrusts: **it was never submitted.**  Through the window
+  this receipt was measured in, the pool ran 38–42 ready and 6 claimed against 3
+  workers on `sparky` — the only box that can see this worktree — and the small
+  GPU probe above waited in that queue twice (`pbrun: gave up waiting for
+  922705a786a2`, and one refusal, `pbrun: no live worker can run this action …
+  required tags ['sparky'] … demand {'gpu': 1, 'mem_gb': 24}`, from tagging it
+  `--here`).  A pair of serves is minutes of exclusive GPU each; taken against
+  that queue it would have been a contended measurement of a compile whose whole
+  subject is how compile-time device timing varies with contention.  So it was
+  not taken.
 - **Whether reasserting is the fix.**  `on_reassert` shows the flag *can* govern
   a later compile if something re-sets it.  Nothing sets it inside a vLLM serve,
   and this receipt does not propose a patch that would — a producer-side
