@@ -1,0 +1,68 @@
+Issue #50 -- targeted branch evidence (AGENTS.md, commit 1f7836c)
+===============================================================
+
+A branch owes the test files its diff touches, the files that import what
+it changed, and the pre-fix failure line for every test it added.  The full
+suite is the coordinator's, run once on the merge result.
+
+-- BRANCH, the sixteen files ---------------------------------------------
+
+  tests/test_lut_exact_fit.py  tests/test_ldlq_lut_plane.py     (the diff)
+  tests/test_scale_refit.py  tests/test_span_and_lut.py
+  tests/test_lut_stop_dtype.py  tests/test_landing_ordering.py
+  tests/test_refit_trailing.py  tests/test_audit_byte_baseline.py
+  tests/test_plane_promotion.py  tests/test_full_grammar.py
+  tests/test_channel_plane.py  tests/test_export.py
+  tests/test_math_audit_scale_and_trellis.py  tests/test_merge_guard.py
+  tests/test_window_body.py  tests/test_wire.py
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+321 passed, 14 warnings in 1131.00s (0:18:50)
+PYTEST_EXIT=0
+
+No test failed, so none needed re-running against master to answer whether
+it was already broken.
+
+-- PRE-FIX, the five tests added, against a pristine master checkout ------
+
+/home/rob/tmp/ts50-master-pre50 is master with the two test files dropped
+in and nothing else changed.
+
+  
+  ==================================== ERRORS ====================================
+  _________________ ERROR collecting tests/test_lut_exact_fit.py _________________
+  ImportError while importing test module '/home/rob/tmp/ts50-master-pre50/tests/test_lut_exact_fit.py'.
+  Hint: make sure your test modules/packages have valid Python names.
+  Traceback:
+  /usr/lib/python3.12/importlib/__init__.py:90: in import_module
+      return _bootstrap._gcd_import(name[level:], package, level)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  tests/test_lut_exact_fit.py:17: in <module>
+      from tessera.encode import (
+  E   ImportError: cannot import name '_fit_lut_exact' from 'tessera.encode' (/home/rob/tmp/ts50-master-pre50/src/tessera/encode.py)
+  =========================== short test summary info ============================
+  ERROR tests/test_lut_exact_fit.py
+  !!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+  1 error in 0.90s
+  PYTEST_EXIT=2
+
+Collection stops at the first error, so the four appended to
+test_ldlq_lut_plane.py were run again on their own:
+
+  FFFF                                                                     [100%]
+  =================================== FAILURES ===================================
+  E   TypeError: _refit_scales_lut() got an unexpected keyword argument 'exact_fit'
+  /home/rob/tmp/ts50-master-pre50/tests/test_ldlq_lut_plane.py:682: TypeError: _refit_scales_lut() got an unexpected keyword argument 'exact_fit'
+  E   ImportError: cannot import name '_fit_lut_exact' from 'tessera.encode' (/home/rob/tmp/ts50-master-pre50/src/tessera/encode.py)
+  /home/rob/tmp/ts50-master-pre50/tests/test_ldlq_lut_plane.py:692: ImportError: cannot import name '_fit_lut_exact' from 'tessera.encode' (/home/rob/tmp/ts50-master-pre50/src/tessera/encode.py)
+  E   TypeError: encode_linear_planes() got an unexpected keyword argument 'refit_lut_exact'
+  /home/rob/tmp/ts50-master-pre50/src/tessera/export.py:1113: TypeError: encode_linear_planes() got an unexpected keyword argument 'refit_lut_exact'
+  E   TypeError: encode_linear_planes() got an unexpected keyword argument 'refit_lut_exact'
+  /home/rob/tmp/ts50-master-pre50/src/tessera/export.py:1113: TypeError: encode_linear_planes() got an unexpected keyword argument 'refit_lut_exact'
+  =========================== short test summary info ============================
+  FAILED tests/test_ldlq_lut_plane.py::test_the_exact_fit_off_is_the_fit_that_was_there
+  FAILED tests/test_ldlq_lut_plane.py::test_the_exact_fit_never_raises_the_fit_it_replaces
+  FAILED tests/test_ldlq_lut_plane.py::test_the_exact_fit_reaches_the_bytes_only_where_the_greedy_is_not_already_right
+  FAILED tests/test_ldlq_lut_plane.py::test_the_exact_fit_is_refused_where_there_is_no_fit_to_solve
+  4 failed in 1.73s
+  PYTEST_EXIT=1

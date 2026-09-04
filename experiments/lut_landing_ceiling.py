@@ -30,8 +30,21 @@ each ``table`` arm is scored BOTH ways, so the run proves the sink equals
 The served default runs first and again last, in one process, as `#35`'s
 receipt did: an arm-to-arm gap below the control's own spread is not a result.
 
+``--stage exact-fit`` is the second half of issue #50, and it is measured on
+the wire: the control triplicate plus ``refit_lut_exact``, every arm at
+``landing="table"``.  Two of the three mechanisms #50 funds do not exist on
+the shipped ``h^1.0`` arm -- ``_fit_lut`` already takes ``A_b`` as its
+weights, a curvature-weighted *assignment* is a no-op once the table is
+fixed, and a 1-D metric's cost is separable so there is no cross-block term
+to retain -- which leaves the SOLVER: ``_fit_lut``'s greedy against
+``_fit_lut_exact``'s dynamic program on the same objective.  Passing
+``--ceiling-json`` reads the ``table -> grid`` split out of the step-1 run
+and prints the stop rule's verdict against half of it.
+
     PYTHONPATH=src TMPDIR=/home/rob/tmp TRITON_CACHE_DIR=/home/rob/.triton-cache \
       python experiments/lut_landing_ceiling.py --out .../qwen_lut_landing.json
+    ... --stage exact-fit --ceiling-json .../qwen_lut_landing.json \
+        --out .../qwen_lut_exact_fit.json
 """
 from __future__ import annotations
 
@@ -72,6 +85,27 @@ def geo(units, arm, field):
     return math.exp(sum(math.log(units[u][arm][field]) for u in units) / len(units))
 
 
+def verdict(ceiling_doc, gm, ceiling_json, alpha, log):
+    """The stop rule: does the arm return at least half the table -> grid gap?
+
+    Both sides are read off committed runs, so this is a ratio and not a
+    measurement -- which is why it can be taken after the fact when the step-1
+    JSON lands second (``--verdict-only``) instead of costing an encode.
+    """
+    cg = ceiling_doc["geomeans"]
+    cctl = next(x for x in cg if x.startswith("drift control FIRST"))
+    cgrid = next(x for x in cg if x.endswith("| landing=grid")
+                 and "full-H" not in x)
+    ceiling = 1.0 - cg[cgrid]["out"] / cg[cctl]["out"]
+    bar = ceiling / 2.0
+    fired = not ((1.0 - gm) >= bar)
+    log(f"    step-1 ceiling (table -> grid, h^{alpha}) {ceiling:.4%}"
+        f"   half of it {bar:.4%}")
+    log(f"    VERDICT: {'STOP -- under half the ceiling' if fired else 'CONTINUE -- clears half the ceiling'}")
+    return {"ceiling_json": ceiling_json, "ceiling": ceiling, "bar": bar,
+            "fired": bool(fired)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/home/rob/models/Qwen3-0.6B")
@@ -84,7 +118,39 @@ def main() -> None:
     ap.add_argument("--alpha", type=float, default=1.0)
     ap.add_argument("--units", nargs="*", default=None)
     ap.add_argument("--out", default="experiments/results/tessera_lut_landing_ceiling.json")
+    ap.add_argument("--stage", default="ceiling", choices=("ceiling", "exact-fit"),
+                    help="ceiling: the three landings per refit objective (issue #50 "
+                         "step 1).  exact-fit: the control triplicate and the "
+                         "exact-16 table fit, all at landing=table (step 2).")
+    ap.add_argument("--verdict-only", action="store_true",
+                    help="take the stop-rule verdict from an --out JSON that "
+                         "already exists and a --ceiling-json that landed after "
+                         "it, and write it beside them.  The verdict is a ratio "
+                         "of two committed numbers; nothing is re-encoded.")
+    ap.add_argument("--ceiling-json", default=None,
+                    help="exact-fit only: the step-1 JSON whose table/grid split "
+                         "sets the stop-rule threshold, so the bar is read from a "
+                         "committed measurement rather than retyped.")
     a = ap.parse_args()
+
+    if a.verdict_only:
+        arm_doc = json.loads(Path(a.out).read_text())
+        sr = arm_doc.get("stop_rule")
+        if sr is None:
+            raise SystemExit(f"{a.out} has no stop_rule block; it is not the "
+                             "output of a --stage exact-fit run")
+        if not a.ceiling_json:
+            raise SystemExit("--verdict-only needs --ceiling-json")
+        print("\n== issue #50 stop rule, taken after the fact")
+        print(f"    arm JSON      {a.out}")
+        print(f"    ceiling JSON  {a.ceiling_json}")
+        print(f"    six-unit out geomean ratio  {sr['geomean_ratio']:.5f}x")
+        v = verdict(json.loads(Path(a.ceiling_json).read_text()),
+                    sr["geomean_ratio"], a.ceiling_json, a.alpha, print)
+        dest = Path(a.out).with_name(Path(a.out).stem + "_verdict.json")
+        dest.write_text(json.dumps({"arm_json": a.out, **sr, **v}, indent=1))
+        print(f"\nwrote {dest}")
+        return
 
     grid = grid_by_name(a.grid)
     recipe = wire_recipe(grid, a.q256)
@@ -171,16 +237,28 @@ def main() -> None:
 
             ctl = f"LDLQ {a.sigma}/{a.block} + refit h^{a.alpha}"
             run(f"drift control FIRST [{ctl}]", "table", dup_ok=True, refit_metric=hmetric)
-            for landing in ("grid", "none"):
-                run(f"{ctl} | landing={landing}", landing, refit_metric=hmetric)
-            gs = f"LDLQ {a.sigma}/{a.block} + refit full-H (Gauss-Seidel)"
-            run(gs, "table", refit_metric=H, refit_gauss_seidel=True)
-            for landing in ("grid", "none"):
-                run(f"{gs} | landing={landing}", landing,
-                    refit_metric=H, refit_gauss_seidel=True)
-            jac = f"LDLQ {a.sigma}/{a.block} + refit full-H"
-            run(jac, "table", refit_metric=H)
-            run(f"{jac} | landing=none", "none", refit_metric=H)
+            if a.stage == "ceiling":
+                for landing in ("grid", "none"):
+                    run(f"{ctl} | landing={landing}", landing, refit_metric=hmetric)
+                gs = f"LDLQ {a.sigma}/{a.block} + refit full-H (Gauss-Seidel)"
+                run(gs, "table", refit_metric=H, refit_gauss_seidel=True)
+                for landing in ("grid", "none"):
+                    run(f"{gs} | landing={landing}", landing,
+                        refit_metric=H, refit_gauss_seidel=True)
+                jac = f"LDLQ {a.sigma}/{a.block} + refit full-H"
+                run(jac, "table", refit_metric=H)
+                for landing in ("grid", "none"):
+                    run(f"{jac} | landing={landing}", landing, refit_metric=H)
+            else:
+                # The triplicate is the control measured three times in one
+                # process, exactly as #35's receipt did it: an arm-to-arm gap
+                # below the control's own spread is not a result, and two
+                # readings cannot show a spread that a third would.  The arm
+                # sits between the second and third so it is not the only
+                # encode that ran late in the process.
+                run(f"{ctl} [triplicate MID]", "table", dup_ok=True, refit_metric=hmetric)
+                run(f"{ctl} + exact-16 fit", "table",
+                    refit_metric=hmetric, refit_lut_exact=True)
             last = run(f"drift control LAST [{ctl}]", "table", dup_ok=True,
                        refit_metric=hmetric)
             first = res[f"drift control FIRST [{ctl}]"]
@@ -204,6 +282,45 @@ def main() -> None:
         log(f"    {arm:<48} {g:9.5f} {hh:9.5f} {g / gc:9.4f} {hh / hc:9.4f}")
     out["geomeans"] = {arm: {f: geo(out["units"], arm, f) for f in ("out", "hfit")}
                        for arm in arms}
+
+    if a.stage == "exact-fit":
+        ctl_arm = next(x for x in arms if x.startswith("drift control FIRST"))
+        arm = next(x for x in arms if x.endswith("+ exact-16 fit"))
+        trip = [x for x in arms if x.startswith("drift control")
+                or x.endswith("[triplicate MID]")]
+        ratios = {u: out["units"][u][arm]["out"] / out["units"][u][ctl_arm]["out"]
+                  for u in names}
+        gm = math.exp(sum(math.log(r) for r in ratios.values()) / len(ratios))
+        spread = (max(geo(out["units"], t, "out") for t in trip)
+                  / min(geo(out["units"], t, "out") for t in trip) - 1.0)
+        log("\n== issue #50 stop rule, read against the step-1 ceiling")
+        log(f"    control  {ctl_arm!r}")
+        log(f"    arm      {arm!r}   landing=table (the wire)")
+        for u in names:
+            log(f"      {u:<44} {ratios[u]:8.5f}x")
+        log(f"    six-unit out geomean ratio  {gm:.5f}x  -- the arm's "
+            f"held-out error is {abs(gm - 1.0):.4%} "
+            f"{'HIGHER' if gm > 1.0 else 'LOWER'} than the control's")
+        log(f"    control triplicate spread   {spread:.4%}  "
+            f"({len(trip)} identical encodes)")
+        out["stop_rule"] = {
+            "control_arm": ctl_arm, "arm": arm, "landing": "table",
+            "unit_ratios": ratios, "geomean_ratio": gm,
+            "gain": 1.0 - gm, "control_triplicate_spread": spread,
+        }
+        # A missing or half-written step-1 JSON must not cost this run its
+        # arms: the verdict is a ratio of two committed numbers and can be
+        # taken afterwards, but an encode that raised on the way to writing
+        # its own results is gone.
+        try:
+            c = json.loads(Path(a.ceiling_json).read_text()) if a.ceiling_json else None
+        except (OSError, ValueError) as exc:
+            log(f"    step-1 ceiling unreadable ({exc}); verdict not stamped")
+            c = None
+        if c is not None:
+            out["stop_rule"].update(
+                verdict(c, gm, a.ceiling_json, a.alpha, log))
+
     out["log"] = lines
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
     Path(a.out).write_text(json.dumps(out, indent=1))

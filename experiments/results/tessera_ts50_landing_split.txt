@@ -1,0 +1,37 @@
+
+=== tessera_lut_exact_fit.json   (6 units)
+    summed over every refit pass of every unit, in the fit's own cost
+
+arm                                                        step won  landing lost  of step       out
+drift control FIRST [LDLQ 1.0/32 + refit h^1.0]               63.30         48.21   76.2%   0.05111
+LDLQ 1.0/32 + refit h^1.0 [triplicate MID]                    63.30         48.21   76.2%   0.05111
+LDLQ 1.0/32 + refit h^1.0 + exact-16 fit                      64.23         48.62   75.7%   0.05137
+drift control LAST [LDLQ 1.0/32 + refit h^1.0]                63.30         48.21   76.2%   0.05111
+
+    pass 1 only -- the one pass both arms enter with the same continuous optimum
+
+unit                                        control        arm   removed
+  LDLQ 1.0/32 + refit h^1.0 [triplicate MID]
+    model.layers.0.self_attn.q_proj            5.8000     5.8000    0.00%
+    model.layers.1.self_attn.k_proj            1.3450     1.3450    0.00%
+    model.layers.13.mlp.down_proj              1.7274     1.7274    0.00%
+    model.layers.14.mlp.gate_proj              3.0918     3.0918    0.00%
+    model.layers.2.mlp.down_proj               0.7189     0.7189    0.00%
+    model.layers.27.self_attn.o_proj           1.1729     1.1729    0.00%
+    TOTAL                                     13.8560    13.8560    0.00%
+  LDLQ 1.0/32 + refit h^1.0 + exact-16 fit
+    model.layers.0.self_attn.q_proj            5.8000     5.3809    7.23%
+    model.layers.1.self_attn.k_proj            1.3450     1.3450    0.00%
+    model.layers.13.mlp.down_proj              1.7274     1.7274    0.00%
+    model.layers.14.mlp.gate_proj              3.0918     3.0918    0.00%
+    model.layers.2.mlp.down_proj               0.7189     0.7189    0.00%
+    model.layers.27.self_attn.o_proj           1.1729     1.1729    0.00%
+    TOTAL                                     13.8560    13.4368    3.03%
+  drift control LAST [LDLQ 1.0/32 + refit h^1.0]
+    model.layers.0.self_attn.q_proj            5.8000     5.8000    0.00%
+    model.layers.1.self_attn.k_proj            1.3450     1.3450    0.00%
+    model.layers.13.mlp.down_proj              1.7274     1.7274    0.00%
+    model.layers.14.mlp.gate_proj              3.0918     3.0918    0.00%
+    model.layers.2.mlp.down_proj               0.7189     0.7189    0.00%
+    model.layers.27.self_attn.o_proj           1.1729     1.1729    0.00%
+    TOTAL                                     13.8560    13.8560    0.00%

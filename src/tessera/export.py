@@ -1000,6 +1000,7 @@ def encode_linear_planes(
     refit_metric_trailing: "torch.Tensor | None" = None,
     refit_reach_floor: bool = False,
     refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
 ) -> "tuple[ExportedUnit, EncodedUnit, object]":
     """Encode one ``[out_features, in_features]`` weight to artifact bytes.
 
@@ -1082,6 +1083,7 @@ def encode_linear_planes(
         refit_metric_trailing=refit_metric_trailing,
         refit_reach_floor=refit_reach_floor,
         refit_gauss_seidel=refit_gauss_seidel,
+        refit_lut_exact=refit_lut_exact,
     )
     # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
     # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares

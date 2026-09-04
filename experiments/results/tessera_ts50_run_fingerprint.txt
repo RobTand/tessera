@@ -1,0 +1,24 @@
+Issue #50 -- the checkout every arm in this directory was produced from
+=======================================================================
+
+Both the ceiling run and the exact-fit arm run were executed on sparklina from
+ONE rsynced copy of this branch at /home/rob/tmp/ts50-lutfit, and nothing was
+rsynced into it between the first unit and the last.  No rebase was taken
+during either run, so all six units of both runs share one code state.
+
+branch      muse/ts-50-lutfit
+base        master 82cdf51   (NOT rebased onto dc83ee1 / #100 -- deliberately:
+                              a mid-run rebase would split the six units
+                              across two builds and `require_same_build` now
+                              refuses that, since #100 gave `identity` an
+                              `image_digest`)
+commit      a86f64d          (identical encoder and harness to 7835933; the
+                              two commits between them add files only)
+
+The two files that decide what an arm computes, byte for byte:
+
+  00d856d627b5f04786f434bfa2701974ee8f085f0abb77a3f71be5c9013e677b  src/tessera/encode.py
+  01ca5de396bd6c5a7be70e126d987ed8efc08e5b7b95605927ad6c6b664d453b  experiments/lut_landing_ceiling.py
+
+Verified equal on the running copy, on the worktree at a86f64d, and on
+`git show 7835933:` for both paths.
