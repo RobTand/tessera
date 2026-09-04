@@ -355,7 +355,9 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # A side: per-token dynamic E4M3.  bf16 x fp8 is refused by
             # _scaled_mm on this hardware, so W8A8 is the only native shape.
             # The quantiser runs on EVERY path, including the GEMV one: the
-            # lane is handed the dequantised values (``fp8_gemv``), so the
+            # lane is handed these codes and applies ``a_scale`` to its fp32
+            # output (``fp8_gemv``, #110 -- folding the scale into a bf16
+            # operand is a rounding ``_scaled_mm`` does not do), so the
             # activation contract the census reads is the one that ran.
             a_q, a_scale = native_ops.native_fp8_quant(x2.contiguous())
             if layer.tessera_mode == MODE_RESIDENT:

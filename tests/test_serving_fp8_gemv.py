@@ -1,11 +1,14 @@
 """The streamed FP8 route's decode-regime GEMV: the wire read once, never materialised.
 
-Wires ``tessera.kernel_window_gemv`` (the fused window-body GEMV, bit-exact on
-196/196 reach units) into the FP8 route's ``apply()`` for M <= 8, keeping the
+Wires ``tessera.kernel_window_gemv`` (the fused window-body GEMV, whose
+DECODED TILE is bit-exact against the torch decoder's on 196/196 reach units
+-- the GEMM is a separate question, and #110 is what happens when the two are
+conflated) into the FP8 route's ``apply()`` for M <= 8, keeping the
 materialised decode + ``torch._scaled_mm`` path for prefill.  The activation
-contract does NOT change: the GEMV runs on the dequantised per-token-dynamic
-FP8 values, so what it computes is the W8A8 product up to fp32 summation
-order, and the census contract field is untouched.
+contract does NOT change: the GEMV runs on the per-token-dynamic FP8 codes the
+route's own quantiser produced, with ``a_scale`` applied to the kernel's fp32
+output, so what it computes is the W8A8 product up to fp32 summation order,
+and the census contract field is untouched.
 
 STUBBED like its sibling: vLLM's ``LinearMethodBase`` / parameters, the
 per-token FP8 activation quantiser and the ABI attestation.
@@ -206,12 +209,22 @@ def test_prefill_keeps_the_materialised_path(monkeypatch, m):
 
 
 @requires_cuda
-def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch):
-    """Same weights (bit-exact) and same A values: only the fp32 reduction order differs."""
-    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=4, seed=13)
+@pytest.mark.parametrize("m", [1, 4])
+def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch, m):
+    """Same weights (their DECODED BYTES bit-exact) and the same A codes.
+
+    The tolerance below is a bf16 ulp of the output, which is far wider than
+    what separates two fp32 summation orders -- so the *sharp* statement is
+    the second assertion: the two arms' bf16 outputs must be bit-identical on
+    all but a handful of elements.  Before #110 they agreed on about three
+    quarters of them, because the lane folded ``a_scale`` into a bf16 operand
+    and ``_scaled_mm`` does not.  ``m=1`` is the served shape (#110's decode
+    regime is every-position M=1) and was the shape no test compared.
+    """
+    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=m, seed=13)
     holder = layer.tessera_gemv
     g = torch.Generator(device="cuda").manual_seed(13)
-    x = torch.randn(4, layer.tessera_columns, device="cuda", generator=g).bfloat16()
+    x = torch.randn(m, layer.tessera_columns, device="cuda", generator=g).bfloat16()
     a_q, a_scale = _reference_fp8_quant(x.contiguous())
     y_gemv = fp8_gemv.streamed_apply(a_q, a_scale, layer.scale_b, *holder.op_args())
     b = weight.view(torch.float8_e4m3fn)
@@ -221,6 +234,47 @@ def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch):
     bound = _fp32_bound(w, scale.float().cuda(), x)
     tol = _bf16_tol(bound, y_mm.double())
     assert bool((((y_gemv.float() - y_mm.float()).abs()) <= tol).all())
+    same = (y_gemv.view(torch.int16) == y_mm.view(torch.int16)).double().mean().item()
+    assert same >= 0.99, f"only {same:.4%} of bf16 outputs match the fallback's bit for bit"
+
+
+@requires_cuda
+@pytest.mark.parametrize("m", [1, 2, 4, 8])
+def test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand(monkeypatch, m):
+    """#110: ``a_scale`` belongs on the fp32 output, never folded into bf16.
+
+    An E4M3 code is exact in bf16 (four significant bits;
+    ``test_every_legal_e4m3_byte_is_exact_in_bf16``).  ``code * a_scale`` is
+    NOT -- the fp32 scale carries twenty-four significant bits and bf16 keeps
+    eight -- so folding costs ~2^-9 relative on every activation element,
+    hundreds of times the fp32 accumulation floor this lane's receipts claim
+    as its only error.  This is the same rule ``bf16_route`` holds for the
+    weight side (``test_value_family_scale_is_applied_on_the_output_not_the
+    _tile``), here for the activation side, priced against an fp64 reference
+    of the product both arms claim to compute.
+    """
+    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=m, seed=17)
+    holder = layer.tessera_gemv
+    tensors, meta, _rows, _cols = holder.op_args()
+    g = torch.Generator(device="cuda").manual_seed(17)
+    x = torch.randn(m, layer.tessera_columns, device="cuda", generator=g).bfloat16()
+    a_q, a_scale = _reference_fp8_quant(x.contiguous())
+    w64 = weight.view(torch.float8_e4m3fn).float().double()
+    ref = (a_q.float().double() * a_scale.double()) @ (w64 * scale.double().cuda()[:, None]).t()
+
+    served = fp8_gemv._gemv_path(a_q.float().to(torch.bfloat16), tensors, meta) * a_scale
+    folded = fp8_gemv._gemv_path((a_q.float() * a_scale).to(torch.bfloat16), tensors, meta)
+
+    def relerr(y):
+        return float((y.double() - ref).norm() / ref.norm())
+
+    kept, lost = relerr(served), relerr(folded)
+    # sqrt(K) * 2^-24 is ~2e-6 at K = 1024; 1e-5 leaves headroom for the
+    # reduction tree without admitting a bf16 rounding of the operand.
+    assert kept < 1e-5, f"the lane is {kept:.3e} from the fp64 product, not an accumulation floor"
+    assert lost > 50 * kept, (
+        f"folding a_scale into the bf16 operand reads {lost:.3e} against {kept:.3e}: this test "
+        "no longer discriminates the two arithmetics and its threshold needs re-deriving")
 
 
 @requires_cuda

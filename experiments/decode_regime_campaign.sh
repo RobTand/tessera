@@ -28,6 +28,12 @@ ARMS=${ARMS:-/home/rob/tessera-runs/ts83}
 KLDIR=/mnt/shared/tessera-kl
 STAGE=${1:-all}
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
+# The campaign's own name.  #102 is the default so its receipt reproduces; a
+# re-run over the same arms after a lane change sets both and writes beside
+# the evidence rather than over it (TAG=ts110 PREFIX=qwen_ts110).
+TAG=${TESSERA_KL_ARM_TAG:-ts102}
+PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
+export TESSERA_KL_DUMP_PREFIX=$PREFIX
 export TS=$WT RUNS
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 export TESSERA_KL_IMAGE=${TESSERA_KL_IMAGE:-vllm/vllm-openai:latest}
@@ -60,25 +66,25 @@ if [ "$STAGE" = arms ] || [ "$STAGE" = all ]; then
   EXT_B_RO=$ARMS/ext-B-readonly
   mkdir -p "$EXT_B_RO"; chmod a-w "$EXT_B_RO"
   for ARM in armA armB; do
-    if [ -f "$KLDIR/qwen_ts102_ts102-${ARM}_decode.json.npz" ]; then
+    if [ -f "$KLDIR/${PREFIX}_${TAG}-${ARM}_decode.json.npz" ]; then
       echo "=== $ARM already dumped"; continue
     fi
     EXTRA=""
     [ "$ARM" = armB ] && EXTRA="-v $EXT_B_RO:/ext-ro:ro -e TORCH_EXTENSIONS_DIR=/ext-ro"
     echo "=== $ARM  $(date -Is)"
     EXT=$ARMS/ext-A TESSERA_LANE_DOCKER_EXTRA="$EXTRA" \
-      experiments/decode_regime_kl.sh "$ARMS/$ARM" "ts102-$ARM" streamed \
+      experiments/decode_regime_kl.sh "$ARMS/$ARM" "$TAG-$ARM" streamed \
       2>&1 | tee "$RUNS/$ARM.log"
   done
 
   echo "=== mutual KL between the two arms, per regime  $(date -Is)"
   for REG in decode prefill; do
-    A=$KLDIR/qwen_ts102_ts102-armA_$REG.json.npz
-    B=$KLDIR/qwen_ts102_ts102-armB_$REG.json.npz
+    A=$KLDIR/${PREFIX}_${TAG}-armA_$REG.json.npz
+    B=$KLDIR/${PREFIX}_${TAG}-armB_$REG.json.npz
     [ -f "$A" ] && [ -f "$B" ] || { echo "  $REG: missing an arm"; continue; }
     echo "--- $REG: armB against armA, byte-identical bytes ---"
     $PY /home/rob/dq-runs/kl_tool.py compare "$A" "$B" \
-      --teacher-label-override "armA-GEMV-$REG" \
+      --teacher-label-override "$TAG-armA-GEMV-$REG" \
       --out "$RUNS/mutual_$REG.json" | tail -6
   done
 fi
