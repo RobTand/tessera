@@ -138,12 +138,10 @@ the rule from being restated as a number again.
   is two docstring/comment paragraphs — `diff`-verified, no code differs.)
 * `tests/test_audit_byte_baseline.py` — **6 passed** (60.30 s) on the branch
   tree itself.  This is the repo's own no-bytes-move harness.
-* A combined re-run of those three plus the other two files that import
-  `compensate` (`test_ldlq_window.py`, `test_refit_trailing.py`) was queued
-  behind the fleet in the GPU slot and had not been granted it at the time of
-  writing; it lands at `/home/rob/tmp/ts95/after_tree/pbrun_result.txt` on
-  sparklina.  Nothing in it is expected to move: neither file calls
-  `choose_ldl_block`, and the AST diff below bounds what could.
+* The combined run on the branch tree — those three files plus the other two
+  that import `compensate` (`test_ldlq_window.py`, `test_refit_trailing.py`) —
+  **88 passed** in 322.39 s, on sparklina through the PrismaBuild pool, exit
+  code 0.
 
 ## Off-task fixes
 
