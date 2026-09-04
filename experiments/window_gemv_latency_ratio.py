@@ -185,6 +185,27 @@ def trace_window(path: str, t0: float, t1: float) -> dict:
                             for n, v in per_kernel_us.most_common(8)]}
 
 
+def ceiling_if_lane_were_free(lane_share: float | None) -> float | None:
+    """The most a perfect lane can be worth on a whole decode step.
+
+    Amdahl, and the reason it is reported beside the served ratio rather than
+    offered afterwards as an excuse: the served TPOT ratio prices an entire
+    decode step and the lane owns only part of it.  If the lane is share ``s``
+    of the step's device time, driving its cost to zero leaves ``1 - s`` and
+    the ratio cannot exceed ``1/(1 - s)``.  On the #83 arms ``s = 0.2979``
+    (``lm_head`` alone is 0.481), so the ceiling is 1.424x -- a served 1.15x
+    there would mean the kernel took most of what there was to take.
+
+    The same expression inverted says what a ratio would REQUIRE of the lane:
+    an observed step ratio ``R`` needs ``1 + (R - 1)/s`` on the lane bucket
+    alone, which is how the 2026-09-03 pair's 8.024x resolves to a demand for
+    a 24.6x lane difference and is refused.
+    """
+    if not lane_share or not 0 < lane_share < 1:
+        return None
+    return round(1.0 / (1.0 - lane_share), 4)
+
+
 def _decode_steps(receipt: dict) -> int | None:
     prof = receipt.get("profiled_load") or {}
     dec = prof.get("decode") or {}
@@ -254,8 +275,10 @@ def main() -> int:
             lane = sum(w["by_bucket"].get(k, {}).get("ms", 0.0)
                        for k in ("window_gemv", "window_decode", "scaled_mm/cutlass"))
             w["lane_bucket_ms"] = round(lane, 3)
-            w["lane_share_of_window"] = (round(lane / w["device_ms_in_window"], 4)
-                                         if w["device_ms_in_window"] else None)
+            share = (lane / w["device_ms_in_window"]
+                     if w["device_ms_in_window"] else None)
+            w["lane_share_of_window"] = round(share, 4) if share else None
+            w["ceiling_if_lane_were_free"] = ceiling_if_lane_were_free(share)
         traces[name] = w
 
     lane_ratio = None

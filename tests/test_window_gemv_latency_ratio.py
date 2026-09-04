@@ -161,3 +161,31 @@ def test_trace_clock_is_base_plus_ts(tmp_path):
     assert w["kernels_in_window"] == 2         # ts=0 falls outside the cut
     assert w["device_ms_in_window"] == pytest.approx(0.5)
     assert w["trace_span_utc"][0] == pytest.approx(base_s)
+
+
+def test_the_ceiling_is_amdahl_on_the_lane_share():
+    """A free lane is worth 1/(1 - share), and that is the ratio's ceiling.
+
+    0.2979 is the window-GEMV bucket's share of decode device time on the #83
+    arms -- 149.9 of 503.1 ms, against 242.0 ms for the bf16 cuBLAS GEMV under
+    ``logits_processor._apply_head``.  1.424x is therefore the most any served
+    TPOT ratio on those arms can read, and the number belongs in the reader's
+    hand before the ratio rather than after it.
+    """
+    assert RATIO.ceiling_if_lane_were_free(0.2979) == pytest.approx(1.4242, abs=5e-4)
+    assert RATIO.ceiling_if_lane_were_free(0.5) == pytest.approx(2.0)
+    # Not a number: no lane in the window, or a share arithmetic cannot produce.
+    assert RATIO.ceiling_if_lane_were_free(0.0) is None
+    assert RATIO.ceiling_if_lane_were_free(None) is None
+    assert RATIO.ceiling_if_lane_were_free(1.0) is None
+
+
+def test_the_cublas_gemv_is_bucketed_rather_than_left_in_other():
+    """It was 263.9 ms of one trace and sat in ``other``; ``other`` is where a
+    dilution hides."""
+    assert RATIO._bucket(
+        "std::enable_if<!(false), void>::type internal::gemvx::kernel<int, int, "
+        "__nv_bfloat16, __nv_bfloat16, __nv_bfloat16, float>") == "cublas_gemv"
+    assert RATIO._bucket(
+        "void (anonymous namespace)::window_gemv_kernel<14, 16, 1, unsigned short, "
+        "false, false>") == "window_gemv"

@@ -36,6 +36,15 @@ import re
 BUCKETS = (
     ("window_gemv", re.compile(r"window_gemv", re.I)),
     ("window_decode", re.compile(r"window_decode|decode_window", re.I)),
+    # cuBLAS's tall-skinny GEMV.  Called out rather than left in ``other``
+    # because on the #83 arms it is the single largest kernel in a decode step
+    # -- 242.0 of 503.1 ms of device time, 48.1% -- and a summary that hides it
+    # makes the lane's own share look larger than it is.  On those arms all 50
+    # launches resolved through their correlation ids to ``aten::mm`` inside
+    # ``logits_processor._apply_head``, i.e. ``lm_head``; the bucket is named
+    # for the kernel rather than for that attribution, because the attribution
+    # is a fact about one model's trace and the kernel is not.
+    ("cublas_gemv", re.compile(r"gemvx|gemv_bf16", re.I)),
     ("attention", re.compile(r"flash|attn|paged", re.I)),
     ("scaled_mm/cutlass", re.compile(r"cutlass|scaled_mm|gemm|Kernel_.*sm.*", re.I)),
     ("fp8_quant", re.compile(r"quant", re.I)),

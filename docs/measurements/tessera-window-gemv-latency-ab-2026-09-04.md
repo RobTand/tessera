@@ -330,8 +330,11 @@ the lane *as deployed on this model*, and the per-bucket device time is what
 transfers to a model whose `lm_head` is a smaller share. That is why
 `window_gemv_latency_ratio.py` reports two things and calls neither the other's
 headline: the served ratio, and the device time inside the profiled decode
-window by bucket (`lane_share_of_window`), cut from both arms' traces by one
-wall-clock rule.
+window by bucket (`lane_share_of_window`, and `ceiling_if_lane_were_free`
+beside it), cut from both arms' traces by one wall-clock rule. The cuBLAS GEMV
+now has a bucket of its own in the shared summariser rather than sitting in
+`other`, which is where a dilution hides: on this trace `other` falls from
+297.3 ms to 33.4 ms once it is named.
 
 This section was computed from `prof-armA-streamed-compiled/rank0.*.pt.trace.json.gz`
 -- the #83 campaign's own compiled trace, which is whole-serve rather than cut
