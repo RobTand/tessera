@@ -172,6 +172,52 @@ to load 86 within twenty minutes. Both exports hold a full core each (98% CPU,
 says), so they are not stalled, but the wall clock will exceed the projection
 and is reported as measured rather than as projected.
 
+## The concurrent design failed as a measurement, three times over
+
+I ran the three arms side by side and argued that made them a matched set. It
+did not, and the reasons compounded:
+
+1. **Different durations over a moving load.** Their first-chunk windows were
+   15, 68 and 95 minutes while `load1` ran 3.3 to 82.6, so each averaged a
+   different stretch of the curve. This is what forced the retraction of the
+   6.15x.
+2. **Different start times, so the interference is not symmetric** -- which was
+   the specific thing "matched by construction" claimed.
+3. **The interference is as large as the effect.** b32's rate got *worse* as
+   the box got quieter: 20.2 s/Mparam over units 0-20 (external load ~40)
+   against 31.6 s/Mparam over units 60-100 (external load ~8). The confounder
+   resolves cleanly -- b32's first chunk ended 19:41 and b8 started 19:40, so
+   chunk 1 had two of my arms and the quiet chunks had three. The 1.5x tracks
+   **my own arm count**, not the box.
+
+The sequential matched pair under the pool's `--exclusive` is therefore not a
+refinement of the concurrent measurement. It is the only version of it that was
+ever going to work, and the concurrent full-export wall clocks will be reported
+as elapsed-under-named-conditions rather than as any kind of ratio.
+
+## Projected completion, by each arm's own rate
+
+Two methods disagree and the difference decides whether b4 is deliverable:
+
+| arm | own rate (s/Mparam) | total | scaling b32's quiet rate by 32/block |
+|---|---|---|---|
+| b32 | 20.2 | ~2.5 h | ~3.7 h |
+| b8 | 88.2 | **~10.8 h** | ~15.0 h |
+| b4 | 124.0 | **~15.2 h** | ~29.3 h |
+
+The right-hand column assumes cost scales as 1/block, which my own data
+refutes: b4's measured rate is 124 s/Mparam where 1/block predicts 253. Each
+arm's own rate involves no cross-block extrapolation and is the defensible one.
+All three were measured through the load spike, so all three are upper bounds.
+
+Both candidates are inside the driver's window, so both should get served.
+
+## The branch suite
+
+`pytest -q` on the branch, run once through the pool on sparky:
+**1,619 passed, 9 skipped, 0 failed**, exit code 0, 990 s. No failures, so
+nothing needed checking against master.
+
 ## What is pending
 
 - [ ] b32 export wall-clock and bytes
