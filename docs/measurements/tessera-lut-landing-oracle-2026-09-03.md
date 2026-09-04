@@ -78,7 +78,11 @@ below the third. What it is worth, GS arm, six units:
   buys output-space error with weight-space error. Both `out` (held out) and
   `hfit` improve together, so there is no screen-inverts-on-held-out signature
   here -- but any future reading of this lever on a weight-space number will
-  see a regression, and that number is the wrong one.
+  see a regression, and that number is the wrong one. **On GLM there IS such a
+  signature, and it is why this lever does not promote**: `hfit` improves 6/6
+  and `out` worsens 6/6 -- see
+  `tessera-coupled-landing-glm-2026-09-04`. "Here" in this bullet means the
+  Qwen population and nothing wider.
 - **Of the landing loss itself** (`landed - continuous`, pooled over passes,
   cost-weighted): the coupled landing recovers **102%** of it on the GS arm
   (it lands below the one-step continuous point, which is a step and not a
@@ -100,9 +104,23 @@ the same device, same session, hashing every arm that touches
 **0 changed of 15**.
 
 **Nothing here is served.** Six units, one wire, weight-space `hfit` and a
-held-out activation-space `out` screen. No KL, no GLM arm. The lever stays
-opt-in, exactly as `refit_gauss_seidel` is, and inherits the same two gates
-before any default moves: the GLM six-expert geomean and a same-session serve.
+held-out activation-space `out` screen. No KL, and at the time this was
+written no GLM arm. The lever stays opt-in, exactly as `refit_gauss_seidel`
+is, and inherits the same two gates before any default moves: the GLM
+six-expert geomean and a same-session serve.
+
+**The first of those two gates has since been run, and the lever FAILS it**
+(2026-09-04, `tessera-coupled-landing-glm-2026-09-04`). On the six
+GLM-5.3-Flash experts the `h^1.0` default was chosen on, the same trailing arm
+is **1.0160x** against the served control -- above the 1x gate, and worse than
+the 1.0104x of the same arm without the coupled landing. The lever itself is
+1.0055x on held-out `out` there, unanimous over six units, while `hfit`
+improves 0.9841x, also unanimous: it minimises the fit-row quadratic better
+and loses held-out output error doing it. Every number in this receipt still
+stands as a statement about the six dense Qwen3-0.6B units it was measured on;
+none of them is a statement about the wire's default, and the GLM leg is why.
+`assert_plane_promotion` refuses the arm, and the second gate (a served KL
+A/B) is moot until the first is cleared.
 
 Commit: see `git log` for this file. Code: `src/tessera/encode.py`
 (`_coupled_landing`, `_refit_scales_lut_metric(coupled_landing=)`,
