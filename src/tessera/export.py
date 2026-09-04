@@ -171,6 +171,14 @@ DEFAULT_CHANNEL_SIGMA: "float | None" = None
 #: scale group constrains the schedule (tessera#95).  The constant stays 32
 #: because moving it is a quality-for-encode-time trade nobody has priced
 #: (tessera#60).
+#:
+#: A caller that wants the derived block instead of the constant passes a
+#: **budget** rather than an int -- ``ldlq_block={"max_penalty": 1.02}`` -- and
+#: every unit then gets the largest block whose predicted penalty is inside it,
+#: priced from that unit's own Hessian.  That is the only spelling under which
+#: one export gives GLM's experts a coarse block and dense attention a fine
+#: one, which is what the two measured populations ask for; a global flip to
+#: another constant cannot (tessera#12, tessera#60).
 DEFAULT_LDLQ_SIGMA = 1.0
 DEFAULT_LDLQ_BLOCK = 32
 
@@ -273,7 +281,7 @@ class ActivationSource:
     hessians: "Mapping[str, torch.Tensor]"
     provenance: "dict"
     ldlq_sigma: "float | None" = DEFAULT_LDLQ_SIGMA
-    ldlq_block: int = DEFAULT_LDLQ_BLOCK
+    ldlq_block: "int | Mapping[str, float]" = DEFAULT_LDLQ_BLOCK
     refit_objective: str = DEFAULT_REFIT_OBJECTIVE
     refit_reach_floor: bool = False
 
@@ -295,9 +303,41 @@ class ActivationSource:
                 f"the LDLQ regulariser must be positive (or None to turn LDLQ off), "
                 f"got {self.ldlq_sigma}"
             )
-        if self.ldlq_block < 1:
-            raise GrammarError(f"the LDLQ block must be at least one column, got "
-                               f"{self.ldlq_block}")
+        if isinstance(self.ldlq_block, int):
+            if self.ldlq_block < 1:
+                raise GrammarError(f"the LDLQ block must be at least one column, got "
+                                   f"{self.ldlq_block}")
+        else:
+            try:
+                budget = dict(self.ldlq_block)
+            except TypeError:
+                raise GrammarError(
+                    f"ldlq_block is a block width, or a budget "
+                    f"{{'max_penalty': ratio}} to derive one per unit, got "
+                    f"{self.ldlq_block!r}") from None
+            if set(budget) != {"max_penalty"}:
+                raise GrammarError(
+                    f"a derived-block budget names exactly 'max_penalty' -- the "
+                    f"ratio against full feedback a unit may pay -- got "
+                    f"{sorted(budget)}. The floor is not a caller field here: on "
+                    f"the encode_unit path it is 1 (tessera#95)")
+            try:
+                penalty = float(budget["max_penalty"])
+            except (TypeError, ValueError):
+                raise GrammarError(
+                    f"max_penalty is a ratio, got {budget['max_penalty']!r}") from None
+            if not penalty >= 1.0:
+                raise GrammarError(
+                    f"max_penalty is a ratio against full feedback and is at "
+                    f"least 1.0, got {penalty}")
+            if self.ldlq_sigma is None:
+                raise GrammarError(
+                    "a derived-block budget with LDLQ off prices nothing: the "
+                    "block only exists inside the LDLQ schedule, and the "
+                    "penalty is read off the *regularised* Hessian, which needs "
+                    "ldlq_sigma. Pass a sigma, or drop the budget")
+            object.__setattr__(self, "ldlq_block",
+                               MappingProxyType({"max_penalty": penalty}))
         obj = self.refit_objective
         if isinstance(obj, str):
             _check_refit_objective(obj)
@@ -358,6 +398,42 @@ class ActivationSource:
             )
         return obj[key]
 
+    def block_for(self, H_reg: "torch.Tensor") -> int:
+        """The LDLQ block for a unit whose regularised Hessian is ``H_reg``.
+
+        A stated ``ldlq_block`` is returned as it stands and ``H_reg`` is not
+        read -- that path is byte for byte what it always was, and costs no
+        Cholesky.  A budget is resolved here, per unit, against that unit's own
+        Hessian, at ``floor=1``: the block goes to ``encode_unit(ldl=...)``,
+        which reads the scale plane once per pass *before* the block loop and
+        refits it once after, so no scale group constrains the schedule and
+        every width down to a single column is legal (tessera#95).  Passing the
+        stitching path's floor of 16 here would delete every block below 16,
+        which on dense attention is where the whole of the measured win lives.
+
+        Why a budget and not a better constant: ``block_penalty`` at ``b=32``
+        reads 1.098 on dense Qwen attention and 1.0014 on GLM experts, a factor
+        of 70 in what the same constant costs the two populations (tessera#60).
+        A budget states the exchange rate once and lets each unit answer it,
+        which is the only spelling under which one export can serve both.
+
+        What it cannot see: the penalty is a function of ``H`` alone, so units
+        that share a Hessian get the same block however differently they spend
+        it.  ``q_proj``, ``k_proj`` and ``v_proj`` of one layer read the same
+        hidden state and have bit-identical Hessians, yet halving the block was
+        measured worth 5.5% on ``q``/``k`` against 2.0% on ``v_proj``
+        (``docs/measurements/tessera-dense4-residual-mechanism-2026-09-03.md``).
+        A budget therefore over-provisions ``v_proj`` at the rate it provisions
+        ``q``/``k``; it spends encode time where feedback is being *skipped*,
+        which is not the same claim as spending it where it pays most.
+        """
+        if isinstance(self.ldlq_block, int):
+            return self.ldlq_block
+        from .compensate import choose_ldl_block
+
+        return choose_ldl_block(
+            H_reg, max_penalty=float(self.ldlq_block["max_penalty"]), floor=1)
+
     def for_unit(self, tensor_name: str, in_features: int,
                  device: "str | torch.device" = "cpu",
                  scale_plane: "ScalePlaneKind | None" = None) -> dict:
@@ -388,11 +464,10 @@ class ActivationSource:
         if self.ldlq_sigma is not None:
             from .compensate import block_ldl, regularize_hessian
 
-            kwargs["ldl"] = block_ldl(
-                regularize_hessian(H, sigma_reg=float(self.ldlq_sigma)),
-                self.ldlq_block,
-            )
-            kwargs["ldl_block"] = self.ldlq_block
+            H_reg = regularize_hessian(H, sigma_reg=float(self.ldlq_sigma))
+            block = self.block_for(H_reg)
+            kwargs["ldl"] = block_ldl(H_reg, block)
+            kwargs["ldl_block"] = block
         objective = self.objective_for(scale_plane)
         if objective == "hessian":
             kwargs["refit_metric"] = H
@@ -439,7 +514,15 @@ class ActivationSource:
         """
         return {
             "ldlq_sigma": self.ldlq_sigma,
-            "ldlq_block": self.ldlq_block,
+            # An int is written as the int it always was, so a stated-block
+            # export's config is byte for byte what it was before budgets
+            # existed.  A budget is written as its own dict: the merge guard
+            # already compares this field, and two parts built against the same
+            # Hessian identity (compared beside it) under the same budget chose
+            # the same block for every unit, because the choice is a
+            # deterministic function of exactly those two things.
+            "ldlq_block": (self.ldlq_block if isinstance(self.ldlq_block, int)
+                           else dict(self.ldlq_block)),
             "refit_objective": (self.refit_objective
                                 if isinstance(self.refit_objective, str)
                                 else dict(self.refit_objective)),
