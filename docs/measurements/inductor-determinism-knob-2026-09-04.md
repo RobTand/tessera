@@ -278,4 +278,7 @@ carry that receipt's provenance, not this one's.
 Tests touched by the change that carries this receipt: `tests/test_issue_refs.py
 tests/test_audit_doc_claims.py tests/test_serve_build_identity.py
 tests/test_inductor_determinism_knob.py` — **44 passed in 43.06 s** on sparky
-(`pbrun` action `189a47296cf3`).
+through the pool (`pbrun` action `189a47296cf3`), and **44 passed in 47.43 s**
+again on sparky against the final text of this file, run in-process with
+`CUDA_VISIBLE_DEVICES=''` because the pooled re-run was still queued behind
+16 ready jobs after twenty minutes and this set claims no GPU.
