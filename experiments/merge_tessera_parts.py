@@ -231,6 +231,17 @@ def main():
                     help="move shard files instead of copying (needs one filesystem)")
     args = ap.parse_args()
 
+    if any((Path(p) / "tessera_part_config.json").exists() for p in args.parts):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+        from tessera.serving_parts import merge_serving_parts
+        try:
+            manifest = merge_serving_parts(args.parts, Path(args.out), Path(args.source), move=args.move)
+        except (ValueError, OSError, KeyError) as exc:
+            raise SystemExit(f"serving-part merge refused: {exc}") from exc
+        print(f"merged {len(args.parts)} serving parts -> {args.out}: "
+              f"{manifest['totals']['modules']} modules, {manifest['totals']['wire_bytes']} wire bytes")
+        return
+
     loaded = [load(p) for p in args.parts]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

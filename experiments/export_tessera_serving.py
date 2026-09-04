@@ -164,6 +164,9 @@ from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
+from tessera.serving_parts import (  # noqa: E402
+    BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
+    partition_owner, sha256_file)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -186,7 +189,7 @@ FUSED = (
 #: ``ignore`` by ``ignored_modules``, which runs over the tensors WRITTEN rather
 #: than over the ones this pattern matched.  Staying BF16 and being named are
 #: different facts and the plugin reads the second one (#86).
-BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
+# BODY_LAYER is shared with the whole-layer partition ownership rule.
 
 #: GLM writes descriptive names; LFM writes shard ids. The shared scheme
 #: table normalises both, while the emitted wire retains the source spelling
@@ -1041,6 +1044,11 @@ def main():
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
+    ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
+                    help="write only whole layers owned by layer %% COUNT == INDEX; "
+                         "non-body tensors belong to index 0. Merge every part before serving.")
+    ap.add_argument("--partition-runtime-image",
+                    help="exact repository@sha256 image pinned by the part's dispatch command")
     ap.add_argument("--hessian", type=Path, default=None,
                     help="capture_h_full.py payload: full input Hessians keyed by the tensor's module "
                          "name.  Enables the activation-aware encoder settings below; an encode that "
@@ -1104,6 +1112,15 @@ def main():
                          "serving_gate block. Needed today by --grid BF16, whose wire has no "
                          "plugin route and whose --stock-twin is what gets served.")
     args = ap.parse_args()
+    if args.partition:
+        if args.stock_twin is not None:
+            ap.error("--partition does not support --stock-twin; assemble the wire checkpoint first")
+        if args.out.exists():
+            ap.error(f"partition output already exists: {args.out}; use a fresh directory")
+        if not args.partition_runtime_image:
+            ap.error("--partition requires --partition-runtime-image")
+    elif args.partition_runtime_image:
+        ap.error("--partition-runtime-image requires --partition")
 
     # The activation-aware settings fire when, and only when, a Hessian is
     # here: the encoder cannot invent one, and a weights-only export must stay
@@ -1413,6 +1430,40 @@ def main():
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
 
+    partition_record = None
+    if args.partition:
+        index, count = args.partition
+        options = {key: value for key, value in vars(args).items()
+                   if key not in {"src", "out", "partition", "partition_runtime_image",
+                                  "device", "stock_twin", "plan_json", "hessian", "input_scales"}}
+        options["plan"] = json.loads(args.plan_json.read_text()) if args.plan_json else None
+        for key in ("hessian", "input_scales"):
+            path = getattr(args, key)
+            options[key + "_sha256"] = sha256_file(path) if path else None
+        identity = export_identity(args.src, options, args.partition_runtime_image,
+                                   Path(__file__).resolve().parents[1])
+        from tessera.encoder_identity import encoder_fixture_id
+        identity["encoder_fixture_id"] = encoder_fixture_id().hex()
+        owns = lambda name: partition_owner(name, count) == index
+        selected = sorted(name for names in shards.values() for name in names if owns(name))
+        if not selected:
+            raise SystemExit(f"partition {index}/{count} owns no source tensors")
+        partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
+                            "identity": identity, "source_tensors": selected}
+        shards = {shard: [name for name in names if owns(name)] for shard, names in shards.items()}
+        shards = {shard: names for shard, names in shards.items() if names}
+        # Planning and the construction gate above see the same complete plan
+        # on every worker. Only execution is partitioned, at whole-layer ownership.
+        plan = {name: value for name, value in plan.items() if owns(name)}
+        modules = {name: members for name, members in modules.items() if owns(name)}
+        stack_plan = {name: value for name, value in stack_plan.items() if owns(name)}
+        shapes = {name: shape for name, shape in shapes.items() if owns(name)}
+        expert_shapes = {name: shape for name, shape in expert_shapes.items() if owns(name)}
+        routed_shapes = {name: shape for name, shape in routed_shapes.items() if owns(name)}
+        passthrough = [name for name in passthrough if owns(name)]
+        print(f"partition {index}/{count}: {len(selected)} source tensors, "
+              f"{len(stack_plan)} routed stacks, {len(modules)} dense modules", flush=True)
+
     input_scales = {}
     if args.input_scales:
         with safe_open(str(args.input_scales), framework="pt") as handle:
@@ -1436,7 +1487,8 @@ def main():
     module_records: dict[str, dict] = {}
     twin_modules: dict[str, list[str]] = {NVFP4: [], FP8: [], BF16: []}
     twin_records: dict[str, dict] = {}
-    ignore = ["lm_head", "model.embed_tokens"]
+    ignore = (["lm_head", "model.embed_tokens"]
+              if args.partition is None or args.partition[0] == 0 else [])
     passthrough_bytes = 0
     weights_cache: dict[str, torch.Tensor] = {}
     done = 0
@@ -1739,12 +1791,13 @@ def main():
         "config_groups": config_groups, "ignore": ignore,
     }
     tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)
-    (args.out / "config.json").write_text(json.dumps(config, indent=2))
-    if len(shards) > 1:
+    config_name = "tessera_part_config.json" if args.partition else "config.json"
+    (args.out / config_name).write_text(json.dumps(config, indent=2))
+    if len(shards) > 1 or args.partition:
         size = sum((args.out / s).stat().st_size for s in shards)
         (args.out / "model.safetensors.index.json").write_text(
             json.dumps({"metadata": {"total_size": size}, "weight_map": new_weight_map}, indent=2))
-    aux_patterns = ("*.json", "*.txt", "*.jinja", "*.model")
+    aux_patterns = () if args.partition else ("*.json", "*.txt", "*.jinja", "*.model")
     for pattern in aux_patterns:
         for aux in args.src.glob(pattern):
             if aux.name in ("config.json", "model.safetensors.index.json"):
@@ -1810,12 +1863,9 @@ def main():
             "passthrough_unrouted": bool(args.passthrough_unrouted),
             "unrouted": unrouted_records,
         },
-        # WHAT THE ROUTED-MoE LAYERS GOT, as a value rather than as a line of
-        # stdout.  Every expert of this model stayed at source precision and
-        # its FusedMoE module is named in ``ignore``; on a routed-MoE model
-        # that is most of the parameters, so a reader comparing this manifest's
-        # bpp against a target has to be able to see it without re-deriving it
-        # from the tensor names.  ``modules`` is exactly the set of ``ignore``
+        # WHAT THE ROUTED-MoE LAYERS GOT, as a value rather than stdout.
+        # Unplanned stacks stay at source precision; planned stacks carry wires.
+        # ``modules`` is exactly the set of ``ignore``
         # entries this block accounts for -- read off ``ignored_modules``, the
         # same rule that put them there, so this cannot drift from the list it
         # claims to summarise (#86).  Both counts are zero on a dense model,
@@ -1858,6 +1908,10 @@ def main():
         "vllm_fp4_predicate": tessera_fp4_predicate,
         "totals": totals, "modules": module_records,
     }
+    if partition_record is not None:
+        partition_record["output_sha256"] = {
+            shard: sha256_file(args.out / shard) for shard in sorted(shards)}
+        manifest["export_partition"] = partition_record
     (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
 
     if twin is not None:

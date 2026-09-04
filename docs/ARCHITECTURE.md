@@ -24,6 +24,25 @@ families) and stamping coverage and accounting into `<plan>.provenance.json`.
 The exporter encodes what the plan names and the manifest states what is on
 disk; the census checks every module serves on its declared family.
 
+### 2.1 Whole-layer export parts have one checked assembly
+
+`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
+validates the same full plan before selecting its work, so a fused module and
+an expert stack cannot be divided between workers. Each worker reads and writes
+only its owned source tensors. A part has `tessera_part_config.json`, never a
+loadable `config.json`; it is not a checkpoint until assembly.
+
+`merge_tessera_parts.py` recognizes these serving parts separately from the
+older shard-split wire exports. Before creating its output it requires every
+partition exactly once, exact source-tensor ownership and coverage, identical
+source/config/tokenizer hashes, encoder source and behavior fixture hashes, full plan/options and
+dispatch-pinned runtime digest, and an index matching the hashed output files.
+It copies the containers unchanged under unique shard names, unions the schemes
+and ignores, derives totals from the combined module records, and writes the
+final `config.json` last. The runtime digest here names what the dispatch was
+asked to run; PrismaBuild's campaign receipt supplies the execution evidence.
+
 ## 3. Bytes: priced == served
 
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
