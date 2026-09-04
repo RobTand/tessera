@@ -826,3 +826,215 @@ has the rate in hand (`max(14, R)`) if Rob ever wants to spend it.
 * **Wall times in these runs are not a measurement.** Three sweeps shared two
   boxes with a dozen other agents' jobs; the controls are byte- and
   tensor-identity, which is unaffected, and the seconds column is not a claim.
+
+## #18, part 1: the bundle split -- entries and reach, priced apart
+
+The joint grid above ends by naming the comparison it cannot make.  At ratio
+1 a wider window table has more entries **and** its outermost entry sits
+further out, so `L=16 r=1` is not "the shipped recipe with more resolution":
+it is the shipped recipe with more resolution *and* a reach of 4.3125 where
+the shipped one reaches 4.0.  Every `L` number above prices that bundle.  It
+matters which half is being bought, because the two halves have different
+prices: **entries cost bytes** (the table is `2^L x 2` on the ALPHABET plane,
+and the sweep byte-matches it against the shipped pair built at the rung that
+spends the same bytes), while **reach costs nothing at all** -- a spread is a
+constant in the recipe and the artifact is the same size at every value of
+it.
+
+`experiments/matched_reach.py` builds the arms that split them.  For a target
+reach it searches for the spread at which a given width realises *exactly*
+that reach, and asserts the realised value before returning it.  A search,
+not a division: a table's entries are grid values, so its reach is the
+**snapped** outermost quantile and therefore a step function of the spread.
+On the shipped BF16 grid the naive `target / own_reach` lands on the wrong
+step -- at `L=14`, asking for `L=12`'s reach of 3.671875 by that route
+delivers 3.6875 -- and a receipt computed that way would report a 0.4% miss
+as an exact match.  The three widths' own reaches, from the code:
+
+| L | own reach (row-RMS at the shipped `channel_sigma = 1.0`) |
+|---|---|
+| 12 | 3.671875 |
+| 14 | **4.0** |
+| 16 | 4.3125 |
+
+The rows of `experiments/bf16_matched_reach_run.sh` each encode one width at
+all three of those reaches, which turns the one-dimensional `L` axis into a
+factorial whose **rows are entry counts** (byte-matched by the sweep) and
+whose **columns are realised reaches** (free).  The `L=14` row is the cheap
+and decisive one: it is the shipped table at another width's reach, at zero
+byte cost and no change to the table's size.
+
+**The reading was registered in the run script's header before any number
+existed.**  For a (population, rung), `A` is the landed byte-matched effect
+of the L-arm on its gate and `B` the effect of the `L=14` arm at that width's
+reach; `recovered = log B / log A`.  At or above 0.5 the majority of the L
+win is reach and is free; at or below 0.15 it is entry count and costs bytes;
+between, both halves are real.  A *negative* fraction is a different fact and
+is reported as one rather than as a band: the two axes moved the gate in
+opposite directions, so no part of one is recoverable from the other.  Both
+orientations of that occur -- an L win the spread alone reverses
+(`B > 1 > A`), and an L arm that hurts while the spread alone helps
+(`B < 1 < A`, which the landed dense `L=16` arms at 1.1655x-1.1882x can
+produce).
+
+**Where that reading applies was registered with it.**  `recovered` is a
+ratio of two logarithms, so wherever `A` sits near 1 it is dominated by its
+own third digit: the landed GLM `R=4` arms are 1.0029x and 1.0134x, and
+splitting a 0.3% effect into halves would report precision the quantity does
+not have.  So the fraction is computed and printed for every cell and the
+*verdict* is read only where `|log A| >= log 1.01` -- where the byte-matched
+L arm moves its gate by at least 1%.  Applied to the grids already landed
+that admits all six dense cells (0.8916x to 1.1882x) and five of the six GLM
+ones, excluding exactly one, `R=4 L=16` at 1.0029x.  It is a reporting
+convention and is labelled as one, not a noise floor: the encoder is
+deterministic and the repeat control is byte identity, so there is no noise
+here to clear -- only conditioning.  It lives in
+`matched_reach_report.read_split`, with the threshold pinned by
+`tests/test_matched_reach_report.py` against those same landed numbers,
+because a threshold that lives only in a comment is one the report can
+quietly ignore.
+
+The physical check comes free and is reported: at a matched reach the same
+rows are clipped, so `rows_over_reach` at `(14, r*)` must equal it at
+`(L, 1.0)` on every unit.  The controls are the sweep's own in-process repeat
+plus a **cross-run** one these separate processes make possible and the
+in-process repeat cannot give: the shipped `(L=14, r=1)` baseline is
+re-encoded in every row and must be byte- *and* tensor-identical to the same
+arm in the landed `pair_glm.json` / `pair_dense.json`.
+`experiments/matched_reach_report.py` refuses to summarise without it.
+
+That physical check, though, is a check on the *diagnostic*: both sides
+compute `rows_over_reach` from the same helper, so it can confirm the
+arithmetic and is silent about whether the **encoder** built the table the
+helper describes.  What makes a matched arm an arm is a separate identity,
+and it is four constants, verified in the code rather than argued:
+`bf16_l_sigma_sweep` passes `window_sigma = ratio * BF16_CHANNEL_SIGMA`
+(`None` at ratio 1.0) and `encode_unit`'s CHANNEL branch sets
+`table_sigma = window_sigma`, falling back to `channel_sigma` only when it is
+`None` (`src/tessera/encode.py:2378-2385`); the seed is
+`BF16_RECIPE.window_seed = DEFAULT_WINDOW_SEED = 0`
+(`src/tessera/export.py:146,714`), which is the helper's default; and `half`
+is read *only* on the `sigma is None` branch of `_window_points_cpu`
+(`src/tessera/encode.py:739-750`), which this path never takes, so that
+argument cannot move the table here at all.  The grid is `BF16_GRID`, the
+recipe's own.  `tests/test_matched_reach.py` pins all four, including by
+building each table at `half` 8, 16 and 32 and asserting one reach.
+
+### The `L=14` row, measured
+
+Both `L=14` rows ran on sparky through the PrismaBuild pool on 2026-09-04
+(action keys `9f7abf6f...`, `8b60e5a1...`; about 13 and 9 minutes of GPU).
+Rows are the table's entry count, byte-matched by the sweep; columns are the
+realised reach, which costs nothing.  Every cell is the geomean over the
+population's units against that unit's own byte-matched shipped pair, with
+the unanimity count beside it.
+
+**Six GLM experts, gate = held-out capture rows (`out`):**
+
+| L | reach 3.671875 | reach 4.0 | reach 4.3125 |
+|---|---|---|---|
+| 12 | **1.0134x** 0/6 | — | — |
+| 14 | 1.0094x 0/6 | 1.0000x (the reference) | **0.9915x 6/6** |
+| 16 | — | — | **1.0029x** 1/6 |
+| *R=6* | | | |
+| 12 | **1.0414x** 0/6 | — | — |
+| 14 | 1.0233x 0/6 | 1.0000x | **0.9862x 6/6** |
+| 16 | — | — | **0.9801x** 6/6 |
+| *R=8* | | | |
+| 12 | **1.1170x** 0/6 | — | — |
+| 14 | 1.0440x 0/6 | 1.0000x | **0.9610x 6/6** |
+| 16 | — | — | **0.9332x** 6/6 |
+
+(the first block is R=4; bold cells are the byte-costing `L` arms and the free
+matched-reach ones.)
+
+**The split, read as registered.**  On the GLM experts the two axes point the
+same way and the free half carries the majority of the win: `L=16` at R=8 is
+`recovered +0.576` -- 58% of a 0.9332x win is the reach, available at zero
+bytes -- and the per-unit fractions are tight (+0.52 to +0.61 across six
+experts).  R=6 reads +0.694 the same way.  The `L=12` side reads +0.706 at
+R=4, +0.567 at R=6 and +0.389 at R=8 ("both halves are real").  R=4 `L=16` is
+**not read**: its L arm moves 0.29%, below the registered 1% conditioning
+floor, and its per-unit fractions (-6.45 to +1.23) are exactly the noise-about-
+nothing the floor exists to refuse.
+
+**Eight dense Qwen3-0.6B Linears, gate = captured `h`:**
+
+| L | reach 3.671875 | reach 4.0 | reach 4.3125 |
+|---|---|---|---|
+| 12 | **0.8916x** 8/8 | — | — |
+| 14 | 1.0091x 3/8 | 1.0000x | 1.0006x 4/8 |
+| 16 | — | — | **1.1882x** 0/8 |
+| *R=6* | | | |
+| 12 | **0.9003x** 8/8 | — | — |
+| 14 | 1.0295x 0/8 | 1.0000x | **0.9844x 5/8** |
+| 16 | — | — | **1.1720x** 0/8 |
+| *R=8* | | | |
+| 12 | **0.9565x** 6/8 | — | — |
+| 14 | 1.0678x 1/8 | 1.0000x | **0.9606x 7/8** |
+| 16 | — | — | **1.1655x** 0/8 |
+
+**On dense the two axes are antagonistic, and that is the finding.**  Five of
+the six dense cells come back opposite-signed: fewer entries wins at matched
+bytes (0.8916x at R=4) while *less reach* alone loses (1.0091x), and more
+entries loses (1.1655x at R=8) while *more reach* alone wins (0.9606x, 7/8).
+There is no fraction of one recoverable from the other, and the report says
+so rather than filing a negative fraction in the "entry count" band.  One
+disclosure belongs with that sentence: the registration named this case in a
+single orientation (`B > 1 > A`) and the code implemented only that one, so
+the mirror -- an L arm that hurts while the spread alone helps -- would have
+been filed in the `f <= 0.15` band.  It was generalised to the sign itself
+(`f8047f7`) after the first arms had landed and before any verdict was read.
+The fix relabels three dense cells from a band they were never in to the sign
+they are; it moves no number, and it is disclosed here rather than left to
+the commit log.  The one
+readable dense cell, R=4 `L=16`, is +0.003: that loss is entry count, whole.
+
+Two consequences worth separating from the decomposition itself:
+
+* **A cell the earlier one-sided grid stepped over.**  Its ratios were
+  `[1.0, 1.25, 1.41, 1.75]`, whose realised reaches are 4.0 then **5.0**.  At
+  GLM R=4 that grid saw 1.0000x then 1.0135x (0/6) and concluded no spread
+  helps; the matched reach of 4.3125, which lies between its first two rungs,
+  is **0.9915x on 6 of 6 experts at zero bytes** -- though at 0.85% geomean
+  only 3 of those 6 clear 1% individually, which the sweep's own `win@1%`
+  column reports and this receipt repeats rather than rounding away (R=6 is
+  6/6 with 4 at 1%; R=8 is 6/6 with 6).  At R=8 the coarse grid's own 5.0
+  (0.9375x, 6/6) is still the better free point, so this is a gap in the
+  earlier grid's resolution at low rate, not a new optimum everywhere.
+* **The one-sidedness cost nothing.**  `r=0.91596` is the first spread below
+  the shipped one ever measured on this grid, and it is worse in all six
+  populations x rungs (1.0094x to 1.0678x).  The axis really is monotone
+  downward from the shipped point, so the earlier grid missed nothing by
+  never going there.  A negative result, recorded as one.
+
+**Controls.**  Cross-run: the shipped `(L=14, r=1)` baseline is re-encoded in
+these separate processes and is byte- **and** tensor-identical to the same arm
+in the landed grids -- 18 of 18 shared (unit, rung) baselines on GLM, 24 of 24
+on dense.  In-run: 18 of 18 and 24 of 24 repeated-last baselines identical.
+Byte match: 3 of 3 arms per unit sit at their reference's exact bpp.  Physical
+check: `rows_over_reach` agrees at every matched reach, on every cell.
+
+**What is still missing, precisely.**  This is the `L=14` row only, so the
+factorial has one row of three.  Attributing the residual to entry count --
+"the L=16 entries alone cost 1.1655/0.9606 = 1.21x on dense R=8" -- assumes
+the two axes compose multiplicatively, which one row cannot test.  The cell
+that tests it is `L=16` at reach 4.0 (the wide table with its spread narrowed
+to the shipped reach).  The four rows that complete the factorial were
+submitted to the pool after the two above landed -- `87cf849b` (`glm-16`),
+`ef037166` (`dense-16`), `6977d165` (`glm-12`), `fa81010e` (`dense-12`), about
+38 minutes of GPU for the expert `L=16` row and 11 for `L=12` -- and write
+beside these two, where `experiments/matched_reach_report.py` takes any
+combination of them on one command line.  Removing their `pb-queue/ready`
+records cancels them.  Two pool observations from these submissions, recorded
+because they are PrismaBuild's to fix and not this repo's: both completed
+rows re-entered `pb-queue/ready` after publishing their results, so their
+records were removed by hand and the landed JSON copied to
+`mr_*_L14.landed.json` beside it; and during a runtime rollout sparky's offer
+file oscillated between two worker generations' capacity shapes (28 of 60
+samples carrying `cpu: 10` and a `runtime_commit`, 32 carrying neither), which
+refuses any submission declaring cores about half the time.  The oscillation
+was gone afterwards -- 40 of 40 samples consistent -- so it is a rollout-window
+shape, not a standing one.  Nothing here moves a default in any case --
+both axes change `encoder_profile_id`, there is no BF16 serving lane, and both
+gates are weight-space or H-weighted columns.  House principle 3: a screen.
