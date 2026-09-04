@@ -291,7 +291,12 @@ it back through the plugin's own functions -- scheme validation, per-container
 parse, `unpack_moe_wires`, `prepare_tessera_moe_experts` -- and it is where the
 stride stops being an argument: at one shape and one rung the blobs of a group
 differ in length, because the manifest's `global_scale` is an exact varint
-ratio whose width follows its value.
+ratio whose width follows its value. On the GPU,
+`experiments/moe_route_load_probe.sh` takes the same bytes further: its
+`positive_exported` arm loads what the exporter wrote through
+`RoutedExperts.load_weights` and executes it through vLLM's own fused-MoE
+kernel, matching the arm the probe encoded itself digit for digit while the
+bytes on disk differ.
 
 The PACKED 3-D source layout has no export, and the reason is two conventions
 the tensor does not state: which axis is the output (the dims decide only when
