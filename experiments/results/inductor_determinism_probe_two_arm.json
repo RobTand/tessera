@@ -1,5 +1,5 @@
 {
-  "schema": "tessera.inductor_determinism_probe/2",
+  "schema": "tessera.inductor_determinism_probe/1",
   "torch": "2.13.0+cu130",
   "device": "cuda",
   "params": {
@@ -44,20 +44,6 @@
           false,
           false
         ]
-      },
-      "on_reassert": {
-        "at_import": [
-          true,
-          true
-        ],
-        "after_first_compile": [
-          false,
-          false
-        ],
-        "after_second_compile": [
-          false,
-          false
-        ]
       }
     },
     "summary": {
@@ -66,10 +52,6 @@
         "resets_after_compile": false
       },
       "on": {
-        "live_at_import": true,
-        "resets_after_compile": true
-      },
-      "on_reassert": {
         "live_at_import": true,
         "resets_after_compile": true
       }
@@ -85,38 +67,7 @@
       "only_in_a": 0,
       "only_in_b": 0,
       "byte_identical": 0,
-      "same_choice_different_measured_time": 2,
-      "different_tuning_choice": 0,
-      "examples": [],
-      "kernel_sources_identical": false,
-      "kernel_count": {
-        "a": 4,
-        "b": 4
-      },
-      "kernel_meta_deterministic": [
-        "False"
-      ],
-      "kernel_meta_deterministic_by_phase": {
-        "first": [
-          "False"
-        ],
-        "second": [
-          "False"
-        ]
-      },
-      "kernel_meta_contiguous_rdim": [],
-      "outputs_bitwise_equal": true
-    },
-    "on": {
-      "autotune_records": {
-        "a": 1,
-        "b": 1
-      },
-      "records_in_both": 1,
-      "only_in_a": 0,
-      "only_in_b": 0,
-      "byte_identical": 0,
-      "same_choice_different_measured_time": 0,
+      "same_choice_different_measured_time": 1,
       "different_tuning_choice": 1,
       "examples": [
         {
@@ -139,32 +90,21 @@
         "b": 4
       },
       "kernel_meta_deterministic": [
-        "False",
-        "True"
+        "False"
       ],
-      "kernel_meta_deterministic_by_phase": {
-        "first": [
-          "True"
-        ],
-        "second": [
-          "False"
-        ]
-      },
-      "kernel_meta_contiguous_rdim": [
-        "True"
-      ],
+      "kernel_meta_contiguous_rdim": [],
       "outputs_bitwise_equal": true
     },
-    "on_reassert": {
+    "on": {
       "autotune_records": {
-        "a": 0,
-        "b": 0
+        "a": 1,
+        "b": 1
       },
-      "records_in_both": 0,
+      "records_in_both": 1,
       "only_in_a": 0,
       "only_in_b": 0,
       "byte_identical": 0,
-      "same_choice_different_measured_time": 0,
+      "same_choice_different_measured_time": 1,
       "different_tuning_choice": 0,
       "examples": [],
       "kernel_sources_identical": false,
@@ -173,16 +113,9 @@
         "b": 4
       },
       "kernel_meta_deterministic": [
+        "False",
         "True"
       ],
-      "kernel_meta_deterministic_by_phase": {
-        "first": [
-          "True"
-        ],
-        "second": [
-          "True"
-        ]
-      },
       "kernel_meta_contiguous_rdim": [
         "True"
       ],
