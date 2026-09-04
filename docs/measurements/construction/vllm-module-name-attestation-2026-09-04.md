@@ -46,7 +46,17 @@ has cannot be attested by an artifact.
 
 **In the pinned image:** `tests/test_serving_name_mapping.py` — **15 passed**,
 vLLM 0.28.0, sparky, pbrun action `4e6a943d0559`, 16 s. The replay and the
-real `WeightsMapper` agree on every probe name of every table.
+real `WeightsMapper` agree on every probe name of every table: **232 names
+across 9 tables** (7 synthetic, 2 committed receipts).
+
+That run predates commit `e27d56a`, which moved `SYNTHETIC_TABLES`, `LEAVES`
+and the name generator out of the test file into `tests/mapper_probes.py` so
+the distance harness could share them. `src/tessera/serving/contract.py` is
+byte-identical between the run and `HEAD`, and the refactor generates the same
+232 names for the same 9 tables — checked by execing the pre-refactor
+generator out of `git show 056bb5f` and comparing set-wise. So the receipt
+covers the shipped logic; what has not been re-run in-image is the file
+layout.
 
 **How far master was from the runtime.** The in-image arm establishes
 `vllm_module_name(this branch) == WeightsMapper`, so master's distance from
@@ -86,6 +96,22 @@ assert 'model.layers.0.b_proj' == 'model.layers.0.c_proj'             # suffix c
 and the four refusal cases fail as `DID NOT RAISE ValueError` on
 `orig_to_new_renaming`, `orig_to_new_regex`, a populated `orig_to_new_stacked`
 and an invented field. After the fix: **22 passed**.
+
+## What is still queued, and why it is not load-bearing
+
+An in-image **master arm** — master's `contract.py` under the shipped
+attestation, expected to fail — is queued in the PrismaBuild pool as action
+`282a16d71082` and had not been picked up when this was written: sparky's
+queue stood at 37 ready / 6 claimed, a fresh `--gpu` submit was refused with
+`no live worker can run this action`, and sparklina's GPU was held by an
+out-of-pool encode. That is a contended box, not a blocked measurement.
+
+It is not load-bearing because AGENTS.md rule 8 ("show the test failing before
+the fix") is already met twice over, without an image: the pure suite fails 7
+of its 9 new cases on master with the lines recorded above, and the
+`experiments/vllm_module_name_distance.py` table counts master's disagreement
+with the attested replay name by name. The queued arm would restate that
+inside the container.
 
 ## The census was the deeper hole
 
