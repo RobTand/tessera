@@ -146,10 +146,56 @@ verified into it.
 
 ## Test evidence
 
-See the "Tests" section of the branch report handed to the coordinator; the
-suite log is `/home/rob/tmp/ts100-suite.log`.
+Targeted, per AGENTS.md `1f7836c`: the branch owes evidence for the test files
+its diff touches, not a whole-tree run. Those are exactly two --
+`tests/test_runtime_image_pin.py` (new) and `tests/test_serve_build_identity.py`
+(modified); they are also the only two files that import `runtime_image`.
 
-New file `tests/test_runtime_image_pin.py`, 12 tests. It pins the **rule**,
+```
+$ python -m pytest tests/test_runtime_image_pin.py tests/test_serve_build_identity.py -q -p no:randomly
+30 passed in 4.91s          EXIT=0
+```
+
+12 passed / 0 failed / 0 skipped in the new file, 18 in the modified one.
+
+### Each added test, and the line it prints when what it pins is gone
+
+Reverted one thing at a time in a scratch copy of the branch:
+
+| what was reverted | failing test(s) | the line |
+|---|---|---|
+| contract holds the tag again | 10 of 12 | `RuntimeImageError: ... image is 'vllm/vllm-openai:latest', which is not a digest reference` |
+| master's ungated wrappers restored | `..._every_wrapper_that_starts_a_container_gates...` | `AssertionError: gridbook_lane_served.sh starts a container without gating its image` |
+| a second copy of the digest planted in `tools/` | `..._contract_field_and_nothing_else_holds_it` | `assert ['tools/tessera_route_census.py'] == []` |
+| `image_digest` removed from the receipt | `..._cli_writes_the_sidecar_a_later_comparison_reads` | `KeyError: 'image_digest'` |
+| **the gate compares `.Id` instead of `RepoDigests`** | `..._local_id_never_decides_anything` (+2) | `assert (False is False and True is False)` -- the sparklina arm is refused |
+
+That last row is the finding as an executable test: the literal reading of the
+brief ("resolve the local image id") fails it, and it fails in exactly the way
+that would have taken sparklina out of the fleet.
+
+Against pristine `master` the new file does not collect at all
+(`ModuleNotFoundError: No module named 'tessera.serving.runtime_image'`), which
+is the expected shape for tests of a module this branch adds.
+
+The full-tree run is the coordinator's, once, on the merge result.
+
+### The strongest evidence is not a unit test
+
+Both real wrappers, driven with a fake `docker` on `PATH` reporting a
+non-pinned digest:
+
+```
+$ TESSERA_KL_IMAGE=vllm/vllm-openai:latest bash experiments/serve_and_dump_kl.sh ...   -> rc=2
+$ IMG=vllm/vllm-openai:latest bash experiments/tessera_plugin_run.sh -- 'echo SHOULD-NOT-RUN'  -> rc=2
+```
+
+Both printed the prose refusal on stderr and the JSON record on stdout, and
+both stopped **before** `serve_lock_acquire` and before `docker run`. Gate
+line numbers precede lock line numbers in all four wrappers that take the lock
+(33/53, 36/40, 63/65, 21/22).
+
+### `tests/test_runtime_image_pin.py`, 12 tests. It pins the **rule**,
 never the digest:
 
 | test | what it pins |
