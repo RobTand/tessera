@@ -71,6 +71,21 @@ float is bit-identical and not merely close.
 `tests/test_window_graph.py`, 19 tests, all against `impl="reference"` — the
 torch chain that defines the trellis, not another run of the same kernels.
 
+## Tests
+
+Full suite on the branch, sparky, `PYTHONPATH=src`, `-p no:randomly`:
+
+    1638 passed, 9 skipped, 14 warnings in 2097.30s
+
+No failures and no errors, so the per-failure comparison against a pristine
+master checkout has nothing to compare — every test that master runs, this
+branch runs and passes. The suite was launched under `nohup` without capturing
+`$?`, so the exit status is reported as what the summary line implies rather
+than as an observed number; a pass/skip-only summary is pytest's zero.
+
+`tests/test_window_graph.py` (19) and `tests/test_window_viterbi_fast.py` (52)
+were additionally run on their own against the same tree.
+
 ## Measurement
 
 FILLED IN BELOW.
