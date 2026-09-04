@@ -188,7 +188,7 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     scope. Missing context and cells without scope cover nothing; a global
     image pin is never borrowed. A module the table does not cover
     is counted as ``unattested`` and is NOT a problem: absence is the honest
-    state a v4 table has for a rung no receipt covered, and inventing a
+    state a closed-world table has for a rung no receipt covered, and inventing a
     verdict from it is the failure the whole table is shaped to avoid.
 
     Returns ``(block, problems)``.  ``agrees`` is three-valued for the same
