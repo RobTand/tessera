@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
-  "contract_version": 12,
+  "contract_version": 14,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -49,7 +49,8 @@
     "source": "csrc/window_gemv.cu",
     "loaded_by": "tessera.serving.fp8_gemv",
     "routes": [
-     "TESSERA_FP8"
+     "TESSERA_FP8",
+     "TESSERA_BF16"
     ],
     "lane": {
      "decoder": "window_gemv",
@@ -189,7 +190,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v3",
+  "schema": "tessera.lane-eligibility.v4",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -207,7 +208,7 @@
   ],
   "cells": [
    {
-    "id": "tessera_e2m1_k2_dense_sm121_decode_scaled_mm_w4a4",
+    "id": "tessera_e2m1_k2_dense_sm121_decode",
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -216,6 +217,12 @@
      896
     ],
     "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "native_span2"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -225,7 +232,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_e2m1_k2_dense_sm121_batch_scaled_mm_w4a4",
+    "id": "tessera_e2m1_k2_dense_sm121_batch",
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
@@ -234,6 +241,12 @@
      896
     ],
     "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "native_span2"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -243,7 +256,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_e4m3_k1_dense_sm121_decode_scaled_mm_w8a8",
+    "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -252,16 +265,46 @@
      1024
     ],
     "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
+     "TESSERA_SERVE_MODE=resident"
     ],
     "predicates": []
    },
    {
-    "id": "tessera_e4m3_k1_dense_sm121_batch_scaled_mm_w8a8",
+    "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "tessera_window_gemv::gemv",
+      "decoder": "window_gemv"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
     "structure": "dense",
@@ -270,16 +313,50 @@
      1024
     ],
     "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
+     "TESSERA_SERVE_MODE=resident"
     ],
     "predicates": []
    },
    {
-    "id": "tessera_bf16_k1_dense_sm121_decode_mm_w16a16",
+    "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     1024
+    ],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "tessera_window_gemv::gemv",
+      "decoder": "window_gemv"
+     },
+     {
+      "symbol": "torch._scaled_mm",
+      "decoder": "window_gemv"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=streamed"
+    ],
+    "predicates": []
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_decode",
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -288,6 +365,12 @@
      1792
     ],
     "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -297,7 +380,7 @@
     "predicates": []
    },
    {
-    "id": "tessera_bf16_k1_dense_sm121_batch_mm_w16a16",
+    "id": "tessera_bf16_k1_dense_sm121_batch",
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "dense",
@@ -306,6 +389,12 @@
      1792
     ],
     "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
     "route_status": "backed_with_serve_flag",
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
@@ -617,6 +706,16 @@
       ]
    },
    "changelog": [
+    {
+     "contract_version": 14,
+     "date": "2026-09-04",
+     "change": "native_extensions[tessera_window_gemv].routes gains TESSERA_BF16. The window GEMV is loaded by BOTH window routes -- bf16_route.prepare_bf16_gemv repacks through kernel_window_gemv.prepare_value_unit exactly as fp8_gemv does, sets the same layer.tessera_gemv, and bf16_route.apply branches on it -- and the table said TESSERA_FP8 alone. That is a claim about this runtime narrower than the runtime: a consumer keying reproducibility on native-extension residency (PrismaQuant's serve fingerprint, which is why this block exists) would have read a BF16 serve with the extension and one without as the same serve, and they execute different launches. Found by the tie tests added with lane_eligibility v4: scheme.ROUTE_LAUNCHES gives the 16-bit route the same three launches the 8-bit one has, and test_the_launch_tables_lane_is_the_published_extension asserts every launch's lane names an extension that lists that route. The correction is also load-bearing for v4's own derivation: contract._lanes_a_rung_reaches filters candidate lanes by route, so with the narrower list a TESSERA_BF16_K1 cell could never derive a GEMV launch -- correct today only because the attested rung 1792 is root 7 and unreachable anyway, and silently wrong the day a reachable BF16 rung is attested. NO CELL MOVES: at 1792 the derivation still returns torch.mm over torch_window, because the rung, not the route list, is what refuses the lane there. loaded_by stays tessera.serving.fp8_gemv: the field is a single string by schema and both reaching modules are under tessera.serving, so it still says what it is for -- that this entry is serving-side and not producer-side -- while naming one of the two. Widening it to a list is a shape change to native_extensions with its own consumer coordination and is not attempted here. ADDITIVE for a reader that treats routes as a set: nothing was removed."
+    },
+    {
+     "contract_version": 13,
+     "date": "2026-09-04",
+     "change": "lane_eligibility schema v4: every cell publishes `executes`, the (symbol, decoder) launches the route MAKES in that cell's regime at that cell's residency on that cell's rungs -- and the E4M3 family's cells split along the residency, because that is the axis those launches differ on. WHAT WAS WRONG: a cell said which A-side contract ran (correct, and still does: the FP8 route's per-token quantiser runs on every path and hands the GEMV dequantised values, so fp8_per_token_dynamic is what executes in both regimes) and which rungs a receipt covered, and the only place the LAUNCH appeared was the cell's id -- `..._decode_scaled_mm_w8a8`, a string no gate parses. That was accidentally true while the window-GEMV lane was unreachable: every allocated checkpoint carried a rate outside kernel_window_gemv.SUPPORTED_RATES, so an E4M3 decode really did execute the materialised FP8 pair (issue #104). It stopped being true on /mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024 (q256 1024, root rate 4 exactly), whose served census records decode: symbol tessera_window_gemv::gemv, decoder window_gemv, 112 of 112 modules; prefill: symbol torch._scaled_mm, decoder window_gemv, 112 of 112 (receipt /home/rob/tessera-runs/ts104/census-R1024-readable.json, streamed, eager). A gate reading the contract to decide what the decode regime runs would have read a false value: principle 14 from the other direction, an attested claim gone stale under a checkpoint the runtime can finally serve (issue #111). WHICH REGIME THE TABLE SPEAKS: this contract's, not the kernel's. `decode` here is the ONE-ROW forward and `batch` is every M > 1 (contract.CENSUS_PHASE_REGIMES, which says so in its own words); the kernel's `decode` is M <= GEMV_MAX_M and spans eight token counts. The first cut of this entry read the second into the first and published the batch cell WITHOUT the GEMV -- true of the 64-row prefill the census drives, false of the 2-to-8-row forwards the same regime covers, on which the lane serves its own gemv exactly as it does at one row. So tessera_e4m3_k1_dense_sm121_batch_streamed executes BOTH launches, while the decode cell executes the gemv alone, because decode_is_gemv is unconditionally true at one row (the rate-1 refusal starts at the 4-row tile) -- there is no rate condition on a cell anywhere. tests/test_serving_contract.py::test_the_launch_tables_regimes_are_the_routes_own_dispatch derives both regimes from the routes' own decode_is_gemv over every M the dispatch distinguishes, which is what makes this a derivation and not a second guess. WHAT THE VALUE IS DERIVED FROM: tessera.serving.scheme.ROUTE_LAUNCHES, the torch-free table the routes' OWN fp8_gemv.census_expected / bf16_route.census_expected are built from and which owns WINDOW_GEMV_SYMBOL, narrowed by the three axes a cell already carries -- the regime, the residency its TESSERA_SERVE_MODE flag names (both window routes set layer.tessera_gemv = None in resident, so the lane exists in streamed alone), and the lanes each rung REACHES under the predicate native_extensions[].lane.requires publishes (contract v12), which is kernel_window_gemv's own constants. So a cell naming the GEMV cannot outlive the kernel's rate set: change SUPPORTED_RATES and this document stops validating. WHY THE RESIDENCY SPLIT AND NOT A PREDICATE: the two shapes issue #111 offered were a lane predicate on the cell and an explicit rung condition. The rung condition is kept -- rungs_q256 is an enumerated list and a reader resolves no predicate -- but the rung alone cannot separate the two launches, because the one attested E4M3 rung (1024) is lane-readable and the launch there is decided by the residency, which was already a machine-readable cell field spelled as an OR. Two cells of one (platform, family, structure, regime) must now cover DISJOINT residencies, so a reader's answer cannot depend on the order the cells were written in. Cell IDs no longer name a launch: an id is its scope (family, structure, platform, regime, plus the residency where a cell covers only some), because an id that names a launch is a second unparsed spelling of `executes` -- the one that went stale. NOT ADDITIVE, and the schema string says so: a v3 reader must not read a v4 cell, both because `executes` is a key it does not know and because the E4M3 decode answer it would have taken from one cell is now two. TESSERA_BF16_K1 gains `executes` and NO GEMV cell: its attested rung 1792 is root 7, outside SUPPORTED_RATES, so its own streamed GEMV lane is unreachable and the launch a receipt could cover there is the torch window decode under torch.mm -- which is what the derivation returns, unforced. The day a reachable BF16 rung is attested, the same derivation produces its GEMV cell."
+    },
     {
      "contract_version": 12,
     "date": "2026-09-03",

@@ -275,6 +275,189 @@ def test_require_lane_is_stamped_into_the_artifact():
 
 
 # --------------------------------------------------------------------------
+# the CELL that names the lane, and the tie that stops it drifting (#111)
+# --------------------------------------------------------------------------
+#
+# THE DEFECT THIS HALF PINS.  The E4M3 family's cells published
+# ``scaled_mm_w8a8`` for both regimes -- in the cell ``id``, the only place a
+# launch appeared -- and no cell named the window-GEMV lane at all.  That was
+# accidentally true while the lane was unreachable (the first half of this
+# file is why), and false the moment a rate-constrained artifact was served:
+# ``/home/rob/tessera-runs/ts104/census-R1024-readable.json`` records
+# ``tessera_window_gemv::gemv`` on 112 of 112 modules in the decode regime.
+# So the contract answered "what does an E4M3 decode execute" with a value the
+# runtime had stopped executing -- principle 14 from the other direction.
+#
+# Schema v4 puts the launch in ``executes``, and the validator DERIVES it from
+# ``scheme.ROUTE_LAUNCHES`` narrowed by the lanes each rung reaches under
+# ``lane.requires``.  Together with
+# ``test_the_published_lane_predicate_is_the_kernels_own_constants`` above,
+# that makes a chain the tests below break at each link: cell -> requires ->
+# ``kernel_window_gemv``'s own constants.
+
+
+def _gemv_cells(contract):
+    """Every cell whose ``executes`` names the lane's own op.
+
+    There are TWO, one per regime, and that is the correction #111's first
+    pass needed: the lane serves the one-row forward and the 2-to-8-row tile
+    alike, and the contract's ``batch`` regime is every M > 1 forward and not
+    only a first prefill (``contract.CENSUS_PHASE_REGIMES``).  A helper that
+    asserted one cell was reading the census's 64-row prefill as the whole of
+    the batch regime.
+    """
+    cells = [c for c in contract["lane_eligibility"]["cells"]
+             if any(e["decoder"] == telemetry_decoder() for e in c["executes"])
+             and any(e["symbol"] == kg_symbol() for e in c["executes"])]
+    assert {c["regime"] for c in cells} == {"decode", "batch"}, [c["id"] for c in cells]
+    return cells
+
+
+def _gemv_cell(contract, regime="decode"):
+    """The one GEMV cell of ``regime``."""
+    cells = [c for c in _gemv_cells(contract) if c["regime"] == regime]
+    assert len(cells) == 1, [c["id"] for c in cells]
+    return cells[0]
+
+
+def telemetry_decoder():
+    from tessera.serving.contract import lane_decoder
+
+    return lane_decoder(LANE)
+
+
+def kg_symbol():
+    from tessera.serving.scheme import WINDOW_GEMV_SYMBOL
+
+    return WINDOW_GEMV_SYMBOL
+
+
+def test_a_cell_names_the_lane_the_census_observed():
+    """The shipped table says the E4M3 streamed route runs the GEMV, in both regimes.
+
+    The positive half.  Without it every refusal below would pass on a table
+    that named the lane nowhere, which is the state #111 was filed on.  The
+    decode cell executes the GEMV and NOTHING else -- one row is always the
+    lane's own op -- while the batch cell holds both launches, because "every
+    M > 1" spans the 2-to-8-row tiles the GEMV serves and the wider ones only
+    the materialised path can.
+    """
+    from tessera.serving.contract import cell_executes, cell_residency_modes
+
+    for cell in _gemv_cells(load_serving_contract()):
+        assert cell["family"] == "TESSERA_E4M3_K1"
+        assert cell["rungs_q256"] == [1024]
+        assert cell_residency_modes(cell) == ("streamed",)
+        # The lane exists in streamed alone -- both window routes set
+        # ``layer.tessera_gemv = None`` in resident -- so a cell claiming it in
+        # both residencies claims a launch the resident path cannot make.
+        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=streamed"]
+    assert cell_executes(_gemv_cell(load_serving_contract(), "decode")) == {
+        (kg_symbol(), telemetry_decoder())}
+    assert cell_executes(_gemv_cell(load_serving_contract(), "batch")) == {
+        (kg_symbol(), telemetry_decoder()), ("torch._scaled_mm", telemetry_decoder())}
+
+
+def test_every_rung_a_gemv_cell_claims_is_one_the_lane_actually_reads():
+    """Straight through ``refuse_unreachable_lane``, not through a restated set."""
+    contract = load_serving_contract()
+    for cell in _gemv_cells(contract):
+        wires = {int(w["q256"]): w
+                 for entry in contract["formats"] if entry["family"] == cell["family"]
+                 for w in entry["attested_wire"]}
+        for rung in cell["rungs_q256"]:
+            wire = wires[int(rung)]
+            assert refuse_unreachable_lane(
+                LANE, grid="E4M3", q256=int(rung), rate_cap=E4M3.rate_cap,
+                body=wire_recipe(E4M3, int(rung)).body.name,
+                plane=wire_recipe(E4M3, int(rung)).scale_plane.name,
+                window_bits=int(wire["window_bits"]), target=f"cell {cell['id']}")
+
+
+def test_a_lane_that_stops_reading_the_rung_invalidates_the_cell(monkeypatch):
+    """The drift the issue asked for, broken at the kernel end.
+
+    ``lane.requires.column_rates`` IS ``kernel_window_gemv.SUPPORTED_RATES``
+    (pinned above).  Drop rate 4 from it -- what the kernel losing its 4-bit
+    lane would do -- and the attested rung 1024 stops being readable, so the
+    derivation says the decode regime executes the materialised pair while the
+    cell still claims the GEMV.  The contract must refuse, not resolve.
+    """
+    def _no_rate_four(entry):
+        entry["lane"]["requires"]["column_rates"] = [1, 2]
+
+    payload = _mutated_lane(monkeypatch, _no_rate_four)
+    with pytest.raises(ValueError, match="executes"):
+        validate_serving_contract(payload)
+
+
+def test_a_lane_that_stops_reading_the_window_invalidates_the_cell(monkeypatch):
+    """The same tie on the other published constant, ``WINDOW_BITS_SUPPORTED``."""
+    def _no_l14(entry):
+        entry["lane"]["requires"]["window_bits"] = [12]
+
+    payload = _mutated_lane(monkeypatch, _no_l14)
+    with pytest.raises(ValueError, match="executes"):
+        validate_serving_contract(payload)
+
+
+def test_a_gemv_cell_cannot_acquire_an_unreadable_rung():
+    """The drift broken at the CELL end: attest 1006 and claim the lane on it.
+
+    1006 is the rung every allocated checkpoint carried -- root 3.93, columns
+    at rates 3 and 4 -- so no unit of it can take the lane.  Attesting it (the
+    family row and its wire stamp, as a receipt would) and adding it to the
+    GEMV cell must be refused, because at that rung the route executes the
+    materialised pair and the cell would say otherwise.
+    """
+    payload = copy.deepcopy(load_serving_contract())
+    entry = next(e for e in payload["formats"] if e["family"] == "TESSERA_E4M3_K1")
+    entry["attested_rungs_q256"] = [1006, 1024]
+    entry["candidate_rungs_q256"] = [1006, 1024]
+    stamp = dict(entry["attested_wire"][0])
+    stamp["q256"] = 1006
+    entry["attested_wire"] = [stamp] + list(entry["attested_wire"])
+    cell = next(c for c in payload["lane_eligibility"]["cells"]
+                if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_streamed")
+    cell["rungs_q256"] = [1006, 1024]
+    with pytest.raises(ValueError, match="executes"):
+        validate_serving_contract(payload)
+
+
+def test_a_cell_may_not_claim_the_lane_in_the_residency_that_has_none(monkeypatch):
+    """``resident`` sets ``tessera_gemv = None``; a cell claiming it is refused.
+
+    The residency is the axis the two E4M3 decode cells are told apart by, so
+    it has to be an axis the validator reads rather than a label.
+    """
+    payload = copy.deepcopy(load_serving_contract())
+    cell = next(c for c in payload["lane_eligibility"]["cells"]
+                if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_streamed")
+    cell["requires_serve_flags"] = ["TESSERA_SERVE_MODE=resident"]
+    cell["id"] = "tessera_e4m3_k1_dense_sm121_decode_resident"
+    with pytest.raises(ValueError, match=r"executes .* residency \['resident'\]"):
+        validate_serving_contract(payload)
+
+
+def test_two_cells_may_not_cover_one_residency_of_one_regime():
+    """Otherwise a reader's answer depends on the order the cells were written.
+
+    This is the hazard the residency split introduces and the rule that closes
+    it: a consumer resolving ``(platform, family, structure, regime, rung)``
+    picks among matching cells, and with two matches of equal status it picks
+    whichever came first.  The publisher must not be able to write that table.
+    """
+    payload = copy.deepcopy(load_serving_contract())
+    cell = next(c for c in payload["lane_eligibility"]["cells"]
+                if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_resident")
+    twin = copy.deepcopy(cell)
+    twin["id"] = "tessera_e4m3_k1_dense_sm121_decode_resident"
+    payload["lane_eligibility"]["cells"].append(twin)
+    with pytest.raises(ValueError, match="both cover"):
+        validate_serving_contract(payload)
+
+
+# --------------------------------------------------------------------------
 # scope: the BF16 family's own attested rung
 # --------------------------------------------------------------------------
 
