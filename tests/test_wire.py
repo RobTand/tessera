@@ -6,6 +6,7 @@ counts, sub-byte padding, or whether the artifact is self-describing at all.
 """
 
 import os
+import struct
 from unittest import mock
 
 import pytest
@@ -28,9 +29,11 @@ from tessera.unit_artifact import (
 from tessera.wire import (
     nvfp4_scale_bytes,
     pack_body,
+    pack_fp16,
     pack_uniform,
     scales_from_planes,
     unpack_body,
+    unpack_fp16,
     unpack_uniform,
 )
 
@@ -425,3 +428,21 @@ def test_a_fifteen_binade_span_is_legal_unless_the_top_word_is_nan():
     # Mantissa 7 at the top binade is 0x7F, which E4M3FN reads as NaN.
     with pytest.raises(GrammarError, match="span 15"):
         nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 7]))
+
+
+def test_the_diagonal_planes_are_little_endian_by_the_format_not_by_the_host():
+    """``pack_fp16``/``unpack_fp16`` document "little-endian" and wrote the
+    host's order.  Every box this has run on is little-endian, so the pin is
+    what the docstring already promised rather than a caught regression: on a
+    big-endian host the old pair round-tripped against itself and against no
+    other reader, which is the one thing a wire format may not do.
+    ``unit_artifact``'s window-table reader states the same rule with the same
+    ``<`` spelling."""
+    values = torch.tensor([1.0, -2.5, 0.0, 65504.0, 6.103515625e-05], dtype=torch.float16)
+    expected = struct.pack("<5e", *(float(v) for v in values))
+    assert pack_fp16(values) == expected
+    assert torch.equal(unpack_fp16(expected, len(values)), values)
+    # A reader that took the host's order would decode the byte-swapped
+    # stream, so the swap has to change the answer.
+    swapped = struct.pack(">5e", *(float(v) for v in values))
+    assert not torch.equal(unpack_fp16(swapped, len(values)), values)
