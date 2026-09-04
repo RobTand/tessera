@@ -240,7 +240,8 @@ def test_shipped_checkpoint_units_reparse_identically():
             slice_unit(parsed), manifest.branch.unit_id, parsed.forests,
             manifest.branch.root_q256, parsed.code or CODE,
             superblock=manifest.geometry.superblock_columns,
-            container=manifest.branch.container)
+            container=manifest.branch.container,
+            fixture_id=manifest.encoder_fixture_id)
         assert again == member.blob, member.name
 
 
@@ -332,7 +333,7 @@ def test_shard_round_trips_through_bytes(units, label, axis):
         shard = slice_unit(parsed, **kwargs)
         _m, _r, shard_blob = build_unit_artifact(
             shard, f"{label}.rank{rank}", forests,
-            manifest.branch.root_q256, CODE)
+            manifest.branch.root_q256, CODE, fixture_id=None)
         back = parse_unit_artifact(shard_blob, device=DEVICE)
         want = full[lo:hi, :] if axis == "row" else full[:, lo:hi]
         assert torch.equal(

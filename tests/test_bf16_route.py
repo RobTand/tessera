@@ -190,8 +190,9 @@ def test_a_high_row_is_started_inside_the_reach():
     reach = float(grid_vector_table(BF16_GRID)[table.long()].abs().max())
     stored, effective, _ = initial_channel_scale(w, BF16_CHANNEL_SIGMA, reach=reach)
     amax = w.abs().amax(dim=1)
-    # Every row's largest weight starts inside the reach, to the fp16 word.
-    assert bool((amax <= reach * effective * (1 + 1e-3)).all())
+    # The row this fixture raises starts inside the reach, exactly.  The old
+    # 1e-3 slack was wider than one fp16 ulp and therefore hid issue #87.
+    assert float(amax[0]) <= reach * float(effective[0])
     # ...and without it the wide row would have been clipped before the
     # first pass: the plain RMS start puts its largest weight past the table.
     _, plain_eff, _ = initial_channel_scale(w, BF16_CHANNEL_SIGMA, reach=None)

@@ -24,6 +24,7 @@ relied on:
     (``tests/test_kernel_window.py``);
   * the exporter records the body and replays a config at its own meaning.
 """
+import dataclasses
 import itertools
 from fractions import Fraction
 
@@ -274,7 +275,11 @@ def test_wire_round_trip_of_a_window_body(grid, q256, window, plane, diagonals):
     rates = bresenham_rate_schedule(root_from_q256(q256), 512, cap=grid.rate_cap)
     unit = encode_unit(w, grid, rates, CODE, body=WINDOW, window_bits=window,
                        scale_plane=plane, with_diagonals=diagonals, scale_refit=1)
-    manifest, region, blob = build_unit_artifact(unit, "unit0", grid, q256, CODE)
+    # This assertion pins the WINDOW record's own lowest minor, not the
+    # independent encoder-identity envelope.
+    manifest, region, blob = build_unit_artifact(
+        unit, "unit0", grid, q256, CODE, fixture_id=None
+    )
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, grid, None))
     assert blob[10] == 2, "schema minor 2"
     art = parse(blob)
@@ -324,17 +329,25 @@ def test_tcq_artifacts_are_byte_identical_and_keep_their_minor():
     w = _weights()
     unit = encode_unit(w, {7: build_forest(7, grid=K2)}, (7,) * 512, CODE)
     assert unit.body is BodyKind.TCQ and unit.window_bits == 0 and unit.window_codes is None
-    manifest, _, blob = build_unit_artifact(unit, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE)
+    manifest, _, blob = build_unit_artifact(
+        unit, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE,
+        fixture_id=None,
+    )
     assert blob[10] == 0 and manifest.schema_minor == 0
     assert manifest.body is BodyKind.TCQ and manifest.window_bits == 0
     assert manifest.encode() == manifest.encode(0) == manifest.encode(1)[: len(manifest.encode(0))]
     span2 = encode_unit(w, {7: build_forest(7, grid=K2)}, (7,) * 512, CODE, span=2,
                         scale_plane=ScalePlaneKind.LUT)
-    m2, _, blob2 = build_unit_artifact(span2, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE)
+    m2, _, blob2 = build_unit_artifact(
+        span2, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE,
+        fixture_id=None,
+    )
     assert blob2[10] == 1 and m2.schema_minor == 1
     # a minor-2 manifest cannot be squeezed into minor 1
     win = encode_unit(w, K2, (7,) * 512, CODE, body=WINDOW, window_bits=9)
-    mw, _, _ = build_unit_artifact(win, "unit0", K2, 7 * 256, CODE)
+    mw, _, _ = build_unit_artifact(
+        win, "unit0", K2, 7 * 256, CODE, fixture_id=None
+    )
     assert mw.schema_minor == 2
     with pytest.raises(ManifestError, match="needs minor 2"):
         mw.encode(1)
@@ -447,10 +460,14 @@ def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
     w = _weights().bfloat16()
     exported = encode_linear(w, grid=K2, q256=6 * 128, name="w", body=WINDOW, window_bits=10,
                              window_seed=7, window_sigma=2.5)
-    # a non-default reach spelling binds into the profile and declares minor
-    # 5 (issue #77); a default spelling would keep minor 2, byte for byte.
-    assert exported.blob[10] == 5
     art = parse(exported.blob)
+    # A non-default reach spelling needs minor 5 (issue #77).  The live header
+    # is minor 6 because this encoder also carries its behaviour identity; take
+    # that sibling field away and the record's own lower bound remains 5.
+    assert exported.blob[10] == art.manifest.schema_minor
+    assert dataclasses.replace(
+        art.manifest, encoder_fixture_id=None
+    ).schema_minor == 5
     assert art.manifest.body is WINDOW and art.manifest.window_bits == 10
     assert art.manifest.reach is not None
     assert (art.manifest.reach.window_seed, art.manifest.reach.window_sigma,

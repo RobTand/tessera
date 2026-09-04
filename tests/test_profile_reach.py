@@ -51,7 +51,11 @@ def _window_unit(w, window_bits=6, scale_plane=CHANNEL, **reach):
 
 
 def _built(unit):
-    manifest, region, blob = build_unit_artifact(unit, "unit0", E4M3_GRID, Q256, CODE)
+    # These tests pin the reach record's own lowest minor.  Suppress the
+    # independent encoder-identity envelope so that assertion stays literal.
+    manifest, region, blob = build_unit_artifact(
+        unit, "unit0", E4M3_GRID, Q256, CODE, fixture_id=None
+    )
     return manifest, region, blob
 
 
@@ -162,7 +166,9 @@ def test_the_digest_binds_reach_spellings_where_they_move_bytes():
 def test_default_builds_keep_their_bytes_minor_and_digest():
     """Lowest-minor discipline: a default reach spelling says nothing, so no
     record is written, the minor stays where it was, and the digest is the
-    old one -- every artifact ever written is byte-identical."""
+    old one -- for the born-against encoder requested by ``_built``.  A
+    current default production build also carries the independent
+    ``encoder_fixture_id`` envelope, whose minor is tested separately."""
     w = _weights()
     unit = _window_unit(w)
     manifest, _region, blob = _built(unit)
@@ -184,11 +190,15 @@ def test_inert_reach_attrs_change_neither_bytes_nor_digest():
     rates = (2,) * 64
     forests = {2: build_forest(2, grid=E4M3_GRID)}
     unit = encode_unit(w, forests, rates, CODE, scale_refit=1, completion=0)
-    _m0, _r0, blob0 = build_unit_artifact(unit, "unit0", forests, Q256, CODE)
+    _m0, _r0, blob0 = build_unit_artifact(
+        unit, "unit0", forests, Q256, CODE, fixture_id=None
+    )
     unit.window_seed = 7
     unit.window_sigma = 2.5
     unit.channel_sigma = 2.5
-    manifest, _region, blob = build_unit_artifact(unit, "unit0", forests, Q256, CODE)
+    manifest, _region, blob = build_unit_artifact(
+        unit, "unit0", forests, Q256, CODE, fixture_id=None
+    )
     assert blob == blob0
     assert blob[10] == 0 and manifest.schema_minor == 0
 
@@ -206,12 +216,14 @@ def test_a_shard_keeps_its_parents_reach_profile():
     whole = slice_unit(parsed)
     _m2, _r2, again = build_unit_artifact(
         whole, parsed.manifest.branch.unit_id, parsed.forests,
-        parsed.manifest.branch.root_q256, parsed.code or CODE)
+        parsed.manifest.branch.root_q256, parsed.code or CODE,
+        fixture_id=parsed.manifest.encoder_fixture_id)
     assert again == blob
     shard = slice_unit(parsed, rows=(0, 16))
     _m3, _r3, shard_blob = build_unit_artifact(
         shard, parsed.manifest.branch.unit_id, parsed.forests,
-        parsed.manifest.branch.root_q256, parsed.code or CODE)
+        parsed.manifest.branch.root_q256, parsed.code or CODE,
+        fixture_id=parsed.manifest.encoder_fixture_id)
     assert parse(shard_blob).manifest.encoder_profile_id == parsed.manifest.encoder_profile_id
     assert torch.equal(
         read_unit_artifact(shard_blob),

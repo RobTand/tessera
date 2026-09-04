@@ -190,7 +190,7 @@ def initial_channel_scale(
     work: torch.Tensor, sigma: float, reach: "float | None" = None
 ) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """The initial plane: every row's RMS lands on ``sigma`` grid units, and
-    every row's largest weight lands within one fp16 ulp of the body's
+    every **raised** row's largest weight lands at or inside the body's
     ``reach``.
 
     ``reach`` is the largest magnitude, in grid units, the body can emit: the
@@ -204,18 +204,23 @@ def initial_channel_scale(
     this is the plain RMS start byte for byte; ``None`` is that start for
     every row.
 
-    **"Within one ulp", not "inside".**  ``scale = amax / reach`` is a *lower*
-    bound -- an effective scale below it puts ``amax / effective`` back past the
-    reach -- and ``land_channel_scale`` rounds to **nearest**, so about a third
-    of the raised rows land one fp16 ulp under their own bound and the trellis
-    clips them to the table's extreme entry anyway.  Measured (issue #87,
-    ``experiments/reach_land_census.py``): 29609 of the 87870 raised rows over
-    196 dense Qwen3-0.6B Linears at E4M3/L=14, 16-44% per unit, worst shortfall
-    3.2e-4 relative -- one ulp, as the mechanism predicts.  The clipped energy
-    is 9.1e-10 of the h-weighted budget on the worst unit, which is why this is
-    stated rather than fixed: closing it would move a row word by one ulp on
-    every CHANNEL artifact with rows past the reach, and that is a re-cut of the
-    E4M3 wire under an unchanged ``encoder_profile_id``.
+    **The raise is a lower bound, so it is landed upward.**  ``scale = amax /
+    reach`` is a lower bound: an effective scale below it puts ``amax /
+    effective`` back past the reach and clips the very weight the raise exists
+    for.  The ordinary cast rounds to nearest, so :func:`_bump_below_floor`
+    steps a raised row to the next fp16 word wherever that cast fell short.
+    The same helper serves :func:`land_at_least`, so the start that computes a
+    reach floor and the refit that re-imposes one cannot disagree about the
+    landing rule.
+
+    Before that correction, 29609 of 87870 raised rows over 196 dense
+    Qwen3-0.6B Linears at E4M3/L=14 landed short, worst relative shortfall
+    3.2e-4 (issue #87, ``experiments/reach_land_census.py``).  This is a
+    contract repair, not a quality result: the shipping refit runs with
+    ``refit_reach_floor=False`` and may move a row below the bound again.  The
+    mask is deliberately the raise's ``over`` mask.  An unraised row keeps its
+    plain RMS word; the measured half-ulp boundary left by that narrower rule
+    is tracked separately by issue #115.
 
     A **bf16-valued source** has no shortfall at all, and not by luck: the BF16
     reach is exactly 4.0 and the global is a power of two, so
@@ -225,14 +230,6 @@ def initial_channel_scale(
     two of ``audit_byte_baseline``'s BF16 shape cases (``torch.randn``, fp32)
     would move under a landing change while the identical fixtures snapped to
     bf16 would not.  Every shipped BF16 artifact has a bf16 source.
-
-    ``refit_channel_scale``'s ``floor`` lands the *same* bound with
-    ``land_at_least``, which rounds **up**.  The two halves of one rule
-    therefore differ by design and not by oversight: the refit re-imposes the
-    bound exactly, the start honours it to a rounding.  Anything that reads
-    this start as an exact guarantee -- as the refit's ``floor`` docstring
-    does when it says "which no later step recovers" -- is reading one ulp too
-    much into it.
 
     Why per row and not per unit: the source model the alphabet and the
     table were fit to is a Gaussian, whose rows exceed the E4M3 table's
@@ -260,21 +257,32 @@ def initial_channel_scale(
         # the reach the row starts at ``reach * rms / amax`` instead.
         over = amax * float(sigma) > float(reach) * rms
         row_sigma = torch.where(over, float(reach) * rms / amax.clamp_min(1e-30), row_sigma)
+        floor = amax / float(reach)
     scale = rms / row_sigma
     global_scale = channel_global(scale)
     stored, effective = land_channel_scale(scale, global_scale)
+    if reach is not None:
+        # A lower bound must not be rounded below itself.  Restrict the bump to
+        # rows the reach raise touched; all other rows retain their ordinary
+        # RMS landing byte for byte (#87; the wider boundary is #115).
+        stored, effective = _bump_below_floor(
+            stored, effective, floor, global_scale, where=over,
+        )
     return stored, effective, global_scale
 
 
-def land_at_least(
-    floor: torch.Tensor, global_scale: float
+def _bump_below_floor(
+    stored: torch.Tensor,
+    effective: torch.Tensor,
+    floor: torch.Tensor,
+    global_scale: float,
+    where: "torch.Tensor | None" = None,
 ) -> "tuple[torch.Tensor, torch.Tensor]":
-    """The smallest fp16 word over ``global_scale`` that is at least ``floor``.
+    """Step landed words below ``floor`` to the next fp16 word upward.
 
-    ``land_channel_scale`` rounds to nearest, which may land a hair *below* a
-    scale that was computed as a lower bound.  A reach floor that is missed by
-    one ulp clips the very weight it was raised for, so this rounds up: cast,
-    then step to the next fp16 word up where the cast fell short.
+    This is the one home for the upward step shared by the initial reach raise
+    and the refit's :func:`land_at_least`.  ``where`` restricts which rows own
+    a floor; other stored words remain byte-identical.
 
     The step is taken on the **bit pattern**, not by multiplying by
     ``1 + 2^-10``.  Every word here is positive and finite, so incrementing the
@@ -284,30 +292,46 @@ def land_at_least(
     range ``65504 * (1 + 2^-10)`` rounds to **infinity**, whose ``0 * inf`` in
     the refit's ``A s^2 - 2 B s`` is a NaN that then decides the accept test by
     comparing false.  A floor no fp16 word over this global can carry is
-    refused here instead: saturating would silently reinstate the very clip the
+    refused instead: saturating would silently reinstate the very clip the
     floor exists to prevent.
     """
-    stored, effective = land_channel_scale(floor, global_scale)
     short = effective < floor
-    if bool(short.any()):
-        bits = stored.contiguous().view(torch.int16)
-        bumped = (bits + 1).view(torch.float16)
-        stored = torch.where(short, bumped, stored)
-        effective = stored.float() * global_scale
-        over = ~torch.isfinite(effective)
-        if bool(over.any()):
-            raise GrammarError(
-                f"{int(over.sum())} of {effective.numel()} row scale floors are above "
-                f"fp16's range over a global of {global_scale}; the largest is "
-                f"{float(floor.float().max())} and the largest word is "
-                f"{_FP16_MAX * global_scale}"
-            )
-        if bool((effective < floor).any()):
-            raise GrammarError(
-                "landing a row scale upward left it below its floor; one ulp above "
-                "a round-to-nearest cast should always clear it"
-            )
+    if where is not None:
+        short = short & where
+    if not bool(short.any()):
+        return stored, effective
+    bits = stored.contiguous().view(torch.int16)
+    bumped = (bits + 1).view(torch.float16)
+    stored = torch.where(short, bumped, stored)
+    effective = stored.float() * global_scale
+    over = short & ~torch.isfinite(effective)
+    if bool(over.any()):
+        raise GrammarError(
+            f"{int(over.sum())} of {effective.numel()} row scale floors are above "
+            f"fp16's range over a global of {global_scale}; the largest is "
+            f"{float(floor.float()[short].max())} and the largest word is "
+            f"{_FP16_MAX * global_scale}"
+        )
+    if bool((short & (effective < floor)).any()):
+        raise GrammarError(
+            "landing a row scale upward left it below its floor; one ulp above "
+            "a round-to-nearest cast should always clear it"
+        )
     return stored, effective
+
+
+def land_at_least(
+    floor: torch.Tensor, global_scale: float
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The smallest fp16 word over ``global_scale`` that is at least ``floor``.
+
+    ``land_channel_scale`` rounds to nearest, which may land a hair *below* a
+    scale that was computed as a lower bound.  A reach floor that is missed by
+    one ulp clips the very weight it was raised for, so this casts and then
+    delegates the exact next-word step to :func:`_bump_below_floor`.
+    """
+    stored, effective = land_channel_scale(floor, global_scale)
+    return _bump_below_floor(stored, effective, floor, global_scale)
 
 
 def refit_channel_scale(

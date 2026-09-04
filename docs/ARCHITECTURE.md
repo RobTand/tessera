@@ -59,6 +59,17 @@ every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
 set is blind to.
 
+Issue #87 is the first post-identity encoder move: a CHANNEL row raised to the
+body's reach now lands that lower bound upward instead of rounding below it by
+one fp16 ulp. The behaviour-derived identity moves as a consequence, so a
+default artifact written by this encoder carries `encoder_fixture_id` and uses
+the already-defined minor-6 envelope; minor 6 is the identity-bearing
+container, not a new reach-floor field or a wider reach schema. An untagged
+artifact names the pre-#87 encoder and `encoder_identity.resumable` refuses it
+under the new encoder. Tests that assert an older record minor explicitly ask
+`build_unit_artifact` for that born-against spelling, while a byte-for-byte
+rebuild inherits the parsed artifact's identity.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
@@ -700,4 +711,3 @@ that artifact and `82cdf513` closed a further 2.1% with no recipe change, and
 the block is worth 1.94% against its own session's control. Quoting the
 published incumbent instead of re-running it would have credited the block
 with twice its size.
-

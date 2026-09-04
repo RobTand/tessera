@@ -190,7 +190,11 @@ def test_wire_round_trip_at_span_two_over_a_lut_plane(q256, diagonals):
     rates = bresenham_rate_schedule(root_from_q256(q256), 512)
     unit = encode_unit(w, FORESTS1, rates, CODE, span=2,
                        scale_plane=ScalePlaneKind.LUT, with_diagonals=diagonals)
-    _, region, blob = build_unit_artifact(unit, "unit0", FORESTS1, q256, CODE)
+    # This test pins the span record's minor, independently of the encoder
+    # identity stamped by a default production build.
+    _, region, blob = build_unit_artifact(
+        unit, "unit0", FORESTS1, q256, CODE, fixture_id=None
+    )
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS1, CODE))
     art = parse(blob)
     assert blob[10] == 1, "schema minor 1"
@@ -225,11 +229,15 @@ def test_the_exporter_defaults_are_the_new_wire():
 
 def test_span_one_over_s6b_is_still_a_minor_zero_artifact():
     """Every artifact written before minor 1 is reproducible: same bytes,
-    same header, same profile id."""
+    same header, same profile id.  This asks for that artifact's untagged
+    encoder spelling; a current production build carries the independent
+    encoder-identity envelope."""
     w = _weights()
     unit = encode_unit(w, FORESTS2, (7,) * 512, CODE)
     assert unit.span == 1 and unit.scale_plane is ScalePlaneKind.S6B
-    manifest, _, blob = build_unit_artifact(unit, "unit0", FORESTS2, 7 * 256, CODE)
+    manifest, _, blob = build_unit_artifact(
+        unit, "unit0", FORESTS2, 7 * 256, CODE, fixture_id=None
+    )
     assert blob[10] == 0
     assert manifest.schema_minor == 0
     assert manifest.encoder_profile_id == encoder_profile_id(CODE, unit.rates, K2)

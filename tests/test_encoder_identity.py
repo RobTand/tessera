@@ -62,6 +62,21 @@ def test_the_identity_moves_when_the_encoder_moves(identity, monkeypatch):
     assert ei.encoder_fixture_id() != identity
 
 
+def test_reach_floor_moves_identity_and_refuses_an_untagged_resume(identity):
+    """Issue #87 is a byte mover, so #101's derived gate must see it.
+
+    ``UNTAGGED_ENCODER_ID`` is the historical encoder before the upward reach
+    landing.  The fixed encoder must differ without a maintained version bump,
+    and a cached artifact carrying that absent spelling must be refused.
+    """
+
+    class Untagged:
+        encoder_fixture_id = None
+
+    assert identity != ei.UNTAGGED_ENCODER_ID
+    assert not ei.resumable(Untagged())
+
+
 def test_an_unread_slot_does_not_move_the_identity(identity, monkeypatch):
     """The other half of the claim: it moves on behaviour and on nothing else.
 

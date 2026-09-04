@@ -37,11 +37,11 @@ too slow to run before *and* after every fix stops being run, which is a worse
 failure than a narrow one.
 
 Two conditions the audit fixes also touched stay out of reach here, and this
-harness does not claim them: ``land_at_least``'s ``inf`` branch needs a reach
-floor above fp16's range over the unit's global scale, which no real slice
-produces, and ``shared_lut_global``'s subnormal range check lives in the fused
-lane, which ``encode_linear`` never calls.  Both are pinned by unit tests
-instead.
+harness does not claim them: the shared upward-landing helper's ``inf`` branch
+needs a reach floor above fp16's range over the unit's global scale, which no
+real slice produces, and ``shared_lut_global``'s subnormal range check lives in
+the fused lane, which ``encode_linear`` never calls.  Both are pinned by unit
+tests instead.
 
 ``release`` is the third half, and it exists because the first two are blind to
 the RELEASE plane: ``export.encode_linear`` has no ``released_positions``
@@ -169,7 +169,8 @@ def _value_cases():
         # than to the plane.
         ValueCase("bf16-1024-128c/hessian", BF16_GRID, 1024,
                   dict(ldlq_sigma=None)),
-        # The reach floor, which is the only caller of ``land_at_least``.
+        # The refit's reach floor, which covers ``land_at_least`` separately
+        # from the initial reach landing exercised by the LDLQ case above.
         ValueCase("e4m3-1024-128c/hessian+reach", E4M3_GRID, 1024,
                   dict(ldlq_sigma=None, refit_reach_floor=True)),
         # The LUT plane's own metric refit: a 1-D diagonal weight

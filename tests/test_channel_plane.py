@@ -95,7 +95,11 @@ def test_wire_round_trip_of_a_channel_plane(grid, q256, body, window):
     assert unit.scale_rows is not None and unit.scale_rows.dtype == torch.float16
     assert unit.scale_rows.numel() == rows
     assert unit.scale_base.numel() == 0 and unit.scale_refine.numel() == 0
-    manifest, region, blob = build_unit_artifact(unit, "unit0", forest, q256, CODE)
+    # This assertion prices the CHANNEL record, not the encoder-identity
+    # envelope.  Ask for the born-against spelling explicitly.
+    manifest, region, blob = build_unit_artifact(
+        unit, "unit0", forest, q256, CODE, fixture_id=None
+    )
     recovered = read_unit_artifact(blob)
     assert torch.equal(recovered, reconstruct_unit(unit, forest, CODE))
     assert blob[10] == 3, "schema minor 3"
@@ -195,7 +199,9 @@ def test_the_reader_fails_closed_on_planes_that_disagree_with_the_kind():
     w = _weights()
     unit = encode_unit(w, E4M3_GRID, (4,) * 512, CODE, body=WINDOW, window_bits=8,
                        scale_plane=CHANNEL)
-    manifest, region, blob = build_unit_artifact(unit, "unit0", E4M3_GRID, 4 * 256, CODE)
+    manifest, region, blob = build_unit_artifact(
+        unit, "unit0", E4M3_GRID, 4 * 256, CODE, fixture_id=None
+    )
     # a LUT unit's bytes relabelled as CHANNEL: the terminal declares a
     # refinement plane a CHANNEL plane cannot have
     lut = encode_unit(w, E4M3_GRID, (4,) * 512, CODE, body=WINDOW, window_bits=8,
@@ -253,7 +259,9 @@ def test_the_window_lane_decodes_a_channel_plane(grid, rate, window):
     rates = (rate,) * cols
     unit = encode_unit(w, grid, rates, CODE, body=WINDOW, window_bits=window,
                        scale_plane=CHANNEL, scale_refit=1, completion=0)
-    _manifest, _region, blob = build_unit_artifact(unit, "unit0", grid, rate * 256, CODE)
+    _manifest, _region, blob = build_unit_artifact(
+        unit, "unit0", grid, rate * 256, CODE, fixture_id=None
+    )
     assert blob[10] == 3
     reference = read_unit_artifact(blob, device="cuda")
     packed = pack_unit_for_kernel(unit, grid, CODE)
@@ -277,14 +285,20 @@ def test_block_plane_artifacts_keep_their_bytes_and_their_minor():
     w = _weights()
     forests = {7: build_forest(7, grid=K2)}
     tcq = encode_unit(w, forests, (7,) * 512, CODE, span=2, scale_plane=ScalePlaneKind.LUT)
-    m, _, blob = build_unit_artifact(tcq, "unit0", forests, 7 * 256, CODE)
+    m, _, blob = build_unit_artifact(
+        tcq, "unit0", forests, 7 * 256, CODE, fixture_id=None
+    )
     assert blob[10] == 1 and m.schema_minor == 1 and tcq.scale_rows is None
     win = encode_unit(w, K2, (7,) * 512, CODE, body=WINDOW, window_bits=9,
                       scale_plane=ScalePlaneKind.LUT)
-    m, _, blob = build_unit_artifact(win, "unit0", K2, 7 * 256, CODE)
+    m, _, blob = build_unit_artifact(
+        win, "unit0", K2, 7 * 256, CODE, fixture_id=None
+    )
     assert blob[10] == 2 and m.schema_minor == 2
     legacy = encode_unit(w, forests, (7,) * 512, CODE)
-    m, _, blob = build_unit_artifact(legacy, "unit0", forests, 7 * 256, CODE)
+    m, _, blob = build_unit_artifact(
+        legacy, "unit0", forests, 7 * 256, CODE, fixture_id=None
+    )
     assert blob[10] == 0 and m.schema_minor == 0
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(legacy, forests, CODE))
 
@@ -383,22 +397,16 @@ def test_the_initial_plane_keeps_every_row_inside_the_reach():
         initial_channel_scale(work, sigma, reach=0.0)
 
 
-def test_a_raised_row_lands_within_one_ulp_of_the_reach():
-    """Issue #87, the contract as the code actually holds it.
+def test_a_raised_row_lands_at_or_inside_the_reach():
+    """Issue #87: the reach start's lower bound is held exactly.
 
     ``initial_channel_scale`` raises a row whose loudest weight would land past
-    the body's reach to ``scale = amax / reach``, and lands that with
-    ``land_channel_scale`` -- round to **nearest**.  ``amax / reach`` is a lower
-    bound, so a third of the raised rows land one fp16 ulp under it and are
-    clipped anyway: 29609 of 87870 raised rows over 196 dense Qwen3-0.6B
-    Linears at E4M3/L=14, 16-44% per unit (``experiments/reach_land_census.py``).
-
-    This pins what that means, so nothing downstream reads the start as an
-    exact guarantee: a raised row's largest weight lands inside the reach **to
-    within one fp16 ulp** (4.9e-4 relative), and never further out than that.
-    ``refit_channel_scale``'s ``floor`` lands the same bound with
-    ``land_at_least``, which rounds up and is exact; the difference is one ulp
-    and it is deliberate here, not an oversight.
+    the body's reach to ``scale = amax / reach``.  It first casts that scale to
+    the nearest fp16 word, then steps upward if the word is below the bound;
+    landing below it clips the very weight the raise exists for.  The source is
+    heavy-tailed on purpose: a light-tailed fixture raises nothing and therefore
+    asserts nothing.  There is no tolerance here because one fp16 ulp is the
+    defect this test exists to catch.
     """
     from tessera.encode import grid_vector_table, window_table
 
@@ -415,10 +423,21 @@ def test_a_raised_row_lands_within_one_ulp_of_the_reach():
     over = amax * sigma > reach * rms
     assert 0 < int(over.sum()) < rows, "the fixture must raise some rows and not others"
 
-    _stored, effective, _g = initial_channel_scale(w, sigma, reach=reach)
+    stored, effective, global_scale = initial_channel_scale(w, sigma, reach=reach)
     landed = amax[over] / effective[over]
-    # Not "inside": some rows land past the reach, by at most one ulp.
-    assert bool((landed > reach).any()), "the fixture must exercise the shortfall"
-    assert bool((landed <= reach * (1 + 2.0 ** -10)).all()), (
-        f"worst landing is {float(landed.max()) / reach - 1:.3e} past the reach, "
-        f"which is more than one fp16 ulp")
+    assert bool((landed <= reach).all()), (
+        f"{int((landed > reach).sum())} of {int(over.sum())} raised rows land "
+        f"past the reach; worst {float(landed.max()) / reach - 1:.3e} over"
+    )
+
+    # Rows the reach raise did not touch retain the ordinary RMS start byte for
+    # byte.  Rounding those boundary rows upward would be a wider policy.
+    from tessera.scale_channel import land_channel_scale
+
+    plain, _ = land_channel_scale(rms / sigma, global_scale)
+    assert torch.equal(stored[~over], plain[~over])
+
+    # The raise is minimal: it lands at its floor or one fp16 ulp above it.
+    floor = amax / reach
+    assert bool((effective[over] >= floor[over]).all())
+    assert bool((effective[over] <= floor[over] * (1 + 2.0 ** -10)).all())

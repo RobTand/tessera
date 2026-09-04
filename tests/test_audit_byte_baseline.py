@@ -162,6 +162,37 @@ def test_the_value_matrix_catches_the_channel_refit_mutation(monkeypatch):
     )
 
 
+def test_the_value_matrix_catches_the_initial_reach_floor(monkeypatch):
+    """Removing #87's upward landing must move a baseline digest.
+
+    The condition is selected from the recipe-owning data: a CHANNEL value
+    case whose activation source enables LDLQ.  The mutation disables only the
+    one-ulp correction after the ordinary round-to-nearest landing.  If the
+    digest holds, the byte audit no longer exercises the change it is meant to
+    price.
+    """
+    module = _load()
+    payload = module.load_value_slice()
+    case = next(
+        c for c in module._value_cases()
+        if wire_recipe(c.grid, c.q256).scale_plane is ScalePlaneKind.CHANNEL
+        and c.source.get("ldlq_sigma", DEFAULT_LDLQ_SIGMA) is not None
+    )
+    kept = module.encode_value_case(case, payload)
+
+    def no_bump(stored, effective, _floor, _global_scale, where=None):
+        return stored, effective
+
+    monkeypatch.setattr(
+        tessera.scale_channel, "_bump_below_floor", no_bump, raising=False
+    )
+    assert module.encode_value_case(case, payload) != kept, (
+        f"value case {case.label!r} keeps the same bytes when the initial "
+        "reach floor is landed to nearest, so the byte audit no longer "
+        "covers issue #87's condition"
+    )
+
+
 def test_the_shape_matrix_alone_is_blind_to_that_mutation(monkeypatch):
     """The measurement behind issue #39, kept in the tree rather than in prose.
 
@@ -222,8 +253,8 @@ def test_the_value_matrix_reaches_every_condition_the_shape_matrix_cannot():
         "schedule moves real exported bytes and this harness reports 0 changed"
     )
     assert any(c.source.get("refit_reach_floor") for c in cases), (
-        "no value case sets refit_reach_floor, which is land_at_least's only "
-        "caller"
+        "no value case sets refit_reach_floor, so the refit caller of "
+        "land_at_least is uncovered"
     )
     assert any(c.encode.get("completion") for c in cases), (
         "no value case spends the completion axis, so the completion argmin "
