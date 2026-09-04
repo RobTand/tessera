@@ -5,11 +5,15 @@ Branch `muse/ts-94-window`, from master `82cdf51`.
 **The defect is there.** `viterbi_window_fused` decided whether to capture from
 `len(descs) >= 6`, and under LDLQ every call carries exactly one batch, so the
 shipping E4M3 recipe ran the eager step loop on a freshly allocated,
-freshly tiled, freshly warmed plan on every one of its several hundred calls.
+freshly tiled, freshly warmed plan on every one of its 192 calls per pass,
+and again on every scale_refit pass.
 The eager/captured split was a read on *whether the caller was compensating*,
 which is not a property the launch stream has any business seeing.
 
-*(Numbers below are filled in from the runs; see "Measurement".)*
+Measured on a quiet box: **1.394x on the LDLQ arm**, **262,912 individual
+kernel launches collapse to 256 graph launches**, **1.43x work per joule**,
+bytes byte-identical against the reference on every lever. Details under
+"Measurement".
 
 ## Why one batch, always
 
@@ -34,7 +38,7 @@ Four distinct shapes for the whole unit, each recurring dozens of times per
 pass and again in each of the `scale_refit` passes — every one of them under
 `width`, so `len(descs) == 1 < 6` on all of them, and none of them captured.
 The same tensor encoded in one call (no LDLQ) has 96 batches and does capture.
-Receipt: `shape_census.json`.
+Receipt: `experiments/results/ts94_shape_census.json`.
 
 ## The change
 
@@ -73,7 +77,7 @@ torch chain that defines the trellis, not another run of the same kernels.
 
 ## Tests
 
-Full suite on the branch, sparky, `PYTHONPATH=src`, `-p no:randomly`:
+Full suite, sparky, `PYTHONPATH=src`, `-p no:randomly`:
 
     1638 passed, 9 skipped, 14 warnings in 2097.30s
 
@@ -83,8 +87,17 @@ branch runs and passes. The suite was launched under `nohup` without capturing
 `$?`, so the exit status is reported as what the summary line implies rather
 than as an observed number; a pass/skip-only summary is pytest's zero.
 
-`tests/test_window_graph.py` (19) and `tests/test_window_viterbi_fast.py` (52)
-were additionally run on their own against the same tree.
+**Which tree that suite pinned, precisely.** It started at 19:28:05, after
+`60a7dc5` and before `8a164a6`, and pytest imports every test module and its
+dependencies at collection — so it exercised `60a7dc5`'s source, not the final
+tree. The source changes after it are the three review corrections below: the
+forced-eager reorder (reachable only with `TESSERA_WINDOW_GRAPH=0` in the
+environment, which no test outside the two window files sets), the plan-cache
+constant, and comments. The two files that do exercise them,
+`tests/test_window_graph.py` (19 passed) and `tests/test_window_viterbi_fast.py`
+(52 passed), were re-run on their own against the **final** source tree. I did
+not re-run the full suite: the coordinator's standing rule is targeted evidence
+via `tools/impacted_tests.py`, with the full suite taken on the merge result.
 
 ## Measurement
 
@@ -227,7 +240,7 @@ they correct.
   which is what makes `0` an A/B control at all — the measurement below depends
   on it.
 * the plan cache held four shapes and the shipping schedule asks for exactly
-  four; raised to eight, priced from the buffers (`bbd8f0f`) rather than from a
+  four; raised to eight, priced from the buffers (`65924e2`) rather than from a
   millisecond figure nobody had measured.
 
 ## Off-task fixes
@@ -266,7 +279,9 @@ immediately, three times, with
 because the *previous* pbrun run left `pbrun_result.txt` in the checkout root
 and the worker requires the declared `result_path` to be absent. I cleared it
 by hand and the job then ran. Every agent that submits twice from one directory
-hits this. I could have fixed it -- unlink the stale `result_path` at submit,
+hits this, and `/home/rob/tmp/musefix` is a shared cwd (ts-5, ts-18 and ts-86
+also live under it), so I renamed both of my leftovers on both boxes
+(`pbrun_result_ts94_pass{1,2}.txt`) rather than leave a trap behind me. I could have fixed it -- unlink the stale `result_path` at submit,
 or make the name unique per action key, either is a few lines -- and chose not
 to: `pbrun.py` lives in `/mnt/shared/prismabuild-fleet/repo/tools/`, it is a
 different repository from this branch, and it was being used by every agent on
@@ -276,7 +291,23 @@ the coordinator's call. Reported to the coordinator in-session.
 **No PrismaBuild worker was polling on sparklina.** Every `gx10-6b77`-tagged
 action sat in `pb-queue/ready` with nothing to execute it -- `pbrun.py` only
 submits and polls. I started `worker_loop.py --max-idle 180` there, which is
-additive and exits on its own once the queue drains. Also reported.
+additive and exits on its own once the queue drains -- it has since done so, so
+sparklina is back to having no poller and the next agent to need it will have to
+start one again. Also reported.
+
+## Receipts
+
+Committed under `experiments/results/`, matching where this repo keeps result
+JSON:
+
+* `ts94_shape_census.json` -- the call-shape census the plan cache is sized from
+* `ts94_c_timing.json` -- the 7-rep interleaved timing pair, branch `ce811e8`
+* `ts94_m_timing.json` -- the master control on pristine `82cdf51`
+* `ts94_d_profile_fwd.json`, `ts94_e_profile_rev.json` -- the two profiles, run
+  in opposite arm order
+
+#13 kept its write-up on the branch rather than in `docs/measurements/`, so this
+report follows it; relocating it there on merge is the coordinator's call.
 
 ## Consultations
 
@@ -286,4 +317,15 @@ additive and exits on its own once the queue drains. Also reported.
   padding) is right: padding the 2-column calls to width 32 would run 16x the
   device work they need.
 * `advisor()` after the mechanism landed: found the three defects listed under
-  "Off-task fixes" above. Each was verified by reading the line before fixing.
+  "Review corrections" above. Each was verified by reading the line before
+  fixing.
+* `advisor()` while waiting on the pool queue: argued that a contaminated pass
+  must be discarded rather than averaged, and that the direction of the
+  contamination is itself reportable. That is why pass 1 is named and dropped
+  rather than quietly replaced.
+* `advisor()` before writing this report's final form: caught that the full
+  suite pinned `60a7dc5` rather than the final tree, which is the caveat now in
+  "Tests"; verified from `git log` timestamps against the run's start time.
+
+No `fable-*` consultations — nothing in this task was a judgment call the code
+could not settle.
