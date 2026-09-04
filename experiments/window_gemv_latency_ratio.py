@@ -34,11 +34,13 @@ usage:
 from __future__ import annotations
 
 import argparse
+import bisect
 import collections
 import glob
 import gzip
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -139,6 +141,91 @@ def _bucket(name: str) -> str:
     return "other"
 
 
+#: Python frames that ARE the lane, whichever kernels they launch.  Name-based
+#: bucketing cannot compare the two arms: the engaged arm's lane is one named
+#: CUDA kernel, while the fallback's window decode is pure torch over packed
+#: bits and lands in ``at::native::*`` elementwise and index kernels that no
+#: lane pattern matches.  Bucketing by name therefore counts the whole engaged
+#: lane against only the fallback's ``_scaled_mm``, which flatters the built
+#: kernel and understates ``s_f`` -- the very share the A/B's ceiling is read
+#: from.  Attribution by enclosing frame is symmetric by construction: it asks
+#: "did this kernel get launched from inside the lane's code", which is the
+#: same question in both arms.
+LANE_FRAMES = re.compile(r"tessera/serving/fp8_gemv\.py|kernel_window_gemv\.py"
+                         r"|tessera/serving/window", re.I)
+
+
+def lane_by_frames(events, t0: float, t1: float, base_s: float,
+                   pattern=LANE_FRAMES) -> dict:
+    """Device time of kernels launched from inside the lane's own Python.
+
+    Returns ``{"attributable": False, ...}`` when the trace carries no Python
+    frames at all -- a profile taken without ``with_stack`` cannot answer this,
+    and saying so is not the same as saying the lane cost nothing.
+
+    EAGER ONLY, and measured to be so.  On the #83 *compiled* trace this finds
+    542.65 ms under ``fp8_gemv.py`` frames and **none of it is
+    ``window_gemv_kernel``**: the matched frames are ``streamed_apply``,
+    ``_materialised_path`` and ``_role_view``, while the GEMV route is traced
+    into the inductor graph and launched from generated code with no
+    ``fp8_gemv.py`` frame above it.  Under a compiled forward this number is a
+    floor, not the lane, and ``main`` stamps that on the receipt.  Eager first
+    is what makes the frame method the symmetric one.
+    """
+    frames, launches, kernels = [], {}, {}
+    for e in events:
+        if e.get("ph") != "X":
+            continue
+        cat = str(e.get("cat", ""))
+        if cat == "python_function":
+            if pattern.search(str(e.get("name", ""))):
+                frames.append(e)
+        elif cat in ("cuda_runtime", "cuda_driver"):
+            c = (e.get("args") or {}).get("correlation")
+            if c is not None:
+                launches[c] = e
+        elif cat in ("kernel", "Kernel", "cuda_kernel"):
+            c = (e.get("args") or {}).get("correlation")
+            if c is not None:
+                kernels.setdefault(c, []).append(e)
+    have_python = any(str(e.get("cat", "")) == "python_function" for e in events)
+    if not have_python:
+        return {"attributable": False,
+                "note": "trace carries no python_function frames (no with_stack); "
+                        "lane attribution by frame is not possible in it"}
+    by_tid: dict = {}
+    for f in frames:
+        by_tid.setdefault(f.get("tid"), []).append(f)
+    for v in by_tid.values():
+        v.sort(key=lambda e: e["ts"])
+    us, n, unattributed = 0.0, 0, 0
+    for c, ks in kernels.items():
+        inside_window = [k for k in ks
+                         if t0 <= base_s + float(k.get("ts", 0.0)) / 1e6 <= t1]
+        if not inside_window:
+            continue
+        launch = launches.get(c)
+        if launch is None:
+            unattributed += len(inside_window)
+            continue
+        cands = by_tid.get(launch.get("tid")) or []
+        i = bisect.bisect_right([f["ts"] for f in cands], launch["ts"]) - 1
+        hit = False
+        while i >= 0:
+            f = cands[i]
+            if f["ts"] + f.get("dur", 0) >= launch["ts"]:
+                hit = True
+                break
+            i -= 1
+        if hit:
+            n += len(inside_window)
+            us += sum(float(k.get("dur", 0.0)) for k in inside_window)
+    return {"attributable": True, "lane_frames_ms": round(us / 1000, 3),
+            "lane_frame_launches": n,
+            "kernels_without_a_launch_record": unattributed,
+            "pattern": pattern.pattern}
+
+
 def trace_window(path: str, t0: float, t1: float) -> dict:
     """Kernel launches and device time inside an absolute UTC window.
 
@@ -154,6 +241,7 @@ def trace_window(path: str, t0: float, t1: float) -> dict:
         doc = json.load(fh)
     base_s = float(doc.get("baseTimeNanoseconds", 0)) / 1e9
     events = doc.get("traceEvents", [])
+    frame_lane = lane_by_frames(events, t0, t1, base_s)
     launches, us = collections.Counter(), collections.Counter()
     per_kernel_us = collections.Counter()
     seen, inside = 0, 0
@@ -175,6 +263,7 @@ def trace_window(path: str, t0: float, t1: float) -> dict:
         us[b] += float(e.get("dur", 0.0))
         per_kernel_us[name] += float(e.get("dur", 0.0))
     return {"file": path, "base_time_s": base_s,
+            "lane_by_frames": frame_lane,
             "trace_span_utc": span,
             "kernels_in_trace": seen, "kernels_in_window": inside,
             "window_unix": [t0, t1],
@@ -288,10 +377,19 @@ def main() -> int:
                             "marks (schema /1); the trace cannot be cut by wall clock"}
             continue
         w = trace_window(f, float(t0), float(t1))
+        fl = w.get("lane_by_frames") or {}
+        if fl.get("attributable") and receipt.get("forward") == "compiled":
+            fl["note"] = ("compiled forward: the GEMV route is traced into the "
+                          "inductor graph and launched with no fp8_gemv.py frame "
+                          "above it, so this is a floor on the lane, not the lane")
         steps = _decode_steps(receipt)
         if steps:
             w["decode_steps"] = steps
             w["device_ms_per_step"] = round(w["device_ms_in_window"] / steps, 5)
+            # By NAME.  Asymmetric between the arms by construction -- see
+            # LANE_FRAMES -- and kept because it is what a reader can check
+            # against the per-bucket table.  ``lane_by_frames`` is the
+            # symmetric one; under an eager forward, prefer it.
             lane = sum(w["by_bucket"].get(k, {}).get("ms", 0.0)
                        for k in ("window_gemv", "window_decode", "scaled_mm/cutlass"))
             w["lane_bucket_ms"] = round(lane, 3)

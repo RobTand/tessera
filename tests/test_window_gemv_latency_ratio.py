@@ -215,3 +215,60 @@ def test_the_cublas_gemv_is_bucketed_rather_than_left_in_other():
     assert RATIO._bucket(
         "void (anonymous namespace)::window_gemv_kernel<14, 16, 1, unsigned short, "
         "false, false>") == "window_gemv"
+
+
+def _trace(events, base_ns=1_788_479_556_000_000_000):
+    return {"baseTimeNanoseconds": base_ns, "traceEvents": events}
+
+
+def test_lane_attribution_by_frame_is_symmetric_across_the_arms():
+    """Name buckets cannot compare the arms; enclosing frames can.
+
+    The engaged arm's lane is one named CUDA kernel. The fallback's window
+    decode is pure torch over packed bits and lands in ``at::native::*``
+    kernels that no lane pattern matches, so a name-bucket comparison counts
+    the whole engaged lane against only the fallback's ``_scaled_mm``. Asking
+    instead "was this kernel launched from inside ``fp8_gemv.py``" is the same
+    question in both arms.
+    """
+    import importlib
+    R = RATIO
+    base_ns = 1_788_479_556_000_000_000
+    base_s = base_ns / 1e9
+
+    def arm(kernel_name):
+        return [
+            {"ph": "X", "cat": "python_function", "tid": 1, "ts": 1_000_000.0,
+             "dur": 500.0, "name": "tessera/serving/fp8_gemv.py(300): streamed_apply"},
+            {"ph": "X", "cat": "cuda_runtime", "tid": 1, "ts": 1_000_010.0, "dur": 5.0,
+             "name": "cudaLaunchKernel", "args": {"correlation": 7}},
+            {"ph": "X", "cat": "kernel", "tid": 9, "ts": 1_000_100.0, "dur": 400.0,
+             "name": kernel_name, "args": {"correlation": 7}},
+            # A kernel outside the lane's frames: lm_head, in both arms.
+            {"ph": "X", "cat": "cuda_runtime", "tid": 1, "ts": 1_002_000.0, "dur": 5.0,
+             "name": "cudaLaunchKernel", "args": {"correlation": 8}},
+            {"ph": "X", "cat": "kernel", "tid": 9, "ts": 1_002_100.0, "dur": 900.0,
+             "name": "internal::gemvx::kernel", "args": {"correlation": 8}},
+        ]
+
+    engaged = R.lane_by_frames(arm("window_gemv_kernel<14, 16, 1>"),
+                               base_s, base_s + 10, base_s)
+    fallback = R.lane_by_frames(arm("at::native::unrolled_elementwise_kernel<...>"),
+                                base_s, base_s + 10, base_s)
+    assert engaged["attributable"] and fallback["attributable"]
+    # Same lane cost found in both, though only one has a nameable kernel.
+    assert engaged["lane_frames_ms"] == pytest.approx(0.4)
+    assert fallback["lane_frames_ms"] == pytest.approx(0.4)
+    # The name buckets are what disagree, which is the whole point.
+    assert R._bucket("window_gemv_kernel<14, 16, 1>") == "window_gemv"
+    assert R._bucket("at::native::unrolled_elementwise_kernel<...>") != "window_gemv"
+
+
+def test_a_trace_without_python_frames_says_so_rather_than_zero():
+    base_s = 1_788_479_556_000_000_000 / 1e9
+    got = RATIO.lane_by_frames(
+        [{"ph": "X", "cat": "kernel", "tid": 9, "ts": 0.0, "dur": 10.0,
+          "name": "window_gemv_kernel", "args": {"correlation": 1}}],
+        base_s, base_s + 10, base_s)
+    assert got["attributable"] is False
+    assert "with_stack" in got["note"]

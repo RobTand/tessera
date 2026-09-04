@@ -353,10 +353,35 @@ cannot move a real serve is not worth its complexity -- but it prices the lane
 to a model whose `lm_head` is a smaller share. That is why
 `window_gemv_latency_ratio.py` reports two things and calls neither the other's
 headline: the served ratio, and the device time inside the profiled decode
-window by bucket (`lane_share_of_window`), cut from both arms' traces by one
-wall-clock rule. The cuBLAS GEMV now has a bucket of its own in the shared
-summariser rather than sitting in `other`, which is where a dilution hides: on
-this trace `other` falls from 297.3 ms to 33.4 ms once it is named.
+window, cut from both arms' traces by one wall-clock rule. The cuBLAS GEMV now
+has a bucket of its own in the shared summariser rather than sitting in
+`other`, which is where a dilution hides: on this trace `other` falls from
+297.3 ms to 33.4 ms once it is named.
+
+### The lane cannot be compared across the arms by kernel name
+
+One asymmetry in the profile half is worth stating before a receipt shows it.
+The engaged arm's lane is one named CUDA kernel; the fallback's window decode
+is **pure torch over packed bits** and lands in `at::native::*` elementwise and
+index kernels that no lane pattern matches. Summing a `window_gemv|
+window_decode|scaled_mm` name bucket therefore counts the *whole* engaged lane
+against only the fallback's `_scaled_mm` -- flattering the built kernel, and
+understating `s_f`, which is the share the A/B's ceiling is read from.
+
+So the tool also attributes by **enclosing Python frame**: was this kernel
+launched from inside `tessera/serving/fp8_gemv.py`? That is the same question
+in both arms. On the #83 engaged trace it finds 542.65 ms under those frames
+against 387.6 ms by name -- the difference being the torch work inside
+`_materialised_path` and `_role_view` that the name buckets scatter into
+`elementwise/triton`.
+
+**And it is eager-only, measured rather than assumed.** On that same *compiled*
+trace, none of the 542.65 ms is `window_gemv_kernel`: the matched frames are
+`streamed_apply`, `_materialised_path` and `_role_view`, while the GEMV route
+is traced into the inductor graph and launched from generated code with no
+`fp8_gemv.py` frame above it. Under a compiled forward the number is a floor on
+the lane, not the lane, and the receipt says so in a `note`. This is a second
+reason the campaign runs eager first, beyond the one in §5.
 
 This section was computed from `prof-armA-streamed-compiled/rank0.*.pt.trace.json.gz`
 -- the #83 campaign's own compiled trace, which is whole-serve rather than cut
