@@ -173,6 +173,10 @@ and allocation/cache keys remove exactly that suffix via `ActivationSource`.
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
+Its `encoding_input_identity` is shared by dense and projected campaign
+callers; `unit_input_identity` adds the producer's explicit expert projection.
+Both use the same unit-record construction and wire verifier, while the
+export boundary still requires the projected identity and exact field equality.
 `export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates

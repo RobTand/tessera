@@ -144,9 +144,20 @@ def _check_wire(blob: bytes, identity: dict):
     from .control import grid_for_name
     from .planes import PlaneKind
 
+    schema = identity.get("schema")
+    if schema not in (INPUT_SCHEMA, ENCODING_INPUT_SCHEMA):
+        raise ValueError("cached unit input schema is unsupported")
+    projected = schema == INPUT_SCHEMA
+    if projected != ("projection" in identity):
+        raise ValueError("cached unit input schema/projection fields disagree")
+    shape = identity["source"]["shape"]
+    if not isinstance(shape, list) or len(shape) != 2 or any(type(n) is not int or n <= 0 for n in shape):
+        raise ValueError("cached unit source identity must carry an exact 2-D shape")
+    rows, columns = shape
+    if projected and [identity["projection"]["rows"], identity["projection"]["cols"]] != shape:
+        raise ValueError("cached unit projection geometry disagrees with source identity")
     artifact = parse(blob)
     manifest = artifact.manifest
-    expected = identity["projection"]
     recipe_spec = identity["recipe"]
     grid = grid_for_name(recipe_spec["grid"])
     q256 = recipe_spec["q256"]
@@ -157,7 +168,7 @@ def _check_wire(blob: bytes, identity: dict):
     if manifest.shard is not None or len(manifest.terminals) != 1:
         raise ValueError("cached unit must be one complete, unsharded terminal")
     if (geometry.rows, geometry.columns, geometry.quantizable_params) != (
-            expected["rows"], expected["cols"], expected["rows"] * expected["cols"]):
+            rows, columns, rows * columns):
         raise ValueError("cached unit wire geometry disagrees with source projection")
     superblock = inspect.signature(build_unit_artifact).parameters["superblock"].default
     if (geometry.group_weights, geometry.half_weights, geometry.superblock_columns) != (
@@ -168,7 +179,7 @@ def _check_wire(blob: bytes, identity: dict):
     if manifest.branch.rotation != RotationState.NONE or manifest.branch.container != ContainerClass.GRIDBOOK:
         raise ValueError("cached unit wire rotation/container differs from the encoder defaults")
     cap = grid.payload_bits if recipe.body is BodyKind.WINDOW else grid.rate_cap
-    rates = bresenham_rate_schedule(Fraction(q256 * grid.arity, 256), expected["cols"], cap=cap)
+    rates = bresenham_rate_schedule(Fraction(q256 * grid.arity, 256), columns, cap=cap)
     code = None if recipe.body is BodyKind.WINDOW else DEFAULT_CODE
     profile = encoder_profile_id(code, rates, grid, recipe.span, recipe.scale_plane,
                                  recipe.body, recipe.window_bits, recipe.window_seed,
@@ -207,8 +218,6 @@ def verify_cached_unit(blob: bytes, record: dict, expected_identity: dict) -> Ac
     for key, value in expected_identity.items():
         if observed[key] != value:
             raise ValueError(f"cached unit {key} identity mismatch")
-    if expected_identity["schema"] != INPUT_SCHEMA:
-        raise ValueError("cached unit input schema is unsupported")
     artifact = _check_wire(blob, expected_identity)
     return AcceptedUnit(blob, artifact.manifest, artifact.terminal.exact_bytes)
 

@@ -263,3 +263,16 @@ def test_encoding_identity_is_shared_by_dense_and_projected_callers():
     assert "projection" not in dense
     assert dense["source"] == common["source"]
     assert dense["unit"] != common["unit"]
+
+
+def test_dense_resume_uses_same_record_and_wire_validation(encoded):
+    api = _api()
+    expected = api.encoding_input_identity(encoded[0], "model.layers.0.self_attn.q_proj",
+                                           E4M3_GRID, 1024)
+    record = api.make_unit_record(encoded[1], expected, filename="dense.tessera")
+    accepted = api.verify_cached_unit(encoded[1], record, expected)
+    assert accepted.blob == encoded[1]
+    changed = api.encoding_input_identity(encoded[0], "model.layers.0.self_attn.q_proj",
+                                          E4M3_GRID, 1280)
+    with pytest.raises(ValueError, match="recipe"):
+        api.verify_cached_unit(encoded[1], record, changed)
