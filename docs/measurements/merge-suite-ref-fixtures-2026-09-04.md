@@ -49,3 +49,26 @@ tessera surface: this run did not exercise the CUDA-gated surface. Its pass coun
 
 These are targeted test-infrastructure checks, not the final full CPU/CUDA
 merge receipt or a served model measurement.
+
+## Combined runner check and impact selection
+
+On coordinator source `02d631c`, PrismaBuild action
+`be00e4704b2195f99e30ac10ee1cf8dbc778aff58e34b4782324ba025726ec2b`
+fetched the exact base `fefa56e067b0b20f7866e4032aa5836cce513add` and ran the
+selector in its own snapshot checkout. The selector reported `narrowed`,
+with `test_impacted_tests.py` and `test_merge_suite.py`, using a direct tree
+comparison because the snapshot was parentless. Both selected files plus
+`test_suite_source.py` and `test_cuda_surface.py` were run: **79 passed,
+1 skipped, zero uncollected modules in 50.58 seconds**. The skip reason was
+verbatim `needs a CUDA device`. This was the same serial dl380g10 CPU-only
+population, one CPU and 4 GiB, not CUDA coverage.
+
+The submitting client stopped waiting after 30 seconds; the pool completed
+the action in 55.03 seconds with `detail.returncode=0`. The result was read
+from the published CAS blob, not inferred from the client's timeout:
+
+- Receipt: `9ebf4e4665dfacd98e3285794bed49c273448f1265211ec04586c9f6c045e2a8`.
+- Result: `bbee66a9c7372fce714a5a8785831d53842cb9ea8badae5b96ec38d53f1d3bcb`.
+- Snapshot: `e5e849413c83a13d941282bda983e97fdf6eeba4`.
+
+Subsequent MoE collector integration is outside this run's source scope.
