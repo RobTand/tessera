@@ -1267,9 +1267,20 @@ claim also needs a served receipt (§3).
 refuses a tag that does not name the version in `pyproject.toml`, builds the
 sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
 `pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
-is no API token in the repository. The trigger is a bare tag match with no
-ancestry check and no GitHub `environment` -- recorded as an open issue
-against #17, not a property this section claims.
+is no API token in the repository.
+
+The trigger is a bare `v*` tag match, and a tag is not a review gate -- so
+before the job builds anything it refuses a commit that is not reachable from
+`origin/master` (`.github/scripts/require_tag_on_master.sh`, under a
+`fetch-depth: 0` checkout, because a shallow clone answers reachability from
+whatever history it happens to hold). Every other outcome is a refusal too: a
+shallow checkout, or a branch the runner could not read.
+
+What the trigger still lacks is a GitHub `environment` gating the OIDC token.
+Naming one here only works once the PyPI Trusted Publisher is configured with
+the same name, so the workflow change and the PyPI-side change have to land
+together -- #17's question, and Rob's alone. This section claims no
+`environment`.
 
 Every `uses:` in the file names a commit SHA, with the version it was in a
 trailing comment. A tag or a branch (`@v4`, `@release/v1`) is a ref another

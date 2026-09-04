@@ -14,8 +14,13 @@ cannot find is a failure, never a silent pass.
 """
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -59,3 +64,156 @@ def test_every_action_is_pinned_to_a_commit_sha():
                     "so nobody can read or bump the pin"
                 )
     assert not unpinned, "unpinned or unlabelled actions:\n" + "\n".join(unpinned)
+
+
+# ---------------------------------------------------------------------------
+# The publish gate: which commit a tag is allowed to publish.
+# ---------------------------------------------------------------------------
+
+#: The one home of the reachability rule.  The workflow calls it; so do these
+#: tests, which is the point of it being a file and not an inline `run:` block.
+ANCESTRY_SCRIPT = ROOT / ".github" / "scripts" / "require_tag_on_master.sh"
+
+
+def _job_block(text: str, name: str) -> str:
+    """The body of one job, sliced by indentation.
+
+    Fails closed: an anchor that is not there is an error, never an empty
+    block that every ``in`` below would then pass on.
+    """
+    lines = text.splitlines()
+    starts = [i for i, line in enumerate(lines) if line == f"  {name}:"]
+    assert len(starts) == 1, f"expected exactly one '  {name}:' line, found {len(starts)}"
+    body = []
+    for line in lines[starts[0] + 1 :]:
+        if line.strip() and not line.startswith("    "):
+            break
+        body.append(line)
+    assert body, f"job {name!r} has an empty body"
+    return "\n".join(body)
+
+
+def test_publish_gates_the_tag_before_it_builds_anything():
+    """A ``v*`` tag is not a review gate, so the job needs one of its own.
+
+    Three properties, and each is load-bearing on its own: the ancestry check
+    is called at all; it runs before the build, so an unreviewable commit is
+    refused rather than packaged and then refused; and the checkout is deep,
+    because ``git merge-base --is-ancestor`` cannot answer reachability from
+    a shallow clone.  ``needs: pure`` is asserted here too -- it is what makes
+    the tag path run the same tests the branch path does.
+    """
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    publish = _job_block(text, "publish")
+
+    assert "needs: pure" in publish, "publish must not run before the pure job is green"
+    assert "fetch-depth: 0" in publish, (
+        "the publish checkout must be deep: reachability cannot be answered "
+        "from a shallow clone"
+    )
+    call = ANCESTRY_SCRIPT.relative_to(ROOT).as_posix()
+    assert call in publish, f"publish never calls {call}"
+
+    lines = publish.splitlines()
+    check_at = next(i for i, line in enumerate(lines) if call in line)
+    build_at = next(i for i, line in enumerate(lines) if "python -m build" in line)
+    assert check_at < build_at, (
+        "the ancestry check runs after the build; refuse the commit before "
+        "packaging it"
+    )
+
+
+# --- the script's own behaviour, on real repositories -----------------------
+
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@example.invalid",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@example.invalid",
+    "GIT_CONFIG_GLOBAL": "/dev/null",
+    "GIT_CONFIG_SYSTEM": "/dev/null",
+    "PATH": os.environ.get("PATH", ""),
+    "HOME": os.environ.get("HOME", ""),
+}
+
+
+def _git(repo: Path, *args: str) -> str:
+    done = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True, text=True, env=GIT_ENV, check=True,
+    )
+    return done.stdout.strip()
+
+
+def _commit(repo: Path, message: str) -> str:
+    (repo / "file").write_text(message, encoding="utf-8")
+    _git(repo, "add", "file")
+    _git(repo, "commit", "-m", message)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def origin_and_clone(tmp_path):
+    """An origin with two commits on master and one on a side branch, plus a
+    full clone of it -- the shape a tag build sees."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "master")
+    first = _commit(origin, "one")
+    tip = _commit(origin, "two")
+    _git(origin, "checkout", "-q", "-b", "side")
+    side = _commit(origin, "side")
+    _git(origin, "checkout", "-q", "master")
+
+    clone = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", "-q", str(origin), str(clone)],
+        check=True, env=GIT_ENV, capture_output=True, text=True,
+    )
+    return SimpleNamespace(origin=origin, clone=clone, first=first, tip=tip, side=side)
+
+
+def _run_check(repo: Path, commit: str, *extra: str):
+    return subprocess.run(
+        ["bash", str(ANCESTRY_SCRIPT), commit, *extra],
+        cwd=str(repo), capture_output=True, text=True, env=GIT_ENV,
+    )
+
+
+def test_a_commit_on_master_is_publishable(origin_and_clone):
+    for name, commit in (("tip", origin_and_clone.tip), ("older", origin_and_clone.first)):
+        done = _run_check(origin_and_clone.clone, commit)
+        assert done.returncode == 0, (
+            f"{name} commit on master refused: {done.stdout}{done.stderr}"
+        )
+
+
+def test_a_commit_off_master_is_refused(origin_and_clone):
+    """The whole point: a tag pushed at an unreviewed commit publishes nothing."""
+    done = _run_check(origin_and_clone.clone, origin_and_clone.side)
+    assert done.returncode != 0, "a commit that is not on master was accepted"
+    assert origin_and_clone.side[:12] in (done.stdout + done.stderr)
+
+
+def test_a_shallow_checkout_is_refused_rather_than_guessed(origin_and_clone):
+    """A shallow clone answers reachability from the history it happens to
+    have.  Refuse, and name the checkout setting that fixes it."""
+    shallow = origin_and_clone.clone.parent / "shallow"
+    subprocess.run(
+        ["git", "clone", "-q", "--depth", "1",
+         f"file://{origin_and_clone.origin}", str(shallow)],
+        check=True, env=GIT_ENV, capture_output=True, text=True,
+    )
+    done = _run_check(shallow, origin_and_clone.tip)
+    assert done.returncode != 0, "a shallow clone was accepted"
+    assert "fetch-depth" in (done.stdout + done.stderr)
+
+
+def test_a_branch_that_does_not_exist_is_refused(origin_and_clone):
+    """Fail closed on the ref, too: no branch, no publish."""
+    done = _run_check(origin_and_clone.clone, origin_and_clone.tip, "origin", "no-such-branch")
+    assert done.returncode != 0, "a missing branch was treated as reachable"
+    assert "no-such-branch" in (done.stdout + done.stderr), (
+        "the refusal must name the branch it could not read; any non-zero "
+        "exit passes this test otherwise, including the script being absent"
+    )
