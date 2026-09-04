@@ -80,6 +80,20 @@ def test_the_refusal_carries_the_load_time_reason():
     assert "112 of 112 module(s) recorded a load-time refusal" in problems[0]
 
 
+def test_a_load_time_refusal_is_not_multiplied_by_the_phase_count():
+    """The tool hands the SAME load-time map to every phase (a refusal happens
+    once, at load).  Summing them reported 224 of 112 modules refusing."""
+    refusal = f"{LANE}: GrammarError: rates [3] have no lane here (supported (1, 2, 4))"
+    records = _records(112, "torch_window")
+    phases = {"prefill": records, "decode": records}
+    refusals = {phase: {name: refusal for name in records} for phase in phases}
+    _block, problems = lane_engagement(phases, required_lanes=[LANE], lane_decoders=DECODERS,
+                                       refusals_by_phase=refusals)
+    assert len(problems) == 1
+    assert "112 of 112 module(s) recorded a load-time refusal" in problems[0]
+    assert "224" not in problems[0]
+
+
 def test_an_engaged_arm_passes():
     """The control: the same check on a serve that DID take the lane."""
     phases = {"prefill": _records(112, "window_gemv"),

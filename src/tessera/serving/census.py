@@ -99,7 +99,12 @@ def lane_engagement(records_by_phase: Mapping[str, Mapping[str, Mapping[str, Any
             engaged_anywhere[lane] = max(engaged_anywhere[lane], n)
         refusals = dict(sorted(collections.Counter(
             str(v) for v in (refusals_by_phase or {}).get(phase, {}).values()).items()))
-        all_refusals.update(refusals)
+        # A load-time refusal is a fact about the LOAD, not about a phase: the
+        # tool hands the same {module: refusal} map to every phase, so summing
+        # would report "224 of 112 modules refused" on a two-phase census.
+        # Take the largest count each reason reached in any one phase.
+        for reason, n in refusals.items():
+            all_refusals[reason] = max(all_refusals[reason], n)
         modules_seen = max(modules_seen, len(records))
         phases[phase] = {
             "tessera_modules": len(records),

@@ -21,7 +21,12 @@ RUNS=${RUNS:-/home/rob/tessera-runs/ts104}
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 NEW=${NEW:-/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024}
 ALLOC=/mnt/shared/tessera-runs/allocated
-mkdir -p "$RUNS"
+# The Triton cache is root-owned on this box and every kernel test fails
+# without a writable redirect; the pytest legs below run in this shell,
+# not in the census script's child, so it is set here.
+export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/home/rob/.triton-cache}
+export TMPDIR=${TMPDIR:-/home/rob/tmp}
+mkdir -p "$RUNS" "$TRITON_CACHE_DIR"
 
 sha_before=$(sha256sum "$NEW/model.safetensors" 2>/dev/null | cut -d" " -f1)
 "$PY" "$WT/experiments/export_tessera_serving.py" /home/rob/models/Qwen3-0.6B "$NEW" \

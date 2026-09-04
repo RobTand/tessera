@@ -141,7 +141,13 @@ streamed FP8 route's decode regime legitimately admits both the GEMV pair
 and the materialised one, so a serve in which the lane prepared for nothing
 passes it module by module (§4.4b). Hence `lane_engagement`: an arm that
 requested a route and got zero units on it is a failed census, in a field a
-gate reads.
+gate reads. The verdict is over the census, not over each phase: a lane owns
+a *regime*, not a serve -- the window GEMV decodes M <= 8
+(`kernel_window_gemv.GEMV_MAX_M`), so the census's prefill forward takes the
+torch decode by design, and only zero modules in *every* phase is the void
+the field exists to catch. The per-phase counts stay in the block, and
+`all_required_engaged` is three-valued so "nobody said what to require" never
+reads as "everything required was engaged".
 
 ### 4.6 The stock twin isolates the wire from the kernel
 
