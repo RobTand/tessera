@@ -40,13 +40,24 @@ def test_the_gpu_arm_carries_the_gate_and_the_cpu_arm_does_not():
     x86 = merge_suite._command(merge_suite.ARMS["x86"], surface, [])
     assert "--strict-cuda" in gpu
     assert "--strict-cuda" not in x86
-    for command in (gpu, x86):
+    for name, command in (("gpu", gpu), ("x86", x86)):
         # Both arms must publish a population, or the receipt has nothing to
         # put side by side.
         assert "--surface-json" in command
-        # The interpreter is named, never inherited: a pool action runs in a
-        # sealed environment on a box that is not this one.
-        assert command[0].startswith("/") and command[0] != sys.executable
+        # The interpreter is NAMED -- taken from the arm table -- never
+        # inherited from whatever launched this test, because a pool action
+        # runs in a sealed environment on a box that is not this one.
+        #
+        # ``command[0] != sys.executable`` was the first spelling and it is a
+        # different claim wearing the same words: it asks whether the named
+        # interpreter happens to differ from the running one, which is a fact
+        # about WHERE the test runs.  It passed on sparky and failed on
+        # dl380g10, whose python IS the x86 arm's named interpreter, and it
+        # would fail on the GPU arm too for the same reason.  A test whose
+        # verdict depends on its box is the blindness tessera#112 is about,
+        # and this branch's own first cross-population run is what caught it.
+        assert command[0] == merge_suite.ARMS[name]["python"]
+        assert command[0].startswith("/")
 
 
 def test_a_missing_surface_is_reported_as_absent_not_as_a_pass():
