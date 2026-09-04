@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T15:55:43Z",
+ "generated": "2026-09-04T15:59:06Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -390,7 +390,7 @@
     "title": "Unraised CHANNEL rows can still land one fp16 ulp below the body reach"
    },
    "116": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Encoder identity fixture misses unraised fp16 reach-boundary landing"
    },
    "12": {
