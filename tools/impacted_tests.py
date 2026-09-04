@@ -21,10 +21,11 @@ coupling that an ``import`` statement expresses.  Three kinds here do not:
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
-PrismaBuild snapshots add one generated source-closure member named exactly
-``.pbrun-closure.<16 lowercase hex>.json``. It describes the checkout rather
-than changing it, so it is removed before classification; lookalike basenames
-remain ordinary changes. A snapshot commit is intentionally parentless. When
+PrismaBuild snapshots add one generated source-closure member. Only the exact
+member independently verified by ``tessera.suite_source`` against the sealed
+action is removed before classification. A matching basename is not ownership
+proof; unverified closure-shaped changes force a full selection. A snapshot
+commit is intentionally parentless. When
 both endpoints of ``BASE...HEAD`` exist but have no merge base, the selector
 records and uses the equivalent direct ``BASE..HEAD`` tree comparison.
 
@@ -51,6 +52,9 @@ import sys
 from collections import defaultdict, deque
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.suite_source import measured_source  # noqa: E402
+
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
 OPAQUE = (
@@ -64,10 +68,9 @@ SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
 # Extensions that cannot change behaviour and never force a full run.
 INERT = {".md", ".txt", ".rst"}
 
-# PrismaBuild seals this generated closure member into its parentless checkout
-# snapshot.  It describes the snapshot; it is not a project change.  Match the
-# complete basename because a broad prefix would hide a caller-owned file.
-PBRUN_CLOSURE_BASENAME = re.compile(
+# This grammar only identifies metadata that needs verification. It never
+# proves ownership or grants an exclusion: the sealed action does that.
+PBRUN_CLOSURE_CANDIDATE = re.compile(
     r"\.pbrun-closure\.[0-9a-f]{16}\.json\Z"
 )
 
@@ -199,11 +202,12 @@ def changed_files(ref: str, root: Path) -> tuple[list[str], str]:
         lines, comparison = fallback
     else:
         lines, comparison = out.stdout.splitlines(), ref
-    changed = [
-        line
-        for line in lines
-        if line.strip() and not PBRUN_CLOSURE_BASENAME.fullmatch(Path(line).name)
-    ]
+    changed = [line for line in lines if line.strip()]
+    if any(PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(line).name) for line in changed):
+        source = measured_source(root)
+        verified = ({member["path"] for member in source["excluded_metadata"]}
+                    if source["verification"] == "verified" else set())
+        changed = [line for line in changed if line not in verified]
     return sorted(changed), comparison
 
 
@@ -270,6 +274,9 @@ def main() -> int:
     ]
     # The root conftest is imported by pytest for the whole tree.
     forced += [f for f in changed if f == "conftest.py"]
+    # An unowned metadata-shaped file remains a real change. We cannot infer
+    # that it is harmless scaffolding from its spelling, so fail open.
+    forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
     by_name, importers = build_graph(root)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
