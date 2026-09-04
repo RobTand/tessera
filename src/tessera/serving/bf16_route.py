@@ -68,8 +68,8 @@ tile the op owns) or the window GEMV's repack where it did (read directly in
 the decode regime, kernel-decoded to a transient tile above it).  That is the
 mode the family is a product in.
 
-WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json`` v5
-publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
+WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json``'s
+lane-eligibility table publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
 ``sm_121`` dense cells (``decode`` and ``batch``), because a container receipt
 covers exactly that: four route censuses on the stock vLLM 0.28 image -- both
 residency

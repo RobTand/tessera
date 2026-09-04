@@ -48,10 +48,15 @@ resolves only under a ``swiglu_limit`` clamp on this build
 (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), and a BF16 expert
 stack is the passthrough ``ignore`` already gives.
 
-There is still no ``routed_moe`` cell in ``runtime_contract.json``, and there
-will not be one until a served census and KL cover it on a real artifact.
-That is the ``loader_axes`` precedent again: this is what the loader DOES,
-which is a different published fact from what has been served.
+``runtime_contract.json`` v16 publishes two ``routed_moe`` cells, and only
+two: ``TESSERA_E4M3_K1`` at rung 1024 on ``sm_121``, resident/eager, decode
+and batch, attested on the exact ``eugr/spark-vllm`` image the complete
+LFM2.5-8B-A1B artifact was censused and KL-compared on
+(``docs/measurements/tessera-lfm-campaign-2026-09-04.md`` sections 7-10).
+Every other rung, image, the compiled and streamed forms and any expert or
+tensor parallelism are unattested for this structure.  That is the
+``loader_axes`` precedent: what the loader DOES is a different published
+fact from what has been served, and the cell names exactly the second.
 
 MoE AND PARALLELISM.  Expert parallelism needs no slicing at all: its
 granularity is one whole expert unit per rank, which is the case
