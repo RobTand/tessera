@@ -182,7 +182,12 @@ person or agent — changing the code.
   other, appending a row per arm to `docs/status/suite-populations.md` under
   `--record`. That ledger is where a suite result is recorded; read the two
   adjacent rows, not one of them -- an arm a run did not submit is written as
-  `not submitted in this run`, so a lone row cannot be read as a whole result.
+  `not submitted in this run`, so a lone row cannot be read as a whole result
+  -- and read each row's `mode` beside its `device`, because two rows of one
+  commit can differ by how they ran and not by the box they ran on. `--cpus N`
+  is clamped per arm: the GPU arm is always `serial` (its workers would share
+  one device and its CUDA venv has no xdist) while the x86 arm takes `-n N`,
+  which is what lets one submission carry both arms at all.
   If the submitting session dies while the pool carries on -- which is how
   every GPU submission on this branch has gone -- `--resume <receipt dir>`
   rebuilds the receipt from the populations the runs published. Its exit
