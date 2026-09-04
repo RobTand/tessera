@@ -100,7 +100,8 @@ d = json.load(open(sys.argv[1]))
 p = (d.get("gpu_power_w") or {})
 load = d["series"]["system.load"]["stats"]["load1"]
 swap = d["series"]["mem.swapio"]["stats"]
-ncpu = 20
+import os
+ncpu = os.cpu_count() or 1
 bad = []
 if not p:
     bad.append("no GPU power samples in the idle window")
@@ -109,9 +110,23 @@ elif p["max"] > 30:
 if load.get("max", 99) / ncpu > 0.5:
     bad.append(f"load1 peaked at {load['max']} on {ncpu} cores "
                f"({load['max']/ncpu:.2f} per core, >0.5 is not quiet)")
-if swap.get("out", {}).get("max", 0) > 0 or swap.get("in", {}).get("max", 0) > 1024:
-    bad.append(f"the box is paging (swap in max {swap.get('in',{}).get('max')} KiB/s, "
-               f"out max {swap.get('out',{}).get('max')} KiB/s)")
+# PAGING: a rate, judged the way a rate should be.  The first spelling of this
+# gate refused on ``in max > 1 MiB/s`` and ``out max > 0``, which on a box
+# carrying 2 GiB of resident swap refuses on a single log flush touching a
+# paged-out page -- an event that costs the measurement nothing.  What would
+# cost it is SUSTAINED paging, so the median carries the refusal and the max
+# only catches a burst big enough to be a stall in its own right.  The per-
+# window ``swap_io`` deltas in each arm's receipt remain the direct evidence:
+# they say whether pages moved WHILE the arm was being timed, which no
+# box-level idle window can.
+def dim(name, key, default=0.0):
+    return (swap.get(name) or {}).get(key, default)
+if dim("in", "median") > 100 or dim("in", "max") > 10240:
+    bad.append(f"the box is paging in (median {dim('in','median')} KiB/s, "
+               f"max {dim('in','max')} KiB/s; sustained >100 or a >10 MiB/s burst)")
+if dim("out", "median") > 0 or dim("out", "max") > 1024:
+    bad.append(f"the box is paging out (median {dim('out','median')} KiB/s, "
+               f"max {dim('out','max')} KiB/s; any sustained page-out is pressure)")
 if bad:
     print("REFUSED: the box is not quiet, and a latency ratio taken here would be")
     print("about the box rather than the lane.  Readings:")
@@ -119,7 +134,8 @@ if bad:
         print("  -", b)
     print("Set TESSERA_LAT_REQUIRE_QUIET=0 to record the reading and run anyway.")
     sys.exit(2)
-print("idle gate: PASSED")
+print(f"idle gate: PASSED (gpu max {p['max']} W, load1 max {load['max']} on {ncpu} cores, "
+      f"swap in median {dim('in','median')} max {dim('in','max')} KiB/s)")
 PYEOF
 fi
 

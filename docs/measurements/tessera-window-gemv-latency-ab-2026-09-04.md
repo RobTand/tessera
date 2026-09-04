@@ -5,10 +5,13 @@
 > window-GEMV kernel's decode-path latency against the route it replaces, as a
 > ratio, on an otherwise idle box. This document does not contain that number.
 > What it contains is (a) the pair harness master did not have, (b) the
-> box-state readings that decided against taking the measurement tonight, and
+> box-state readings that decided against taking the measurement tonight,
 > (c) a re-reading of the 2026-09-03 arms that produces, for the first time,
-> a *measured* control for why their 8x is not a lane result. Nothing here is a
-> placeholder standing in for a number that was taken and disliked.
+> a *measured* control for why their 8x is not a lane result, and (d) the
+> **ceiling** the ratio can reach at all, read off that pair's own trace:
+> **1.424x**, because the lane owns 29.8% of a decode step's device time on
+> this model and `lm_head` owns 48.1% of it. Nothing here is a placeholder
+> standing in for a number that was taken and disliked.
 
 ## 1. What #109 owes, and what is missing
 
@@ -38,6 +41,7 @@ have is anything that turns two arms into a **pair**. Four pieces now do:
 | `experiments/window_gemv_latency_ab.sh` | the quiet-box gate, the settle, the crossover order, and one power window per arm cut to that arm's own marks |
 | `experiments/window_gemv_latency_ratio.py` | the ratio, its provenance, and its refusal |
 | `experiments/window_gemv_load.py` (extended) | swap *activity* beside swap in use; sub-second marks on the profiled sub-loads |
+| `tests/test_window_gemv_latency_ratio.py` | the ratio's direction, its provenance stamps, and its refusal, pinned on the 2026-09-03 receipts' own bytes |
 
 Three of those deserve their reason stated.
 
@@ -47,9 +51,10 @@ than a number because Netdata showed 63-88 W on sparky for the seven minutes
 before the process existed. So the chain reads the idle window off Netdata,
 writes it to a receipt, and **refuses to run** when the box is not idle by that
 reading (GPU peak over 30 W, load1 over half a runnable process per core, or
-any page-out). `TESSERA_LAT_REQUIRE_QUIET=0` records the reading and runs
-anyway; the refusal is the default because the alternative is a number nobody
-can use.
+sustained paging -- see §4 for the rate thresholds and why they are rates).
+`TESSERA_LAT_REQUIRE_QUIET=0` records the reading and runs anyway; the refusal
+is the default because the alternative is a number nobody can use. Run against
+tonight's two boxes it refuses both, which is §4.
 
 **The order is crossed over.** Rep 1 runs A then B; rep 2 runs B then A. Drift
 that is monotone across a session -- a box warming, another agent's job ramping
@@ -129,6 +134,14 @@ what the old receipts are good for:
   only because `moved()` dumps every vLLM series that changed over each window.
   The insurance paid; the ratio tool reads it and stamps `series_moved` as the
   source rather than presenting it as a published histogram.
+  **This is an age, not a live defect, and the clocks say so:** the stem was
+  corrected in `b8ef715`, committed `23:24:09Z`, while armA started
+  `23:18:28Z` and armB `23:22:53Z` -- both arms were already running. A future
+  receipt should carry `tpot` in its named field with `source: histogram`, and
+  a `/2` receipt that still says `series_moved` there is a finding, not a
+  formality. `tests/test_window_gemv_latency_ratio.py` pins the recovery
+  arithmetic on those receipts' own bytes so the fallback keeps working
+  whichever way that goes.
 - **Those receipts cannot say whether the box was paging.** They predate the
   swap-activity field, so the tool reports "cannot say" rather than "nothing
   moved". They are `schema /1`; the new receipts are `/2`.
@@ -164,21 +177,94 @@ and the 5 W median says the GPU was mostly idle -- but a claimed slot is another
 agent's job about to run, and a latency number taken beside it is a number about
 that job.
 
+**The quiet gate, run against those two receipts, refuses both boxes.** That is
+the gate doing its job rather than a formality, and it is worth reading as the
+decision itself:
+
+```
+sparky      REFUSED  GPU peaked at 56 W in the idle window (>30 W is not idle)
+                     paging in: median 14.152 KiB/s, max 18890.417 KiB/s
+sparklina   REFUSED  GPU peaked at 32 W in the idle window (>30 W is not idle)
+```
+
+The paging clause was rewritten while doing this. Its first spelling refused on
+`swap in max > 1 MiB/s` or **any** page-out, which on a box carrying ~2 GiB of
+resident swap refuses on a single log flush touching a paged-out page -- an
+event that costs a latency measurement nothing. Paging is a rate, so the median
+now carries the refusal (>100 KiB/s sustained) and the max only catches a burst
+large enough to be a stall in its own right (>10 MiB/s). sparky trips the burst
+clause on a genuine 18.9 MiB/s spike, not on the resident 2 GiB. What was
+deliberately **not** relaxed is the per-arm `contended` label in
+`window_gemv_load.py`: loosening the threshold that decides whether my own
+receipt is admissible is the self-serving edit, and the `/2` schema's per-window
+`pswpin`/`pswpout` deltas are the honest way to distinguish "swap is resident"
+from "pages moved while this arm was timed".
+
+**And the queue is the other half of the refusal.** The submission below was
+accepted at `05:55:47Z` as `66266919c4c2` and had not been claimed an hour
+later, for a reason the ledger states plainly:
+
+| | | |
+|---|---|---|
+| rank 1 | `1244c3e5db31` | **156 passes**, `gpu: 1`, `/home/rob/tmp/pb1` |
+| rank 2 | `4e70f110eb97` | priority 30, CPU only |
+| rank 3 | `66266919c4c2` | priority 5, `gpu: 2` -- this job |
+
+`pool.claim` orders ready items by passes first, and an item at or past
+`STARVATION_FLOOR = 3` that cannot acquire returns `None` from the scan rather
+than letting smaller work overtake it (`pool.py:750-754`). A 156-pass item ahead
+of this one therefore withholds sparky on every pass, correctly. Both of
+sparky's GPU tokens are held (`reservations/sparky/held/`: `gpu-0000` by wf105,
+`gpu-0001` by wf75), and `--exclusive` resolves to `gpu: 2` -- the box's whole
+capacity -- so this job needs *both* back before it can run at all.
+
+One pool defect was found on the way and is **not** fixed here, because it is
+not this repo's code and the stale loops are not mine to restart: sparky
+publishes its worker offer from **two runtime versions at once**, and the file
+flickers every ~15 s between
+
+```
+{"capacity": {"cpu": 10, "gpu": 2, "mem_gb": 48}, "runtime_commit": "1caa8908..."}
+{"capacity": {"gpu": 2, "mem_gb": 48}}                      # no cores, no commit
+```
+
+(reproduced live at 06:00:14-06:01:09Z, 4 of 12 samples in the second shape).
+`pbrun`'s pre-submit fit check reads whichever shape it catches, and a demand
+naming `cpu` is rejected outright against the second one -- "sparky's offer had
+no cores dimension" -- which cost two submission attempts here before one
+landed. The claim path is safe (it reads the reservation ledger, which keeps its
+`cpu` tokens), so this is a submit-path flake rather than a scheduling bug, but
+a `--cpus N` submission to sparky will fail intermittently until one of the two
+worker loops is retired.
+
 ## 5. What remains
 
 The A/B itself, which is one command once a box is genuinely free:
 
 ```
+bash experiments/ts109_submit.sh          # REGIME=eager REPS=2 CWD=<worktree>
+```
+
+which is one `pbrun` call plus a retry loop for the offer flake described in
+§4:
+
+```
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --exclusive --here --cpus 10 --demand mem_gb=48 --timeout-s 7200 \
-  --cwd <worktree> --tag sparky \
+  --exclusive --here --demand mem_gb=48 --timeout-s 7200 --wait-s 7200 \
+  --priority 5 --cwd <worktree> --tag sparky \
   --env TESSERA_LAT_OTHER_BOXES=sparklina --env SETTLE_S=420 --env IDLE_S=360 \
   -- bash experiments/window_gemv_latency_ab.sh eager 2
 ```
 
+Two flags are worth their explanation. `--wait-s 7200` is the wait for an
+*outcome*, not for a placement: an earlier draft used `--wait-s 900` and would
+have abandoned a 45-minute A/B fifteen minutes in. And no `--cpus` is declared,
+deliberately: the A/B is one serve at a time and the flickering offer in §4
+rejects any `cpu`-naming demand outright about a third of the time.
+
 `--exclusive` rather than `--gpu` is the point: a latency A/B needs the whole
 box, not one of sparky's two slots, and the ledger turns a full-capacity demand
-into exclusion. `SETTLE_S` holds the claim doing nothing so the idle window that
+into exclusion -- which is also why it waits behind everything, as §4 shows. `SETTLE_S` holds the claim doing nothing so the idle window that
 follows describes a box with nothing on it -- which is not queueing, because
 that reading is itself one of #109's deliverables.
 
@@ -187,14 +273,70 @@ carries the `tessera_window_gemv::gemv` symbol at M1 shapes directly, so the
 lane's engagement in the eager arm needs no trace to establish, while a compiled
 record stamps a combined pair and proves dispatch rather than launch.
 
-**What is still unknown after the ratio lands**, and worth saying before it does
-so it is not discovered as a disappointment: the served TPOT ratio prices a
-whole decode step, and the lane owns only the Tessera Linears in it. armA's
-compiled trace has a cuBLAS bf16 GEMV taking 263.9 ms over 50 launches -- more
-device time than the entire window-GEMV bucket -- which the 2026-09-03 document
-flagged and did not attribute. If that kernel is on the decode path, an
-end-to-end TPOT ratio is diluted by work the lane does not touch and will sit
-closer to 1 than the kernel does however good the kernel is. That is why
+## 6. The ceiling, measured before the ratio: **1.424x**
+
+The 2026-09-03 document flagged a cuBLAS bf16 GEMV in armA's compiled trace --
+263.9 ms over 50 launches, more device time than the entire window-GEMV bucket
+-- and did not attribute it. It is attributed now, and it changes how the ratio
+must be read.
+
+**It is `lm_head`, and this is read off the trace rather than inferred from
+shapes.** Each of the 50 `internal::gemvx::kernel<..., __nv_bfloat16, ...>`
+kernels carries a correlation id; each id resolves to one `cudaLaunchKernel`;
+each launch resolves to an enclosing `aten::mm` (50 of 50); and every one of
+those 50 sits inside a `vllm/model_executor/layers/logits_processor.py(132):
+_apply_head` frame, under `LogitsProcessor_0` and
+`vllm/model_executor/models/qwen3.py(330): compute_logits`. 50 launches, 50
+`_apply_head` frames. The arm model is Qwen3-0.6B: `vocab_size` 151936 against
+`hidden_size` 1024, so the output projection is by a wide margin the largest
+single matmul in a decode step and it is in bf16.
+
+Segmenting that trace into engine steps (`_process_engine_step`, 62 of them)
+and classifying each by which route it launched gives the decode step's real
+composition:
+
+| decode steps (46) | device ms | share |
+|---|---|---|
+| `lm_head` cuBLAS GEMV | 242.0 | **48.1%** |
+| the lane (`window_gemv_kernel`) | 149.9 | **29.8%** |
+| everything else | 111.2 | 22.1% |
+| **total** | **503.1** | |
+
+(The 4 prefill steps are a different mix -- 583.9 ms, of which 237.7 ms is
+`window_decode_kernel` materialising for `_scaled_mm` and only 21.9 ms is
+`lm_head` -- which is the same fact from the other side: `GEMV_MAX_M = 8`
+refuses prefill, so the lane's *decode* kernel does not appear there at all.)
+
+Two numbers follow, and both should be in the reader's hand before the served
+ratio is:
+
+- **A free lane is worth 1.424x.** If `window_gemv_kernel` cost zero, a decode
+  step's device time would fall from 503.1 ms to 353.2 ms. `1/(1 - 0.2979) =
+  1.424`. **No served TPOT ratio on this model can exceed that**, however good
+  the kernel is, and a measured 1.15x would mean the kernel had taken most of
+  what there is to take rather than that it had underperformed.
+- **The 2026-09-03 pair's 8.024x would require the fallback lane to be 24.6x
+  slower than the built one** (`1 + (8.024-1)/0.2979`). That is the §3 control
+  restated as arithmetic instead of as a null-window observation, and the two
+  agree.
+
+The honest reading of the first number is that **Qwen3-0.6B is a poor ruler for
+this lane**: a 151936-row `lm_head` against 28 layers of 1024-wide Linears puts
+nearly half the decode step in one bf16 kernel the lane will never touch. The
+ratio taken on these arms is still the right thing to take -- it is the number
+#109 asks for, on the arms whose KL and census are already published, and a
+lane that cannot move a real serve is not worth its complexity -- but it prices
+the lane *as deployed on this model*, and the per-bucket device time is what
+transfers to a model whose `lm_head` is a smaller share. That is why
 `window_gemv_latency_ratio.py` reports two things and calls neither the other's
 headline: the served ratio, and the device time inside the profiled decode
-window by bucket, cut from both arms' traces by one wall-clock rule.
+window by bucket (`lane_share_of_window`), cut from both arms' traces by one
+wall-clock rule.
+
+This section was computed from `prof-armA-streamed-compiled/rank0.*.pt.trace.json.gz`
+-- the #83 campaign's own compiled trace, which is whole-serve rather than cut
+to a decode window, hence the step-classification above. The 2026-09-03 *latency*
+receipts carry `profiled_load: {"error": "HTTPError: HTTP Error 404: Not Found"}`
+and no trace of their own; the `/2` receipts written by the new driver carry
+`profile_decode_start`/`profile_decode_end` marks so the same cut can be made
+directly and identically in both arms.
