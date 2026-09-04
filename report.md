@@ -90,10 +90,12 @@ than as an observed number; a pass/skip-only summary is pytest's zero.
 **Which tree that suite pinned, precisely.** It started at 19:28:05, after
 `60a7dc5` and before `8a164a6`, and pytest imports every test module and its
 dependencies at collection — so it exercised `60a7dc5`'s source, not the final
-tree. The source changes after it are the three review corrections below: the
-forced-eager reorder (reachable only with `TESSERA_WINDOW_GRAPH=0` in the
-environment, which no test outside the two window files sets), the plan-cache
-constant, and comments. The two files that do exercise them,
+tree. `git diff 60a7dc5..HEAD -- src/ tests/` is 26 insertions over two files
+and nothing else: the forced-eager reorder (reachable only with
+`TESSERA_WINDOW_GRAPH=0` in the environment, which no test outside the two
+window files sets), the plan-cache constant with its comment, and the
+reference-arm pin in `tests/test_window_graph.py`. The two files that exercise
+all three,
 `tests/test_window_graph.py` (19 passed) and `tests/test_window_viterbi_fast.py`
 (52 passed), were re-run on their own against the **final** source tree. I did
 not re-run the full suite: the coordinator's standing rule is targeted evidence
