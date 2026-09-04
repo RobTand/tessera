@@ -33,7 +33,7 @@ serves them at one declared residency.
 
 STRUCTURE.  ``structure`` names what kind of vLLM layer the target is:
 ``dense`` (a ``LinearBase``, one blob per module) or ``routed_moe`` (a
-``RoutedExperts`` stack, one blob per expert per projection group).  A dense
+``RoutedExperts`` stack, one blob per expert per projection).  A dense
 scheme declares one geometry and one exact ``wire_bytes``; a routed-MoE scheme
 declares an expert count and the two GROUPS vLLM's fused-MoE kernel reads --
 ``w13`` (gate then up, one matrix) and ``w2`` -- each with its own geometry,
@@ -131,7 +131,7 @@ TESSERA_BF16 = "TESSERA_BF16"
 TESSERA_SCHEME_KEY = "family"
 
 #: What kind of vLLM layer a scheme's target is.  ``dense`` is one blob per
-#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION GROUP on a
+#: ``LinearBase``; ``routed_moe`` is one blob per expert PROJECTION on a
 #: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
 #: a structure outside it is refused by name rather than served through a
 #: method that would read the wrong tensor rank.
@@ -143,14 +143,14 @@ STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
 #: (gate at rows ``[0:N]``, up at ``[N:2N]`` -- ``RoutedExperts._load_w13``
 #: narrows on ``shard_id``) and its down alone in ``w2``.  A Tessera MoE
-#: checkpoint therefore writes one fused container per group per expert: the
-#: group IS the tile the kernel reads, so the container and the tile have the
-#: same members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
+#: checkpoint therefore writes one fused container per projection per expert.
+#: The group's containers stack into the tile the kernel reads, with the same
+#: members in the same order.  ``MOE_GROUP_SHARDS`` is the runtime's own
 #: shard vocabulary for each group, in the row order the group stacks; a
 #: producer reads the order off this table instead of restating it.
 MOE_GROUPS = ("w13", "w2")
 MOE_GROUP_SHARDS: dict[str, tuple[str, ...]] = {"w13": ("w1", "w3"), "w2": ("w2",)}
-#: How many roles each group's container holds.  DERIVED from the shard table,
+#: How many projection containers each group holds. DERIVED from the shard table,
 #: never a second literal: the members of a group are exactly the shards the
 #: runtime loads into it.
 MOE_GROUP_ROLES: dict[str, int] = {g: len(s) for g, s in MOE_GROUP_SHARDS.items()}
@@ -924,10 +924,10 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     """Resolve a routed-MoE scheme: E experts, two groups, one route.
 
     THE SHAPE, AND WHY IT IS NOT THE DENSE ONE.  A dense scheme describes one
-    module: one blob, one exact byte count.  An expert stack is E x 2 blobs --
-    a ``w13`` container (gate then up, the row order
-    ``RoutedExperts._load_w13`` narrows to) and a ``w2`` container -- whose
-    lengths differ expert by expert.  So the sidecar declares the two GROUPS
+    module: one blob, one exact byte count. An expert stack carries per-expert
+    gate, up and down containers: ``w13`` stacks gate then up in the row order
+    ``RoutedExperts._load_w13`` narrows to, and ``w2`` holds down. Their lengths
+    differ by projection and expert. So the sidecar declares the two GROUPS
     and the expert count, and per group a ``wire_stride`` (the parameter row
     width every expert's blob is copied into) rather than a ``wire_bytes``.
     The true length of a blob is the blob's own, carried beside it

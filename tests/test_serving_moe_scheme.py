@@ -1,7 +1,8 @@
 """The routed-MoE sidecar scheme: two groups, E experts, one route.
 
 A dense scheme describes one module -- one container, one exact byte count.
-An expert stack is E x 2 containers whose lengths differ expert by expert
+An expert stack holds gate, up and down containers for each expert, whose
+lengths differ by projection and expert
 (``tessera.moe_layout`` says why: the manifest writes ``global_scale`` as an
 exact varint ratio, so the blob length follows the data even at fixed shape
 and rung).  So the MoE scheme declares the expert count, the two groups vLLM's
