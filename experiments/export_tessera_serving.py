@@ -1007,6 +1007,58 @@ def packed_expert_weight(source: torch.Tensor, unit: dict) -> torch.Tensor:
     return weight.contiguous()
 
 
+def project_expert_plan(source_shapes: dict, source_config: dict,
+                        stack_plan: dict) -> dict:
+    """JSON producer view of source slices and the groups the exporter writes.
+
+    Header shapes and explicit stack choices go through the same planners as
+    export. The result is a plan, not a serving qualification or an allocation
+    for any unplanned stack.
+    """
+    from tessera.control import grid_for_name
+
+    routed = {name: tuple(shape) for name, shape in source_shapes.items()
+              if ROUTED_EXPERT_2D.fullmatch(name)}
+    packed = {name: tuple(shape) for name, shape in source_shapes.items()
+              if PACKED_EXPERT_ND.fullmatch(
+                  name if name.endswith(".weight") else name + ".weight")}
+    unpacked_stacks, packed_stacks = expert_stacks(routed), packed_expert_stacks(packed)
+    overlap = set(unpacked_stacks) & set(packed_stacks)
+    if overlap:
+        raise SystemExit(f"source stack appears in both packed and unpacked layouts: {sorted(overlap)}")
+    unknown = set(stack_plan) - (set(unpacked_stacks) | set(packed_stacks))
+    if unknown:
+        raise SystemExit(f"producer plan has unknown expert stacks: {sorted(unknown)}")
+    result = {}
+    for stack, choice in sorted(stack_plan.items()):
+        if not isinstance(choice, dict) or not {"grid", "q256"} <= choice.keys() \
+                or set(choice) - {"grid", "q256", "source_layout"}:
+            raise SystemExit(f"{stack}: producer stack plan requires grid/q256 and optional source_layout")
+        if type(choice["q256"]) is not int:
+            raise SystemExit(f"{stack}: producer stack rung must be an integer")
+        grid = grid_for_name(choice["grid"])
+        if stack in packed_stacks:
+            planned = plan_packed_expert_stack(
+                stack, packed_stacks[stack], grid, choice["q256"],
+                source_layout=choice.get("source_layout"), config=source_config)
+        else:
+            layout = choice.get("source_layout", MOE_SOURCE_UNPACKED)
+            if layout != MOE_SOURCE_UNPACKED:
+                raise SystemExit(f"{stack}: unpacked source requires source_layout={MOE_SOURCE_UNPACKED}")
+            planned = plan_expert_stack(stack, unpacked_stacks[stack], grid, choice["q256"])
+        result[stack] = dict(planned, grid=grid.name)
+    return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
+
+
+def pack_cached_expert_unit(blob: bytes, record: dict, expected_identity: dict):
+    """Verify the exact campaign unit and frame it without another encode."""
+    from tessera.cached_unit import verify_cached_unit
+
+    accepted = verify_cached_unit(blob, record, expected_identity)
+    projection = expected_identity["projection"]
+    return accepted, pack_fused([(projection["projection"], projection["rows"], accepted.blob)])
+
+
 def stock_targets(modules):
     """compressed-tensors targets for member modules plus their fused names (the stock exporter's rule)."""
     found = sorted(set(modules))
@@ -1042,6 +1094,9 @@ def main():
     ap.add_argument("--stock-twin", type=Path, default=None,
                     help="also write the compressed-tensors materialisation of the same wires here")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--cached-expert-units", type=Path, default=None,
+                    help="closed exact-unit cache manifest for every planned expert; "
+                         "missing/unmeasured units refuse, with no re-encode fallback")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
@@ -1430,16 +1485,25 @@ def main():
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
 
+    cache_unit_names = {ActivationSource.unit_name(unit["tensor"])
+                        for record in stack_plan.values() for unit in record["units"]}
+    if args.cached_expert_units is not None and not cache_unit_names:
+        raise SystemExit("--cached-expert-units requires a nonempty explicit expert stack plan")
+    if args.cached_expert_units is not None and args.out.exists():
+        raise SystemExit("cached expert export requires a fresh output directory")
     partition_record = None
     if args.partition:
         index, count = args.partition
         options = {key: value for key, value in vars(args).items()
                    if key not in {"src", "out", "partition", "partition_runtime_image",
-                                  "device", "stock_twin", "plan_json", "hessian", "input_scales"}}
+                                  "device", "stock_twin", "plan_json", "hessian", "input_scales",
+                                  "cached_expert_units"}}
         options["plan"] = json.loads(args.plan_json.read_text()) if args.plan_json else None
         for key in ("hessian", "input_scales"):
             path = getattr(args, key)
             options[key + "_sha256"] = sha256_file(path) if path else None
+        if args.cached_expert_units is not None:
+            options["cached_expert_units_sha256"] = sha256_file(args.cached_expert_units)
         identity = export_identity(args.src, options, args.partition_runtime_image,
                                    Path(__file__).resolve().parents[1])
         from tessera.encoder_identity import encoder_fixture_id
@@ -1463,6 +1527,15 @@ def main():
         passthrough = [name for name in passthrough if owns(name)]
         print(f"partition {index}/{count}: {len(selected)} source tensors, "
               f"{len(stack_plan)} routed stacks, {len(modules)} dense modules", flush=True)
+
+    cached_units = None
+    if args.cached_expert_units is not None:
+        from tessera.cached_unit import CachedUnitBundle, read_manifest
+        from tessera.serving_parts import source_identity
+        source = (partition_record["identity"]["source"] if partition_record is not None
+                  else source_identity(args.src))
+        cached_units = CachedUnitBundle(read_manifest(args.cached_expert_units),
+                                        args.cached_expert_units.parent, cache_unit_names, source)
 
     input_scales = {}
     if args.input_scales:
@@ -1534,25 +1607,37 @@ def main():
                         stack_spec = stack_plan[unit["stack"]]
                         unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
                         unit_recipe = wire_recipe(unit_grid, unit_q256)
-                        weight = packed_expert_weight(tensor, unit).to(
-                            args.device, torch.float32).contiguous()
-                        # Same call as the dense path: a missing Hessian key renders
-                        # RTN and raises nothing, ``for_unit`` refuses instead.
-                        extra = ({} if activation is None else
-                                 activation.for_unit(
-                                     unit["tensor"], weight.shape[1], args.device,
-                                     scale_plane=unit_recipe.scale_plane))
-                        exported, unit_artifact_, _forests = encode_linear_planes(
-                            weight, grid=unit_grid, q256=unit_q256,
-                            name=unit["tensor"], verify=not args.no_verify, **extra)
-                        extra.clear()
-                        parse_unit_artifact(exported.blob, device=args.device)
+                        source_weight = packed_expert_weight(tensor, unit)
+                        if cached_units is None:
+                            weight = source_weight.to(args.device, torch.float32).contiguous()
+                            # Same call as the dense path: a missing Hessian key
+                            # must refuse rather than fall through to RTN.
+                            extra = ({} if activation is None else activation.for_unit(
+                                unit["tensor"], weight.shape[1], args.device,
+                                scale_plane=unit_recipe.scale_plane))
+                            exported, unit_artifact_, _forests = encode_linear_planes(
+                                weight, grid=unit_grid, q256=unit_q256,
+                                name=unit["tensor"], verify=not args.no_verify, **extra)
+                            extra.clear()
+                            parse_unit_artifact(exported.blob, device=args.device)
+                            blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
+                            own_global = float(unit_artifact_.scale_global)
+                            del weight
+                        else:
+                            from tessera.cached_unit import unit_input_identity
+                            from tessera.export import ExportedUnit
+                            expected = unit_input_identity(
+                                source_weight, unit, unit_grid, unit_q256, activation=activation)
+                            cached_blob, cache_record = cached_units.read(expected["unit"])
+                            accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
+                            exported = ExportedUnit(unit["tensor"], accepted.blob,
+                                                    unit["rows"], unit["cols"], unit_q256,
+                                                    accepted.wire_bytes)
+                            own_global = float(accepted.manifest.scale_plane.global_scale)
                         # ONE container per expert PROJECTION -- the granularity of
                         # the runtime's shard ids and of
                         # ``scheme.expert_role_declarations``.  A packed physical
                         # tensor may supply several such logical projections.
-                        blob = pack_fused([
-                            (unit["projection"], exported.rows, exported.blob)])
                         shard_payload[unit["wire"]] = torch.frombuffer(
                             bytearray(blob), dtype=torch.uint8).clone()
                         stack_record = moe_records[unit["stack"]]
@@ -1572,8 +1657,10 @@ def main():
                             "q256": unit_q256, "family": stack_spec["family"],
                             "wire_bytes": exported.exact_bytes,
                             "blob_bytes": len(blob), "wire_bpp": float(exported.bpp),
-                            "own_global": float(unit_artifact_.scale_global)})
-                        del weight
+                            "own_global": own_global,
+                            **({"cached_blob_sha256": cache_record["blob_sha256"]}
+                               if cached_units is not None else {})})
+                        del source_weight
                         moe_done += 1
                         if moe_done % 50 == 0 or moe_done == moe_total:
                             print(f"  [moe {moe_done}/{moe_total}] {unit['tensor']}  "
@@ -1812,6 +1899,10 @@ def main():
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {
         "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        **({"cached_expert_units": {"manifest_sha256": cached_units.manifest_sha256,
+                                    "manifest_encoding": "canonical_json.sorted_compact.v1",
+                                    "planned_units": len(cache_unit_names)}}
+           if cached_units is not None else {}),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,

@@ -127,10 +127,9 @@ the encoder's output moves and never when a comment or a refactor does. It is
 a sibling of the profile id and never an input to it. It rides in the manifest
 at schema minor 6 and in `tessera_config.json`; `merge_tessera_parts.py`
 compares the stamped value across parts. `encoder_identity.resumable` states
-the rule for whether a cached unit may be reused, and nothing calls it yet —
-no path reuses a cached wire shard today, so the rule sits with the identity
-rather than being invented inside the first consumer that needs one. Both
-compare, never compute: only a process about to encode pays for the fixtures. The untagged spelling —
+the rule for whether a cached unit may be reused. The explicit expert-cache
+intake below calls it and pays the memoized CPU fixture once; merge guards
+continue to compare recorded identities without computing it. The untagged spelling —
 the encoder the field was born against — writes no field and no minor, so
 every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
@@ -160,6 +159,33 @@ witness neutral again, and the full identity rolls back only when the other
 fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
+
+### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
+
+`experiments/tessera_producer_plan.py` reads source headers and an explicit
+stack plan, then calls the exporter's existing expert planners. Its JSON names
+the physical source tensor, logical tensor, source slice, expert, canonical
+role and both unit/group dimensions. PrismaQuant can invoke this producer tool
+without importing the serving runtime or restating its expert grammar. Source
+tensor names retain their actual suffix; logical tensors include `.weight`,
+and allocation/cache keys remove exactly that suffix via `ActivationSource`.
+
+`tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
+per-unit Hessian plus capture identity and full activation settings, resolved
+recipe, encoder behavior/source identities, and the whole blob digest.
+`export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
+coverage of the planned experts and the full source checkpoint seal. It
+checks those receipts against the actual source slices and capture, validates
+wire geometry/rates/profile/encoder identity, and wraps accepted blobs in
+`pack_fused` unchanged. Their original unit-id spelling is preserved. A
+missing selected rung, including an interpolated rate with no measured blob,
+refuses; this intake has no encode fallback. The ordinary dense encode path
+and all defaults remain unchanged. The cache mode requires a fresh output
+directory and records each accepted blob's SHA in the export manifest.
+
+These are producer evidence and tests only. They do not promote a recipe,
+open an eligibility cell, or replace the source-matched served measurements
+required for the PrismaQuant campaign bridge.
 
 ## 4. Allocation and the uniform gate
 
