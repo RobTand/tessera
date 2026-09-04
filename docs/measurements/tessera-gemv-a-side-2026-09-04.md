@@ -364,18 +364,40 @@ table.
    difference; it reads about 0.005 (0.012111 minus what section 3 prices),
    and the fold was most of it with a second term left; or it is unmoved, and
    whatever separates the two arms is not this Linear's arithmetic at all.
-2. **The two CUDA-gated assertions have still never executed.** They are step 2
-   of the campaign above, gating the serve. Their thresholds are loose
-   separators rather than fitted values -- `same >= 0.90` sits against a
-   measured 0.9990-1.0000, and `lost > 3 * kept` against a measured ratio near
-   10 000 -- but "loose" is an argument, not a run, and this branch cannot
-   claim they pass. What DID execute on CPU, on this tree:
+2. **The CUDA leg HAS now executed, and it failed -- because the fix was
+   never run on a GPU.** Action `6c90ba1b` placed at 05:49 on 2026-09-04 and
+   its step-2 gate ran both modules with a device: **1 failed, 85 passed** in
+   210 s, and the gate refused to spend the serve, which is the gate doing its
+   job. The failure is this branch's own.
+   `test_rate1_columns_fall_back_inside_the_decode_regime` referenced the M = 2
+   GEMV path against `bf16(a_q * a_scale)` -- *that is the folded arithmetic
+   #110 is about*. The fix changed the lane to hand the kernel `bf16(a_q)` and
+   multiply `a_scale` into the fp32 output, so the lane and its own reference
+   had disagreed by exactly the term the fix removes, from the moment the fix
+   landed. The CPU suite could not see it: the test is `@requires_cuda` and was
+   one of the 77 skips this receipt kept reporting as "all pass". The reference
+   now follows the lane (M = 2 references `bf16(a_q)` and carries `a_scale` on
+   the result with the accumulation bound scaled to match; the M = 4 row, which
+   falls to `_scaled_mm`, is unchanged), and the action **auto-requeued for
+   attempt 2**, which will re-run the gate against the correction.
+
+   The two assertions the review named as unverified **passed**, at all four M:
+   `same >= 0.90` in
+   `test_gemv_and_materialised_agree_within_fp32_summation_order` and
+   `lost > 3 * kept` in
+   `test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand`
+   are both among the 85. So the specific worry is answered, and the general
+   one was righter than it was put: the problem was never two thresholds, it
+   was that **no CUDA test had run against the fix at all**, and the first run
+   that did found a defect. Not yet verified on a GPU: the correction itself.
+
+   For completeness, on CPU on this tree:
    `pytest tests/test_serving_fp8_gemv.py tests/test_kernel_window_gemv.py` =
-   **9 passed, 77 skipped**, the 77 being every CUDA-gated case.
-   `test_a_code_times_a_per_token_scale_is_NOT_exact_in_bf16` is new and is in
-   the 9: it pins the arithmetic the fix rests on -- one bf16 rounding, bounded
-   by 2^-8, rms 1.6e-03 -- on a box with no GPU, which nothing else in this
-   branch could do.
+   **9 passed, 77 skipped**, and
+   `test_a_code_times_a_per_token_scale_is_NOT_exact_in_bf16` is one of the 9:
+   it pins the arithmetic the fix rests on -- one bf16 rounding, bounded by
+   2^-8, rms 1.6e-03 -- on a box with no GPU, which nothing else here could do.
+
 3. **The kernel leg is measured at K = 1024 only, and the served K are three.**
    Qwen3-0.6B's served Linears carry K = 1024 (qkv, gate_up), 2048 (o_proj:
    16 heads x 128) and 3072 (down_proj) -- not the 4096 a reader might assume
