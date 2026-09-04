@@ -12,9 +12,24 @@ mechanism (``torch/_inductor/config.py:1007-1009``) and
 ``TESSERA_SERVE_DETERMINISTIC=1`` -- while recording that **no arm was served with
 it**, so what it actually does was never measured.  Issue #30 asks for that.
 
-This is the half of the measurement that does not need a serve.  Matched pair:
+This is the half of the measurement that does not need a serve.  Matched set:
 two builds per arm, from a **fresh inductor cache directory each time**, and the
-only difference between the arms is the environment variable.
+only difference between the arms is the environment variable (and, for the third
+arm, one line in the child).
+
+THREE ARMS, because the flag is read **once**, at inductor's import, and a serve
+compiles many graphs in one process:
+
+* ``off``  -- the control, ``TORCHINDUCTOR_DETERMINISTIC=0``;
+* ``on``   -- the flag, set the way a serve would set it (an env var);
+* ``on_reassert`` -- the flag, plus ``config.deterministic = True`` put back on
+  the config object before the *second* compile in the same process.
+
+``arms[*].kernel_meta_deterministic_by_phase`` reports, per arm, what the
+kernels of the first compile and of a later compile say about whether the flag
+was in force when they were generated.  A flag that holds only for the first
+compile is a flag that does nothing for a serve, and that is a different verdict
+from a flag that does not work at all.
 
 THE OBSERVABLE, and why it is not the config attribute.  Reading
 ``torch._inductor.config.deterministic`` back *after* a compile has run reports
@@ -72,6 +87,30 @@ META_RDIM = re.compile(r"'has_loadstore_with_contiguous_rdim': (\w+)")
 HEURISTIC = re.compile(r"@triton_heuristics\.(\w+)\(")
 
 
+def _scan_kernels(root: Path) -> dict[str, dict]:
+    """Every generated Triton kernel under a cache root, by source digest.
+
+    Called twice per build so the two ``torch.compile`` invocations can be told
+    apart: the second one's kernels are the ones the first scan did not see.
+    """
+    kernels: dict[str, dict] = {}
+    for p in sorted(root.rglob("*.py"), key=lambda q: q.stat().st_mtime):
+        try:
+            text = p.read_text(errors="replace")
+        except OSError:  # a file being written as we walk is not a kernel yet
+            continue
+        heuristics = HEURISTIC.findall(text)
+        if not heuristics:
+            continue
+        kernels[hashlib.sha256(text.encode()).hexdigest()[:16]] = {
+            "heuristics": sorted(set(heuristics)),
+            "meta_deterministic": sorted(set(META_DETERMINISTIC.findall(text))),
+            "meta_contiguous_rdim": sorted(set(META_RDIM.findall(text))),
+            "mtime": p.stat().st_mtime,
+        }
+    return kernels
+
+
 def _child(cache_dir: str, out_path: str) -> int:
     """One build, in a process of its own: compile, run, record what was written."""
     import torch
@@ -125,7 +164,17 @@ def _child(cache_dir: str, out_path: str) -> int:
                 ]
             )
         reads.append(bool(inductor_config.deterministic))
-        # persistence: a SECOND compile in the same process, same flag
+        first_phase = _scan_kernels(Path(cache_dir))
+        # persistence: a SECOND compile in the same process, same flag.  The
+        # env var is read once, at inductor's import; whether it is still in
+        # force for a later compile is the question -- and a serve compiles
+        # many graphs in one process, so the answer decides whether the knob
+        # means anything to a serve.  TESSERA_PROBE_REASSERT=1 puts the value
+        # back on the config object first, which separates "the flag stopped
+        # applying" from "the second graph would not have used it anyway".
+        reassert = os.environ.get("TESSERA_PROBE_REASSERT") == "1"
+        if reassert:
+            inductor_config.deterministic = True
         mod2 = Block(h // 2).to(dev)
         compiled2 = torch.compile(mod2, dynamic=True)
         x = torch.randn(256, h // 2, device=dev, dtype=torch.bfloat16)
@@ -143,18 +192,11 @@ def _child(cache_dir: str, out_path: str) -> int:
         except Exception:  # noqa: BLE001 - a truncated record is data, not a crash
             configs[str(p.relative_to(root))] = {"__unparsed__": True}
 
-    kernels: dict[str, dict] = {}
-    for p in sorted(root.rglob("*.py"), key=lambda q: q.stat().st_mtime):
-        text = p.read_text(errors="replace")
-        heuristics = HEURISTIC.findall(text)
-        if not heuristics:
-            continue
-        kernels[hashlib.sha256(text.encode()).hexdigest()[:16]] = {
-            "heuristics": sorted(set(heuristics)),
-            "meta_deterministic": sorted(set(META_DETERMINISTIC.findall(text))),
-            "meta_contiguous_rdim": sorted(set(META_RDIM.findall(text))),
-            "mtime": p.stat().st_mtime,
-        }
+    kernels = _scan_kernels(root)
+    phases = {
+        "first": sorted(first_phase),
+        "second": sorted(set(kernels) - set(first_phase)),
+    }
 
     Path(out_path).write_text(
         json.dumps(
@@ -170,6 +212,8 @@ def _child(cache_dir: str, out_path: str) -> int:
                 },
                 "config_at_import": at_import,
                 "config_reads": reads,
+                "reassert": reassert,
+                "kernel_phases": phases,
                 "device": dev,
                 "digests": digests,
                 "configs": configs,
@@ -209,6 +253,14 @@ def _compare(a: dict, b: dict) -> dict:
                     }
                 )
     meta = sorted({v for build in (a, b) for k in build["kernels"].values() for v in k["meta_deterministic"]})
+    by_phase = {}
+    for phase in ("first", "second"):
+        by_phase[phase] = sorted({
+            v
+            for build in (a, b)
+            for key in build.get("kernel_phases", {}).get(phase, [])
+            for v in build["kernels"][key]["meta_deterministic"]
+        })
     return {
         "autotune_records": {"a": len(ca), "b": len(cb)},
         "records_in_both": len(both),
@@ -221,6 +273,11 @@ def _compare(a: dict, b: dict) -> dict:
         "kernel_sources_identical": sorted(a["kernels"]) == sorted(b["kernels"]),
         "kernel_count": {"a": len(a["kernels"]), "b": len(b["kernels"])},
         "kernel_meta_deterministic": meta,
+        # Which compile in the process emitted a kernel that says the flag was
+        # in force.  ``first`` is the compile that follows inductor's import;
+        # ``second`` is a later one in the same process, which is the shape a
+        # serve has.
+        "kernel_meta_deterministic_by_phase": by_phase,
         "kernel_meta_contiguous_rdim": sorted(
             {v for build in (a, b) for k in build["kernels"].values() for v in k["meta_contiguous_rdim"]}
         ),
@@ -267,7 +324,12 @@ def main() -> int:
     work.mkdir(parents=True)
 
     arms = {}
-    for arm, flag in (("off", "0"), ("on", "1")):
+    # The third arm exists because the flag is read once, at inductor's import,
+    # and a serve compiles many graphs in one process.  It differs from ``on``
+    # in one line inside the child: the value is put back on the config object
+    # before the second compile.
+    for arm, flag, reassert in (("off", "0", "0"), ("on", "1", "0"),
+                                ("on_reassert", "1", "1")):
         builds = []
         for i in (0, 1):
             cache = work / f"{arm}{i}"
@@ -276,6 +338,7 @@ def main() -> int:
             env["TORCHINDUCTOR_CACHE_DIR"] = str(cache)
             env["TRITON_CACHE_DIR"] = str(cache / "triton")
             env["TORCHINDUCTOR_DETERMINISTIC"] = flag
+            env["TESSERA_PROBE_REASSERT"] = reassert
             out = work / f"{arm}{i}.json"
             r = subprocess.run(
                 [sys.executable, __file__, "--child", str(cache), str(out)],
@@ -290,7 +353,7 @@ def main() -> int:
         arms[arm] = {"builds": builds, "compare": _compare(*builds)}
 
     report = {
-        "schema": "tessera.inductor_determinism_probe/1",
+        "schema": "tessera.inductor_determinism_probe/2",
         "torch": arms["off"]["builds"][0]["torch"],
         "device": arms["off"]["builds"][0]["device"],
         "params": arms["off"]["builds"][0]["params"],

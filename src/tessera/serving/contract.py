@@ -7,12 +7,32 @@ its own ``runtime_contract.json`` and a producer (PrismaQuant) reads it through
 ``importlib.resources`` rather than hard-coding a route claim.
 
 WHAT A CELL MEANS.  A ``lane_eligibility`` cell says: on this platform, for
-this payload family, at these rungs, in this regime, the plugin executes this
-activation contract on a route with this status.  A cell exists only where a
-container receipt covers it; absence resolves ``unattested``, which is the
-honest status and not a refusal.  Today the table is DENSE-ONLY on sm_121, at
-one rung per family, both residency modes -- exactly the axes the served
-receipts cover.  Routed-MoE experts, TP>1 and any other rung are not in it.
+this payload family, at these rungs, in this regime, at this residency, the
+plugin executes these LAUNCHES under this activation contract on a route with
+this status.  A cell exists only where a container receipt covers it; absence
+resolves ``unattested``, which is the honest status and not a refusal.  Today
+the table is DENSE-ONLY on sm_121, at one rung per family -- exactly the axes
+the served receipts cover.  Routed-MoE experts, TP>1 and any other rung are
+not in it.
+
+THE LAUNCH IS A VALUE, AND THE RESIDENCY IS A CONDITION (schema v4, #111).
+``executes`` is a list of ``{symbol, decoder}`` and it is DERIVED here from
+``scheme.ROUTE_LAUNCHES`` -- the table the routes' own ``census_expected`` is
+built from -- narrowed by the cell's regime, by the residency its
+``TESSERA_SERVE_MODE`` flag names, and by the lanes each of its rungs reaches
+under ``native_extensions[].lane.requires``.  The REGIME there is this
+module's (``CENSUS_PHASE_REGIMES`` below: ``decode`` is the one-row forward
+and ``batch`` is every M > 1), never the kernel's word for M <= its GEMV max
+-- reading the second into a cell is how the batch cell first published the
+prefill launch alone and left out the GEMV the same regime runs at two rows.  Before v4 the launch appeared
+only in the cell's ``id``, so an E4M3 decode published the materialised FP8
+pair in every case; that was accidentally true while the window-GEMV lane was
+unreachable and false the moment a rate-constrained artifact was served, with
+the lane's own op on 112 of 112 modules.  The residency carries the condition
+because both window routes set ``layer.tessera_gemv = None`` in ``resident``
+-- the lane exists in ``streamed`` alone -- so two cells of one ``(platform,
+family, structure, regime)`` must cover DISJOINT residencies, and a cell
+``id`` is its scope and never a launch.
 
 WHAT THE BYTES WERE.  A cell says a receipt covered a rung; it cannot say
 *which bytes* at that rung, and two encoders can write two byte strings at
@@ -84,10 +104,13 @@ __all__ = [
     "vllm_module_name",
     "CONTRACT_FILENAME",
     "CONTRACT_SCHEMA",
+    "PAYLOAD_FAMILY_BY_ROUTE",
     "LANE_ELIGIBILITY_SCHEMA",
     "FORMAT_KIND",
     "REQUIRES_PLUGIN",
     "contract_path",
+    "cell_executes",
+    "cell_residency_modes",
     "extension_lane",
     "lane_decoder",
     "lane_requirements",
@@ -98,7 +121,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v3"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v4"
 #: The ``formats[]`` discriminator for a family addressed by a RATE (body bits
 #: per 256 weights), not by a codebook size.  Every Tessera family is one.
 FORMAT_KIND = "tessera_wire"
@@ -598,13 +621,14 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         family: route["activation_contract"] for family, route in (
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
+    _cell_scope: dict = {}
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
         _require_keys(cell, where,
                       required={"id", "platform", "family", "structure", "regime",
-                                "rungs_q256", "activation_contract", "route_status",
-                                "qualification", "requires_plugin", "requires_serve_flags",
-                                "predicates"})
+                                "rungs_q256", "activation_contract", "executes",
+                                "route_status", "qualification", "requires_plugin",
+                                "requires_serve_flags", "predicates"})
         if cell["platform"] not in block["platforms"]:
             raise ValueError(f"{where}.platform {cell['platform']!r} is not declared")
         if cell["regime"] not in block["regimes"]:
@@ -635,6 +659,54 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         if unknown_rungs:
             raise ValueError(
                 f"{where}.rungs_q256 names {unknown_rungs}, which the family does not publish")
+        # WHAT IT EXECUTES (schema v4).  Shape first, then the value.
+        executes = cell["executes"]
+        if (not isinstance(executes, list) or not executes
+                or any(not isinstance(e, Mapping) for e in executes)):
+            raise ValueError(
+                f"{where}.executes must be a non-empty list of {{symbol, decoder}} objects: a "
+                "cell that names no launch attests a route nobody can identify, and an empty "
+                "list would read as 'this regime runs nothing'")
+        for j, launch in enumerate(executes):
+            _require_keys(launch, f"{where}.executes[{j}]", required={"symbol", "decoder"})
+        if len(cell_executes(cell)) != len(executes):
+            raise ValueError(
+                f"{where}.executes repeats a (symbol, decoder) pair; the field is a SET of "
+                "launches and a duplicate would double-count a route in any histogram "
+                "built from it")
+        _validate_cell_executes(cell, _FAMILY_TO_ROUTE[cell["family"]],
+                                families[cell["family"]], contract, where)
+        # THE RESIDENCY IS A CONDITION, so two cells of one (platform, family,
+        # structure, regime) must not both claim one mode: a reader resolving
+        # "what runs here" would otherwise get whichever cell it read first,
+        # and that is the failure this schema version exists to close.
+        modes = cell_residency_modes(cell, where)
+        # THE ID NAMES THE SCOPE, NEVER THE LAUNCH.  Until v4 every id ended in
+        # the launch it claimed (``..._decode_scaled_mm_w8a8``) -- an assertion
+        # in a string no gate parses, which went stale the day the window-GEMV
+        # lane became reachable while the id went on saying ``scaled_mm``
+        # (#111).  The launch is ``executes`` now; the id is the five facts a
+        # cell is resolved by, so it cannot say anything the table does not.
+        expected_id = "_".join(
+            [cell["family"].lower(), cell["structure"], cell["platform"].replace("_", ""),
+             cell["regime"]]
+            + ([] if len(modes) == len(_all_modes()) else list(modes)))
+        if cell["id"] != expected_id:
+            raise ValueError(
+                f"{where}.id is {cell['id']!r}; a cell id is its SCOPE and must be "
+                f"{expected_id!r} (family, structure, platform, regime, plus the residency "
+                "where the cell covers only some). An id that names a launch is a second, "
+                "unparsed spelling of `executes` -- exactly the one that went stale.")
+        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"])
+        for mode in modes:
+            clash = _cell_scope.get((scope, mode))
+            if clash is not None:
+                raise ValueError(
+                    f"{where} ({cell['id']!r}) and {clash!r} both cover "
+                    f"{scope} at residency {mode!r}. A cell is resolved by those five facts "
+                    "plus the rung, so two cells claiming one of them is a table whose answer "
+                    "depends on the order it was written in.")
+            _cell_scope[(scope, mode)] = cell["id"]
 
     _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
                   required={"axis", "semantics", "units"},
@@ -762,6 +834,128 @@ def lane_requirements(module_name_prefix: str,
     return dict(extension_lane(module_name_prefix, contract).get("requires", {}))
 
 
+#: How a cell's ``requires_serve_flags`` names a residency.  The env var is
+#: ``lane.TESSERA_MODE_ENV``'s and the values are ``lane.MODES``'; the pipe is
+#: an OR, so ``TESSERA_SERVE_MODE=resident|streamed`` is a cell that covers
+#: both.  Parsed rather than pattern-matched because since schema v4 the
+#: residency is a CONDITION on the cell, not decoration: two cells of one
+#: ``(platform, family, structure, regime)`` are told apart by it.
+_MODE_FLAG_SEPARATOR = "|"
+
+
+def cell_residency_modes(cell: Mapping[str, Any],
+                         where: str = "lane_eligibility cell") -> tuple[str, ...]:
+    """The residencies a cell's serve flags select, as a value a gate reads.
+
+    A ``lane_eligibility`` cell is scoped to a ``(platform, family, structure,
+    regime)`` and, since v4, to a set of RESIDENCIES: the window-GEMV lane
+    exists in ``streamed`` alone (both window routes set
+    ``layer.tessera_gemv = None`` in ``resident``), so the decode regime of one
+    family executes two different launches depending on this flag.  It was
+    always in the cell -- as a string a reader had to pattern-match.  This is
+    the same string, read.
+    """
+    from .lane import MODES, TESSERA_MODE_ENV
+
+    head = f"{TESSERA_MODE_ENV}="
+    named = [f for f in cell.get("requires_serve_flags", ()) if str(f).startswith(head)]
+    if len(named) != 1:
+        raise ValueError(
+            f"{where}.requires_serve_flags must name exactly one {TESSERA_MODE_ENV} flag "
+            f"(got {named!r}): the residency is the axis that decides which launch a regime "
+            "makes, so a cell that does not scope itself to one cannot be resolved")
+    modes = tuple(str(named[0])[len(head):].split(_MODE_FLAG_SEPARATOR))
+    if not modes or len(set(modes)) != len(modes) or any(m not in MODES for m in modes):
+        raise ValueError(
+            f"{where}.requires_serve_flags names residencies {list(modes)}; they must be "
+            f"distinct values of {list(MODES)} (tessera.serving.lane.MODES, the set "
+            "lane.serve_mode gates on)")
+    return modes
+
+
+def _all_modes() -> tuple:
+    """``lane.MODES``, imported lazily so this module stays torch-free to read."""
+    from .lane import MODES
+
+    return MODES
+
+
+def cell_executes(cell: Mapping[str, Any]) -> set:
+    """``{(symbol, decoder)}`` a cell publishes -- the census's own shape."""
+    return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
+
+
+def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],
+                          rates: "tuple[int, ...]") -> tuple[str, ...]:
+    """Which of ``route``'s extension lanes can read a rung, by the published predicate.
+
+    The predicate is the one the extension itself publishes at
+    ``native_extensions[].lane.requires`` -- column rates, window bits, body and
+    plane -- which ``tests/test_lane_reachability.py`` ties to
+    ``kernel_window_gemv``'s own constants.  So a cell whose ``executes`` names
+    a lane launch is bound to the kernel's constants transitively, and the day
+    the kernel drops a rate the contract stops validating.
+    """
+    from .scheme import lane_rate_report
+
+    out = []
+    for entry in contract["native_extensions"]:
+        lane = entry.get("lane")
+        if not lane or route not in entry.get("routes", ()):
+            continue
+        requires = lane.get("requires") or {}
+        if not lane_rate_report(entry["module_name_prefix"], rates, contract)["reachable"]:
+            continue
+        if int(wire["window_bits"]) not in [int(b) for b in requires.get("window_bits", ())]:
+            continue
+        if str(wire["body"]) != str(requires.get("body")):
+            continue
+        if str(wire["plane"]) != str(requires.get("plane")):
+            continue
+        out.append(entry["module_name_prefix"])
+    return tuple(out)
+
+
+def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                            contract: Mapping[str, Any], where: str) -> None:
+    """``executes`` must BE the launches this build makes, not agree with them.
+
+    Principle 14 applied to the launch: until schema v4 a cell said which A-side
+    contract ran and which rungs a receipt covered, and the only place the
+    LAUNCH appeared was the cell's ``id`` -- so the contract's machine-readable
+    answer to "what does an E4M3 decode execute" was the materialised FP8 pair
+    in every case, which stopped being true the moment an artifact at a
+    lane-readable rung was served (#111).  The value is derived here from
+    ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
+    is built from, narrowed by exactly the axes the cell already carries: the
+    regime, the residency its serve flag names, and the lanes each of its
+    rungs can reach.
+    """
+    from ..grammar import rate_set, root_from_q256
+    from .scheme import launch_pairs
+
+    wires = {int(w["q256"]): w for w in entry["attested_wire"]}
+    # The family's own published terminal rate, so a rung above what this
+    # family can encode raises here rather than resolving to a rate set.
+    cap = int(entry["native_terminal_q256"]) // 256
+    modes = cell_residency_modes(cell, where)
+    want: set = set()
+    for rung in cell["rungs_q256"]:
+        rates = rate_set(root_from_q256(int(rung)), cap=cap)
+        lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates)
+        for mode in modes:
+            want |= launch_pairs(route, regime=cell["regime"], mode=mode, lanes=lanes)
+    got = cell_executes(cell)
+    if got != want:
+        raise ValueError(
+            f"{where}.executes is {sorted(got)} but the {route} route makes "
+            f"{sorted(want)} in the {cell['regime']!r} regime at residency {list(modes)} "
+            f"on rung(s) {list(cell['rungs_q256'])} (tessera.serving.scheme.ROUTE_LAUNCHES, "
+            "the table the routes' own census_expected is derived from). A cell states what "
+            "the runtime EXECUTES; it is derived from the dispatch's table or it is a claim "
+            "about a runtime nobody read.")
+
+
 #: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names
 #: for one thing, and they are deliberately different: the contract's family is
 #: a PAYLOAD name a producer prices (grid + arity), the route key is what the
@@ -771,6 +965,17 @@ _FAMILY_TO_ROUTE = {
     "TESSERA_E4M3_K1": "TESSERA_FP8",
     "TESSERA_BF16_K1": "TESSERA_BF16",
 }
+
+#: The inverse, and it is a map a CONSUMER needs: a route record's ``policy``
+#: names the ROUTE (``TESSERA_FP8:streamed``) while a ``lane_eligibility``
+#: cell names the PAYLOAD FAMILY (``TESSERA_E4M3_K1``), so joining a served
+#: record to the cell that covers it goes through here rather than through a
+#: second table in the tool.  Derived, and asserted injective at import: the
+#: day one route publishes two families, this map stops being the join and a
+#: caller must say which family it means.
+PAYLOAD_FAMILY_BY_ROUTE = {route: family for family, route in _FAMILY_TO_ROUTE.items()}
+assert len(PAYLOAD_FAMILY_BY_ROUTE) == len(_FAMILY_TO_ROUTE), (
+    "two payload families share a route, so route -> family is no longer a join")
 
 #: The checkpoint's spelling of a body/plane beside the route's spelling of
 #: the same fact.  ``attested_wire`` speaks ``wire.recipes`` -- the
@@ -1004,15 +1209,65 @@ def construction_entry(architectures, contract: Mapping[str, Any] | None = None)
     return None
 
 
+#: The ``WeightsMapper`` fields ``vllm_module_name`` replays, in vLLM's own
+#: order (``_map_name_with_shard``, vLLM 0.28 ``model_executor/models/
+#: utils.py``).  Everything else in that dataclass -- ``orig_to_new_renaming``,
+#: ``orig_to_new_regex``, ``orig_to_new_stacked``, and whatever vLLM adds next
+#: -- is REFUSED rather than skipped, because a rule silently not applied is a
+#: wrong module name and a wrong module name is a dead wire.
+_MAPPER_FIELDS_REPLAYED = ("orig_to_new_substr", "orig_to_new_prefix", "orig_to_new_suffix")
+
+
+def _require_replayable_mapper(table: Mapping[str, Any]) -> None:
+    """Refuse a mapper table carrying a rule this producer cannot replay.
+
+    Principle 14 has no exemption for "the algorithm is code, not a table".
+    vLLM publishes the TABLE (the census reads it off the model class); the
+    ALGORITHM that consumes it lives in ``WeightsMapper._map_name_with_shard``
+    and cannot be derived from the table.  So the producer replays the three
+    fields whose semantics are pinned in the pure suite and attested against
+    the real mapper in ``tests/test_serving_name_mapping.py`` -- and refuses,
+    by name, on every other field.
+
+    ``orig_to_new_stacked`` is in the refused set on purpose.  vLLM applies it
+    inside ``_map_name``, and ``get_unstacked_mapper()`` -- the variant
+    ``configure_quant_config`` hands a quant config -- empties it.  A receipt
+    field named ``hf_to_vllm_mapper_unstacked`` carrying a populated stacked
+    map therefore says the census fell back to the raw mapper, which is a
+    contradiction in the receipt rather than a case to implement.
+    """
+    unknown = sorted(field for field, value in table.items()
+                     if value and field not in _MAPPER_FIELDS_REPLAYED)
+    if unknown:
+        raise ValueError(
+            f"the census recorded hf_to_vllm_mapper fields this producer does not replay: "
+            f"{unknown}. vLLM applies them in WeightsMapper._map_name_with_shard, so the "
+            f"vLLM-side module name computed here would be wrong and the wire written to it "
+            f"dead. Extend vllm_module_name AND its attestation in "
+            f"tests/test_serving_name_mapping.py, or export this architecture through a "
+            f"runtime whose mapper uses only {list(_MAPPER_FIELDS_REPLAYED)}.")
+
+
 def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
     """A checkpoint module name in the namespace the runtime builds it under.
 
-    The same three rename kinds vLLM's ``WeightsMapper`` applies, in its order,
-    and only the unstacked ones -- which is exactly what
-    ``configure_quant_config`` hands a quant config, and therefore exactly what
+    A line-for-line replay of vLLM's ``WeightsMapper._map_name_with_shard``
+    over the three fields ``_MAPPER_FIELDS_REPLAYED`` names, in its order and
+    with its semantics: a substring rule replaces ONE occurrence
+    (``key.replace(substr, new_key, 1)``), and the prefix and suffix loops fall
+    THROUGH -- each rule sees the key the previous rule rewrote.  Only the
+    unstacked fields matter, which is exactly what ``configure_quant_config``
+    hands a quant config and therefore exactly what
     ``TesseraConfig.apply_vllm_mapper`` will apply to this name at load.
+
+    The replay is a claim about another runtime, so it is attested rather than
+    asserted: ``tests/test_serving_name_mapping.py`` runs these same names
+    through the real ``WeightsMapper`` inside the serving image and fails on
+    any disagreement, and ``_require_replayable_mapper`` refuses a table
+    carrying a rule the replay does not cover.
     """
     table = entry.get("hf_to_vllm_mapper_unstacked") or {}
+    _require_replayable_mapper(table)
     name = checkpoint_module
 
     def _dropped() -> None:
@@ -1031,19 +1286,17 @@ def vllm_module_name(entry: Mapping[str, Any], checkpoint_module: str) -> str:
         if old in name:
             if new is None:
                 _dropped()
-            name = name.replace(old, new)
+            name = name.replace(old, new, 1)
     for old, new in (table.get("orig_to_new_prefix") or {}).items():
         if name.startswith(old):
             if new is None:
                 _dropped()
-            name = new + name[len(old):]
-            break
+            name = name.replace(old, new, 1)
     for old, new in (table.get("orig_to_new_suffix") or {}).items():
         if name.endswith(old):
             if new is None:
                 _dropped()
-            name = name[: -len(old)] + new
-            break
+            name = new.join(name.rsplit(old, 1))
     return name
 
 

@@ -329,6 +329,48 @@ def test_the_cli_writes_the_sidecar_a_later_comparison_reads(tmp_path):
                        why="the CLI and the API stamp one build alike")
 
 
+def test_the_cli_refuses_a_cross_regime_pair_and_passes_a_pinned_one(tmp_path):
+    """The A/B rule reachable from a shell, not only from Python.
+
+    ``require_same_dispatch`` existed as a library function with no way to
+    call it from a campaign script, which calls ``compare --require`` and
+    nothing else.  ``same`` is the wrong check for this: it is about the
+    compiled *build*, so it refuses the pinned pair too -- the pair whose
+    served KL is 0.000000 (docs/measurements/serving-compile-dispatch-2026-09-03.md
+    section 3).  A rule a gate cannot read is a note, so the gate reads it here.
+    """
+    root = _cache(tmp_path, "one", xblock=8, time_ms=1.0)
+    kw = dict(cache_root=root, image=PIN, image_digest=PIN_DIGEST,
+              serve_mode="resident")
+    arms = {
+        "eager": _stamp(EAGER_DISPATCH_LOG, tmp_path, "e", eager=True, **kw),
+        "compiled": _stamp(COMPILED_DISPATCH_LOG, tmp_path, "c", eager=False, **kw),
+        "pinned": _stamp(PINNED_DISPATCH_LOG, tmp_path, "p", eager=False, **kw),
+    }
+    paths = {}
+    for name, rec in arms.items():
+        paths[name] = tmp_path / f"{name}.build.json"
+        paths[name].write_text(json.dumps(rec, indent=1) + "\n")
+
+    env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="",
+               PYTHONPATH=str(ROOT / "src"))
+
+    def _compare(a, b, require):
+        return subprocess.run(
+            [sys.executable, "-m", "tessera.serving.build_identity", "compare",
+             str(paths[a]), str(paths[b]), "--require", require],
+            env=env, capture_output=True, text=True)
+
+    crossed = _compare("eager", "compiled", "same-dispatch")
+    assert crossed.returncode == 4, crossed.stdout + crossed.stderr
+    assert "different implementations" in crossed.stderr
+
+    # The pinned compiled arm ran the eager arm's implementations, so the
+    # dispatch check passes -- while the build check, correctly, does not.
+    assert _compare("eager", "pinned", "same-dispatch").returncode == 0
+    assert _compare("eager", "pinned", "same").returncode == 4
+
+
 def test_the_shell_helper_forwards_the_knob_and_stamps(tmp_path):
     """The serve wrappers' own code path, run without docker.
 

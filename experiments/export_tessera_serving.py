@@ -879,6 +879,13 @@ def main():
     ap.add_argument("--ldlq-sigma", type=float, default=DEFAULT_LDLQ_SIGMA,
                     help="Hessian regulariser for LDLQ cross-column feedback; a negative value turns LDLQ off")
     ap.add_argument("--ldlq-block", type=int, default=DEFAULT_LDLQ_BLOCK, help="LDLQ input-feature block")
+    ap.add_argument("--ldlq-block-budget", type=float, default=None,
+                    help="derive each unit's LDLQ block from its own Hessian instead "
+                         "of stating one: the largest block whose predicted penalty "
+                         "against full feedback (compensate.block_penalty) is within "
+                         "this ratio, floored at 1 column. Mutually exclusive with "
+                         "--ldlq-block. Prices the same axis the two measured "
+                         "populations disagree about by a factor of 70 at b=32.")
     ap.add_argument("--refit-metric", default=None,
                     help="error the scale refit minimises: plain | hessian | h^ALPHA. "
                          "Default: the measured objective for each unit's own scale "
@@ -928,7 +935,13 @@ def main():
     # that let the library path encode weights-only while the script did not.
     activation = None
     if args.hessian:
-        settings = {"ldlq_sigma": args.ldlq_sigma, "ldlq_block": args.ldlq_block,
+        block: "int | dict" = args.ldlq_block
+        if args.ldlq_block_budget is not None:
+            if "--ldlq-block" in sys.argv:
+                ap.error("--ldlq-block and --ldlq-block-budget both state the "
+                         "block: one names it, the other derives it. Pass one.")
+            block = {"max_penalty": args.ldlq_block_budget}
+        settings = {"ldlq_sigma": args.ldlq_sigma, "ldlq_block": block,
                     "refit_reach_floor": args.refit_reach_floor}
         if args.refit_metric is not None:      # else: the measured per-plane map
             settings["refit_objective"] = args.refit_metric

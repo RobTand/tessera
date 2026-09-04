@@ -1,0 +1,69 @@
+{
+ "schema": "tessera.ts60.byte_check.v1",
+ "claim_under_test": "ldlq_block is a SCHEDULING change: it must move every code and no bytes. Both halves are checked, because each failing alone is a different bug.",
+ "incumbent": {
+  "arm": "b32",
+  "wire": "/mnt/shared/tessera-runs/ldlq-block-serve/b32-tessera",
+  "twin": "/mnt/shared/tessera-runs/ldlq-block-serve/b32-stock-twin"
+ },
+ "candidate": {
+  "arm": "b8",
+  "wire": "/mnt/shared/tessera-runs/ldlq-block-serve/b8-tessera",
+  "twin": "/mnt/shared/tessera-runs/ldlq-block-serve/b8-stock-twin"
+ },
+ "byte_counts_identical": {
+  "quantized_params": 440401920,
+  "wire_bytes": 220301312,
+  "wire_bpp": 4.001822916666667,
+  "on_disk_bytes": 220443566,
+  "resident_mode_bytes": 247726080,
+  "checkpoint_bytes": 842943478,
+  "modules": 112,
+  "units": 196,
+  "twin_checkpoint_on_disk_bytes": 870290032
+ },
+ "encoder_settings_diff": {
+  "ldlq_block": {
+   "incumbent": 32,
+   "candidate": 8
+  },
+  "fields_differing": 1,
+  "verdict": "one arm changed, and it is ldlq_block"
+ },
+ "tensor_level": {
+  "shared_quantized_tensors": 784,
+  "identical": 392,
+  "different": 392,
+  "only_in_first": 0,
+  "only_in_second": 0,
+  "example_differing_fractions": {
+   "layers.0.mlp.down_proj.weight_packed": 0.2671,
+   "layers.0.mlp.down_proj.weight_scale": 0.0998,
+   "layers.0.self_attn.q_proj.weight_packed": 0.2954,
+   "layers.0.self_attn.q_proj.weight_scale": 0.1587
+  },
+  "reading": "Every weight_packed and weight_scale tensor differs, by 7-30% of its bytes. The block reached the encoder and changed the codes. The 392 identical tensors are the per-unit metadata that a scheduling change does not touch."
+ },
+ "verdict": "PASS. Identical bytes, different codes. This is a genuine A/B at matched bytes and not, as has happened in this repo when a kwarg was silently dropped, one arm exported twice.",
+ "encode_wall_clock_CONTENDED": {
+  "b32": {
+   "wall": "3:34:36",
+   "seconds": 12876,
+   "max_rss_kb": 6021028
+  },
+  "b8": {
+   "wall": "5:47:29",
+   "seconds": 20849,
+   "max_rss_kb": 7562152
+  },
+  "ratio_b8_over_b32": 1.619,
+  "WARNING": "These two wall clocks are NOT a controlled encode-cost measurement and the 1.619 ratio must not be quoted as one. The three arms ran CONCURRENTLY on one box, under an external load that varied from 3.3 to 82.6, and their windows have different durations over that curve. My earlier 6.15x figure from the same design was retracted for exactly this reason. The controlled sequential matched-pair measurement is a separate, still-pending deliverable. The same caveat applies to max_rss_kb: b8's 1.26x peak RSS over b32 was measured with three arms resident on one box and is not a per-arm memory cost -- b4, at 8x the segments of b32, peaked within 2% of it, which confirms the block is not a memory lever.",
+  "b4": {
+   "wall": "7:35:51",
+   "seconds": 27351,
+   "max_rss_kb": 6125908,
+   "note": "b4 was NOT the served arm; recorded here so the three encodes sit together. It ran with the least company of the three."
+  },
+  "ratio_b4_over_b32": 2.124
+ }
+}

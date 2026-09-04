@@ -28,3 +28,9 @@ build/
 # `git add -A` sweeps them into someone else's commit.
 .pbrun-closure.*.json
 pbrun_result.*.txt
+
+# Agent scratch: a per-checkout campaign log, dropped from tracking twice
+# (d3ff7c2 and the #60 merge) and still arriving on merges.  The durable
+# version of a campaign write-up goes to docs/reports/.
+report.md
+.pbrun-closure.*.json
