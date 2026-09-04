@@ -1,0 +1,21 @@
+{
+ "arm_json": "experiments/results/tessera_lut_exact_fit.json",
+ "control_arm": "drift control FIRST [LDLQ 1.0/32 + refit h^1.0]",
+ "arm": "LDLQ 1.0/32 + refit h^1.0 + exact-16 fit",
+ "landing": "table",
+ "unit_ratios": {
+  "model.layers.0.self_attn.q_proj": 1.0305567698936207,
+  "model.layers.1.self_attn.k_proj": 1.0,
+  "model.layers.13.mlp.down_proj": 1.0,
+  "model.layers.14.mlp.gate_proj": 1.0,
+  "model.layers.2.mlp.down_proj": 1.0007501998221708,
+  "model.layers.27.self_attn.o_proj": 1.0
+ },
+ "geomean_ratio": 1.0051547616450567,
+ "gain": -0.0051547616450566824,
+ "control_triplicate_spread": 0.0,
+ "ceiling_json": "experiments/results/tessera_lut_landing_ceiling.json",
+ "ceiling": 0.04941811478353442,
+ "bar": 0.02470905739176721,
+ "fired": true
+}
