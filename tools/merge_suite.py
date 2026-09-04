@@ -4,7 +4,18 @@
 tessera#112: master was red on three CUDA-gated tests while GitHub Actions,
 the x86 pool suite and a local CPU run all read green.  Not one of those three
 signals could have seen the failure, and none of them said so.  The CUDA-gated
-surface -- some 450-480 tests -- was exercised by nothing automatic.
+surface is exercised by nothing automatic.
+
+*How big is that surface?*  Not stated here, because it has not been measured.
+The issue's "450-480" is a subtraction between two runs of two different
+commits on two different boxes, which is an estimate, not a population.  What
+IS measured is one arm of one commit: on ``dee1aa9`` the torch-free x86 arm
+published 1406 passed / 0 failed / 499 skipped and 0 modules uncollected, with
+its skip reasons verbatim in that run's ``surface.x86.json``.  The GPU arm has
+never placed, so the difference between the two populations -- the thing the
+estimate is estimating -- is still unmeasured.  A run of this tool with both
+arms on one commit is what would answer it, and until one exists no number
+belongs in this sentence.
 
 Two facts shape what this tool is.
 

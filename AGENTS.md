@@ -161,14 +161,22 @@ person or agent — changing the code.
   before believing a pass count, and quote it whenever you record one. A run
   that must cover the CUDA-gated surface says `--strict-cuda` (or
   `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
-  skipping some 450-480 tests and reporting green. `--surface-json PATH` writes
-  the same population as a table, which is what a receipt should read.
+  skipping the surface and reporting green. Do not quote a size for that
+  surface: the issue's 450-480 is a subtraction between two runs of two
+  commits on two boxes. One arm of one commit is measured -- on `dee1aa9` the
+  torch-free x86 arm published 1406 passed / 0 failed / 499 skipped, 0 modules
+  uncollected -- and the GPU arm has never placed, so the difference between
+  the populations is still unmeasured. `--surface-json PATH` writes the same
+  population as a table, which is what a receipt should read; under `-n` each
+  worker writes its own `surface.<arm>.<workerid>.json` share and only the
+  controller writes the population, so a shard can never be read as a run.
   `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
   one under `--strict-cuda`, the torch-free x86 one -- and writes **one**
   receipt holding both side by side, so neither can be quoted without the
   other, appending a row per arm to `docs/status/suite-populations.md` under
   `--record`. That ledger is where a suite result is recorded; read the two
-  adjacent rows, not one of them. If the submitting session dies while the
+  adjacent rows, not one of them -- an arm a run did not submit is written as
+  `not submitted in this run`, so a lone row cannot be read as a whole result. If the submitting session dies while the
   pool carries on, `--resume <receipt dir>` rebuilds the receipt from the
   populations the runs published -- with the exit status marked `not
   observed`, because published failures prove red while their absence does not
