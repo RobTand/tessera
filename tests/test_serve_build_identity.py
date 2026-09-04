@@ -741,6 +741,18 @@ def test_serve_wrappers_do_not_repeat_trust_remote_code_as_a_noop(wrapper):
     assert "EAGER_FLAG=--trust-remote-code" not in body
 
 
+def test_decode_wrapper_profiles_only_the_decode_measurement_when_requested():
+    """Compiled launch evidence brackets the M=1 dump, not startup/prefill."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    assert "TESSERA_KL_PROFILE_DIR" in body
+    start = body.index("/start_profile")
+    decode = body.index('echo "=== decode-regime dump')
+    stop = body.index("/stop_profile")
+    prefill = body.index('echo "=== prefill-regime dump')
+    assert start < decode < stop < prefill
+    assert "window_gemv_trace_summary.py" in body
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 

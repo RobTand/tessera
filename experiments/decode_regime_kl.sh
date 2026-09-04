@@ -60,6 +60,18 @@ DUMP_PREFILL=$KLDIR/${DUMP_PREFIX}_${ARM}_prefill.json
 LOG=$RUNS/serve_$ARM.log
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 KL=${KL:-/home/rob/dq-runs/kl_tool.py}
+PROFILE_DIR=${TESSERA_KL_PROFILE_DIR:-}
+PROFILE_MOUNT=()
+PROFILE_CONFIG=
+if [ -n "$PROFILE_DIR" ]; then
+  if [ -e "$PROFILE_DIR" ] && [ -n "$(find "$PROFILE_DIR" -mindepth 1 -print -quit)" ]; then
+    echo "REFUSED: profile directory is not empty: $PROFILE_DIR" >&2
+    exit 2
+  fi
+  mkdir -p "$PROFILE_DIR"
+  PROFILE_MOUNT=(-v "$PROFILE_DIR:/prof")
+  PROFILE_CONFIG='{"profiler":"torch","torch_profiler_dir":"/prof"}'
+fi
 # TESSERA_LANE_EAGER=0 serves under vLLM's default compiled forward + CUDA
 # graphs, which is the configuration vLLM serves by default and the one #113
 # has no KL for.  Compiled mode contributes no optional flag; the one required
@@ -90,20 +102,23 @@ docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
   -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm \
   -v "$TRACEDIR":/trace \
+  "${PROFILE_MOUNT[@]}" \
   -e TORCH_EXTENSIONS_DIR=/ext -e TMPDIR=/ext \
   -e TESSERA_SERVE_MODE="$MODE" \
   -e TESSERA_ROUTE_TRACE=/trace/route-trace.json \
   -e TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.45}" \
+  -e TESSERA_KL_PROFILE_CONFIG="$PROFILE_CONFIG" \
   $(build_identity_docker_env) \
   ${TESSERA_LANE_DOCKER_EXTRA:-} \
   --entrypoint bash "$IMAGE" -c '
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include; for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src" "$dst/$n"; done
 pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
+profile_args=(); [ -z "${TESSERA_KL_PROFILE_CONFIG:-}" ] || profile_args=(--profiler-config "$TESSERA_KL_PROFILE_CONFIG")
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.45}" \
   --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' --enable-prompt-tokens-details \
-  '"$EAGER_FLAG"' --trust-remote-code' >/dev/null
+  '"$EAGER_FLAG"' --trust-remote-code "${profile_args[@]}"' >/dev/null
 
 for i in $(seq 1 240); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
@@ -126,12 +141,37 @@ snap() {  # stage-name
 
 snap 01-startup
 
+if [ -n "$PROFILE_DIR" ]; then
+  echo "=== start compiled launch profile (decode only) ==="
+  if ! curl -fsS -X POST "http://127.0.0.1:${PORT}/start_profile" \
+      > "$RUNS/profile-$ARM-start.json"; then
+    reap; echo "profile start FAILED"; exit 3
+  fi
+fi
+
 echo "=== decode-regime dump (M=1 forwards, stride $STRIDE) ==="
 if ! $PY "$KL" dump --model kl-target --out "$DUMP_DECODE" \
     --url "http://127.0.0.1:${PORT}/v1/completions" \
     --corpus-contract "$CORPUS" --role student --artifact-path "$MODEL" \
     --regime decode --decode-stride "$STRIDE"; then
   reap; echo "decode dump FAILED; serve log at $LOG"; exit 3
+fi
+if [ -n "$PROFILE_DIR" ]; then
+  echo "=== stop compiled launch profile ==="
+  if ! curl -fsS --max-time 900 -X POST \
+      "http://127.0.0.1:${PORT}/stop_profile" \
+      > "$RUNS/profile-$ARM-stop.json"; then
+    reap; echo "profile stop FAILED"; exit 3
+  fi
+  for _ in $(seq 1 60); do
+    [ -n "$(find "$PROFILE_DIR" -type f -print -quit)" ] && break
+    sleep 1
+  done
+  [ -n "$(find "$PROFILE_DIR" -type f -print -quit)" ] || {
+    reap; echo "REFUSED: profiler produced no trace under $PROFILE_DIR"; exit 3;
+  }
+  $PY "$(dirname "$0")/window_gemv_trace_summary.py" "$PROFILE_DIR" \
+    --phases 24 --out "$RUNS/profile-$ARM-summary.json"
 fi
 snap 02-decode
 

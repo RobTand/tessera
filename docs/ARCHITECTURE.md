@@ -459,8 +459,13 @@ the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's. Both arms of that
 receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
 a compiled serve, where the trace declines and the attestation is
-`compile_identity`'s per-arm AOT key plus the mutual KL itself. That arm was
-taken for #113: compiled, the same two arms read mutual `KL >= 0.012585` at
+`compile_identity`'s per-arm AOT key plus the mutual KL itself. When
+`TESSERA_KL_PROFILE_DIR` is set, the wrapper also enables vLLM's torch
+profiler, starts it immediately before the decode dump, stops it before the
+prefill dump, and writes `window_gemv_trace_summary.py`'s kernel summary. That
+is the compiled arm's runtime launch evidence; it is not inferred from the
+compile-time route trace. The first arm taken for #113 read: compiled, the
+same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
 and that decode number is **below** the same-artifact rebuild delta measured
 beside it (`KL >= 0.019423`, arm A re-served, one lane state, two builds), so
