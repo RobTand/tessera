@@ -463,6 +463,11 @@ eager prefill mode, dump and build sidecars, and reference-usability result.
 The earlier revision-labelled teacher remains historical evidence; checking
 its dump hash now does not retroactively establish loaded-weight identity.
 This is provenance for the quality measurement, not a new quality threshold.
+The separate census/student stages in `ts5_lfm_served_bound.py` likewise
+compare every merged shard and sidecar with the checked assembly seal before
+and after execution, mount the exact model directory read-only, and preserve
+the raw census or matched teacher/student comparison alongside their hashes.
+Each stage owns one exclusive GPU reservation through verified cleanup.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
