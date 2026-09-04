@@ -164,6 +164,10 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "arm": name,
         "why": arm["why"],
         "python": arm["python"],
+        # What this arm was SUBMITTED to cover, carried on the record so the
+        # verdict can check the population against it without reaching back
+        # into a table the receipt does not contain.
+        "requires_cuda": bool(arm["strict_cuda"]),
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
     if args.dry_run:
@@ -180,12 +184,45 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     return record
 
 
+#: What a surface file has to say about itself before this tool will read it
+#: as an arm's population.  ``tessera.test_surface.v1`` had no such field, and
+#: a v1 file at this path could be one xdist worker's share: under ``-n 8``
+#: every worker wrote the arm's canonical path, so eight shards landed there
+#: before the controller's aggregate did.  v2 files say which they are.
+_SHARD_ROLE = "worker-share"
+
+
 def _attach_surface(record: dict, surface_json: Path) -> None:
-    """Put this arm's published population on the record, or say it has none."""
+    """Put this arm's published population on the record, or say it has none.
+
+    A worker's share is refused rather than read.  It is a real measurement of
+    a real slice, and it is not the arm's population -- reading one as the
+    population is how ``docs/status/suite-populations.md`` would come to carry
+    206 passed / 108 skipped as an x86 suite result.  An absent measurement is
+    honest; a partial one wearing the whole one's name is not.
+    """
 
     if surface_json.exists():
-        record["surface"] = json.loads(surface_json.read_text())
+        published = json.loads(surface_json.read_text())
+        role = published.get("role")
+        if role == _SHARD_ROLE:
+            record["surface"] = None
+            record["shard_at_population_path"] = str(surface_json)
+            record["no_surface_means"] = (
+                f"the file at {surface_json.name} says it is one xdist "
+                f"worker's share ({published.get('worker_id')}), not this "
+                "arm's population. A share is a slice of the run; reporting "
+                "it as the population would put a fraction of a suite in the "
+                "ledger as the whole of it. This is an absent measurement."
+            )
+            return
+        record["surface"] = published
         record["surface_path"] = str(surface_json)
+        # Pre-v2 files cannot answer, and the honest reading of one is that the
+        # question is open -- not that the answer is "population".
+        record["surface_role"] = role or (
+            "unstated: written before the role field existed, so under -n it "
+            "could be a worker's share rather than the whole run")
         # WHEN the population was measured, which on a resumed receipt is not
         # when the receipt was assembled -- the run may have finished hours
         # before anyone came back for it.  The ledger dates the measurement,
@@ -227,6 +264,7 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
         "arm": name,
         "why": arm["why"],
         "python": arm["python"],
+        "requires_cuda": bool(arm["strict_cuda"]),
         "resumed": True,
         "exit_status_observed": False,
         "returncode": None,
@@ -268,6 +306,28 @@ def _verdict(arms: list[dict]) -> str:
             return f"red on one of: {names}"
         if record.get("returncode") not in (0, None):
             return f"red on one of: {names}"
+    # Second leg, and the reason it exists: everything above is satisfied by a
+    # run that skipped the entire surface it was submitted to cover.  The GPU
+    # arm's whole claim rests on ``--strict-cuda`` having refused a device-less
+    # session -- one unexercised code path between a green tick and an
+    # unmeasured population, which is tessera#112 verbatim.  The surface
+    # already publishes both facts, derived in-process from torch rather than
+    # asserted about another runtime, so the verdict reads them too.  Two
+    # independent legs, not one.
+    for record in arms:
+        if not record.get("requires_cuda"):
+            continue
+        surface = record.get("surface") or {}
+        if not surface.get("cuda"):
+            device = surface.get("device") or "device not stated"
+            return ("incomplete: the " + record["arm"] + " arm was submitted "
+                    "to cover the CUDA-gated surface and published a "
+                    "population that saw no device (" + device + ")")
+        if not surface.get("strict_cuda"):
+            return ("incomplete: the " + record["arm"] + " arm's population "
+                    "says the --strict-cuda gate was not armed, so a "
+                    "device-less placement would have skipped the surface "
+                    "and passed")
     unobserved = [record["arm"] for record in arms
                   if not record.get("exit_status_observed", True)]
     if unobserved:

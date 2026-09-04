@@ -245,9 +245,15 @@ def test_a_resumed_receipt_reports_failures_but_never_declares_green(tmp_path):
     """
 
     merge_suite = _module()
+    # ``cuda``/``strict_cuda`` are in every surface a run publishes, and the
+    # verdict now reads them for an arm submitted to cover the CUDA surface
+    # (see the second-leg test below).  A fixture without them is not a
+    # smaller version of a real population; it is a different one.
     clean = {"counts": {"passed": 10, "failed": 0, "error": 0, "skipped": 1},
+             "cuda": True, "strict_cuda": True,
              "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10"}
     broken = {"counts": {"passed": 9, "failed": 1, "error": 0, "skipped": 1},
+              "cuda": False, "strict_cuda": False,
               "device": "torch 2.11.0+cpu reports no CUDA device"}
 
     (tmp_path / "surface.gpu.json").write_text(json.dumps(clean))
@@ -279,10 +285,12 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
 
     surfaces = tmp_path / "surfaces"
     surfaces.mkdir()
-    for arm, device in (("gpu", "1 CUDA device(s), device 0 = NVIDIA GB10"),
-                        ("x86", "torch 2.11.0+cpu reports no CUDA device")):
+    for arm, cuda, device in (
+            ("gpu", True, "1 CUDA device(s), device 0 = NVIDIA GB10"),
+            ("x86", False, "torch 2.11.0+cpu reports no CUDA device")):
         (surfaces / f"surface.{arm}.json").write_text(json.dumps(
-            {"device": device,
+            {"device": device, "cuda": cuda, "strict_cuda": cuda,
+             "role": "population",
              "counts": {"passed": 5, "failed": 0, "skipped": 2},
              "not_collected": []}))
     out = tmp_path / "receipt.json"
@@ -519,3 +527,151 @@ def test_an_arm_that_measured_nothing_carries_no_measurement_time(tmp_path):
     assert "no population published" in row, row
     assert "2026-09-04T09:00:00Z" not in row, row
     assert row.split("|")[1].strip() == "--", row
+
+
+def test_a_worker_share_is_never_read_as_this_arms_population(tmp_path):
+    """A shard on the population's path is an absent measurement, not a result.
+
+    Under `-n 8` every xdist worker used to write the arm's canonical
+    `--surface-json` path, so that path held one worker's SHARE until the
+    controller's final write. A `--timeout-s` kill in that window, followed by
+    `--resume`, would have recorded a fraction of a suite -- 206 passed / 0
+    failed / 108 skipped, in receipt `20260904T040432` -- in
+    `docs/status/suite-populations.md` as the x86 arm's population. Not a false
+    green (`_verdict` withholds green when nobody observed an exit status) but
+    a wrong number in the permanent artefact, which is the thing #112 item 1
+    asked for.
+
+    `tests/conftest.py` now gives each worker its own path, so this cannot
+    happen by accident. This is the reader's own leg: a file that says it is a
+    share is refused as a population however it got there.
+
+    Before this::
+
+        AssertionError: assert {'counts': {'error': 0, 'failed': 0,
+        'passed': 206, 'skipped': 108}, 'cuda': False, ...} is None
+    """
+
+    merge_suite = _module()
+    (tmp_path / "surface.x86.json").write_text(json.dumps({
+        "schema": "tessera.test_surface.v2",
+        "role": "worker-share", "worker_id": "gw6", "xdist_workers": 8,
+        "cuda": False, "strict_cuda": False,
+        "device": "torch 2.11.0+cpu reports no CUDA device",
+        "counts": {"passed": 206, "failed": 0, "error": 0, "skipped": 108},
+        "not_collected": []}))
+
+    record = merge_suite._resume("x86", merge_suite.ARMS["x86"], tmp_path)
+    assert record["surface"] is None
+    assert "gw6" in record["no_surface_means"]
+    assert "206" not in json.dumps(record), "a share's counts reached the record"
+    assert merge_suite._verdict([record]) == \
+        "incomplete: an arm published no population"
+
+    # And the row a reader sees says nothing was measured, not 206.
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T09:00:00Z",
+        "population": {"commit": "f" * 40, "is_master_head": True},
+        "arms": [record]})
+    row = [l for l in ledger.read_text().splitlines() if "| x86 |" in l][0]
+    assert "no population published" in row, row
+    assert "206" not in row, row
+
+
+def test_a_population_that_states_its_role_is_read_and_a_silent_one_is_flagged(tmp_path):
+    """A pre-v2 surface is read, and the open question is written down.
+
+    Refusing every file without a `role` would refuse the population the queued
+    GPU arm will publish if it places on a tree that predates the field, which
+    would be throwing away the measurement everyone is waiting for. Reading it
+    silently would be pretending v1 answered a question it cannot. So: read it,
+    and record that it did not say.
+
+    Before this: `KeyError: 'surface_role'`.
+    """
+
+    merge_suite = _module()
+    (tmp_path / "surface.gpu.json").write_text(json.dumps({
+        "schema": "tessera.test_surface.v1",
+        "cuda": True, "strict_cuda": True,
+        "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10",
+        "counts": {"passed": 1827, "failed": 0, "skipped": 10},
+        "not_collected": []}))
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], tmp_path)
+    assert record["surface"]["counts"]["passed"] == 1827
+    assert "unstated" in record["surface_role"], record["surface_role"]
+
+    (tmp_path / "surface.x86.json").write_text(json.dumps({
+        "schema": "tessera.test_surface.v2", "role": "population",
+        "worker_id": None, "cuda": False, "strict_cuda": False,
+        "device": "torch 2.11.0+cpu reports no CUDA device",
+        "counts": {"passed": 1406, "failed": 0, "skipped": 499},
+        "not_collected": []}))
+    stated = merge_suite._resume("x86", merge_suite.ARMS["x86"], tmp_path)
+    assert stated["surface_role"] == "population"
+
+
+def test_the_gpu_arms_green_has_two_legs_not_one(tmp_path):
+    """A pass count is not coverage; the population has to say it saw a device.
+
+    The GPU arm's entire claim to have covered the CUDA-gated surface rested on
+    `--strict-cuda` having refused a device-less session -- one code path, and
+    one that has never executed its ACCEPT branch on a real device. If it were
+    ever mis-wired, mis-spelled or dropped from the submitted command line, a
+    placement on a box with no GPU would skip the whole surface, publish 1406
+    passed / 0 failed, and this tool would call it green. That is tessera#112
+    reproduced inside the tool written to prevent it.
+
+    The surface already publishes `cuda` and `strict_cuda`, both derived
+    in-process from torch on the box that ran -- an attestation, not a claim
+    about another runtime (principle 14) -- so the verdict reads them as a
+    second, independent leg.
+
+    Before this test::
+
+        AssertionError: green on 1 population(s): gpu
+        assert 'green' not in 'green on 1 population(s): gpu'
+
+    -- for the first case below, a GPU arm that saw no device at all.
+    """
+
+    merge_suite = _module()
+    cpu_population = {
+        "cuda": False, "strict_cuda": False,
+        "device": "torch 2.11.0+cpu reports no CUDA device",
+        "counts": {"passed": 1406, "failed": 0, "error": 0, "skipped": 499}}
+
+    # Submitted to cover the CUDA surface, ran on a box with no device.
+    landed_wrong = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
+                    "surface": cpu_population}
+    verdict = merge_suite._verdict([landed_wrong])
+    assert "green" not in verdict, verdict
+    assert "no device" in verdict and "gpu" in verdict, verdict
+
+    # A device, but the gate was not armed: the run passed because nothing
+    # made it refuse, which is the same coverage question one step earlier.
+    unarmed = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
+               "surface": dict(cpu_population, cuda=True, strict_cuda=False,
+                               device="torch 2.11, 1 CUDA device(s)")}
+    assert "not armed" in merge_suite._verdict([unarmed])
+
+    # Both legs: a device, and the gate that would have refused without one.
+    covered = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
+               "surface": dict(cpu_population, cuda=True, strict_cuda=True,
+                               device="torch 2.11, 1 CUDA device(s)")}
+    assert merge_suite._verdict([covered]) == "green on 1 population(s): gpu"
+
+    # The x86 arm was never submitted to cover that surface, and must not be
+    # held to it -- that box has no torch by design.
+    x86 = {"arm": "x86", "requires_cuda": False, "returncode": 0,
+           "surface": cpu_population}
+    assert merge_suite._verdict([x86]) == "green on 1 population(s): x86"
+
+    # The arm records the tool builds carry the flag, so this is the verdict
+    # the tool actually reaches -- not one only this test can construct.
+    assert merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
+                              tmp_path)["requires_cuda"] is True
+    assert merge_suite._resume("x86", merge_suite.ARMS["x86"],
+                              tmp_path)["requires_cuda"] is False
+
