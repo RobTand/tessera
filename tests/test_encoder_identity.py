@@ -62,6 +62,33 @@ def test_the_identity_moves_when_the_encoder_moves(identity, monkeypatch):
     assert ei.encoder_fixture_id() != identity
 
 
+def test_identity_sees_upward_landing_of_an_unraised_boundary(
+        identity, monkeypatch):
+    """Issue #116: the fixture reaches #115's exact residual branch.
+
+    Arm B changes only an unraised CHANNEL row whose nearest fp16 word landed
+    below ``amax / reach``.  If that policy can move artifact bytes, the
+    behaviour-derived identity must distinguish them from current arm A.
+    """
+    import tessera.scale_channel as sc
+
+    current = sc.initial_channel_scale
+
+    def upward_for_every_below_floor(work, sigma, reach=None):
+        stored, effective, global_scale = current(work, sigma, reach=reach)
+        if reach is None:
+            return stored, effective, global_scale
+        floor = work.float().abs().amax(dim=1) / float(reach)
+        stored, effective = sc._bump_below_floor(
+            stored, effective, floor, global_scale,
+        )
+        return stored, effective, global_scale
+
+    monkeypatch.setattr(sc, "initial_channel_scale", upward_for_every_below_floor)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    assert ei.encoder_fixture_id() != identity
+
+
 def test_reach_floor_moves_identity_and_refuses_an_untagged_resume(identity):
     """Issue #87 is a byte mover, so #101's derived gate must see it.
 
@@ -104,6 +131,44 @@ def test_the_fixture_weights_do_not_ride_torch_rng():
     torch.manual_seed(999)
     assert torch.equal(first, ei._fixture_weight())
     assert first.device.type == "cpu"
+
+
+def test_unraised_boundary_fixture_reaches_the_exact_residual_branch():
+    """The #116 witness is unraised, but its nearest word is below reach."""
+    import tessera.scale_channel as sc
+
+    weight, sigma, reach = ei._unraised_boundary_fixture()
+    w = weight.float()
+    rms = w.pow(2).mean(dim=1).sqrt()
+    amax = w.abs().amax(dim=1)
+    over = amax * sigma > reach * rms
+    floor = amax / reach
+    stored, effective, global_scale = sc.initial_channel_scale(
+        w, sigma, reach=reach,
+    )
+    residual = (~over) & (effective < floor)
+
+    assert torch.equal(torch.nonzero(residual).flatten(), torch.tensor([0]))
+    assert not bool(over[0])
+    assert float(global_scale) == 1.0
+    assert float(stored[0]) == 1.0
+
+
+def test_new_boundary_witness_is_neutral_for_current_arm_a(identity):
+    """Coverage added after #101 must not relabel unchanged arm-A bytes."""
+    boundary = next(
+        case for case in ei.fixtures()
+        if case.compatibility_baseline is not None
+    )
+    encoded = ei._encode_fixture(boundary)
+    assert hashlib.sha256(encoded).hexdigest() == boundary.compatibility_baseline
+    assert ei._identity_contribution(boundary) == b""
+
+    old_payload = b"".join(
+        ei._encode_fixture(case) for case in ei.fixtures()
+        if case.compatibility_baseline is None
+    )
+    assert identity == hashlib.sha256(ei._DOMAIN + old_payload).digest()
 
 
 # --------------------------------------------------------------------------
