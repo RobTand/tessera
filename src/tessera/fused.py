@@ -57,13 +57,32 @@ def pack_fused(members: "list[tuple[str, int, bytes]]") -> bytes:
     out = [_HEADER.pack(FUSED_MAGIC, _VERSION, len(members))]
     for name, rows, blob in members:
         raw = name.encode("utf-8")
-        if len(raw) > 0xFFFF or rows <= 0 or not blob:
-            raise GrammarError(f"fused member {name!r}: bad name, rows {rows} or empty blob")
+        _check_member(name, len(raw), rows, len(blob))
         out.append(_MEMBER.pack(len(raw), int(rows), len(blob)))
         out.append(raw)
     for _name, _rows, blob in members:
         out.append(blob)
     return b"".join(out)
+
+
+def _check_member(name: str, name_bytes: int, rows: int, blob_len: int) -> None:
+    """The member domain, stated once for the writer and the reader.
+
+    The reader used to check the member table and the blobs but not the
+    header fields themselves, so a member the writer would have refused
+    decoded and failed a step later in somebody else's words: a truncated
+    name ran the cursor past the end and the framing check then reported
+    ``"-12 trailing bytes"``.  A reader that cannot refuse what its writer
+    cannot write is not fail-closed (AGENTS.md 4, 5).
+    """
+    if name_bytes > 0xFFFF:
+        raise GrammarError(
+            f"fused member {name!r}: name is {name_bytes} bytes, at most 65535"
+        )
+    if rows <= 0:
+        raise GrammarError(f"fused member {name!r}: rows must be positive, got {rows}")
+    if blob_len <= 0:
+        raise GrammarError(f"fused member {name!r}: empty blob")
 
 
 def parse_fused(data: bytes) -> "list[FusedMember]":
@@ -82,8 +101,20 @@ def parse_fused(data: bytes) -> "list[FusedMember]":
             raise GrammarError("truncated fused member table")
         name_len, rows, blob_len = _MEMBER.unpack_from(data, cursor)
         cursor += _MEMBER.size
-        name = data[cursor:cursor + name_len].decode("utf-8")
+        if cursor + name_len > len(data):
+            raise GrammarError(
+                f"truncated fused member name: {name_len} byte(s) declared, "
+                f"{len(data) - cursor} left"
+            )
+        raw = data[cursor:cursor + name_len]
+        try:
+            name = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GrammarError(
+                f"fused member name is not UTF-8: {raw!r}"
+            ) from exc
         cursor += name_len
+        _check_member(name, name_len, rows, blob_len)
         heads.append((name, rows, blob_len))
     members = []
     for name, rows, blob_len in heads:
