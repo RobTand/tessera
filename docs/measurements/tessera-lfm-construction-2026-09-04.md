@@ -47,3 +47,29 @@ receipt is
 These receipts establish construction and source-layout eligibility. They
 do not attest encoded full-model quality, promote a `routed_moe` cell, or
 change the dense serving image pin.
+
+## Additional tests selected from the contract diff
+
+PrismaBuild `58ced01a7c04ed8bb104aa1a9946dfb919275201d117ca3f1d23e6ceb1dedb8d`
+ran the impact selector in its own snapshot against the exact fetched trees
+`307c0d15a9a56c98883058118862c4e383edc22c..7e32950a87bb3968759a99039d276458d2cc4229`.
+It returned `narrowed`, ten test files and no full-suite trigger. The three
+files above had already passed; action
+`812ec1224c629876e5ffc816f84349c964e05b47bd230e97eac7c33d6867746e`
+ran the other seven: 132 passed, 12 skipped, zero uncollected modules, serial
+on dl380g10 with torch `2.11.0+cpu` and no CUDA device. Its population is
+`/mnt/shared/tessera-runs/ts5/lfm25/astra-contract-impact-r1.surface.json`.
+The skip reasons, verbatim, were:
+
+```text
+6 /home/rob/tessera-runs/compile-dispatch is not on this box
+1 the PrismaQuant tree with tessera_formats is not on this box
+1 the PrismaQuant tree or the allocation outputs are not on this box
+1 Qwen3-0.6B is not on this box
+1 the two surviving compile caches from 2026-09-02 are not on this box
+1 /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box
+1 /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box
+```
+
+These environment-dependent checks were not exercised by this CPU run; the
+passing count does not cover them or the CUDA-gated surface.
