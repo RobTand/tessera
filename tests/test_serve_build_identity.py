@@ -834,6 +834,22 @@ def test_profile_roster_refuses_target_split_across_scan_chunks(tmp_path):
     assert not out.exists()
 
 
+def test_decode_wrapper_exit_reaps_before_releasing_the_serve_lock():
+    body = _EAGER_WRAPPERS[0].read_text()
+    reap = body.index("reap() {")
+    cleanup = body.index("trap 'reap; serve_lock_release' EXIT")
+    launch = body.index('docker run -d --name "$NAME"')
+    assert reap < cleanup < launch
+    trap = next(line for line in body.splitlines() if line.startswith("trap "))
+    result = subprocess.run(
+        ["bash", "-c", "reap() { echo reap; }; "
+         "serve_lock_release() { echo release; }; " + trap + "; exit 42"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 42
+    assert result.stdout.splitlines() == ["reap", "release"]
+
+
 def test_ts113_launch_gate_counts_source_roles_not_module_containers(tmp_path):
     """One GEMV launches per source role, while fallback refuses per module."""
     body = _TS113_CAMPAIGN.read_text()

@@ -94,8 +94,14 @@ chmod a+rwx "$TRACEDIR"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
 runtime_image_require "$IMAGE" || exit 2
+SERVE_REAPED=1
+reap() {
+  [ "$SERVE_REAPED" = 0 ] || return 0
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  if docker rm -f "$NAME" >/dev/null 2>&1; then SERVE_REAPED=1; fi
+}
 source "$(dirname "$0")/serve_lock.sh"; SERVE_LOCK_OWNER="$0 $ARM"; serve_lock_acquire
-trap serve_lock_release EXIT
+trap 'reap; serve_lock_release' EXIT
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 
 # --enable-prompt-tokens-details is what makes the decode regime a MEASUREMENT:
@@ -104,6 +110,7 @@ docker rm -f "$NAME" >/dev/null 2>&1 || true
 # TESSERA_ROUTE_TRACE goes to its own writable mount, NOT under /ext: arm B
 # mounts its extensions root read-only, and telemetry never raises, so a trace
 # under /ext would be silently absent in exactly the arm that needs it.
+SERVE_REAPED=0
 docker run -d --name "$NAME" --gpus all --ipc=host -p "${PORT}:8000" \
   -v /mnt/shared:/mnt/shared -v "${MODEL_MOUNT}:${MODEL_MOUNT}" \
   -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
@@ -139,7 +146,6 @@ if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
   echo "REFUSED: spec-decode active"; docker rm -f "$NAME" >/dev/null; exit 2
 fi
 
-reap() { docker logs "$NAME" > "$LOG" 2>&1 || true; docker rm -f "$NAME" >/dev/null 2>&1 || true; }
 snap() {  # stage-name
   sleep 3   # the trace flushes on a 1s timer; give the last forward time to land
   cp "$TRACEDIR/route-trace.json" "$RUNS/trace-$ARM-$1.json"
