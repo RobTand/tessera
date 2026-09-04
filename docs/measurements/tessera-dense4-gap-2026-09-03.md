@@ -394,11 +394,15 @@ claiming not to make.
 `block_for`, a mapping-valued `ldlq_block`, the `floor=1` derivation, the
 refusals for a budget with LDLQ off or a malformed spec, the frozen budget and
 the guarded config field. On the pre-change tree `ActivationSource.ldlq_block`
-is a bare `int` and `block_for` is absent, so they fail on `AttributeError`
-and on `TypeError: '<' not supported between instances of 'dict' and 'int'`
-from the old `if self.ldlq_block < 1` -- the refusal tests fail *on the type
-error* rather than on their expected `GrammarError`, which is a real failure
-and worth naming precisely rather than reporting as "would fail".
+is a bare `int` (`ts12-pre/src/tessera/export.py:276`) and `block_for` is
+absent. **Pre-registered, pending the run:** they should fail on
+`AttributeError` for the missing `block_for` and on `TypeError` from the old
+`if self.ldlq_block < 1` comparing a dict to an int -- which would mean the
+refusal tests fail *on the type error* rather than on their expected
+`GrammarError`. That distinction is worth naming rather than reporting a bare
+"would fail", and it is written here before the counterfactual run lands so
+the run can contradict it. The pre-change split is expected to be 5 passed /
+15 failed; the actual split replaces this paragraph.
 
 The counterfactual run itself is recorded below under its own heading, because
 the obvious way to take it does not work in this suite.
