@@ -165,3 +165,43 @@ def test_a_second_process_does_not_clobber_the_histogram(tracing):
     other.flush()
     entries = json.loads(path.read_text())["entries"]
     assert [e["launches"] for e in entries] == [1], "the histogram survived"
+
+
+def test_a_compiled_forward_can_emit_without_killing_the_serve(tracing):
+    """The trace must DECLINE under compile, not stop the serve (#113).
+
+    vLLM 0.28 captures the forward with ``aot_compile_fullgraph``, and Dynamo
+    cannot enter a ``threading.Lock`` context manager under a full-graph
+    capture. The error is raised while COMPILING the traced body, so
+    ``emit_route``'s ``except Exception: pass`` never sees it: the engine core
+    failed to initialise and a compiled serve with ``TESSERA_ROUTE_TRACE`` set
+    never came up at all.
+
+    ``fullgraph=True`` with the eager backend is the same capture and the same
+    failure, on CPU, in milliseconds:
+
+        torch._dynamo.exc.Unsupported: Unsupported context manager
+          Explanation: Dynamo does not know how to enter a `lock` context
+          manager.
+
+    What is pinned is both halves -- the capture succeeds, AND nothing is
+    counted, because a trace-time count would describe compilation and this
+    class is eager-only by contract.
+    """
+    import torch
+
+    trace, _path = tracing
+    layer = _Layer("model.layers.0.mlp.down_proj")
+
+    def forward(x):
+        _emit(layer, shape="M*:N1024:K2048")
+        return x + 1
+
+    compiled = torch.compile(forward, fullgraph=True, backend="eager")
+    compiled(torch.zeros(2))
+
+    assert trace.snapshot()["entries"] == [], \
+        "a compiled forward counted a launch it did not make"
+    _emit(layer, shape="M1:N1024:K2048")
+    assert [e["launches"] for e in trace.snapshot()["entries"]] == [1], \
+        "eager counting after a compiled capture is unchanged"

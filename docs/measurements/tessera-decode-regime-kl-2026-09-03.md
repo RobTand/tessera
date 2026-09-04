@@ -353,7 +353,15 @@ whole point is that every launch is attributable.
   in the compile-cache key, #91) plus the fact that `streamed_apply` is a
   `custom_op(mutates_args=())` whose `M <= GEMV_MAX_M` branch runs at runtime
   inside an opaque node, with the mutual KL itself as the served
-  discriminator.
+  discriminator. **The first attempt at that dump found why nobody had taken
+  one:** with `TESSERA_ROUTE_TRACE` set, a compiled serve did not come up at
+  all -- vLLM 0.28 captures with `aot_compile_fullgraph` and Dynamo cannot
+  enter this trace's `threading.Lock`, an error raised while *compiling* the
+  traced body, where `emit_route`'s `except Exception` cannot reach it. The
+  counter now declines under `torch.compiler.is_compiling()` before the lock,
+  so the eager path is byte-identical and a compiled serve records only its
+  startup and serves (`tests/test_route_trace.py::
+  test_a_compiled_forward_can_emit_without_killing_the_serve`).
 * **The NVFP4 and BF16 routes**, and MoE. Not touched here.
 * **Which arm is right.** §5's closing note, filed as **#110**. 256 positions
   on one 0.6B checkpoint is a signal to chase, not a verdict.

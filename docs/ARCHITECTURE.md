@@ -330,7 +330,9 @@ The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.
 
-`TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only) makes the
+`TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
+compile it declines and counts nothing, which is enforced since #113 rather
+than described) makes the
 serve write a launch histogram keyed by route **and problem shape**, which is
 what lets a receipt show that its scored forwards were the shapes it claims:
 the fallback arm reports `torch._scaled_mm` in both regimes, so the shape is
