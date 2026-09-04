@@ -68,10 +68,11 @@ and repeat within a state. 3 passed in 135 s on GPU.
 **Not established at the time of writing.** The end-to-end serve reproduction —
 two streamed arms over one `VLLM_CACHE` root landing in the same key directory
 and replaying the wrong graph. `experiments/ts91_chain.sh` runs it as four
-censuses (A→cacheX, B→cacheY, B→cacheX, A→cacheY) and both the before and after
-chains are queued on sparklina's **slot runner** (`gpuslot.sh`, three concurrent
-slots), with per-chain cache roots *and* per-chain JIT extension dirs so the two
-concurrent chains cannot contaminate each other. §6 says how to read the result.
+censuses (A→cacheX, B→cacheY, B→cacheX, A→cacheY), with per-chain cache roots
+*and* per-chain JIT extension dirs so two concurrent chains cannot contaminate
+each other. Both chains are **queued in the PrismaBuild pool** on sparklina
+(`pbrun --gpu`, jobs `ae7b06d9c893` before / `0a090ffa1b67` after) and had not
+been scheduled when this was written. §6 says how to read the result.
 
 Two things the serve chain adds that the CPU tier cannot give:
 
