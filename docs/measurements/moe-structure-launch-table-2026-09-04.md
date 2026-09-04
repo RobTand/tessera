@@ -46,3 +46,37 @@ submitted separately in action
 `87a9114a88776dfe85c67e4a1ba114e3214e9b7c3a16989006c512f1e7c6fd05`;
 that population must be read before treating the selected validation as
 complete. The previously green sidecar test is excluded from the repeat.
+
+## Completed selected CPU population
+
+The remaining action completed: 598 passed, 298 skipped, 14 warnings in
+252.37 seconds, serial on dl380g10. Receipt:
+`f2a4f952045cfdac204f4c9b48162ca4c5dc02fb2fdbe0aabe2934caac8e9bee`.
+Its surface reported `torch 2.11.0+cpu reports no CUDA device`, 298 tests
+skipped and 0 modules not collected. Skip reasons, verbatim:
+
+```text
+81 the encoder is a CUDA path
+79 needs a CUDA device
+29 the Viterbi is CUDA
+24 the kernel lane is a CUDA path
+23 the lane is a CUDA kernel
+15 the encoder is a GPU job
+14 the Tessera encoder is a CUDA path
+6 needs CUDA
+6 /home/rob/tessera-runs/compile-dispatch is not on this box
+5 the kernel lane runs on CUDA
+5 the reach checkpoint is not on this box
+3 Qwen3-0.6B is not on this box
+2 no stock twin
+1 could not import 'vllm': No module named 'vllm'
+1 the two surviving compile caches from 2026-09-02 are not on this box
+1 /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box
+1 /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box
+1 E2M1 publishes no reader range
+1 the shipped checkpoint is not here
+```
+
+This completes selected CPU coverage, not the CUDA-gated surface or a served
+qualification. The full pre-fix action key was
+`ea0f66f044a49292eca1808b5268949b2c8c6baaee3009c1724840105592e2c2`.
