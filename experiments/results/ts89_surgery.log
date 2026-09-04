@@ -16,3 +16,6 @@ h-weighted sse {'s1.00': 3.585548162460327, 's0.75': 3.854710578918457}; h ratio
   graft top   1024 entries -> h ratio 1.0256 (reach 288.0)
   graft top   2048 entries -> h ratio 1.0269 (reach 288.0)
   graft top   4096 entries -> h ratio 1.0331 (reach 288.0)
+  graft top   8192 entries -> h ratio 1.0331 (reach 288.0)
+  graft top  16384 entries -> h ratio 1.0310 (reach 288.0)
+wrote experiments/results/ts89_surgery.json
