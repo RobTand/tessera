@@ -437,3 +437,36 @@ def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):
     assert len(kept) == 1, sorted(p.name for p in tmp_path.iterdir())
     assert json.loads(kept[0].read_text())["counts"]["passed"] == 1
     assert "kept at" in (result.stdout + result.stderr)
+
+
+def test_a_child_run_is_not_the_worker_that_launched_it(tmp_path):
+    """``PYTEST_XDIST_WORKER`` is inherited; it never says who THIS run is.
+
+    Under ``-n``, xdist sets that variable in each worker's environment, and
+    every process a test starts from there inherits it.  A nested pytest is
+    its own controller -- it has no ``workerinput`` -- so reading the variable
+    made it file its whole run as ``surface.gw1.json`` and leave the path it
+    was asked for empty.  That is the converse of the bug the shard fix
+    closed, and it shipped inside the fix: the ``-n 8`` x86 population of
+    ``82f0047`` on dl380g10 was 1536 passed / **5 failed** / 503 skipped, all
+    five in this file, and the same commit run serially was green.
+
+    Serial on purpose, and with no xdist needed: the point is a process that
+    is NOT a worker but is told it is.
+
+    Before this test::
+
+        >       assert surface.exists(), sorted(p.name for p in tmp_path.iterdir())
+        E       AssertionError: ['surface.gw1.json']
+    """
+
+    import json
+
+    surface = tmp_path / "surface.json"
+    ran = _run([STDLIB_ONLY_TEST, "-q", "--surface-json", str(surface)],
+               CUDA_VISIBLE_DEVICES="", PYTEST_XDIST_WORKER="gw1")
+    assert ran.returncode == 0, ran.stdout + ran.stderr
+    assert surface.exists(), sorted(p.name for p in tmp_path.iterdir())
+    payload = json.loads(surface.read_text())
+    assert payload["role"] == "population", payload
+    assert payload["worker_id"] is None, payload

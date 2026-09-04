@@ -370,14 +370,24 @@ def _worker_id(config):
     ``pytest_terminal_summary`` runs in every xdist worker as well as in the
     controller, and a worker's ``stats`` hold that worker's SHARE of the run.
     ``workerinput`` is the same attribute ``pytest_sessionstart`` above already
-    uses to tell the two apart; the environment variable is xdist's own and is
-    kept as a second answer to the same question.
+    uses to tell the two apart, and it is the ONLY answer read here: xdist
+    sets it on this process's own config, so it cannot describe another one.
+
+    ``PYTEST_XDIST_WORKER`` was kept beside it as "a second answer to the same
+    question" and is not one -- it is inherited.  A pytest launched from
+    inside a worker sees ``gw1`` in its environment and has no ``workerinput``
+    of its own, so it filed its whole run as that worker's share: the
+    population never appeared on the path it was asked for.  Five tests in
+    ``tests/test_cuda_surface.py`` failed exactly that way in the ``-n 8`` x86
+    population of ``82f0047`` (1536 passed / 5 failed / 503 skipped,
+    dl380g10), and passed when the same commit ran serially.  The fix that
+    stopped a share being read as a population had introduced the converse.
     """
 
     workerinput = getattr(config, "workerinput", None)
     if workerinput:
         return str(workerinput.get("workerid") or "") or None
-    return os.environ.get("PYTEST_XDIST_WORKER") or None
+    return None
 
 
 def _worker_count(config):
