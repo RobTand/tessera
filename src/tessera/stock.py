@@ -297,6 +297,11 @@ def share_global(
 # the recorded value is honest only with the image and version it was read in).
 
 #: Per-group ``format`` strings the two exporters write.
+from tessera.serving.runtime_image import (          # noqa: E402
+    parse_reference as _parse_reference,
+    pinned_reference as _pinned_reference,
+)
+
 NVFP4_PACK_QUANTIZED = "nvfp4-pack-quantized"
 FLOAT_QUANTIZED = "float-quantized"
 #: The top-level label for an artifact whose groups do not agree on one format.
@@ -307,9 +312,13 @@ MIXED_PRECISION = "mixed-precision"
 #: makes a stamped record stale, and the version is what lets someone see that.
 VLLM_FP4_PREDICATE_ATTESTATION = {
     "image": "vllm/vllm-openai:latest",
-    # The tag floats and the two boxes do not hold the same bytes under it
-    # (tessera#100), so the id is part of the reading, not decoration.
-    "image_id": "sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    # The tag floats (tessera#100), so the resolved digest is part of the
+    # reading rather than decoration -- but it is READ from the pin rather
+    # than repeated here.  A second copy of a 64-hex string is a second thing
+    # to forget to update, and the pin's own contract already says that moving
+    # it means re-attesting: this predicate reading is one of the things that
+    # then has to be re-taken.
+    "image_id": _parse_reference(_pinned_reference())[2],
     "box": "sparky",
     "version": "0.28.0",
     "read": "2026-09-03",

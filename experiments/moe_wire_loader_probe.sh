@@ -8,8 +8,20 @@
 #
 # usage: experiments/moe_wire_loader_probe.sh [image] [out.json]
 set -u
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMAGE=${1:-prismaquant/glm53-mia-sm121:487ecf187}
+
+# Gate the image this actually runs, after the argument has chosen it
+# (tessera#100).  Gating before the assignment would have checked one image
+# and started another, which is a vacuous gate rather than a lenient one.
+# The default here is Mia's GLM build, outside the pinned vllm/vllm-openai
+# repository, so require resolves and stamps it under "not_pinned_repository"
+# rather than refusing -- which is the documented scope, not a hole: refusing
+# an image against a pin that does not exist would break this probe to
+# enforce nothing.
+source "$HERE/runtime_image.sh"
+runtime_image_require "$IMAGE" || exit 2
 OUT=${2:-$HERE/results/moe_wire_loader_probe.json}
 export TMPDIR=${TMPDIR:-/home/rob/tmp}
 
