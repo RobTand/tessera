@@ -122,9 +122,10 @@ def _mapper_field_names(unstacked) -> list:
 def _weights_mapper_table(model_class) -> "dict | None":
     """The rename table vLLM hands a quant config, as data.
 
-    ``configure_quant_config`` calls ``quant_config.apply_vllm_mapper(
-    model_class.hf_to_vllm_mapper.get_unstacked_mapper())`` for a model class
-    that is not ``SupportsQuant``, so a producer writing ``config_groups`` in
+    ``configure_quant_config`` hands ``quant_config.apply_vllm_mapper`` the
+    model's name-only mapper (``get_rename_mapper`` in the pinned EUGR build,
+    ``get_unstacked_mapper`` in earlier builds) for a class that is not
+    ``SupportsQuant``, so a producer writing ``config_groups`` in
     the CHECKPOINT's namespace has to apply the same table to know which vLLM
     module it named.  Publishing it here means the producer reads it rather
     than reproducing it.
@@ -136,10 +137,8 @@ def _weights_mapper_table(model_class) -> "dict | None":
     mapper = getattr(model_class, "hf_to_vllm_mapper", None)
     if mapper is None:
         return None
-    try:
-        unstacked = mapper.get_unstacked_mapper()
-    except Exception:  # noqa: BLE001 -- an older WeightsMapper
-        unstacked = mapper
+    from tessera.serving.weights_mapper import module_name_mapper
+    unstacked = module_name_mapper(mapper)
     table = {}
     for field in _mapper_field_names(unstacked):
         value = getattr(unstacked, field, None)

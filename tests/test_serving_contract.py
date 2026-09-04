@@ -1,6 +1,6 @@
 """The runtime contract this plugin packages, and what it may not be made to say.
 
-Principle 14: a claim about what a serving runtime DOES is derived from a
+Runtime attestation: a claim about what a serving runtime DOES is derived from a
 machine-readable table the runtime publishes.  This package IS that runtime for
 Tessera bytes, so the table travels inside it and a producer reads it through
 ``importlib.resources``.  Two layers of test, because one alone is not enough:
@@ -9,7 +9,7 @@ Tessera bytes, so the table travels inside it and a producer reads it through
   family does not publish, an activation contract that is not the route's, a
   cell with no serve flag, a cell that forgets it is plugin-gated, a structure
   the dispatch refuses;
-* a LAWS TABLE below pins the six cells field for field, because no generic
+* a LAWS TABLE below pins the measured cells field for field, because no generic
   rule knows which rungs a receipt covered.  ``rungs_q256: [512]`` is a
   perfectly well-formed cell and a false claim.
 """
@@ -29,7 +29,7 @@ from tessera.serving.contract import (
     validate_serving_contract,
 )
 
-#: The eight cells the served Tessera receipts cover, field for field:
+#: The eight preserved dense cells the served Tessera receipts cover:
 #: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896), on the E4M3 window wire
 #: (q256 = 1024) and on the BF16 window wire (q256 = 1792), every dense Linear,
 #: eager and compiled -- the 2026-09-02 receipts for the six that were here
@@ -150,6 +150,19 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
 #: deliberately not the same thing as an absent family.
 _FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896], "TESSERA_E4M3_K1": [1024],
                  "TESSERA_BF16_K1": [1792]}
+
+# The full LFM receipt pins this measured pair, not a capability-derived roster.
+for _regime in ("decode", "batch"):
+    _CELL_LAWS[f"tessera_e4m3_k1_routed_moe_sm121_{_regime}_resident"] = {
+        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "routed_moe",
+        "regime": _regime, "rungs_q256": [1024],
+        "activation_contract": "fp8_per_token_dynamic",
+        "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "predicates": [], "runtime": {
+            "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+            "execution_modes": ["eager"]}}
 
 
 @pytest.fixture(scope="module")
@@ -376,19 +389,17 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
         assert modes and set(modes) <= set(MODES)
 
 
-def test_the_table_is_dense_only(contract):
-    """No cell mentions routed MoE, and there is no expert-parallel claim.
-
-    A cell requires a served promotion receipt. The expert route is built,
-    but the packaged table carries no routed-MoE quality qualification yet;
-    parsing and dispatching a stack do not attest it. The table therefore
-    says ``dense`` and nothing else, and the absence resolves ``unattested``
-    rather than ``denied``.
-    """
+def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
+    """The LFM receipt adds one family/rung/residency/runtime pair of regimes."""
     block = contract["lane_eligibility"]
-    assert block["structures"] == ["dense"]
-    assert {cell["structure"] for cell in block["cells"]} == {"dense"}
-    assert "routed_moe" not in repr(contract).lower()
+    assert block["structures"] == ["dense", "routed_moe"]
+    moe = [cell for cell in block["cells"] if cell["structure"] == "routed_moe"]
+    assert {cell["regime"] for cell in moe} == {"decode", "batch"}
+    assert len(moe) == 2
+    for cell in moe:
+        assert cell["family"] == "TESSERA_E4M3_K1" and cell["rungs_q256"] == [1024]
+        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
+        assert cell["runtime"]["execution_modes"] == ["eager"]
     assert contract["expert_parallel"]["units"] == []
 
 
@@ -700,15 +711,11 @@ def _mutated(contract, mutate):
     return copy_
 
 
-def _set_routed_moe_structure(c):
-    """The structure the build EXECUTES but has not SERVED.
-
-    ``routed_moe`` entered ``scheme.STRUCTURES`` when the expert route landed,
-    so this is no longer "a structure no route executes" -- it is a structure
-    with no served receipt, and ``lane_eligibility`` is where served facts go.
-    The refusal must therefore still fire, and for that reason.
-    """
-    c["lane_eligibility"]["structures"] = ["dense", "routed_moe"]
+def _remove_cells_for_a_declared_structure(c):
+    """A declared structure without any receipt-bearing cell is not attested."""
+    structure = c["lane_eligibility"]["structures"][-1]
+    c["lane_eligibility"]["cells"] = [cell for cell in c["lane_eligibility"]["cells"]
+                                    if cell["structure"] != structure]
 
 
 def _empty_serve_flags(c):
@@ -732,7 +739,7 @@ def _unpublished_rung(c):
 
 
 @pytest.mark.parametrize("mutate, match", [
-    (_set_routed_moe_structure, "where served facts go"),
+    (_remove_cells_for_a_declared_structure, "where served facts go"),
     (_empty_serve_flags, "declared residency"),
     (_wrong_activation_contract, "route executes"),
     (_drop_requires_plugin, r"missing \['requires_plugin'\]"),
@@ -746,11 +753,10 @@ def test_the_validator_refuses_a_contract_this_package_would_not_honour(
         validate_serving_contract(bad)
 
 
-def test_a_cell_may_not_declare_a_structure_the_dispatch_refuses(contract):
-    """Both halves of the routed-MoE refusal: the structure list, and a cell
-    naming a structure that is not in it."""
+def test_a_cell_may_not_name_a_structure_absent_from_the_published_axis(contract):
+    """A cell's structure must be present in the published projection."""
     bad = _mutated(contract,
-                   lambda c: c["lane_eligibility"]["cells"][0].__setitem__("structure", "routed_moe"))
+                   lambda c: c["lane_eligibility"]["structures"].pop(0))
     with pytest.raises(ValueError, match="is not declared"):
         validate_serving_contract(bad)
 

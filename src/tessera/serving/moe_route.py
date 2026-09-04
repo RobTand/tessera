@@ -54,11 +54,14 @@ expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
 
-WHAT IS NOT ATTESTED.  There is no ``routed_moe`` cell in this package's
-``runtime_contract.json`` and there will not be one until a served census and
-KL cover it on a real artifact.  This module is what the loader DOES, on the
-``loader_axes`` precedent: attempted, measured on the load-and-execute
-contract, and not claimed as served.  That measurement
+WHAT IS ATTESTED. Contract v16 publishes exactly two ``routed_moe`` cells:
+E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
+image named by each cell. The complete LFM artifact's census and source-bound
+prefill KL comparison are recorded in
+``docs/measurements/tessera-lfm-campaign-2026-09-04.md``. Other rungs/images,
+compiled/streamed MoE and multi-rank execution remain unattested.
+
+The earlier load-and-execute measurement
 (``docs/measurements/tessera-moe-route-load-2026-09-04.md``) was taken twice --
 once on the pin, once on the build that registers ``Glm5Next`` -- and every
 recorded field, backend selection and error number is identical, so the route
@@ -126,11 +129,12 @@ def census_expected(*, compiled: bool = False) -> dict:
     kernel roster written in our own prose, which the runtime-attestation rule forbids;
     pinning one would refuse a box whose runtime picked another.
 
-    DERIVED, BUT NOT ATTESTED. The shared ``scheme.ROUTE_LAUNCHES`` table
+    DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
     separates this expert structure from the dense FP8 launch set. Reading
     that table keeps the census and contract derivations together. It does
-    not publish a served cell: ``runtime_contract.json`` remains dense-only
-    until a full-model quality and census receipt covers this structure.
+    not itself publish a served cell. Contract v16's measured E4M3/q1024
+    resident/eager cells name their exact EUGR image and sm_121 scope;
+    returning the same expected launch for compiled execution does not attest it.
     """
     del compiled  # documented above: one launch has nothing to combine
     launches = route_launches(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,

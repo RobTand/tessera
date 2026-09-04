@@ -212,14 +212,14 @@ _MOE_RECORD = {
 
 
 def test_a_routed_expert_record_is_unattested_under_a_dense_block(cells):
-    """A served MoE stack is counted, never covered, while no cell publishes one.
+    """A served MoE stack is counted, never covered, by a dense-only block.
 
     THE DEFECT THIS PINS.  Everything else about this record resolves: the
     policy names a route the table knows, the residency is a cell's residency,
     the regime is a cell's regime, and the rung below is the rung the E4M3
     cells are attested at.  What does NOT match is the only thing that decides
     the launch -- the structure.  The stack executes vLLM's modular fused-MoE
-    kernel over a materialised tile; every cell in this contract is
+    kernel over a materialised tile; every cell selected by this dense block is
     ``structure: "dense"`` and publishes ``torch._scaled_mm``.  So a join that
     ignored ``kind`` would report a disagreement on a serve that did nothing
     wrong, and a join that ignored it in the other direction (a dense cell

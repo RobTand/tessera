@@ -72,6 +72,23 @@ def test_a_model_with_no_mapper_reports_no_translation():
     assert _tool().declared_in_module_space(_Model(), ["model.layers.0.mlp.down_proj"]) is None
 
 
+def test_an_already_unstacked_runtime_mapper_is_replayed_directly():
+    dead = "model.dead"
+    mapper = _Unstacked({"model.": "mapped."}, drop=[dead])
+    assert _tool().declared_in_module_space(_Model(mapper), [dead, "model.live"]) == {
+        dead: None, "model.live": "mapped.live"}
+
+
+def test_the_runtime_rename_mapper_takes_precedence_over_raw_weights():
+    class ModernMapper(_Unstacked):
+        def get_rename_mapper(self):
+            return _Unstacked({"model.": "renamed."})
+
+    mapper = ModernMapper({"model.": "raw."}, drop=["model.dead"])
+    assert _tool().declared_in_module_space(_Model(mapper), ["model.dead", "model.live"]) == {
+        "model.dead": "renamed.dead", "model.live": "renamed.live"}
+
+
 def test_a_mapped_architecture_translates_every_target():
     mapper = _Mapper(_Unstacked({"model.language_model.": "language_model.model.",
                                  "model.visual.": "visual."}))
