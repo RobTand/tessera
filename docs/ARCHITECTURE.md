@@ -465,6 +465,9 @@ eager prefill mode, dump and build sidecars, and reference-usability result.
 The earlier revision-labelled teacher remains historical evidence; checking
 its dump hash now does not retroactively establish loaded-weight identity.
 This is provenance for the quality measurement, not a new quality threshold.
+The teacher and plugin-student wrappers pass `TESSERA_KL_TOPK` to both the
+server's logprob limit and the dump request's explicit `--top-k`; a nondefault
+support request must not silently fall back to the dump tool's default.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
