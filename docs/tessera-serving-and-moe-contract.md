@@ -176,8 +176,11 @@ with that declaration, per principle 12.
    whether a serving backend is worth building. `validate_assignments_kl` needs
    no served artifact.
 3. **Small-scale first** — full chain on LFM2.5-8B-A1B (shipped, MoE, small
-   enough to iterate, exercises the packed-expert cell) before GLM. GLM-5.3 is
-   the campaign, not the testbed.
+   enough to iterate, and exercising the served routed-MoE path through its
+   unpacked per-expert `w1`/`w3`/`w2` tensors) before GLM. Packed-source layout
+   coverage is independent: Qwen3.8-Flash-Next supplies the real packed
+   `gate_up_proj`/`down_proj` population, and the exporter requires its
+   convention explicitly. GLM-5.3 is the campaign, not the testbed.
 4. **Export**, then **the serving backend**, in that order and only if (2) pays.
 
 Aqua merges at step 1/2 (the allocate step), not before. The disk-vs-resident
