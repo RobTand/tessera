@@ -85,6 +85,27 @@ def geo(units, arm, field):
     return math.exp(sum(math.log(units[u][arm][field]) for u in units) / len(units))
 
 
+def verdict(ceiling_doc, gm, ceiling_json, alpha, log):
+    """The stop rule: does the arm return at least half the table -> grid gap?
+
+    Both sides are read off committed runs, so this is a ratio and not a
+    measurement -- which is why it can be taken after the fact when the step-1
+    JSON lands second (``--verdict-only``) instead of costing an encode.
+    """
+    cg = ceiling_doc["geomeans"]
+    cctl = next(x for x in cg if x.startswith("drift control FIRST"))
+    cgrid = next(x for x in cg if x.endswith("| landing=grid")
+                 and "full-H" not in x)
+    ceiling = 1.0 - cg[cgrid]["out"] / cg[cctl]["out"]
+    bar = ceiling / 2.0
+    fired = not ((1.0 - gm) >= bar)
+    log(f"    step-1 ceiling (table -> grid, h^{alpha}) {ceiling:.4%}"
+        f"   half of it {bar:.4%}")
+    log(f"    VERDICT: {'STOP -- under half the ceiling' if fired else 'CONTINUE -- clears half the ceiling'}")
+    return {"ceiling_json": ceiling_json, "ceiling": ceiling, "bar": bar,
+            "fired": bool(fired)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="/home/rob/models/Qwen3-0.6B")
@@ -101,11 +122,35 @@ def main() -> None:
                     help="ceiling: the three landings per refit objective (issue #50 "
                          "step 1).  exact-fit: the control triplicate and the "
                          "exact-16 table fit, all at landing=table (step 2).")
+    ap.add_argument("--verdict-only", action="store_true",
+                    help="take the stop-rule verdict from an --out JSON that "
+                         "already exists and a --ceiling-json that landed after "
+                         "it, and write it beside them.  The verdict is a ratio "
+                         "of two committed numbers; nothing is re-encoded.")
     ap.add_argument("--ceiling-json", default=None,
                     help="exact-fit only: the step-1 JSON whose table/grid split "
                          "sets the stop-rule threshold, so the bar is read from a "
                          "committed measurement rather than retyped.")
     a = ap.parse_args()
+
+    if a.verdict_only:
+        arm_doc = json.loads(Path(a.out).read_text())
+        sr = arm_doc.get("stop_rule")
+        if sr is None:
+            raise SystemExit(f"{a.out} has no stop_rule block; it is not the "
+                             "output of a --stage exact-fit run")
+        if not a.ceiling_json:
+            raise SystemExit("--verdict-only needs --ceiling-json")
+        print("\n== issue #50 stop rule, taken after the fact")
+        print(f"    arm JSON      {a.out}")
+        print(f"    ceiling JSON  {a.ceiling_json}")
+        print(f"    six-unit out geomean ratio  {sr['geomean_ratio']:.5f}x")
+        v = verdict(json.loads(Path(a.ceiling_json).read_text()),
+                    sr["geomean_ratio"], a.ceiling_json, a.alpha, print)
+        dest = Path(a.out).with_name(Path(a.out).stem + "_verdict.json")
+        dest.write_text(json.dumps({"arm_json": a.out, **sr, **v}, indent=1))
+        print(f"\nwrote {dest}")
+        return
 
     grid = grid_by_name(a.grid)
     recipe = wire_recipe(grid, a.q256)
@@ -253,8 +298,9 @@ def main() -> None:
         log(f"    arm      {arm!r}   landing=table (the wire)")
         for u in names:
             log(f"      {u:<44} {ratios[u]:8.5f}x")
-        log(f"    six-unit out geomean ratio  {gm:.5f}x  "
-            f"({1 - gm:+.4%} against the control)")
+        log(f"    six-unit out geomean ratio  {gm:.5f}x  -- the arm's "
+            f"held-out error is {abs(gm - 1.0):.4%} "
+            f"{'HIGHER' if gm > 1.0 else 'LOWER'} than the control's")
         log(f"    control triplicate spread   {spread:.4%}  "
             f"({len(trip)} identical encodes)")
         out["stop_rule"] = {
@@ -272,20 +318,8 @@ def main() -> None:
             log(f"    step-1 ceiling unreadable ({exc}); verdict not stamped")
             c = None
         if c is not None:
-            cg = c["geomeans"]
-            cctl = next(x for x in cg if x.startswith("drift control FIRST"))
-            cgrid = next(x for x in cg if x.endswith("| landing=grid")
-                         and "full-H" not in x)
-            ceiling = 1.0 - cg[cgrid]["out"] / cg[cctl]["out"]
-            bar = ceiling / 2.0
-            fired = not ((1.0 - gm) >= bar)
-            log(f"    step-1 ceiling (table -> grid, h^{a.alpha}) {ceiling:.4%}"
-                f"   half of it {bar:.4%}")
-            log(f"    VERDICT: {'STOP -- under half the ceiling' if fired else 'CONTINUE -- clears half the ceiling'}")
-            out["stop_rule"].update({
-                "ceiling_json": a.ceiling_json, "ceiling": ceiling, "bar": bar,
-                "fired": bool(fired),
-            })
+            out["stop_rule"].update(
+                verdict(c, gm, a.ceiling_json, a.alpha, log))
 
     out["log"] = lines
     Path(a.out).parent.mkdir(parents=True, exist_ok=True)
