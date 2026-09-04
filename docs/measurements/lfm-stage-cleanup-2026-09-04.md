@@ -86,3 +86,20 @@ without executing them; no comparability blocker was found for this campaign.
 The adjacent nondefault `TESSERA_KL_TOPK` forwarding defect was handed to the
 coordinator and fixed separately, not folded into cleanup. These CPU tests are
 not a served-quality result or MoE attestation.
+# Explicit retry namespace after the first census refusal
+
+The actual `census-bound-r1` action stopped before model load because the
+NFS-root-squashed container could not read an owner-only merged shard.
+Its verified cleanup was safe, and automatic retries correctly refused the
+existing r1 output directory. A new explicit positive `--attempt` now selects
+fresh output/container/local-census names; it does not overwrite or reuse r1.
+
+Four added pure namespace tests failed before this addition under PB
+`790688233993` at `tests/test_ts5_stage_attempt.py:14`,
+`AssertionError: campaign driver has no explicit attempt namespace`.
+Afterward, PB
+`86cbe958a258e1e49b80bf601825984ee89194576fb380772d793e8f91f8632d`
+returned zero: 16 passed in 1.18 seconds across namespace, actual-driver
+collision and shared-deadline tests. Both runs were serial dl380g10 CPU,
+torch 2.11.0+cpu/no CUDA, 0 skipped and 0 uncollected modules. Green CAS:
+`dd50e17eb3de8c2b57a24900571cde9159f1be8530bc7a7181a9f92aae140e61`.

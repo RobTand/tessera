@@ -478,6 +478,9 @@ Cleanup stops telemetry first, joins it for at most two seconds, and shares
 one 90-second deadline across all Docker/GPU subprocess waits, within the
 120-second outer cleanup grace. Failed inspections or an exhausted deadline
 produce an unsafe cleanup receipt; they never count as an empty process list.
+An explicit positive `--attempt` selects fresh output, container and local
+census paths after a failed stage. Automatic retries retain the same attempt
+and refuse its existing directory; no previous receipt is overwritten.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 

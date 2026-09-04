@@ -19,16 +19,27 @@ sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
 from experiments.ts5_stage_cleanup import cleanup_stage
 
+
+def campaign_stage_paths(stage, attempt):
+    """An explicit retry keeps all prior outputs and container identities."""
+    if attempt < 1:
+        raise ValueError("campaign attempt must be positive")
+    return (CAMPAIGN / f"{stage}-bound-r{attempt}",
+            f"ts5-lfm-r2-{stage}-bound-r{attempt}",
+            Path(f"/home/rob/tmp/ts5-lfm-r2-final-{stage}-output-r{attempt}"))
+
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("stage", choices=("census", "student"))
-stage = parser.parse_args().stage
+parser.add_argument("--attempt", type=int, default=1)
+args = parser.parse_args()
+stage = args.stage
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 MODEL = CAMPAIGN / "full-model"
-OUT = CAMPAIGN / f"{stage}-bound-r1"
+OUT, NAME, LOCAL_OUTPUT = campaign_stage_paths(stage, args.attempt)
 TEACHER = CAMPAIGN / "teacher-bound-r1"
 CORPUS = Path("/mnt/shared/tessera-runs/ts5/lfm25/teacher-gate/corpus_n8_s512.json")
 IMAGE = "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c"
-NAME = f"ts5-lfm-r2-{stage}-bound-r1"
 PY = "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python"
 EXT = "/home/rob/tmp/ts5-lfm-r2-final-ext"
 
@@ -85,7 +96,7 @@ try:
     env = os.environ.copy()
     env.update({"TS": str(Path.cwd()), "RUNS": str(OUT), "EXT": EXT})
     if stage == "census":
-        local = Path("/home/rob/tmp/ts5-lfm-r2-final-census-output")
+        local = LOCAL_OUTPUT
         local.mkdir()
         env["IMG"] = IMAGE
         command = ["experiments/tessera_plugin_run.sh", "--name", NAME,
