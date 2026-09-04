@@ -45,6 +45,7 @@ def main():
     assert output != POP
     assert (POP / 'CAMPAIGN_COMPLETE').is_file(), 'campaign is not yet complete'
     output.mkdir(exist_ok=False)
+    tool_hashes = {str(path): sha(path) for path in (KL, KL.with_name('kl_estimator.py'))}
     inputs = {}
     builds = {}
     fingerprints = {}
@@ -100,6 +101,7 @@ def main():
     source_root = Path(__file__).resolve().parents[1]
     stamps = list(source_root.glob('.pbrun-closure.*.json'))
     assert len(stamps) == 1
+    assert all(sha(path) == digest for path, digest in tool_hashes.items()), 'metric code changed during analysis'
     record = {
         'schema': 'tessera.ts113.r6-pairwise-receipt.v1',
         'produced_at_utc': datetime.now(timezone.utc).isoformat(),
@@ -112,7 +114,7 @@ def main():
         'stage_measurement_source': read(POP / 'CONTINUATION_IDENTITY.json')['stage_measurement_source'],
         'postprocessing_source': read(stamps[0]),
         'postprocessing_script_sha256': sha(__file__),
-        'kl_tool_sha256': sha(KL),
+        'metric_tool_hashes': tool_hashes,
         'sealed_inputs': inputs,
         'build_fingerprints': {stage: value['build_fingerprint'] for stage, value in builds.items()},
         'build_pairs': build_pairs,
