@@ -462,6 +462,11 @@ class ShardOrigin:
     ``parent_digest`` is the parent manifest's ``manifest_digest``.  It is
     provenance, not a decode input: two ranks holding two shards can prove
     they came from one artifact without either holding the other's bytes.
+
+    The parent every field names is the **original** -- the whole unit the
+    exporter wrote -- however many re-slices produced this shard: offsets
+    into it, its extent, its digest.  ``slicing.slice_unit`` composes them
+    so that a shard of a shard writes the record a direct cut would.
     """
 
     row_offset: int

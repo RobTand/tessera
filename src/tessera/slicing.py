@@ -20,6 +20,13 @@ Nothing here re-encodes.  Every code in the shard is the code the parent
 stored -- the same E4M3 or E2M1 nibble, against the same scale -- so a rank's
 shard decodes bit-for-bit to its window of the parent's decode.  The
 alternative, which this replaces, was encoding one artifact per TP degree.
+
+**The shard record's frame.**  Every field of a shard record
+(``manifest.ShardOrigin``) names the *original* -- the whole unit the exporter
+wrote, the one artifact every rank cut from -- so ``row_offset``/``col_offset``
+are offsets into it, ``parent_rows``/``parent_columns`` are its extent and
+``parent_digest`` is its manifest digest, composed through any number of
+re-slices; a shard of a shard writes the record the direct cut would.
 """
 
 from __future__ import annotations
@@ -380,10 +387,16 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
         grid = unit.grid
         code = code or unit.code
         superblock = manifest.geometry.superblock_columns
-        parent_shape = parent_shape or (
-            manifest.geometry.rows, manifest.geometry.columns
-        )
-        parent_digest = parent_digest or manifest.manifest_digest()
+        if manifest.shard is None:
+            # A whole artifact is the original: its own geometry and digest
+            # are what a first cut records.  A parsed SHARD's geometry and
+            # digest are the shard's, not the original's -- ``_as_unit``
+            # restored its record onto the unit, and the origin is read off
+            # that below.
+            parent_shape = parent_shape or (
+                manifest.geometry.rows, manifest.geometry.columns
+            )
+            parent_digest = parent_digest or manifest.manifest_digest()
         unit = unit.unit
     if grid is not None:
         arity = grid.arity
@@ -470,12 +483,39 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
         state_bits = (
             int(unit.window_bits) if body_kind is BodyKind.WINDOW else code.memory
         )
-    parent_rows, parent_columns = parent_shape or (n_rows, columns)
+    # The record names the ORIGINAL (see the module docstring).  A unit that
+    # already carries a record is a shard, and its record is the origin: the
+    # offsets below compose into that frame, so the extent and digest must be
+    # the same unit's -- taking them off the immediate parent wrote a record
+    # whose four fields described two units (tessera#140: a legal re-slice
+    # refused as running past its parent, an illegal one serialised).  An
+    # explicit parent that contradicts the record is refused by name rather
+    # than overriding it, because no caller holds a truer origin than the
+    # shard does.
+    inherited = int(getattr(unit, "parent_rows", 0))
+    if inherited:
+        origin_shape = (inherited, int(unit.parent_columns))
+        origin_digest = unit.parent_digest
+        if parent_shape is not None and tuple(parent_shape) != origin_shape:
+            raise GrammarError(
+                f"parent_shape {tuple(parent_shape)} contradicts the record this "
+                f"shard carries: it is a window of a {origin_shape[0]}x"
+                f"{origin_shape[1]} original, and a shard of it names the same one"
+            )
+        if parent_digest and parent_digest != origin_digest:
+            raise GrammarError(
+                f"parent_digest {parent_digest.hex()[:16]} contradicts the record "
+                f"this shard carries ({origin_digest.hex()[:16]}): a shard of a "
+                "shard names the original's manifest, not the shard's"
+            )
+        parent_rows, parent_columns = origin_shape
+        parent_digest = origin_digest
+    else:
+        parent_rows, parent_columns = parent_shape or (n_rows, columns)
     # The identity slice of a whole unit is that unit: it names no parent, so
     # it writes no shard record and its bytes are the bytes it came from.  A
     # slice of a *shard* keeps the shard record whatever its extent, because
-    # the offsets it composes are still offsets into the original parent.
-    inherited = int(getattr(unit, "parent_rows", 0))
+    # the offsets it composes are still offsets into the original.
     if not inherited and (r0, c0, r1, c1) == (0, 0, n_rows, columns):
         parent_rows = parent_columns = 0
         parent_digest = b""
@@ -521,7 +561,7 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
         initial_state=state,
         parent_rows=parent_rows,
         parent_columns=parent_columns,
-        parent_digest=parent_digest or getattr(unit, "parent_digest", b""),
+        parent_digest=parent_digest,
         release_counts=counts,
         state_bits=state_bits,
     )

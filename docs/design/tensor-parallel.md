@@ -177,9 +177,13 @@ TP degree per rank; see the receipt for the measured numbers.
 **Provenance.** Every shard's manifest carries `row_offset`, `col_offset`, the
 parent's shape and the parent manifest's digest, so two ranks holding two
 shards can prove they came from one artifact without either holding the other's
-bytes. The encoder profile id is *unchanged* by slicing: a shard is decoded by
-the same trellis over the same grid at the same span. A shard is not a
-different encoding.
+bytes. The parent is always the *original* -- the whole unit the exporter
+wrote -- so a shard of a shard carries the same extent and digest as its
+parent with its offsets composed, and writes the record a direct cut would
+(tessera#140 fixed a writer that named the immediate parent's extent under
+the original's offsets). The encoder profile id is *unchanged* by slicing: a
+shard is decoded by the same trellis over the same grid at the same span. A
+shard is not a different encoding.
 
 ## Kernel implications
 

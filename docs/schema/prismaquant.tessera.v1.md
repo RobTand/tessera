@@ -206,6 +206,17 @@ minor-2 fields, and — only for a shard cut below row 0 — adds one plane.
 | `shard.parent_digest` | digest32 | The parent manifest's `manifest_digest`. Provenance, never a decode input. |
 | `shard.state_bits` | uint | The INITIAL_STATE plane's element width, or `0`. Non-zero **iff** `row_offset` is non-zero. |
 
+**The parent is the original.** Every field of the record names the whole
+unit the exporter wrote -- the one artifact every rank cut from -- whatever
+depth of re-slicing produced this shard: the offsets are offsets into it, the
+extent is its extent and the digest is its manifest digest. A shard cut from
+a shard writes the record a direct cut of the original would, so the four
+fields always describe one unit and `row_offset + rows <= parent_rows` is
+checkable by a reader holding nothing but the shard. (Until tessera#140 the
+writer took the extent off the immediate parent while composing the offsets
+into the original's frame; no shipped artifact is a re-sliced shard, and a
+first cut's record is unchanged.)
+
 **Why it exists.** A Tessera artifact is tensor-parallel by construction: the
 exporter writes one whole unit and never learns the TP degree, and every rank
 cuts its own shard out of those bytes at load (`layout.slice_unit`). Every
