@@ -982,6 +982,23 @@ def test_ts113_extension_hashes_ignore_unrelated_private_tempdirs(tmp_path):
     assert "private-vllm-temp" not in manifest
 
 
+@pytest.mark.parametrize("seal", ["STAGE_SHA256", "STAGE_COMPLETE"])
+def test_ts113_recovery_never_reseals_a_failed_existing_seal(tmp_path, seal):
+    body = (ROOT / "experiments/ts113_resume_r6.sh").read_text()
+    start = body.index('if ! verify_stage "$POP_ROOT/stages/A1"; then')
+    end = body.index('\nrun_arm A2 ', start)
+    stage = tmp_path / "stages" / "A1"
+    stage.mkdir(parents=True)
+    (stage / seal).write_text("an existing seal that no longer verifies")
+    program = ("set -euo pipefail\nverify_stage() { return 1; }\n"
+               "run_arm() { echo RECOVERED; }\n" + body[start:end])
+    result = subprocess.run(["bash", "-c", program], capture_output=True, text=True,
+                            env=dict(os.environ, POP_ROOT=str(tmp_path), ARMA="unused"))
+    assert result.returncode != 0
+    assert "RECOVERED" not in result.stdout
+    assert (stage / seal).read_text() == "an existing seal that no longer verifies"
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 
