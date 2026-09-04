@@ -31,9 +31,12 @@ Three kinds of row per case:
   ``ENCODE REACHED <tensor>`` -- the plan got as far as asking the encoder for
   that tensor, which is the mis-plan in one line.
 
-One row is REAL: ``classify/Qwen3.8-Flash-Next`` classifies the one routed-MoE
-checkpoint on this box (transformers-5 packed experts, no ``.weight`` suffix)
-by reading its shapes; nothing is encoded or written for it.
+Two rows are REAL, one per source layout, and they are digests rather than
+name lists (``_real_buckets``): ``classify/Qwen3.8-Flash-Next`` is the
+transformers-5 PACKED layout with no ``.weight`` suffix, and
+``classify/GLM-5.3-Flash-4layer`` the UNPACKED per-expert 2-D leaves under
+``model.language_model.layers.N.`` -- 2592 of them, the model #5 names.  Both
+are classified by reading shapes; nothing is encoded or written for either.
 
 The layouts, with the runtime file that builds each MoE module at
 ``<moe>.experts`` on the pinned build (``prismaquant/glm53-mia-sm121:
@@ -71,7 +74,15 @@ _spec = importlib.util.spec_from_file_location(
 export = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(export)
 
-REAL = Path("/mnt/shared/models/Qwen3.8-Flash-Next")
+#: Real checkpoints on this box, classified read-only.  Two layouts, because
+#: one of each is what the classification has to get right: Qwen3.8-Flash-Next
+#: carries transformers-5 PACKED expert stacks with no ``.weight`` suffix, and
+#: GLM-5.3-Flash-4layer -- the model #5 names, and the one an expert route will
+#: first serve -- carries the UNPACKED per-expert 2-D leaves under a
+#: ``model.language_model.layers.N.`` prefix.  A toy fixture can stage either
+#: shape; only the checkpoint can say that this is the shape it has.
+REAL = (Path("/mnt/shared/models/Qwen3.8-Flash-Next"),
+        Path("/mnt/shared/models/GLM-5.3-Flash-4layer"))
 HIDDEN, INTER = 64, 32          # every unit is a whole number of 32-row tuples, K % 16 == 0
 PACKED_INTER = 16               # 2 * 16 != 64, so a packed stack's orientation is decidable
 GRID, Q256 = "E4M3", 1024
@@ -259,6 +270,47 @@ def _buckets(result) -> dict:
     return {"shapes": sorted(shapes), "packed": sorted(packed), "routed": sorted(routed)}
 
 
+def _real_buckets(result, src: Path) -> dict:
+    """``_buckets`` as a DIGEST, for a checkpoint with thousands of tensors.
+
+    A real MoE layer contributes 864 routed names per layer, and a baseline
+    file that inlines them is unreadable in a diff for no gain: what a
+    classification change moves is which bucket a name is in, and a per-bucket
+    count plus a sha over the sorted names moves whenever that does.  The first
+    and last name of each bucket are kept because they are what says *which*
+    layout was classified when the count is right and the sha is not.
+
+    A packed stack's ORIENTATION is recorded beside the names, because it is
+    the other thing the planner decides about a real checkpoint and the one
+    that transposes every expert in silence when it is wrong.  It is read the
+    way the exporter reads it -- off ``config.json`` -- and a refusal is
+    recorded as the refusal, since "this checkpoint cannot be oriented" is an
+    answer about it and not a harness failure.
+    """
+    shapes = getattr(result, "expert_shapes", None)
+    if shapes is None:
+        shapes = result[2]
+    config = json.loads((src / "config.json").read_text())
+    out = {}
+    for bucket, names in _buckets(result).items():
+        names = sorted(names)
+        out[bucket] = {"count": len(names),
+                       "sha256": _sha("\n".join(names).encode()),
+                       "first": names[0] if names else None,
+                       "last": names[-1] if names else None}
+    orientations = {}
+    for name in sorted(shapes):
+        try:
+            orientations[name] = export.packed_expert_orientation(name, shapes[name], config)
+        except SystemExit as exc:                       # the refusal IS the record
+            orientations[name] = f"REFUSED: {exc}"
+    if orientations:
+        first = sorted(orientations)[0]
+        out["packed_orientation"] = {"distinct": sorted(set(orientations.values())),
+                                     "example": {first: orientations[first]}}
+    return out
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -350,9 +402,11 @@ def run(root: Path, cases: list[str], *, export_rows: bool) -> dict:
                     line.strip() for line in stdout.splitlines()
                     if "expert" in line or "router" in line or "MoE" in line]
             print(f"  {case}: {'refused' if message else 'exported'}", flush=True)
-    if REAL.exists():
-        rows["classify/Qwen3.8-Flash-Next"] = _buckets(export.quantizable(REAL))
-        print("  classified the real Qwen3.8-Flash-Next (read-only)", flush=True)
+    for real in REAL:
+        if not real.exists():
+            continue
+        rows[f"classify/{real.name}"] = _real_buckets(export.quantizable(real), real)
+        print(f"  classified the real {real.name} (read-only)", flush=True)
     return rows
 
 
