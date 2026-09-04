@@ -98,12 +98,18 @@ Hessian-weighted error on six of 3072 columns.
 within 1.5% of each other at 4 b/wt. Every band number below is R2048. Whether
 the curve reappears at 4 b/wt on some other unit is not measured.
 
+As framing only, not a derivation: R2048 is 8 b/wt on a grid whose *values* are
+8-bit, so the trellis is running near the alphabet's own rate, where shaping
+gain thins and the row scale carries proportionally more of the reconstruction.
+That is the regime in which §5's refit dominates. I did not test that reading.
+
 ## 3. Sigma is a gauge; the residue is its only coordinate (negative result)
 
 **The sigma axis is exactly a gauge up to powers of two.** Every row's pre-fp16
 scale is proportional to `1/sigma` — a row inside the reach starts at
 `rms/sigma`, and a row past it starts at `reach·rms/amax`, which is again
-proportional to `1/sigma` because `reach ∝ sigma`. `channel_global` then
+proportional to `1/sigma` because `reach(2^k·σ) = 2^k·reach(σ)` exactly, on a
+floating-point grid, away from the floor and the peak. `channel_global` then
 returns `2^floor(log2(median scale))`, **a power of two**. So under
 `sigma → 2^k·sigma` every stored fp16 row word is *bit-identical* and only the
 global's exponent moves, while every table value scales by the same `2^k`. The
@@ -121,10 +127,13 @@ onto the grid's smallest magnitude instead of halving through it: 12 entries of
 (`test_the_channel_sigma_is_a_gauge_up_to_powers_of_two`), including where it
 breaks.
 
-**The alphabet's own error does not carry the effect.** For every unclamped
-sigma the reach is proportional to sigma, so the two arms' reach-aware row
-scales are exactly proportional and the two normalised tables differ only in
-where the E4M3 snap lands. Snapped-against-ideal relative energy is `6.976e-4`
+**The alphabet's own error does not carry the effect.** For *this pair* the
+reach is exactly proportional — `reach(0.75·σ0) = 288 = 0.75 · 384`, because
+288 is itself an E4M3 value — so the two arms' reach-aware row scales are
+exactly proportional and the two normalised tables differ only in where the
+E4M3 snap lands. (In general it is not: §4 measures the snapped reach as a
+*step* function of sigma. `reach = 4.0773·σ` holds at the default and nowhere
+in between.) Snapped-against-ideal relative energy is `6.976e-4`
 at the default and `7.031e-4` at m=0.75 — **a predicted ratio of 1.004 against
 a measured 1.367**.
 
@@ -174,6 +183,11 @@ sigma, snap the reach, read the mantissa, read the band.**
 measures 1.367 and 1.362. m=1.25/1.5/2 → clamped at 448 → mantissa 7.0 →
 predicts ≈1.32, measures 1.313 / 1.341 / 1.411 (the clamp adds its own spread
 on top; see §8). Five arms exact, three approximate.
+
+**Which of those are out-of-sample.** `m=1` and `m=0.75` are ladder points — the
+ladder was built around them, so they are fits, not predictions. The genuine
+out-of-sample calls are `m=0.5` and `rho=0.5` (predicted by the gauge from
+`m=1`, before the ladder ran), `rho=0.75`, and the three clamped arms.
 
 **This corrects #89's reading of its own evidence.** The issue reads the
 `rho=0.5` arm — reach 192, no cost — as showing the effect is not about the
@@ -277,6 +291,10 @@ Three things this settles.
   score is slightly worse than the h-blind default's (0.01074 vs 0.01024) and
   its weight error much worse (0.048 vs 0.026), both expected for an objective
   scored under a different metric than the one it minimises.
+  **Scope:** this is *one pair of sigmas*, not a ladder. 0.9677 says the
+  default's band is not special under production's objective; it does not say
+  where that objective's residue curve has its minimum, or whether it has the
+  same seven-band shape at all. The residue ladder under full H is unmeasured.
 * **`refit_reach_floor` explains where the default's 32% comes from and refuses
   to bank it.** With the floor on, `rows@clip` goes to 0 at both sigmas and the
   default's h reverts from 0.01024 to 0.01394 — i.e. the gain the h-blind refit
@@ -321,10 +339,13 @@ the ladder, not the sign: 21 sigmas, seven bands, a single minimum, repeatable
 to 1% within each band, and a curve that behaves identically on the two dyadic
 gauge arms. A lattice of arbitrary draws does not produce that.
 
-The two observations reconcile cleanly: the **shape** of the curve is a property
-of the grid (it is the same seven mantissas for every unit), while the **size**
-of the effect is a property of the unit — it needs the error concentrated on
-Hessian-heavy columns, which is why seven units barely see it.
+The two observations reconcile cleanly. The **bands** are a property of the grid
+— every unit built at the same sigma snaps to the same seven E4M3 mantissas,
+which is a fact about the alphabet and needs no measurement. The **ordering**
+of the bands, and the **size** of the gap between them, were measured on one
+unit; the size clearly is a unit property (it needs the error concentrated on
+Hessian-heavy columns, which is why seven units barely see it), and whether the
+ordering is also unit-dependent is not measured.
 
 ## 7. What this says about `default_channel_sigma`
 
@@ -433,6 +454,9 @@ Nothing in this report is a ship claim, and the gap is large:
   artifact **without moving `encoder_profile_id`** (§7). Before such a change
   could ship, that normalisation would have to bind the constant, or the
   constant would have to be written into the profile explicitly.
+* §5b's inversion (0.9677 under full H) is **one pair of sigmas on one unit**.
+  It is enough to say the default's band is not privileged under production's
+  own objective; it is not enough to say what that objective's best residue is.
 * The one arm that would turn §5b into a proposal — "always refit under a
   metric, even weights-only" — has no metric to use when there is no Hessian,
   so it is not a proposal at all. If someone wants the weights-only path
@@ -473,7 +497,8 @@ Each is a separate commit so it can be taken or dropped independently.
 | `b85e233` | #84's reporting half: `window_table_reach()` returns requested vs realised reach, `delivered`, `saturated`, `saturated_fraction`; `EncodedUnit.table_reach` records it per encode (diagnostic, never wire); `bf16_l_sigma_sweep.py` reports it. Two new tests in `tests/test_window_body.py`. |
 | `14880cd` | `scale_channel._default_sigma`'s docstring said the ladder was dyadic. It is a **quarter-binade** ladder (`peak · 2^(-k/4)`, forty rungs) minimising scalar-RTN nearest-value error — neither dyadic nor the objective #89 is about. Prose only, plus prose in `export.py`, `tests/test_bf16_route.py`, `experiments/tessera16_alphabet_floor.py`. |
 | `4cf9a69` | `tests/test_window_body.py::test_the_channel_sigma_is_a_gauge_up_to_powers_of_two` — pins §3's gauge (bit-identical fp16 row words, exact table scaling) and characterises where it breaks at the E4M3 floor. Passes on master too: it is a pin, not evidence of a fix. |
-| `a7f8ece` + `2b84551` | `pbrun_result.txt` had ridden into git on a `git add -A`; the pool refuses to run an action whose declared result path already exists, so a restored copy failed two jobs. Untracked — and untracked *again* two commits later, because a blanket `git add -A` put it back: a worktree's `.git` is a **file**, so the relative `.git/info/exclude` a fix reaches for is not a directory and the append goes nowhere. The real path is `/home/rob/tessera/.git/worktrees/<name>/info/exclude`. |
+| `a7f8ece` + `2b84551` + `f5f2f52` | `pbrun_result.txt` had ridden into git on a `git add -A`; the pool refuses to run an action whose declared result path already exists, so a restored copy failed two jobs. Untracked in `a7f8ece`, put back by a later blanket `git add -A`, and only actually untracked in `f5f2f52` — `2b84551` **claims** to have untracked it and did not (its diffstat is a modification, 3 insertions / 1 deletion), so HEAD still carried the file until `f5f2f52`. `2b84551`'s message also asserts an unchecked cause; `f5f2f52` corrects it. The real one: for a worktree, `info/exclude` lives in the **common** git dir, so the append to `.git/worktrees/<name>/info/exclude` landed in a file git never reads, and the shared `/home/rob/tessera/.git/info/exclude` got the pattern four minutes *after* the `git add -A`. `git check-ignore -v` names the effective file. |
+| `568bd08` | `stage_refit`'s docstring in `experiments/ts89_dyadic_reach.py` asserted `reach = 4.0773 · sigma` for every unclamped sigma. The ladder falsifies that — snapped reach is a *step* function. Corrected to the statement that is actually true (`reach(2^k·σ) = 2^k·reach(σ)`, plus why this particular pair is exact: 288 is itself an E4M3 value). Prose only. |
 | `751302b` | `_default_sigma`'s docstring now records what its 0.11% margin bought: the four E4M3 residue classes are worth 1.00 / 1.18 / 1.32 / 1.35 under the window body at 8 b/wt, the 0.11% picks the 1.00, and the two objectives swap the middle pair. Prose only — and it says explicitly that this is not licence to re-derive the constant. |
 
 ## 13. Consultations
