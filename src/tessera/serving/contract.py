@@ -669,7 +669,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         expected_id = "_".join(
             [cell["family"].lower(), cell["structure"], cell["platform"].replace("_", ""),
              cell["regime"]]
-            + ([] if len(modes) == len(_ALL_MODES()) else list(modes)))
+            + ([] if len(modes) == len(_all_modes()) else list(modes)))
         if cell["id"] != expected_id:
             raise ValueError(
                 f"{where}.id is {cell['id']!r}; a cell id is its SCOPE and must be "
@@ -813,10 +813,6 @@ def lane_requirements(module_name_prefix: str,
     return dict(extension_lane(module_name_prefix, contract).get("requires", {}))
 
 
-#: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names
-#: for one thing, and they are deliberately different: the contract's family is
-#: a PAYLOAD name a producer prices (grid + arity), the route key is what the
-#: tile IS on the hardware.
 #: How a cell's ``requires_serve_flags`` names a residency.  The env var is
 #: ``lane.TESSERA_MODE_ENV``'s and the values are ``lane.MODES``'; the pipe is
 #: an OR, so ``TESSERA_SERVE_MODE=resident|streamed`` is a cell that covers
@@ -856,7 +852,8 @@ def cell_residency_modes(cell: Mapping[str, Any],
     return modes
 
 
-def _ALL_MODES() -> tuple:
+def _all_modes() -> tuple:
+    """``lane.MODES``, imported lazily so this module stays torch-free to read."""
     from .lane import MODES
 
     return MODES
@@ -939,6 +936,10 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
             "about a runtime nobody read.")
 
 
+#: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names
+#: for one thing, and they are deliberately different: the contract's family is
+#: a PAYLOAD name a producer prices (grid + arity), the route key is what the
+#: tile IS on the hardware.
 _FAMILY_TO_ROUTE = {
     "TESSERA_E2M1_K2": "TESSERA_NVFP4",
     "TESSERA_E4M3_K1": "TESSERA_FP8",
