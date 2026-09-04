@@ -676,6 +676,31 @@ def test_the_receipt_says_whether_the_arms_ran_one_tree():
     assert half["unstamped_arms"] == ["x86"]
 
 
+def test_snapshot_commit_agreement_is_separate_from_effective_source():
+    merge_suite = _module()
+    arms = [{"arm": arm, "surface": {"commit": commit, "source_identity": {
+        "schema": "tessera.suite_source.v1", "verification": "verified",
+        "snapshot_commit": commit, "sha256": "c" * 64}}}
+        for arm, commit in (("gpu", "a" * 40), ("x86", "b" * 40))]
+    comparison = merge_suite._commits_measured(arms)
+    assert comparison["agree"] is False
+    assert comparison["effective_source"]["agree"] is True
+    arms[1]["surface"]["source_identity"]["sha256"] = "d" * 64
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is False
+    arms[1]["surface"]["source_identity"]["verification"] = "unknown"
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is None
+    del arms[1]["surface"]["source_identity"]
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is None
+
+
+def test_source_identity_cannot_be_borrowed_from_another_snapshot():
+    merge_suite = _module()
+    record = {"arm": "gpu", "surface": {"commit": "a" * 40, "source_identity": {
+        "schema": "tessera.suite_source.v1", "verification": "verified",
+        "snapshot_commit": "b" * 40, "sha256": "c" * 64}}}
+    assert merge_suite._commits_measured([record])["effective_source"]["agree"] is None
+
+
 def test_the_recorded_ledger_is_written_in_the_tools_current_dialect():
     """The ledger in the repo must be readable by its own header.
 

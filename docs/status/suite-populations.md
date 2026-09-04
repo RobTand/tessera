@@ -19,8 +19,14 @@ master ref resolved in that checkout and the question was not answered.
 always the tree the receipt was assembled against: the arms are separate
 processes on separate boxes, and a queued arm can place after the checkout has
 moved. `(assumed)` marks a row whose run predates that field, where the
-receipt's own commit is the best available guess. Rows of one run with two
-commits are two measurements, not one merge receipt.
+receipt's own commit is the best available guess. PrismaBuild's parentless
+snapshot commits also differ when only its verified action-specific closure
+stamp differs. New populations retain that raw commit and independently hash
+the effective source; the JSON receipt's
+`commits_measured.effective_source.agree` distinguishes equivalent source from
+different source, and is unknown for legacy or unverifiable populations.
+`source <hash>` beside a row's snapshot commit names that verified source.
+Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the

@@ -24,6 +24,20 @@ from that worker's advertised capacity, rather than treating one logical slot
 as physical exclusion. The GPU arm remains serial under `--strict-cuda`;
 the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
 
+Each population retains the actual Git snapshot commit and separately records
+`tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
+mode, and actual file/symlink bytes, checked against the snapshot blobs. Only
+the exact generated closure member verified against that action's sealed CAS
+request is omitted. The action-prefix directory is a bounded lookup hint,
+not proof: the full action key, snapshot commit, container owner, closure
+hash/size, logical path and generated filename fingerprint must all agree.
+Other closure-looking tracked files remain source. Original-head and dirty
+stamps are never substituted for the actual source hash. Post-materialization
+dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+The merge receipt keeps raw commit agreement and effective-source agreement
+separate; legacy populations cannot establish the latter. Population pass
+counts alone still do not establish a same-source merge check.
+
 ## 2. The pipeline
 
 An allocator proposes one rung per Linear. The converter translates that

@@ -613,8 +613,8 @@ def _verdict(arms: list[dict]) -> str:
 def _commits_measured(arms: list[dict]) -> dict:
     """The trees the arms actually ran, and whether they agree.
 
-    Two arms that ran different commits are two measurements, not one merge
-    receipt, and a reader must be told that without having to diff the rows.
+    Snapshot IDs remain verbatim. PB embeds action-specific closure metadata,
+    so effective source agreement is a separate, independently verified fact.
 
     ``agree`` is ``True`` only when every arm said which tree it ran and they
     all said the same one.  One arm that cannot answer makes agreement
@@ -625,10 +625,28 @@ def _commits_measured(arms: list[dict]) -> dict:
     by_arm = {r["arm"]: (r.get("surface") or {}).get("commit") for r in arms}
     unstamped = sorted(a for a, c in by_arm.items() if not c)
     stamped = {c for c in by_arm.values() if c}
+    sources = {}
+    for record in arms:
+        surface = record.get("surface") or {}
+        source = surface.get("source_identity") or {}
+        digest = source.get("sha256")
+        verified = (source.get("schema") == "tessera.suite_source.v1"
+                    and source.get("verification") == "verified"
+                    and source.get("snapshot_commit") == surface.get("commit")
+                    and isinstance(digest, str) and len(digest) == 64
+                    and all(c in "0123456789abcdef" for c in digest))
+        sources[record["arm"]] = digest if verified else None
+    unknown_sources = sorted(arm for arm, digest in sources.items() if not digest)
     return {
         "by_arm": by_arm,
         "agree": None if (unstamped or not stamped) else (len(stamped) == 1),
         "unstamped_arms": unstamped,
+        "effective_source": {
+            "by_arm": sources,
+            "agree": (None if unknown_sources or not sources
+                      else len(set(sources.values())) == 1),
+            "unverified_arms": unknown_sources,
+        },
     }
 
 
@@ -675,8 +693,14 @@ master ref resolved in that checkout and the question was not answered.
 always the tree the receipt was assembled against: the arms are separate
 processes on separate boxes, and a queued arm can place after the checkout has
 moved. `(assumed)` marks a row whose run predates that field, where the
-receipt's own commit is the best available guess. Rows of one run with two
-commits are two measurements, not one merge receipt.
+receipt's own commit is the best available guess. PrismaBuild's parentless
+snapshot commits also differ when only its verified action-specific closure
+stamp differs. New populations retain that raw commit and independently hash
+the effective source; the JSON receipt's
+`commits_measured.effective_source.agree` distinguishes equivalent source from
+different source, and is unknown for legacy or unverifiable populations.
+`source <hash>` beside a row's snapshot commit names that verified source.
+Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
@@ -756,6 +780,9 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         commit, established = _arm_commit(record, population)
         commit_text = f"`{commit[:12]}`" if established \
             else f"`{commit[:12]}` (assumed)"
+        source = _commits_measured([record])["effective_source"]["by_arm"][record["arm"]]
+        if source:
+            commit_text += f"<br>source `{source[:12]}`"
         # ``master head?`` was answered against the population commit. If this
         # arm ran a different tree, that answer is not about this row.
         row_head = head_text if commit == population["commit"] else "unknown"
@@ -943,7 +970,9 @@ def main() -> int:
         "reading_note": (
             "Each arm's counts belong to that arm's device population and to "
             "no other. A pass count quoted without the device beside it is the "
-            "misreading tessera#112 is about."
+            "misreading tessera#112 is about. Snapshot commit IDs are preserved; "
+            "commits_measured.effective_source.agree separately establishes "
+            "whether the populations exercised equivalent verified source."
         ),
     }
     out.parent.mkdir(parents=True, exist_ok=True)

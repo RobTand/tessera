@@ -401,6 +401,9 @@ def test_the_population_names_the_tree_it_was_measured_on(tmp_path):
     assert payload["commit"] == head, payload["commit"]
     # Not a guess dressed as a fact: an interpreter that cannot answer says so.
     assert payload["commit"] is None or len(payload["commit"]) == 40
+    assert payload["source_identity"]["snapshot_commit"] == payload["commit"]
+    assert payload["source_identity"]["verification"] == "verified"
+    assert len(payload["source_identity"]["sha256"]) == 64
 
 
 def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):

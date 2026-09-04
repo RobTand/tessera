@@ -431,6 +431,7 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
     """
 
     import json
+    from tessera.suite_source import measured_source
 
     worker = _worker_id(config)
     if worker:
@@ -446,6 +447,7 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
         "worker_id": worker,
         "xdist_workers": _worker_count(config),
         "commit": _measured_commit(),
+        "source_identity": measured_source(Path(__file__).resolve().parents[1]),
         "cuda": present,
         "device": detail,
         "strict_cuda": _strict_cuda(config),
