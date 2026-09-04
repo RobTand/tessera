@@ -11,6 +11,7 @@ is published.  Torch-free by construction so the bytes-only job runs them.
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -187,3 +188,21 @@ def test_the_sdist_policy_names_paths_that_exist():
             assert (ROOT / argument).exists(), (
                 f"MANIFEST.in '{command} {argument}': no such path, so the "
                 "directive includes or excludes nothing")
+
+
+def test_the_readme_pins_its_links_to_the_version_it_ships_with():
+    """README.md says its links are pinned to the release tag so they resolve
+    from PyPI, where relative paths do not.  That makes every one of them a
+    copy of the version: a bump that leaves them behind ships a page
+    describing one release and linking to another."""
+    declared = _declared_version()
+    stale = sorted({
+        f"v{tag}"
+        for tag in re.findall(r"github\.com/RobTand/tessera/(?:blob|tree)/v([^/]+)/",
+                              (ROOT / "README.md").read_text(encoding="utf-8"))
+        if tag != declared
+    })
+    assert not stale, (
+        f"README.md pins links to {stale} but the distribution is v{declared}; "
+        "the pinned links and the version are bumped together or the page "
+        "documents one release and links to another")

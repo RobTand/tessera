@@ -1338,9 +1338,11 @@ same object, so the string vLLM's compile-cache key folds in
 with the distribution, and a version neither reader can produce is refused
 rather than guessed.
 
-Two copies remain that no code here can derive: the `Documentation` URL's
-tag, and the contract's `versions.tessera` / `versions.plugin_entry_point`,
-which are bytes a producer's receipts bind to. Neither is left to review.
+Three copies remain that no code here can derive: the `Documentation` URL's
+tag, the release tag README.md pins its own links to (it says so, because
+relative links do not resolve from a PyPI page), and the contract's
+`versions.tessera` / `versions.plugin_entry_point`, which are bytes a
+producer's receipts bind to. None is left to review.
 `tests/test_packaging.py` fails when either disagrees with the declaration;
 `tools/check_wheel.py` reads the declaration too -- it restates neither the
 version nor the entry point -- and refuses a built wheel whose `Version`
