@@ -92,3 +92,71 @@ from the integrated controller containing those guards; the older frozen
 encoder outputs remain compatible. A loadable merged config is published
 only after exact source/plan/code/runtime identity, complete source ownership,
 shard hashes and tensor-header coverage, and explicit-plan obligations pass.
+
+## 4. Half0 completed; half1 claimed without GPU overlap
+
+Sparklina claimed action
+`80fcb8d1cddb6059c795f5205860c430375728365ee3b11e24b7ea4a5d833817`
+at 19:45:05 UTC after the #113 reservation released. Its PB snapshot is
+`524d56f4827769265a109145103805d5af9e99f9`; half0's snapshot is
+`96bad5276ff8785ad989886b7849688fd55b3af4`. These are independently generated
+PB snapshot commits of the same frozen source tree, not two evolving encoder
+branches. The checked merger compares their sealed code/source/plan/runtime
+identities rather than assuming the short Git stamp is shared.
+
+Half0 finished with worker return code zero and a published result:
+`bc0016e36d5a139184239a590dc16a2b8d686df35febf80ae4d1cfab3a682772`.
+The exporter reports 2,358 seconds, including its final write; PB reports
+2,435 seconds for the whole invocation. It encoded all 1,056 projection
+containers in its 11 planned stacks and wrote 1,158 output tensors. Its
+partial checkpoint has no loadable `config.json`, by design.
+
+| half0 quantity | measured value |
+|---|---:|
+| quantized parameters | 3,875,536,896 |
+| wire bytes | 1,959,034,880 |
+| wire bits per quantized parameter | 4.043898809523809 |
+| container bytes | 1,959,821,590 |
+| resident-mode prepared bytes | 3,883,466,752 |
+| BF16 passthrough bytes | 953,739,904 |
+| checkpoint bytes, including passthrough | 2,913,700,766 |
+
+Independent CPU verification action
+`396bb6ef48c969efd7100f59d6b5ed0f85a87e2f2b690a42e5f3bdd916c146fb`
+read and hashed the completed shard, matched the manifest's sealed output
+hash, and summarized its immutable telemetry log. Its successful worker
+result is in CAS
+`df2df4df7b43147e64fbe18e362e57c824d47f4cd1fe69405a0cdd270cf6ad16`.
+The code identity sealed into the partition is
+`a57ccfd37af16e82f99b172abda46c87652a855eb53f7cd78ac0326b4116b524`.
+
+| half0 file | independently checked SHA256 |
+|---|---|
+| `model.safetensors` | `f3504c20e11188b0705556e5daee473788db66b02bd86083f0631fe6b16f9f82` |
+| `tessera_serving_manifest.json` | `55d774d0cc512faa3ac46c310f043b783a742f02c2125ac834fd7513bb2a3102` |
+| `tessera_part_config.json` | `dc1d84f140429a1102a0f02416b60758445e9dd24c1e7e3074fe0ea0f736a3d7` |
+| `model.safetensors.index.json` | `ded483bd7d3b9dbfea37df9c25cc87210b99abc44111c2d9fec93dea032302fe` |
+
+The 243 telemetry samples span 15:12:00–15:52:26 EDT, 2,426 seconds, with a
+maximum sample gap of 11 seconds. Maximum sampled board power was 72.89 W;
+minimum host MemAvailable was 111,953,124 KiB; swap use was 364 KiB at both
+ends. Trapezoidal integration of `power.draw` over that interval gives
+157,440.135 joules. This is gross sampled board energy including startup,
+without idle-power subtraction, not a paired efficiency comparison. The
+telemetry SHA256 is
+`2b9c17b7cda875025b739168b2f2b6453ad15bd12157c29b472b7d25a5ade779`.
+
+**Pool outcome caveat, not concealed as a clean client exit.** The verifier's
+original worker returned zero after 7.4 seconds and published the result
+above, but a live-claim/reaper race had already launched three guarded retries
+within about 1.5 seconds. The submitting client first returned the retry's
+`mkdir: File exists` failure. The authoritative `done/` record retains the
+successful original `worker_detail.returncode=0`; both terminal records exist.
+This is filed as PrismaBuild #36 with a read-only worker investigating; no
+PrismaBuild code, queue record, or active encoder reservation was changed.
+An earlier verifier attempt used the wrong partial-manifest key and failed
+before producing a result; the corrected verifier explicitly reads
+`export_partition.identity`, not the merged manifest's `export_identity`.
+
+At this section's completion, half1 is still encoding. There is still no
+full-model merge, student serve, or positive MoE contract promotion to report.
