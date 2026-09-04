@@ -16,7 +16,14 @@ one process.  This proves it on the 196 units of the artifact that gets served,
 across two separate exports -- which is the statement a served A/B needs, since
 "identical bytes" there means the checkpoints, not a helper's tensors.
 
+The twin carries the *codes* claim.  ``--wire-a/--wire-b`` carry the *length*
+claim, off the two exports' own totals: #75 says the swap costs no bytes, and
+that is a statement about the Tessera wire the twin is a materialisation of,
+not about the twin.  Both are recorded, and a length that moved fails the same
+way a moved code does.
+
     PYTHONPATH=src python experiments/refit_trailing_bytes.py A_DIR B_DIR \
+        --wire-a A_TESSERA --wire-b B_TESSERA \
         --out experiments/results/refit_trailing_bytes.json
 """
 from __future__ import annotations
@@ -52,6 +59,10 @@ def main() -> int:
     ap.add_argument("a")
     ap.add_argument("b")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--wire-a", default=None,
+                    help="A's Tessera export dir, for the wire-length claim")
+    ap.add_argument("--wire-b", default=None,
+                    help="B's Tessera export dir, for the wire-length claim")
     args = ap.parse_args()
 
     ta, tb = load(Path(args.a)), load(Path(args.b))
@@ -66,11 +77,25 @@ def main() -> int:
         if not same and len(by_suffix[suffix]["names_different"]) < 4:
             by_suffix[suffix]["names_different"].append(name)
 
+    wire = None
+    if args.wire_a and args.wire_b:
+        wire = {}
+        for side, path in (("a", args.wire_a), ("b", args.wire_b)):
+            man = json.loads(
+                (Path(path) / "tessera_serving_manifest.json").read_text())
+            totals = man.get("totals", man)
+            wire[side] = {k: totals.get(k) for k in
+                          ("wire_bytes", "on_disk_bytes", "units", "modules")}
+        wire["wire_bytes_equal"] = (
+            wire["a"]["wire_bytes"] is not None
+            and wire["a"]["wire_bytes"] == wire["b"]["wire_bytes"])
+
     record = {
         "a": args.a, "b": args.b,
         "tensors_only_in_a": sorted(set(ta) - set(tb)),
         "tensors_only_in_b": sorted(set(tb) - set(ta)),
         "by_suffix": {k: dict(v) for k, v in sorted(by_suffix.items())},
+        "wire": wire,
     }
     packed = by_suffix[".weight_packed"]
     scale = by_suffix[".weight_scale"]
@@ -81,6 +106,7 @@ def main() -> int:
         "the matched pair" if record["codes_identical_on_every_unit"]
         and record["the_plane_moved"] and not record["tensors_only_in_a"]
         and not record["tensors_only_in_b"]
+        and (wire is None or wire["wire_bytes_equal"])
         else "NOT the matched pair")
 
     print(json.dumps(record, indent=1))
