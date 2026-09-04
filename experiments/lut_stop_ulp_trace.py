@@ -207,16 +207,34 @@ def run_audit_matrix(tracer: Tracer) -> dict:
     return out
 
 
-#: Whole real Linears with their real Hessian, cut by
-#: ``experiments/audit_byte_baseline.py``'s recipe on the box that holds the
-#: model and the capture.  The audit harness's value cases cut the committed
-#: slice to 16x128; the swap loop's near-ties are a property of how many halves
-#: there are, so the receipt needs at least one unit at its shipped width.
+#: Whole real Linears with their real Hessian.  The audit harness's value cases
+#: cut the committed slice to 16x128, a few dozen halves; the swap loop's
+#: near-ties are a property of how many halves there are, so the receipt needs
+#: at least one unit at its shipped width.
+#:
+#: The fixture is cut once, on the box that holds the model and the capture, and
+#: parked on the share so every arm reads identical bytes.  It is not in the
+#: tree (50 MB).  Its shape is
+#:
+#:     {"provenance": <the capture's own, carrying HESSIAN_IDENTITY>,
+#:      "units": {<unit>: {"weight": bf16 [out, in], "H": fp32 [in, in]}}}
+#:
+#: with the weights read from /home/rob/models/Qwen3-0.6B/model.safetensors and
+#: each H from the model.layers.2.{mlp.down_proj,self_attn.k_proj} rows of
+#: /home/rob/tessera-runs/ldlq/h_full_qwen06b.pt.  The capture's provenance
+#: travels with the weights, so the fixture is re-cuttable from those two files
+#: and every encode can say which H shaped its bytes.
 REAL_UNITS = "/mnt/shared/ts106-arms/real_units_qwen06b.pt"
 
 
 def run_full_unit(tracer: Tracer, units: "list[str] | None" = None) -> dict:
-    """Whole real Linears, real H, on the LUT-plane wire -- traced."""
+    """Whole real Linears, real H, on the LUT-plane wire -- traced.
+
+    ``ldlq_sigma=None`` deliberately: LDLQ moves the residual the refit's
+    targets are drawn from, so it is a *different* set of ``_fit_lut`` trials,
+    and it is measured as its own arm (``ts106_real_unit.py --ldlq default``)
+    rather than folded into this one.  The counts below are the LDLQ-off leg.
+    """
     import hashlib
 
     from tessera.alphabet import E2M1_GRID, tuple_grid
