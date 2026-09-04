@@ -133,11 +133,13 @@ def score(w, hat, h) -> dict:
     }
 
 
-def encode_arm(w, q256, name, *, window_sigma, channel_sigma, want_unit=False):
+def encode_arm(w, q256, name, *, window_sigma, channel_sigma, want_unit=False,
+               scale_refit=None):
     t0 = time.time()
     exported, unit, _f = encode_linear_planes(
         w, grid=E4M3_GRID, q256=q256, name=name, window_bits=WINDOW_BITS,
         window_sigma=window_sigma, channel_sigma=channel_sigma, verify=True,
+        **({} if scale_refit is None else {"scale_refit": scale_refit}),
     )
     hat = read_unit_artifact(exported.blob, device=w.device)
     out = {"bpp": float(exported.bpp), "sha": sha(exported.blob),
@@ -396,8 +398,80 @@ def stage_general(a) -> None:
     b.log(f"\nwrote {a.out}")
 
 
+def stage_refit(a) -> None:
+    """Is the 1.367x in the TABLE, or in the scale refit that follows it?
+
+    The reduced model says it is not in the table.  Re-running the first
+    Viterbi pass alone on this unit's top-64 Hessian columns -- exact, on the
+    CPU, at both sigmas, with production's ``trellis_weighting="scale"`` branch
+    weight -- gives an h ratio of **1.0369**, not 1.367
+    (``ts89_table_surgery.py``).  Those 64 columns carry 99.93% of this unit's
+    h, so the reduction is not throwing the metric away; what it throws away is
+    ``scale_refit=4``.
+
+    The table cannot be carrying it on its own, either.  For every unclamped
+    sigma the table's reach is exactly ``4.0773 * sigma``, so the two arms'
+    reach-aware row scales are exactly proportional and the two normalised
+    tables differ only by where the E4M3 snap lands: relative snapped-vs-ideal
+    energy 6.976e-4 at the default against 7.031e-4 at ``m=0.75``, a predicted
+    ratio of **1.004** against a measured 1.367.
+
+    So this stage walks ``scale_refit`` from 0 to 4 at both sigmas and reports
+    the ratio at each.  Flat at ~1.0 across the walk would refute the refit
+    story; a ratio that is ~1.0 at 0 refits and 1.367 at 4 locates the
+    mechanism in the alternation, not in the alphabet -- which is a different
+    claim from the one the issue's title makes, and changes what a fix is.
+    """
+    base = default_channel_sigma(E4M3_GRID)
+    w, h = load(UNIT)
+    b = Bench(a.out)
+    b.doc = {"stage": "refit", "unit": UNIT, "base_channel_sigma": base,
+             "shape": list(w.shape), "arms": {}}
+    gv = grid_vector_table(E4M3_GRID, w.device).squeeze(-1).float()
+    for q in a.rungs:
+        b.log(f"\n== {UNIT} {tuple(w.shape)}  R={q}  ({q // 256} b/wt)")
+        b.log(f"    {'refit':>6}{'m':>7}{'sigma':>10}{'reach':>8}"
+              f"{'wt':>10}{'h':>10}{'h ratio':>9}{'rows@clip':>11}{'s':>7}")
+        for nref in a.refits:
+            per_sigma = {}
+            for m in (1.0, 0.75):
+                cs = m * base
+                facts = table_facts(cs)
+                hat, meta, unit = encode_arm(
+                    w, q, UNIT, window_sigma=None, channel_sigma=cs,
+                    want_unit=True, scale_refit=nref)
+                # Recover the effective row scale from the artifact the reader
+                # sees: hat = row_scale * table_value, so the ratio is constant
+                # down a row wherever the table value is nonzero.
+                val = gv[unit.codes]
+                rs = torch.where(val.abs() > 0, hat / val,
+                                 torch.full_like(hat, float("nan"))).nanmedian(dim=1).values
+                # A row is AT THE CLIP when its loudest weight needs more than
+                # the table's outermost entry at the scale the refit landed on.
+                clipped = int((w.abs().amax(dim=1) > rs * facts["reach"] * (1 + 1e-6)).sum())
+                r = {**meta, "channel_sigma": cs, "table_sigma": cs, "refits": nref,
+                     **facts, **score(w, hat, h), "rows_at_clip": clipped,
+                     "rows": int(w.shape[0])}
+                per_sigma[m] = r
+                b.doc["arms"][f"R{q}/refit{nref}/m{m:g}"] = r
+                del hat, unit, val, rs
+                torch.cuda.empty_cache()
+            ratio = per_sigma[0.75]["h"] / per_sigma[1.0]["h"]
+            for m in (1.0, 0.75):
+                r = per_sigma[m]
+                shown = ratio if m == 0.75 else 1.0
+                b.log(f"    {nref:>6}{m:>7.2f}{r['channel_sigma']:>10.4f}"
+                      f"{r['reach']:>8.1f}{r['wt']:>10.5f}{r['h']:>10.5f}"
+                      f"{shown:>9.4f}{r['rows_at_clip']:>11d}{r['secs']:>7.0f}")
+            b.doc["arms"][f"R{q}/refit{nref}/ratio"] = ratio
+            b.save()
+    b.save()
+    b.log(f"\nwrote {a.out}")
+
+
 STAGES = {"repro": stage_repro, "decompose": stage_decompose,
-          "ladder": stage_ladder, "general": stage_general}
+          "ladder": stage_ladder, "general": stage_general,
+          "refit": stage_refit}
 
 
 def main() -> None:
@@ -406,6 +480,7 @@ def main() -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--rungs", type=int, nargs="+", default=[2048])
     p.add_argument("--sigmas", type=float, nargs="*", default=None)
+    p.add_argument("--refits", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     a = p.parse_args()
     torch.manual_seed(0)
     STAGES[a.stage](a)
