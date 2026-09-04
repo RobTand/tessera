@@ -105,6 +105,20 @@ the result. The arm is run either way.
 **4.94%** ceiling whose half is **2.47%** — not merely under the bar, but on
 the wrong side of zero. No default is proposed and none should be.
 
+The verdict is not restated prose: it is a ratio of two committed JSONs,
+computed by the harness after the fact
+(`experiments/results/tessera_lut_exact_fit_verdict.{json,log}`), and its
+output is quoted here verbatim —
+
+```
+== issue #50 stop rule, taken after the fact
+    arm JSON      experiments/results/tessera_lut_exact_fit.json
+    ceiling JSON  experiments/results/tessera_lut_landing_ceiling.json
+    six-unit out geomean ratio  1.00515x
+    step-1 ceiling (table -> grid, h^1.0) 4.9418%   half of it 2.4709%
+    VERDICT: STOP -- under half the ceiling
+```
+
 ### Step 1 — the `landing=grid` column, re-derived
 
 `experiments/results/tessera_lut_landing_ceiling.json` (+ `.log`), eleven arms
@@ -155,8 +169,13 @@ metric's cost is `sum(A*C² − 2*B*C)`, the quadratic with its constant
 dropped), so they must be **differenced, never divided**; the quantity with a
 meaning is the loss the landing adds, `landed − continuous ≥ 0`.
 
-On the **first refit pass** — the one pass where both arms enter with the same
-`continuous` optimum, so the comparison is like for like:
+A pass is comparable only while both arms enter it with the same `continuous`
+optimum. Pass 1 always is. So is any later pass a unit reaches with its table
+still unchanged, because the encode is deterministic and an identical table
+hands the next pass an identical plane — which is how `L2.down_proj`, flat at
+0.00% in pass 1, is read at all.
+
+On the **first refit pass**:
 
 | unit | control loss | exact loss | removed |
 |---|---:|---:|---:|
@@ -164,13 +183,22 @@ On the **first refit pass** — the one pass where both arms enter with the same
 | the other five | — | unchanged | 0.00% |
 | **total** | 13.8560 | 13.4368 | **3.03%** |
 
-So the exact DP **strictly wins the objective `_fit_lut` states**, on identical
-inputs — and held-out `out` still comes out 0.515% worse.
+On the **first pass where each unit's table actually differs**, with the
+`continuous` equality re-checked at that pass:
 
-Later passes are excluded from that table on purpose: an arm that changes the
-table in pass 1 hands pass 2 a different starting plane, so the summed columns
-(`step won` 64.23 vs 63.30, `landing lost` 48.62 vs 48.21) are not comparable
-pass for pass.
+| unit | pass | control loss | exact loss | removed | held-out `out` |
+|---|---:|---:|---:|---:|---:|
+| `L0.q_proj` | 1 | 5.8000 | 5.3809 | **7.23%** | 1.03056x |
+| `L2.down_proj` | 2 | 0.7269 | 0.7268 | **0.02%** | 1.00075x |
+| the other four | — | tables identical in every pass | | 0.00% | 1.00000x |
+
+So the exact DP **strictly wins the objective `_fit_lut` states**, on identical
+inputs, on both units where it moves at all — and held-out `out` rises on both,
+roughly in proportion. It buys 7.23% of q_proj's landing loss for 3.06% of its
+output error, and 0.02% of L2.down's for 0.075% of its. The summed columns
+across all passes (`step won` 64.23 vs 63.30, `landing lost` 48.62 vs 48.21)
+are *not* comparable, because after a table changes the two arms are no longer
+on shared inputs; they are printed for completeness only.
 
 ## What this retires
 
@@ -181,7 +209,10 @@ is the problem:
   the DP returns the same bytes. There is no solver slack to spend there at
   all.
 * On the two where the DP finds a strictly better table under that objective,
-  **held-out `out` goes up**, once by 3.06%.
+  **held-out `out` goes up on both** — by 3.06% on `q_proj` for a 7.23%
+  objective win, and by 0.075% on `L2.down_proj` for a 0.02% one. The sign is
+  the same at two orders of magnitude apart, which is what makes it a property
+  of the objective rather than a single unlucky unit.
 
 `_fit_lut` minimises `sum_b A_b (c_b − s*_b)²`: a weight-space quadratic in
 the scale plane, weighted by the refit's local curvature, with the trellis
@@ -199,6 +230,14 @@ way.
 inside it is the sixteen-entry budget — four bits of index — which is a wire
 change and outside this issue's premise. The 17.46% below it is the E4M3 value
 set, likewise a wire change.
+
+`docs/ARCHITECTURE.md` was checked and deliberately **not** edited. Its two
+mentions of #50 (`:163`, `:200`) are pointers — "can remove that landing to
+read issue #50's ceiling", "a re-run trigger for the day a better landing
+lands" — and neither asserts the gap is reachable by a better sixteen-entry
+fit, so neither is made false by this result. Nothing here moves a default, a
+stage, a format, the plugin contract, a lane or a ship gate, which is what §0's
+maintenance contract triggers on.
 
 ## What would be worth doing instead (proposals, not builds)
 
@@ -256,8 +295,11 @@ statement is that no default is proposed, so the gate has nothing to judge.
   function both paths call.
 * `a872ed1` — the first landing-split reader **divided** the diagnostics'
   negative costs, which is meaningless; it differences them now.
+* `a507299` — the same reader compared pass 1 only, so `L2.down_proj` read
+  0.00% next to a held-out `out` of 1.00075x; it now walks forward to the first
+  pass whose tables differ and re-checks `continuous` equality there.
 
-## An unhedged timing observation, deliberately not a claim
+## A timing observation, hedged and deliberately not a claim
 
 The DP ran the refit at roughly half the greedy's wall clock (`q_proj` 70.2 s
 vs 133–142 s; `k_proj` 37.5 s vs 75 s), because `_fit_lut`'s elimination and
@@ -266,13 +308,35 @@ times. **This is a wall clock on a contended box with no profile either side,
 so under principle 15 it is not a speed claim** — only a reason someone might
 want to take one.
 
+## Issues filed
+
+**None.** Everything found was either fixed on this branch as a separate
+commit (the three listed above) or is a change of premise that is Rob's to
+make, not a defect to file: making `refit_lut_exact` the default would move
+bytes, and both proposals in *What would be worth doing instead* change what
+the fit optimises. Those are recorded here rather than as issues so the
+decision stays with the decision-maker.
+
 ## Consultations
 
-* **advisor** (stronger reviewer, full transcript) — asked how to spend the
+**Two, both with `advisor`; no Fable consultation** — the question turned out
+to be measurable rather than hard, which is the condition under which the
+ladder says not to escalate. (This count is my own record: the worker session's
+transcript is not among the `.jsonl` files on disk, so it could not be
+machine-checked; the file the compaction pointer names is a session with 1907
+Bash calls and 35 agent spawns, i.e. the coordinator's, not this one's.)
+
+* **advisor #1** — asked how to spend the
   wait on the encode arms. It steered the targeted-test ordering, warned that
   an `!! IDENTICAL RECONSTRUCTION` on *some* units was expected rather than a
   bug, predicted a held-out regression was possible even under a monotone
   per-pass fit, and pointed at `refit_diagnostics`' third leg as the
   mechanism-level reading. All four held up against the measurement; the third
-  leg became the decisive evidence. No Fable consultation was needed — the
-  question turned out to be measurable rather than hard.
+  leg became the decisive evidence.
+* **advisor #2** — asked, with the report already committed, what was left. It
+  caught that the "two strict wins" claim was proven for `q_proj` only, since
+  `L2.down_proj` read 0.00% in pass 1, and that the first pass whose tables
+  differ is still a fair comparison when `continuous` agrees there. Checked
+  against the arm JSON: correct, and it turned a single-unit result into a
+  two-unit one spanning two orders of magnitude (`a507299`). It also caught
+  the inverted section title above and the missing *Issues filed* line.
