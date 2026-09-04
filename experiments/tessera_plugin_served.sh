@@ -46,9 +46,9 @@ PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # default belongs with the reader.
 # TESSERA_LANE_EAGER=0 serves under vLLM's default compiled forward + CUDA
 # graphs; the eager serve is the numerics arm, the compiled serve is principle
-# 9's second leg.  The repeated store_true flag is a no-op stand-in so the argv
-# shape does not change between the two.
-EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
+# 9's second leg.  Compiled mode contributes no optional flag;
+# --trust-remote-code is appended once below.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=
 # Which compiled build served this dump, recorded beside it (issue #30).  This
 # wrapper already pins ONE $VLLM_CACHE across every arm, so the stamp can read
 # the cache slot's contents and the sidecar is complete: the AOT key alone

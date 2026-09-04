@@ -135,6 +135,18 @@ rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
 Images outside the pinned repository (Mia's GLM image) are resolved and
 stamped, not refused.
 
+`experiments/serve_lock.sh` is the one lock protocol for every serve and every
+GPU-only probe.  Acquisition publishes one symlink at the host-local
+`serve.lock` pathname; its target binds PID, `/proc` start ticks and a random
+nonce, so publication has no directory-to-owner gap and PID reuse is not
+ownership.  All new-protocol observe/reap/publish transitions run under a
+host-local `flock` guard, so two dead-owner reapers cannot unlink each other's
+replacement token.  Release first matches that exact target.  A dead token is
+reaped only after the PID/start pair no longer names its publisher and Docker
+reports no running container.  During the rolling transition, the same
+pathname also excludes legacy directory-lock clients; old directories retain
+their stricter hour-old, dead-owner, no-container recovery rule.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and
@@ -459,8 +471,29 @@ the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's. Both arms of that
 receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
 a compiled serve, where the trace declines and the attestation is
-`compile_identity`'s per-arm AOT key plus the mutual KL itself. That arm was
-taken for #113: compiled, the same two arms read mutual `KL >= 0.012585` at
+`compile_identity`'s per-arm AOT key plus the mutual KL itself. When
+`TESSERA_KL_PROFILE_DIR` is set, the wrapper also enables vLLM's torch
+profiler, starts it immediately before the decode dump, stops it before the
+prefill dump, and writes `window_gemv_trace_summary.py`'s kernel summary. That
+is the compiled arm's runtime launch evidence; it is not inferred from the
+compile-time route trace. Its launch gate counts the manifest's source-role
+**units**, because every scored decode position launches the GEMV once for each
+role. Its fallback refusal gate separately counts module containers, because
+preparation refuses once per container. Thus the #113 population's 256 scored
+positions over 112 modules / 196 units requires exactly 50,176 GEMV launches
+in a lane arm and 112 preparation refusals in a fallback arm; collapsing those
+two manifest axes is a failed gate, not a tolerance. Profile export and parsing
+are also distinct phases on GB10: the wrapper stops the decode-only profiler,
+takes the matched prefill dump, reaps the serve, then parses the exactly-one
+`rank0` model-worker trace under a 900-second timeout and a 64-GiB
+`MemAvailable` headroom gate matching the action's declared allocation (not a
+hard parser memory cap), and records peak parser RSS. It hashes the
+complete profiler-file roster and stream-scans every excluded trace, refusing
+if one contains `window_gemv`; an API-process trace is excluded by evidence,
+not by filename alone. Parsing before reap drove the shared UMA pool to 3.6 GiB
+available in #113 r4 even though the parser itself peaked at 20.1 GiB RSS. The
+first arm taken for #113 read: compiled, the
+same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
 and that decode number is **below** the same-artifact rebuild delta measured
 beside it (`KL >= 0.019423`, arm A re-served, one lane state, two builds), so

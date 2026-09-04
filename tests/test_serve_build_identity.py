@@ -29,6 +29,7 @@ agree needs a live serve and is not claimed here.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -679,6 +680,25 @@ def test_the_real_serve_logs_of_the_measured_pair(log, expected):
 # A gate that refuses on a match (#16)
 
 _WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
+_TS113_CAMPAIGN = (
+    Path(__file__).resolve().parents[1]
+    / "experiments"
+    / "ts113_sparklina_campaign.sh"
+)
+_TS113_PREFLIGHT = (
+    Path(__file__).resolve().parents[1]
+    / "experiments"
+    / "ts113_sparklina_preflight.sh"
+)
+_EAGER_WRAPPERS = [
+    Path(__file__).resolve().parents[1] / "experiments" / name
+    for name in (
+        "decode_regime_kl.sh",
+        "gridbook_lane_served.sh",
+        "tessera_plugin_served.sh",
+        "window_gemv_latency.sh",
+    )
+]
 
 
 def test_a_matching_pattern_returns_zero_only_when_the_producer_is_not_piped():
@@ -723,6 +743,206 @@ def test_the_serve_wrapper_does_not_repeat_trust_remote_code_as_a_noop():
     body = _WRAPPER.read_text()
     assert "EAGER_FLAG=--trust-remote-code" not in body
     assert "DETAILS_FLAG=--trust-remote-code" not in body
+
+
+@pytest.mark.parametrize("wrapper", _EAGER_WRAPPERS, ids=lambda path: path.name)
+def test_serve_wrappers_do_not_repeat_trust_remote_code_as_a_noop(wrapper):
+    """Compiled mode contributes no flag before the one required copy."""
+    body = wrapper.read_text()
+    assert "EAGER_FLAG=--trust-remote-code" not in body
+
+
+def test_decode_wrapper_profiles_only_the_decode_measurement_when_requested():
+    """Compiled launch evidence brackets the M=1 dump, not startup/prefill."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    assert "TESSERA_KL_PROFILE_DIR" in body
+    start = body.index("/start_profile")
+    decode = body.index('echo "=== decode-regime dump')
+    stop = body.index("/stop_profile")
+    prefill = body.index('echo "=== prefill-regime dump')
+    assert start < decode < stop < prefill
+    assert "window_gemv_trace_summary.py" in body
+
+
+def test_decode_wrapper_makes_container_output_mounts_writable():
+    """Root-squashed containers must be able to write trace/profile mounts."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    assert 'chmod a+rwx "$TRACEDIR"' in body
+    assert 'chmod a+rwx "$PROFILE_DIR"' in body
+
+
+def test_decode_wrapper_reaps_the_serve_before_summarising_its_profile():
+    """Trace parsing may not overlap the GB10 memory held by the live serve."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    stop = body.index("/stop_profile")
+    prefill = body.index('echo "=== prefill-regime dump')
+    reap = body.index("\nreap\n", prefill)
+    summary = body.index("window_gemv_trace_summary.py", stop)
+    assert stop < prefill < reap < summary
+    assert 'path.name.startswith("rank0.")' in body
+    assert 'MemAvailable:' in body
+    assert 'TESSERA_PROFILE_SUMMARY_TIMEOUT_S' in body
+    assert 'profile-$ARM-files.json' in body
+    assert 'window_gemv_present' in body
+    assert 'excluded profiler trace' in body
+    assert 'if ! remaining=$(docker ps' in body
+
+
+def _profile_roster(tmp_path, *, excluded=b'{"traceEvents":[]}'):
+    import gzip
+
+    body = _EAGER_WRAPPERS[0].read_text()
+    start = body.index("rank0_trace=$($PY - ")
+    code = body[start:].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    root = tmp_path / "profile"
+    root.mkdir(exist_ok=True)
+    (root / "rank0.one.pt.trace.json.gz").write_bytes(
+        gzip.compress(b'{"traceEvents":[{"name":"window_gemv"}]}')
+    )
+    (root / "api.pt.trace.json.gz").write_bytes(gzip.compress(excluded))
+    (root / "metadata.txt").write_text("all outputs must be hashed")
+    out = tmp_path / "files.json"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(root), str(out)],
+        capture_output=True, text=True,
+    )
+    return result, root, out
+
+
+def test_profile_roster_hashes_all_outputs_and_attests_exclusion(tmp_path):
+    result, root, out = _profile_roster(tmp_path)
+    assert result.returncode == 0, result.stderr
+    record = json.loads(out.read_text())
+    assert Path(result.stdout.strip()) == root / record["rank0_trace"]
+    assert {row["path"] for row in record["files"]} == {
+        path.name for path in root.iterdir()
+    }
+    for row in record["files"]:
+        data = (root / row["path"]).read_bytes()
+        assert row["sha256"] == hashlib.sha256(data).hexdigest()
+        assert row["bytes"] == len(data)
+        if row["trace"] and not row["rank0"]:
+            assert row["window_gemv_present"] is False
+
+
+def test_profile_roster_refuses_target_split_across_scan_chunks(tmp_path):
+    result, _, out = _profile_roster(
+        tmp_path, excluded=b" " * (1024 * 1024 - 5) + b"WINDOW_GEMV"
+    )
+    assert result.returncode != 0
+    assert "excluded profiler trace" in result.stderr
+    assert not out.exists()
+
+
+def test_decode_wrapper_exit_reaps_before_releasing_the_serve_lock():
+    body = _EAGER_WRAPPERS[0].read_text()
+    reap = body.index("reap() {")
+    cleanup = body.index("trap 'reap; ")
+    launch = body.index('docker run -d --name "$NAME"')
+    assert reap < cleanup < launch
+    trap = next(line for line in body.splitlines() if line.startswith("trap "))
+    result = subprocess.run(
+        ["bash", "-c", "reap() { echo reap; SERVE_REAPED=1; }; "
+         "serve_lock_release() { echo release; }; " + trap + "; exit 42"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 42
+    assert result.stdout.splitlines() == ["reap", "release"]
+    failed = subprocess.run(
+        ["bash", "-c", "reap() { echo reap; SERVE_REAPED=0; }; "
+         "serve_lock_release() { echo release; }; " + trap + "; exit 42"],
+        capture_output=True, text=True,
+    )
+    assert failed.returncode == 42
+    assert failed.stdout.splitlines() == ["reap"]
+    assert "cleanup unverified" in failed.stderr
+
+
+def test_ts113_launch_gate_counts_source_roles_not_module_containers(tmp_path):
+    """One GEMV launches per source role, while fallback refuses per module."""
+    body = _TS113_CAMPAIGN.read_text()
+    anchor = body.index("read -r DECODE_POSITIONS")
+    start = body.index("<<'PY'\n", anchor) + len("<<'PY'\n")
+    end = body.index("\nPY\n", start)
+    program = body[start:end]
+
+    closure = tmp_path / ".pbrun-closure.test.json"
+    manifest = tmp_path / "manifest.json"
+    contract = tmp_path / "runtime_contract.json"
+    corpus = tmp_path / "corpus.json"
+    identity = tmp_path / "CAMPAIGN_IDENTITY.json"
+    closure.write_text(json.dumps({
+        "cwd": ".",
+        "dirty_sha256": hashlib.sha256(b"").hexdigest(),
+        "head": "a" * 40,
+    }))
+    manifest.write_text(json.dumps({
+        "modules": {
+            "model.layers.0.qkv_proj": {
+                "grid": "E4M3", "q256": 1024, "roles": ["q", "k", "v"],
+            },
+            "model.layers.0.gate_up_proj": {
+                "grid": "E4M3", "q256": 1024, "roles": ["gate", "up"],
+            },
+        },
+        "totals": {"modules": 2, "units": 5},
+    }))
+    contract.write_text(json.dumps({
+        "formats": [{"grid": "E4M3", "family": "TESSERA_FP8"}],
+        "lane_eligibility": {"cells": [{
+            "platform": "sm_121",
+            "structure": "dense",
+            "regime": "decode",
+            "family": "TESSERA_FP8",
+            "rungs_q256": [1024],
+            "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
+            "executes": [{
+                "symbol": "tessera_window_gemv::gemv",
+                "decoder": "window_gemv",
+            }],
+        }]},
+    }))
+    corpus.write_text(json.dumps({
+        "n_chunks": 1,
+        "seqlen": 5,
+        "chunks": [[1, 2, 3, 4, 5]],
+        "contract_sha256": "b" * 64,
+    }))
+
+    result = subprocess.run(
+        [sys.executable, "-", str(closure), "c" * 40, PIN,
+         str(manifest), str(contract), str(corpus), str(identity), "2",
+         "device:inode"],
+        input=program,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert [int(value) for value in result.stdout.split()] == [2, 2, 5, 10]
+    derived = json.loads(identity.read_text())["derived_gate"]
+    assert derived["eligible_modules"] == 2
+    assert derived["eligible_units"] == 5
+    assert derived["expected_window_gemv_launches"] == 10
+    assert derived["fallback_refusals"] == 2
+
+
+def test_ts113_preflight_defaults_to_the_campaign_population():
+    """The standalone preflight must guard the namespace the campaign writes."""
+    campaign = _TS113_CAMPAIGN.read_text().splitlines()
+    preflight = _TS113_PREFLIGHT.read_text().splitlines()
+
+    def literal(lines, name):
+        return next(line.split("=", 1)[1] for line in lines
+                    if line.startswith(f"{name}="))
+
+    def default(lines, name):
+        value = literal(lines, name)
+        return value.split(":-", 1)[1][:-1]
+
+    assert default(preflight, "POP_ROOT") == literal(
+        campaign, "PROMOTIONAL_POP_ROOT")
+    assert default(preflight, "LOCAL_ROOT") == literal(
+        campaign, "PROMOTIONAL_LOCAL_ROOT")
 
 
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:

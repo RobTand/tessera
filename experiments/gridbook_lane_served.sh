@@ -30,7 +30,8 @@ PY=/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python
 # serve is the numerics arm, the graph serve is principle 9's second leg.
 # TESSERA_LANE_DOCKER_EXTRA adds docker-run arguments (e.g. -e CUDA_LAUNCH_BLOCKING=1
 # to make an asynchronous kernel fault name its kernel instead of the next cuBLAS call).
-EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code  # repeated store_true = no-op: graph mode is vLLM's default
+# An inactive optional flag is empty; --trust-remote-code is appended once.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=
 # Refuse a floating image BEFORE the serve lock: a wrapper that is going to
 # refuse must not first make every other agent on the box queue behind it.
 runtime_image_require "$IMAGE" || exit 2

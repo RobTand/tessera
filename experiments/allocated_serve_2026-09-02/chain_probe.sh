@@ -27,6 +27,7 @@ export TESSERA_GPU_MEM_UTIL=0.30
 export PORT=8004 TESSERA_KL_PORT=8004
 export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
 mkdir -p "$RUNS" "$EXT"
+source "$TS/experiments/runtime_image.sh"
 
 kl () {       # <checkpoint> <arm>
   local ckpt=$1 arm=$2
@@ -46,7 +47,7 @@ kl "$OUT/qwen3-0.6b-l0-allocnodown"  l0-allocnodown
 TWIN=$OUT/qwen3-0.6b-l0-alloc-twin
 if [ -d "$TWIN" ] && [ ! -f "$KLDIR/qwen_tessera_l0-alloc-twin.json.npz" ]; then
   echo "== kl l0-alloc-twin (stock twin, vanilla vLLM, no plugin)"
-  TESSERA_KL_IMAGE=vllm/vllm-openai:latest TESSERA_KL_NAME=alloc-serve-l0twin \
+  TESSERA_KL_IMAGE="$(runtime_image_pin)" TESSERA_KL_NAME=alloc-serve-l0twin \
     "$TS/experiments/serve_and_dump_kl.sh" "$TWIN" \
     "$KLDIR/qwen_tessera_l0-alloc-twin.json" student > "$RUNS/arm_l0-alloc-twin.log" 2>&1
   echo "   rc=$?"; tail -8 "$RUNS/arm_l0-alloc-twin.log"
