@@ -1165,6 +1165,19 @@ manifest's `routed_moe` block. Every byte-deciding row — the tensor digest, th
 `quantization_config`, the `ignore` list — is identical, and an unplanned stack
 is untouched.
 
+**It was run and read back, on the CPU.**
+`experiments/moe_write_readback_check.py` (4 experts, 128x64, E4M3 q256=1024)
+writes a stack and then reads it with the plugin's own functions:
+`validate_tessera_moe_scheme` accepts the scheme, all 12 containers parse
+against their declared role, `unpack_moe_wires` round-trips them byte for byte
+off padded rows, and `prepare_tessera_moe_experts` decodes to
+`w13 [4, 128, 128] float8_e4m3fn` / `w2 [4, 128, 64]` with `[4, 128, 1]`
+scales — the stock per-channel FP8 stack. The `wire_stride` argument stops
+being an argument there: at ONE shape and ONE rung the eight `w13` blobs run
+21293..21297 bytes, a 4-byte spread, and the declared stride is the max. This
+is the plumbing and the reader's acceptance; the CUDA encoder and the fused-MoE
+kernel are not in it.
+
 ### What §14's list looks like now
 
 1. ~~The exporter's write half~~ — **done**, unpacked source.

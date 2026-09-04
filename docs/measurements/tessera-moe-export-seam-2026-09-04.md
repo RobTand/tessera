@@ -2,7 +2,8 @@
 
 **Date** 2026-09-04 · **Box** sparky (GB10, sm_121) · **Issue** #5 ·
 **Code** `experiments/export_tessera_serving.py`,
-`experiments/moe_route_load_probe.py`, `tests/test_export_moe_write.py`
+`experiments/moe_write_readback_check.py`, `experiments/moe_route_load_probe.py`,
+`tests/test_export_moe_write.py`
 
 Before this, `tessera.serving.moe_route` had been loaded and executed on the
 pinned runtime (`tessera-moe-route-load-2026-09-04.md`), the sidecar shape and
@@ -18,7 +19,7 @@ the two.
 | 1. The plugin has no MoE route | closed before this pass (`moe_route.py`, load-and-execute receipt) |
 | 2. The exporter mis-plans this model silently | closed on master (`ee54038`/`d82b29e`/`3caa49c`, then `7375914`/`2975448`) |
 | 3. The fused parameter layout | closed on master (`c9561e3`, `moe_layout.py`) |
-| 4. Both source layouts | **unpacked: closed here. packed 3-D: still refused** — §4 |
+| 4. Both source layouts | **unpacked: written and read back here (CPU). packed 3-D: still refused** — §2, §4 |
 | 5. Contract rows + a served census and KL | **OPEN.** No serve was run; §5 says why and what it costs |
 
 **No `routed_moe` cell was added to `runtime_contract.json`,** and none should
@@ -51,6 +52,35 @@ The scheme dict is put through `scheme.validate_tessera_moe_scheme` — the exac
 function `TesseraConfig` calls — before `config.json` is written. The reader is
 the gate, so the writer is held to it at write time rather than at load.
 
+### It was run, and read back — **on the CPU**
+
+`experiments/moe_write_readback_check.py`, through the pool, no GPU
+(`CUDA_VISIBLE_DEVICES=`), on a miniature of the real checkpoint: 4 experts,
+`hidden_size` 128, `moe_intermediate_size` 64, `E4M3` at `q256=1024`, the
+default `WINDOW`/`CHANNEL` wire. Everything below is the run's own output, not
+a reading of the code:
+
+| Read back with | Result |
+|---|---|
+| `config.json` | one `config_groups` entry, `format: TESSERA`, `targets: [<stack>]`, and the stack **not** in `ignore` |
+| `scheme.validate_tessera_moe_scheme` (what `TesseraConfig` calls) | accepted: `structure routed_moe`, 4 experts, hidden 128, intermediate 64 |
+| `model.safetensors` | 12 one-dimensional `uint8` `.wire` tensors under the stack, and no `.weight` left behind |
+| `scheme.parse_tessera_expert_blob` per container | all 12 parse against their declared role — grid, body, plane, span, rung, geometry |
+| `moe_layout.unpack_moe_wires` | padded rows plus lengths round-trip to the written blobs **byte for byte** |
+| `moe_route.prepare_tessera_moe_experts(device="cpu")` | `w13_weight [4, 128, 128] float8_e4m3fn`, `w2_weight [4, 128, 64]`, scales `[4, 128, 1]` each — the stock per-channel FP8 stack |
+
+**The variable-length claim is now a number.** Inside `w13`, at one shape and
+one rung, the eight blobs run **21293..21297 bytes — a 4-byte spread** — and
+the declared `wire_stride` is 21297, the max. That is exactly the reason the
+sidecar declares a stride rather than a `wire_bytes`: there is no single length
+for the group to promise. (`w2`'s four blobs happened to agree at 21427; the
+stride is still the max, derived the same way.)
+
+This covers the exporter's plumbing and the plugin's *reader* acceptance. It
+does **not** cover the CUDA encoder path or the fused-MoE kernel — those are
+`tests/test_export_moe_write.py`'s three `@cuda` cases and the load probe, and
+§5 says where they stand. A CPU run is not a GPU receipt.
+
 ## 3. What is refused before the first encode
 
 A GLM routed stack is 864 units and ~75 minutes of GPU, so every disagreement
@@ -64,7 +94,7 @@ and reproduced by hand at the shapes below):
 | the stack at `E2M1x2` | `scheme.MOE_BUILDERS names ['TESSERA_FP8']`, with the NVFP4 clamp receipt cited |
 | expert 1 absent | `missing expert(s) [1] of 4` — the parameter is `[E, ...]` and the loader writes row `expert_id`, so a gap is a row of zeros served as an expert |
 | expert 2 without `up_proj` | `w13 is the gate/up PAIR, so a stack missing one half has no second half for the tile` |
-| one expert at a different shape | `One stack is one tile, so one shape` |
+| one expert at a different shape | `One stack is one tile, so one shape` — reproduced end to end in `moe_write_readback_check.py`, on a whole checkpoint |
 | intermediate size 40 (not a whole tuple) | `a routed stack cannot be half passed through, because vLLM builds ONE method per stack` |
 | the stack plus `--layers 1` | the bound stops before the planned stack; refused rather than silently skipped |
 | the stack plus `--stock-twin` | there is no per-channel FP8 expert twin writer, so the twin would be a checkpoint with no experts in it |
@@ -118,12 +148,23 @@ packed-source model this repo can serve.
 ## 5. What was NOT done, and why
 
 * **No served census and no KL.** Item 5 stays open. Both GB10 GPUs in the pool
-  were held for the whole of this pass — sparky's two by other agents' jobs,
-  sparklina's one by an out-of-pool encode — with ready items up to 2.9 h old,
-  so the encode campaign in §4 was costed and scripted but not submitted. It is
-  also more than an encode: no GLM artifact has ever been served in this repo
-  (every served receipt here is Qwen3-0.6B), so the serve needs a GLM teacher
-  dump on the pinned image before a student KL means anything.
+  were held for the whole of this pass — sparky's three tokens by other agents'
+  jobs, sparklina's by an out-of-pool encode — behind a 19-deep GPU queue whose
+  head-of-line item was **3.6 h old**, so the encode campaign in §4 was costed
+  and scripted but not submitted. It is also more than an encode: no GLM
+  artifact has ever been served in this repo (every served receipt here is
+  Qwen3-0.6B), so the serve needs a GLM teacher dump on the pinned image before
+  a student KL means anything.
+* **No GPU leg of this pass ran.** Two jobs are queued and unclaimed:
+  `93f5bae3b4be` (the three `@cuda` cases of `tests/test_export_moe_write.py`
+  plus `tests/test_export_moe_layouts.py`) and `2be23f3a9e9d`
+  (`experiments/moe_route_load_probe.sh`, whose `positive_exported` leg is the
+  matched pair: the same experts, shapes, rung, seed and weights, with only the
+  producer of the bytes varying). The CPU pytest of
+  `tests/test_export_moe_layouts.py` did land — `839b1b0a1bf4`, **22 passed, 2
+  skipped in 29.74 s**, the two skips being its CUDA cases. So the CUDA-gated
+  surface of this pass is *unmeasured*, not *passing*; §2 says which legs the
+  CPU run does and does not cover.
 * **The model-level load hop is still unmeasured.** The probe drives
   `RoutedExperts.load_weights`; in a serve
   `Glm5NextForConditionalGeneration.load_weights` runs first and decides what is
@@ -154,8 +195,13 @@ Everything that decides bytes is **unchanged**:
 `export/dense/quantization_config`, `export/dense/ignore`,
 `export/dense/declared` and `export/dense/tensor_names` are all identical, as
 are the six other cases' export rows. So a checkpoint written before this pass
-is byte-identical under the same command line, and an unplanned stack is
-untouched: source precision, named in `ignore` at the FusedMoE prefix.
+is byte-identical under the same command line.
+
+The unplanned stack is **directly measured** too, rather than inferred from
+that: leg 2 of `moe_write_readback_check.py` exports the same checkpoint with
+no plan entry for the stack, and the run reports the stack named in `ignore`,
+no `.wire` tensor anywhere under it, every source `.weight` still present, and
+`routed_moe.disposition == "passed_through_bf16"`.
 
 *(The `dense` case is the only one of the seven that reaches an export at all;
 the other six are construction-gate refusals, and their refusal text is

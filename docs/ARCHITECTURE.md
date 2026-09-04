@@ -286,6 +286,12 @@ gate covers the stack too, through the census's `offered_non_linear` row --
 a `RoutedExperts` stack is not a `LinearBase`, so it is recorded there and a
 classifier reading only `offered` called it `absent`. An unplanned stack is
 untouched: source precision, named in `ignore` at the FusedMoE prefix.
+`experiments/moe_write_readback_check.py` writes a stack on the CPU and reads
+it back through the plugin's own functions -- scheme validation, per-container
+parse, `unpack_moe_wires`, `prepare_tessera_moe_experts` -- and it is where the
+stride stops being an argument: at one shape and one rung the blobs of a group
+differ in length, because the manifest's `global_scale` is an exact varint
+ratio whose width follows its value.
 
 The PACKED 3-D source layout has no export, and the reason is two conventions
 the tensor does not state: which axis is the output (the dims decide only when
