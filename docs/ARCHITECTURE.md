@@ -325,7 +325,11 @@ Two consequences, and only one of them is a refusal.
   pin one measurement -- one wire, one `(sigma, block)`, six weight-space Qwen
   units, no serve -- as a standing rule about the plane, which is the
   roster-not-rule failure AGENTS.md rule 3 names. The disagreement is a
-  **re-run trigger** for the day a better landing lands (issue #50).
+  **re-run trigger** for the day a better landing lands (issue #50). That
+  landing has since landed and did **not** cash the ceiling: the coupled
+  landing wins the Qwen screen (0.8037x) and **fails** the GLM six-expert
+  cross-check at 1.0160x, so it stays opt-in and the default is unmoved
+  (`docs/measurements/tessera-coupled-landing-glm-2026-09-04.md`).
 
 The pair is not free and is not readable off `refit_diagnostics`. That
 instrument's `continuous` leg is a within-call quantity by its own contract --

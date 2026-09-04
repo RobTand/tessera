@@ -69,15 +69,40 @@ each direction: **the coupled landing is overfitting the fit-row Hessian.**
 That is a coherent mechanism rather than noise --- and note there is no
 run-to-run noise to appeal to: every arm is deterministic given code and
 inputs, the drift control's floor is 0.0000%, and the sign is unanimous over
-six units in both columns. Nearest-in-linear landing is a weak, per-block
-rule; it cannot exploit fine structure in `H` because it never looks at more
-than one block's own target. The coupled landing looks at the
-full quadratic, so whatever `H` says --- including the part of `H` that is a
-1024-row sample and not the population --- it will spend the sixteen entries'
-assignment on. On dense Qwen Linears the fit-row `H` generalises well enough
-that this is a win. On routed-expert activations it does not: an expert's rows
-are the tokens the router sent it, and the fit/held-out split of that is a
-harder split than a dense layer's.
+six units in both columns.
+
+**The split is not the coupled landing's; it is the full-H objective's.** Read
+the B family as a ladder in how hard each arm minimises `E H E^T`:
+
+| arm | GLM `hfit` | GLM `out` |
+|---|---|---|
+| B-Jac --- one Jacobi step | 0.9929x | 0.9999x |
+| B-GS --- Gauss--Seidel sweep | 0.9783x | 1.0104x |
+| B-GS+CL --- and the coupled landing | 0.9627x | 1.0160x |
+
+Monotone in both columns, in opposite directions: each increment of minimising
+power buys `hfit` and pays for it in `out`. The coupled landing is the
+strongest minimiser on the rung and therefore the worst held-out --- it is not
+a defect of its own, it is the end of this ladder. The C family ends flat
+rather than worse (`C-GS -> C-GS+CL` is 0.9845x `hfit` for 1.00005x `out`), so
+the honest general statement is: **on GLM no arm here converts a full-H gain
+into an `out` gain.**
+
+The reason is the fit-row Hessian, not the landing rule. `H` is
+`x_fit^T x_fit / n_fit` over the **fit** rows only --- the 1024-row tail `out`
+is scored on is excluded from it, which is what makes `out` held-out at all ---
+and that sample is small against the dimension it has to condition. A GLM
+expert's rows are 4096-dimensional with `n_fit = 8192 - 1024 = 7168`, so
+`p/n = 0.57`. The six Qwen units are 1024- or 3072-dimensional over 16384 fit
+tokens: `p/n` from 0.06 to 0.19, three to nine times better conditioned. At
+`p/n ~ 0.57` a sample Hessian's small eigenvalues are badly underestimated, so
+an exact minimiser of `E H E^T` is free to spend its budget along directions
+the held-out rows still have energy in. Nearest-in-linear landing is a weak
+per-block rule that never looks past one block's own target: it cannot exploit
+that fine structure and so cannot be hurt by it. The coupled landing looks at
+the full quadratic and takes whatever `H` offers, sampling error included. That
+an expert's rows are only the tokens the router sent it makes the fit/held-out
+split harder still, on top of the aspect ratio.
 
 **Do not read this lever on `plain`.** Weight space worsens on GLM as it does
 on Qwen --- lever 1.0101x, composite 1.0261x --- and that is the mechanism
@@ -151,8 +176,13 @@ about that here.
   unanimously is a statement about `H`, not about the landing. The same
   reading applies to any future exact minimiser of the same objective --- a
   better solver of a fit-row quadratic buys nothing when the quadratic is the
-  thing that is wrong. `refit_reach_floor`-style regularisation of `H`, or a
-  held-out-scored refit, is where that goes.
+  thing that is wrong. There is a concrete
+  asymmetry to start from, visible in this script's own schedule: LDLQ is
+  given `regularize_hessian(H, sigma_reg=1.0)` at `refit_trailing_pair.py:261`,
+  while the refit and the coupled landing are handed the **raw** `H`. One
+  consumer of this Hessian is damped and the other is not, and it is the
+  undamped one that overfits. Damping the refit's `H`, or scoring the refit on
+  held-out rows, is where that goes.
 
 ## Provenance
 
