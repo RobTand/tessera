@@ -12,8 +12,9 @@ import subprocess
 import sys
 import threading
 
-sys.path.insert(0, str(Path.cwd() / "src"))
+sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
+from experiments.ts5_stage_cleanup import cleanup_stage
 
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
 SOURCE = Path("/mnt/shared/models/LFM2.5-8B-A1B-BF16")
@@ -53,6 +54,7 @@ def telemetry():
 monitor = threading.Thread(target=telemetry, daemon=True)
 monitor.start()
 completed = False
+launched = False
 try:
     assert not capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"]), "unique container name already exists"
     manifest_path = CAMPAIGN / "part0/tessera_serving_manifest.json"
@@ -85,6 +87,7 @@ try:
         "TESSERA_KL_EAGER": "1", "TESSERA_KL_REGIME": "prefill",
     })
     with (OUT / "action.log").open("w") as log:
+        launched = True  # Ownership starts only when the launch can begin.
         subprocess.run([
             "timeout", "--signal=TERM", "--kill-after=30s", "900s",
             "experiments/serve_and_dump_kl.sh", str(SOURCE), str(OUT / "teacher_bf16.json"),
@@ -117,19 +120,9 @@ try:
     write("source-bound-result.json", evidence)
     completed = True
 finally:
-    cleanup = {"container_name": NAME, "measurement_completed": completed}
-    try:
-        existing = capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"])
-        cleanup["container_before_cleanup"] = existing
-        if existing:
-            subprocess.run(["docker", "rm", "-f", NAME], check=True, timeout=45)
-        cleanup["container_after_cleanup"] = capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"])
-        cleanup["gpu_compute_processes"] = capture(["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader"])
-        cleanup["safe_to_release"] = not cleanup["container_after_cleanup"] and not cleanup["gpu_compute_processes"]
-        write("cleanup.json", cleanup)
+    cleanup = cleanup_stage(NAME, launched=launched, completed=completed,
+                            stop=stop, monitor=monitor)
+    write("cleanup.json", cleanup)
+    if launched:
         assert cleanup["safe_to_release"], "GPU/container cleanup not verified"
-    finally:
-        stop.set()
-        monitor.join(timeout=35)
 print(json.dumps({"result": str(OUT / "source-bound-result.json"), "cleanup": str(OUT / "cleanup.json")}), flush=True)
-

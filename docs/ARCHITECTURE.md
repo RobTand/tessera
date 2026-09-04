@@ -482,6 +482,13 @@ compare every merged shard and sidecar with the checked assembly seal before
 and after execution, mount the exact model directory read-only, and preserve
 the raw census or matched teacher/student comparison alongside their hashes.
 Each stage owns one exclusive GPU reservation through verified cleanup.
+The teacher and served-stage drivers share `experiments/ts5_stage_cleanup.py`.
+Container ownership begins only immediately before their launch call; a
+prelaunch name collision is observed but never removed by the refusing action.
+Cleanup stops telemetry first, joins it for at most two seconds, and shares
+one 90-second deadline across all Docker/GPU subprocess waits, within the
+120-second outer cleanup grace. Failed inspections or an exhausted deadline
+produce an unsafe cleanup receipt; they never count as an empty process list.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
