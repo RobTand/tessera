@@ -38,4 +38,26 @@ wrote /home/rob/tmp/musefix/out/ts89_fullh.json
 ........................................................................ [ 37%]
 ........................................................................ [ 43%]
 ........................................................................ [ 48%]
-..........................
+........................................................................ [ 53%]
+........................................................................ [ 59%]
+.........................s.............................................. [ 64%]
+........................................................................ [ 70%]
+........................................................................ [ 75%]
+........s.......s........s...s.......................................... [ 80%]
+........................................................................ [ 86%]
+........................................................................ [ 91%]
+........................................................................ [ 97%]
+........................................                                 [100%]
+=============================== warnings summary ===============================
+tests/test_compensate.py::test_encoding_a_slice_equals_the_span_of_a_whole_encode[1-0]
+  /home/rob/tmp/musefix/ts-89-dyadic/src/tessera/encode.py:1129: UserWarning: No PYTORCH_KERNEL_CACHE_PATH or HOME environment variable set! This disables kernel caching. (Triggered internally at /pytorch/aten/src/ATen/native/cuda/jit_utils.cpp:1489.)
+    ratio = per_half / torch.exp2(base_for_half)
+
+tests/test_compensate.py: 14 warnings
+  /home/rob/dq-runs/venvs/prismaquant-cu130/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1331 passed, 6 skipped, 15 warnings in 932.83s (0:15:32)
++ echo '=== TARGETED exit 0'
+=== TARGETED exit 0

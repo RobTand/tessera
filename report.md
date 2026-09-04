@@ -441,7 +441,30 @@ Nothing in this report is a ship claim, and the gap is large:
 
 ---
 
-## 11. Off-task fixes landed on this branch
+## 11. Targeted test evidence
+
+No full suite (AGENTS.md `1f7836c`). `tools/impacted_tests.py --ref master...HEAD`
+returns **verdict `narrowed`** — 25 changed paths, every one a Python module the
+import graph covers — and names **71 test files**. All 71 ran in one pool action
+on sparky:
+
+```
+1331 passed, 6 skipped, 15 warnings in 932.83s   (=== TARGETED exit 0)
+```
+
+Pre-fix failure line for the two tests added with the #84 reporting fix, captured
+on a detached `master` worktree before the change:
+
+```
+ImportError: cannot import name 'window_table_reach' from 'tessera.encode'
+```
+
+The gauge test added in `4cf9a69` has **no** pre-fix failure line, and that is
+deliberate: it passes on master too. It pins §3's invariant against future
+change; it is not evidence of a fix, and the report should not be read as
+claiming it is.
+
+## 12. Off-task fixes landed on this branch
 
 Each is a separate commit so it can be taken or dropped independently.
 
@@ -450,9 +473,10 @@ Each is a separate commit so it can be taken or dropped independently.
 | `b85e233` | #84's reporting half: `window_table_reach()` returns requested vs realised reach, `delivered`, `saturated`, `saturated_fraction`; `EncodedUnit.table_reach` records it per encode (diagnostic, never wire); `bf16_l_sigma_sweep.py` reports it. Two new tests in `tests/test_window_body.py`. |
 | `14880cd` | `scale_channel._default_sigma`'s docstring said the ladder was dyadic. It is a **quarter-binade** ladder (`peak · 2^(-k/4)`, forty rungs) minimising scalar-RTN nearest-value error — neither dyadic nor the objective #89 is about. Prose only, plus prose in `export.py`, `tests/test_bf16_route.py`, `experiments/tessera16_alphabet_floor.py`. |
 | `4cf9a69` | `tests/test_window_body.py::test_the_channel_sigma_is_a_gauge_up_to_powers_of_two` — pins §3's gauge (bit-identical fp16 row words, exact table scaling) and characterises where it breaks at the E4M3 floor. Passes on master too: it is a pin, not evidence of a fix. |
-| `a7f8ece` | `pbrun_result.txt` had ridden into git on a `git add -A`; the pool refuses to run an action whose declared result path already exists, so a restored copy failed two jobs. Untracked and excluded locally. |
+| `a7f8ece` + `2b84551` | `pbrun_result.txt` had ridden into git on a `git add -A`; the pool refuses to run an action whose declared result path already exists, so a restored copy failed two jobs. Untracked — and untracked *again* two commits later, because a blanket `git add -A` put it back: a worktree's `.git` is a **file**, so the relative `.git/info/exclude` a fix reaches for is not a directory and the append goes nowhere. The real path is `/home/rob/tessera/.git/worktrees/<name>/info/exclude`. |
+| `751302b` | `_default_sigma`'s docstring now records what its 0.11% margin bought: the four E4M3 residue classes are worth 1.00 / 1.18 / 1.32 / 1.35 under the window body at 8 b/wt, the 0.11% picks the 1.00, and the two objectives swap the middle pair. Prose only — and it says explicitly that this is not licence to re-derive the constant. |
 
-## 12. Consultations
+## 13. Consultations
 
 None. No `fable-*` agent was spawned. Every open question on this ticket was a
 few-encode experiment or a CPU diagnostic, and the one reduced model I built
