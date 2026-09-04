@@ -54,8 +54,9 @@ the gate, so the writer is held to it at write time rather than at load.
 
 ### It was run, and read back — **on the CPU**
 
-`experiments/moe_write_readback_check.py`, through the pool, no GPU
-(`CUDA_VISIBLE_DEVICES=`), on a miniature of the real checkpoint: 4 experts,
+`experiments/moe_write_readback_check.py`, through the pool on sparky
+(`260e2bcba0d5`), no GPU (`CUDA_VISIBLE_DEVICES=`), on a miniature of the real
+checkpoint: 4 experts,
 `hidden_size` 128, `moe_intermediate_size` 64, `E4M3` at `q256=1024`, the
 default `WINDOW`/`CHANNEL` wire. Everything below is the run's own output, not
 a reading of the code:
