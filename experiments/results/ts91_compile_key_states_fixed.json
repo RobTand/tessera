@@ -1,0 +1,35 @@
+{
+ "distinct_keys": 4,
+ "keys": {
+  "every module on the torch-window fallback": "233b6eaee447ae9e13b26deef8a63c5d974a4c204d48601fe088e71f516a37e2",
+  "every module on the window-GEMV lane": "85abb8e3a3afaec3719b797339baab08f6d9c10d398cffd3f406d02e844447e1",
+  "mixed: the even layers refused": "49dcd56dac0cd3d61ae8fc3e9f0e2ae401e9b469e805ac2114b1a4681358bfcd",
+  "mixed: the odd layers refused": "0716f2fc2f7398b63b7c64a8039a93474ece9f5942cca93c9167bcb10271b3a6"
+ },
+ "one_state_twice_is_one_key": true,
+ "records": {
+  "every module on the torch-window fallback": {
+   "serve_mode": "streamed",
+   "traced_dispatch": "torch._scaled_mm=112#e83f11db264126dc",
+   "version": "0.1.0"
+  },
+  "every module on the window-GEMV lane": {
+   "serve_mode": "streamed",
+   "traced_dispatch": "tessera::fp8_streamed_apply=112#ceed03ab2fc46b8d",
+   "version": "0.1.0"
+  },
+  "mixed: the even layers refused": {
+   "serve_mode": "streamed",
+   "traced_dispatch": "tessera::fp8_streamed_apply=56+torch._scaled_mm=56#a8e01a647fa254a9",
+   "version": "0.1.0"
+  },
+  "mixed: the odd layers refused": {
+   "serve_mode": "streamed",
+   "traced_dispatch": "tessera::fp8_streamed_apply=56+torch._scaled_mm=56#d4300f60a0994ba6",
+   "version": "0.1.0"
+  }
+ },
+ "schema": "tessera.serving.compile_key_states/1",
+ "states": 4,
+ "vllm": "0.28.0"
+}

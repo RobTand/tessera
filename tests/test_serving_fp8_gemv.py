@@ -242,6 +242,55 @@ def test_without_the_extension_streamed_falls_back_to_the_torch_path(monkeypatch
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
 
 
+@requires_cuda
+def test_the_two_streamed_lanes_declare_two_compile_identities(monkeypatch):
+    """Issue #91: the lane is a graph, so the compile-cache key must see it.
+
+    Both arms below are ``TESSERA_SERVE_MODE=streamed`` over the same wire and
+    the same source files; one prepares the GEMV holder and traces
+    ``tessera::fp8_streamed_apply``, the other cannot and traces the window
+    decode plus ``torch._scaled_mm``.  ``serve_mode`` alone is equal across
+    them, which is what let vLLM's AOT cache hand the second serve the first's
+    compiled forward.  What is asserted here is the route's half: that
+    ``process_weights_after_loading`` reports the op it will dispatch through.
+    """
+    import json
+
+    from tessera import kernel_window_gemv
+    from tessera.serving import compile_identity as ci
+
+    def _no_toolchain():
+        raise RuntimeError("no nvcc on this box")
+
+    def _identity(mp):
+        ci.reset_for_tests()
+        cfg = types.SimpleNamespace(
+            additional_config={},
+            compilation_config=types.SimpleNamespace(
+                mode=types.SimpleNamespace(name="VLLM_COMPILE")))
+        # The mode is declared from ``get_quant_method``, before weights load;
+        # the lane arrives at weight load, into the record that declared it.
+        ci.declare_compile_identity_in(cfg, serve_mode=MODE_STREAMED)
+        _g, _w, layer, _m, _ = _drive(mp, MODE_STREAMED)
+        return layer, json.dumps(cfg.additional_config, sort_keys=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        gemv_layer, gemv = _identity(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(kernel_window_gemv, "_ext", _no_toolchain)
+        fallback_layer, fallback = _identity(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        _again_layer, again = _identity(mp)
+    ci.reset_for_tests()
+
+    assert gemv_layer.tessera_gemv is not None
+    assert fallback_layer.tessera_gemv is None
+    assert fp8_gemv.STREAMED_APPLY_OP in gemv
+    assert fp8_gemv.STREAMED_APPLY_OP not in fallback
+    assert gemv != fallback, "two graphs, one compile identity"
+    assert gemv == again, "one lane state, two identities: the cache would never hit"
+
+
 def _synthetic_parsed(rows, cols, rates, seed=0):
     """A ParsedUnit stand-in carrying a raw window body (only what prepare reads)."""
     from types import SimpleNamespace

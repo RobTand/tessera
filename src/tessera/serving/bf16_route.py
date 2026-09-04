@@ -87,6 +87,7 @@ from typing import List, Optional, Sequence
 
 import torch
 
+from .compile_identity import note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_BF16, parse_tessera_blob_for_scheme, validate_tessera_scheme
@@ -97,6 +98,7 @@ from .window import PreparedWindow, prepare_window
 __all__ = [
     "ACTIVATION_CONTRACT",
     "GEMM_SYMBOL",
+    "STREAMED_APPLY_OP",
     "GEMV_MODULE_NAME",
     "GEMV_SYMBOL",
     "GEMV_MAX_M",
@@ -126,6 +128,11 @@ GEMV_MODULE_NAME = WINDOW_GEMV_MODULE_NAME
 #: (``tessera.kernel_window_gemv``'s ``tessera_window_gemv::gemv``); ``fp8_gemv``
 #: spells the same string where ITS dispatch lives.
 GEMV_SYMBOL = "tessera_window_gemv::gemv"
+
+#: The op the streamed GEMV lane dispatches through, for the same reason
+#: ``fp8_gemv.STREAMED_APPLY_OP`` is a constant: the compile-cache identity
+#: declares this string and torch registers the op under it.
+STREAMED_APPLY_OP = "tessera::bf16_streamed_apply"
 
 #: What a compiled record stamps.  One graph serves every M, so no single
 #: path's symbol is true of every launch through it; the honest static answer
@@ -555,7 +562,7 @@ def _materialised_path(x: torch.Tensor, tensors: List[torch.Tensor], meta: List[
 # prefill/materialised fallback all happen inside, where ``x.shape[0]`` is a
 # concrete integer -- exactly the shape ``tessera_window_gemv::gemv`` already
 # takes for the same reason.
-@torch.library.custom_op("tessera::bf16_streamed_apply", mutates_args=())
+@torch.library.custom_op(STREAMED_APPLY_OP, mutates_args=())
 def streamed_apply(x: torch.Tensor, tensors: List[torch.Tensor], meta: List[int],
                    rows: int, cols: int) -> torch.Tensor:
     M = x.shape[0]
@@ -739,6 +746,16 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                     layer.tessera_decoder = DECODER_WINDOW_GEMV
             # streamed without a GEMV lane: the prepared planes stay; the tile
             # is decoded per forward
+            #
+            # The same trace-time lane the FP8 route declares (issue #91):
+            # ``apply`` below branches on ``tessera_gemv``, so this module's
+            # forward contains either ``tessera::bf16_streamed_apply`` or a
+            # window decode plus ``torch.mm``, over byte-identical sources.
+            # vLLM's compile-cache key sees neither unless it is declared.
+            note_traced_dispatch(
+                prefix,
+                STREAMED_APPLY_OP
+                if getattr(layer, "tessera_gemv", None) is not None else GEMM_SYMBOL)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:

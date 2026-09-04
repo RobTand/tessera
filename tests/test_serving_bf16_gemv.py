@@ -385,6 +385,44 @@ def test_an_out_of_range_unit_serves_through_torch_and_says_so(monkeypatch):
 
 
 @requires_cuda
+def test_a_per_unit_refusal_changes_the_compile_identity(monkeypatch):
+    """Issue #91, in the form the fallback actually reaches one box.
+
+    No toolchain is broken here: R = 7 is simply outside the lane's support
+    set, so this unit serves through the torch decode while an R = 4 unit
+    beside it dispatches ``tessera::bf16_streamed_apply``.  Same residency,
+    same sources, two graphs -- and it is a PER-UNIT difference, which is why
+    the declared fact is per module rather than one boolean for the
+    checkpoint.
+    """
+    import json
+
+    from tessera.serving import compile_identity as ci
+
+    def _identity(mp, q256, cols, m):
+        ci.reset_for_tests()
+        cfg = types.SimpleNamespace(
+            additional_config={},
+            compilation_config=types.SimpleNamespace(
+                mode=types.SimpleNamespace(name="VLLM_COMPILE")))
+        ci.declare_compile_identity_in(cfg, serve_mode=MODE_STREAMED)
+        _g, layer, _m, _x, _r = _drive(mp, MODE_STREAMED, q256=q256, cols=cols, m=m)
+        return layer, json.dumps(cfg.additional_config, sort_keys=True)
+
+    with pytest.MonkeyPatch.context() as mp:
+        in_range, gemv = _identity(mp, 1024, 256, 4)
+    with pytest.MonkeyPatch.context() as mp:
+        out_of_range, torch_lane = _identity(mp, 1792, 512, 2)
+    ci.reset_for_tests()
+
+    assert in_range.tessera_gemv is not None
+    assert out_of_range.tessera_gemv is None
+    assert route.STREAMED_APPLY_OP in gemv
+    assert route.STREAMED_APPLY_OP not in torch_lane
+    assert gemv != torch_lane, "two graphs, one compile identity"
+
+
+@requires_cuda
 def test_resident_does_not_prepare_the_gemv(monkeypatch):
     """The resident lane already holds the tile; the GEMV is the streamed route's."""
     _g, layer, _m, _x, _r = _drive(monkeypatch, MODE_RESIDENT, q256=1024)

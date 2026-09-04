@@ -343,6 +343,18 @@ box. What is still open here
    bit for bit and the A side is the only difference. Eager **and** compiled,
    both residency modes, census clean in both phases.
 
+   **The compile cache now sees which lane traced (#91).** Two streamed arms
+   that differ only in whether the window GEMV was available used to compute
+   the *same* vLLM compile-cache key -- `serve_mode` was the only Tessera fact
+   in it, and the lane is a Python attribute Dynamo resolves at trace time, so
+   one arm could replay the other's graph. `fp8_route`/`bf16_route` now call
+   `compile_identity.note_traced_dispatch(prefix, op)` from
+   `process_weights_after_loading`, which puts the per-module dispatch set into
+   `additional_config["tessera"]["traced_dispatch"]`, and so into the key.
+   Running each arm under its **own** `VLLM_CACHE` root (what #83 does) stays
+   correct measurement hygiene and should stay in the protocol; it was never
+   the fix, and it is not what makes the two arms comparable now.
+
 **#10 specifically (the FP8 route / E4M3 wire):**
 
 * The A/B is runnable at the **already-attested rung**: `TESSERA_E4M3_K1`
