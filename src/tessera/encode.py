@@ -2476,16 +2476,27 @@ def encode_unit(
         # independent and nearest-in-linear is already each block's
         # conditional minimiser; on CHANNEL there is one scale per row and no
         # block.
-        if refit_metric is None:
+        # Which metrics actually run, not which argument was passed: #75's
+        # schedule puts a coupled metric on the TRAILING pass behind 1-D inner
+        # ones, and reading refit_metric alone would refuse
+        # refit_coupled_landing="trailing" -- the one arm the schedule exists
+        # to express.  This mirrors refit_gauss_seidel's `in_use` above; the
+        # two flags gate on the same fact and must read it the same way.
+        if refit_metric_trailing is not None:
+            in_use = [refit_metric_trailing] if refit_coupled_landing == "trailing" else (
+                ([refit_metric] if refit_metric is not None else []) + [refit_metric_trailing])
+        else:
+            in_use = [refit_metric] if refit_metric is not None else []
+        if not in_use:
             raise GrammarError(
                 "refit_coupled_landing re-assigns the LUT plane's blocks under the "
                 "metric-aware refit, and without refit_metric no such refit runs: "
                 "the plain landing is already per-block exact"
             )
-        if refit_metric.ndim == 1:
+        if all(m.ndim == 1 for m in in_use):
             raise GrammarError(
                 "refit_coupled_landing needs a metric that couples the blocks. A 1-D "
-                f"refit_metric ({tuple(refit_metric.shape)}) is separable: nearest-"
+                f"refit_metric ({tuple(in_use[0].shape)}) is separable: nearest-"
                 "in-linear is already each block's conditional minimiser, so the "
                 "coupled sweep moves nothing and the flag would name an arm that "
                 "changed nothing"
