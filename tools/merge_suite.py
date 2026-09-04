@@ -84,6 +84,13 @@ SHARED_ROOT = Path("/mnt/shared")
 #: miss dressed up as a different action.
 DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 
+# Each arm has one reserved CPU per pytest process: the GPU arm is serial,
+# while xdist spends the x86 reservation as one process per core. Native math
+# threads and per-process extension builds must not multiply that reservation.
+PROCESS_THREAD_LIMITS = dict.fromkeys(
+    ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
+)
+
 #: Where the pool publishes what it did.  A finished action's outcome record
 #: carries the exit status the worker actually saw; the CAS request beside it
 #: carries the command that action ran.  Reading those two is how a resumed
@@ -273,6 +280,8 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "--cwd", str(args.checkout),
         "--timeout-s", str(args.timeout_s),
         "--wait-s", str(args.wait_s),
+        *[part for key, value in PROCESS_THREAD_LIMITS.items()
+          for part in ("--env", f"{key}={value}")],
         "--", *command,
     ]
     record = {
@@ -288,6 +297,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         # failures on ``82f0047`` were an ``-n``-only defect.
         "cpus_requested": args.cpus,
         "cpus_used": cpus,
+        "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
     if cpus != args.cpus:

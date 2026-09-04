@@ -211,6 +211,34 @@ def test_gpu_submission_delegates_physical_exclusion_to_pbrun(tmp_path, gpu_tag)
     assert "-n" not in invocation
 
 
+@pytest.mark.parametrize(("name", "requested"), [("gpu", 8), ("x86", 8), ("x86", 1)])
+def test_submission_caps_native_threads_and_compiler_jobs_per_process(
+    tmp_path, monkeypatch, name, requested,
+):
+    import shlex
+    from types import SimpleNamespace
+
+    merge_suite = _module()
+    limits = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS")
+    for variable in limits:
+        monkeypatch.setenv(variable, "64")
+    args = SimpleNamespace(cpus=requested, pytest_arg=[], gpu_tag="sparky", mem_gb=4,
+                           checkout=ROOT, timeout_s=300, wait_s=300, dry_run=True)
+    record = merge_suite._submit(name, merge_suite.ARMS[name], args, tmp_path)
+    invocation = shlex.split(record["pbrun"])
+    options = invocation[:invocation.index("--")]
+    environment = [options[index + 1] for index, option in enumerate(options) if option == "--env"]
+    for variable in limits:
+        assert [value for value in environment if value.startswith(variable + "=")] == [variable + "=1"], (
+            "every pytest process must override ambient/pool native and compiler thread defaults"
+        )
+    reserved = int(options[options.index("--cpus") + 1])
+    command = invocation[invocation.index("--") + 1:]
+    processes = int(command[command.index("-n") + 1]) if "-n" in command else 1
+    assert processes == reserved
+    assert record["process_thread_limits"] == dict.fromkeys(limits, "1")
+
+
 def test_live_gpu_submission_requires_an_explicit_placement_tag(monkeypatch, tmp_path, capsys):
     merge_suite = _module()
     monkeypatch.setattr(merge_suite, "DEFAULT_RECEIPT_ROOT", tmp_path / "receipts")

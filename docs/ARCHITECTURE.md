@@ -23,6 +23,11 @@ PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
 from that worker's advertised capacity, rather than treating one logical slot
 as physical exclusion. The GPU arm remains serial under `--strict-cuda`;
 the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
+Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
+`MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` and `MAX_JOBS=1`, overriding pool
+defaults and preventing each xdist worker's native math or extension compiler
+from multiplying its one-CPU share. The per-process limits are recorded in
+each arm's receipt; these environment settings are not an OS-level CPU quota.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
