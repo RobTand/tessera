@@ -32,6 +32,33 @@ leaves a body Linear unnamed does not get a passthrough: the exporter falls
 back to its `--grid`/`--q256` default, so the converter names every unpriced
 Linear `"BF16"` explicitly.
 
+### 3.1 Which encoder cut the bytes is on the artifact
+
+Three identities travel with a Tessera checkpoint and they answer different
+questions. `encoder_profile_id` binds the **arguments** a reader must
+reproduce — code, grid, span, body, plane, window width, reach spellings — and
+is input-only by decision: it "contains nothing an encode alone can produce".
+`CONTAINER_VERSION` versions the **container** around the bytes. Neither can
+see an **encoder** change: same arguments, different bytes out. That gap
+merged two differently-encoded halves once already (issue #78), and closing it
+is issue #101.
+
+The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
+**derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
+at fixed arguments and the result is hashed, so the value moves exactly when
+the encoder's output moves and never when a comment or a refactor does. It is
+a sibling of the profile id and never an input to it. It rides in the manifest
+at schema minor 6 and in `tessera_config.json`; `merge_tessera_parts.py`
+compares the stamped value across parts. `encoder_identity.resumable` states
+the rule for whether a cached unit may be reused, and nothing calls it yet —
+no path reuses a cached wire shard today, so the rule sits with the identity
+rather than being invented inside the first consumer that needs one. Both
+compare, never compute: only a process about to encode pays for the fixtures. The untagged spelling —
+the encoder the field was born against — writes no field and no minor, so
+every artifact already on disk is byte-identical across the bump. The wire is
+`docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
+set is blind to.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats

@@ -81,8 +81,16 @@ SCHEMA_MAJOR = 1
 #: takes the record off the manifest and recomputes the digest with it, so a
 #: manifest whose reach disagrees with the profile fails closed at the digest
 #: search like every earlier identity field.
-SCHEMA_MINOR = 5
-SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5)
+#: Minor 6 (2026-09-04) appends the encoder identity -- which *encoder* cut the
+#: bytes, derived from a fixture encode rather than declared by anyone
+#: (``encoder_identity``, tessera#101) -- after the reach section, present only
+#: when the encoder differs from the one the field was born against.  A build
+#: by that encoder carries no identity and writes at the minor it always did,
+#: so every artifact on disk is byte-identical; unlike the earlier fields this
+#: one is *not* bound into ``encoder_profile_id``, which stays input-only by
+#: decision, so a reader recomputes the profile id exactly as before.
+SCHEMA_MINOR = 6
+SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5, 6)
 
 _HEADER = struct.Struct("<8sHHIII")
 
