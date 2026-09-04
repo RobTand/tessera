@@ -62,9 +62,17 @@ compare)
       2>&1 | tee "$RUNS/compare_$ARM.log" | tail -20
   ;;
 serve)
-  twin=$RUNS/$ARM-stock-twin
+  # serve [ARM] -- default the candidate; `incumbent` re-serves the 2026-09-02
+  # ldlqH1 twin in THIS session, so the A/B carries its own A rather than
+  # quoting one.  The lane is deterministic across boxes and days
+  # (kl-cross-session-drift-is-zero-on-this-lane), so the bracket is
+  # confirmatory; it costs six minutes and settles the question.
+  case "${2:-candidate}" in
+    incumbent) ARM=ldlqH1; twin=$INCUMBENT ;;
+    *)         twin=$RUNS/$ARM-stock-twin ;;
+  esac
   [ -f "$twin/model.safetensors" ] || { echo "no export for $ARM"; exit 1; }
-  export TESSERA_KL_PORT="${TESSERA_KL_PORT:-8003}"
+  export TESSERA_KL_PORT="${TESSERA_KL_PORT:-8005}"
   export TESSERA_GPU_MEM_UTIL="${TESSERA_GPU_MEM_UTIL:-0.30}"
   export TESSERA_KL_NAME="${TESSERA_KL_NAME:-tessera-kl-ts75}"
   source "$(dirname "$0")/runtime_image.sh"
@@ -79,6 +87,6 @@ serve)
   $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$npz" \
       --out "$RUNS/kl_$ARM.json" 2>&1 | tee "$RUNS/kl_$ARM.log" | tail -12
   ;;
-*) echo "usage: $0 export|compare|serve"; exit 2;;
+*) echo "usage: $0 export|compare|serve [candidate|incumbent]"; exit 2;;
 esac
 echo "STEP_DONE ${1:-export}"; date

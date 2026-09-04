@@ -270,23 +270,34 @@ def _wire(out: Path) -> bytes:
 
 
 def test_the_export_flag_records_the_trailing_objective(tmp_path, monkeypatch):
-    """The block a merge guard and an auditor read must name what ran.
+    """The block an auditor reads must name what ran.
 
     Without this the flag would be a shell argument: the bytes would carry a
     trailing full-H refit and ``activation_aware`` would say ``None``, which
-    is the config-lying-about-the-bytes failure tessera#103 exists to stop --
-    and two parts encoded under different trailing objectives would merge.
+    is the config-lying-about-the-bytes failure tessera#103 exists to stop.
+    Checked on the TWIN's manifest as well as the wire's, because a served KL
+    is read off the twin and quoted long afterwards -- two arms of an A/B whose
+    one difference is an ``activation_aware`` field must be tellable apart from
+    the artifacts that produced the numbers (tessera#60).
     """
-    def block(out: Path) -> dict:
-        config = json.loads((out / "config.json").read_text())
-        return config["quantization_config"]["activation_aware"]
+    def blocks(out: Path) -> "tuple[dict, dict]":
+        wire = json.loads((out / "tessera_serving_manifest.json").read_text())
+        twin = json.loads(
+            (out.parent / "twin" / "tessera_stock_twin_manifest.json").read_text())
+        return wire["activation_aware"], twin["activation_aware"]
 
-    control = block(_export(tmp_path / "a", monkeypatch, "out"))
-    swapped = block(_export(tmp_path / "b", monkeypatch, "out",
-                            "--refit-metric-trailing", "hessian"))
-    assert control["refit_objective"] == swapped["refit_objective"] == "h^1.0"
-    assert control["refit_objective_trailing"] is None      # the old encode
-    assert swapped["refit_objective_trailing"] == "hessian"
+    control_wire, control_twin = blocks(
+        _export(tmp_path / "a", monkeypatch, "out",
+                "--stock-twin", str(tmp_path / "a" / "twin")))
+    swapped_wire, swapped_twin = blocks(
+        _export(tmp_path / "b", monkeypatch, "out",
+                "--stock-twin", str(tmp_path / "b" / "twin"),
+                "--refit-metric-trailing", "hessian"))
+    for control, swapped in ((control_wire, swapped_wire),
+                             (control_twin, swapped_twin)):
+        assert control["refit_objective"] == swapped["refit_objective"] == "h^1.0"
+        assert control["refit_objective_trailing"] is None   # the old encode
+        assert swapped["refit_objective_trailing"] == "hessian"
 
 
 def test_the_export_flag_reaches_the_bytes_and_moves_no_others(tmp_path, monkeypatch):
