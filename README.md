@@ -12,59 +12,66 @@ Linear by PrismaQuant across all three alphabets on measured cost.
 bytes-only parser, the exact-byte footprint accountant, the encoder (Viterbi
 with an optional Hessian-aware LDLQ + row-scale refit), the decoders, the
 kernels, and the serving plugin. Measurements live under `docs/measurements/`;
-the current state under `docs/status/`.
+the current system map is [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Implemented against `prismaquant/docs/design/embedded_native_weight_coding_2026-08-31.md`
 (sha256 `1f813a354fe694b31a24aee65f47e3f6cc5b1043f3556005120a1b795bf27886`,
 revision 8, review cycle closed).
 
-```bash
-# The pure lane -- build items 1a/1b/11. Stdlib only: no torch, no GPU, no model data.
-PYTHONPATH=src python3 -m pytest tests -q \
-    --ignore=tests/test_kernel.py --ignore=tests/test_ktuple.py   # 210 passing
+GitHub Actions runs the bytes-only tests without torch, a GPU, or model data.
+That checks the parser's dependency boundary; it does not cover CUDA kernels.
+For the merged tree, the coordinator uses `tools/merge_suite.py` to dispatch
+both a GPU arm (`--strict-cuda`) and a device-less x86 arm through PrismaBuild.
+Read their adjacent rows in
+[the suite population ledger](docs/status/suite-populations.md), including the
+commit, run mode, device, skips and uncollected modules. There is no timeless
+test count that describes both populations.
 
-# Everything, including the pre-gate kernel lane. Needs torch + triton + a GPU.
-PYTHONPATH=src python3 -m pytest tests -q                          # 249 passing
-```
-
-**The split is the point, not an accident of packaging.** S16 forbids pipeline
-wiring before 1b passes, and a test job that imports no torch proves that
-structurally rather than by discipline. CI runs the pure lane only; the kernel
-lane cannot run on a hosted runner and must never become a required check,
-because a green tick on a screen is exactly the promotion this repo refuses.
+Branch work runs its affected tests through PrismaBuild; see
+[AGENTS.md](AGENTS.md) for test selection and receipt requirements. Test results
+establish correctness for their measured population, while a serving claim
+also needs the served evidence described below.
 
 ---
 
 ## What this is
 
-Build items **1a** and **1b** of §16, plus item 11's pure calculator — the only
-items the document authorizes without a GPU, a BF16 GLM checkpoint, or a
-Gridbook release.
+The package now spans the wire, encoder, decoders, CUDA kernels, checkpoint
+exporter and vLLM plugin. PrismaQuant proposes per-Linear rungs; Tessera prices
+and writes their bytes, checks that the pinned runtime can serve them, and
+records the routes actually taken. The architecture document describes that
+path and its admission gates.
+
+### Initial build scope (historical)
+
+The repository began with §16 build items **1a**, **1b** and **11**, before
+encoder, allocation and serving work was admitted. This table records that
+initial scope, not the limits of the current package.
 
 | Item | Deliverable | State |
 |---|---|---|
-| 1a | Reviewed byte-level schema and parse algorithm | **Pass 1 complete** — 9 findings, all closed (`docs/schema/review-1a-findings.md`); two external passes running |
-| 1b | Pure serializer/parser/footprint plus bytes-only tests | Passing, 210 bytes-only tests |
+| 1a | Reviewed byte-level schema and parse algorithm | Review and resolutions in [`review-1a-findings.md`](docs/schema/review-1a-findings.md) |
+| 1b | Pure serializer/parser/footprint plus bytes-only tests | Implemented; the bytes-only CI job preserves this boundary |
 | 11 | Legacy-plane wire arithmetic in a pure calculator | Derived, provenance-tagged |
 
-A separate repository is the right shape for this: §16 forbids menu, pipeline,
-or shipping-code wiring before 1b passes, and a standalone package enforces
-that structurally rather than by discipline.
+A separate package established the byte-level boundary before menu, pipeline
+and serving wiring were added.
 
-### And one thing beyond that scope, named rather than hidden
+### What the measurements establish
 
-`src/tessera/kernel.py` and the encoder/trellis it exercises are **outside items
-1a/1b/11**. They are **pre-gate research under S16 P1-6/P1-7**: their results
-bind only the construction that produced them, they are screens and not results
-under principle 3, and **promotion remains Arm-12-gated** — no menu entry, no
-pipeline wiring, no serving claim follows from anything measured here.
+Weight-space error and kernel microbenchmarks remain screens. Promotion uses
+served KL against a BF16 teacher at matched bytes, with the runtime, route,
+regime and build identity recorded. The serving contract publishes which
+combinations are attested; an unlisted combination gains no claim from a
+nearby result.
 
-They exist because the decode-regime question in S13 turned out to be
-decoder-specific rather than general, and that is worth constructive evidence.
-`docs/measurements/` states the evidence tier of every number, including what is
-still owed (energy, in-process profile, a served artifact — none of which exist).
-A reader who takes the kernel numbers as a serving result has been warned by the
-docs and is still wrong.
+Served artifacts and in-process route profiles now exist; for example,
+[the GEMV activation-scale receipt](docs/measurements/tessera-gemv-a-side-2026-09-04.md)
+records served comparisons and their controls. Power measurements and their
+attribution limits are recorded in
+[the window GEMV study](docs/measurements/tessera-window-gemv-2026-09-02.md).
+These receipts name their populations and remaining uncertainties; they do not
+establish a universal quality or energy result.
 
 ## What it proves
 
@@ -106,11 +113,12 @@ item-11 calculator:
 - **Trellis decoder: absent at 1a/1b.** Parse was not decode, and the decode
   lived outside this package at that time, gated behind arm 4b. It has since
   landed as `src/tessera/decode.py` with the self-housed serving plugin
-  (`src/tessera/serving/`, contract v7, which imports no gridbook); Gridbook
-  withdrew its lane at contract v15.
-- **No rate-1/rate-2 alphabet convention.** Build item 2, explicitly owed.
-  Alphabets and descendant maps are content-addressed blobs, validated
-  structurally only.
+  (`src/tessera/serving/`, which imports no gridbook); the packaged
+  `runtime_contract.json` is the current contract. Gridbook withdrew its lane
+  at its contract v15.
+- **No rate-1/rate-2 alphabet convention at 1a/1b.** Those build items treated
+  alphabets and descendant maps as content-addressed blobs and validated
+  their structure only.
 - **Menu, DP, export, and serving wiring: absent at 1a/1b.** §16: nothing
   preceded 1b passing. Checkpoint export has since landed as
   `src/tessera/export.py` and serving as `src/tessera/serving/`.
@@ -121,22 +129,16 @@ item-11 calculator:
   empty list, because silently passing everything is the failure the check
   exists to prevent.
 
-## Owed before this lands in PrismaQuant
+## Release readiness
 
-1. **Review of the 1a schema.** "Reviewed byte-level schema" is the item's own
-   definition; this text has not been reviewed.
-2. **The in-tree landing commit.** §16 wants one commit carrying the
-   document-wide EN4/EN8 → Tessera sweep, a disjoint Tessera parser, collision
-   tests **against the real legacy parser**, and a name-novelty check. This
-   repository tests against the legacy grammar *as documented*; the real
-   parser is in PrismaQuant and stays immutable.
-3. **The §6b reuse determination.** §6b requires Tessera's codec to be a
-   parameterization of the shipped `two-tier-scale-spec.md` abstraction "or
-   document why it differs". That spec was outside this task's declared input
-   scope, so the determination is unmade.
-4. **`docs/ARCHITECTURE.md` carry-forward** in the same commit (rule 12).
-
-Tests passing is not a gate passed.
+`v0.1.0` is held until the remaining Tessera implementation and measurement
+issues are resolved, including routed MoE in the initial release. The merged
+tree must have a green two-population suite receipt. The final release work
+is tracked in [#17](https://github.com/RobTand/tessera/issues/17): verify the
+PyPI Trusted Publisher configuration, tag and publish `tessera-quant`, then
+update PrismaQuant's release pin and reviewed development contract together.
+PrismaQuant's release admission remains fail-closed while those pins name an
+unreleased runtime.
 
 ## Layout
 
@@ -145,8 +147,8 @@ src/tessera/
   fp8.py           exact E4M3FN / E8M0 tables — no rounding anywhere
   scale_codec.py   §6b: legality, canonicalisation, 65,536-word census
   grammar.py       §6: roots, Bresenham quota, completion, release, partition
-   canonical.py     integer-only canonical encoding and the hash domain
-   planes.py        §9 typed plane descriptors, canonical order
+  canonical.py     integer-only canonical encoding and the hash domain
+  planes.py        §9 typed plane descriptors, canonical order
   manifest.py      branch identity, terminal records, content-addressed IDs
   layout.py        plane extents from declared parameters (no coding decisions)
   container.py     header/manifest/plane-region codec, fail-closed parse
@@ -154,6 +156,10 @@ src/tessera/
   identity.py      disjoint parser, legacy collision, name novelty
   provenance.py    content-addressed ancestry and denylist mechanism
   calculator.py    item 11; DERIVED vs CITED, never conflated
+  encode.py        encoder and optional Hessian-aware compensation
+  decode.py        wire decoding
+  export.py        checkpoint export and serving admission
+  serving/         vLLM plugin and packaged runtime contract
 ```
 
 ## Also here
@@ -166,6 +172,8 @@ EXL3 one. The size win and the comparison are the same blocked item — a
 `glm5_next` routed-MoE cell.
 
 ## Install
+
+After the first release is published:
 
 ```
 pip install tessera-quant            # the library and the vLLM plugin entry point
