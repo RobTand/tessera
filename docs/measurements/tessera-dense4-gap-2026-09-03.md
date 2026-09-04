@@ -1,11 +1,14 @@
 # The dense 4-bit gap, and the block that closes it (2026-09-03)
 
-**Answer first: closed. At equal residency the 4.0-bpp Tessera wire now serves
-at 0.5099719526415252 against PrismaQuant NVFP4 GPTQ+JSO's
-0.5105764371970046 -- 1.0011853290212303x ahead**, on identical 870,290,032-byte
-files, one corpus, one teacher, with the control served either side of the
-candidate and agreeing to sixteen digits. The lever is the LDLQ block: 32 -> 8,
-no wire change, no schema bump, no byte change at unchanged arguments.
+**Answer first: closed -- to parity. At equal residency the 4.0-bpp Tessera
+wire now serves at 0.5099719526415252 against PrismaQuant NVFP4 GPTQ+JSO's
+0.5105764371970046 -- 0.9988x of the comparator, within 0.12%**, on identical
+870,290,032-byte files, one corpus, one teacher, with the control served either
+side of the candidate and agreeing to sixteen digits. 0.12% on one 4,088-position
+corpus is not a win and this document does not call it one: the claim is that the
+1.254x deficit the issue was opened on is gone, not that Tessera is now ahead.
+The lever is the LDLQ block: 32 -> 8, no wire change, no schema bump, no byte
+change at unchanged arguments.
 
 **And the number in issue #12's title is three revisions stale.** It says
 Tessera W4A4 **0.640** against **0.511**, a gap of 1.254x. That was the
@@ -331,9 +334,10 @@ teachers are one distribution.
 ### The verdict, read against the zones registered above
 
 **Zone A: closed.** `b8` at 0.5099719526415252 is at or below the comparator's
-0.5105764371970046, so at equal residency the 4.0-bpp Tessera wire is
-**1.0011853290212303x ahead** of the PrismaQuant NVFP4 GPTQ+JSO encoder --
-level, with the sign now on Tessera's side. The arc of the number the issue was
+0.5105764371970046, so at equal residency the 4.0-bpp Tessera wire is at
+**0.9988146x** of the PrismaQuant NVFP4 GPTQ+JSO encoder -- **level**. The sign
+is on Tessera's side and the margin is 0.12%, which is smaller than anything one
+corpus can discriminate; read this as parity reached, not as a lead taken. The arc of the number the issue was
 opened on:
 
 | what is being compared | ratio to the comparator |
@@ -341,13 +345,18 @@ opened on:
 | the issue's weights-only wire (0.640404) | 1.2542764478434043x behind |
 | the 2026-09-02 artifact (0.5310275686796917) | 1.0400549849009113x behind |
 | this bracket's own control `b32` (0.5200805955385711) | 1.0186145651251417x behind |
-| **`b8`, the block this branch makes reachable** | **1.0011853290212303x ahead** |
+| **`b8`, the block this branch makes reachable** | **0.9988146425628404x -- parity** |
 
 Two of those three steps are not this branch's. The 2026-09-02 LDLQ+refit work
 closed most of the gap; the merges between that artifact and `82cdf513` closed
 another 2.1% (0.5310275686796917 -> 0.5200805955385711) with no recipe change
 at all, which is exactly why the published number could not be used as the
-control. What the LDLQ block is worth, measured against its own session's
+control. That attribution assumes the encoder is deterministic at fixed code,
+and the byte checks in this document are that evidence: two separate export runs
+at `HEAD~1` and `HEAD` produced 312 of 312 byte-identical tensors, and `HEAD`
+reproduced the bracket's own `82cdf513` arm byte for byte -- so a re-export that
+*does* differ (69 of 112 wire blobs, 2026-09-02 vs `82cdf513`) differs because
+the code changed, not because the encoder wanders. What the LDLQ block is worth, measured against its own session's
 control, is **0.9805633146405358x** -- 1.94%.
 
 **The weight-space screen over-promised, and by how much is now a number.**
@@ -445,7 +454,8 @@ tree would be describing a behaviour change the branch is claiming not to make.
 
 **The other sixteen fail there**, measured, not predicted: `16 failed, 4
 passed in 0.79s` with the test file run out of the pre-change checkout
-(`ts12-pre`, whose `export.py:276` still reads `ldlq_block: int =
+(a checkout of the base commit, whose `git show
+42615e4:src/tessera/export.py` line 276 still reads `ldlq_block: int =
 DEFAULT_LDLQ_BLOCK`). The failure modes, tallied from that run:
 
 | failure | count | what it says |
@@ -575,4 +585,6 @@ counterfactual quoted above is the one run with the test file under
 | the pre-change counterfactual (`16 failed, 4 passed`) | test file run out of `ts12-pre`, pool action `80c1cd3fada2` on sparky |
 | the impacted-file suite (`181 passed, 1 skipped`) | pool action `ae6350752e26` on sparky, 173.77 s |
 | the Hessian | `/mnt/shared/tessera-runs/ldlq/h_full_qwen06b.pt`, wikitext-2 **train**, 16,384 fit tokens, `text_sha256 a5c5fd09...`, `fit_ids_sha256 229c6f72...` |
+| the two BF16 teacher dumps, distinct files | `/mnt/shared/tessera-kl/qwen_rot_teacher_lina.json.npz` sha256 `260fcd2fbb06...`, produced 2026-09-02T17:12:00Z; `/mnt/shared/tessera-kl/qwen_teacher_bf16_v028.json.npz` sha256 `63e5e1f0acf2...`, produced 2026-09-02T05:32:45Z -- two dumps eleven hours apart, which is why their mutual KL of 0.0 is an agreement and not a file compared with itself |
+| the docs-currency suite | `tests/test_audit_doc_claims.py test_doc_alphabet_70.py test_doc_route_71.py test_doc_scope_69.py` -- `17 passed in 7.27s`, pool action `1a266075586d`; none of them bind a CLI flag registry, so the new `--ldlq-block-budget` is covered only by `tests/test_ldlq_block_budget.py` |
 | the KL corpus | `/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json` -- the **Qwen** contract, wikitext-2 **test**, disjoint from the capture; 8 x 512, 4,088 scored positions |
