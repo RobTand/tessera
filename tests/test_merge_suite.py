@@ -271,6 +271,16 @@ def test_the_receipt_states_which_tree_it_is_about(tmp_path):
     assert "reading_note" in receipt
 
 
+def test_pr_ci_fetches_the_base_ref_that_population_identity_reads():
+    """The PR checkout must contain master; absence is not a branch verdict."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    pure_job = workflow.split("  pure:\n", 1)[1].split("\n  publish:\n", 1)[0]
+    checkout = pure_job.split("- uses: actions/checkout@", 1)[1].split("\n      - ", 1)[0]
+    assert "fetch-depth: 0" in checkout, (
+        "the pure PR job uses merge_suite's population test but its shallow checkout "
+        "contains neither master nor origin/master")
+
+
 def test_the_ledger_puts_the_two_arms_next_to_each_other(tmp_path):
     """A row without its device is the misreading; there is no such row.
 
