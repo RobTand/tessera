@@ -408,3 +408,25 @@ def test_the_streamed_residency_refuses_the_fallback(monkeypatch):
     monkeypatch.setattr(ext, "get_tessera_ext", lambda: None)
     with pytest.raises(ext.NativeKernelUnavailableError):
         _drive(monkeypatch, MODE_STREAMED, roles=(("weight", 128),), cols=512)
+
+
+def test_an_unloaded_input_global_scale_is_refused_by_the_gates_own_predicate(monkeypatch):
+    """The A-side scale must fail ``gs > 0`` until a loader writes it.
+
+    ``torch.empty`` left the parameter holding whatever the allocator had, and
+    a positive leftover passed the gate with a wrong activation scale and a
+    wrong epilogue scale.  The value the route allocates is now one the gate
+    refuses by construction, so a checkpoint that omits the tensor is refused
+    at load on this route's own authority.
+    """
+    serving_lane.reset_for_tests()
+    monkeypatch.setenv(TESSERA_MODE_ENV, MODE_RESIDENT)
+    _install_vllm_stubs(monkeypatch)
+    monkeypatch.setattr(native_ops, "require_native_fp4_quant", lambda context: None)
+    method = build_tessera_method(_scheme(), "test.layer")
+    layer = _Layer()
+    method.create_weights(layer, input_size_per_partition=1024, output_partition_sizes=[256],
+                          input_size=1024, output_size=256, params_dtype=torch.bfloat16)
+    gs = layer.trellis_input_global_scale.data
+    assert torch.isnan(gs).all(), "the unloaded scale must be a value the gate refuses"
+    assert not float(gs.reshape(-1)[0]) > 0.0

@@ -136,8 +136,13 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # global vLLM's NVFP4 scheme passes to ``scaled_fp4_quant``.
             layer.register_parameter("wire_bytes", BasevLLMParameter(
                 data=torch.empty(wire_bytes, dtype=torch.uint8), weight_loader=weight_loader))
+            # NaN until a loader writes it: ``not (nan > 0)`` is True, so a
+            # checkpoint that omits the tensor is refused by the gate below on
+            # this route's own authority.  ``torch.empty`` left whatever the
+            # allocator had, and a positive leftover passed that gate.
             layer.register_parameter("trellis_input_global_scale", BasevLLMParameter(
-                data=torch.empty(1, dtype=torch.float32), weight_loader=weight_loader))
+                data=torch.full((1,), float("nan"), dtype=torch.float32),
+                weight_loader=weight_loader))
             layer.tessera_shard_plan = plan
             layer.tessera_rows = plan.shard_rows
             layer.tessera_columns = plan.shard_columns
