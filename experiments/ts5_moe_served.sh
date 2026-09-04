@@ -33,7 +33,15 @@ WIRE=${2:?tessera cut}
 OUT=${3:-/mnt/shared/tessera-runs/ts5/served}
 export TMPDIR=${TMPDIR:-/home/rob/tmp}
 export TRITON_CACHE_DIR=${TRITON_CACHE_DIR:-/home/rob/.triton-cache}
-export TS RUNS=${RUNS:-$OUT} EXT=${EXT:-$OUT/ext}
+# CONTAINER SCRATCH IS LOCAL, ALWAYS.  $EXT is bind-mounted as /ext and carries
+# TORCH_EXTENSIONS_DIR, TMPDIR and (in tessera_plugin_run.sh) TRITON_CACHE_DIR,
+# so it is written by the container's ROOT -- which /mnt/shared squashes.  A
+# default of $OUT/ext puts it on NFS and the census dies at model inspection
+# with "PermissionError: '/ext/triton'", which surfaces as vLLM failing to
+# inspect Glm5NextForConditionalGeneration and looks like a model problem.
+# (The first census run survived only because $EXT happened to be inherited
+# from the environment as a local path, so this was luck, not design.)
+export TS RUNS=${RUNS:-$OUT} EXT=${EXT:-/home/rob/tmp/ts5-ext}
 mkdir -p "$OUT" "$EXT"
 # EVERYTHING THIS SCRIPT SAYS GOES TO A FILE AS IT SAYS IT.  Under the
 # PrismaBuild pool the client buffers an action's stdout and publishes it
@@ -120,7 +128,7 @@ mkdir -p "$CENSUS_LOCAL"
   -v /mnt/shared:/mnt/shared -v "$CENSUS_LOCAL":/census -- \
   "python3 tools/tessera_route_census.py '$WIRE' /census/census.json \
      --tessera-commit $COMMIT --gpu-memory-utilization ${CENSUS_MEM_UTIL} \
-     --max-model-len 1024" 2>&1 | tee "$OUT/census.log"
+     --max-model-len 1024" 2>&1 | tee -a "$OUT/census.log"
 rc_census=${PIPESTATUS[0]}
 [ -s "$CENSUS_LOCAL/census.json" ] && cp "$CENSUS_LOCAL/census.json" "$OUT/census.json"
 
