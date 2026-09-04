@@ -96,22 +96,36 @@ Then it stops.  The generated kernels record their own shape, which says which
 
 Three observables agree, and they are independent of each other:
 
-1. **The config attribute.**  `torch._inductor.config.deterministic` reads
-   `True` at import in both `on` builds and **`False` after the first compile**
-   in both (`knob.reads.on`; `knob.summary.on.resets_after_compile` is `True`).
-   Something inside the first compile clears it; the probe never assigns it.
+1. **The kernel's own record of the flag.**  The `'deterministic'` key in the
+   emitted metadata is written at `torch/_inductor/codegen/triton.py:6200` as
+   `"deterministic": config.deterministic or config.batch_invariant` — it is a
+   *direct transcript of the config value at the moment that kernel was
+   generated*, not an inference about it.  In the `on` builds the first
+   compile's kernels transcribe `True` and the second compile's transcribe
+   `False`.  (`has_loadstore_with_contiguous_rdim` comes from the same block,
+   `:6251-6252`, under the same condition.)
 2. **The codegen.**  The second compile's kernels are byte-identical between the
-   flag-off and flag-on builds.  Both emit `cg/ccg3diw3…py` verbatim, and the
-   remaining second-compile kernel differs across all four builds only in one
-   comment line — the absolute `# kernel path:` embedded in it, which contains
-   the build directory's own name.  Modulo that path, **all four builds emit the
-   same second-compile source.**
+   flag-off and flag-on builds.  All four builds emit `cg/ccg3diw3…py` verbatim,
+   and their remaining second-compile kernel hashes to `cbdddc82d2ce551e` in all
+   four once the one line that differs — the absolute `# kernel path:` comment,
+   which contains the build directory's own name — is dropped.
 3. **The surviving autotune.**  Exactly one `.best_config` survives under the
    flag, and it is the second compile's `cg/f62c0da5…` — the *same record that
    flipped* in the off arm — still carrying a device-measured `time_taken_ms`
    (74, 73).  The flag removed the benchmark for the first compile's `qz/79ad…`,
    which had been stable across both off builds, and left the benchmark running
-   on the one that had not been.
+   on the one that had not been.  Under the flag that record could not have been
+   written: `may_ban_benchmarking` does not skip a non-vetted benchmark, it
+   **raises** `RuntimeError("In the deterministic mode of Inductor, we will avoid
+   those benchmarkings…")`.  A `time_taken_ms` in the record is proof the flag
+   was not in force when it was measured.
+
+The config attribute agrees but is the weakest of the four: it reads `True` at
+import in both `on` builds and **`False` after the first compile** in both
+(`knob.reads.on`; `knob.summary.on.resets_after_compile` is `True`).  It is
+listed last on purpose — an attribute read after the fact could be an artifact
+of how the config module reports state, which is why the conclusion rests on
+what the compiler *wrote*.
 
 That the two `on` builds happen to agree on that surviving record (both
 `R0_BLOCK` 4096 / `num_warps` 16, both `triton_cache_hash EXFMVC7U…`) is **one
@@ -147,9 +161,13 @@ Named here, and in #16, rather than acted on.
   196.  An `off` arm that agrees on a toy is not evidence a real build is
   reproducible, and the two arms here agree on outputs *bitwise* — so this probe
   cannot say what a tiling flip costs in KL.
-- **The reset's mechanism.**  That `config.deterministic` goes False across the
-  first compile is measured three ways above; *which* line in torch clears it is
-  not located, so this receipt states the behaviour and not its cause.
+- **The reset's mechanism.**  That the flag stops applying across the first
+  compile is measured three ways above; *which* line in torch clears it is not
+  located.  A grep of the pinned build finds **no assignment to
+  `config.deterministic` anywhere in `torch/_inductor`** (top level plus one
+  directory down) — every one of the fourteen sites is a read.  So it is not a
+  plain write, it is the config module's own state machinery, and this receipt
+  states the behaviour and not its cause.
 - **Whether reasserting helps.**  `experiments/inductor_determinism_probe.py` now
   carries a third arm (`on_reassert`, schema `/2`) that puts the attribute back
   before the second compile, which would separate "the flag stopped applying"
@@ -164,6 +182,12 @@ Every number in this receipt is from one run:
 (`executed on sparky in 25s`), inside the pinned image resolved by
 `PYTHONPATH=src python3 -m tessera.serving.runtime_image pin`.  The per-record
 and per-kernel details in sections 2 and 3 were read back off the run's own
-cache roots.  The 120/196 count, the 0.017117 rebuild KL and the 95.65% top-1
-are quoted from `serving-compile-divergence-2026-09-02.md` and carry that
-receipt's provenance, not this one's.
+cache roots.  The torch line numbers are from a grep of the same image
+(`pbrun` action `4884c24517a9`).  The 120/196 count, the 0.017117 rebuild KL and
+the 95.65% top-1 are quoted from `serving-compile-divergence-2026-09-02.md` and
+carry that receipt's provenance, not this one's.
+
+Tests touched by the change that carries this receipt:
+`tests/test_issue_refs.py tests/test_audit_doc_claims.py
+tests/test_serve_build_identity.py tests/test_inductor_determinism_knob.py`
+— **44 passed in 43.06 s** on sparky (`pbrun` action `189a47296cf3`).
