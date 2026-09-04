@@ -127,7 +127,8 @@ def test_a_container_that_is_not_what_the_sidecar_declared_is_refused():
 def test_a_missing_expert_or_projection_is_refused_by_name():
     w13_blobs, w2_blobs, scheme, _ref = _stack()
     declared = validate_tessera_moe_scheme(scheme, "m")
-    with pytest.raises(ValueError, match="every expert of a stack"):
+    # Pin the named group/count refusal, not the explanatory suffix prose.
+    with pytest.raises(ValueError, match=r"group 'w13' carries .* expert row\(s\)"):
         moe_route.prepare_tessera_moe_experts(
             {"w13": w13_blobs[:-1], "w2": [[b] for b in w2_blobs]}, declared, "m", device="cpu")
     with pytest.raises(ValueError, match="declared projection"):
