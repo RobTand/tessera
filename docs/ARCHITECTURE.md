@@ -471,6 +471,13 @@ Each stage owns one exclusive GPU reservation through verified cleanup.
 The teacher and plugin-student wrappers pass `TESSERA_KL_TOPK` to both the
 server's logprob limit and the dump request's explicit `--top-k`; a nondefault
 support request must not silently fall back to the dump tool's default.
+The teacher and served-stage drivers share `experiments/ts5_stage_cleanup.py`.
+Container ownership begins only immediately before their launch call; a
+prelaunch name collision is observed but never removed by the refusing action.
+Cleanup stops telemetry first, joins it for at most two seconds, and shares
+one 90-second deadline across all Docker/GPU subprocess waits, within the
+120-second outer cleanup grace. Failed inspections or an exhausted deadline
+produce an unsafe cleanup receipt; they never count as an empty process list.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 

@@ -15,8 +15,9 @@ import subprocess
 import sys
 import threading
 
-sys.path.insert(0, str(Path.cwd() / "src"))
+sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
+from experiments.ts5_stage_cleanup import cleanup_stage
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("stage", choices=("census", "student"))
@@ -65,6 +66,7 @@ def telemetry():
 monitor = threading.Thread(target=telemetry, daemon=True)
 monitor.start()
 completed = False
+launched = False
 try:
     assert not capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"]), "unique container exists"
     assert not gpu_processes(), "previous GPU stage has not finished cleanup"
@@ -112,6 +114,7 @@ try:
                     "TESSERA_LANE_DOCKER_EXTRA": f"--memory=64g --memory-swap=64g -v {MODEL}:{MODEL}:ro"})
         command = ["experiments/tessera_plugin_served.sh", str(MODEL), "ts5lfm", "resident"]
     with (OUT / "action.log").open("w") as log:
+        launched = True  # Ownership starts only when the launch can begin.
         subprocess.run(command, env=env, check=True, stdout=log, stderr=subprocess.STDOUT)
     post = source_identity(MODEL)
     assert post == pre == seal["checkpoint_identity"], "assembled checkpoint changed across serve"
@@ -146,18 +149,9 @@ try:
     write("artifact-bound-result.json", evidence)
     completed = True
 finally:
-    cleanup = {"container_name": NAME, "measurement_completed": completed}
-    try:
-        existing = capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"])
-        cleanup["container_before_cleanup"] = existing
-        if existing:
-            subprocess.run(["docker", "rm", "-f", NAME], check=True, timeout=45)
-        cleanup["container_after_cleanup"] = capture(["docker", "ps", "-aq", "--filter", f"name=^/{NAME}$"])
-        cleanup["gpu_compute_processes"] = gpu_processes()
-        cleanup["safe_to_release"] = not cleanup["container_after_cleanup"] and not cleanup["gpu_compute_processes"]
-        write("cleanup.json", cleanup)
+    cleanup = cleanup_stage(NAME, launched=launched, completed=completed,
+                            stop=stop, monitor=monitor)
+    write("cleanup.json", cleanup)
+    if launched:
         assert cleanup["safe_to_release"], "GPU/container cleanup not verified"
-    finally:
-        stop.set()
-        monitor.join(timeout=35)
 print(json.dumps({"result": str(OUT / "artifact-bound-result.json"), "cleanup": str(OUT / "cleanup.json")}), flush=True)
