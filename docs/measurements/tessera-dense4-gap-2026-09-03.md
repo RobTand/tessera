@@ -5,9 +5,8 @@ The issue says Tessera W4A4 **0.640** against PrismaQuant NVFP4 GPTQ+JSO
 **0.511**, a gap of 1.254x. That was the *weights-only* wire. LDLQ plus the
 `h^1.0` row-scale refit landed on 2026-09-02 and took the same bytes to
 **0.5310275686796917** served (`tessera-ldlq-lut-plane-served-2026-09-02.md`),
-so the live gap this document is about is **1.040x** (provisional -- see
-below: the two ends were scored against different BF16 teacher dumps, and a
-queued job re-scores the comparator on the bracket's teacher), not 1.254x.
+so the live gap this document is about is **1.0400549849009113x**, not
+1.254x.
 
 | what | served KL-vs-BF16 | teacher dump | wire bpp | resident bpp |
 |---|---|---|---|---|
@@ -46,12 +45,21 @@ session as the candidates. The #60 driver brackets the sweep `b32 -> b8 -> b4
 -> b32`, so there are two control serves; both are quoted separately below and
 their spread is the session's own error bar.
 
-Both teachers are BF16 dumps of the same model on the same corpus
-(`corpus_qwen_n8_s512.json`, sha `076d33ef...`, contract `cfbddc2c...`, 4088
-scored positions), but they are *different dumps on different boxes*, so the
-comparator is re-scored against the bracket's teacher rather than carried
-across (`ts12_kl_nvfp4prod_vs_lina.json`), and the two teachers are scored
-against each other so the size of that confound is a number and not a hope.
+The two ends were originally scored against *different* BF16 teacher dumps --
+0.5310275686796917 against `qwen_rot_teacher_lina`, 0.5105764371970046 against
+`qwen_teacher_bf16_v028` -- which is a confound whether or not it is a large
+one, so it was measured rather than waved away. Both were re-run through
+`kl_tool compare` on the same corpus (`corpus_qwen_n8_s512.json`, sha
+`076d33ef...`, contract `cfbddc2c...`, 4088 scored positions, prefill regime):
+
+| compare | KL >= | top-1 agree |
+|---|---|---|
+| `nvfp4-prod` against the bracket's teacher (`ts12_kl_nvfp4prod_vs_lina.json`) | 0.5105764371970046 | 62.573% |
+| `qwen_teacher_bf16_v028` against `qwen_rot_teacher_lina` (`ts12_kl_teacher_vs_teacher.json`) | **0.0** | **100.000%** |
+
+The comparator re-scores to the same value to sixteen digits, because the two
+teacher dumps are the same distribution position for position. The confound is
+exactly zero and the ratio above is a one-teacher ratio.
 
 ### Pre-registered reading of the served candidate
 
@@ -291,13 +299,10 @@ against the zones pre-registered at the top of this document.
 
 What is settled without them, and does not change when they arrive:
 
-* the gap the issue is about is nearer **1.04x** than the 1.254x in its
-  title, and both ends are now quoted at full precision from their own compare
-  files -- *provisionally*, because 0.5310275686796917 was scored against
-  `qwen_rot_teacher_lina` and 0.5105764371970046 against
-  `qwen_teacher_bf16_v028`. The one-teacher ratio from
-  `ts12_kl_nvfp4prod_vs_lina.json` replaces it; this number is the one thing
-  here that a pending job can still move;
+* the gap the issue is about is **1.0400549849009113x**, not the 1.254x in
+  its title; both ends are quoted at full precision from their own compare
+  files, and the two teacher dumps behind them were scored against each other
+  and agree exactly (KL 0.0, top-1 100%), so it is a one-teacher ratio;
 * the control for the delta is the bracket's own `b32`, not the published
   0.5310275686796917, because a fresh export of the same recipe at the same
   block moves 161 of 784 tensors;
@@ -313,13 +318,19 @@ What is settled without them, and does not change when they arrive:
   a second 4-15 hour core for a number already being produced. The bytes are
   read, not rebuilt.
 
-  What that costs in scope is stated rather than waved at. The bracket was
-  encoded at `82cdf513`. Whether `82cdf513..HEAD` moves bytes is *measured*
-  by `ts12_byte_identity.json` (a fresh layer-0 export at this checkout hashed
-  against that arm) and is reported there rather than assumed here; what is
-  already known is that the *preceding* range moved them, since the same
-  recipe at the same block differs from the 2026-09-02 artifact in 161 of 784
-  tensors, which is why the forward range is measured instead of trusted. The
+  What that costs in scope is measured, not waved at. The bracket was encoded
+  at `82cdf513`, and the *preceding* range moved bytes -- the same recipe at
+  the same block differs from the 2026-09-02 artifact in 161 of 784 twin
+  tensors and 69 of 112 wire blobs -- so the forward range was not assumed to
+  be different. A fresh `b=32` export at this checkout, with the served arm's
+  verbatim arguments, reproduces that arm's layer-0 wire **exactly**: 4 of 4
+  `wire_bytes` blobs and all 123 shared tensors identical, `activation_aware`
+  equal (`ts12_byte_identity.json`). So `82cdf513..HEAD` -- the intervening
+  merges *and* this branch's own commit together -- moves no bytes on the
+  units it was checked on, and the bracket's absolute numbers, not only its
+  delta, are readable at this commit. The check's own limit: `--layers 1`, so
+  it covers 4 of 112 modules; it is layer 0's wire, not the whole
+  checkpoint's. The
   bracket is therefore read as an *internally matched* pair: control and
   candidates from one tree, one session, one teacher, so the delta between them
   is a fact about the block. Its absolute values describe `82cdf513`'s encoder,
