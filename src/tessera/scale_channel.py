@@ -73,6 +73,21 @@ def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
     objective asks -- a scalar RTN quantiser is not how the window body uses
     the table (issue #89).
 
+    Measured, and recorded because the margin is so thin.  Under
+    ``sigma -> 2^k sigma`` this plane's encode is *exactly* invariant (every
+    stored fp16 row word is bit-identical and the whole table scales by
+    ``2^k``), so on E4M3 the forty rungs are four residues, not forty spreads.
+    A window-body sweep across one binade at 8 b/wt on a massive-activation
+    unit puts the Hessian-weighted error of those four at 1.00 / 1.18 / 1.32 /
+    1.35 -- and the residue this objective picks by 0.11% is the 1.00.  The two
+    objectives agree on the winner and the loser and swap the middle pair, so
+    the constant is right here for a reason it cannot see, on a margin that
+    could not have justified it.  Do not read that as licence to re-derive the
+    constant against the window body: the effect is 0.1% at 4 b/wt, where the
+    E4M3 wire ships, and it vanishes entirely once the refit is given a
+    Hessian.  Evidence: ``experiments/results/ts89_ladder.json``,
+    ``ts89_residue_ladder.json``, ``ts89_fullh.json``.
+
     Deterministic: the source is ``GAUSSIAN_SOURCE``'s fixed quantile sample.
     """
     scalar = torch.tensor(sorted(set(values)), dtype=torch.float64)
