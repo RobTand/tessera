@@ -19,6 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # merge_suite records whether the tested commit is master.  A PR's
+          # default depth-1 synthetic-merge checkout contains neither master
+          # nor origin/master, so absence would masquerade as no population.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
