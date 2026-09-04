@@ -880,3 +880,16 @@ in-process repeat cannot give: the shipped `(L=14, r=1)` baseline is
 re-encoded in every row and must be byte- *and* tensor-identical to the same
 arm in the landed `pair_glm.json` / `pair_dense.json`.
 `experiments/matched_reach_report.py` refuses to summarise without it.
+
+**No numbers yet, and that is the state of this section.**  The apparatus,
+the ratios and the reading are here; the two `L=14` rows -- the cheap and
+decisive ones -- were submitted to the PrismaBuild pool on 2026-09-04 and sat
+at GPU-queue positions 12 and 13 of 14 behind other agents' work, with
+sparklina's GPU held out of the pool until ~07:00.  Nothing below this line
+should be read as measured until those files exist at
+`/mnt/shared/tessera-runs/reach/matched/`, and
+`experiments/matched_reach_report.py` is what turns them into the table above.
+The costs, from the landed runs' own per-arm wall clocks: the `L=14` row is
+about 12 minutes of GPU on the six GLM experts and 10 on the eight dense
+Linears (three rungs each); the `L=16` row, which carries the expensive
+width, is about 38 minutes on the experts; the `L=12` row about 11.
