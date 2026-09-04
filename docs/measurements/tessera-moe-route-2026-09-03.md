@@ -87,6 +87,14 @@ box, `Qwen3.8-Flash-Next` (packed) beside `GLM-5.3-Flash-4layer` (unpacked), as
 digests rather than 2592-name lists, and records each packed stack's
 orientation beside them.
 
+One thing to know before diffing that baseline across this branch: a
+`plan/<case>/<kind>` row is the exporter's refusal **verbatim**
+(`_plan_row` returns the raised message), so the routed-expert rewording later
+in this branch moves those rows too. The 25-of-62 diff recorded with the
+classification change was taken before that rewording and is a record of the
+classification change alone; a run today moves both sets, for two unrelated
+reasons.
+
 ---
 
 ## 2. The wire layout
