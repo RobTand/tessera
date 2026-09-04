@@ -176,6 +176,12 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
     if surface_json.exists():
         record["surface"] = json.loads(surface_json.read_text())
         record["surface_path"] = str(surface_json)
+        # WHEN the population was measured, which on a resumed receipt is not
+        # when the receipt was assembled -- the run may have finished hours
+        # before anyone came back for it.  The ledger dates the measurement,
+        # not the bookkeeping.
+        record["measured_utc"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(surface_json.stat().st_mtime))
         return
     # The distinction that matters: a suite that ran and failed published a
     # surface; one that was never placed, or was refused before collection,
@@ -271,8 +277,13 @@ other (tessera#112).
 time. `yes` is a merge receipt; `no` is a branch's own run; `unknown` means no
 master ref resolved in that checkout and the question was not answered.
 
-| when (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+`exit` is the status the submitting process observed. `not observed` means the
+receipt was assembled after the fact from what the run published (`--resume`):
+the failure count in that row is still a fact, but a zero in it does not make
+the row green, because a suite can exit non-zero after a clean summary.
+
+| measured (UTC) | commit | master head? | arm | device | passed | failed | skipped | not collected | exit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 """
 
 
@@ -291,12 +302,20 @@ def _record_markdown(path: Path, receipt: dict) -> None:
         surface = record.get("surface") or {}
         counts = surface.get("counts") or {}
         cell = lambda key: str(counts.get(key, "--"))          # noqa: E731
+        if record.get("exit_status_observed", True):
+            exit_text = str(record.get("returncode", "--"))
+        else:
+            # Never a bare number here: this process did not watch the run, and
+            # a row that looks watched when it was not is the same overclaim
+            # the whole file exists to prevent.
+            exit_text = "not observed"
         rows.append(
-            f"| {receipt['generated_utc']} | `{population['commit'][:12]}` | "
+            f"| {record.get('measured_utc', receipt['generated_utc'])} | "
+            f"`{population['commit'][:12]}` | "
             f"{head_text} | {record['arm']} | "
             f"{surface.get('device', 'no population published')} | "
             f"{cell('passed')} | {cell('failed')} | {cell('skipped')} | "
-            f"{len(surface.get('not_collected', []))} |"
+            f"{len(surface.get('not_collected', []))} | {exit_text} |"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():

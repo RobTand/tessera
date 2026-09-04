@@ -8,8 +8,10 @@ placement, which belongs to the pool.
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -202,7 +204,7 @@ def test_the_ledger_puts_the_two_arms_next_to_each_other(tmp_path):
     }
     merge_suite._record_markdown(ledger, receipt)
     text = ledger.read_text()
-    assert "| when (UTC) |" in text
+    assert "| measured (UTC) |" in text
     gpu_row = [line for line in text.splitlines() if "| gpu |" in line]
     x86_row = [line for line in text.splitlines() if "| x86 |" in line]
     assert len(gpu_row) == len(x86_row) == 1
@@ -211,7 +213,7 @@ def test_the_ledger_puts_the_two_arms_next_to_each_other(tmp_path):
 
     # A second run appends rather than replacing: the header is written once.
     merge_suite._record_markdown(ledger, receipt)
-    assert ledger.read_text().count("| when (UTC) |") == 1
+    assert ledger.read_text().count("| measured (UTC) |") == 1
     assert ledger.read_text().count("| gpu |") == 2
 
 
@@ -300,3 +302,57 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
     # whole reason to assemble a receipt at all.
     text = ledger.read_text()
     assert "NVIDIA GB10" in text and "no CUDA device" in text
+
+
+def test_a_resumed_row_is_dated_by_the_run_and_never_looks_watched(tmp_path):
+    """Two ways a resumed row could quietly overclaim; neither is allowed.
+
+    Found by reading the first real ledger this tool wrote. The row carried
+    the time the row was WRITTEN, not the time the suite ran -- for a resume
+    that is hours off, and it is the measurement a reader is dating. And its
+    exit cell would have read like any watched row, when nobody watched it.
+
+    A resumed row therefore takes its date from the surface file the run
+    published, and says `not observed` where a watched row says a status.
+    """
+
+    merge_suite = _module()
+    surfaces = tmp_path / "s"
+    surfaces.mkdir()
+    surface = surfaces / "surface.gpu.json"
+    surface.write_text(json.dumps({
+        "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10",
+        "counts": {"passed": 1827, "failed": 0, "skipped": 10},
+        "not_collected": []}))
+    # A run that finished well before anyone came back for its receipt.
+    ran_at = 1788504000
+    os.utime(surface, (ran_at, ran_at))
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], surfaces)
+    expected = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ran_at))
+    assert record["measured_utc"] == expected
+
+    ledger = tmp_path / "ledger.md"
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2099-01-01T00:00:00Z",       # bookkeeping time
+        "population": {"commit": "abcdef012345", "is_master_head": False},
+        "arms": [record],
+    })
+    row = [line for line in ledger.read_text().splitlines() if "| gpu |" in line][0]
+    assert expected in row, row
+    assert "2099" not in row, "the row was dated by the bookkeeping, not the run"
+    # Zero failures on an unwatched run is not a green row, and must not read
+    # as one.
+    assert row.rstrip().endswith("| not observed |"), row
+
+    # A watched arm still records the status that was actually seen.
+    merge_suite._record_markdown(ledger, {
+        "generated_utc": "2026-09-04T00:00:00Z",
+        "population": {"commit": "abcdef012345", "is_master_head": True},
+        "arms": [{"arm": "x86", "returncode": 0, "surface": {
+            "device": "torch 2.11.0+cpu reports no CUDA device",
+            "counts": {"passed": 1381, "failed": 0, "skipped": 497},
+            "not_collected": []}}],
+    })
+    watched = [line for line in ledger.read_text().splitlines() if "| x86 |" in line][0]
+    assert watched.rstrip().endswith("| 0 |"), watched
