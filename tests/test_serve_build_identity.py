@@ -753,6 +753,13 @@ def test_decode_wrapper_profiles_only_the_decode_measurement_when_requested():
     assert "window_gemv_trace_summary.py" in body
 
 
+def test_decode_wrapper_makes_container_output_mounts_writable():
+    """Root-squashed containers must be able to write trace/profile mounts."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    assert 'chmod a+rwx "$TRACEDIR"' in body
+    assert 'chmod a+rwx "$PROFILE_DIR"' in body
+
+
 def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     """Absence must not read as agreement -- the thing the field exists for.
 

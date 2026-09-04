@@ -69,6 +69,10 @@ if [ -n "$PROFILE_DIR" ]; then
     exit 2
   fi
   mkdir -p "$PROFILE_DIR"
+  # /mnt/shared is root-squashed: the image runs as root, but that identity is
+  # deliberately not privileged on the host mount.  Make this fresh campaign
+  # directory writable before Docker binds it at /prof.
+  chmod a+rwx "$PROFILE_DIR"
   PROFILE_MOUNT=(-v "$PROFILE_DIR:/prof")
   PROFILE_CONFIG='{"profiler":"torch","torch_profiler_dir":"/prof"}'
 fi
@@ -84,6 +88,9 @@ source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}
 source "$(dirname "$0")/build_identity.sh"
 mkdir -p "$EXT" "$VLLM_CACHE" "$RUNS" "$TRACEDIR"
+# The route writer runs inside the container.  On a root-squashed shared mount
+# host ownership alone is insufficient even though the action owns RUNS.
+chmod a+rwx "$TRACEDIR"
 MODEL_MOUNT="$(cd "$(dirname "$MODEL")" && pwd)"
 echo "serving $MODEL via the tessera plugin ($IMAGE, mode=$MODE, port=$PORT)"
 runtime_image_require "$IMAGE" || exit 2
