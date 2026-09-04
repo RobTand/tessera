@@ -114,7 +114,7 @@ def test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did(tmp_path, monk
     assert probe.main() == 0
     report = json.loads(out.read_text())
 
-    assert report["schema"] == "tessera.inductor_determinism_probe/1"
+    assert report["schema"] == "tessera.inductor_determinism_probe/2"
     assert report["torch"] == torch.__version__
     # No GPU job ran here: with the device hidden the children compile for cpu.
     assert report["device"] == "cpu"
@@ -128,13 +128,23 @@ def test_two_fresh_cache_cpu_builds_per_arm_and_what_the_knob_did(tmp_path, monk
     reads = report["knob"]["reads"]
     assert reads["off"]["at_import"] == [False, False]
     assert reads["on"]["at_import"] == [True, True]
+    assert reads["on_reassert"]["at_import"] == [True, True]
     assert report["knob"]["summary"] == {
         "off": {"live_at_import": False, "resets_after_compile": False},
         "on": {"live_at_import": True, "resets_after_compile": True},
+        # The third arm puts the value back before the second compile, so the
+        # attribute is True again when the second compile reads it -- which is
+        # what makes it a control for "the flag stopped applying" rather than a
+        # second copy of ``on``.
+        "on_reassert": {"live_at_import": True, "resets_after_compile": True},
     }
 
-    for arm in ("off", "on"):
+    for arm in ("off", "on", "on_reassert"):
         assert report["arms"][arm]["outputs_bitwise_equal"] is True
+        # The phase split exists in every report, empty on a CPU run because
+        # CPU codegen emits no Triton kernel to carry the meta key.
+        assert set(report["arms"][arm]["kernel_meta_deterministic_by_phase"]) \
+            == {"first", "second"}
     # Deliberately unasserted: autotune/kernel counts.  On the CPU path both
     # arms record zero ``.best_config`` records and zero triton kernels (this
     # run: 0/0 on both sides), so this run cannot say whether the flag
