@@ -37,7 +37,7 @@ def main() -> None:
     ap.add_argument("--dir", default="/mnt/shared/tessera-runs/ldlq-block-serve")
     args = ap.parse_args()
 
-    arms, other = {}, {}
+    arms, other, cross = {}, {}, {}
     for p in sorted(glob.glob(f"{args.dir}/kl_*.json")):
         r = read(p)
         if not r:
@@ -49,6 +49,13 @@ def main() -> None:
         # checkpoint and is not one of the three blocks.  Counting it as a
         # candidate would compare an arm against a control it never shared a
         # session or an encoder with.
+        # ``<arm>.x`` is the SAME dump scored against the second teacher, not a
+        # second arm.  Counting it as one would manufacture a control spread of
+        # exactly zero out of one serve -- a fake error bar, and the most
+        # flattering possible one.  It is kept as a cross-teacher check.
+        if name.endswith(".x"):
+            cross[name[:-2]] = r
+            continue
         (arms if re.fullmatch(r"b32[ab]_\S+|b\d+", name) else other)[name] = r
 
     comp = read(COMPARATOR) or read(FALLBACK)
@@ -58,6 +65,11 @@ def main() -> None:
     for name, r in arms.items():
         print(f"{name:<24} {r['kl']!r}  conf={r['confident']!r} "
               f"top1={r['top1']!r}  teacher={r['teacher']}")
+    for name, r in cross.items():
+        base = arms.get(name) or other.get(name)
+        agree = (base is not None and base["kl"] == r["kl"])
+        print(f"  cross-teacher check {name}: {r['kl']!r} on {r['teacher']} "
+              f"-- {'identical' if agree else 'DIFFERS from the primary scoring'}")
     for name, r in other.items():
         print(f"(not a bracket arm) {name}: {r['kl']!r} "
               f"student={r['student']}")
