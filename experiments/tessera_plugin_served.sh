@@ -1,16 +1,15 @@
 #!/usr/bin/env bash
-# Serve a Tessera-wire checkpoint through TESSERA'S OWN vLLM plugin (both
-# families: TESSERA_NVFP4 W4A4 and TESSERA_FP8 W8A8, selected per module by the
-# checkpoint) on the vanilla vLLM 0.28 image, dump its logprobs on the same
-# corpus as the other arms, compare to the image-matched teacher, and grep the
-# route.
+# Serve a Tessera-wire checkpoint through Tessera's own vLLM plugin on the
+# selected digest-pinned image (the dense vLLM 0.28 pin is the default). Dump
+# its logprobs on the selected model-matched corpus, compare to the supplied
+# image-matched teacher, and record the route. Campaigns must supply matching
+# model, corpus, teacher and runtime settings together.
 #
-# The acceptance is the GRIDBOOK LANE's own number on the same bytes: these
-# checkpoints are hardlinks of the ones that lane served, retargeted by a
-# config edit only (``retarget_checkpoint_to_plugin.py``), and the plugin runs
-# the same decoder and the same ``torch._scaled_mm``.  A non-zero mutual KL
-# against the matching /mnt/shared/tessera-kl/qwen_gridbook_* dump would mean
-# the move changed the arithmetic, which it must not.
+# For the historical dense Gridbook retargeting experiment, the checkpoints
+# were hardlinks retargeted by config only (retarget_checkpoint_to_plugin.py),
+# so mutual KL against that lane tested preservation of its decoder arithmetic.
+# That experiment's acceptance rule is not a general MoE promotion criterion;
+# each campaign must retain its own matched-byte served evidence and gate.
 #
 # There is NO enable flag: ``quant_method: "tessera"`` in the checkpoint selects
 # the plugin.  TESSERA_SERVE_MODE declares the residency.
