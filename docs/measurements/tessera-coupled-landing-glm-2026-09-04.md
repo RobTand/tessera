@@ -47,18 +47,30 @@ minimises the coupled quadratic better on both populations, by about the same
 
 ## What the split means, and why it is the reading that matters
 
-`hfit` is `sqrt(E H E^T / W H W^T)` on the **fit** rows --- the quantity every
-refit here is monotone in, and the one the coupled landing is an exact
-coordinate-descent minimiser of. `out` is held-out activation-space relative
-error on rows no fit ever saw. On Qwen the two moved together, and #105's
-receipt said so in as many words: *"Both `out` (held out) and `hfit` improve
+**The two columns are the same functional on two different Hessians**, which
+is what makes the split readable at all. `hfit` is
+`sqrt(tr(E H E^T) / tr(W H W^T))` with `H` the fit-row Hessian --- the
+quantity every refit here is monotone in, and the one the coupled landing is
+an exact coordinate-descent minimiser of. `out` is
+`||X_ev E^T||_F / ||X_ev W^T||_F`, and since `||X_ev E^T||_F^2 =
+tr(E X_ev^T X_ev E^T)`, that is the *identical* expression with `X_ev^T X_ev`
+in place of `H` (the row-count normalisation cancels in the ratio). So the two
+numbers differ in one thing and one thing only: **which rows the Hessian was
+built from.** There is no second reading available --- not a different norm,
+not a different weighting, not a rendering difference. A mechanism that moves
+them in opposite directions is telling you about `H`, and about nothing else.
+
+On Qwen the two moved together, and #105's receipt said so in as many words: *"Both `out` (held out) and `hfit` improve
 together, so there is no screen-inverts-on-held-out signature here."* That
 sentence was true of Qwen and is false of GLM. Here they part company, 6/6 in
 each direction: **the coupled landing is overfitting the fit-row Hessian.**
 
-That is a coherent mechanism rather than noise. Nearest-in-linear landing is a
-weak, per-block rule; it cannot exploit fine structure in `H` because it never
-looks at more than one block's own target. The coupled landing looks at the
+That is a coherent mechanism rather than noise --- and note there is no
+run-to-run noise to appeal to: every arm is deterministic given code and
+inputs, the drift control's floor is 0.0000%, and the sign is unanimous over
+six units in both columns. Nearest-in-linear landing is a weak, per-block
+rule; it cannot exploit fine structure in `H` because it never looks at more
+than one block's own target. The coupled landing looks at the
 full quadratic, so whatever `H` says --- including the part of `H` that is a
 1024-row sample and not the population --- it will spend the sixteen entries'
 assignment on. On dense Qwen Linears the fit-row `H` generalises well enough
