@@ -69,12 +69,16 @@ covered:
   that branch is invisible here.  The audit harness, with its committed real
   slice, is the instrument for that; this is the cheap always-on one.
 * **The fixture set itself.**  The digest binds what the encoder does *on
-  these fixtures*, so extending the set re-bases the identity even though no
-  encoder changed -- and the coverage rule above requires extending it when a
-  grid, body or plane is added.  That is a real cost and it is the same one
-  ``encoder_profile_id`` paid when it began digesting the payload grid
-  unconditionally ("re-bases every profile id, including arity-1 E2M1's").  A
-  new shipping structure is a wire event either way.
+  these fixtures*, so an ordinary extension re-bases the identity even though
+  no encoder changed -- and the coverage rule above requires that cost when a
+  new grid, body or plane ships.  A witness added later for a blind spot in an
+  existing structure follows the narrower issue-#116 compatibility rule: its
+  encoded arm-A contribution is recorded once, contributes zero bytes while
+  it matches, and contributes its self-delimiting encoded bytes when it does
+  not.  That preserves the identity of unchanged artifacts without hiding the
+  newly-covered byte move.  The baseline is measured history and is never
+  bumped; a true rollback removes the contribution again, so the identity
+  rolls back if and only if every other fixture output does too.
 * **Device.**  The fixtures run on CPU by construction, so the digest is one
   value for the fleet rather than one per accelerator.  Nothing about that is
   left to the environment: every accelerated branch dispatches on the *tensor's*
@@ -99,9 +103,11 @@ that catches it, by reporting a byte move where there is none.
 Cost, measured
 --------------
 
-Seven encodes of a 16x128 unit, on sparky (GB10, CPU only, box under load):
-**42.5 s in a cold process, 1.7 s in a warm one**, memoised so any process
-pays it once.  Almost all of the 41 s difference is ``_plan_for`` building the
+The original seven encodes of a 16x128 unit, on sparky (GB10, CPU only, box
+under load): **42.5 s in a cold process, 1.7 s in a warm one**, memoised so any
+process pays it once. Issue #116 adds an eighth, baseline-neutral 16x128
+witness; its incremental time has not been isolated from that shared cold
+start. Almost all of the original 41 s difference is ``_plan_for`` building the
 window tables and anchor forests for the five distinct ``(grid, rung)`` pairs
 -- work an exporter does anyway -- which is why the cost lands where it does:
 
@@ -119,6 +125,7 @@ cold process, and no consumer that has nothing to encode is asked to pay.
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 import threading
 from dataclasses import dataclass
@@ -194,6 +201,16 @@ OUTLIER_STRIDE = 3
 OUTLIER_SIGMAS = 6.0
 OUTLIER_SPREAD = 6.0
 
+#: A one-time compatibility witness for issue #116.  This is the digest of
+#: the boundary fixture contribution under the current arm-A encoder.  That
+#: contribution is omitted while it matches, so adding coverage does not
+#: re-label artifacts already written by unchanged behaviour; any byte move on
+#: the witness contributes its encoded bytes and therefore moves the identity.
+#: Like ``UNTAGGED_ENCODER_ID``, this is measured history and is never bumped.
+_UNRAISED_BOUNDARY_BASELINE = (
+    "a4d6cc3a19556393eb7dacdf3567ad241789900e06f9e42aeabe38982dd8b7f2"
+)
+
 _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
 
 _LOCK = threading.RLock()
@@ -234,6 +251,70 @@ def _fixture_weight():
     return weight
 
 
+def _unraised_boundary_fixture():
+    """A synthetic E4M3 row in #115's half-ulp residual interval.
+
+    The row is constructed from the fp16 lattice rather than searched for.  Its
+    exact RMS scale sits three eighths of one fp16 ulp above 1, while
+    ``amax / reach`` sits one quarter ulp above 1.  It is therefore unraised,
+    yet round-to-nearest stores 1 and lands below the represented reach.  The
+    other rows sit one eighth ulp above 1: they still store 1, while keeping
+    the median above the binade boundary so ``channel_global`` is derived as 1.
+
+    Returns ``(weight, sigma, reach)`` so the test can pin the inequalities the
+    construction exists to exercise against the same owning arithmetic.
+    """
+    import torch
+
+    from .alphabet import E4M3_GRID
+    from .encode import grid_vector_table, window_table
+    from .export import wire_recipe
+    from .scale_channel import default_channel_sigma
+
+    recipe = wire_recipe(E4M3_GRID, 1024)
+    sigma = (
+        float(default_channel_sigma(E4M3_GRID))
+        if recipe.channel_sigma is None else float(recipe.channel_sigma)
+    )
+    table = window_table(
+        E4M3_GRID,
+        recipe.window_bits,
+        sigma=sigma,
+        seed=recipe.window_seed,
+        half=16,
+        device="cpu",
+    )
+    reach = float(
+        grid_vector_table(E4M3_GRID, device="cpu")[table.long()].abs().max()
+    )
+
+    lower = torch.tensor(1.0, dtype=torch.float16).float()
+    upper = torch.nextafter(
+        lower.to(torch.float16),
+        torch.tensor(float("inf"), dtype=torch.float16),
+    ).float()
+    ulp = upper - lower
+    floor_scale = lower + ulp / 4
+    rms_scale = lower + 3 * ulp / 8
+    peak = float(reach * floor_scale)
+    target_rms = float(sigma * rms_scale)
+    rest = math.sqrt(
+        (FIXTURE_COLS * target_rms * target_rms - peak * peak)
+        / (FIXTURE_COLS - 1)
+    )
+
+    ordinary_scale = lower + ulp / 8
+    weight = torch.full(
+        (FIXTURE_ROWS, FIXTURE_COLS), float(sigma * ordinary_scale),
+        dtype=torch.float32, device="cpu",
+    )
+    weight[:, 1::2].neg_()
+    weight[0].fill_(rest)
+    weight[0, 1::2].neg_()
+    weight[0, 0] = peak
+    return weight, sigma, reach
+
+
 def _fixture_hessian():
     """A deterministic PSD Hessian for the fixture's columns.
 
@@ -264,6 +345,15 @@ class Fixture:
     #: exporter's activation-aware recipe (LDLQ, the metric refits, the reach
     #: floor), which is where most recent byte movers live.
     activation: bool = False
+    #: This fixture was added after the identity shipped.  Matching the
+    #: recorded contribution is neutral; a mismatch contributes and moves it.
+    compatibility_baseline: "str | None" = None
+    #: Use the deliberately constructed #115 boundary weights instead of the
+    #: general mixed raised/unraised fixture.
+    unraised_boundary: bool = False
+    #: ``None`` tracks the exporter default.  The boundary witness holds the
+    #: initial plane fixed at zero refits so the exact branch reaches bytes.
+    scale_refit: "int | None" = None
 
     @property
     def grid(self):
@@ -292,7 +382,9 @@ def fixtures() -> "tuple[Fixture, ...]":
     One weight-only case per shipping ``(grid, body, scale plane)`` structure,
     plus one activation-aware case per *scale plane*: the plane is what decides
     which refit runs, and running both planes' refits is what makes a change to
-    either move this digest.
+    either move this digest. The final E4M3 case is issue #116's
+    baseline-neutral witness for the unraised half-ulp reach boundary inside an
+    already-covered structure.
 
     The rungs are declared inputs.  E4M3 at 1024 and E2M1x2 at 768 are the
     rates those wires ship at; E2M1x2 at 896 is its coset-trellis cap (the
@@ -307,6 +399,14 @@ def fixtures() -> "tuple[Fixture, ...]":
         Fixture("e2m1-768/tcq-lut", "E2M1", 768),
         Fixture("e4m3-1024/channel+activation", "E4M3", 1024, activation=True),
         Fixture("e2m1x2-768/lut+activation", "E2M1x2", 768, activation=True),
+        Fixture(
+            "e4m3-1024/window-channel-unraised-boundary",
+            "E4M3",
+            1024,
+            compatibility_baseline=_UNRAISED_BOUNDARY_BASELINE,
+            unraised_boundary=True,
+            scale_refit=0,
+        ),
     )
 
 
@@ -360,8 +460,11 @@ def _encode_fixture(case: Fixture) -> bytes:
     from .export import ActivationSource, encode_linear, wire_recipe
     from .manifest import ScalePlaneKind
 
-    weight = _fixture_weight()
+    weight = _unraised_boundary_fixture()[0] if case.unraised_boundary \
+        else _fixture_weight()
     kwargs: dict = {}
+    if case.scale_refit is not None:
+        kwargs["scale_refit"] = case.scale_refit
     if case.activation:
         plane = wire_recipe(case.grid, case.q256).scale_plane
         # Named by naming nothing: a case that spelled ``ldlq_sigma=1.0``
@@ -394,6 +497,15 @@ def _encode_fixture(case: Fixture) -> bytes:
     for terminal in manifest.terminals:
         terminal.encode(writer)
     return writer.bytes
+
+
+def _identity_contribution(case: Fixture) -> bytes:
+    """Encoded fixture bytes, neutral only at a recorded compatibility point."""
+    encoded = _encode_fixture(case)
+    if case.compatibility_baseline is not None:
+        if hashlib.sha256(encoded).hexdigest() == case.compatibility_baseline:
+            return b""
+    return encoded
 
 
 def fixture_digests() -> "dict[str, str]":
@@ -465,6 +577,6 @@ def encoder_fixture_id() -> bytes:
         if _MEMO:
             return _MEMO[0]
         with _fixture_build():
-            payload = b"".join(_encode_fixture(case) for case in fixtures())
+            payload = b"".join(_identity_contribution(case) for case in fixtures())
         _MEMO.append(hashlib.sha256(_DOMAIN + payload).digest())
         return _MEMO[0]

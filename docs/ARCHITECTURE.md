@@ -70,6 +70,20 @@ under the new encoder. Tests that assert an older record minor explicitly ask
 `build_unit_artifact` for that born-against spelling, while a byte-for-byte
 rebuild inherits the parsed artifact's identity.
 
+Issue #116 adds the exact half-ulp boundary that #87 deliberately left to
+issue #115: an unraised E4M3 row whose RMS scale is inside the body's reach in
+float arithmetic while its nearest fp16 word is one word below that bound.
+Because the identity was already live, adding that witness may not re-label
+unchanged arm-A artifacts. Its encoded arm-A contribution therefore has a
+measured historical digest and is neutral while it matches; if the encoded
+contribution differs, its self-delimiting bytes join the identity hash. The
+historical digest is never bumped. This is content identity rather than a
+monotonic version: rolling the encoder back to the exact baseline makes the
+witness neutral again, and the full identity rolls back only when the other
+fixture outputs do too. New shipping structures still add ordinary fixtures
+and re-base the identity; baseline-neutral witnesses are only for newly found
+blind spots inside a structure the live identity already claimed to cover.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats

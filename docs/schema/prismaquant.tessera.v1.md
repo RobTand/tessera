@@ -480,9 +480,23 @@ at one declared rung per structure (`window_bits` varies with the rung and is
 already bound in `encoder_profile_id`); the activation-aware arms use a
 synthetic Hessian, so the CHANNEL refit's `B <= 0` branch — a property of a
 real capture's off-diagonal structure — stays the byte-baseline harness's to
-catch. The digest also binds the fixture set itself, so extending the set
+catch. The digest also binds the fixture set itself, so an ordinary extension
 re-bases the identity, exactly as digesting the payload grid once re-based
-every profile id.
+every profile id. That remains the rule for a new shipping structure.
+
+There is one narrower rule for a coverage defect found **after** the identity
+is live. Re-basing merely because a fixture was missing would label unchanged
+bytes as a new encoder, so issue #116's unraised reach-boundary witness records
+the SHA-256 of its exact encoded arm-A contribution once. While the live
+contribution matches that measured baseline it contributes the empty string to
+the aggregate; any other encoded contribution contributes its self-delimiting
+bytes and moves the identity. The baseline is historical evidence, like
+`UNTAGGED_ENCODER_ID`, and is never advanced to bless a new result. Identity is
+content-addressed rather than monotonic: an exact rollback makes the witness
+neutral again, and recovers an earlier full identity only if every ordinary
+fixture output also recovered. This exception repairs a blind spot within an
+already-covered `(grid, body, scale plane)`; it does not waive the ordinary
+re-base when the set of shipping structures grows.
 
 **Not bound into `encoder_profile_id`.** The profile id stays input-only, which
 is the one thing it is for; this is a **sibling** field, never a digest input.
