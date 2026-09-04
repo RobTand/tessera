@@ -1080,16 +1080,19 @@ loader would have dropped silently.
 
 ### What is still owed
 
-1. **The exporter's write half** (2-D unpacked source). This is the only thing
-   standing between the route and an artifact — and it is *not* blocked on a
-   measurement: contract v11's `construction` block already carries
+1. ~~**The exporter's write half** (2-D unpacked source).~~ **Landed
+   2026-09-04 — see §15.** It was not blocked on a measurement, and it is not
+   any more: contract v11's `construction` block already carried
    `offered_non_linear` naming `...mlp.experts` / `RoutedExperts` on
-   GLM-5.3-Flash, so the construction gate has a row to read for the MoE
-   module. The refusals in `experiments/export_tessera_serving.py` now say
-   exactly this instead of claiming the plugin has no route.
-2. **The packed 3-D source layout** stays refused, and *is* blocked on a
-   measurement: §9.3's orientation ambiguity is unresolved, and this model is
-   the case where no shape settles it.
+   GLM-5.3-Flash, and `classify_construction` now reads that list as well as
+   `offered`, which is what the stack's construction gate needed.
+2. **The packed 3-D source layout** stays refused, and is blocked on **two**
+   unattested conventions rather than the one this list named. §9.3's
+   orientation ambiguity is the first. The second is the gate/up **split**: a
+   packed `gate_up_proj` carries both halves on one axis, and whether they are
+   chunked or interleaved is the producing library's convention, which the
+   tensor does not state. Getting either wrong transposes or interleaves every
+   expert in silence. The refusal names both.
 3. **A served census and KL.** §0's encode table prices it: the E4M3 whole-expert
    rate is 1.611 Mparam/s on a held box, so one GLM-5.3-Flash-4layer MoE layer
    (288 experts x 3 projections) is ~72–75 min and all three are ~3.7 h, before
@@ -1117,3 +1120,64 @@ loader would have dropped silently.
 8. **`resident` becomes process-wide.** MoE refuses `streamed` and
    `TESSERA_SERVE_MODE` is one process-level setting, so a mixed artifact is
    resident everywhere, dense modules included, until (4) lands.
+
+## 15. The exporter's write half, and what it changed (2026-09-04, #5)
+
+`experiments/export_tessera_serving.py` writes routed-MoE stacks from the
+**unpacked** (per-expert 2-D) source layout. Until this, §14's list item 1 was
+the only thing standing between the route and an artifact, and it stood: no
+Tessera checkpoint could contain a `routed_moe` stack, so nothing could be
+served through the route, the sidecar or the parameter layout. Receipt:
+`docs/measurements/tessera-moe-export-seam-2026-09-04.md`.
+
+**The plannable unit is the stack.** A `--plan-json` entry keyed
+`<moe>.experts` gives every expert of that stack one rung — the same
+per-layer expert uniformity every allocator in this house already enforces, and
+the granularity vLLM builds one method at. Naming a leaf is still refused, now
+with the spelling that works rather than a note that the write half does not
+exist.
+
+**One container per expert per projection**, written as
+`<moe>.experts.{e}.{proj}.wire`. The suffix is what makes
+`RoutedExperts.build_expert_params_mapping` route it to `w13_wire`/`w2_wire`
+(§9.6), and the parameter's own `weight_loader` is what makes the write happen.
+
+**`wire_stride` is derived, not declared.** It is the maximum over the group's
+blobs, computed after the last one is written — which is also when
+`config.json` is written, so nothing waits on it. There is no stride a caller
+could pass that the bytes could not contradict, and `unpack_moe_wires` refuses
+one that is not what the lengths imply.
+
+**The reader is the gate at write time.** The scheme dict goes through
+`scheme.validate_tessera_moe_scheme` — the exact function `TesseraConfig`
+calls — before `config.json` is written.
+
+**The construction gate reads `offered_non_linear` now.** A `RoutedExperts`
+stack is not a `LinearBase`, so the census records it in that list rather than
+in `offered`, and `classify_construction` reading only the first called the one
+module the expert route exists for `absent`. The attestation is the census
+either way (principle 14); the classifier now reads all of what it wrote. On
+GLM-5.3-Flash-4layer all three stacks resolve `offered`.
+
+**Nothing that was written before moves.** `moe_plan_baseline.py`, master
+against this branch: 5 of 72 rows, four of them refusal text and the fifth the
+manifest's `routed_moe` block. Every byte-deciding row — the tensor digest, the
+`quantization_config`, the `ignore` list — is identical, and an unplanned stack
+is untouched.
+
+### What §14's list looks like now
+
+1. ~~The exporter's write half~~ — **done**, unpacked source.
+2. **The packed 3-D source layout** — still refused, on **two** conventions:
+   §9.3's orientation ambiguity, and the gate/up split (chunked or
+   interleaved), which the tensor does not state either. GLM's source is
+   unpacked, so the target model is not blocked by this.
+3. **A served census and KL** — **still open, and it is the whole of what is
+   left.** Costed in §0 and in the receipt: ~75 min of held-box GPU per
+   288-expert stack, ~3.75 h for all three, plus a GLM teacher dump on the
+   pinned image, because no GLM artifact has ever been served in this repo.
+   `experiments/moe_export_glm_4layer.sh` and `experiments/moe_stack_plan.py`
+   are the driver and the plan builder; neither has been run on the real model.
+4-8. Unchanged: expert parallelism, TP inside an expert and `streamed` are
+   refused by name; memory at 288 experts is a design item; the model-level
+   load hop and the compiled forward are unmeasured.

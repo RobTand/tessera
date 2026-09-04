@@ -128,11 +128,16 @@ describes. It fired on real bytes.
   `MARLIN`, that check would fail for a *probe* reason — the kernel repacking
   the tile — not a route reason, and the probe would need to compare before
   the conversion instead.
-- **No exporter writes these bytes.** The wires in this probe were built by
-  `tessera.export.encode_linear_planes` and `tessera.fused.pack_fused` — the
-  same calls an exporter would make — but
-  `experiments/export_tessera_serving.py` still refuses routed experts at plan
-  time. Until that lands, no Tessera MoE checkpoint can exist.
+- **No exporter wrote these bytes** — true when this receipt was taken, and
+  **superseded later the same day**. The wires here were built by
+  `tessera.export.encode_linear_planes` and `tessera.fused.pack_fused`, the
+  same calls an exporter would make, but nothing wrote a checkpoint.
+  `experiments/export_tessera_serving.py` now does: a `--plan-json` entry keyed
+  `<moe>.experts` writes the containers and the `routed_moe` scheme, and this
+  probe grew a second positive leg (`positive_exported`) that loads what the
+  EXPORTER wrote rather than what the probe built. Read the original bullet as
+  the state at the hour, and
+  `docs/measurements/tessera-moe-export-seam-2026-09-04.md` for the pair.
 - **No served census, no KL, no `routed_moe` cell.** This is what the loader
   *does*; what has been *served* is a different published fact, and the
   `loader_axes` precedent is that the two are published separately or not at
