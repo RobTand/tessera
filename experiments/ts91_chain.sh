@@ -20,12 +20,5 @@ SUF=${1:-before}
 # separate cache roots and separate extension dirs -- and not a quiet box.
 PBRUN=${PBRUN:-/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py}
 GPUWRAP=(/usr/bin/python3 "$PBRUN" --gpu --)
-export TS91_NO_LOCK=1
-run() { "$WT/experiments/ts91_cache_key_repro.sh" "$1" "$2" compiled "$SUF-$1-into-$2"; }
-exec "${GPUWRAP[@]}" bash -c "
-set -x
-'$WT/experiments/ts91_cache_key_repro.sh' A X-$SUF compiled '$SUF-A-into-X'
-'$WT/experiments/ts91_cache_key_repro.sh' B Y-$SUF compiled '$SUF-B-into-Y'
-'$WT/experiments/ts91_cache_key_repro.sh' B X-$SUF compiled '$SUF-B-into-X'
-'$WT/experiments/ts91_cache_key_repro.sh' A Y-$SUF compiled '$SUF-A-into-Y'
-"
+export TS91_NO_LOCK=1 WT SUF
+exec "${GPUWRAP[@]}" bash "$WT/experiments/ts91_chain_body.sh"
