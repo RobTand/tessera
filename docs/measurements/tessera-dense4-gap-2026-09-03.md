@@ -331,12 +331,9 @@ What is settled without them, and does not change when they arrive:
   delta, are readable at this commit. The check's own limit: `--layers 1`, so
   it covers 4 of 112 modules; it is layer 0's wire, not the whole
   checkpoint's. The
-  bracket is therefore read as an *internally matched* pair: control and
+  bracket is in any case read as an *internally matched* pair -- control and
   candidates from one tree, one session, one teacher, so the delta between them
-  is a fact about the block. Its absolute values describe `82cdf513`'s encoder,
-  not this branch's, and the byte-identity check below says only that this
-  branch's own commit changes nothing at a stated block -- it does not carry
-  the bracket across the intervening merges, and is not offered as doing so.
+  is a fact about the block whatever the surrounding commits did.
 * **Rotation.** Off the lever list by decision: 2.5-2.8x worse served on this
   model (`rotation-hurts-block-scaled-formats`).
 * **A learned codebook.** Kernel-lane only under the FP4-native constraint.
@@ -344,6 +341,39 @@ What is settled without them, and does not change when they arrive:
   0.151. `encode_unit` calls `initial_channel_scale` only when the plane is
   `CHANNEL`, and `wire_recipe(E2M1x2, 896)` returns `LUT`. It cannot apply
   here, and this is the third document to say so.
+
+## The ruling on the floor, and the byte-identity proof it owes
+
+The change is a **caller-side** one: `choose_ldl_block` is told `floor=1` from
+`ActivationSource.block_for` (the `encode_unit(ldl=...)` path's floor, per
+tessera#95), a budget is opt-in, and `DEFAULT_LDLQ_BLOCK` is untouched. **No
+schema minor bump**: the wire is unchanged, the default is unchanged, and
+`activation_aware.ldlq_block` keeps its old type and value whenever a block is
+stated. What that owes, per the acceptance criteria, is a proof that unchanged
+arguments move no bytes -- not a reading of the diff.
+
+Two exports settle it, both with the served arm's verbatim arguments
+(`--grid E2M1x2 --q256 896 --ldlq-sigma 1.0 --ldlq-block 32
+--refit-metric h^1.0 --layers 1`) and both hashed on the raw safetensors byte
+ranges:
+
+| pair | tensors compared | `wire_bytes` blobs | differing | `activation_aware` | verdict |
+|---|---|---|---|---|---|
+| `HEAD~1` vs `HEAD` -- this commit alone (`ts12_byte_identity_pair.json`) | 312 | 4 | **0** | equal | **BYTE-IDENTICAL** |
+| `HEAD` vs the bracket's arm at `82cdf513` (`ts12_byte_identity.json`) | 123 shared | 4 | **0** | equal | **BYTE-IDENTICAL** |
+
+The first isolates the commit: `HEAD~1..HEAD` is exactly this change, so a
+byte-identical pair across it is the claim, not an argument for it. The second
+is wider than needed and is the more useful of the two: it says the whole range
+`82cdf513..HEAD` -- three merges into `encode.py`, `window_viterbi.py`,
+`compensate.py` and `scale_channel.py`, plus this commit -- reproduces the
+served arm's layer-0 wire exactly.
+
+Both are `--layers 1`, i.e. 4 of 112 modules. That is the honest limit: seven
+units settle a per-unit byte claim in minutes where the whole model costs
+hours, and the *preceding* range shows what a real encoder change looks like
+here (69 of 112 wire blobs moving), so this is not a check with no power to
+fail. It is stated as layer 0's wire, not as the checkpoint's.
 
 ## What remains unmeasured
 
