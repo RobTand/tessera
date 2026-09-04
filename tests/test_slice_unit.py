@@ -840,6 +840,34 @@ def test_release_placement_ranks_by_the_units_own_grid(body, plane, q256):
     assert torch.equal(parsed.unit.release_code.cpu(), unit.release_code.cpu())
 
 
+def test_release_is_refused_on_a_grid_wider_than_the_release_plane():
+    """The encoder says which dial does not exist, and says it before it works.
+
+    A release stores a whole payload code and the RELEASE plane is
+    ``grammar.RELEASE_BITS`` wide whatever the grid, so release is a 16-code
+    grid's dial.  Without this refusal the pass ran to completion, picked
+    release codes by argmin over all 256 E4M3 values, and failed at write with
+    ``wire.pack_uniform``'s "value out of range for a 4-bit field: [113, 251]"
+    -- which names neither release nor the grid, and arrives one call after the
+    encoder that chose them.  Widening the plane per grid is a wire change.
+    """
+    grid = GRIDS["E4M3"]
+    rows, cols, q256 = 8, 256, 1024
+    rates, forests = _plan_for(grid, q256, cols, BodyKind.WINDOW, None)
+    recipe = wire_recipe(grid, q256)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    assert grid.size > (1 << RELEASE_BITS)
+    with pytest.raises(GrammarError, match=f"stores {RELEASE_BITS} bits"):
+        encode_unit(
+            weight, forests, rates, CODE, completion=0, released_positions=8,
+            span=1, scale_plane=ScalePlaneKind.CHANNEL, body=BodyKind.WINDOW,
+            scale_refit=2, window_bits=recipe.window_bits,
+            window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+            channel_sigma=recipe.channel_sigma,
+        )
+
+
 @needs_cuda
 def test_release_restricts_to_the_shard(units):
     """The released set of a shard is the parent's, restricted -- and the
