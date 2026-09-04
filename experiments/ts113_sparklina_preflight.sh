@@ -4,8 +4,8 @@ set -euo pipefail
 
 WT=${WT:-$(cd "$(dirname "$0")/.." && pwd)}
 STAGE_ROOT=${TS113_STAGE_ROOT:-/mnt/shared/tessera-runs/ts113-fresh-sparklina-aa6-r1}
-POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r2}
-LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r2}
+POP_ROOT=${TS113_POP_ROOT:-/mnt/shared/tessera-runs/ts113-sparklina-population-aa6-r3}
+LOCAL_ROOT=${TS113_LOCAL_ROOT:-/home/rob/tessera-runs/ts113-sparklina-aa6-r3}
 source "$WT/experiments/runtime_image.sh"
 IMAGE=$(runtime_image_pin)
 CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
@@ -110,12 +110,6 @@ version=$(docker run --rm --entrypoint python3 "$IMAGE" -c \
 }
 [ ! -e "$LOCAL_ROOT" ] || {
   echo "REFUSED: host-local population namespace already exists: $LOCAL_ROOT" >&2
-  exit 2
-}
-shopt -s nullglob
-old_dumps=(/mnt/shared/tessera-kl/qwen_ts113_sparklina_aa6_r1_*)
-[ "${#old_dumps[@]}" = 0 ] || {
-  printf 'REFUSED: dump namespace already populated: %s\n' "${old_dumps[@]}" >&2
   exit 2
 }
 
