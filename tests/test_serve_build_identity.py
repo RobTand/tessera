@@ -34,6 +34,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -541,3 +542,46 @@ def test_the_real_serve_logs_of_the_measured_pair(log, expected):
     if not path.is_file():
         pytest.skip(f"{log} is not on this box")
     assert read_serve_log(path.read_text(errors="replace"))["dispatch"] == expected
+
+
+# ---------------------------------------------------------------- the gate --
+# A gate that refuses on a match (#16)
+
+_WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
+
+
+def test_a_matching_pattern_returns_zero_only_when_the_producer_is_not_piped():
+    """``producer | grep -q`` returns NON-zero on a match under ``pipefail``.
+
+    grep -q exits at the first hit, the producer takes SIGPIPE and dies 141, and
+    that is the status ``set -o pipefail`` propagates.  This is not a hypothesis:
+    it is what ``serve_and_dump_kl.sh`` did to every arm of the dispatch ladder
+    on 2026-09-03, refusing each serve whose log said exactly what the arm had
+    asked for.  ``yes`` is used as the producer because it is guaranteed to
+    still be writing when grep leaves; a short producer may finish first and
+    hide the bug, which is how it survived review.
+    """
+    piped = subprocess.run(
+        ["bash", "-c", "set -euo pipefail; yes match 2>/dev/null | grep -Eq match"],
+        capture_output=True)
+    assert piped.returncode != 0, (
+        "the piped form is expected to FAIL on a match; if it now succeeds the "
+        "premise of the fix below has changed and the fix should be re-argued")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "serve.log"
+        log.write_text("match\n" * 100000)
+        filed = subprocess.run(
+            ["bash", "-c", f"set -euo pipefail; grep -Eq match {log}"],
+            capture_output=True)
+    assert filed.returncode == 0
+
+
+def test_the_serve_wrapper_greps_its_log_file_rather_than_a_pipe():
+    """The wrapper's own gate must use the form that survives a match."""
+    body = _WRAPPER.read_text()
+    assert "TESSERA_KL_REQUIRE_IN_LOG" in body
+    assert 'docker logs "$NAME" 2>&1 | grep' not in body, (
+        "the require gate is piping docker logs into grep again; under pipefail "
+        "that refuses precisely the arms whose log matches")
+    assert 'grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"' in body

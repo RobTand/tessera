@@ -111,8 +111,13 @@ fi
 # What the runtime resolved, checked against what this arm asked for, while
 # the container is still up and before anything is measured on it.
 if [ -n "${TESSERA_KL_REQUIRE_IN_LOG:-}" ]; then
-  if ! docker logs "$NAME" 2>&1 | grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG"; then
-    docker logs "$NAME" > "$LOG" 2>&1 || true
+  # Grep the FILE, never a pipe.  Under `set -o pipefail` (line 11) a
+  # `docker logs | grep -Eq` that MATCHES returns NON-zero: grep -q exits at the
+  # first hit and SIGPIPEs the producer, whose 141 is what pipefail propagates.
+  # So the piped form refused exactly the arms it should have passed, and did,
+  # on every arm that reached this gate on 2026-09-03.
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  if ! grep -Eq "$TESSERA_KL_REQUIRE_IN_LOG" "$LOG"; then
     docker rm -f "$NAME" >/dev/null 2>&1
     echo "REFUSED: the serve's own log does not match TESSERA_KL_REQUIRE_IN_LOG"
     echo "  pattern: $TESSERA_KL_REQUIRE_IN_LOG"
