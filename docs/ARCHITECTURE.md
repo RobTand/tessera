@@ -382,7 +382,12 @@ than left to the accident that the record's name carries a suffix no
 declaration does. That is the same honest absence §4.4 records for the loader,
 and closing it is a document change: a structure axis in `ROUTE_LAUNCHES` and a
 `routed_moe` cell at the next contract version, derived from that table the way
-every dense cell is.
+every dense cell is. The validator derives the positive
+`lane_eligibility.structures` set from those receipt-bearing cells, while
+`scheme.STRUCTURES` is only the upper bound on what dispatch can execute. Thus
+adding a future dispatch structure cannot attest it by omission from a
+hand-maintained "unserved" denylist: without a served cell, naming it in the
+structure axis is refused.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 

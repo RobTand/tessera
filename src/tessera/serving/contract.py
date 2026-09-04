@@ -478,7 +478,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
-    from .scheme import ROUTES, STRUCTURE_ROUTED_MOE, STRUCTURES
+    from .scheme import ROUTES, STRUCTURES
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
@@ -592,29 +592,17 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             "a phase the census drives under a name this document does not declare cannot be "
             "joined to a cell at all -- which is how a per-(family, regime) expectation goes "
             "vacuously true on half the matrix. Add the regime to BOTH sides, in this table.")
-    # ``lane_eligibility`` is an ATTESTATION block, so the set it may name is
-    # narrower than the set the dispatch serves -- the same split as
-    # ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
-    # does).  ``routed_moe`` entered ``scheme.STRUCTURES`` on 2026-09-04 and is
-    # executed by ``moe_route``; what covers it is a load-and-execute probe
-    # (docs/measurements/tessera-moe-route-load-2026-09-04.md), which is not a
-    # served receipt, so it does not enter here.  Derived from ``STRUCTURES``
-    # rather than written beside it, minus what has no served receipt, so a
-    # structure cannot appear here by being merely runnable.
-    unserved_structures = (STRUCTURE_ROUTED_MOE,)
-    attested = tuple(s for s in STRUCTURES if s not in unserved_structures)
-    unknown_structures = sorted(set(block["structures"]) - set(attested))
-    if unknown_structures:
-        refused = [s for s in unknown_structures if s not in STRUCTURES]
+    # ``scheme.STRUCTURES`` is the DISPATCH-capability bound, not an
+    # attestation source.  A new dispatch structure must not become eligible
+    # here merely because nobody remembered to add it to an ``unserved``
+    # denylist: only a cell below is the published authority that a served
+    # receipt exists.  First refuse anything the build cannot execute; after
+    # validating the cells, derive the positive attested set from them.
+    refused = sorted(set(block["structures"]) - set(STRUCTURES))
+    if refused:
         raise ValueError(
-            f"runtime_contract.lane_eligibility.structures names {unknown_structures}; this "
-            f"block may name {sorted(attested)}. "
-            + (f"{refused} is a structure the dispatch refuses outright. "
-               if refused else
-               "routed-MoE experts ARE executed by this build (scheme.STRUCTURES, "
-               "tessera.serving.moe_route) -- what they have no receipt for is being SERVED: no "
-               "census, no KL, no artifact. lane_eligibility is where served facts go, so the "
-               "cell waits for the serve, exactly as max_world_size waits for a two-rank one."))
+            f"runtime_contract.lane_eligibility.structures names {refused}, which "
+            "scheme.STRUCTURES says the dispatch refuses outright")
     contracts_by_family = {
         # The route's own constant, not a copy: a cell that drifted from the
         # code would attest an activation contract the serve does not run.
@@ -622,6 +610,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
     _cell_scope: dict = {}
+    cell_structures: set[str] = set()
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
         _require_keys(cell, where,
@@ -635,6 +624,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             raise ValueError(f"{where}.regime {cell['regime']!r} is not declared")
         if cell["structure"] not in block["structures"]:
             raise ValueError(f"{where}.structure {cell['structure']!r} is not declared")
+        cell_structures.add(cell["structure"])
         if cell["family"] not in families:
             raise ValueError(f"{where}.family {cell['family']!r} is not published in formats[]")
         if cell["route_status"] not in _ROUTE_STATUSES:
@@ -707,6 +697,20 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                     "plus the rung, so two cells claiming one of them is a table whose answer "
                     "depends on the order it was written in.")
             _cell_scope[(scope, mode)] = cell["id"]
+
+    # The structure axis is a projection of the receipt-bearing cells, never
+    # of the dispatch roster.  This is intentionally positive authority: when
+    # a future structure enters ``scheme.STRUCTURES`` it remains unattested
+    # until a cell is published for an actual serve, without requiring a
+    # second hand-maintained list of every runnable-but-unserved structure.
+    without_cells = sorted(set(block["structures"]) - cell_structures)
+    if without_cells:
+        raise ValueError(
+            "runtime_contract.lane_eligibility.structures names "
+            f"{without_cells}, but no receipt-bearing cell names "
+            f"{'it' if len(without_cells) == 1 else 'them'}. lane_eligibility is where served "
+            "facts go, so dispatch capability alone cannot attest a structure; publish the "
+            "served cell only after its census, artifact, and quality receipt exist.")
 
     _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
                   required={"axis", "semantics", "units"},
