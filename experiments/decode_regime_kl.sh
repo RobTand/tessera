@@ -50,15 +50,23 @@ CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}
 TEACHER_DECODE=${TEACHER_DECODE:-$KLDIR/qwen_teacher_bf16_v028_decode.json}
 TEACHER_PREFILL=${TEACHER_PREFILL:-$KLDIR/qwen_teacher_bf16_v028.json}
 STRIDE=${TESSERA_KL_DECODE_STRIDE:-16}
-# The dump family this campaign writes.  Defaulted to #102's so that receipt
-# reproduces byte for byte; a later campaign over the same arms (#110's, after
-# the lane's A-side fix) sets its own and cannot clobber the evidence.
+# The dump family this wrapper writes.  Defaulted to #102's so that receipt
+# reproduces byte for byte; a later campaign over the same two arms -- #110's
+# after the lane's A-side fix, or #113's compiled re-take -- sets its own and
+# writes beside the evidence rather than over it.
 DUMP_PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
 DUMP_DECODE=$KLDIR/${DUMP_PREFIX}_${ARM}_decode.json
 DUMP_PREFILL=$KLDIR/${DUMP_PREFIX}_${ARM}_prefill.json
 LOG=$RUNS/serve_$ARM.log
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 KL=${KL:-/home/rob/dq-runs/kl_tool.py}
+# TESSERA_LANE_EAGER=0 serves under vLLM's default compiled forward + CUDA
+# graphs, which is the configuration vLLM serves by default and the one #113
+# has no KL for.  The repeated store_true flag is the no-op stand-in the other
+# wrappers use, so the argv shape does not change between the two.  NOTE the
+# route trace cannot attest shapes in that arm: under compile the dispatch's
+# Python body runs at trace time and ``route_shape`` yields ``M*``.
+EAGER_FLAG=--enforce-eager; [ "${TESSERA_LANE_EAGER:-1}" = "0" ] && EAGER_FLAG=--trust-remote-code
 
 source "$(dirname "$0")/runtime_image.sh"
 IMAGE=${IMAGE:-$(runtime_image_pin)}
@@ -95,7 +103,7 @@ pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
 exec vllm serve '"$MODEL"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL:-0.45}" \
   --max-logprobs '"${TESSERA_KL_TOPK:-1024}"' --enable-prompt-tokens-details \
-  --enforce-eager --trust-remote-code' >/dev/null
+  '"$EAGER_FLAG"' --trust-remote-code' >/dev/null
 
 for i in $(seq 1 240); do
   if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then echo "  up after ${i}0s"; break; fi
@@ -137,7 +145,7 @@ snap 03-prefill
 
 reap
 build_identity_stamp "$LOG" "${DUMP_DECODE%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \
-  "$MODE" 1 "$MODEL"
+  "$MODE" "${TESSERA_LANE_EAGER:-1}" "$MODEL"
 
 echo "=== what the serve executed, by stage ==="
 $PY "$(dirname "$0")/route_trace_delta.py" \

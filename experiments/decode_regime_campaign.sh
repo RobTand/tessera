@@ -27,12 +27,25 @@ RUNS=${RUNS:-/home/rob/tessera-runs/ts102}
 ARMS=${ARMS:-/home/rob/tessera-runs/ts83}
 KLDIR=/mnt/shared/tessera-kl
 STAGE=${1:-all}
+# The campaign tag that names this run's arms and dumps.  Default = #102's own,
+# so nothing here changes.  The compiled re-take #113 asks for, over the same
+# two hardlinked arms, is
+#   ARMTAG=compiled TESSERA_LANE_EAGER=0 TESSERA_KL_DUMP_PREFIX=qwen_ts113 \
+#   RUNS=/home/rob/tessera-runs/ts113 decode_regime_campaign.sh arms
+ARMTAG=${ARMTAG:-ts102}
+export TESSERA_KL_DUMP_PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
+DP=$TESSERA_KL_DUMP_PREFIX
 PY=${PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}
 # The campaign's own name.  #102 is the default so its receipt reproduces; a
 # re-run over the same arms after a lane change sets both and writes beside
 # the evidence rather than over it (TAG=ts110 PREFIX=qwen_ts110).
-TAG=${TESSERA_KL_ARM_TAG:-ts102}
+# Two names for one value: #83/#113 drive this with ARMTAG, #102/#110 with
+# TESSERA_KL_ARM_TAG.  Either works and they cannot disagree -- picking one
+# side of the merge would have silently dropped the other issue's invocation.
+TAG=${TESSERA_KL_ARM_TAG:-$ARMTAG}
+ARMTAG=$TAG
 PREFIX=${TESSERA_KL_DUMP_PREFIX:-qwen_ts102}
+DP=$PREFIX
 export TESSERA_KL_DUMP_PREFIX=$PREFIX
 export TS=$WT RUNS
 export TESSERA_KL_CORPUS=${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}

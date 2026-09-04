@@ -25,6 +25,34 @@
 > trace.
 > Nothing in this document is a placeholder standing in for a measurement that was
 > taken and disliked.
+>
+> **Since this was written, both gaps have owners and one of them has a
+> number.** The GEMV's own served KL was taken by the follow-up campaign filed
+> as #102, which gave `kl_tool.py` a decode regime and re-ran these two arms on
+> this inode at M = 1: mutual `KL >= 0.012111` at 91.02% top-1 over 256 scored
+> forwards, receipt at
+> `docs/measurements/tessera-decode-regime-kl-2026-09-03.md`, with the arms'
+> disagreement filed as #110. The latency A/B §4 defers is tracked by #109.
+> That campaign is **eager**. The compiled half -- what vLLM runs by default,
+> and where this campaign's only KL is §3's prefill-regime null -- was filed as
+> **#113** and measured the next day: on these same two arms, compiled, the
+> decode regime reads mutual `KL >= 0.012585` at 88.67% where the prefill
+> regime reads `0.000000` at 100.00% -- a number that sits **below** the same-artifact rebuild delta (`KL >= 0.019423` decode, arm A re-served, one lane state, two builds), so it is **not** yet a lane-attributable separation, receipt at
+> `docs/measurements/tessera-compiled-decode-kl-2026-09-04.md` §7. Nothing is
+> restated here as this campaign's result; the pointers are here so a reader who
+> lands on this receipt is not left at its gaps.
+>
+> **So, exactly:** #83's census (all four mode x regime combos, 112/112) and its
+> two-arm served KL (eager/streamed, decode regime, #102: mutual
+> `KL >= 0.012111` at 91.02% top-1, arms 0.436065 / 0.432477 against the BF16
+> teacher) are measured and on master; the served latency A/B is unmeasured
+> (#109), the compiled-serve decode-regime KL is measured off-campaign (#113:
+> mutual `KL >= 0.012585` at 88.67%, below a `0.019423` same-artifact rebuild
+> delta, so not yet lane-attributable), and which arm is closer to BF16 at
+> M = 1 is open (#110) -- more open than before, since the arms' ordering flips
+> between eager and compiled at 256 positions and a rebuild of one arm moves
+> its teacher KL 5.3x further than the flip. **Nothing here is a served
+> latency or speed claim for the lane.**
 
 **What this is.** Issue #10 wired `fp8_gemv.streamed_apply` into the streamed
 `TESSERA_FP8` route and proved it bit-exact against the torch decoder at load.
@@ -327,6 +355,45 @@ comparison is against a differently-produced reference. That needs a serve, a
 teacher rebuild and a change to `kl_tool.py` (which lives outside this repo), so
 it is filed rather than fixed here.
 
+**And that is what closed it, filed as #102 and measured the same night.**
+`kl_tool.py` grew an opt-in `--regime decode` in which every scored position is
+an M = 1 forward, verified per request from
+`usage.prompt_tokens_details.cached_tokens` rather than asserted, with the
+teacher re-dumped in the same regime and cross-regime `compare` refused
+outright. Re-run over these two arms on this inode, the decode regime reads
+mutual `KL >= 0.012111` at 91.02% top-1 over 256 positions where the prefill
+regime above reads `0.000000` at 100.00%, and the route trace shows why: 28 672
+`tessera_window_gemv::gemv` launches on the decode dump's scored forwards and
+zero on the prefill dump's. Against the BF16 teacher in that regime, arm A reads
+`KL >= 0.436065` and arm B `KL >= 0.432477` — **two arms, two KLs**, which is
+what #83 asked for. That receipt declines to say which arm is closer to BF16 at
+256 positions, and files the arms' M = 1 disagreement as #110; read it there,
+not here. The receipt is
+`docs/measurements/tessera-decode-regime-kl-2026-09-03.md`.
+
+**It closed it eager, and only eager.** Both of #102's arms served with
+`--enforce-eager` (its own §5, and `enforce_eager: True` in both serve logs).
+The A/B protocol this section points at is explicit that eager is half of it --
+`docs/design/window-gemv-a-side.md` §5 item 5, "Eager **and** compiled, both
+residency modes" -- and the compiled half is where the production configuration
+lives, because vLLM compiles by default. The compiled arms of *this* campaign
+have a KL, but it is the prefill-regime null above and it is uninformative for
+the same `GEMV_MAX_M` reason -- `kl_tessera_ts83-arm{A,B}-streamed-compiled.json`
+read `0.4668730966935983` at 62.67% top-1 over 4088 positions in **both** arms,
+identical to the last digit, exactly as the eager prefill pair reads
+`0.46599389451679424` in both. So the compiled serve's decode-regime KL for this
+lane is **unmeasured**, and it is filed as **#113** rather than left in this
+paragraph. What was *not* in doubt there is engagement: §4's recovered trace
+shows the GEMV launching 9 016 times under a compiled forward with zero CUTLASS
+GEMM launches in every purely-decode bin. **#113 supplied the missing number
+the next day**: compiled, on these arms, mutual `KL >= 0.012585` at 88.67% over
+256 M = 1 positions against `0.000000` at 100.00% over 4088 prefill ones --
+a number that sits **below** the same-artifact rebuild delta (`KL >= 0.019423` decode, arm A re-served, one lane state, two builds), so it is **not** yet a lane-attributable separation -- and
+the compiled prefill dumps of *this* campaign carry the same
+`kl_tool.py fingerprint` as #113's, so the null above is an identity across
+campaigns as well as across arms
+(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`).
+
 ### Method
 
 Method: `kl_tool.py dump` against each served arm, then `compare`
@@ -344,7 +411,11 @@ the interesting result rather than the mean.
 campaign.** Two arms were taken before the box degraded; both are reported below,
 both are labelled contended, and **no A-vs-B ratio is computed from them.** This
 is the honest outcome rather than a missing one: the numbers exist, they are
-recorded, and they are not evidence about the lane.
+recorded, and they are not evidence about the lane. **The ratio this section
+does not compute is tracked as #109**, which carries the discipline it needs:
+an idle-power trace recorded before the run starts, both arms in one process and
+one session, and power read against the ~140 W envelope rather than
+`gpu_utilization`.
 
 ### What was measured, and why it is not a result
 

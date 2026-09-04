@@ -417,7 +417,9 @@ The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.
 
-`TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only) makes the
+`TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
+compile it declines and counts nothing, which is enforced since #113 rather
+than described) makes the
 serve write a launch histogram keyed by route **and problem shape**, which is
 what lets a receipt show that its scored forwards were the shapes it claims:
 the fallback arm reports `torch._scaled_mm` in both regimes, so the shape is
@@ -429,7 +431,17 @@ measures the gap: over byte-identical bytes with the GEMV lane on in one arm
 and refused in the other, the prefill regime reads `KL >= 0.000000` at 100.00%
 top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
-decode dump's scored forwards, zero on the prefill dump's.
+decode dump's scored forwards, zero on the prefill dump's. Both arms of that
+receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
+a compiled serve, where the trace declines and the attestation is
+`compile_identity`'s per-arm AOT key plus the mutual KL itself. That arm was
+taken for #113: compiled, the same two arms read mutual `KL >= 0.012585` at
+88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
+and that decode number is **below** the same-artifact rebuild delta measured
+beside it (`KL >= 0.019423`, arm A re-served, one lane state, two builds), so
+**only the eager pair is currently a lane-attributable KL difference**; a
+compiled serve on this stack stamps `inductor_deterministic: false`
+(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md` §7).
 
 **That decode-regime gap is now fully accounted for, and it was half a defect
 and half accumulation order** (#110) -- the issue offered those as alternatives

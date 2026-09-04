@@ -237,6 +237,12 @@ class _RouteTrace:
     dispatch's Python body runs at TRACE time, not per launch, so the counts
     would describe compilation rather than serving; ``route_shape`` already
     degrades to ``M*`` there, which is what marks such an entry in the file.
+    Since tessera#113 that is enforced rather than described: ``count``
+    declines while ``torch.compiler.is_compiling()``, so a compiled serve with
+    the trace enabled records only its eager startup and **serves**.  It used
+    to die instead -- Dynamo cannot enter this class's lock under vLLM 0.28's
+    full-graph capture, and that error is raised while compiling the traced
+    body, where ``emit_route``'s ``except Exception`` cannot reach it.
     """
 
     #: How often the flusher thread writes, when anything changed.  A
@@ -263,6 +269,26 @@ class _RouteTrace:
 
     # -- hot path ----------------------------------------------------------
     def count(self, layer, values) -> None:
+        # DECLINE UNDER COMPILE, and decline BEFORE the lock (tessera#113).
+        # The class docstring already says this counter is eager-only because
+        # its counts would describe compilation; what it did not do is behave
+        # that way.  vLLM 0.28 captures the forward with
+        # ``aot_compile_fullgraph``, and Dynamo cannot enter a ``threading
+        # .Lock`` context manager under a full-graph capture:
+        #
+        #   torch._dynamo.exc.Unsupported: Unsupported context manager
+        #     Explanation: Dynamo does not know how to enter a `lock` context
+        #     manager.
+        #
+        # ``emit_route``'s ``except Exception: pass`` does not catch that --
+        # it is raised while COMPILING the traced body, not while running it
+        # -- so the whole engine core failed to initialise and the serve never
+        # came up.  A telemetry switch must never be able to stop a serve.
+        # ``torch.compiler.is_compiling()`` is constant-folded by Dynamo, so
+        # under compile this method is dead code and the lock is never traced;
+        # eager is unchanged, byte for byte.
+        if torch.compiler.is_compiling():
+            return
         if values.get("state") != "served":
             return
         key = (values["policy"], values["shape"], values["symbol"],
