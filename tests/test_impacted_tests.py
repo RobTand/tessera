@@ -60,10 +60,7 @@ def test_parentless_snapshot_uses_a_direct_base_tree_comparison(
     repo, base = _repo(tmp_path)
     _git(repo, "checkout", "--orphan", "pbrun-snapshot")
     (repo / "seed.txt").write_text("branch\n", encoding="utf-8")
-    (repo / ".pbrun-closure.0123456789abcdef.json").write_text(
-        "{}\n", encoding="utf-8"
-    )
-    _git(repo, "add", "seed.txt", ".pbrun-closure.0123456789abcdef.json")
+    _git(repo, "add", "seed.txt")
     _git(repo, "commit", "-qm", "parentless snapshot")
     head = _git(repo, "rev-parse", "HEAD")
 
@@ -78,7 +75,7 @@ def test_parentless_snapshot_uses_a_direct_base_tree_comparison(
     assert result["reason"] == "inert changed paths require no tests"
 
 
-def test_only_the_exact_pbrun_closure_basename_is_excluded(
+def test_a_closure_shaped_tracked_file_is_not_ownership_proof(
     tmp_path: Path,
 ) -> None:
     repo, base = _repo(tmp_path)
@@ -98,7 +95,34 @@ def test_only_the_exact_pbrun_closure_basename_is_excluded(
     changed, comparison = impacted.changed_files(f"{base}...HEAD", repo)
 
     assert comparison == f"{base}...HEAD"
-    assert changed == sorted(names[1:])
+    assert changed == sorted(names)
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "full"
+    assert names[0] in result["forces_full"]
+
+
+def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeypatch):
+    from test_suite_source import _snapshot
+    from tessera.suite_source import measured_source
+
+    repo, requests, _, stamp = _snapshot(tmp_path, "gpu")
+    empty = subprocess.check_output(
+        ["git", "-C", str(repo), "hash-object", "-t", "tree", "-w", "--stdin"],
+        input=b"",
+    ).decode().strip()
+    verified = []
+
+    def inspect_source(root):
+        record = measured_source(root, request_root=requests, owner="e" * 64)
+        assert record["verification"] == "verified", record
+        verified.append(record)
+        return record
+
+    monkeypatch.setattr(impacted, "measured_source", inspect_source, raising=False)
+    changed, _ = impacted.changed_files(f"{empty}..HEAD", repo)
+    assert len(verified) == 1, "selector skipped metadata without checking its action"
+    assert changed == ["source.py"]
+    assert verified[0]["excluded_metadata"][0]["path"] == stamp
 
 
 @pytest.mark.parametrize(

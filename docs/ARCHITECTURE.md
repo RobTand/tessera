@@ -37,6 +37,12 @@ dirty state, ambiguous/missing requests or failed verification yield `unknown`.
 The merge receipt keeps raw commit agreement and effective-source agreement
 separate; legacy populations cannot establish the latter. Population pass
 counts alone still do not establish a same-source merge check.
+`tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
+tracked file is not ignored by name, and unverifiable metadata forces a full
+selection. Verified PB metadata still permits narrowed selection. A conftest
+change reaches its entire test population; a delegated runner-fix task records
+its targeted regression evidence while the coordinator owns the final full
+dual-population integration run.
 
 ## 2. The pipeline
 

@@ -285,25 +285,48 @@ def test_the_x86_arm_refuses_a_checkout_only_one_box_can_see(tmp_path):
     assert "/mnt/shared" in result.stderr
 
 
-def test_the_receipt_states_which_tree_it_is_about(tmp_path):
-    """A branch receipt is not a merge receipt, and must not read as one."""
+@pytest.mark.parametrize("master_ref,at_master", [
+    ("master", True), ("master", False),
+    ("origin/master", True), ("origin/master", False), (None, None),
+])
+def test_the_receipt_states_which_tree_it_is_about(tmp_path, master_ref, at_master):
+    """Exercise the ref states, not whichever refs the test runner inherited."""
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+
+    def git(*args):
+        return subprocess.check_output(
+            ["git", "-C", str(checkout), "-c", "user.name=Test",
+             "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+             *args], text=True).strip()
+
+    git("init", "-q", "--initial-branch=measured")
+    git("commit", "-q", "--allow-empty", "-m", "fixture base")
+    base = git("rev-parse", "HEAD")
+    if master_ref:
+        ref = ("refs/heads/master" if master_ref == "master"
+               else "refs/remotes/origin/master")
+        git("update-ref", ref, base)
+    if at_master is False:
+        git("commit", "-q", "--allow-empty", "-m", "fixture branch")
+    head = git("rev-parse", "HEAD")
 
     out = tmp_path / "receipt.json"
     result = subprocess.run(
         [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
-         "--checkout", str(ROOT), "--out", str(out)],
+         "--checkout", str(checkout), "--out", str(out)],
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode != 0, "a dry run has covered no population"
     receipt = json.loads(out.read_text())
     population = receipt["population"]
-    assert population["commit"]
-    assert "is_master_head" in population
-    # A clone made for a pool run carries only ``origin/master``; the ref that
-    # actually answered is recorded so an unresolved comparison reads as
-    # "not established" rather than as "not master".
-    assert population["master_ref_used"] != "none resolved"
-    assert population["is_master_head"] is not None
+    assert population["commit"] == head
+    assert population["master_ref_used"] == (master_ref or "none resolved")
+    assert population["master_head_at_submit"] == (base if master_ref else None)
+    assert population["is_master_head"] is at_master
+    # A parentless PB snapshot has neither ref. That is an unknown comparison,
+    # not a failed receipt and not a reason to manufacture a master ref.
     assert receipt["verdict"] == "not run"
     # Both arms' numbers live under one key, so quoting one without its device
     # means quoting it out of this object rather than out of a scrollback.
