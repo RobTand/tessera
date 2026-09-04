@@ -135,6 +135,11 @@ rides in `provenance`, so a cross-box pair does not fingerprint itself apart.
 Images outside the pinned repository (Mia's GLM image) are resolved and
 stamped, not refused.
 
+`serve_and_dump_kl.sh` reaps its named container on every exit, including an
+unexpected shell failure. Successful removal is remembered so normal exit
+preserves the collected log. The wrapper releases its serve lock only after
+removal succeeds; failed cleanup retains ownership and refuses certification.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and
