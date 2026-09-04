@@ -170,15 +170,6 @@ if [ -n "$PROFILE_DIR" ]; then
       > "$RUNS/profile-$ARM-stop.json"; then
     reap; echo "profile stop FAILED"; exit 3
   fi
-  for _ in $(seq 1 60); do
-    [ -n "$(find "$PROFILE_DIR" -type f -print -quit)" ] && break
-    sleep 1
-  done
-  [ -n "$(find "$PROFILE_DIR" -type f -print -quit)" ] || {
-    reap; echo "REFUSED: profiler produced no trace under $PROFILE_DIR"; exit 3;
-  }
-  $PY "$(dirname "$0")/window_gemv_trace_summary.py" "$PROFILE_DIR" \
-    --phases 24 --out "$RUNS/profile-$ARM-summary.json"
 fi
 snap 02-decode
 
@@ -191,6 +182,95 @@ fi
 snap 03-prefill
 
 reap
+if [ -n "$PROFILE_DIR" ]; then
+  # A Chrome trace expands far beyond its gzip on this stack.  Parsing it while
+  # the GB10 serve still holds the shared UMA pool drove MemAvailable down to
+  # 3.6 GiB in r4 and 7.0 GiB in r5.  The prefill dump must come from the same
+  # serve, so take it first; only parse after reap has released the container.
+  if ! remaining=$(docker ps -aq -f "name=^${NAME}$"); then
+    echo "REFUSED: cannot verify $NAME was reaped before profile summarisation" >&2
+    exit 3
+  fi
+  [ -z "$remaining" ] || {
+    echo "REFUSED: $NAME still exists before profile summarisation" >&2
+    exit 3
+  }
+  profile_roster="$RUNS/profile-$ARM-files.json"
+  rank0_trace=$($PY - "$PROFILE_DIR" "$profile_roster" <<'PY'
+import gzip
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+root, out = map(Path, sys.argv[1:])
+files = sorted(path for path in root.rglob("*") if path.is_file())
+traces = [path for path in files if ".trace.json" in path.name]
+rank0 = [path for path in traces if path.name.startswith("rank0.")]
+if len(rank0) != 1:
+    raise SystemExit(
+        f"REFUSED: expected exactly one rank0 model-worker trace, found {len(rank0)}"
+    )
+
+target = b"window_gemv"
+records = []
+for path in files:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    record = {
+        "path": path.relative_to(root).as_posix(),
+        "bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+        "trace": path in traces,
+        "rank0": path == rank0[0],
+    }
+    if path in traces and path != rank0[0]:
+        opener = gzip.open if path.name.endswith(".gz") else open
+        overlap = b""
+        found = False
+        with opener(path, "rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                scan = overlap + chunk
+                if target in scan.lower():
+                    found = True
+                    break
+                overlap = scan[-(len(target) - 1):]
+        record["window_gemv_present"] = found
+        if found:
+            raise SystemExit(
+                f"REFUSED: excluded profiler trace {path} contains window_gemv"
+            )
+    records.append(record)
+
+payload = {
+    "schema": "tessera.ts113.profile-file-roster.v1",
+    "root": str(root),
+    "rank0_trace": rank0[0].relative_to(root).as_posix(),
+    "files": records,
+}
+tmp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
+tmp.write_text(json.dumps(payload, indent=1, sort_keys=True) + "\n")
+os.replace(tmp, out)
+print(rank0[0])
+PY
+)
+  profile_min_available=${TESSERA_PROFILE_MIN_AVAILABLE_BYTES:-68719476736}
+  profile_available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+  profile_available_bytes=$((profile_available_kib * 1024))
+  [ "$profile_available_bytes" -ge "$profile_min_available" ] || {
+    echo "REFUSED: profile summary has $profile_available_bytes available bytes, requires $profile_min_available" >&2
+    exit 3
+  }
+  profile_timeout=${TESSERA_PROFILE_SUMMARY_TIMEOUT_S:-900}
+  echo "=== compiled launch profile summary after reap: rank0=$rank0_trace available_bytes=$profile_available_bytes required_bytes=$profile_min_available timeout_s=$profile_timeout ==="
+  timeout --signal=TERM --kill-after=30s "${profile_timeout}s" \
+    /usr/bin/time -v -o "$RUNS/profile-$ARM-parser-resources.txt" \
+    "$PY" "$(dirname "$0")/window_gemv_trace_summary.py" "$rank0_trace" \
+      --phases 24 --out "$RUNS/profile-$ARM-summary.json"
+fi
 build_identity_stamp "$LOG" "${DUMP_DECODE%.json}.build.json" "$VLLM_CACHE" "$IMAGE" \
   "$MODE" "${TESSERA_LANE_EAGER:-1}" "$MODEL"
 

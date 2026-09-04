@@ -771,6 +771,69 @@ def test_decode_wrapper_makes_container_output_mounts_writable():
     assert 'chmod a+rwx "$PROFILE_DIR"' in body
 
 
+def test_decode_wrapper_reaps_the_serve_before_summarising_its_profile():
+    """Trace parsing may not overlap the GB10 memory held by the live serve."""
+    body = _EAGER_WRAPPERS[0].read_text()
+    stop = body.index("/stop_profile")
+    prefill = body.index('echo "=== prefill-regime dump')
+    reap = body.index("\nreap\n", prefill)
+    summary = body.index("window_gemv_trace_summary.py", stop)
+    assert stop < prefill < reap < summary
+    assert 'path.name.startswith("rank0.")' in body
+    assert 'MemAvailable:' in body
+    assert 'TESSERA_PROFILE_SUMMARY_TIMEOUT_S' in body
+    assert 'profile-$ARM-files.json' in body
+    assert 'window_gemv_present' in body
+    assert 'excluded profiler trace' in body
+    assert 'if ! remaining=$(docker ps' in body
+
+
+def _profile_roster(tmp_path, *, excluded=b'{"traceEvents":[]}'):
+    import gzip
+
+    body = _EAGER_WRAPPERS[0].read_text()
+    start = body.index("rank0_trace=$($PY - ")
+    code = body[start:].split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    root = tmp_path / "profile"
+    root.mkdir(exist_ok=True)
+    (root / "rank0.one.pt.trace.json.gz").write_bytes(
+        gzip.compress(b'{"traceEvents":[{"name":"window_gemv"}]}')
+    )
+    (root / "api.pt.trace.json.gz").write_bytes(gzip.compress(excluded))
+    (root / "metadata.txt").write_text("all outputs must be hashed")
+    out = tmp_path / "files.json"
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(root), str(out)],
+        capture_output=True, text=True,
+    )
+    return result, root, out
+
+
+def test_profile_roster_hashes_all_outputs_and_attests_exclusion(tmp_path):
+    result, root, out = _profile_roster(tmp_path)
+    assert result.returncode == 0, result.stderr
+    record = json.loads(out.read_text())
+    assert Path(result.stdout.strip()) == root / record["rank0_trace"]
+    assert {row["path"] for row in record["files"]} == {
+        path.name for path in root.iterdir()
+    }
+    for row in record["files"]:
+        data = (root / row["path"]).read_bytes()
+        assert row["sha256"] == hashlib.sha256(data).hexdigest()
+        assert row["bytes"] == len(data)
+        if row["trace"] and not row["rank0"]:
+            assert row["window_gemv_present"] is False
+
+
+def test_profile_roster_refuses_target_split_across_scan_chunks(tmp_path):
+    result, _, out = _profile_roster(
+        tmp_path, excluded=b" " * (1024 * 1024 - 5) + b"WINDOW_GEMV"
+    )
+    assert result.returncode != 0
+    assert "excluded profiler trace" in result.stderr
+    assert not out.exists()
+
+
 def test_ts113_launch_gate_counts_source_roles_not_module_containers(tmp_path):
     """One GEMV launches per source role, while fallback refuses per module."""
     body = _TS113_CAMPAIGN.read_text()

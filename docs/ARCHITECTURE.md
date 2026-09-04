@@ -482,8 +482,17 @@ role. Its fallback refusal gate separately counts module containers, because
 preparation refuses once per container. Thus the #113 population's 256 scored
 positions over 112 modules / 196 units requires exactly 50,176 GEMV launches
 in a lane arm and 112 preparation refusals in a fallback arm; collapsing those
-two manifest axes is a failed gate, not a tolerance. The first arm taken for
-#113 read: compiled, the
+two manifest axes is a failed gate, not a tolerance. Profile export and parsing
+are also distinct phases on GB10: the wrapper stops the decode-only profiler,
+takes the matched prefill dump, reaps the serve, then parses the exactly-one
+`rank0` model-worker trace under a 900-second timeout and a 64-GiB
+`MemAvailable` headroom gate matching the action's declared allocation (not a
+hard parser memory cap), and records peak parser RSS. It hashes the
+complete profiler-file roster and stream-scans every excluded trace, refusing
+if one contains `window_gemv`; an API-process trace is excluded by evidence,
+not by filename alone. Parsing before reap drove the shared UMA pool to 3.6 GiB
+available in #113 r4 even though the parser itself peaked at 20.1 GiB RSS. The
+first arm taken for #113 read: compiled, the
 same two arms had mutual `KL >= 0.012585` at
 88.67% in the decode regime and `0.000000` at 100.00% in the prefill one --
 and that decode number is **below** the same-artifact rebuild delta measured
