@@ -145,8 +145,20 @@ def report(paths, *, gate=None) -> None:
         raise SystemExit(
             "matched_reach_report: the shipped baseline differs between runs, "
             "so their cells are not on one reference. Nothing is summarised.")
-    print(f"cross-run control: {ctl['pairs']} shared (unit, rung) baselines, "
-          "byte- AND tensor-identical in every pair")
+    # A count of zero passes "identical in every pair" vacuously, which is
+    # how a guard comes to be reported as green over nothing at all.  Say
+    # which of the three cases this is.
+    if len(docs) == 1:
+        print("cross-run control: one file, so there is none -- every number "
+              "below rests on this run's own in-process repeat")
+    elif ctl["pairs"] == 0:
+        raise SystemExit(
+            "matched_reach_report: these files share no (unit, rung) shipped "
+            "baseline, so nothing ties them together and their cells are not "
+            "on one reference. Check the unit lists and the rungs.")
+    else:
+        print(f"cross-run control: {ctl['pairs']} shared (unit, rung) "
+              "baselines, byte- AND tensor-identical in every pair")
 
     all_cells = {}
     for doc in docs.values():
@@ -154,7 +166,19 @@ def report(paths, *, gate=None) -> None:
     units = sorted({k[0] for k in all_cells})
     rungs = sorted({k[1] for k in all_cells})
     Ls = sorted({k[2] for k in all_cells})
-    reaches = sorted({k[3] for k in all_cells})
+    # The columns of this factorial are the widths' OWN reaches -- the three
+    # values a shipped-ratio arm lands on.  A file swept for something else
+    # (the landed pair grid's ratios of 1.25 and up) also carries arms at
+    # reaches no width has, and those are not columns of this table: they
+    # have no entry-count row to be read against.  They are dropped, and
+    # counted, rather than widening the table with cells that can only ever
+    # read "n/N units".
+    own = sorted({k[3] for k, c in all_cells.items() if c["ratio"] == 1.0})
+    other = sorted({k[3] for k in all_cells} - set(own))
+    reaches = own
+    if other:
+        print(f"columns dropped (reaches no width lands on at ratio 1): "
+              f"{[round(r, 4) for r in other]}")
     print(f"units={len(units)}  rungs={[r / 256 for r in rungs]}  "
           f"widths={Ls}  reaches={reaches}")
 
@@ -221,9 +245,10 @@ def report(paths, *, gate=None) -> None:
     for name, doc in docs.items():
         states = [control_status(v) for res in doc["units"].values()
                   for k, v in res.items() if k.endswith("_control")]
-        ok = sum(1 for s in states if s == "identical")
+        ok = sum(1 for st in states if st["ran"] and st["passed"])
         print(f"in-run controls {name}: {ok} of {len(states)} repeats "
-              "byte- AND tensor-identical")
+              "byte- AND tensor-identical"
+              + ("" if ok == len(states) else "  -- NOT ALL; read the run's log"))
 
 
 if __name__ == "__main__":
