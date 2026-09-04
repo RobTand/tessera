@@ -42,6 +42,7 @@ from tessera.container import parse, serialize
 from tessera.decode import decode_codes_mixed, reconstruct_unit, replay_window
 from tessera.encode import (
     encode_unit,
+    grid_vector_table,
     viterbi_window,
     window_table,
     window_table_reach,
@@ -56,7 +57,7 @@ from tessera.export import (
     read_checkpoint_config,
 )
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
-from tessera.scale_channel import default_channel_sigma
+from tessera.scale_channel import default_channel_sigma, initial_channel_scale
 from tessera.manifest import WINDOW_BITS_MAX, BodyKind, ScalePlaneKind
 from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
 from tessera.trellis import ConvCode
@@ -496,3 +497,66 @@ def test_the_window_body_beats_the_trellis_below_the_cap():
                       body=WINDOW, window_bits=10, trellis_weighting="scale")
     err = lambda unit, f: float(((reconstruct_unit(unit, f, CODE if f is forests else None) - w) ** 2).sum())
     assert err(win, K2) < 0.92 * err(tcq, forests)
+
+
+def test_the_channel_sigma_is_a_gauge_up_to_powers_of_two():
+    """Halving the table sigma changes nothing the encoder can see.
+
+    Both legs of the CHANNEL start scale with ``1/sigma`` -- a row inside the
+    reach starts at ``rms/sigma``, a row past it at ``reach*rms/amax``, and the
+    reach is itself proportional to sigma -- and ``channel_global`` returns a
+    power of two.  So under ``sigma -> sigma/2`` every stored fp16 row word is
+    *bit-identical*, only the global's exponent moves, and every table value
+    halves exactly.  The encode is gauge-equivalent, not approximately so.
+
+    This is why #89's two dyadic arms agree to twelve decimals in ``wt``, and
+    why its non-dyadic arms cannot be compared to them as if sigma were a
+    continuous knob: off the dyadic lattice, three quarters of the rows land on
+    a different fp16 word and the E4M3 snap in the table moves too.
+
+    The gauge only runs **downward** without further argument.  Upward it holds
+    until the table clamps on the grid's peak, which is exactly why #89 flags
+    ``m=2`` as not a clean gauge arm.
+    """
+    torch.manual_seed(0)
+    w = torch.randn(97, 512)
+    w[3] *= 40.0                                    # a row that needs the reach
+    base = default_channel_sigma(E4M3_GRID)
+    gv = grid_vector_table(E4M3_GRID).squeeze(-1).float()
+
+    def leg(sigma):
+        codes = window_table(E4M3_GRID, 10, sigma=sigma, seed=0, half=16)
+        vals = gv[codes.long()]
+        reach = float(vals.abs().max())
+        stored, effective, glob = initial_channel_scale(w, sigma, reach=reach)
+        return vals, reach, stored, effective, glob
+
+    ref = leg(base)
+    for k in (0.5, 0.25):
+        arm = leg(base * k)
+        assert torch.equal(ref[2], arm[2]), f"the fp16 row words moved at k={k}"
+        assert arm[4] == ref[4] / k                 # only the exponent moved
+        torch.testing.assert_close(arm[3], ref[3] / k, rtol=0, atol=0)
+        torch.testing.assert_close(arm[0], ref[0] * k, rtol=0, atol=0)
+        assert arm[1] == ref[1] * k
+
+    # The gauge runs out where the table does.  Scaled far enough down, the
+    # innermost quantiles reach the grid's smallest magnitude and snap onto it
+    # instead of halving through it, so a few entries stop scaling -- 2 of 1024
+    # at k=1/8 here, both within eight steps of the floor, and 1.4e-11 of the
+    # table's energy.  This is the whole of the "about 2 of 16384" caveat.
+    deep = leg(base * 0.125)
+    off_by = (deep[0] - ref[0] * 0.125).abs()
+    stuck = off_by > 0
+    assert 0 < int(stuck.sum()) <= 8
+    floor = min(abs(float(v)) for v in E4M3_GRID.values if v != 0)
+    assert float(deep[0].abs()[stuck].max()) <= 8 * floor
+    assert float((off_by ** 2).sum() / ((ref[0] * 0.125) ** 2).sum()) < 1e-9
+
+    # Off the lattice both quantities move, and neither moves by much: the
+    # words shift by an ulp and the table's snap by well under a percent.
+    off = leg(base * 0.75)
+    moved = int((off[2].float() * off[4] * 0.75 != ref[2].float() * ref[4]).sum())
+    assert moved > w.shape[0] // 2, "expected most rows to land on another word"
+    rel = ((off[0] / 0.75 - ref[0]) ** 2).sum() / (ref[0] ** 2).sum()
+    assert float(rel) < 1e-2, "the snap should move by well under a percent"
