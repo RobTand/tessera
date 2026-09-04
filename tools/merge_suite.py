@@ -20,9 +20,19 @@ refuses a session that has no CUDA device instead of skipping the surface it
 was submitted to cover.  A placement that lands the GPU arm on a box without a
 device now fails loudly; before, it would have returned a green tick.
 
+*The receipt must outlive the terminal.*  ``--record`` appends one row per arm
+to ``docs/status/suite-populations.md``, which is where a reader of the repo
+looks; and if the submitting session dies while the pool carries on -- which is
+how the first real run went -- ``--resume <receipt dir>`` rebuilds the receipt
+from the populations the runs published.  A resumed arm's exit status is marked
+unobserved rather than guessed: published failures prove red, their absence
+does not prove green.
+
 Everything about scheduling is PrismaBuild's: this composes ``pbrun``
 invocations and reads what they return.  It never runs a suite itself, never
 sshes anywhere, and a refused placement comes back as the refusal it is.
+``--cpus N`` is spent as well as declared: above 1 it becomes pytest's ``-n``,
+so the reservation and the command cannot disagree.
 """
 from __future__ import annotations
 
