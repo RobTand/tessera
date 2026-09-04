@@ -244,7 +244,15 @@ NATIVE_EXTENSIONS = [
         "match": MATCH_BASENAME_FNMATCH,
         "source": "csrc/window_gemv.cu",
         "loaded_by": "tessera.serving.fp8_gemv",
-        "routes": ["TESSERA_FP8"],
+        # BOTH window routes.  ``bf16_route.prepare_bf16_gemv`` repacks through
+        # ``kernel_window_gemv.prepare_value_unit`` exactly as ``fp8_gemv`` does
+        # and branches its ``apply`` on the same ``layer.tessera_gemv``, so the
+        # 16-bit route's streamed dispatch turns on whether this extension
+        # mapped.  Publishing one route said the other's serve is unaffected by
+        # it, which is the claim a consumer keys a fingerprint on.
+        # ``loaded_by`` still names ``fp8_gemv`` alone: the field is one string
+        # by schema, and widening it is a second contract shape change.
+        "routes": ["TESSERA_FP8", "TESSERA_BF16"],
         "lane": WINDOW_GEMV_LANE,
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,

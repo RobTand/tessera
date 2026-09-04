@@ -90,7 +90,8 @@ import torch
 from .compile_identity import note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
-from .scheme import ROUTES, TESSERA_BF16, parse_tessera_blob_for_scheme, validate_tessera_scheme
+from .scheme import (ROUTES, TESSERA_BF16, WINDOW_GEMV_SYMBOL, launch_pairs,
+                     parse_tessera_blob_for_scheme, validate_tessera_scheme)
 from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
 from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
                         note_lane_refusal, route_shape)
@@ -126,10 +127,11 @@ GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 GEMV_MODULE_NAME = WINDOW_GEMV_MODULE_NAME
 
 #: Stamped on a route record whose launch was the window GEMV: the custom op
-#: actually invoked.  The home of the string is the op's registration
-#: (``tessera.kernel_window_gemv``'s ``tessera_window_gemv::gemv``); ``fp8_gemv``
-#: spells the same string where ITS dispatch lives.
-GEMV_SYMBOL = "tessera_window_gemv::gemv"
+#: actually invoked.  The home of the string is ``scheme.WINDOW_GEMV_SYMBOL``,
+#: torch-free so the contract validator can read it, and it is the string
+#: ``tessera.kernel_window_gemv`` registers the op under; ``fp8_gemv`` reads
+#: the same constant where ITS dispatch lives.
+GEMV_SYMBOL = WINDOW_GEMV_SYMBOL
 
 #: The op the streamed GEMV lane dispatches through, for the same reason
 #: ``fp8_gemv.STREAMED_APPLY_OP`` is a constant: the compile-cache identity
@@ -650,11 +652,8 @@ def census_expected(*, compiled: bool):
     regimes in one graph and stamps the combined pair (plus the torch pair
     where no GEMV lane was prepared).
     """
-    torch_pair = (GEMM_SYMBOL, DECODER_TORCH_WINDOW)
-    lane_mm_pair = (GEMM_SYMBOL, DECODER_WINDOW_GEMV)
-    gemv_pair = (GEMV_SYMBOL, DECODER_WINDOW_GEMV)
-    decode = {gemv_pair, torch_pair, lane_mm_pair}
-    batch = {torch_pair, lane_mm_pair}
+    decode = launch_pairs(TESSERA_BF16, regime="decode")
+    batch = launch_pairs(TESSERA_BF16, regime="batch")
     if compiled:
         combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
         return {"decode": combined | batch, "batch": combined | batch}

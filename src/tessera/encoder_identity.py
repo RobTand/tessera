@@ -1,0 +1,470 @@
+"""What the encoder *does*, hashed -- the identity nobody has to remember.
+
+``encoder_profile_id`` (``unit_artifact.py``) is input-only by design: it
+declares the finite ordered set of terminal slots a reader must reproduce, and
+"contains nothing an encode alone can produce" (``manifest.py:12``).  So an
+*encoder* change -- same arguments, different bytes out -- moves nothing in it,
+and neither ``CONTAINER_VERSION`` (the on-disk container) nor the merge guard's
+``activation_aware`` block (settings, not numerics) catches it either.  Two
+halves of one checkpoint built either side of such a change compare equal and
+merge; a resume picks up half its units from the old encoder.  That is not
+hypothetical: it happened once already, and only a uniform ``q896`` made it
+recoverable (tessera#78).
+
+This module is the third identity that closes it, and it is **derived, never
+declared**.  :func:`encoder_fixture_id` encodes a fixed, tiny fixture set at
+fixed arguments and hashes what comes out.  The digest moves exactly when the
+encoder's output moves at fixed inputs -- which is the definition of the thing
+being caught -- and never when a comment, a docstring or a refactor changes.
+Nobody bumps it and nobody can forget to, which is the whole reason it is not
+a hand-maintained ``ENCODER_VERSION``: a constant somebody must remember to
+bump is a discipline, and a discipline that fails does so silently.
+
+What is hashed, and why exactly that
+------------------------------------
+
+Per fixture: the unit's ``payload_digest`` (sha256 of the whole plane region)
+and every ``TerminalRecord``'s canonical bytes (the realised per-plane element
+counts, the clip-exponent code, the exact byte count, the exact bpp, and the
+payload digest again).  Together those are precisely **what the encoder
+computed and how the packer laid it out**.
+
+Three things are deliberately outside the hash, each because it already has an
+owner and folding it in would make this identity move on a change that is not
+the encoder's:
+
+* **The arguments.**  Grid, code, span, body, plane, window width and the reach
+  spellings are ``encoder_profile_id``'s, and the fixtures hold them fixed.
+* **The container framing.**  Schema id, schema minor, header: ``container.py``'s
+  ``SCHEMA_MAJOR``/``SCHEMA_MINOR`` and ``export.CONTAINER_VERSION``.  A future
+  minor bump that adds a field must not read as an encoder change.
+* **This identity itself.**  It is stamped *into* the manifest, so hashing the
+  serialised manifest would be self-referential.  Hashing the payload region and
+  the terminal records is not, which is why the fixture build is also the one
+  path that stamps nothing (:func:`building`).
+
+The honest limit, stated rather than left to be assumed
+-------------------------------------------------------
+
+A fixture hash is exact for what it covers and **blind to what it does not**.
+A change that only moves E4M3 bytes is invisible to an E2M1-only fixture, so
+the set spans the grids, bodies and scale planes that actually ship --
+:func:`shipping_structures` derives that set from ``recipe_table`` over
+``SERIALISABLE_GRIDS`` rather than restating it, and
+``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
+makes the coverage claim enforced instead of asserted.
+
+Four narrower blind spots, named because a reader would otherwise assume them
+covered:
+
+* **Rate.**  Each structure is encoded at one declared rung, not at every rung
+  it covers.  ``window_bits`` varies with the rung on BF16 (L=14/15/16), and it
+  is *bound in* ``encoder_profile_id`` -- two builds that disagree on it are
+  already distinguishable -- so the fixtures exercise the shared code at one
+  width instead of paying for a 65536-entry table.
+* **Hessian structure.**  The activation-aware arms use a synthetic PSD
+  Hessian.  ``experiments/audit_byte_baseline.py`` records that the CHANNEL
+  refit's ``B <= 0`` condition is a property of a *real* H's off-diagonal
+  structure and that no synthetic H tried reaches it, so a change confined to
+  that branch is invisible here.  The audit harness, with its committed real
+  slice, is the instrument for that; this is the cheap always-on one.
+* **The fixture set itself.**  The digest binds what the encoder does *on
+  these fixtures*, so extending the set re-bases the identity even though no
+  encoder changed -- and the coverage rule above requires extending it when a
+  grid, body or plane is added.  That is a real cost and it is the same one
+  ``encoder_profile_id`` paid when it began digesting the payload grid
+  unconditionally ("re-bases every profile id, including arity-1 E2M1's").  A
+  new shipping structure is a wire event either way.
+* **Device.**  The fixtures run on CPU by construction, so the digest is one
+  value for the fleet rather than one per accelerator.  Nothing about that is
+  left to the environment: every accelerated branch dispatches on the *tensor's*
+  device, never on ``torch.cuda.is_available()`` (``encode.py`` at the TCQ
+  ``device.type != "cuda"`` guard and the window ``targets.is_cuda`` guard), so
+  an export running with a GPU visible computes the same digest as a CPU-only
+  process -- measured both ways, same value.  The fused GPU window encoder is
+  pinned bit-exact against the reference elsewhere
+  (``tests/test_window_viterbi_fast.py``); this identity inherits that pin
+  rather than re-proving it.
+
+One thing the test suite deliberately cannot catch.  The tests pin the *rule*
+-- the field is absent exactly when the computed id equals
+:data:`UNTAGGED_ENCODER_ID` -- and never the value, because a test asserting
+the digest would have to be edited whenever the encoder legitimately moves,
+which is the hand-maintained discipline this replaces.  So a *wrong*
+``UNTAGGED_ENCODER_ID`` passes the suite: every artifact would simply declare
+minor 6, which is correct behaviour for a different encoder and wrong history
+for this one.  ``experiments/audit_byte_baseline.py --diff`` is the instrument
+that catches it, by reporting a byte move where there is none.
+
+Cost, measured
+--------------
+
+Seven encodes of a 16x128 unit, on sparky (GB10, CPU only, box under load):
+**42.5 s in a cold process, 1.7 s in a warm one**, memoised so any process
+pays it once.  Almost all of the 41 s difference is ``_plan_for`` building the
+window tables and anchor forests for the five distinct ``(grid, rung)`` pairs
+-- work an exporter does anyway -- which is why the cost lands where it does:
+
+* An **export** computes it, once, before its first unit.  Against an encode
+  that runs for hours it is not a cost anyone can measure.
+* A **merge guard** computes nothing.  It compares the ``encoder_fixture_id``
+  string each part stamped into its ``tessera_config.json``.
+* A **resume** would happen inside a process that is about to encode, so it
+  pays the same single warm-up that process pays anyway (:func:`resumable`).
+
+That is the honest answer to "make the fixtures tiny": they are not free in a
+cold process, and no consumer that has nothing to encode is asked to pay.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import random
+import threading
+from dataclasses import dataclass
+
+__all__ = [
+    "FIXTURE_ROWS",
+    "FIXTURE_COLS",
+    "UNTAGGED_ENCODER_ID",
+    "Fixture",
+    "building",
+    "encoder_fixture_id",
+    "fixture_digests",
+    "fixtures",
+    "resumable",
+    "shipping_structures",
+    "stamped_fixture_id",
+]
+
+#: What an artifact carrying **no** encoder identity means: the encoder as it
+#: stood when this module was written (2026-09-04, tessera#101).
+#:
+#: This is not the ``ENCODER_VERSION`` the issue refuses, and the difference is
+#: the whole point.  Nobody bumps this.  It is a *measured historical fact* --
+#: the value :func:`encoder_fixture_id` returned at the commit that introduced
+#: it -- and it is never edited again: the moment the encoder moves, the
+#: computed id stops matching this and every artifact written from then on
+#: carries its own, automatically.  The conditional write is the same one
+#: ``encoder_profile_id`` already uses for a span-1 S6b pair and for a default
+#: reach record: the default spelling adds no tag, so every artifact already on
+#: disk keeps its bytes and its schema minor.
+#:
+#: Editing it would not "bump a version"; it would re-label every artifact on
+#: disk as having been cut by an encoder they were not cut by.  A test pins the
+#: *rule* -- absent iff the computed id equals this -- and deliberately does
+#: not pin the value, because pinning the value is what turns a derived
+#: identity back into a maintained one.
+UNTAGGED_ENCODER_ID = bytes.fromhex(
+    "b2cee3a2f5998f03747449ba1206c0cd7ad20cc6665e953c71042b5d81816177"
+)
+
+#: The fixture unit's shape.  Sixteen rows because the CHANNEL plane's row
+#: scales are per row and a single row would exercise no spread across them;
+#: 128 columns because the LUT plane fits sixteen entries against the block
+#: scales of a whole superblock, and a narrower unit gives the fit nothing to
+#: choose between.  Small enough that seven of them run inline.
+FIXTURE_ROWS = 16
+FIXTURE_COLS = 128
+
+#: The stream's seed.  A declared input, like any fixture's: what must be
+#: derived is the *set* of configurations covered (:func:`shipping_structures`),
+#: not the arbitrary numbers fed to them.
+FIXTURE_SEED = 20260904
+
+#: Rows given a planted outlier, and how far past the row's own spread it sits.
+#:
+#: The E4M3 window table reaches about 4.08 sigma and a 128-sample Gaussian row
+#: has ``amax/rms`` near 3.0, so a plain Gaussian fixture almost never raises a
+#: row -- and ``scale_channel.initial_channel_scale``'s raise, and the landing
+#: of that raise, are exactly the default-path arithmetic this identity has to
+#: see (tessera#87).  Every third row gets an outlier so the fixture carries
+#: raised *and* unraised rows: the landing rule is masked to the raised ones,
+#: and a fixture with no unraised row could not tell a change that widened the
+#: mask from one that did not.
+#:
+#: The magnitudes **vary per row**, and that is load-bearing rather than
+#: decorative.  A raised row's scale is exactly ``amax / reach``, so a single
+#: planted constant gives every raised row the identical scale, the identical
+#: fp16 word and the identical rounding -- measured: 6 rows raised, 0 landing
+#: short, in all three CHANNEL fixtures.  The rule that has to be reachable
+#: here is precisely the one that depends on where that scale's mantissa falls
+#: between two fp16 words, so the fixture spreads the mantissas.
+OUTLIER_STRIDE = 3
+OUTLIER_SIGMAS = 6.0
+OUTLIER_SPREAD = 6.0
+
+_DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
+
+_LOCK = threading.RLock()
+_MEMO: "list[bytes]" = []
+_BUILDING = threading.local()
+
+
+def _gaussian_stream(seed: int, count: int) -> "list[float]":
+    """``count`` approximately-normal doubles, from Python's own uniform stream.
+
+    ``random.Random.random`` is covered by CPython's compatibility promise and
+    produces the same sequence on every platform and version; ``random.gauss``
+    and ``torch.randn`` are not promised in the same way, and this identity
+    must not move because a runtime upgraded its normal variate.  Twelve
+    uniforms minus six is Irwin-Hall: mean 0, variance 1, and every operation
+    is IEEE double arithmetic that is bit-identical everywhere.
+    """
+    rng = random.Random(seed)
+    return [sum(rng.random() for _ in range(12)) - 6.0 for _ in range(count)]
+
+
+def _fixture_weight():
+    """The fixture matrix: a fixed Gaussian draw with planted row outliers."""
+    import torch
+
+    flat = _gaussian_stream(FIXTURE_SEED, FIXTURE_ROWS * FIXTURE_COLS)
+    weight = torch.tensor(flat, dtype=torch.float32, device="cpu").reshape(
+        FIXTURE_ROWS, FIXTURE_COLS
+    )
+    # Placed at a fixed column so the outlier is a property of the fixture and
+    # not of the stream's tail, which a change to the stream would move; the
+    # magnitude comes off its own uniform stream so no two raised rows share a
+    # scale (see OUTLIER_SIGMAS).
+    rows = list(range(0, FIXTURE_ROWS, OUTLIER_STRIDE))
+    rng = random.Random(FIXTURE_SEED + 2)
+    for row in rows:
+        weight[row, 0] = OUTLIER_SIGMAS + OUTLIER_SPREAD * rng.random()
+    return weight
+
+
+def _fixture_hessian():
+    """A deterministic PSD Hessian for the fixture's columns.
+
+    ``A^T A`` over a fixed 4x-tall draw, so the matrix is a genuine second-
+    moment matrix -- full rank, positive definite, with real off-diagonal
+    structure -- rather than a diagonal that would leave LDLQ nothing to
+    compensate.  It is *not* a real capture, and the module docstring says
+    which condition that costs.
+    """
+    import torch
+
+    tall = FIXTURE_ROWS * 4
+    flat = _gaussian_stream(FIXTURE_SEED + 1, tall * FIXTURE_COLS)
+    a = torch.tensor(flat, dtype=torch.float32, device="cpu").reshape(
+        tall, FIXTURE_COLS
+    )
+    return (a.T @ a) / tall
+
+
+@dataclass(frozen=True)
+class Fixture:
+    """One fixture encode: a shipping structure at a declared rung."""
+
+    label: str
+    grid_name: str
+    q256: int
+    #: ``True`` when the case runs through ``ActivationSource`` -- the
+    #: exporter's activation-aware recipe (LDLQ, the metric refits, the reach
+    #: floor), which is where most recent byte movers live.
+    activation: bool = False
+
+    @property
+    def grid(self):
+        from .alphabet import SERIALISABLE_GRIDS
+
+        for grid in SERIALISABLE_GRIDS.values():
+            if grid.name == self.grid_name:
+                return grid
+        raise KeyError(
+            f"fixture {self.label!r} names grid {self.grid_name!r}, which is "
+            f"not in SERIALISABLE_GRIDS"
+        )
+
+    @property
+    def structure(self) -> tuple:
+        """The ``(grid, body, scale plane)`` key this fixture covers."""
+        from .export import wire_recipe
+
+        recipe = wire_recipe(self.grid, self.q256)
+        return (self.grid_name, recipe.body, recipe.scale_plane)
+
+
+def fixtures() -> "tuple[Fixture, ...]":
+    """The fixture set.
+
+    One weight-only case per shipping ``(grid, body, scale plane)`` structure,
+    plus one activation-aware case per *scale plane*: the plane is what decides
+    which refit runs, and running both planes' refits is what makes a change to
+    either move this digest.
+
+    The rungs are declared inputs.  E4M3 at 1024 and E2M1x2 at 768 are the
+    rates those wires ship at; E2M1x2 at 896 is its coset-trellis cap (the
+    boundary ``wire_recipe`` switches bodies at); E2M1 and BF16 sit at 768 and
+    1024, inside the single range each grid's structure covers.
+    """
+    return (
+        Fixture("e4m3-1024/window-channel", "E4M3", 1024),
+        Fixture("bf16-1024/window-channel", "BF16", 1024),
+        Fixture("e2m1x2-768/window-lut", "E2M1x2", 768),
+        Fixture("e2m1x2-896/tcq-lut", "E2M1x2", 896),
+        Fixture("e2m1-768/tcq-lut", "E2M1", 768),
+        Fixture("e4m3-1024/channel+activation", "E4M3", 1024, activation=True),
+        Fixture("e2m1x2-768/lut+activation", "E2M1x2", 768, activation=True),
+    )
+
+
+def shipping_structures() -> "frozenset[tuple]":
+    """Every ``(grid, body, scale plane)`` an export can write.
+
+    Derived from ``recipe_table`` over ``SERIALISABLE_GRIDS`` -- the two
+    modules that own "which grids may be written" and "which wire each rung
+    gets" -- so adding a grid, a body or a plane changes this set, and the
+    coverage test fails until a fixture covers it.  A restated list would pass
+    on the day the list is wrong.
+    """
+    from .alphabet import SERIALISABLE_GRIDS
+    from .export import recipe_table
+
+    return frozenset(
+        (grid.name, row.recipe.body, row.recipe.scale_plane)
+        for grid in SERIALISABLE_GRIDS.values()
+        for row in recipe_table(grid)
+    )
+
+
+def building() -> bool:
+    """True while :func:`encoder_fixture_id` is encoding its fixtures.
+
+    The fixture build is the one path that must stamp no identity: the digest
+    is not known while it is being computed, and a manifest that carried it
+    would make the hash a function of itself.  ``build_unit_artifact`` asks
+    :func:`stamped_fixture_id`, which reads this.
+    """
+    return getattr(_BUILDING, "active", False)
+
+
+def stamped_fixture_id() -> "bytes | None":
+    """The identity to stamp into a manifest, or ``None`` inside a fixture build."""
+    if building():
+        return None
+    return encoder_fixture_id()
+
+
+def _encode_fixture(case: Fixture) -> bytes:
+    """One fixture's contribution: its payload digest and terminal records.
+
+    Goes through ``encode_linear``, so what is hashed is the encoder an export
+    calls and not a re-implementation of it, and the bytes are read back off
+    the parsed manifest rather than off the blob -- the blob carries the
+    container framing, which is not this identity's to bind.
+    """
+    from .canonical import Writer
+    from .container import parse
+    from .export import ActivationSource, encode_linear, wire_recipe
+    from .manifest import ScalePlaneKind
+
+    weight = _fixture_weight()
+    kwargs: dict = {}
+    if case.activation:
+        plane = wire_recipe(case.grid, case.q256).scale_plane
+        # Named by naming nothing: a case that spelled ``ldlq_sigma=1.0``
+        # would stop tracking ``DEFAULT_LDLQ_SIGMA`` the moment that default
+        # moved, and a moved default is a byte change this identity exists to
+        # carry.  ``refit_reach_floor`` is the one setting stated, because it
+        # is off by default and is the only arm ``land_at_least`` is reachable
+        # from -- and it is stated only on the CHANNEL plane, which is the one
+        # plane it means anything on (``encode_unit`` refuses it elsewhere).
+        source = ActivationSource(
+            {"fixture": _fixture_hessian()},
+            {"text_sha256": "fixture", "fit_tokens": 0, "fit_ids_sha256": "fixture"},
+            refit_reach_floor=plane is ScalePlaneKind.CHANNEL,
+        )
+        kwargs = source.for_unit("fixture.weight", FIXTURE_COLS, scale_plane=plane)
+    exported = encode_linear(
+        weight,
+        grid=case.grid,
+        q256=case.q256,
+        name=case.label,
+        # The exporter's weighting, not ``encode_unit``'s signature default:
+        # this identity is about the encoder an export runs.
+        trellis_weighting="scale",
+        **kwargs,
+    )
+    manifest = parse(exported.blob).manifest
+    writer = Writer()
+    writer.text(case.label).digest32(manifest.payload_digest)
+    writer.uint(len(manifest.terminals))
+    for terminal in manifest.terminals:
+        terminal.encode(writer)
+    return writer.bytes
+
+
+def fixture_digests() -> "dict[str, str]":
+    """Per-fixture hex digests, for a reader diagnosing *which* case moved.
+
+    The identity itself is :func:`encoder_fixture_id`; this is the same work
+    reported case by case, so a bisect can say "the LUT plane moved and the
+    CHANNEL plane did not" instead of only "the encoder moved".
+    """
+    with _fixture_build():
+        return {
+            case.label: hashlib.sha256(_encode_fixture(case)).hexdigest()
+            for case in fixtures()
+        }
+
+
+class _fixture_build:
+    """Marks the fixture encodes so they stamp no identity, and forbids nesting.
+
+    Re-entry would mean a call path routed the fixture build back through the
+    stamping path -- the recursion this guard exists to make impossible -- so
+    it raises rather than quietly returning ``None`` twice.
+    """
+
+    def __enter__(self):
+        if building():
+            raise RuntimeError(
+                "the encoder fixture build re-entered itself: something asked "
+                "for the encoder identity while it was being computed"
+            )
+        _BUILDING.active = True
+        return self
+
+    def __exit__(self, *exc):
+        _BUILDING.active = False
+        return False
+
+
+def resumable(manifest) -> bool:
+    """Whether a cached unit may be reused by *this* encoder.
+
+    One home for the rule, so a resume, a merge guard and an A/B cannot
+    disagree about what "the same encoder" means: a manifest carrying no
+    identity was cut by :data:`UNTAGGED_ENCODER_ID`, and anything else must
+    match what this process computes.  A cache entry that fails this was
+    written by a different encoder and re-encoding it is the only safe move.
+
+    **Nothing calls this yet, and saying so is the point.**  The wire shard a
+    campaign caches is written unconditionally
+    (``prismaquant/tessera_campaign.py`` writes ``wire_path`` at :288-291 with
+    no skip-if-exists), and no path in this repository reuses a cached unit
+    either, so there is no resume for this to gate.  It is the rule stated
+    where the identity lives rather than restated inside whichever consumer
+    reaches a resume first; today its only caller is its test.  Wiring it is
+    that consumer's commit, not this one's.
+    """
+    stamped = getattr(manifest, "encoder_fixture_id", None)
+    return (stamped or UNTAGGED_ENCODER_ID) == encoder_fixture_id()
+
+
+def encoder_fixture_id() -> bytes:
+    """The encoder's behavioural identity: 32 bytes, memoised per process.
+
+    Equal ids mean the encoder produced identical bytes for every fixture, at
+    fixed arguments.  Unequal ids mean it did not, and the parts, the resumed
+    cache entries or the A/B arms carrying them are two artifacts, not one.
+    """
+    with _LOCK:
+        if _MEMO:
+            return _MEMO[0]
+        with _fixture_build():
+            payload = b"".join(_encode_fixture(case) for case in fixtures())
+        _MEMO.append(hashlib.sha256(_DOMAIN + payload).digest())
+        return _MEMO[0]

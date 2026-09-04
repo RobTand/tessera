@@ -964,3 +964,63 @@ def test_the_exact_fit_is_refused_where_there_is_no_fit_to_solve():
     with pytest.raises(GrammarError, match="scale_refit=0"):
         encode_linear(w, grid=K2, q256=CAP, name="x", scale_refit=0,
                       refit_lut_exact=True)
+
+
+@cuda
+def test_a_mixed_plane_export_carries_the_sweep_where_it_belongs():
+    """tessera#107: the export the flag used to be unusable on, encoded.
+
+    ``ActivationSource`` is one object for a whole checkpoint, and
+    ``experiments/export_tessera_serving.py`` reads ``(grid, q256)`` per
+    member -- GLM's attention on E4M3/CHANNEL beside its experts on
+    E2M1x2/LUT16 -- so a bare ``refit_gauss_seidel=True`` refuses at the first
+    CHANNEL unit and the sweep cannot be measured on that model at all.  This
+    walks the same loop twice: once with the bare flag, which must still
+    refuse, and once with ``{"lut16": True}``, which must encode both units
+    and move bytes on the LUT one **only**.  That last half is the point --
+    a map that resolved to ``False`` everywhere would also "fix" the refusal,
+    and would be the silent no-op the refusal exists to prevent.
+    """
+    from tessera.alphabet import E4M3_GRID
+    from tessera.export import ActivationSource
+
+    units = {"model.layers.0.self_attn.q_proj.weight": (E4M3_GRID, 4 * 256),
+             "model.layers.0.mlp.experts.0.gate_proj.weight": (K2, CAP)}
+    planes = {name: wire_recipe(grid, q).scale_plane
+              for name, (grid, q) in units.items()}
+    assert set(planes.values()) == {ScalePlaneKind.CHANNEL, ScalePlaneKind.LUT}, \
+        "the fixture is only a receipt if the two units really sit on two planes"
+
+    H = _hessian(seed=21, coupling=4.0)
+    weights = {name: _weights(seed=21 + i).bfloat16()
+               for i, name in enumerate(units)}
+    common = dict(
+        hessians={ActivationSource.unit_name(n): H for n in units},
+        provenance={"text_sha256": "a" * 64, "fit_tokens": 4096,
+                    "fit_ids_sha256": "b" * 64},
+        refit_objective="hessian",       # the sweep needs a coupling metric
+    )
+
+    def run(source):
+        out = {}
+        for name, (grid, q256) in units.items():
+            out[name] = encode_linear(
+                weights[name], grid=grid, q256=q256, name=name,
+                **source.for_unit(name, COLS, weights[name].device,
+                                  scale_plane=planes[name])).blob
+        return out
+
+    # The bug: one bool over two planes refuses on the plane it is not for.
+    with pytest.raises(GrammarError, match="CHANNEL plane has no block sweep"):
+        run(ActivationSource(**common, refit_gauss_seidel=True))
+
+    off = run(ActivationSource(**common))
+    on = run(ActivationSource(**common, refit_gauss_seidel={"lut16": True}))
+    for name, plane in planes.items():
+        if plane is ScalePlaneKind.LUT:
+            assert on[name] != off[name], (
+                "the sweep did not reach the bytes on the plane it names")
+            assert len(on[name]) == len(off[name]), "the wire is unchanged"
+        else:
+            assert on[name] == off[name], (
+                "the sweep changed a plane the map did not name")

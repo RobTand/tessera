@@ -179,9 +179,13 @@ def encoder_profile_id(
     row scales off DIAG_SV, never rebuilding either -- but they move the
     bytes the reader verifies, a lot (the reach-aware per-row start took the
     4.07-bpp E4M3 wire from served KL 0.470 to 0.151 at an unchanged wire).
-    Equal profile ids must mean equal bytes for every consumer that treats
-    id equality as byte equality -- a cache resume key, a merge guard, an
-    A/B that assumes one arm is a re-cut of the other -- so the id binds
+    Equal profile ids and an equal **encoder identity** must together mean
+    equal bytes for every consumer that treats id equality as byte equality
+    -- a cache resume key, a merge guard, an A/B that assumes one arm is a
+    re-cut of the other.  The id alone does not carry that: it is input-only
+    by decision, so an encoder change moves the bytes at an unchanged id, and
+    ``encoder_identity.encoder_fixture_id`` is the sibling field that says
+    which encoder cut them (tessera#101).  Within one encoder the id binds
     ``window_seed``/``window_sigma`` under a WINDOW body and
     ``channel_sigma`` under a CHANNEL plane, each spelled as told -- a float
     as its shortest round-trip, ``None`` (the grid-derived default: the
@@ -292,6 +296,27 @@ def _read_forest_planes(
     return out
 
 
+#: "ask ``encoder_identity``", as distinct from an explicit ``None`` (write no
+#: field).  A sentinel rather than ``None`` because both answers are legal and
+#: a caller reproducing a pre-identity artifact has to be able to say so.
+_AUTO = object()
+
+
+def _resolve_fixture_id(fixture_id):
+    """The identity to stamp: the encoder's own, unless it is the default one.
+
+    The default adds no field, exactly as a span-1 S6b pair adds no tag to the
+    profile id and a default reach record adds no manifest section -- so an
+    artifact cut by the encoder the field was born against keeps the bytes and
+    the schema minor it always had.  The import is local because
+    ``encoder_identity`` encodes, and encoding imports this module.
+    """
+    from .encoder_identity import UNTAGGED_ENCODER_ID, stamped_fixture_id
+
+    resolved = stamped_fixture_id() if fixture_id is _AUTO else fixture_id
+    return None if resolved == UNTAGGED_ENCODER_ID else resolved
+
+
 def build_unit_artifact(
     unit: EncodedUnit,
     unit_id: str,
@@ -301,8 +326,18 @@ def build_unit_artifact(
     superblock: int = 256,
     alignment_bytes: int = 1,
     container: ContainerClass = ContainerClass.GRIDBOOK,
+    fixture_id: "bytes | None | object" = _AUTO,
 ):
-    """Serialise one encoded Linear.  Returns ``(manifest, region, blob)``."""
+    """Serialise one encoded Linear.  Returns ``(manifest, region, blob)``.
+
+    ``fixture_id`` is the encoder identity to stamp (``encoder_identity``).
+    The default asks that module, which answers with the digest of what this
+    encoder does on a fixed fixture set -- and answers ``None`` while it is
+    computing that set, which is what keeps the identity from being a function
+    of itself.  Pass an explicit value only to reproduce another encoder's
+    bytes; ``None`` writes no field and therefore the minor the artifact would
+    have had before the field existed.
+    """
     # Every per-code plane is one row per CODE, and a code covers ``arity``
     # consecutive rows of the weight.  ``geometry`` is declared in **weight**
     # space -- the scale planes are per position, ``positions`` is rows*columns,
@@ -556,6 +591,7 @@ def build_unit_artifact(
         window_bits=window_bits,
         shard=shard,
         reach=reach,
+        encoder_fixture_id=_resolve_fixture_id(fixture_id),
     )
     return manifest, region, serialize(manifest, region)
 

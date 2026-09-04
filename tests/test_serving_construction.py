@@ -160,3 +160,191 @@ def test_validator_refuses_an_unstamped_runtime():
     contract["construction"]["architectures"][0]["runtime"]["image_id"] = ""
     with pytest.raises(ValueError, match="image_id is empty"):
         validate_serving_contract(contract)
+
+
+# --- vllm_module_name against vLLM's own WeightsMapper (#108) --------------
+#
+# ``vllm_module_name`` is the one place the producer computes what vLLM WOULD
+# do rather than reading what it DID, and principle 14 does not have an
+# exemption for "the algorithm is code, not a table".  The algorithm genuinely
+# is code -- ``WeightsMapper._map_name_with_shard`` -- so it cannot be derived
+# from the census table alone.  What closes the gap is a pair of gates:
+#
+#   * these tests, which pin the semantics vLLM 0.28 has, in the pure suite;
+#   * ``tests/test_serving_name_mapping.py::test_vllm_module_name_agrees_with_
+#     the_real_weights_mapper``, which runs the SAME names through the real
+#     ``WeightsMapper`` inside the serving image and refuses on any
+#     disagreement.  That one is the attestation; this one is the description.
+#
+# and the refusal below, which keeps the description from silently covering a
+# field it never implemented.
+
+
+def _mapper_entry(table):
+    """A construction entry carrying nothing but a mapper table."""
+    return {"architecture": "StubForCausalLM", "hf_to_vllm_mapper_unstacked": table,
+            "offered": [], "never_offered": []}
+
+
+def test_a_substring_rule_replaces_one_occurrence_not_every_one():
+    """``key.replace(substr, new_key, 1)`` -- vLLM 0.28 utils.py, ``_map_name_with_shard``."""
+    entry = _mapper_entry({"orig_to_new_substr": {".block.": ".layer."}})
+    assert vllm_module_name(entry, "model.block.0.block.1.proj") == \
+        "model.layer.0.block.1.proj"
+
+
+def test_prefix_rules_fall_through_instead_of_stopping_at_the_first_match():
+    """vLLM's prefix loop has no ``break``: a later rule sees the rewritten key."""
+    entry = _mapper_entry({"orig_to_new_prefix": {"model.": "language_model.",
+                                                  "language_model.": "lm."}})
+    assert vllm_module_name(entry, "model.layers.0.mlp.down_proj") == "lm.layers.0.mlp.down_proj"
+
+
+def test_suffix_rules_fall_through_too():
+    entry = _mapper_entry({"orig_to_new_suffix": {".a_proj": ".b_proj", ".b_proj": ".c_proj"}})
+    assert vllm_module_name(entry, "model.layers.0.a_proj") == "model.layers.0.c_proj"
+
+
+def test_a_renaming_rule_is_refused_rather_than_ignored():
+    """``orig_to_new_renaming`` is a list of transformers ``WeightRenaming`` objects.
+
+    It cannot be replayed from a JSON table, so a checkpoint whose class
+    declares one gets a refusal that names the field -- not a name computed as
+    though the rule were not there.
+    """
+    entry = _mapper_entry({"orig_to_new_renaming": [{"repr": "<WeightRenaming ...>"}]})
+    with pytest.raises(ValueError, match="orig_to_new_renaming"):
+        vllm_module_name(entry, "model.layers.0.mlp.down_proj")
+
+
+def test_a_regex_rule_is_refused_rather_than_ignored():
+    entry = _mapper_entry({"orig_to_new_regex": {r"layers\.(\d+)": r"blocks.\1"}})
+    with pytest.raises(ValueError, match="orig_to_new_regex"):
+        vllm_module_name(entry, "model.layers.0.mlp.down_proj")
+
+
+def test_a_mapper_field_this_producer_has_never_seen_is_refused():
+    """Pin the rule, not the roster: a field vLLM adds tomorrow refuses today."""
+    entry = _mapper_entry({"orig_to_new_something_vllm_added": {"a": "b"}})
+    with pytest.raises(ValueError, match="orig_to_new_something_vllm_added"):
+        vllm_module_name(entry, "model.layers.0.mlp.down_proj")
+
+
+def test_a_populated_stacked_map_is_refused_because_the_table_claims_to_be_unstacked():
+    """``get_unstacked_mapper`` empties it; a non-empty one means the census fell back.
+
+    vLLM applies ``orig_to_new_stacked`` inside ``_map_name``, so ignoring a
+    populated one would be a silent divergence -- and the field is named
+    ``hf_to_vllm_mapper_unstacked``, so a populated one is a contradiction in
+    the receipt, not a case to implement.
+    """
+    entry = _mapper_entry({"orig_to_new_stacked": {".q_proj.": [".qkv_proj.", "q"]}})
+    with pytest.raises(ValueError, match="orig_to_new_stacked"):
+        vllm_module_name(entry, "model.layers.0.self_attn.q_proj")
+
+
+def test_an_empty_stacked_map_is_not_a_refusal():
+    """The census records only non-empty fields, but a receipt may spell it out."""
+    entry = _mapper_entry({"orig_to_new_stacked": {},
+                           "orig_to_new_prefix": {"model.": "lm."}})
+    assert vllm_module_name(entry, "model.layers.0.mlp.down_proj") == "lm.layers.0.mlp.down_proj"
+
+
+def test_a_dropped_name_is_still_a_refusal():
+    entry = _mapper_entry({"orig_to_new_prefix": {"model.visual.": None}})
+    with pytest.raises(ValueError, match="DROPS"):
+        vllm_module_name(entry, "model.visual.blocks.0.attn.qkv")
+
+
+# --- the census must not drop a mapper field on the way into the receipt ---
+
+
+def _census_module():
+    """The census tool, loaded by path: its top level is stdlib-only by design."""
+    import importlib.util
+    path = ROOT / "tools" / "tessera_construction_census.py"
+    spec = importlib.util.spec_from_file_location("tessera_construction_census", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_census_records_every_mapper_field_the_runtime_declares():
+    """The producer can only refuse a rule the receipt admits exists.
+
+    ``_weights_mapper_table`` used to iterate a hardcoded four-name roster, so
+    a model class declaring ``orig_to_new_regex`` or ``orig_to_new_renaming``
+    produced a receipt that OMITTED the rule -- and a producer reading that
+    receipt would map the name as though the rule were not there, with nothing
+    on either side able to notice. Read the dataclass instead (AGENTS.md rule
+    3: pin the rule, not the roster).
+    """
+    import dataclasses
+    import re as _re
+
+    @dataclasses.dataclass
+    class FakeMapper:
+        """The shape of vLLM's WeightsMapper, including the fields we refuse."""
+        orig_to_new_renaming: list = dataclasses.field(default_factory=list)
+        orig_to_new_regex: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_substr: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_stacked: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_prefix: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_suffix: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_invented_next_release: dict = dataclasses.field(default_factory=dict)
+
+        def get_unstacked_mapper(self):
+            return dataclasses.replace(self, orig_to_new_stacked={})
+
+    class FakeClass:
+        hf_to_vllm_mapper = FakeMapper(
+            orig_to_new_regex={_re.compile(r"layers\.(\d+)"): r"blocks.\1"},
+            orig_to_new_renaming=[object()],
+            orig_to_new_prefix={"model.": "lm."},
+            orig_to_new_stacked={".q_proj.": (".qkv_proj.", "q")},
+            orig_to_new_invented_next_release={"x": "y"})
+
+    table = _census_module()._weights_mapper_table(FakeClass)
+    assert set(table) == {"orig_to_new_regex", "orig_to_new_renaming", "orig_to_new_prefix",
+                          "orig_to_new_invented_next_release"}, (
+        f"the census dropped a non-empty mapper field: {sorted(table)}")
+    # ``get_unstacked_mapper`` empties the stacked map, so it is absent rather
+    # than refused -- the producer only refuses a POPULATED one.
+    assert "orig_to_new_stacked" not in table
+    assert table["orig_to_new_regex"] == {r"layers\.(\d+)": r"blocks.\1"}
+    assert table["orig_to_new_prefix"] == {"model.": "lm."}
+    # And what the census recorded is exactly what the producer refuses on.
+    with pytest.raises(ValueError, match="orig_to_new_regex"):
+        vllm_module_name({"hf_to_vllm_mapper_unstacked": table}, "model.layers.0.mlp.down_proj")
+
+
+def test_the_census_still_produces_the_tables_the_committed_receipts_carry():
+    """The receipt shape did not move: the two committed censuses need no re-run."""
+    import dataclasses
+
+    @dataclasses.dataclass
+    class PrefixOnly:
+        orig_to_new_renaming: list = dataclasses.field(default_factory=list)
+        orig_to_new_regex: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_substr: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_stacked: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_prefix: dict = dataclasses.field(default_factory=dict)
+        orig_to_new_suffix: dict = dataclasses.field(default_factory=dict)
+
+        def get_unstacked_mapper(self):
+            return dataclasses.replace(self, orig_to_new_stacked={})
+
+    census = _census_module()
+    glm = json.loads((ROOT / "docs" / "measurements" / "construction" /
+                      "glm53-flash-4layer.json").read_text())
+    table = glm["hf_to_vllm_mapper_unstacked"]
+
+    class Glm:
+        hf_to_vllm_mapper = PrefixOnly(orig_to_new_prefix=dict(table["orig_to_new_prefix"]))
+
+    assert census._weights_mapper_table(Glm) == table
+
+    class NoMapper:
+        pass
+
+    assert census._weights_mapper_table(NoMapper) is None
