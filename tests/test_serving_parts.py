@@ -213,3 +213,112 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     for field in ("wire_bytes", "on_disk_bytes", "quantized_params", "by_family", "passthrough_bytes"):
         assert manifest["totals"][field] == whole_manifest["totals"][field]
     assert json.loads((merged / "config.json").read_text()) == json.loads((whole / "config.json").read_text())
+
+
+def _moe_plan_parts(tmp_path, encoded=None, count=2):
+    """Two source stacks; an omitted encode is internally consistent BF16."""
+    source = tmp_path / "source"
+    source.mkdir()
+    encoded = range(count) if encoded is None else encoded
+    stacks = [f"model.layers.{i}.feed_forward.experts" for i in range(count)]
+    source_names = [f"{stack}.0.{shard}.weight" for stack in stacks for shard in ("w1", "w3", "w2")]
+    _tensor_file(source / "model.safetensors", source_names)
+    (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
+    plan = {stack: {"grid": "E4M3", "q256": 1024} for stack in stacks}
+    identity = {"source": parts.source_identity(source), "code_sha256": "a" * 64,
+                "runtime_image": "test/image@sha256:" + "b" * 64, "options": {"plan": plan}}
+    paths = []
+    for rank, stack in enumerate(stacks):
+        path = tmp_path / f"part{rank}"
+        path.mkdir()
+        owned = [n for n in source_names if n.startswith(stack + ".")]
+        modules, groups, ignore = {}, {}, []
+        if rank in encoded:
+            names = [n.removesuffix(".weight") + ".wire" for n in owned]
+            roles = [{"tensor": tensor, "source_tensor": tensor, "expert": 0,
+                      "role": role, "group": "w2" if role == "down_proj" else "w13",
+                      "grid": "E4M3", "q256": 1024, "rows": 32, "cols": 32}
+                     for tensor, role in zip(owned, ("gate_proj", "up_proj", "down_proj"))]
+            modules[stack] = {"structure": "routed_moe", "family": "TESSERA_FP8",
+                "grid": "E4M3", "q256": 1024, "experts": 1, "roles": roles,
+                "wire_bytes": 6, "container_bytes": 6, "resident_bytes_resident_mode": 3072}
+            groups[f"stack{rank}"] = {"targets": [stack], "format": "TESSERA", "scheme": {
+                "structure": "routed_moe", "family": "TESSERA_FP8", "grid": "E4M3",
+                "body": "WINDOW", "plane": "CHANNEL", "experts": 1, "groups": {
+                    "w13": {"q256": 1024, "rows": 64, "columns": 32, "wire_stride": 2,
+                            "roles": [["gate_proj", 32], ["up_proj", 32]]},
+                    "w2": {"q256": 1024, "rows": 32, "columns": 32, "wire_stride": 2,
+                           "roles": [["down_proj", 32]]}}}}
+        else:
+            names, ignore = owned, [stack]
+        _tensor_file(path / "model.safetensors", names)
+        (path / "model.safetensors.index.json").write_text(json.dumps({
+            "weight_map": {name: "model.safetensors" for name in names}}))
+        (path / "tessera_part_config.json").write_text(json.dumps({"architectures": ["Example"],
+            "quantization_config": {"quant_method": "tessera", "format": "mixed-precision",
+                                    "config_groups": groups, "ignore": ignore}}))
+        manifest = {"modules": modules, "totals": {"passthrough_bytes": 0 if modules else 6},
+                    "routed_moe": {"quantized_stacks": list(modules), "modules": ignore,
+                        "packed_source_tensors": 0, "unpacked_source_tensors": 3,
+                        "quantized_source_tensors": 3 if modules else 0,
+                        "quantized_logical_units": 3 if modules else 0},
+                    "export_partition": {"schema": parts.SCHEMA, "index": rank, "count": count,
+                        "identity": identity, "source_tensors": owned,
+                        "output_sha256": {"model.safetensors": parts.sha256_file(path / "model.safetensors")}}}
+        (path / "tessera_serving_manifest.json").write_text(json.dumps(manifest))
+        paths.append(path)
+    return source, paths, plan
+
+
+def test_explicit_plan_cannot_lose_a_whole_stack_to_bf16(tmp_path):
+    source, paths, _plan = _moe_plan_parts(tmp_path, encoded=range(21), count=22)
+    with pytest.raises(ValueError, match="plan.*stack"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+def test_complete_explicit_stack_plan_still_merges_partial_matrix(tmp_path):
+    source, paths, plan = _moe_plan_parts(tmp_path)
+    manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert set(manifest["modules"]) == set(plan)
+    assert manifest["totals"]["units"] == 6
+
+
+@pytest.mark.parametrize("field,value", [("grid", "BF16"), ("q256", 896)])
+def test_explicit_plan_checks_each_emitted_role(tmp_path, field, value):
+    source, paths, _plan = _moe_plan_parts(tmp_path)
+    def mutate(manifest):
+        next(iter(manifest["modules"].values()))["roles"][0][field] = value
+    _change(paths[0], mutate)
+    with pytest.raises(ValueError, match="plan"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_explicit_plan_checks_declared_group_rungs(tmp_path):
+    source, paths, _plan = _moe_plan_parts(tmp_path)
+    path = paths[0] / "tessera_part_config.json"
+    config = json.loads(path.read_text())
+    next(iter(config["quantization_config"]["config_groups"].values()))["scheme"]["groups"]["w13"]["q256"] = 896
+    path.write_text(json.dumps(config))
+    with pytest.raises(ValueError, match="plan"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_explicit_plan_requires_every_source_expert(tmp_path):
+    source, paths, _plan = _moe_plan_parts(tmp_path)
+    # Omit a role from the source ownership recorded by the module while the
+    # corresponding source weight passes through and all file/index checks agree.
+    manifest_path = paths[0] / "tessera_serving_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    record = next(iter(manifest["modules"].values()))
+    role = record["roles"].pop()
+    index_path = paths[0] / "model.safetensors.index.json"
+    index = json.loads(index_path.read_text())
+    index["weight_map"].pop(role["tensor"].removesuffix(".weight") + ".wire")
+    index["weight_map"][role["tensor"]] = "model.safetensors"
+    index_path.write_text(json.dumps(index))
+    _tensor_file(paths[0] / "model.safetensors", list(index["weight_map"]))
+    manifest["export_partition"]["output_sha256"]["model.safetensors"] = parts.sha256_file(paths[0] / "model.safetensors")
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="plan.*coverage"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)

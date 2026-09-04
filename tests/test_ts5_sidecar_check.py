@@ -76,3 +76,22 @@ def test_duplicate_tensor_names_across_shards_are_refused(tmp_path, indexed):
         _checker().main(tmp_path)
     assert f"{STACK}.0.gate_proj.wire" in str(failure.value)
     assert first in str(failure.value) and second in str(failure.value)
+
+
+def test_embedded_plan_cannot_claim_an_unwritten_stack(tmp_path):
+    _checkpoint(tmp_path, shard="model.safetensors", aliases=("w1", "w3", "w2"))
+    other = "model.layers.3.feed_forward.experts"
+    manifest = {"modules": {STACK: {"structure": "routed_moe"}},
+                "routed_moe": {"quantized_stacks": [STACK]},
+                "export_identity": {"options": {"plan": {
+                    STACK: {"grid": "E4M3", "q256": 1024},
+                    other: {"grid": "E4M3", "q256": 1024}}}}}
+    (tmp_path / "tessera_serving_manifest.json").write_text(json.dumps(manifest))
+    assert _checker().main(tmp_path) != 0
+
+
+def test_explicit_plan_requires_manifest(tmp_path):
+    _checkpoint(tmp_path, shard="model.safetensors", aliases=("w1", "w3", "w2"))
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({STACK: {"grid": "E4M3", "q256": 1024}}))
+    assert _checker().main(tmp_path, plan_json=plan) != 0
