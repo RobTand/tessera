@@ -29,12 +29,17 @@ run that produced it; nothing is asserted about a runtime we have not read.
 > script's default and was the default wire when this doc was written. It is
 > **not** the wire an expert route would encode at today: a GLM expert resolves
 > through `wire_recipe(E4M3, 1024)` to the `TESSERA_FP8` route -- E4M3 grid,
-> CHANNEL plane, window body L=14 -- and that encode is **27.6x slower per
-> parameter** on the identical shape and box.
+> CHANNEL plane, window body L=14 -- and that encode is ~~27.6x~~ **14.1x**
+> slower per parameter on the identical shape and box.  *(Both figures in this
+> paragraph were struck by the amendment below: they came from an E4M3 arm that
+> shared sparky, and the held-box arm is 1.91x faster.  The struck numbers are
+> left visible rather than silently swapped, because what they cost is the point
+> -- but nobody should be reading a number off this paragraph.)*
 >
-> So the conclusion below inverts. The E4M3 campaign is **two and a bit days on
-> one box, about one on two**, not an afternoon, and encode cost is back on the
-> list of things that gate a served expert route.
+> So the conclusion below inverts. The E4M3 campaign is ~~two and a bit days on
+> one box, about one on two~~ **~54 h on one box, ~27 h on two**, not an
+> afternoon, and encode cost is back on the list of things that gate a served
+> expert route.
 >
 > **Amended the same day: the quiet-box measurement this note asked for has been
 > run.** It is 5.21 s per unit over a whole expert, 1.611 Mparam/s, **~54 h** --
