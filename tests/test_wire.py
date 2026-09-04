@@ -7,6 +7,7 @@ counts, sub-byte padding, or whether the artifact is self-describing at all.
 
 import os
 import struct
+import warnings
 from unittest import mock
 
 import pytest
@@ -464,3 +465,34 @@ def test_the_fusion_switch_is_read_on_every_call_not_once_per_process():
     with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "1"}):
         # And back: the compile is cached, the decision is not.
         assert decode._fused_replay() is first
+
+
+def test_a_compiled_chain_that_falls_back_is_counted_and_says_so_once():
+    """`except Exception: pass  # fall back, never fail closed` swallowed
+    every exception from the compiled path.  Correct for the output -- the
+    eager path is the same function -- but a permanently broken fusion and a
+    working one were indistinguishable: no counter, no warning, and the
+    fused-path speed claim silently stopped holding."""
+    from tessera import decode
+
+    def _always_raises(*_args):
+        raise RuntimeError("inductor said no")
+
+    decode._FUSION_FALLBACKS.pop("probe", None)
+    decode._FUSION_LAST_ERROR.pop("probe", None)
+    try:
+        with pytest.warns(RuntimeWarning, match="fell back|answered instead"):
+            assert decode._run_fused(_always_raises, (), "probe") is None
+        # Only the first warns; every one counts.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert decode._run_fused(_always_raises, (), "probe") is None
+        count, last = decode.fusion_fallbacks()["probe"]
+        assert count == 2
+        assert "inductor said no" in last
+        # A chain that works is not counted.
+        assert decode._run_fused(lambda: torch.zeros(1), (), "probe") is not None
+        assert decode.fusion_fallbacks()["probe"][0] == 2
+    finally:
+        decode._FUSION_FALLBACKS.pop("probe", None)
+        decode._FUSION_LAST_ERROR.pop("probe", None)
