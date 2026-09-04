@@ -77,6 +77,11 @@ dependencies even when annotation evaluation is deferred. Function annotations
 use the defining scope (including a method's class scope), not value-parameter
 locals; generic type-parameter names remain unknown in a separate annotation
 scope instead of borrowing an outer file path.
+Explicit `Path.read_text`/`read_bytes`/`open` and builtin/`io.open` source reads
+also create edges, including aliased readers. This covers `ast.parse`/`exec`
+consumers without guessing what they later do with those bytes. Runtime-selected
+or shadowed paths remain conservative unknown edges and propagate to downstream
+tests; a parameterized filename is not silently treated as no dependency.
 A conftest change reaches its entire test population; a delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.

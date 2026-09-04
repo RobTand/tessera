@@ -515,3 +515,77 @@ def ordinary(value: load_spec("loaded", TOOL)): pass
     found, unknown = file_imports(tree, repo / "tests/test_dynamic.py", repo)
     assert unknown, "a type parameter is not the shadowed global file path"
     assert repo / "tools/driver.py" in found, "annotation scope must not leak to a sibling"
+
+
+@pytest.mark.parametrize(("definition", "target"), [
+    pytest.param('''
+        def consume():
+            tree = ast.parse(TOOL.read_text())
+            exec(compile(tree, str(TOOL), "exec"), {})
+    ''', "tools.driver", id="stage-attempt-literal-path-read-and-ast-exec"),
+    pytest.param('''
+        def consume(driver):
+            tree = ast.parse((ROOT / "tools" / driver).read_text())
+            exec(compile(tree, driver, "exec"), {})
+    ''', "*", id="bound-collision-parameterized-source-read"),
+    pytest.param('''
+        def consume():
+            return ast.parse(TOOL.read_bytes())
+    ''', "tools.driver", id="path-read-bytes"),
+    pytest.param('''
+        read_source = TOOL.read_text
+        def consume():
+            return ast.parse(read_source())
+    ''', "tools.driver", id="aliased-path-reader"),
+    pytest.param('''
+        import builtins as bi
+        source_open = bi.open
+        def consume():
+            with source_open(TOOL) as source:
+                return ast.parse(source.read())
+    ''', "tools.driver", id="aliased-builtin-open"),
+    pytest.param('''
+        def consume():
+            with TOOL.open() as source:
+                return ast.parse(source.read())
+    ''', "tools.driver", id="path-open"),
+    pytest.param('''
+        def consume(TOOL):
+            return ast.parse(TOOL.read_text())
+    ''', "*", id="runtime-path-must-not-borrow-global"),
+])
+def test_explicit_source_reads_are_edges_without_importlib(tmp_path, definition, target):
+    source = '''\
+import ast
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+TOOL = ROOT / "tools" / "driver.py"
+''' + textwrap.dedent(definition)
+    repo, base = _dynamic_repo(tmp_path, source)
+    _, importers = impacted.build_graph(repo)
+    assert "tests.test_dynamic" in importers.get(target, set()), (
+        "reading Python source couples its consumer even without an importlib loader"
+    )
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "AST-executed source changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert result["tests"] == ["tests/test_dynamic.py"]
+
+
+def test_unknown_source_reader_reaches_static_test_consumers(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/dynamic.py": '''
+            import ast
+            def consume(path):
+                return ast.parse(path.read_text())
+        ''',
+        "tests/test_consumer.py": "from support.dynamic import consume\n",
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "dynamically read source changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert result["tests"] == ["tests/test_consumer.py"]
