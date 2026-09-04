@@ -57,6 +57,13 @@
    "max_rss_kb": 7562152
   },
   "ratio_b8_over_b32": 1.619,
-  "WARNING": "These two wall clocks are NOT a controlled encode-cost measurement and the 1.619 ratio must not be quoted as one. The three arms ran CONCURRENTLY on one box, under an external load that varied from 3.3 to 82.6, and their windows have different durations over that curve. My earlier 6.15x figure from the same design was retracted for exactly this reason. The controlled sequential matched-pair measurement is a separate, still-pending deliverable. The same caveat applies to max_rss_kb: b8's 1.26x peak RSS over b32 was measured with three arms resident on one box and is not a per-arm memory cost."
+  "WARNING": "These two wall clocks are NOT a controlled encode-cost measurement and the 1.619 ratio must not be quoted as one. The three arms ran CONCURRENTLY on one box, under an external load that varied from 3.3 to 82.6, and their windows have different durations over that curve. My earlier 6.15x figure from the same design was retracted for exactly this reason. The controlled sequential matched-pair measurement is a separate, still-pending deliverable. The same caveat applies to max_rss_kb: b8's 1.26x peak RSS over b32 was measured with three arms resident on one box and is not a per-arm memory cost -- b4, at 8x the segments of b32, peaked within 2% of it, which confirms the block is not a memory lever.",
+  "b4": {
+   "wall": "7:35:51",
+   "seconds": 27351,
+   "max_rss_kb": 6125908,
+   "note": "b4 was NOT the served arm; recorded here so the three encodes sit together. It ran with the least company of the three."
+  },
+  "ratio_b4_over_b32": 2.124
  }
 }

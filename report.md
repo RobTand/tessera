@@ -92,8 +92,8 @@ less than I said before the arms landed, and the correction matters enough to
 lead with. I projected block 4 at ~8x block 32 model-wide. The arms refute that
 number: see "What the arms did to the projection" below. What survives is the
 *shape* of the argument, not its size. Block 4 costs meaningfully more than
-block 32 -- at least 2.4x, and the contention runs the wrong way to bound it
-tighter -- while GLM's experts are flat across the axis (0.4% from 16 to 256).
+block 32 -- **2.12x measured, and a floor rather than an estimate**, since the
+contention runs the wrong way to bound it tighter -- while GLM's experts are flat across the axis (0.4% from 16 to 256).
 A *global* default of 4 therefore charges GLM for an axis that pays it nothing,
 and a flip to another round number is the wrong shape of fix whatever the KL
 says. That conclusion was right; the 8x I attached to it was not measured, and
@@ -320,11 +320,11 @@ them.
 |---:|---:|---:|---:|---:|
 | 32 | 8,960 | ~6,200 s | **12,876 s** (3:34:36) | 1.437 |
 | 8 | 35,840 | ~24,800 s | **20,849 s** (5:47:29) | 0.582 |
-| 4 | 71,680 | ~49,700 s | 21,769 s at 120/196, still running | ~0.44 |
+| 4 | 71,680 | ~49,700 s | **27,351 s** (7:35:51) | 0.382 |
 
 The receipt's model -- `0.694 s x segments`, flat to 0.6% across a 4x width
 range -- assumed cost per segment is invariant. Across *block sizes* it is not:
-per-segment cost falls 3.3x from block 32 to block 4. So the projection
+per-segment cost falls **3.8x** from block 32 to block 4. So the projection
 over-predicted the small blocks and under-predicted the large one, and the two
 errors are not the same error with a sign flip. The likely reading is that at
 block 32 a per-unit fixed cost the model never had to separate is a large share
@@ -333,12 +333,17 @@ measure that decomposition and am not claiming it.
 
 The practical consequence is the one in "What this run settles": **the ~8x
 encode penalty for block 4 was a projection, not a measurement, and it is
-withdrawn.** The measured contended ratios are b8/b32 = 1.62x and b4/b32 = 2.43x
-against b4's own extrapolated finish. Neither is a clean number -- b32 ran with
-three of my arms on the box, b8 with two, b4 is now alone -- and the bias runs
-the same way for both: the more-contended arm is the denominator, so the true
-quiet ratios are **larger** than these. 2.4x is therefore a floor for b4/b32,
-not an estimate, and 8x has nothing behind it.
+withdrawn.** The measured contended ratios are b8/b32 = 1.62x and **b4/b32 = 2.12x**, both
+from completed runs. Neither is a clean number -- b32 ran with three of my arms
+on the box, b8 with two, b4 finished alone -- and the bias runs the same way for
+both: the more-contended arm is the denominator, so the true quiet ratios are
+**larger** than these. **2.12x is therefore a floor for b4/b32**, not an
+estimate, and 8x has nothing behind it.
+
+Peak RSS settles the other half of the same question. b4 peaked at 6,125,908 kB
+against b32's 6,021,028 -- **equal within 2%, at 8x the segment count**. So b8's
+1.26x peak was three arms sharing a box, not a property of the block, and
+`ldlq_block` is not a memory lever in either direction.
 
 ## The concurrent design failed as a measurement, three times over
 
@@ -378,16 +383,22 @@ faster than the 1/block one.** Both methods were built on rates sampled through
 the load spike and both were badly pessimistic; "all three are upper bounds" was
 the only part of that paragraph that held.
 
-**b4 is still running.** At 6:17 elapsed it is 120/196 units, 21,769 s at the
-last checkpoint. Extrapolating its recent per-unit rate (124.9 s/unit over units
-100-120) gives ~8.7 h; extrapolating its overall average gives ~9.9 h. Both are
-extrapolations of an unfinished run on a box whose load is falling, so **the
-finish time is an estimate and is labelled as one.** It is not 15.2 h.
+**b4 finished in 7:35:51** (27,351 s, exit 0) -- 2.0x faster than its own-rate
+projection and 3.9x faster than the 1/block one.
 
-The lesson is narrow and worth keeping: every encode-cost number this campaign
-produced ahead of the run was wrong by 1.6-2.6x, in both directions, from two
-independent methods. The only encode numbers here that are worth anything are
-the two completed wall clocks, and those are contended.
+It also came in under every estimate I made while it ran, and those are worth
+recording because they were all made the same way and all missed low. At
+120/196 I estimated 8.7-9.9 h from the per-unit rate; the true answer was 7.6 h.
+The box was quieting under it the whole time, so each successive extrapolation
+was built on a rate that was still improving. I said at the 140/196 mark that I
+would stop re-fitting and wait for the number, which is the only reason the
+figure in this table is a measurement.
+
+The lesson is narrow and worth keeping: **every encode-cost number this campaign
+produced ahead of the run was wrong by 1.6-3.9x, always pessimistic, from two
+independent methods and four separate extrapolations.** The only encode numbers
+worth anything here are the three completed wall clocks, and all three are
+contended.
 
 ## The branch suite
 
@@ -454,12 +465,13 @@ Done, and where it is:
 
 Not done, and none of it is blocking the answer above:
 
-- [ ] **b4's own bracket.** b4 is ~8.7-9.9 h into an unfinished encode. When it
-      lands it is mechanical: byte-check it against b32, then
-      `experiments/ldlq_block_serve_ab.sh` with `b4` as the candidate, on an
-      idle box. b8 is the arm this report is about and the coordinator
-      authorised the substitution; b4 refines the size of the effect, not its
-      sign.
+- [ ] **b4's own bracket.** The encode is **done** (7:35:51, exit 0); the serve
+      is not. The byte check against b32 is queued in the pool behind eight
+      other agents' actions and is not reported here because it has not run.
+      What remains after it is `experiments/ldlq_block_serve_ab.sh` with `b4` as
+      the candidate, on an idle box. b8 is the arm this report is about and the
+      coordinator authorised the substitution; b4 refines the size of the
+      effect, not its sign.
 - [ ] **A controlled encode cost.** The only defensible version is a sequential
       matched pair under `pbrun --gpu --exclusive`, which needs a quiet box for
       roughly 10 h for the b32+b4 pair. Every encode number in this report is
