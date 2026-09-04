@@ -93,8 +93,8 @@ The predicate is therefore published (`runtime_contract.json` v11,
   -- so it refuses before a unit is encoded and names the offending rates.
   The flag is stamped into the manifest as `requires_lanes`.
 - **Serve time.** `tools/tessera_route_census.py --require-lane` (or the
-  artifact's own `requires_lanes`) makes a phase in which the lane took zero
-  modules a REFUSAL, and writes a `lane_engagement` block
+  artifact's own `requires_lanes`) makes an arm in which the lane took zero
+  modules in every phase a REFUSAL, and writes a `lane_engagement` block
   (`tessera.serving.census`) whose `all_required_engaged` is `true`, `false`
   or `null` -- the third meaning nobody said what to require. A load-time
   lane refusal is a value on the layer (`telemetry.note_lane_refusal`), so
