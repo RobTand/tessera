@@ -100,11 +100,71 @@ prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
 the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
 manifest's `serving_gate`).
 
-### 4.5 The census attests the route, not the quality
+### 4.4c A LANE inside a route is gated too, and by the rung
+
+`check_recipe` asks whether the *route* publishes a decode for these bytes.
+That is not the same question as whether a named *lane inside* the route can
+read them, and the second one had no producer side at all until issue #104.
+The window GEMV (`kernel_window_gemv`) repacks each column's code stream at
+that column's own rate and has a 16-row lane only where R bits per code is a
+whole number of bytes, so it reads `SUPPORTED_RATES = (1, 2, 4)` and nothing
+else. A rung is a *root* rate that `grammar.bresenham_rate_schedule` realises
+by mixing the two rates bracketing it -- so q256 1006 (root 3.93) is columns
+at rate 3 and columns at rate 4, and **every** unit of such a checkpoint
+refuses the lane at load, module by module, through a substitution the route
+reports as a served module. All six allocated checkpoints under
+`/mnt/shared/tessera-runs/allocated` carried a rate outside the set, so no
+artifact we held could exercise the lane at all.
+
+The predicate is therefore published (`runtime_contract.json` v11,
+`native_extensions[].lane.requires`, which *is*
+`kernel_window_gemv.SUPPORTED_RATES` and `WINDOW_BITS_SUPPORTED` --
+`tests/test_lane_reachability.py` ties the two ends) and read on both sides:
+
+- **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
+  calls `scheme.refuse_unreachable_lane` at argument time, beside
+  `check_recipe`, for the default rung and every plan override. It needs no
+  shape -- reachability is a function of the rung alone (`grammar.rate_set`)
+  -- so it refuses before a unit is encoded and names the offending rates.
+  The flag is stamped into the manifest as `requires_lanes`.
+- **Serve time.** `tools/tessera_route_census.py --require-lane` (or the
+  artifact's own `requires_lanes`) makes an arm in which the lane took zero
+  modules in every phase a REFUSAL, and writes a `lane_engagement` block
+  (`tessera.serving.census`) whose `all_required_engaged` is `true`, `false`
+  or `null` -- the third meaning nobody said what to require. A load-time
+  lane refusal is a value on the layer (`telemetry.note_lane_refusal`), so
+  the receipt says *why* the lane took nothing instead of leaving it on
+  stderr.
+- **After the fact.** `tools/tessera_lane_preflight.py` answers the same
+  question from the bytes of a checkpoint somebody else built, over every
+  unit, and exits non-zero.
+
+The rate axis was **not** narrowed to fit the kernel: it is 2-D and
+continuous by design, and pinning the format to three values so one lane can
+be exercised would pay a permanent quality cost for a measurement
+convenience. The kernel's constraint is the kernel's; the checkpoint comes to
+it (`docs/measurements/tessera-gemv-lane-reachable-2026-09-03.md`). Scope:
+`TESSERA_BF16_K1`'s attested rung is q256 1792 -- root 7 exactly -- so that
+family's streamed GEMV lane is unreachable at its own attested rung for the
+same reason, and no BF16 receipt covers it.
+
+### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. A clean census with exact bytes is
-necessary and, by tessera#1, not sufficient.
+necessary and, by tessera#1, not sufficient. It is also not sufficient
+*within* a route: the per-module check is a check on agreement, and the
+streamed FP8 route's decode regime legitimately admits both the GEMV pair
+and the materialised one, so a serve in which the lane prepared for nothing
+passes it module by module (§4.4c). Hence `lane_engagement`: an arm that
+requested a route and got zero units on it is a failed census, in a field a
+gate reads. The verdict is over the census, not over each phase: a lane owns
+a *regime*, not a serve -- the window GEMV decodes M <= 8
+(`kernel_window_gemv.GEMV_MAX_M`), so the census's prefill forward takes the
+torch decode by design, and only zero modules in *every* phase is the void
+the field exists to catch. The per-phase counts stay in the block, and
+`all_required_engaged` is three-valued so "nobody said what to require" never
+reads as "everything required was engaged".
 
 ### 4.5a A served KL names which FORWARD it scored
 

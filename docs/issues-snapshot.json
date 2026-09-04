@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T04:13:12Z",
+ "generated": "2026-09-04T04:24:53Z",
  "repos": {
   "RobTand/prismaquant": {
    "116": {
@@ -364,6 +364,10 @@
    "110": {
     "state": "OPEN",
     "title": "The window GEMV and its torch fallback disagree as served at M=1: mutual KL 0.012, top-1 91%"
+   },
+   "111": {
+    "state": "OPEN",
+    "title": "The E4M3 lane_eligibility cells name no route for the window-GEMV lane, so the contract cannot attest what the census observed"
    },
    "12": {
     "state": "OPEN",

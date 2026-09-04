@@ -75,6 +75,8 @@ __all__ = [
     "is_tessera_scheme",
     "route_for_grid",
     "refuse_unserveable_wire",
+    "refuse_unreachable_lane",
+    "lane_rate_report",
     "validate_tessera_scheme",
     "parse_tessera_blob_for_scheme",
 ]
@@ -441,6 +443,102 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
             f"{expected_body} body; grid {grid!r} at q256={q256} resolves to {carries}, which "
             f"this build has no in-forward decoder for. " + still_legal)
     return route
+
+
+def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dict:
+    """Which of ``rates`` this lane can read, as a value a gate can read.
+
+    ``{"lane", "supported", "rates", "offending", "reachable"}``.  Used on
+    both sides of the seam: at plan time over the rate SET a rung implies
+    (:func:`refuse_unreachable_lane`), and after the fact over the rates a
+    parsed unit actually carries (``tools/tessera_lane_preflight.py``), so a
+    producer and an auditor answer the question with one function.
+    """
+    from .contract import lane_requirements
+
+    supported = tuple(int(r) for r in lane_requirements(lane, contract).get("column_rates", ()))
+    seen = tuple(sorted({int(r) for r in rates}))
+    offending = tuple(r for r in seen if supported and r not in supported)
+    return {"lane": lane, "supported": list(supported), "rates": list(seen),
+            "offending": list(offending), "reachable": not offending}
+
+
+def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
+                            body: str, plane: str, window_bits: int,
+                            target: str) -> tuple[int, ...]:
+    """Refuse, AT PLAN TIME, a rung whose columns ``lane`` could never read.
+
+    THE SEAM MOVES ONE STAGE EARLIER, and that is the whole point of #104.
+    :func:`refuse_unserveable_wire` asks whether the ROUTE publishes a decode
+    for these bytes; this asks whether a named LANE INSIDE that route can read
+    them.  The two are different questions and the second one had no producer
+    side at all: ``kernel_window_gemv.repack_window_body`` raises per unit at
+    LOAD, the streamed FP8 route catches it and serves the same bytes through
+    the torch window decode, and the module reports itself served.  So a
+    checkpoint built to exercise the GEMV lane exercised nothing, 112 modules
+    at a time, and the census that measured it recorded one route and an empty
+    problem list -- an experiment that compared a thing against itself and
+    reported agreement.
+
+    A rung is a ROOT rate: ``grammar.bresenham_rate_schedule`` realises it by
+    mixing the two rates bracketing it, so the rung determines the rate SET
+    without the column count (``grammar.rate_set``) and this gate can run
+    before a single shape is read -- before hours of encoding, which is the
+    difference between a refusal and a bill.
+
+    Every bound comes from the packaged contract (``lane_requirements``),
+    never from a constant here: the day the kernel grows a 6-byte lane, the
+    contract changes and this follows it.  Returns the accepted rate set.
+    """
+    from fractions import Fraction
+
+    from ..grammar import rate_set, root_from_q256
+    from .contract import lane_requirements, route_wire_spelling
+
+    requires = lane_requirements(lane)
+    q256 = int(q256)
+    still_legal = (
+        f"The rung is still legal to ENCODE and to SERVE -- the {lane} lane is one launch "
+        "inside a route, and a unit it cannot read is served by that route's other path "
+        "(for the window GEMV: the torch window decode plus _scaled_mm, same bytes, slower). "
+        "What is refused here is only the CLAIM that this artifact exercises the lane.")
+
+    wanted_body = requires.get("body")
+    if wanted_body is not None and body != route_wire_spelling("body", wanted_body):
+        raise ValueError(
+            f"tessera lane {lane!r} for {target}: the lane reads the "
+            f"{route_wire_spelling('body', wanted_body)} body; grid {grid!r} at q256={q256} "
+            f"resolves to {body}. " + still_legal)
+    wanted_plane = requires.get("plane")
+    if wanted_plane is not None and plane != route_wire_spelling("plane", wanted_plane):
+        raise ValueError(
+            f"tessera lane {lane!r} for {target}: the lane reads the "
+            f"{route_wire_spelling('plane', wanted_plane)} scale plane; grid {grid!r} at "
+            f"q256={q256} resolves to {plane}. " + still_legal)
+    windows = [int(w) for w in requires.get("window_bits", ())]
+    if windows and int(window_bits) not in windows:
+        raise ValueError(
+            f"tessera lane {lane!r} for {target}: the lane's value table is built for window "
+            f"bits {windows}; grid {grid!r} at q256={q256} resolves to L={int(window_bits)}. "
+            + still_legal)
+
+    rates = rate_set(root_from_q256(q256), cap=int(rate_cap))
+    report = lane_rate_report(lane, rates)
+    if not report["reachable"]:
+        supported = report["supported"]
+        root = Fraction(q256, 256)
+        raise ValueError(
+            f"tessera lane {lane!r} for {target}: q256={q256} is root rate {float(root):.4f}, "
+            f"which bresenham_rate_schedule realises as column rates {report['rates']} -- and "
+            f"{report['offending']} {'is' if len(report['offending']) == 1 else 'are'} outside "
+            f"the rates this lane reads ({supported}, runtime_contract.json "
+            f"native_extensions[{lane}].lane.requires.column_rates). EVERY unit of a checkpoint "
+            f"at this rung would refuse the lane at load and be served by the fallback, so an "
+            f"artifact built to measure the lane would measure the fallback. Re-plan on a rung "
+            f"whose rate set is inside {supported}: an integral root lands every column on one "
+            f"rate (q256 = 256*R), and a fractional root mixes only the two rates bracketing "
+            f"it. " + still_legal)
+    return rates
 
 
 def validate_tessera_scheme(scheme: Mapping, target: str) -> dict:

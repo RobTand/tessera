@@ -71,6 +71,10 @@ __all__ = [
     "FALLBACK_STATUSES",
     "FALLBACK_SUBSTITUTED",
     "MATCH_BASENAME_FNMATCH",
+    "LANE_FIELDS",
+    "LANE_REQUIREMENT_FIELDS",
+    "WINDOW_GEMV_LANE",
+    "NVFP4_LANE",
     "NativeKernelUnavailableError",
     "StaleExtensionError",
     "IncompleteInstallError",
@@ -119,6 +123,56 @@ MATCH_BASENAME_FNMATCH = "basename_fnmatch"
 FALLBACK_SUBSTITUTED = "substituted"
 FALLBACK_REFUSED = "refused"
 FALLBACK_STATUSES = (FALLBACK_SUBSTITUTED, FALLBACK_REFUSED)
+
+#: The fields of a ``lane`` block: the decoder a serve on this extension's own
+#: lane stamps, and (optionally) what a unit's WIRE must be before the lane can
+#: read it at all.
+LANE_FIELDS = ("decoder", "requires")
+#: The wire predicates a ``lane.requires`` block may state.  Every one of them
+#: is decidable from a PLAN -- a ``(grid, q256)`` pair -- which is the whole
+#: point: a lane a checkpoint cannot reach must be refused where the plan is
+#: made, not discovered at load after the encode is paid for (issue #104).
+LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane")
+
+#: The NVFP4 span-2 decoder's lane.  It publishes no ``requires`` block: its
+#: eligibility is the route's own -- grid, body, span and rung, all already
+#: published in ``formats[]`` -- and there is no further per-unit predicate,
+#: so an empty one would be a claim rather than an absence.
+NVFP4_LANE = {"decoder": "native_span2"}
+
+#: The window GEMV's lane, and the reason this block exists.
+#:
+#: ``kernel_window_gemv`` repacks each column's code stream at that column's
+#: OWN rate, and its kernel has a lane for three rates only -- lane widths of
+#: 16 rows at R in (1, 2, 4) are whole numbers of bytes, R = 3 would need
+#: 6-byte lanes.  So a unit is readable by this lane iff EVERY column rate is
+#: in ``kernel_window_gemv.SUPPORTED_RATES`` and its window is in
+#: ``WINDOW_BITS_SUPPORTED``; ``repack_window_body`` and
+#: ``bf16_route.gemv_eligible_for_unit`` are the two enforcement points.
+#:
+#: Published because the constraint is a PRODUCER's problem.  A rung is a root
+#: rate, and ``grammar.bresenham_rate_schedule`` mixes the two rates
+#: bracketing it -- so q256 1006 (root 3.93) is columns at rate 3 and 4, and
+#: EVERY unit of such a checkpoint refuses this lane at load, silently, module
+#: by module, while the census that was meant to measure the lane records a
+#: full house of ``torch_window`` and an empty problem list (issue #104: all
+#: six allocated checkpoints carried a rate outside the set, so no evidence we
+#: held could exercise the lane at all).  With the predicate in the contract a
+#: producer refuses the plan instead (``scheme.refuse_unreachable_lane``).
+#:
+#: The values are literals here and not imports because this module is read by
+#: a producer with no torch and ``kernel_window_gemv`` needs it; they are tied
+#: to the kernel's own constants by ``tests/test_lane_reachability.py``, the
+#: same way ``loader_axes`` is tied to ``sharding.ROUTE_TP_AXES``.
+WINDOW_GEMV_LANE = {
+    "decoder": "window_gemv",
+    "requires": {
+        "column_rates": [1, 2, 4],
+        "window_bits": [14],
+        "body": "window",
+        "plane": "channel",
+    },
+}
 
 #: The native code this package can load INTO A SERVING PROCESS, as the
 #: runtime contract publishes it.
@@ -174,6 +228,7 @@ NATIVE_EXTENSIONS = [
         "source": NVFP4_SOURCE,
         "loaded_by": "tessera.serving.ext",
         "routes": ["TESSERA_NVFP4"],
+        "lane": NVFP4_LANE,
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "torch_materialize_stock"},
@@ -190,6 +245,7 @@ NATIVE_EXTENSIONS = [
         "source": "csrc/window_gemv.cu",
         "loaded_by": "tessera.serving.fp8_gemv",
         "routes": ["TESSERA_FP8"],
+        "lane": WINDOW_GEMV_LANE,
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "torch_window"},

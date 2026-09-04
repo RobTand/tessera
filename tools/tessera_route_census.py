@@ -19,6 +19,23 @@ materialised pair in batch, and the streamed BF16 route the same shape over
 ``torch.mm``) -- so the JSON it writes is a receipt only when
 the run also passed.
 
+AND ONE QUESTION THE PER-MODULE CHECK CANNOT ASK.  Everything above is a check
+on AGREEMENT, and agreement is what a void experiment produces: the streamed
+FP8 route's decode regime legitimately admits the window-GEMV pair OR the
+materialised one, so a serve in which the GEMV lane prepared for *nothing*
+passes module by module.  Issue #104 is what that cost -- four censuses logged
+112 of 112 modules refusing the lane at load, every receipt recorded one route
+and ``problems: []``, and the two arms of the experiment were one lane state
+wearing two names.  So ``--require-lane`` (or the artifact's own
+``requires_lanes``, stamped by ``export_tessera_serving.py --require-lane``)
+names the lane the arm was BUILT to exercise, and a phase in which that lane
+took zero modules is a REFUSAL.  The ``lane_engagement`` block is written
+either way -- decoder counts per phase, and ``all_required_engaged`` as
+``true``/``false``/``null``, the third meaning nobody said what to require --
+so a gate can tell "nothing was required" from "everything required was
+engaged".  ``lane_refusals`` carries what the load path recorded when a lane
+could not prepare, so the receipt says WHY it took nothing.
+
 usage::
 
     tessera_route_census.py <checkpoint-dir> <out.json> \
@@ -70,6 +87,24 @@ def census(model):
     return out
 
 
+def lane_refusals(model):
+    """Runs inside the worker: every module whose LANE refused at load.
+
+    A load fact, read once, never from ``apply()``: what the route record
+    cannot say is that the lane the artifact was built to exercise took
+    nothing, and a stderr warning is not a value a gate reads -- 112 of them
+    scrolled past under four censuses that each reported ``problems: []``
+    (issue #104).
+    """
+    from tessera.serving.telemetry import read_lane_refusal
+    out = {}
+    for name, mod in model.named_modules():
+        refusal = read_lane_refusal(mod)
+        if refusal is not None:
+            out[name] = refusal
+    return out
+
+
 def _git_head(path):
     try:
         return subprocess.run(["git", "-C", path, "rev-parse", "HEAD"],
@@ -96,6 +131,20 @@ def main() -> int:
                     help="accept a module decoded by the pure-torch fallback instead of the "
                          "native span-2 kernel; without it a fallback serve REFUSES, because a "
                          "receipt must not claim the native route for bytes another decoder made")
+    ap.add_argument("--require-lane", action="append", default=None, metavar="LANE",
+                    help="a lane this arm was BUILT to exercise, named by the extension "
+                         "module_name_prefix runtime_contract.json publishes it under (e.g. "
+                         "tessera_window_gemv). The census then REFUSES a phase in which that "
+                         "lane took zero modules: an arm that requested a route and got no "
+                         "units on it measured the fallback, not the lane (issue #104). "
+                         "Repeatable. Without it the engagement block is still written -- with "
+                         "all_required_engaged null, which is how a gate tells 'nothing was "
+                         "required' from 'everything required was engaged'.")
+    ap.add_argument("--no-manifest-lanes", action="store_true",
+                    help="ignore requires_lanes in the checkpoint's tessera_serving_manifest.json; "
+                         "by default an artifact that DECLARES which lane it was built for is "
+                         "believed, so the requirement travels with the bytes rather than with a "
+                         "shell history")
     ap.add_argument("--tessera-commit", default=None,
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
                          "inside a container a worktree's .git pointer resolves nowhere and the "
@@ -112,6 +161,7 @@ def main() -> int:
     import tessera
     import tessera.serving as serving
     from tessera.serving import bf16_route, fp8_gemv, fp8_route, nvfp4_route
+    from tessera.serving.census import lane_engagement
     from tessera.serving.contract import CENSUS_PHASE_REGIMES, load_serving_contract
     from tessera.serving.lane import TESSERA_MODE_ENV
     from tessera.serving.scheme import (
@@ -180,6 +230,31 @@ def main() -> int:
             "the join is then ambiguous in the direction this tool reads it.")
     batch_phase, decode_phase = phase_of["batch"], phase_of["decode"]
 
+    # THE LANE THE ARM REQUESTED, resolved BEFORE the first model load: a lane
+    # name this build publishes no decoder for must fail in a second, not after
+    # two 85-160 s loads.  The artifact's own declaration is read first, so the
+    # requirement travels with the bytes (export_tessera_serving.py --require-lane
+    # stamps requires_lanes into the manifest) rather than depending on whoever
+    # types the census command.
+    required_lanes = list(args.require_lane or ())
+    manifest_lanes = []
+    manifest_path = os.path.join(args.model, "tessera_serving_manifest.json")
+    if not args.no_manifest_lanes and os.path.isfile(manifest_path):
+        with open(manifest_path) as fh:
+            manifest_lanes = list(json.load(fh).get("requires_lanes") or ())
+    for lane in manifest_lanes:
+        if lane not in required_lanes:
+            required_lanes.append(lane)
+    lane_decoders = {}
+    from tessera.serving.contract import lane_decoder as _lane_decoder
+    for lane in required_lanes:
+        lane_decoders[lane] = _lane_decoder(lane)      # raises on an unpublished lane
+    if required_lanes:
+        print(f"[census] required lane(s): "
+              + ", ".join(f"{lane} -> decoder {lane_decoders[lane]!r}" for lane in required_lanes)
+              + (f" (declared by the artifact: {manifest_lanes})" if manifest_lanes else ""),
+              flush=True)
+
     with open(os.path.join(args.model, "config.json")) as fh:
         cfg = json.load(fh)
     qc = cfg.get("quantization_config", {})
@@ -207,6 +282,9 @@ def main() -> int:
     outs = llm.generate([prompt], SamplingParams(max_tokens=8, temperature=0.0))
     phases[decode_phase] = llm.apply_model(census)[0]
     generated = outs[0].outputs[0].text
+    # Load facts, so once and after the forwards: which modules' lane refused
+    # to prepare, and why.  Same for every phase by construction.
+    refusals = llm.apply_model(lane_refusals)[0]
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
@@ -283,6 +361,23 @@ def main() -> int:
                 f"{batch_phase} and {decode_phase} records carry the same shape; only one "
                 "shape was exercised")
 
+    # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
+    # the decode regime legitimately admits both the GEMV pair and the
+    # materialised one -- so a serve in which the lane prepared for NOTHING
+    # passes it module by module.  This asks the question that cannot: did the
+    # lane this arm requested take any units at all (issue #104)?  Emitted
+    # unconditionally so a receipt written without --require-lane still carries
+    # the decoder counts a gate would need.
+    tessera_by_phase = {
+        phase: {n: r for n, r in recs.items()
+                if str(r.get("policy", "")).startswith(prefixes)}
+        for phase, recs in phases.items()}
+    engagement, engagement_problems = lane_engagement(
+        tessera_by_phase, required_lanes=required_lanes, lane_decoders=lane_decoders or None,
+        refusals_by_phase={phase: refusals for phase in phases})
+    engagement["declared_by_artifact"] = manifest_lanes
+    problems.extend(engagement_problems)
+
     receipt = {
         "schema": "tessera.serving.route_census/1",
         "checkpoint": os.path.abspath(args.model),
@@ -305,13 +400,16 @@ def main() -> int:
                    "capability": list(torch.cuda.get_device_capability(0))},
         "elapsed_s": round(time.time() - t0, 1),
         "histogram": histogram,
+        "lane_engagement": engagement,
+        "lane_refusals": refusals,
         "records": phases,
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }
     with open(args.out, "w") as fh:
         json.dump(receipt, fh, indent=1, sort_keys=True)
-    print(json.dumps({k: receipt[k] for k in ("verdict", "histogram", "env", "device", "elapsed_s")},
+    print(json.dumps({k: receipt[k] for k in ("verdict", "histogram", "lane_engagement",
+                                              "env", "device", "elapsed_s")},
                      indent=1))
     for p in problems:
         print("PROBLEM:", p)

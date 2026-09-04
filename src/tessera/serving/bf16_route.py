@@ -92,7 +92,8 @@ from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_BF16, parse_tessera_blob_for_scheme, validate_tessera_scheme
 from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
-from .telemetry import DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route, route_shape
+from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
+                        note_lane_refusal, route_shape)
 from .window import PreparedWindow, prepare_window
 
 __all__ = [
@@ -110,6 +111,7 @@ __all__ = [
     "prepare_tessera_bf16_module",
     "prepare_bf16_gemv",
     "gemv_eligible_for_unit",
+    "gemv_refusal_for_unit",
     "decode_is_gemv",
     "streamed_apply",
     "census_expected",
@@ -357,14 +359,37 @@ def gemv_eligible_for_unit(unit) -> bool:
     (body, plane, grid) is already refused by name in
     ``prepare_tessera_bf16_module`` before this is asked.
     """
+    return gemv_refusal_for_unit(unit) is None
+
+
+def gemv_refusal_for_unit(unit) -> "str | None":
+    """WHY the window GEMV cannot read this unit, or ``None`` if it can.
+
+    The reason, not just the verdict, because "ineligible" is the state the
+    whole of issue #104 lived in: this route's load path took the fallback
+    without an exception, so nothing was written down and the census recorded
+    a full house of ``torch_window`` against an empty problem list.  A refusal
+    that names the offending rates is a value ``telemetry.note_lane_refusal``
+    parks on the layer and a receipt aggregates.
+
+    Read off ``tessera.kernel_window_gemv``'s own support constants -- never
+    restated here, so a wider kernel widens this route with no edit.
+    """
     from tessera import kernel_window_gemv as kg
 
     if getattr(unit, "initial_state", None) is not None:
-        return False
+        return ("the unit carries a shard start state; the kernel supplies "
+                "state_{-1} = 0 itself and has no input for anything else")
     if int(unit.window_bits) not in tuple(kg.WINDOW_BITS_SUPPORTED):
-        return False
+        return (f"window bits L={int(unit.window_bits)} is outside the lane's value table "
+                f"{tuple(kg.WINDOW_BITS_SUPPORTED)}")
     supported = tuple(kg.SUPPORTED_RATES)
-    return all(int(r) in supported for r in unit.rates)
+    offending = sorted({int(r) for r in unit.rates} - set(supported))
+    if offending:
+        return (f"column rates {offending} have no lane here (supported {supported}); the rung "
+                "is a root rate and bresenham mixes the two rates bracketing it, so the whole "
+                "unit refuses")
+    return None
 
 
 class _Bf16GemvRole:
@@ -726,8 +751,22 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                 # surprise, so it stays silent; a unit the lane SHOULD read
                 # that fails to build warns, like the FP8 route's lane.
                 holder = None
+                # Cleared on every load so a re-prepared module cannot carry a
+                # stale refusal, then set below if the lane refuses: the census
+                # reads it as a value, which is the half a stderr warning
+                # cannot give it (issue #104).
+                note_lane_refusal(layer, GEMV_MODULE_NAME, None)
                 try:
-                    if all(gemv_eligible_for_unit(parsed.unit) for _, parsed in roles):
+                    refusals = {name: gemv_refusal_for_unit(parsed.unit)
+                                for name, parsed in roles}
+                    named = sorted(f"{n} ({r})" for n, r in refusals.items() if r)
+                    if named:
+                        # NOT an exception path: this route's lane simply does
+                        # not apply to these bytes, which is why the state used
+                        # to leave no trace at all (issue #104).
+                        note_lane_refusal(layer, GEMV_MODULE_NAME,
+                                          "; ".join(named))
+                    else:
                         holder = prepare_bf16_gemv(
                             roles, device=device,
                             expected=(prepared.decode(), prepared.row_scale()))
@@ -737,6 +776,7 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                           f"did not prepare ({type(exc).__name__}: {exc}); serving streamed "
                           "through the torch window decode instead",
                           file=_sys.stderr, flush=True)
+                    note_lane_refusal(layer, GEMV_MODULE_NAME, f"{type(exc).__name__}: {exc}")
                 layer.tessera_gemv = holder
                 if holder is not None:
                     # The torch planes' job is done: the dispatch decodes

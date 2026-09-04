@@ -122,7 +122,8 @@ from tessera.export import (  # noqa: E402
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     classify_construction, construction_entry, load_serving_contract)
-from tessera.serving.scheme import refuse_unserveable_wire  # noqa: E402
+from tessera.serving.scheme import (  # noqa: E402
+    refuse_unreachable_lane, refuse_unserveable_wire)
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
@@ -404,6 +405,42 @@ def _unrouted_refusal(verdicts, architectures) -> str:
         if len(rows) > 12:
             lines.append(f"    ... and {len(rows) - 12} more")
     return "\n".join(lines)
+
+def check_lanes(lanes, grid, q256: int, where: "str | None" = None) -> None:
+    """Refuse the plan unless every requested LANE can read this rung's wire.
+
+    The second half of the export-time seam, and the half #104 says was
+    missing.  ``check_recipe`` asks whether the ROUTE publishes a decode for
+    these bytes; this asks whether a named lane INSIDE that route can read
+    them -- a different question, and one whose answer was previously
+    discovered per module at LOAD, where the route catches it and serves the
+    same bytes through its other path.  So a checkpoint built to exercise the
+    window GEMV exercised nothing and said so nowhere.
+
+    Placed at the same call sites as ``check_recipe`` -- the default rung and
+    every ``--plan-json`` override, at argument time -- because a refusal
+    after the encode is not a refusal; it is a bill.  There is no override:
+    ``--require-lane`` is itself the opt-in, and a run that wants the rung
+    without the lane simply does not pass the flag.
+    """
+    if not lanes:
+        return
+    recipe = wire_recipe(grid, q256)
+    target = where or f"--grid {grid.name} --q256 {q256}"
+    for lane in lanes:
+        try:
+            rates = refuse_unreachable_lane(
+                lane, grid=grid.name, q256=int(q256), rate_cap=grid.rate_cap,
+                body=recipe.body.name, plane=recipe.scale_plane.name,
+                window_bits=int(recipe.window_bits), target=target)
+        except ValueError as exc:
+            raise SystemExit(
+                f"{exc}\n\n--require-lane {lane} was passed, so this plan is refused HERE -- "
+                "before a single unit is encoded. Drop the flag to write the rung anyway (it "
+                "serves, through the route's other path), or re-plan onto a rung the lane "
+                "reads.") from exc
+        print(f"  --require-lane {lane}: {target} -> column rates {list(rates)}, readable",
+              flush=True)
 
 
 def module_of(tensor_name: str) -> str:
@@ -694,6 +731,19 @@ def main():
                          "vLLM's BF16 method, the weight it wants is not in the checkpoint, and "
                          "the refusal is stamped verbatim into the manifest's serving_gate "
                          "block.")
+
+    ap.add_argument("--require-lane", action="append", default=None, metavar="LANE",
+                    help="refuse the PLAN unless every wire it writes can be read by LANE -- a "
+                         "lane named by the extension module_name_prefix runtime_contract.json "
+                         "publishes it under (tessera_window_gemv). A lane is one launch inside "
+                         "a route, and its eligibility is a function of the RUNG: a rung is a "
+                         "root rate and bresenham mixes the two rates bracketing it, so q256 "
+                         "1006 (root 3.93) is columns at rate 3 and 4 and every unit of that "
+                         "checkpoint refuses the window GEMV at load -- silently, module by "
+                         "module, while the census meant to measure the lane records the "
+                         "fallback (issue #104). Checked at ARGUMENT time, before one unit is "
+                         "encoded, and stamped into the manifest as requires_lanes so the "
+                         "census requires it off the bytes. Repeatable.")
     ap.add_argument("--allow-unserveable", action="store_true",
                     help="write wires this plugin build publishes no decode for (see check_recipe). "
                          "The checkpoint is then a RESEARCH artifact that will not load under this "
@@ -722,8 +772,10 @@ def main():
     # default (grid, q256) or a --plan-json override, and both are gated before
     # a single unit is encoded.
     gate_overrides: list = []
+    required_lanes = list(dict.fromkeys(args.require_lane or ()))
     check_recipe(default_grid, args.q256,
                  allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
+    check_lanes(required_lanes, default_grid, args.q256)
     overrides = {}
     if args.plan_json:
         for name, spec in json.loads(args.plan_json.read_text()).items():
@@ -739,6 +791,7 @@ def main():
                 g = grid_for(spec["grid"])
                 check_recipe(g, int(spec["q256"]), where=name,
                              allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
+                check_lanes(required_lanes, g, int(spec["q256"]), where=name)
                 overrides[name] = (g, int(spec["q256"]))
     src_config = json.loads((args.src / "config.json").read_text())
     shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
@@ -1197,6 +1250,13 @@ def main():
                                for name, shape in source.items()
                                for m in ignored_modules(name, shape)}),
         },
+        # WHICH LANE THIS ARTIFACT WAS BUILT TO EXERCISE, in the bytes.  The
+        # census reads it and REFUSES a phase where the lane took zero modules,
+        # so "this checkpoint is for the window GEMV" is a claim the artifact
+        # carries and a gate can check rather than a sentence in a handover
+        # (issue #104).  Empty means no lane was requested, which is the honest
+        # state of every checkpoint written before this flag existed.
+        "requires_lanes": required_lanes,
         "stock_twin": str(twin) if twin is not None else None,
         "vllm_fp4_predicate": tessera_fp4_predicate,
         "totals": totals, "modules": module_records,
