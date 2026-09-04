@@ -4,10 +4,14 @@ Branch `muse/ts-99-glmattn`, rebased onto master `5970451`. Not pushed, not merg
 
 ## 0. The headline
 
-**The load is LOUD, but only by one thread, and the belt that should have caught
-it is disabled by design.** See §1 for the receipt. The refusal comes from
-`params_dict[name]` in GLM's own `load_weights` hitting an unmapped
-`...wire_bytes` key. The generic "weights were not initialized from checkpoint"
+**PENDING RECEIPT — §1.2 is not yet filled in.** From source read in the pinned
+image, the load is *predicted* to fail loudly, from `params_dict[name]` at
+`vllm/models/glm5next/nvidia/model.py:904` hitting an unmapped `...wire_bytes`
+key. That is a reading, not an attestation, and it is written here as one; the
+verdict in this line is not final until §1.2 carries the log.
+
+**What IS attested, and is the more alarming half:** the belt that should have
+caught the *other* side of the defect is disabled by design. The generic "weights were not initialized from checkpoint"
 check — the one that would catch the *missing* `o_proj.weight` — does **not**
 fire: `default_loader.py:456-464` adds every parameter of any module whose
 `quant_method` has `process_weights_after_loading` to `loaded_weights`, and
@@ -46,7 +50,7 @@ PLACEHOLDER_LOAD
 ### 1.3 The belt that does not fire
 
 Read in `prismaquant/glm53-mia-sm121:487ecf187`
-(`sha256:75ea13eda532...`, `vllm 0.1.dev20051+g487ecf187`):
+(`sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69`, `vllm 0.1.dev20051+g487ecf187`):
 
 ```
 # vllm/model_executor/model_loader/default_loader.py
@@ -88,7 +92,7 @@ with `continue`s above it for biases, kv-scales, PP-missing parameters and
 ## 2. What was attested, and from which image
 
 Everything below is **observed in** `prismaquant/glm53-mia-sm121:487ecf187`
-(image id `sha256:75ea13eda532...`, `vllm 0.1.dev20051+g487ecf187`), never read
+(image id `sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69`, `vllm 0.1.dev20051+g487ecf187`), never read
 off the issue.
 
 ### 2.1 The mechanism: a construction census
@@ -145,8 +149,9 @@ Three corrections to the issue's reading of the source, all measured:
   `LinearBase`, so the Linear census is silent about it by construction. That is
   an honest gap, not a clearance.
 
-Control: `Qwen3ForCausalLM` on the pinned stock image, **4 patterns, 4 offered,
-0 never offered.** That is exactly why this never bit — every Tessera artifact
+Control: `Qwen3ForCausalLM` on the pinned stock image — whose `image_id` in the
+receipt, `sha256:61fc8a896b0a...`, is exactly the digest #100 pinned as
+`versions.attested_on.image` — **4 patterns, 4 offered, 0 never offered.** That is exactly why this never bit — every Tessera artifact
 served to date is Qwen.
 
 ### 2.3 How the fact travels (principle 14)
