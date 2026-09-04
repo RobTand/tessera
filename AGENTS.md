@@ -163,6 +163,11 @@ person or agent — changing the code.
   `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
   skipping some 450-480 tests and reporting green. `--surface-json PATH` writes
   the same population as a table, which is what a receipt should read.
+  `tools/merge_suite.py` submits both arms through `pbrun` -- the GPU-visible
+  one under `--strict-cuda`, the torch-free x86 one -- and writes **one**
+  receipt holding both side by side, so neither can be quoted without the
+  other. The merge run is still the coordinator's to launch; nothing triggers
+  it automatically.
 - The pre-fix failure line for every test added.
 - `docs/ARCHITECTURE.md` updated in the same commit if a normative claim moved.
 - Every side-finding fixed in its own commit, or filed with the reason it
