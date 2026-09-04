@@ -212,6 +212,21 @@ packed-source model this repo can serve.
     `columns 128`, matching the sidecar, and the old path raises the same
     `AttributeError` the GPU run printed — and the `@cuda` case itself is
     re-queued as `ac602404b092`, still unclaimed at the time of writing.
+
+    The failure also means everything *below* line 322 of that test had run on
+    no platform, so it was evaluated by hand on the CPU against the checkpoint
+    the read-back run wrote (`/home/rob/tmp/wf5_tail_check.py`, local-only):
+    `max(lengths) == wire_stride` for both groups (21297, 21427),
+    `unpack_moe_wires` returning 4 and 4, and the manifest's
+    `disposition=quantized` / 12 roles / `wire_stride.w13=21297`. All hold. The
+    re-run is a confirmation, not a first evaluation.
+
+    The other two `@cuda` write-half cases **passed on the GPU** in the same
+    run — including `test_the_written_wires_decode_to_the_stock_expert_tile`,
+    which calls `prepare_tessera_moe_experts` on the exporter's own bytes with
+    `device="cuda"`. Read the tally as 13 of 14 in
+    `tests/test_export_moe_write.py` and 24 of 24 in
+    `tests/test_export_moe_layouts.py`, not as an unlocated red.
   * The CPU halves had landed earlier, both through the pool on sparky:
     `tests/test_export_moe_layouts.py` — `839b1b0a1bf4`, **22 passed, 2 skipped
     in 29.74 s** — and `tests/test_export_moe_write.py` — `cb8372740b1b`,
