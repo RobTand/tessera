@@ -33,19 +33,24 @@
 > forwards, receipt at
 > `docs/measurements/tessera-decode-regime-kl-2026-09-03.md`, with the arms'
 > disagreement filed as #110. The latency A/B §4 defers is tracked by #109.
-> That campaign is **eager**, and so is every served KL this lane has: the
-> compiled serve -- which is what vLLM runs by default -- still has no
-> informative one, because its only KL is §3's prefill-regime null. Filed as
-> **#113**. Nothing is restated here as this campaign's result; the pointers are
-> here so a reader who lands on this receipt is not left at its gaps.
+> That campaign is **eager**. The compiled half -- what vLLM runs by default,
+> and where this campaign's only KL is §3's prefill-regime null -- was filed as
+> **#113** and measured the next day: on these same two arms, compiled, the
+> decode regime reads mutual `KL >= 0.012585` at 88.67% where the prefill
+> regime reads `0.000000` at 100.00%, receipt at
+> `docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`. Nothing is
+> restated here as this campaign's result; the pointers are here so a reader who
+> lands on this receipt is not left at its gaps.
 >
 > **So, exactly:** #83's census (all four mode x regime combos, 112/112) and its
 > two-arm served KL (eager/streamed, decode regime, #102: mutual
 > `KL >= 0.012111` at 91.02% top-1, arms 0.436065 / 0.432477 against the BF16
 > teacher) are measured and on master; the served latency A/B is unmeasured
-> (#109), the compiled-serve decode-regime KL for the GEMV is unmeasured
-> (#113), and which arm is closer to BF16 at M = 1 is open (#110). **Nothing
-> here is a served latency or speed claim for the lane.**
+> (#109), the compiled-serve decode-regime KL is measured off-campaign (#113:
+> mutual `KL >= 0.012585` at 88.67%), and which arm is closer to BF16 at M = 1
+> is open (#110) -- more open than before, since the arms' ordering flips
+> between eager and compiled at 256 positions. **Nothing here is a served
+> latency or speed claim for the lane.**
 
 **What this is.** Issue #10 wired `fp8_gemv.streamed_apply` into the streamed
 `TESSERA_FP8` route and proved it bit-exact against the torch decoder at load.
@@ -376,10 +381,15 @@ read `0.4668730966935983` at 62.67% top-1 over 4088 positions in **both** arms,
 identical to the last digit, exactly as the eager prefill pair reads
 `0.46599389451679424` in both. So the compiled serve's decode-regime KL for this
 lane is **unmeasured**, and it is filed as **#113** rather than left in this
-paragraph. What is *not* in doubt there is engagement: §4's recovered trace
+paragraph. What was *not* in doubt there is engagement: §4's recovered trace
 shows the GEMV launching 9 016 times under a compiled forward with zero CUTLASS
-GEMM launches in every purely-decode bin. The kernel runs there; the two arms
-have never been scored against each other there.
+GEMM launches in every purely-decode bin. **#113 supplied the missing number
+the next day**: compiled, on these arms, mutual `KL >= 0.012585` at 88.67% over
+256 M = 1 positions against `0.000000` at 100.00% over 4088 prefill ones, and
+the compiled prefill dumps of *this* campaign carry the same
+`kl_tool.py fingerprint` as #113's, so the null above is an identity across
+campaigns as well as across arms
+(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`).
 
 ### Method
 

@@ -359,9 +359,14 @@ box. What is still open here
    **eager** and only eager: #83's campaign took the census in all four mode x
    regime combinations, and #102 took the two-arm KL in the decode regime with
    both arms under `--enforce-eager`. The compiled half of "eager **and**
-   compiled" has no informative KL -- its only one is #83's prefill-regime
-   null, which cannot reach a lane capped at `GEMV_MAX_M = 8` -- and that is
-   filed as **#113**. "Two latencies" is unmeasured and filed as **#109**.
+   compiled" was filed as **#113** and taken on 2026-09-04, on the same two
+   hardlinked arms: mutual `KL >= 0.012585` at 88.67% in the decode regime
+   against `0.000000` at 100.00% in the prefill one
+   (`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`). So both
+   dispatch regimes now carry two arms and two KLs, in streamed residency.
+   "Two latencies" is unmeasured and filed as **#109**, and *which* arm is
+   right is **#110** -- harder than it looked, since the arms' ordering against
+   BF16 flips between eager and compiled at 256 positions.
 
 **#10 specifically (the FP8 route / E4M3 wire):**
 

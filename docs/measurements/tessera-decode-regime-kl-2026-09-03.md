@@ -341,7 +341,10 @@ whole point is that every launch is attributable.
   allocated checkpoint we hold carries a column rate outside
   `SUPPORTED_RATES = (1, 2, 4)`, so the lane cannot prepare on one. This
   receipt validates the harness and the lane on a uniform-rate checkpoint.
-* **The compiled forward, now filed as #113.** Both arms here served with
+* **The compiled forward -- filed as #113 and since measured**
+  (`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`: mutual
+  `KL >= 0.012585` at 88.67%, the same finding at the same size, so it is not
+  an artifact of eager dispatch). Both arms here served with
   `--enforce-eager`, so every served KL this lane has is eager, while vLLM
   compiles by default. The route trace is eager-only by construction: under
   `torch.compile` the dispatch's Python body runs at trace time, so a count

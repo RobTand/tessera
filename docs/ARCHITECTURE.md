@@ -346,9 +346,11 @@ top-1 agreement while the decode regime reads `KL >= 0.012111` at 91.02%, and
 the trace shows why -- 28 672 `tessera_window_gemv::gemv` launches on the
 decode dump's scored forwards, zero on the prefill dump's. Both arms of that
 receipt served `--enforce-eager`; the wrapper takes `TESSERA_LANE_EAGER=0` for
-a compiled serve, where the trace cannot attest shapes and the attestation is
-`compile_identity` plus the mutual KL itself. No compiled decode-regime KL has
-been taken for this lane (#113).
+a compiled serve, where the trace declines and the attestation is
+`compile_identity`'s per-arm AOT key plus the mutual KL itself. That arm was
+taken for #113: compiled, the same two arms read mutual `KL >= 0.012585` at
+88.67% in the decode regime and `0.000000` at 100.00% in the prefill one
+(`docs/measurements/tessera-compiled-decode-kl-2026-09-04.md`).
 
 ### 4.6 The stock twin isolates the wire from the kernel
 
