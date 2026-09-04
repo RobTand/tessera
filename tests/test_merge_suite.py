@@ -187,6 +187,45 @@ def test_the_default_submission_declares_one_core(tmp_path):
     assert " -n " not in pbrun, pbrun
 
 
+@pytest.mark.parametrize("gpu_tag", ["sparky", "sparklina"])
+def test_gpu_submission_delegates_physical_exclusion_to_pbrun(tmp_path, gpu_tag):
+    """One declared slot does not exclude a box offering two or three."""
+    import shlex
+
+    out = tmp_path / "receipt.json"
+    result = subprocess.run(
+        [sys.executable, str(TOOL), "--arm", "gpu", "--dry-run",
+         "--gpu-tag", gpu_tag, "--cpus", "8",
+         "--checkout", str(ROOT), "--out", str(out)],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert out.exists(), result.stdout + result.stderr
+    record = json.loads(out.read_text())["arms"][0]
+    invocation = shlex.split(record["pbrun"])
+    options = invocation[:invocation.index("--")]
+    assert "--exclusive" in options
+    assert options[options.index("--tag") + 1] == gpu_tag
+    assert "gpu=" not in options[options.index("--demand") + 1]
+    assert "--gpu-capacity" not in options, "capacity belongs to PB's live offers"
+    assert options[options.index("--cpus") + 1] == "1"
+    assert "-n" not in invocation
+
+
+def test_live_gpu_submission_requires_an_explicit_placement_tag(monkeypatch, tmp_path, capsys):
+    merge_suite = _module()
+    monkeypatch.setattr(merge_suite, "DEFAULT_RECEIPT_ROOT", tmp_path / "receipts")
+    monkeypatch.setattr(sys, "argv", [str(TOOL), "--arm", "gpu",
+                                     "--checkout", str(ROOT),
+                                     "--out", str(tmp_path / "receipt.json")])
+
+    def must_not_submit(*args, **kwargs):
+        raise AssertionError("a GPU action was submitted without explicit placement")
+
+    monkeypatch.setattr(merge_suite, "_submit", must_not_submit)
+    assert merge_suite.main() == 2
+    assert "--gpu-tag" in capsys.readouterr().err
+
+
 def test_a_missing_surface_is_reported_as_absent_not_as_a_pass():
     """An arm that was never placed is not a green arm."""
 

@@ -15,6 +15,15 @@ plus `experiments/uniform_control.py` (the gate that judges the result).
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
 allocator sees is `docs/tessera-one-format.md` §5.
 
+### 1.1 Integration suite placement
+
+`tools/merge_suite.py` dispatches its device populations only through
+PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
+`--exclusive`: the deployed scheduler derives the complete GPU reservation
+from that worker's advertised capacity, rather than treating one logical slot
+as physical exclusion. The GPU arm remains serial under `--strict-cuda`;
+the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
+
 ## 2. The pipeline
 
 An allocator proposes one rung per Linear. The converter translates that

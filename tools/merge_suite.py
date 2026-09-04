@@ -104,7 +104,7 @@ ARMS = {
     "gpu": {
         "why": "the CUDA-gated surface; nothing else exercises it",
         "python": "/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python",
-        "pbrun_flags": ["--gpu"],
+        "pbrun_flags": ["--gpu", "--exclusive"],
         "strict_cuda": True,
         "fans_out": False,
         "serial_because": (
@@ -260,12 +260,16 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     # is busy while seven of its cores idle.
     cpus = _arm_cpus(arm, args.cpus)
     command = _command(arm, surface_json, args.pytest_arg, cpus)
+    flags = list(arm["pbrun_flags"])
+    if name == "gpu" and args.gpu_tag:
+        flags += ["--tag", args.gpu_tag]
     invocation = [
         sys.executable, str(PBRUN),
-        *arm["pbrun_flags"],
+        *flags,
         "--cpus", str(cpus),
-        "--demand", f"{'gpu=1,' if arm['pbrun_flags'][0] == '--gpu' else ''}"
-                    f"mem_gb={args.mem_gb}",
+        # --exclusive derives full GPU capacity from the selected worker's
+        # live offer through pbrun.exclusive_gpu_demand, never from a slot guess.
+        "--demand", f"mem_gb={args.mem_gb}",
         "--cwd", str(args.checkout),
         "--timeout-s", str(args.timeout_s),
         "--wait-s", str(args.wait_s),
@@ -828,6 +832,10 @@ def main() -> int:
                     help="tree to test; the x86 arm needs it under /mnt/shared")
     ap.add_argument("--arm", action="append", choices=sorted(ARMS),
                     default=[], help="repeatable; default is both")
+    ap.add_argument("--gpu-tag", default="",
+                    help="explicit GPU worker tag (e.g. sparky or sparklina); "
+                         "required for live GPU submissions. pbrun --exclusive "
+                         "reserves that worker's advertised full GPU capacity")
     ap.add_argument("--cpus", type=int, default=1,
                     help="cores each arm that can use them will ACTUALLY use: "
                          "declared to the pool and, above 1, passed to pytest "
@@ -879,6 +887,10 @@ def main() -> int:
 
     args.checkout = Path(args.checkout).resolve()
     wanted = args.arm or sorted(ARMS)
+    if "gpu" in wanted and not args.gpu_tag and not (args.resume or args.dry_run):
+        print("merge_suite: live GPU submission requires --gpu-tag to select "
+              "the worker whose full GPU capacity pbrun reserves", file=sys.stderr)
+        return 2
 
     shared = str(args.checkout).startswith(str(SHARED_ROOT))
     for name in wanted:
