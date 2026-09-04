@@ -167,3 +167,68 @@ def test_a_record_that_is_its_own_declaration_wins_over_containment():
     owner, problems = _tool().join_records_to_declared(
         {STACK: {"kind": "moe"}}, {STACK: "TESSERA_FP8"})
     assert owner == {STACK: STACK} and problems == []
+
+
+def test_moe_cell_rung_requires_agreement_of_every_group_role():
+    tool = _tool()
+    scheme = {"structure": "routed_moe", "groups": {
+        "w13": {"q256": [1024, 1024]}, "w2": {"q256": 1024}}}
+    assert tool.declared_rung(scheme) == 1024
+    scheme["groups"]["w2"]["q256"] = 896
+    assert tool.declared_rung(scheme) is None
+    del scheme["groups"]["w2"]["q256"]
+    assert tool.declared_rung(scheme) is None
+
+
+def _moe_agreement_fixture(symbol="vllm.fused_moe.modular_kernel:TRITON"):
+    child = f"{STACK}.routed_experts"
+    records = {"decode": {child: {"kind": "moe", "policy": "TESSERA_FP8:resident",
+        "symbol": symbol, "decoder": "torch_materialize_stock"}}}
+    cell = {"id": "synthetic_moe_cell", "platform": "sm_121", "structure": "routed_moe",
+        "family": "E4M3", "regime": "decode", "rungs_q256": [1024],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "executes": [{"symbol": "vllm.fused_moe.modular_kernel",
+                      "decoder": "torch_materialize_stock"}]}
+    kwargs = {"phase_regimes": {"decode": "decode"}, "platform": "sm_121",
+        "declared_rungs": {STACK: 1024}, "record_owners": {"decode": {child: STACK}},
+        "families_by_route": {"TESSERA_FP8": "E4M3"}}
+    return records, cell, kwargs
+
+
+def test_moe_agreement_joins_the_child_to_its_declared_rung_and_structure():
+    records, cell, kwargs = _moe_agreement_fixture()
+    records["decode"][DENSE] = {"kind": "dense", "policy": "TESSERA_FP8:resident",
+        "symbol": "torch._scaled_mm", "decoder": "torch_materialize_stock"}
+    dense_cell = dict(cell, id="synthetic_dense_cell", structure="dense",
+                      executes=[{"symbol": "torch._scaled_mm",
+                                 "decoder": "torch_materialize_stock"}])
+    kwargs["declared_rungs"][DENSE] = 1024
+    kwargs["record_owners"]["decode"][DENSE] = DENSE
+    block, problems = _tool().all_structure_agreement(records, cells=[cell, dense_cell], **kwargs)
+    assert problems == []
+    assert block["agrees"] is True
+    assert block["structures"]["routed_moe"]["phases"]["decode"]["covered_by_cell"] == 1
+    assert block["structures"]["dense"]["phases"]["decode"]["covered_by_cell"] == 1
+
+
+def test_a_moe_cell_launch_disagreement_is_a_failure():
+    records, cell, kwargs = _moe_agreement_fixture("wrong.kernel")
+    block, problems = _tool().all_structure_agreement(records, cells=[cell], **kwargs)
+    assert block["agrees"] is False
+    assert len(problems) == 1 and "wrong.kernel" in problems[0]
+    records, cell, kwargs = _moe_agreement_fixture()
+    cell["executes"][0]["symbol"] = "vllm.fused_moe.modular_kernel:OTHER_BACKEND"
+    block, problems = _tool().all_structure_agreement(records, cells=[cell], **kwargs)
+    assert block["agrees"] is False and len(problems) == 1
+
+
+def test_dense_cells_do_not_attest_moe_and_missing_owners_stay_unattested():
+    records, cell, kwargs = _moe_agreement_fixture()
+    cell["structure"] = "dense"
+    block, problems = _tool().all_structure_agreement(records, cells=[cell], **kwargs)
+    assert problems == [] and block["agrees"] is None
+    assert block["structures"]["routed_moe"]["phases"]["decode"]["unattested"] == 1
+    cell["structure"] = "routed_moe"
+    kwargs["record_owners"] = {"decode": {}}
+    block, problems = _tool().all_structure_agreement(records, cells=[cell], **kwargs)
+    assert problems == [] and block["agrees"] is None

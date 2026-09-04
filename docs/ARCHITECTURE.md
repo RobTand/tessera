@@ -415,6 +415,14 @@ wire per declared expert and role under its canonical or runtime shard name,
 and recomputes each group's maximum wire length from those headers. A missing
 projection cannot pass merely because another wire has the declared stride.
 
+The eager route census emits `tessera.cell-launch-agreement/2`, aggregating
+the existing per-structure blocks. Each record resolves its rung through its
+declared owner; a MoE stack has one rung only when every group and role agrees.
+Dense cells cannot cover routed experts, and absent MoE cells remain explicitly
+unattested. A routed record retains its exact observed backend suffix; matching
+also accepts the route-owned base symbol when a cell publishes that entry point.
+An explicitly backend-specific cell still requires that exact backend.
+
 `tools/tessera_route_census.py` records, per residency mode, that every
 module serves on its declared family. The join is made in MODULE space: the
 route records come off `named_modules()`, the declared targets come off
