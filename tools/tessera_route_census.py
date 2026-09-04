@@ -148,7 +148,8 @@ def declared_in_module_space(model, targets):
     mapper = getattr(model, "hf_to_vllm_mapper", None)
     if mapper is None:
         return None
-    unstacked = mapper.get_unstacked_mapper()
+    from tessera.serving.weights_mapper import module_name_mapper
+    unstacked = module_name_mapper(mapper)
     out = {}
     for target in targets:
         if "." not in target or target.startswith("re:"):

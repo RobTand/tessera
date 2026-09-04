@@ -52,6 +52,10 @@ cannot serve (non-Tessera quantised choices, fused groups split across two
 families) and stamping coverage and accounting into `<plan>.provenance.json`.
 The exporter encodes what the plan names and the manifest states what is on
 disk; the census checks every module serves on its declared family.
+Construction and route censuses share one runtime-mapper adapter: the current
+`get_rename_mapper` name-only view takes precedence over the earlier
+`get_unstacked_mapper`; a directly exposed mapper is replayed as-is. An
+existing wrapper method that fails is not silently ignored.
 
 The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
 constructed `feed_forward.w13`, for both quantized targets and explicit BF16
