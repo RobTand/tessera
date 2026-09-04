@@ -188,6 +188,155 @@ the eager-vs-compiled gap, and `compiled-ops` (which pins only `custom_ops`)
 should recover little of it. If `compiled-ops` recovers a lot, the op-level
 picture is incomplete and section 3 says so.
 
-## 3. PENDING -- the served ladder
+## 3. The served ladder: attempted, not measured
 
-## 4. PENDING -- what this changes
+Not run. Three attempts, none of which reached a single dump, and the reasons
+are recorded here because two of them are facts about the box and one was my
+own bug:
+
+1. **Every arm died at engine init**, asking for 0.85 of a 121 GiB device on a
+   box running three concurrent GPU jobs: *"Free memory on device cuda:0
+   (76.72/121.63 GiB) on startup is less than desired GPU memory utilization
+   (0.85, 103.38 GiB)"*. Fixed by dropping the ask to 0.15 -- Qwen3-0.6B at
+   max-model-len 4096 does not need more, and every arm uses the same value so
+   nothing about the comparison moves.
+2. **vLLM's memory profiling refuses a moving box**: *"AssertionError: Error in
+   memory profiling. Initial free memory 73.89 GiB, current free memory 74.4
+   GiB."* A serve cannot start while another process is releasing device memory
+   underneath it. This is the substantive finding of the three: an
+   eager-vs-compiled KL comparison is a *correctness* run and does not need a
+   quiet box for its numbers to be valid, but the serve that produces those
+   numbers **does** need one to start at all. Concurrency-slot scheduling and a
+   vLLM serve are not compatible.
+3. **My own gate refused every arm that did start.** See the commit "Stop the
+   gate refusing exactly the arms whose log matches": `docker logs | grep -Eq`
+   under `pipefail` returns non-zero on a *match*. `compiled` came up after
+   180s and `compiled-ops` after 160s and both were turned away; the patterns
+   are present in the log files the refusal itself wrote. Fixed, with tests.
+
+The ladder script is committed and correct as far as anything here shows. What
+it needs is one exclusive box for roughly forty minutes.
+
+**What the ladder would have decided, and what its absence costs.** Section 2
+establishes the mechanism and its size *at the op and GEMM level*. It does not
+establish that pinning the dispatch closes the *served KL* gap -- that
+`compiled-both` lands near `eager` -- and nothing in this receipt should be read
+as claiming it does. The pre-registered prediction in section 2 (`compiled-ir`
+recovers most of the gap, `compiled-ops` little) is unfalsified rather than
+confirmed.
+
+## 4. What this changes
+
+**The two defects of #16 are separate.** The non-reproducible *build* is
+inductor autotuning against a loaded device at compile time -- 120 of 196
+`.best_config` records differing under one AOT key with byte-identical
+`cache_key_factors.json`, a replay bit-identical and a rebuild 0.017117
+(`serving-compile-divergence-2026-09-02.md` section 3). The eager-vs-compiled
+*divergence* is a deterministic, config-driven implementation switch that
+happens before any of that. They share only a consequence: both make a
+cross-regime arm incomparable to another. Issue #60's measurement that the
+*eager* lane's cross-session drift is exactly 0.0 is consistent with this split
+-- the instability is on the compiled side, and it is not the same thing as the
+switch.
+
+**#16 is not a Tessera defect, and the five listed compiled-path breakages are
+already handled in this tree.** Verified by reading, each with its site: the
+`data_ptr` fingerprint is skipped under `torch.compiler.is_compiling()`
+(`src/tessera/serving/ops.py:196`, same in `window.py`); the direct pybind
+decode is now `@torch.library.custom_op("tessera::nvfp4_decode_span2_out", ...)`
+(`ops.py`); the mutating op on an aliased pool is gone (`ops.py:85-90`,
+`fp8_route.py:30`); `int()` on the token dimension is on the
+non-compiling branch only (`fp8_route.py:361`); the lazy extension load is
+lock-guarded (`ext.py:437`); and residency is folded into the compile-cache key
+by `compile_identity.py`. Tessera's serving ops are
+`torch.library.custom_op` registrations, which the `custom_ops` base mode does
+not touch.
+
+**What changed in the tree.** `build_identity` now parses `custom_ops` and
+`ir_op_priority` out of a serve log, folds them into the build fingerprint, and
+offers `require_same_dispatch()`; two arms that ran different implementations
+cannot certify each other, and a record that does not say which it ran certifies
+nothing (schema `tessera.serve_build_identity/1` -> `/2`; no wire, no schema
+minor, no `encoder_profile_id`). `serve_and_dump_kl.sh` can pin the dispatch
+(`TESSERA_KL_VLLM_EXTRA`) and refuses to dump a serve whose own log does not
+match what the arm asked for (`TESSERA_KL_REQUIRE_IN_LOG`).
+
+**What is NOT fixed, and why it is bigger than this issue.** Nothing here makes
+an eager arm and a compiled arm comparable. They can be *made* comparable by
+pinning -- `--kernel-config {"ir_op_priority":{"rms_norm":["vllm_c"],
+"fused_add_rms_norm":["vllm_c"]}}` plus explicit `pass_config` -- but that is a
+non-default serving configuration, so a pinned arm is no longer a measurement of
+what vLLM does by default. The honest options are (a) never compare across the
+two regimes, which the new refusal enforces, or (b) re-take the eager baselines
+under compilation. Choosing between them moves what our receipts mean, so it is
+Rob's call, not a code change.
+
+## 5. Provenance
+
+Corpus `/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json`, contract sha
+`cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d`, tokenizer
+`/home/rob/models/Qwen3-0.6B`, 8x512, 4088 scored positions. Op-level probe on
+GB10, torch 2.13.0+cu130, vLLM 0.28.0 in `vllm/vllm-openai:latest`
+(`sha256:61fc8a896b0a`). The two attested serve logs are
+`/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12` (eager) and
+`serve_qwen_stock_tessera-k2-graph.log:12` (compiled). No KL number in this
+receipt was produced by me; the ones quoted are from
+`serving-compile-divergence-2026-09-02.md` and carry that receipt's provenance.
+
+## 4. What this changes
+
+**The two defects of #16 are separate.** The non-reproducible *build* is
+inductor autotuning against a loaded device at compile time -- 120 of 196
+`.best_config` records differing under one AOT key with byte-identical
+`cache_key_factors.json`, a replay bit-identical and a rebuild 0.017117
+(`serving-compile-divergence-2026-09-02.md` section 3). The eager-vs-compiled
+*divergence* is a deterministic, config-driven implementation switch that
+happens before any of that. They share only a consequence: both make a
+cross-regime arm incomparable to another. Issue #60's measurement that the
+*eager* lane's cross-session drift is exactly 0.0 is consistent with this split
+-- the instability is on the compiled side, and it is not the same thing as the
+switch.
+
+**#16 is not a Tessera defect, and the five listed compiled-path breakages are
+already handled in this tree.** Verified by reading, each with its site: the
+`data_ptr` fingerprint is skipped under `torch.compiler.is_compiling()`
+(`src/tessera/serving/ops.py:196`, same in `window.py`); the direct pybind
+decode is now `@torch.library.custom_op("tessera::nvfp4_decode_span2_out", ...)`
+(`ops.py`); the mutating op on an aliased pool is gone (`ops.py:85-90`,
+`fp8_route.py:30`); `int()` on the token dimension is on the
+non-compiling branch only (`fp8_route.py:361`); the lazy extension load is
+lock-guarded (`ext.py:437`); and residency is folded into the compile-cache key
+by `compile_identity.py`. Tessera's serving ops are
+`torch.library.custom_op` registrations, which the `custom_ops` base mode does
+not touch.
+
+**What changed in the tree.** `build_identity` now parses `custom_ops` and
+`ir_op_priority` out of a serve log, folds them into the build fingerprint, and
+offers `require_same_dispatch()`; two arms that ran different implementations
+cannot certify each other, and a record that does not say which it ran certifies
+nothing (schema `tessera.serve_build_identity/1` -> `/2`; no wire, no schema
+minor, no `encoder_profile_id`). `serve_and_dump_kl.sh` can pin the dispatch
+(`TESSERA_KL_VLLM_EXTRA`) and refuses to dump a serve whose own log does not
+match what the arm asked for (`TESSERA_KL_REQUIRE_IN_LOG`).
+
+**What is NOT fixed, and why it is bigger than this issue.** Nothing here makes
+an eager arm and a compiled arm comparable. They can be *made* comparable by
+pinning -- `--kernel-config {"ir_op_priority":{"rms_norm":["vllm_c"],
+"fused_add_rms_norm":["vllm_c"]}}` plus explicit `pass_config` -- but that is a
+non-default serving configuration, so a pinned arm is no longer a measurement of
+what vLLM does by default. The honest options are (a) never compare across the
+two regimes, which the new refusal enforces, or (b) re-take the eager baselines
+under compilation. Choosing between them moves what our receipts mean, so it is
+Rob's call, not a code change.
+
+## 5. Provenance
+
+Corpus `/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json`, contract sha
+`cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d`, tokenizer
+`/home/rob/models/Qwen3-0.6B`, 8x512, 4088 scored positions. Op-level probe on
+GB10, torch 2.13.0+cu130, vLLM 0.28.0 in `vllm/vllm-openai:latest`
+(`sha256:61fc8a896b0a`). The two attested serve logs are
+`/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12` (eager) and
+`serve_qwen_stock_tessera-k2-graph.log:12` (compiled). No KL number in this
+receipt was produced by me; the ones quoted are from
+`serving-compile-divergence-2026-09-02.md` and carry that receipt's provenance.
