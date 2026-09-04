@@ -156,6 +156,54 @@ def test_serve_lock_reclaims_a_dead_atomic_owner(tmp_path: Path) -> None:
     assert not os.path.lexists(lock)
 
 
+@pytest.mark.parametrize("legacy", [False, True], ids=["atomic", "legacy"])
+def test_release_only_removes_a_lock_this_process_owns(tmp_path: Path, legacy: bool) -> None:
+    """A waiter or an unrelated EXIT handler may not release the holder."""
+    lock = tmp_path / "serve.lock"
+    if legacy:
+        lock.mkdir()
+        (lock / "owner").write_text(f"{os.getpid()} live-holder\n")
+    else:
+        lock.symlink_to(f"{os.getpid()}:1:{'c' * 32}")
+    script = f'SERVE_LOCK="{lock}"; source "{HELPER}"; serve_lock_release'
+    result = subprocess.run(
+        ["bash", "-euo", "pipefail", "-c", script],
+        env=_environment(tmp_path), text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    if legacy:
+        assert (lock / "owner").read_text() == f"{os.getpid()} live-holder\n"
+    else:
+        assert os.readlink(lock) == f"{os.getpid()}:1:{'c' * 32}"
+
+
+def _live_legacy_owner_contender(tmp_path: Path, *, probe_denied: bool = False):
+    lock = tmp_path / "serve.lock"
+    lock.mkdir()
+    owner = lock / "owner"
+    owner.write_text(f"{os.getpid()} live-holder\n")
+    old = time.time() - 7200
+    os.utime(lock, (old, old))
+    script = (
+        f'SERVE_LOCK="{lock}"; SERVE_LOCK_TIMEOUT=1; SERVE_LOCK_POLL_S=0.01; '
+        f'source "{HELPER}"; '
+        + ('kill() { return 1; }; ' if probe_denied else '')
+        + 'serve_lock_acquire; serve_lock_release'
+    )
+    result = subprocess.run(
+        ["timeout", "4", "bash", "-euo", "pipefail", "-c", script],
+        env=_environment(tmp_path), text=True, capture_output=True,
+    )
+    return result, owner
+
+
+def test_live_legacy_owner_blocks_atomic_acquisition(tmp_path: Path) -> None:
+    """An atomic publication may not succeed inside an existing directory lock."""
+    result, owner = _live_legacy_owner_contender(tmp_path)
+    assert result.returncode == 3, result.stdout + result.stderr
+    assert owner.read_text() == f"{os.getpid()} live-holder\n"
+
+
 def test_two_dead_owner_reapers_cannot_unlink_the_new_holder(tmp_path: Path) -> None:
     """Compare+unlink and the replacement acquire are one serialized transition."""
     lock = tmp_path / "serve.lock"
