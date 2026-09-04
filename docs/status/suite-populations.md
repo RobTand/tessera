@@ -67,3 +67,7 @@ dead before its summary. A device string is a measurement.
 | -- | -- | -- | gpu | -- | not submitted in this run | -- | -- | -- | -- | -- |
 | 2026-09-04T14:34:06Z | `66f648017f44` | yes | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2121 | 0 | 13 | 0 | 0 (pool) |
 | 2026-09-04T14:35:57Z | `66f648017f44` | yes | x86 | -n 8 | torch 2.11.0+cpu reports no CUDA device | 1604 | 0 | 517 | 0 | 0 (pool) |
+| -- | `6072e572e749` (assumed) | no | gpu | serial | no population published | -- | -- | -- | 0 | -- |
+| -- | `6072e572e749` (assumed) | no | x86 | -n 24 | no population published | -- | -- | -- | 0 | -- |
+| 2026-09-04T22:25:35Z | `86aa47409242`<br>source `40f8d9ba0962` | unknown | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2535 | 0 | 12 | 0 | 0 |
+| 2026-09-04T22:27:09Z | `08d1571d7598`<br>source `40f8d9ba0962` | unknown | x86 | -n 24 | torch 2.11.0+cpu reports no CUDA device | 2016 | 0 | 518 | 0 | 0 |
