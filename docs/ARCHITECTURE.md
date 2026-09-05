@@ -238,6 +238,29 @@ recalibration (one amax over the members' shared input, which is what both
 repos' calibrators already emit), not a wider bound. Changing the policy
 means changing the constant and this paragraph in one commit.
 
+**Every exporter that writes a fused A-side scale calls that one helper.**
+`experiments/export_stock_compressed.py`, the sanctioned standalone CLI for the
+stock compressed-tensors arms, copied each donor member's `input_global_scale`
+through unchanged and joined the *weight* globals only, so a donor whose
+siblings differ at all -- inside the accepted bound -- served an activation
+quantizer chosen by vLLM's `.max()` reduction instead of by the rule above
+(tessera#305: donor `[4.0, 4.015625, 4.0]` was written through verbatim, and
+the runtime's max picked 4.015625 where the helper answers 4.0). It now
+resolves one value per fused group through `shared_input_global_scale` and
+writes that value on every member, so `priced == written == served` holds for
+the A side of this arm as it already did for the serving exporter's twin. The
+join is resolved from the **planned** fused roster before the output directory
+is created, which is what makes it correct for siblings that straddle source
+shards: an earlier output shard can no longer publish an unjoined member
+before a later shard delivers the rest of the group (#212's completion
+schedule is unchanged), and a donor beyond the declared bound is refused
+beside the other pre-encode refusals rather than at the shard boundary that
+completes the group. An unfused NVFP4 Linear is its own vLLM Linear with its
+own input tensor and keeps its own donor value. The per-unit
+`input_global_scale` in `tessera_stock_manifest.json` records what was
+actually written, so the join is read off the receipt rather than inferred
+from the donor.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
@@ -1884,6 +1907,25 @@ roster is wrong and would let a receipt exempt an arm by deleting its proof.
 `plane_moved=false` is recorded and deliberately not required: an arm whose
 lever reached nothing is an ineffective arm, which is a result and not a
 broken comparison.
+
+**The evidence that derives it is established before the obligations are.**
+`schedule` and the refit's coupled-landing diagnostics decide what an arm is,
+so they are evidence exactly as the proofs are, and a receipt that does not
+record them has not shown an arm to be exempt -- it has failed to say what the
+arm is. Reading them with a `.get()` and answering "not a trailing pair" made
+*deleting one field* a way past every matched-pair check, over an explicitly
+recorded `codes_identical: false` -- the very failure the validator exists to
+catch (tessera#299). Unknown is now refused by name and never exempts:
+`classify_trailing_pair` returns the reason a receipt could not be classified
+beside its answer, an arm whose `schedule` is absent, empty or unparseable and
+an arm whose `refit` records no per-call diagnostics are both refused as
+unclassified, and any matched-pair leg such an arm *did* record is still read,
+so a recorded failure cannot be cleared by removing the field that classifies
+the comparison. The control's schedule is the one exception in scope: it is
+the baseline every other arm in the unit is classified against, so losing it
+exempts all of them at once and refuses the whole document, exactly as a
+failed drift control does. A complete receipt is unaffected -- the committed
+coupled-landing screens still exempt `B-GS+CL` on the diagnostics they record.
 
 #### The fifth leg: a screen taken off the wire does not promote
 
