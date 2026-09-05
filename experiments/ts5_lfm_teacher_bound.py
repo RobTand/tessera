@@ -14,6 +14,7 @@ import threading
 
 sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
+from tessera.serving.build_identity import incomplete_reason, is_complete
 from experiments.ts5_stage_cleanup import cleanup_stage
 
 CAMPAIGN = Path("/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2")
@@ -98,7 +99,10 @@ try:
     assert sha256_file(CORPUS) == evidence["corpus_sha256"], "corpus changed across serve"
     build = json.loads((OUT / "teacher_bf16.build.json").read_text())
     meta = json.loads((OUT / "teacher_bf16.meta.json").read_text())
-    assert build["complete"] is True and build["identity"]["eager"] is True
+    # Derived, not the sidecar's stored verdict: that field is a cached answer
+    # from whichever rule stamped it (#279).
+    assert is_complete(build), incomplete_reason(build)
+    assert build["identity"]["eager"] is True
     assert build["identity"]["compiled_forward"] is False
     assert build["identity"]["image"] == IMAGE
     assert build["identity"]["image_digest"] == IMAGE.split("@", 1)[1]

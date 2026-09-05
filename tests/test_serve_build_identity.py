@@ -47,6 +47,9 @@ from tessera.serving.build_identity import (
     build_identity,
     compare,
     deterministic_effective,
+    incomplete_reason,
+    is_complete,
+    load,
     read_cache_root,
     read_serve_log,
     require_deterministic_build,
@@ -241,7 +244,7 @@ def test_a_cache_root_missing_the_slot_the_log_names_is_incomplete(tmp_path):
 #
 # THE DEFECT THIS PINS.  ``build_identity`` read a missing log as the empty
 # string, ``read_serve_log`` derived ``compiled_forward=False`` from the
-# absence of compile lines, and ``_is_complete`` read THAT as "an eager serve,
+# absence of compile lines, and the completeness rule read THAT as "an eager serve,
 # which answers 'which build served' with 'none'".  So two arms nobody
 # observed at all stamped ``complete: true`` with equal fingerprints, and
 # ``require_same_build`` certified them as one build -- the gate that exists
@@ -296,6 +299,145 @@ def test_the_positive_eager_serve_is_still_complete(tmp_path):
     rec = _stamp(EAGER_LOG, tmp_path, "eager", eager=True)
     assert rec["provenance"]["enforce_eager"] is True
     assert rec["complete"] is True
+
+
+# --------------------- the stored verdict is a cache, not the rule (#279) ---
+#
+# THE DEFECT THIS PINS.  ``complete`` is computed at STAMP time and written into
+# the sidecar; every reader then took it at its word.  #205 changed the rule --
+# an eager arm now has to show vLLM's own ``enforce_eager=True`` -- but the
+# schema stayed ``/2`` and the reader kept trusting the stored field, so a
+# sidecar stamped under the OLD rule still certified under the new one.  Twelve
+# such records exist (``/mnt/shared/tessera-kl/*.build.json``: eager, ``complete:
+# true``, no ``provenance.enforce_eager`` at all, because the field did not yet
+# exist when they were written).
+#
+# The verdict is decided where it is read, not where it was cached: the rule has
+# one home, ``incomplete_reason``/``is_complete``, and the stamper and the gate
+# both call it on the same record shape.  The stored field stays for humans and
+# certifies nothing.
+
+
+def _pre_268(record: dict) -> dict:
+    """The shape a pre-#205-fix stamp wrote, derived from a current one.
+
+    Not a hand-copied literal: the only differences are the two the old stamper
+    made -- ``provenance.enforce_eager`` did not exist, and ``complete`` was
+    computed by the rule that read "no compile lines" as "eager".
+    """
+    old = json.loads(json.dumps(record))
+    old["provenance"].pop("enforce_eager")
+    old["complete"] = True
+    return old
+
+
+def test_a_pre_268_eager_sidecar_cannot_certify_on_its_stored_verdict(tmp_path):
+    """The 12 real sidecars' shape: refused, and told why, on the fields alone."""
+    a = _pre_268(_stamp(EAGER_LOG, tmp_path, "old-a", eager=True))
+    b = _pre_268(_stamp(EAGER_LOG, tmp_path, "old-b", eager=True))
+    assert a["complete"] is True and "enforce_eager" not in a["provenance"]
+    assert compare(a, b)["incomplete"] == ["a", "b"]
+    with pytest.raises(BuildIdentityError, match="enforce_eager was never read"):
+        require_same_build(a, b, why="two pre-#268 eager sidecars")
+    with pytest.raises(BuildIdentityError, match="enforce_eager was never read"):
+        require_distinct_build(a, b, why="two pre-#268 eager sidecars")
+
+
+def test_the_refusal_says_the_stored_verdict_came_from_an_older_rule(tmp_path):
+    """A reader that overrules a stamp must say so, or the refusal is a puzzle."""
+    a = _pre_268(_stamp(EAGER_LOG, tmp_path, "old", eager=True))
+    assert "older rule" in incomplete_reason(a)
+    assert compare(a, a)["stored_complete_disagrees"] == ["a", "b"]
+    with pytest.raises(BuildIdentityError, match="older rule"):
+        require_same_build(a, a, why="a stamped-complete record the rule refuses")
+
+
+def test_the_re_stamped_record_of_the_same_serve_still_certifies(tmp_path):
+    """The control, and the repair: re-stamp from the surviving log and it passes.
+
+    Same log, same arm, same identity block -- only the record is current.  This
+    is what an operator gets back for the two of the twelve whose serve log is
+    still on this box.
+    """
+    old = _pre_268(rec := _stamp(EAGER_LOG, tmp_path, "again", eager=True))
+    assert rec["identity"] == old["identity"]
+    assert rec["provenance"]["enforce_eager"] is True
+    assert incomplete_reason(rec) is None and is_complete(rec) is True
+    assert compare(rec, rec)["stored_complete_disagrees"] == []
+    require_same_build(rec, _stamp(EAGER_LOG, tmp_path, "again2", eager=True),
+                       why="two re-stamped eager serves")
+
+
+def test_a_stale_false_verdict_does_not_refuse_a_record_the_rule_accepts(tmp_path):
+    """Derived wins in BOTH directions, and neither disagreement is silent.
+
+    A stored ``false`` is as much a cached verdict as a stored ``true``; letting
+    it refuse would put the rule back in the sidecar, which is the defect.
+    """
+    rec = _stamp(EAGER_LOG, tmp_path, "stale-false", eager=True)
+    rec["complete"] = False
+    assert is_complete(rec) is True
+    assert compare(rec, rec)["stored_complete_disagrees"] == ["a", "b"]
+    require_same_build(rec, rec, why="a stale false verdict must not refuse")
+
+
+def test_the_cli_refuses_a_pair_of_pre_268_eager_sidecars_on_disk(tmp_path):
+    """The whole path an operator runs, on the shape the 12 real sidecars have.
+
+    ``/2`` is deliberately NOT bumped: ``load`` still accepts these records --
+    bumping would refuse the 22 ``/2`` sidecars to correct 12, and re-stamping
+    needs serve logs that mostly no longer exist.  What moved is who decides.
+    """
+    paths = []
+    for name in ("old-a", "old-b"):
+        rec = _pre_268(_stamp(EAGER_LOG, tmp_path, name, eager=True))
+        p = tmp_path / f"{name}.build.json"
+        p.write_text(json.dumps(rec, indent=1) + "\n")
+        paths.append(p)
+    assert load(paths[0])["schema"] == SCHEMA
+    assert load(paths[0])["complete"] is True, "the stored field is left alone"
+
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(),
+               CUDA_VISIBLE_DEVICES="", PYTHONPATH=str(ROOT / "src"))
+    r = subprocess.run(
+        [sys.executable, "-m", "tessera.serving.build_identity", "compare",
+         str(paths[0]), str(paths[1]), "--require", "same"],
+        env=env, capture_output=True, text=True)
+    assert r.returncode == 4, r.stdout + r.stderr
+    assert "enforce_eager was never read" in r.stderr
+
+
+def test_no_sidecar_consumer_gates_on_the_stored_verdict():
+    """Nothing outside the rule's home may read a sidecar's ``complete`` (#279).
+
+    Derived over the tree rather than pinned as a roster (rule 3): any shipped
+    or experiment file that handles a ``.build.json`` and then reads
+    ``["complete"]`` off it is gating on a cached verdict, which is exactly the
+    defect -- and it reads as a check while the rule that issued it has moved.
+    ``build_identity`` itself is the one home and is excluded by name.
+
+    Shell scripts are scanned too, and not for tidiness: the ts113 campaign's
+    ``validate_build`` gate is an inline Python heredoc inside a ``.sh``, so a
+    scan of ``*.py`` alone reports a clean tree while a live gate reads the
+    stored field.
+    """
+    home = ROOT / "src" / "tessera" / "serving" / "build_identity.py"
+    offenders = []
+    for path in sorted((ROOT / "experiments").rglob("*.py")) + \
+            sorted((ROOT / "experiments").rglob("*.sh")) + \
+            sorted((ROOT / "src").rglob("*.py")):
+        if path == home:
+            continue
+        text = path.read_text()
+        if ".build.json" not in text:
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            if '["complete"]' in line or "['complete']" in line \
+                    or 'get("complete")' in line or "get('complete')" in line:
+                offenders.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
+    assert offenders == [], (
+        "these read a build sidecar's stored verdict; call "
+        "build_identity.is_complete(record) instead:\n  " + "\n  ".join(offenders))
 
 
 # ------------------------------------------------- the determinism knob ----

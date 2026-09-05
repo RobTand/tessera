@@ -21,7 +21,10 @@ This module is that control, promoted out of the receipt's drivers:
 * :func:`assert_byte_matched` refuses a pair that does not, on integer bit
   totals, so a post-export check can hand it two manifests;
 * :func:`control_block` renders the pair -- and, when the two KLs are known,
-  the verdict -- as the JSON an artifact carries beside its bpp.
+  the verdict -- as the JSON an artifact carries beside its bpp;
+* :func:`kl_verdict` is where the two KLs are divided, for the block and for
+  ``experiments/uniform_control.py verify`` alike: it states the ratio, or
+  states that there is none to state, in a form JSON can carry (tessera#288).
 * :func:`selection_requirement` says whether a plan embodies a rung
   selection at all, and stamps the menu's requirement when it does:
   validated-surrogate selection (``docs/ARCHITECTURE.md`` §4.10, tessera#2).
@@ -29,6 +32,9 @@ This module is that control, promoted out of the receipt's drivers:
   does not carry -- a geomean without per-unit wins, a served number for an
   arm other than the one promoted, a screen taken off the wire -- under the
   receipt's GLM gate, which it restates without moving (tessera#65, #85).
+  The legs are :func:`_require_promotion_legs` and :class:`PlanePromotion`
+  clears them at construction, so a hand-built or replaced promotion is the
+  same door as the factory (tessera#287).
 * :func:`landing_ordering` puts the on-wire arm ordering beside the
   landing-disabled one and says, as a value, whether they agree (tessera#85).
 
@@ -90,8 +96,10 @@ __all__ = [
     "SELECTION_SCHEMA",
     "PROMOTION_SCHEMA",
     "GLM_GATE",
+    "KL_RATIO_STATUSES",
     "LANDING_SCHEMA",
     "ByteMatch",
+    "KLVerdict",
     "LandingOrdering",
     "PlannedUnit",
     "PlanePromotion",
@@ -103,6 +111,7 @@ __all__ = [
     "bits_from_manifest",
     "control_block",
     "grid_for_name",
+    "kl_verdict",
     "landing_ordering",
     "plan_wire_bits",
     "promotion_block",
@@ -272,6 +281,92 @@ def require_kl(value, *, field: str, where: str, error=TesseraError) -> float:
     if not math.isfinite(number) or number < 0:
         raise error(reason)
     return number
+
+
+#: What ``candidate_over_control`` is, beside its value.  ``finite`` is the
+#: ordinary case and the only one with a number; the other three say which
+#: way the quotient left the reals or left ``float``, so a reader never has
+#: to guess what a ``null`` meant (tessera#288).
+KL_RATIO_STATUSES = ("finite", "undefined", "unbounded", "overflow")
+
+
+@dataclass(frozen=True)
+class KLVerdict:
+    """The two KLs a verdict divides, their quotient, and what the quotient is.
+
+    :attr:`ratio` is ``None`` in exactly the three cases a float cannot state
+    honestly, and :attr:`ratio_status` names which:
+
+    ``undefined``
+        both arms scored 0 -- the quotient is 0/0, which is not infinity and
+        not 1; the two arms simply agreed with the teacher and with each other.
+    ``unbounded``
+        a positive candidate over a zero control -- no finite ratio exists, and
+        the control is the arm that cannot be divided by.
+    ``overflow``
+        a quotient that is defined and finite in the reals but larger than
+        ``float`` can hold, which ``/`` reports as ``inf`` without raising.
+
+    :attr:`beat_control` is the same strict comparison it has always been: it
+    never divided, so none of the three cases moves it.
+    """
+
+    candidate: float
+    control: float
+    ratio: "float | None"
+    ratio_status: str
+    beat_control: bool
+    text: str
+
+    def to_json(self) -> dict:
+        """The verdict's numeric fields, spelled once for every writer."""
+        return {
+            "candidate": self.candidate,
+            "control": self.control,
+            "candidate_over_control": self.ratio,
+            "candidate_over_control_status": self.ratio_status,
+            "beat_control": self.beat_control,
+        }
+
+
+def kl_verdict(candidate_kl, control_kl, *, where: str, error=TesseraError) -> KLVerdict:
+    """Compare two KLs: the one home for the ratio *and* for what it is.
+
+    Zero is a KL :func:`require_kl` accepts on purpose -- it means the two
+    distributions agree -- so the verdict owes it an answer rather than a
+    refusal.  Both :func:`control_block` and ``experiments/uniform_control.py
+    verify`` used to spell that answer themselves as ``float("inf")`` whenever
+    the control's KL was zero: wrong for 0/0, which is undefined rather than
+    positively infinite, and unwritable either way, since ``Infinity`` is a
+    token no strict JSON reader accepts and the CLI wrote it and exited 0
+    (tessera#288).  One helper, one representation: a number when one exists,
+    and otherwise ``null`` beside the status that says why (AGENTS.md rule 4).
+    """
+    candidate = require_kl(candidate_kl, field="candidate_kl", where=where, error=error)
+    control = require_kl(control_kl, field="control_kl", where=where, error=error)
+    if control == 0:
+        if candidate == 0:
+            status, text = "undefined", "undefined: 0/0, both arms scored 0"
+        else:
+            status = "unbounded"
+            text = "unbounded: the control's KL is 0, so no finite ratio exists"
+        ratio = None
+    else:
+        ratio = candidate / control
+        if math.isfinite(ratio):
+            status, text = "finite", f"{ratio:.4g}x"
+        else:
+            status = "overflow"
+            text = "overflow: the quotient is finite but exceeds float range"
+            ratio = None
+    return KLVerdict(
+        candidate=candidate,
+        control=control,
+        ratio=ratio,
+        ratio_status=status,
+        beat_control=candidate < control,
+        text=text,
+    )
 
 
 def _unit_ratios(values, *, where: str) -> "tuple[float, ...]":
@@ -959,7 +1054,9 @@ def control_block(
     byte-matched uniform": on the issue's pair that read as a victory while
     the arms were 3.16% apart in bytes, 31.6x the tolerance, so the winning
     arm was simply the one holding the extra bytes.  Both KLs are validated
-    for the same reason the totals are: the verdict divides them.
+    for the same reason the totals are: the verdict divides them --
+    :func:`kl_verdict`, which the CLI shares, is where that division and its
+    three undividable cases live (tessera#288).
     """
     block = {
         "schema": CONTROL_SCHEMA,
@@ -991,20 +1088,15 @@ def control_block(
                 "difference in bytes as quality; the unserved block is what an "
                 "unmatched plan may carry."
             )
-        candidate_kl = require_kl(candidate_kl, field="candidate_kl", where=where)
-        control_kl = require_kl(control_kl, field="control_kl", where=where)
-        ratio = candidate_kl / control_kl if control_kl else float("inf")
+        verdict = kl_verdict(candidate_kl, control_kl, where=where)
         block["verdict"] = {
             "metric": metric,
             "measured": True,
-            "candidate": candidate_kl,
-            "control": control_kl,
-            "candidate_over_control": ratio,
-            "beat_control": candidate_kl < control_kl,
+            **verdict.to_json(),
             "detail": (
-                f"{candidate_label} {candidate_kl:.6g} against the byte-matched "
-                f"uniform {control.grid} R{control.q256} {control_kl:.6g} "
-                f"({ratio:.4g}x); the control is "
+                f"{candidate_label} {verdict.candidate:.6g} against the byte-matched "
+                f"uniform {control.grid} R{control.q256} {verdict.control:.6g} "
+                f"({verdict.text}); the control is "
                 f"{float(control.match.relative_slack) * 1e6:.1f} ppm "
                 f"{'fatter' if control.match.slack_bits > 0 else 'lighter'} "
                 "in bytes"
@@ -1333,6 +1425,92 @@ _PROMOTION_REASON = (
 )
 
 
+def _require_promotion_legs(
+    *,
+    candidate: str,
+    served_arm: "str | None",
+    unit_ratios: "Sequence[float]",
+    geomean: float,
+    wins: int,
+    glm_ratio: float,
+    glm_bar: float,
+    served_kl: "float | None",
+    served_bar: float,
+    landing: str,
+    where: str,
+) -> None:
+    """The five legs of a per-plane promotion: one home, every door.
+
+    Called by :func:`assert_plane_promotion` -- through the object it
+    returns -- and by :meth:`PlanePromotion.__post_init__`, so that hand
+    construction and :func:`dataclasses.replace` clear the same legs the
+    factory does (AGENTS.md rule 4).  Until tessera#287 the legs lived only in
+    the factory while the domains lived on both: evidence whose every number
+    was valid and which every leg refused could be built by hand, or replaced
+    into an accepted promotion, and :func:`promotion_block` published it as
+    ``promoted=True`` -- a served regression, a screen that loses every unit,
+    a served number for a different arm, a landing-disabled ceiling read.
+
+    The numbers arrive already in their domains (tessera#224); this reads them
+    in the order the receipt learned them.  The GLM cross-check is first and
+    exactly as written: above ``glm_bar`` refuses, whatever the screen says.
+    Then the screen itself: the geomean must beat the incumbent, and -- never
+    on the geomean alone -- the candidate must win a strict majority of the
+    receipt's own units.  Then the identity the promotion stands on: the served
+    KL must measure the promoted arm, and it must beat its bar.  A served
+    number for a different arm is not evidence for the promoted one, and no
+    served number at all is a screen, not a result.  Then, last learned and
+    first checked, the ``landing``: the per-unit ratios must have been taken on
+    the wire (:func:`assert_plane_promotion` carries that argument).
+    """
+    if not isinstance(candidate, str) or not candidate:
+        raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
+    if landing not in LUT_LANDING_MODES:
+        raise GrammarError(
+            f"{where}: unknown landing {landing!r}; one of "
+            f"{list(LUT_LANDING_MODES)} (tessera.encode.lut_landing)"
+        )
+    if landing != LUT_LANDING_WIRE:
+        raise PromotionRefusedError(
+            f"{where}: the per-unit ratios were taken at landing "
+            f"{landing!r}, which is not a wire -- a ceiling read is the most "
+            "any landing could return, not a number this one reaches, and it "
+            f"reorders the arms (tessera#85).  Only {LUT_LANDING_WIRE!r} "
+            "promotes"
+        )
+    if not glm_ratio <= glm_bar:
+        raise PromotionRefusedError(
+            f"{where}: GLM six-expert {glm_ratio:.4g}x is above the "
+            f"{glm_bar:.4g}x gate -- the cross-check the coordinator's gate "
+            "requires, and no screen overrules it"
+        )
+    if not geomean < 1:
+        raise PromotionRefusedError(
+            f"{where}: {candidate} geomean {geomean:.4g}x does not beat the "
+            "incumbent -- there is nothing to promote"
+        )
+    if not 2 * wins > len(unit_ratios):
+        raise PromotionRefusedError(
+            f"{where}: never promote on geomean alone -- require per-unit "
+            f"wins.  {candidate} takes {wins} of {len(unit_ratios)} units at "
+            f"geomean {geomean:.4g}x: the aggregate is carried by a minority "
+            "of the unit set"
+        )
+    if served_arm != candidate:
+        raise PromotionRefusedError(
+            f"{where}: the served KL measures arm {served_arm!r}, not the "
+            f"promoted arm {candidate!r} -- a served number for a different "
+            "arm is not evidence for it"
+        )
+    if served_kl is None or not served_kl < served_bar:
+        detail = (
+            "no served KL: a screen is not a result"
+            if served_kl is None
+            else f"served KL {served_kl:.4g} does not beat {served_bar:.4g}"
+        )
+        raise PromotionRefusedError(f"{where}: {detail}")
+
+
 @dataclass(frozen=True)
 class PlanePromotion:
     """A per-plane promotion its evidence carries, refused otherwise.
@@ -1362,16 +1540,20 @@ class PlanePromotion:
     where: str
 
     def __post_init__(self) -> None:
-        """The domains, on the object :func:`promotion_block` publishes.
+        """The domains **and the legs**, on the object it publishes.
 
         ``promotion_block`` says "only a promotion this gate accepted reaches
         here", and this is what makes that true rather than conventional: the
-        class is public, so a domain enforced only in
-        :func:`assert_plane_promotion` would be a domain with two doors
-        (tessera#224).  Each number is refused by field name, and the derived
-        pair -- ``geomean`` and ``wins`` -- must be the pair these very ratios
-        make, so a summary can never arrive beside a unit set it does not
-        summarise.
+        class is public, so a rule enforced only in
+        :func:`assert_plane_promotion` would be a rule with two doors
+        (tessera#224, tessera#287).  Each number is refused by field name; the
+        derived pair -- ``geomean`` and ``wins`` -- must be the pair these very
+        ratios make, so a summary can never arrive beside a unit set it does
+        not summarise; and then the evidence has to *win*, through the one
+        home the factory calls, :func:`_require_promotion_legs`.  Domains
+        first, because a leg is an ordered comparison and an ordered
+        comparison is not a validity check; the derived pair next, because two
+        legs read it; the legs last, on numbers that are numbers.
         """
         object.__setattr__(self, "unit_ratios",
                            _unit_ratios(self.unit_ratios, where=self.where))
@@ -1403,6 +1585,19 @@ class PlanePromotion:
                 f"{self.where}: unit_wins {self.wins!r} is not the number of "
                 f"these unit ratios below 1 ({wins})"
             )
+        _require_promotion_legs(
+            candidate=self.candidate,
+            served_arm=self.served_arm,
+            unit_ratios=self.unit_ratios,
+            geomean=geomean,
+            wins=wins,
+            glm_ratio=self.glm_ratio,
+            glm_bar=self.glm_bar,
+            served_kl=self.served_kl,
+            served_bar=self.served_bar,
+            landing=self.landing,
+            where=self.where,
+        )
 
     def to_json(self) -> dict:
         return {
@@ -1450,16 +1645,26 @@ def assert_plane_promotion(
     neither.  ``glm_bar`` may only ever tighten
     (:func:`_require_pinned_glm_bar`).
 
-    Five legs, in the order the receipt learned them.  The GLM cross-check
-    is first and exactly as written: above ``glm_bar`` refuses, whatever the
-    screen says.  Then the screen itself: the geomean must beat the
-    incumbent, and -- never on the geomean alone -- the candidate must win a
-    strict majority of the receipt's own units.  Then the identity the
+    Five legs, in the order the receipt learned them, and they are
+    :func:`_require_promotion_legs` -- **not a copy of it**.  The GLM
+    cross-check is first and exactly as written: above ``glm_bar`` refuses,
+    whatever the screen says.  Then the screen itself: the geomean must beat
+    the incumbent, and -- never on the geomean alone -- the candidate must win
+    a strict majority of the receipt's own units.  Then the identity the
     promotion stands on: the served KL must measure the promoted arm, and it
     must beat its bar.  A served number for a different arm is not evidence
     for the promoted one, and no served number at all is a screen, not a
     result.  Then, last learned and first checked, the ``landing``: the
     per-unit ratios must have been taken on the wire.
+
+    This function derives ``geomean`` and ``wins`` from ``unit_ratios`` and
+    builds the object; **the object refuses itself** (tessera#287).  Every leg
+    above, and every domain below it, is enforced in
+    :meth:`PlanePromotion.__post_init__`, so the factory, a hand-built
+    ``PlanePromotion`` and a :func:`dataclasses.replace` of an accepted one
+    are one door and not three.  Before this, the legs were here alone: valid
+    numbers that lost every leg replaced cleanly into an accepted promotion
+    and :func:`promotion_block` published them as ``promoted=True``.
 
     **The fifth leg (tessera#85), and the leg it is deliberately not.**  On
     the LUT plane a per-block scale lands on one of sixteen E4M3 entries, and
@@ -1505,76 +1710,18 @@ def assert_plane_promotion(
     class of error as the unit legs above and would have been made by the
     gate written to refuse it.
     """
-    if not isinstance(candidate, str) or not candidate:
-        raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
+    # Derive the summary pair from the unit ratios and hand everything to the
+    # class, which owns both the domains (tessera#224) and the legs
+    # (tessera#287): validating here as well would be a second copy of rules
+    # that must not drift, and the object this returns has to clear them
+    # anyway -- it is the object `promotion_block` publishes.
     ratios = _unit_ratios(unit_ratios, where=where)
-    if landing not in LUT_LANDING_MODES:
-        raise GrammarError(
-            f"{where}: unknown landing {landing!r}; one of "
-            f"{list(LUT_LANDING_MODES)} (tessera.encode.lut_landing)"
-        )
-    if landing != LUT_LANDING_WIRE:
-        raise PromotionRefusedError(
-            f"{where}: the per-unit ratios were taken at landing "
-            f"{landing!r}, which is not a wire -- a ceiling read is the most "
-            "any landing could return, not a number this one reaches, and it "
-            f"reorders the arms (tessera#85).  Only {LUT_LANDING_WIRE!r} "
-            "promotes"
-        )
-    # Domains before comparisons (tessera#224).  An ordered comparison is not
-    # a validity check: `not (nan <= bar)` refuses but `not (-inf <= bar)`
-    # passes, `served_kl < inf` passes for every KL, and a caller-supplied
-    # `glm_bar` above the pinned one turns the coordinator's cross-check into
-    # a number the arm being checked chooses.  A ratio of two errors is
-    # strictly positive -- zero is a division artifact and its log is not a
-    # number -- while a KL divergence may be zero, so the two domains are
-    # spelled apart rather than sharing a "positive" that fits neither.
-    glm_ratio = _error_ratio(glm_ratio, field="glm_ratio", where=where)
-    glm_bar = _error_ratio(glm_bar, field="glm_bar", where=where)
-    served_bar = require_kl(served_bar, field="served_bar", where=where)
-    if served_kl is not None:
-        served_kl = require_kl(served_kl, field="served_kl", where=where)
-    _require_pinned_glm_bar(glm_bar, where=where)
-    geomean = _unit_geomean(ratios)
-    wins = sum(1 for r in ratios if r < 1)
-
-    if not glm_ratio <= glm_bar:
-        raise PromotionRefusedError(
-            f"{where}: GLM six-expert {glm_ratio:.4g}x is above the "
-            f"{glm_bar:.4g}x gate -- the cross-check the coordinator's gate "
-            "requires, and no screen overrules it"
-        )
-    if not geomean < 1:
-        raise PromotionRefusedError(
-            f"{where}: {candidate} geomean {geomean:.4g}x does not beat the "
-            "incumbent -- there is nothing to promote"
-        )
-    if not 2 * wins > len(ratios):
-        raise PromotionRefusedError(
-            f"{where}: never promote on geomean alone -- require per-unit "
-            f"wins.  {candidate} takes {wins} of {len(ratios)} units at "
-            f"geomean {geomean:.4g}x: the aggregate is carried by a minority "
-            "of the unit set"
-        )
-    if served_arm != candidate:
-        raise PromotionRefusedError(
-            f"{where}: the served KL measures arm {served_arm!r}, not the "
-            f"promoted arm {candidate!r} -- a served number for a different "
-            "arm is not evidence for it"
-        )
-    if served_kl is None or not served_kl < served_bar:
-        detail = (
-            "no served KL: a screen is not a result"
-            if served_kl is None
-            else f"served KL {served_kl:.4g} does not beat {served_bar:.4g}"
-        )
-        raise PromotionRefusedError(f"{where}: {detail}")
     return PlanePromotion(
         candidate=candidate,
         served_arm=served_arm,
         unit_ratios=ratios,
-        geomean=geomean,
-        wins=wins,
+        geomean=_unit_geomean(ratios),
+        wins=sum(1 for r in ratios if r < 1),
         glm_ratio=glm_ratio,
         glm_bar=glm_bar,
         served_kl=served_kl,
@@ -1587,9 +1734,13 @@ def assert_plane_promotion(
 def promotion_block(promotion: PlanePromotion) -> dict:
     """The JSON a promoted plane carries beside its default (principle 12).
 
-    Only a promotion :func:`assert_plane_promotion` accepted reaches here,
-    so the verdict is the record of which bars it cleared, not a second
-    reading of them.
+    Only a promotion this gate accepted reaches here, so the verdict is the
+    record of which bars it cleared, not a second reading of them -- and that
+    sentence is now true of the type rather than of one caller: a
+    :class:`PlanePromotion` exists only if it cleared
+    :func:`_require_promotion_legs`, whichever door it came through
+    (tessera#287).  So ``served_kl`` is a number here, never ``None``: the
+    served leg refuses that before an object exists.
     """
     block = promotion.to_json()
     block["verdict"] = {

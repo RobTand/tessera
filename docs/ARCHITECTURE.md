@@ -81,7 +81,11 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The `tessera.suite_source.v1` receipt string is unchanged: the
+until they do. The controller-side hook that collects those reports
+(`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
+run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
+worker set, as a serial run always did, instead of pluggy refusing the file at
+collection (#290). The `tessera.suite_source.v1` receipt string is unchanged: the
 span and worker fields are additive, and `verified` became harder to earn, never
 easier.
 The merge receipt keeps raw commit agreement and effective-source agreement
@@ -194,20 +198,30 @@ GEMM's one input tensor actually spans. A max-join picks the smallest
 calibrated range and silently clips every wider member's peak activations;
 the exporter took the max until RobTand/prismaquant#196 flagged the
 divergence against PrismaQuant's `unify_fused_sibling_input_global_scales`
-(min-scale = max-amax, the same rule at calibration time). The stock twin
+(min-scale = max-amax, the same join *direction* at calibration time;
+PrismaQuant's join applies no divergence bound of its own). The stock twin
 carries the joined value on every member for the same reason: vLLM reduces
 whatever the members carry into one scale per fused module -- warning, not
 refusing, when they differ -- and the twin exists to execute the A side this
 export serves. The join accepts only members that agree to within one bf16
 ULP (`fused.FUSED_INPUT_SCALE_ULP` = `torch.finfo(torch.bfloat16).eps` =
-2^-7): the route casts every A tensor to bf16 before the quantiser sees it,
-so a calibrated amax is an observation of a bf16 tensor and scales from ONE
-calibration land within one step of that lattice. A wider spread is two
-calibrations -- mixed draws, mixed policies, or a group never calibrated
-jointly -- and is refused where the bytes are decided rather than joined
-into a distribution nobody measured; the fix is a joint recalibration (one
-amax over the members' shared input, which is what both repos' calibrators
-already emit), not a wider bound.
+2^-7). That bound is **declared policy, not a derivation** (#283): what it
+rests on is that the route casts every A tensor to bf16 before the
+quantiser sees it, so two spellings of ONE calibrated amax agree to within a
+step of that lattice (a single rounding moves an F32 value by at most half
+a step; one full step is the line drawn one doubling outside anything one
+measurement produces). It describes no calibrator: PrismaQuant captures the
+shared input once and writes one value on every member, so its donors
+arrive with spread 0 and never meet the gate; members captured from
+different sample subsets have a spread bounded by nothing, and that is the
+donor the gate exists to refuse. Tessera is stricter here than PrismaQuant's
+join by choice -- it serves one measured distribution or none. A spread
+beyond the bound is two calibrations (mixed draws, mixed policies, or a
+group never calibrated jointly) and is refused where the bytes are decided
+rather than joined into a distribution nobody measured; the fix is a joint
+recalibration (one amax over the members' shared input, which is what both
+repos' calibrators already emit), not a wider bound. Changing the policy
+means changing the constant and this paragraph in one commit.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
@@ -428,7 +442,87 @@ stock twin exporter -- refuses a transformed unit at load, naming the field
 own refusals of the same fields (`lane_planes`, `kernel_window`,
 `kernel_window_gemv`). Untransformed wires -- every shipping export default
 -- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
-the refusal through each consumer on real wire bytes.
+the refusal through each consumer on real wire bytes. The sidecar scheme
+(`config_groups[..].scheme`, the fields `scheme._parse_container` compares
+the wire against) carries **no rotation or diagonals field, on purpose**:
+the field would be needed for `priced == written == served` only if a route
+applied a transform at serve time, and none does -- the served set of
+transforms is exactly {none}, every consumer reads `unit.rotation` /
+`unit.diagonals` off the wire itself (`require_untransformed`, the lane
+packers, `wire_facts_of_parsed`) and refuses anything else by name, the
+exporter has no rotation input and materialises every member's stock twin
+through the same refusal, and the lane predicate publishes both classes as
+refused (`lane.requires`, contract v20) -- so a sidecar copy would be a
+second statement of a fact the wire already carries, with one legal value,
+and a `fused_module.fields` entry PrismaQuant pins for nothing. The day a
+route applies an input rotation the sidecar must name it (`shared` in
+`FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
+contract bumps, and `require_untransformed` learns that consumer; not before.
+
+### 3.5 Channel diagonals are FP16 words from the moment they exist
+
+The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
+one FP16 word per channel) has one stored representation, and it is
+established before anything uses the factors: the tensors the encoder
+balances with (`apply_diagonals`), the metric transport rescales with
+(`transport_metric`, tessera#231), `sse` is reported against, the unit
+carries, the writer packs and the reader multiplies back
+(`undo_diagonals`) are the same FP16 words. `require_invertible_diagonals`
+is the one home of the rule and every consumer above calls it -- the
+writer's call at `unit_artifact.build_unit_artifact` is a call, not a
+second spelling -- refusing by field name a pair that is not `float16`, or
+whose words are zero, negative or non-finite. Two defects closed there:
+
+- **Fitted factors** used to be cast straight to FP16, so a finite source at
+  1e-8 fitted `sv=0` and one at 1e5 fitted `sv=inf`, and the forward divide
+  clamped what the inverse multiplied back (tessera#229). `fit_diagonals`
+  now gives an exactly-zero row or column the identity factor (its factor
+  is pure gauge), spends the rank-1 gauge `(sv*c, su/c)` landing both
+  factors inside FP16's normal range only when the direct cast would not
+  invert -- so every already-representable fit is byte for byte what it
+  was -- and refuses, naming the field, a spread no single scalar can land.
+- **Supplied factors** used to be validated as `factor.float()`, so a
+  positive finite FP32/FP64 pair passed encode and write on its own values
+  while `wire.pack_fp16` cast it on the way to the bytes: `sv=1e5` wrote an
+  artifact whose stored word was infinity and `sv=1e-8` one whose word was
+  zero (both refused by the same rule at read -- the writer emitted what its
+  reader will not load), and `sv=1.0004` wrote `1.0` and served weights
+  2.8e-05 off the ones priced (tessera#286). The pair is now **required to be
+  FP16 words**, not landed at the boundary: the validated object is then the
+  canonical form itself, so no consumer can drift by reading the caller's
+  tensor instead of a return value -- which is exactly the shape of the
+  defect -- and a caller holding wider factors casts them once, gets the
+  words it asked for, and is refused by name if those words do not invert.
+  The one place a wider value is ever rounded for the wire is
+  `fit_diagonals`, which does it with the gauge rather than a plain cast.
+  No shipping caller supplies anything but a `fit_diagonals` result or a
+  slice of a parsed unit, both already FP16, so no artifact byte moved.
+
+`tests/test_diagonals.py` holds the fitted extremes, the invalid-FP16
+refusals, the wider-dtype refusals through every consumer for both fields
+(overflow, underflow and a mere rounding, FP32 and FP64), and the rule that
+whatever the encoder accepts reconstructs identically before and after the
+wire.
+
+### 3.6 The Triton kernel lane is the oracle side, and it may copy a strided activation
+
+`tessera.kernel` is Tessera's own decode-in-the-mainloop kernel: the Triton
+GEMVs and the prefill `tessera_gemm`. It is the *oracle side* of the NVFP4
+port and not a serving lane -- `serving/ext.py` states that no tile-language
+kernel appears on the serving path and nothing there imports it, and the
+repository's own import graph agrees: no module under `src/` or `tools/`
+reaches `tessera.kernel`; its importers are the kernel benchmarks under
+`experiments/` and the tests (`tests/test_kernel_shape_guards.py` pins that
+from `tools/impacted_tests.py`'s graph, not from a list). That placement is
+what decides one guard the lane deliberately does not have (tessera#266):
+`tessera_gemm` **copies** a non-contiguous `x` with `contiguous()` rather
+than refusing it, as the GEMVs do through `kernel._dense_activation`. On a
+served lane a silent copy is a hidden allocation -- memory and bandwidth the
+pricing does not see -- and would be refused by name; here every caller
+hands the wrapper a fresh contiguous batch, the copy is free, and a refusal
+would only move the same `contiguous()` into the benchmark. The docstring
+says so. The day a route or the encoder imports `tessera.kernel`, that test
+fails naming the importer, and the copy becomes a refusal.
 
 ## 4. Allocation and the uniform gate
 
@@ -661,7 +755,14 @@ at load. One loader clause stays unpublished on purpose --
 `prepare_from_parsed`'s scalar-256-native grid check is an entry-point
 fact of the E4M3 table build, and the same extension reads BF16 window
 wire through `prepare_value_unit` (a scalar grid of 65536 codes), so
-publishing it would call wire unreadable that the lane serves. The
+publishing it would call wire unreadable that the lane serves. Excluded
+from the contract is not homeless, though: that clause's three legs -- a
+`native` byte map, 256 codes, arity 1 -- live in
+`alphabet.PayloadGrid.hardware_byte` and
+`alphabet.require_hardware_byte_grid`, and the window GEMV loader, the
+Triton lane's `window_code_table`, `decode.materialize_fp8` and
+`fp8_route.prepare_tessera_fp8_module` call it rather than spell it (#277).
+The lane predicate's own
 decision has ONE home, `scheme.decide_lane_requirements`: the plan-time
 gate, the byte-time report, the loader and `bf16_route`'s gate all decide
 a unit through it over the published block, so the predicate and the
@@ -1473,6 +1574,32 @@ about the GEMM over it -- the tile is bit-exact 196/196 and the GEMM is
 reproducible only to that floor.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` section 6d is the receipt.
 
+### 4.5c A served KL also names which BUILD it scored, and completeness is derived at read time
+
+A compiled vLLM artifact *replayed* is bit-identical; the same graph *rebuilt*
+is not (0.017117 KL / 95.65% top-1, 120 of 196 autotuned Triton kernels
+retuned). So each served dump carries a `<dump>.build.json` sidecar written by
+`tessera.serving.build_identity`, and `require_same_build` /
+`require_distinct_build` / `require_same_dispatch` refuse a pair whose arms
+cannot support the comparison. The fingerprint is over the *content* of the
+compile-cache slot -- the autotune choices -- not over vLLM's cache key, which
+held both of those two divergent builds.
+
+**Whether a sidecar may certify is decided by the reader, not by the sidecar.**
+`build_identity.incomplete_reason` is the one home of that rule: the stamper
+fills `complete` from it and every gate re-derives from the record's own fields
+(`identity.vllm_version`, `identity.compiled_forward`, `identity.aot`,
+`provenance.enforce_eager`, `provenance.cache_root`, `provenance.backbone`).
+The stored `complete` is a cached verdict, issued under whichever rule was in
+force on the day of the stamp, so it is kept for humans and read by nothing;
+`compare` reports `stored_complete_disagrees` when the two differ, in either
+direction, so the override is never silent. The reason is what an operator
+acts on: the repairs differ, and a record that predates a field says which
+re-stamp it needs. Tightening the rule therefore does not need a schema bump --
+`tessera.serve_build_identity/2` stands -- and a record stamped under an older
+rule reads honestly as incomplete instead of certifying on a verdict nobody
+would issue today.
+
 ### 4.6 The stock twin isolates the wire from the kernel
 
 `--stock-twin` writes the same wires materialised for vanilla vLLM, so a
@@ -1498,6 +1625,22 @@ to report the E2M1x2 coset hole rather than paper over it — stays
 representable as the unserved block, an explicitly unqualified diagnostic,
 and cannot become a victory. Both KLs are validated as finite and
 non-negative for the same reason the totals are: the verdict divides them.
+
+**The division has one home, and a value JSON can carry** (tessera#288).
+`tessera.control.kl_verdict` divides the two KLs for `control_block` and for
+`verify` alike — the CLI no longer spells its own — and the verdict reports
+`candidate_over_control` beside `candidate_over_control_status`. The status is
+`finite` and the value is a number whenever the quotient exists in `float`;
+otherwise the value is `null` and the status names which case produced it:
+`undefined` for 0/0, `unbounded` for a positive candidate over a zero control,
+and `overflow` for a quotient that is real and finite but larger than `float`
+holds. Zero is a KL `require_kl` accepts on purpose — it means the two
+distributions agree — so the gate owes it an answer rather than a refusal, and
+0/0 is undefined rather than positively infinite. Both sites used to write
+`float("inf")` for any zero control, which made the CLI emit the token
+`Infinity` — not JSON — and exit 0; every receipt this gate writes now passes
+`json.dumps(..., allow_nan=False)`. `beat_control` is untouched by all of
+this: it is a strict comparison of the two KLs and never divided.
 
 ### 4.8 Dominated rungs are screened by bytes, proved by decode
 
@@ -1580,10 +1723,25 @@ two are spelled apart rather than sharing one word that fits neither. The
 `glm_bar` override **tightens the pinned `GLM_GATE` and never relaxes it**:
 comparing only against the caller's own bar let `glm_ratio=1.5` promote under
 `glm_bar=2.0`, the coordinator's cross-check answering to the arm it checks.
-The domains live on `PlanePromotion` as well as in the assertion, because the
-class is public and `promotion_block`'s "only a promotion this gate accepted
-reaches here" has to be true by construction; the `geomean` and `wins` it
-publishes must be the pair the promotion's own unit ratios make.
+**The legs live where the domains do: on the object** (tessera#287).
+`PlanePromotion` is public and `dataclasses.replace` rebuilds it, so
+`promotion_block`'s "only a promotion this gate accepted reaches here" is a
+claim about the *type* or it is a claim about one caller. #224 put the domains
+there and left the five legs in `assert_plane_promotion`, which left the
+sentence false for evidence whose every number is valid: `replace(accepted,
+glm_ratio=1.2)`, `served_kl=0.7` against a 0.6 bar, `served_arm` naming another
+arm, `landing="none"`, or a unit set that loses every unit with a consistent
+geomean beside it — all five built, and `promotion_block` published each as
+`promoted=True`. The five legs are now one function,
+`control._require_promotion_legs`, and `PlanePromotion.__post_init__` calls it
+after the domains and the derived pair: the factory derives `geomean` and
+`wins` from the unit ratios and builds the object, and the object refuses
+itself, so the factory, a hand-built promotion and a replaced one are one door
+rather than three. Direct construction stays supported — that is what the
+public class is for — and a legitimate hand-built promotion still builds; what
+it can no longer do is publish a leg it failed. The `geomean` and `wins` it
+publishes must still be the pair the promotion's own unit ratios make, and
+`served_kl` is therefore never `None` on an object that exists.
 
 No default moves by this, and `tests/test_plane_promotion.py` is what makes
 that checkable rather than asserted: it runs the receipt's own six-unit

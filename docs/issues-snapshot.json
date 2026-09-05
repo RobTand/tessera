@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T14:56:54Z",
+ "generated": "2026-09-05T17:10:08Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -380,7 +380,7 @@
     "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
    },
    "184": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "run-pipeline accepts COST_PATH_OVERRIDE for Tessera but never consumes the prepriced file"
    },
    "185": {
@@ -388,19 +388,19 @@
     "title": "Thread explicit Tessera runtime scope through campaign, allocator and export"
    },
    "186": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign resume admits anchors without source/calibration/recipe identity"
    },
    "187": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse incomplete MoE campaigns and capture explicit packed expert inputs"
    },
    "188": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Consume validated prepriced cost overrides without running cost builders"
    },
    "189": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind Tessera raw census replay to priced runtime and artifact scope"
    },
    "19": {
@@ -408,11 +408,11 @@
     "title": "register_qwen3() silently stops overriding on newer transformers (broken by 5.13.1; good on 5.6.0)"
    },
    "190": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add opt-in paired no-new-boundary-failures decision"
    },
    "191": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind Tessera campaign resume to current inputs and exact priced wire"
    },
    "192": {
@@ -435,6 +435,18 @@
     "state": "CLOSED",
     "title": "Tessera lane: carry the priced inputs from allocator to executor to cost-table identity (#193, #194, #195)"
    },
+   "197": {
+    "state": "CLOSED",
+    "title": "test_selected_export_units_resolve_their_own_structure passes alone and fails in the full suite: model-profile registry state leaks between tests"
+   },
+   "198": {
+    "state": "OPEN",
+    "title": "Routed-MoE admission: PrismaQuant refuses on smoke.status alone while contract v20 attributes the repetition to the BF16 source (needs-decision)"
+   },
+   "199": {
+    "state": "OPEN",
+    "title": "test_resume_after_coordinator_death_recovers_owned_helper_receipt: an 8s wall-clock deadline mostly spent on interpreter start, so it flakes with box load"
+   },
    "2": {
     "state": "CLOSED",
     "title": "Possibly Useful Theoretical Basis"
@@ -442,6 +454,30 @@
    "20": {
     "state": "CLOSED",
     "title": "Allocator: bit-exact re-encode pricing, gated on an identity activation path"
+   },
+   "200": {
+    "state": "CLOSED",
+    "title": "Restore profile-detection process globals between tests (fixes #197 order dependence)"
+   },
+   "201": {
+    "state": "OPEN",
+    "title": "[P2] _resolve swallows _refuse_dead_vendored_override: a dead vendored override yields DefaultProfile silently instead of refusing by name"
+   },
+   "202": {
+    "state": "OPEN",
+    "title": "[P2] 22 call sites still swallow the dead-vendored-override refusal one level up (#201 follow-up)"
+   },
+   "203": {
+    "state": "OPEN",
+    "title": "Let the dead-vendored-override refusal escape profile detection (#201)"
+   },
+   "204": {
+    "state": "OPEN",
+    "title": "[P0] Bind Tessera export inputs to the actual Hessian and static scales that priced the allocation"
+   },
+   "205": {
+    "state": "OPEN",
+    "title": "[P1] Use the served Tessera activation contract in assignment-KL hooks and cache scoring"
    },
    "21": {
     "state": "CLOSED",
@@ -1542,7 +1578,7 @@
     "title": "Fail closed on absent evidence in the construction, census, lane-preflight and build-identity gates"
    },
    "269": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] compare-drift cannot tell its expected verdict from its tool failing"
    },
    "27": {
@@ -1573,13 +1609,109 @@
     "state": "CLOSED",
     "title": "Fused A-side static scale: join to the MIN member scale; refuse divergence beyond one bf16 ULP"
    },
+   "276": {
+    "state": "CLOSED",
+    "title": "[P2] PR #272's body is a PrismaQuant PR body; the tessera diff's attestation is only in the commit messages"
+   },
+   "277": {
+    "state": "CLOSED",
+    "title": "[P3] \"scalar 256-code hardware grid\" is spelled four times as literals (window GEMV, FP8 route, Triton lane, materialize_fp8), never derived from the grid"
+   },
+   "278": {
+    "state": "CLOSED",
+    "title": "[P3] refit_trailing_bytes polices only the five suffixes it loads; a bias/input_scale that moved still certifies \"the matched pair\""
+   },
+   "279": {
+    "state": "CLOSED",
+    "title": "[P3] build_identity.compare trusts a stored complete=true from pre-#205 stamps; schema /2 not bumped"
+   },
    "28": {
     "state": "CLOSED",
     "title": "runtime_contract.json does not publish the plugin CUDA extension basenames a serve fingerprint must match"
    },
+   "280": {
+    "state": "CLOSED",
+    "title": "compare-drift: tell the verdict from the tool failing, and decide the pair over every tensor"
+   },
+   "281": {
+    "state": "CLOSED",
+    "title": "Give \"a scalar 256-code hardware grid\" one home, on the grid (#277)"
+   },
+   "282": {
+    "state": "CLOSED",
+    "title": "Derive a build identity's completeness where it is read, not from its stamp (#279)"
+   },
+   "283": {
+    "state": "CLOSED",
+    "title": "[P3] FUSED_INPUT_SCALE_ULP (2^-7) is called derived but describes no calibrator; PrismaQuant's join has no bound"
+   },
+   "284": {
+    "state": "CLOSED",
+    "title": "Post-merge audit prose batch; FUSED_INPUT_SCALE_ULP is declared policy (#283)"
+   },
+   "285": {
+    "state": "OPEN",
+    "title": "[P3] build_forest on the 65536-value / arity-2 serialisable grids reached ~73 GB RSS; cell and allocation not characterised"
+   },
+   "286": {
+    "state": "OPEN",
+    "title": "[P0] Supplied FP32 diagonals pass the invertibility guard before FP16 serialization changes their meaning"
+   },
+   "287": {
+    "state": "OPEN",
+    "title": "[P1] Public PlanePromotion construction publishes failed eligibility checks as promoted"
+   },
+   "288": {
+    "state": "OPEN",
+    "title": "[P2] Valid zero-KL controls produce an undefined infinite ratio and nonstandard JSON receipts"
+   },
+   "289": {
+    "state": "OPEN",
+    "title": "Say what a ratio over a zero control is, once, and in JSON"
+   },
    "29": {
     "state": "CLOSED",
     "title": "computation_graph.py records different vllm_ir overloads across builds of one cache key"
+   },
+   "290": {
+    "state": "OPEN",
+    "title": "[P1] conftest's xdist-only pytest_testnodedown hook breaks collection without xdist; CI 'pure' job red since 23288e1"
+   },
+   "291": {
+    "state": "OPEN",
+    "title": "[P1] Finalize each worker source identity before xdist sends workerfinished"
+   },
+   "292": {
+    "state": "OPEN",
+    "title": "[P1] Preserve helper aliases when a canonical module has the same import name"
+   },
+   "293": {
+    "state": "OPEN",
+    "title": "[P1] Treat unreadable importers as unknown dependencies instead of empty modules"
+   },
+   "294": {
+    "state": "OPEN",
+    "title": "[P1] Require a real producer and established attempt binding before adopting resumed exit status"
+   },
+   "295": {
+    "state": "OPEN",
+    "title": "[P1] Refuse explicit convolutional codes the artifact reader cannot recover at write time"
+   },
+   "296": {
+    "state": "OPEN",
+    "title": "[P1] Refuse completion-carrying TCQ units before packing the span-2 kernel lane"
+   },
+   "297": {
+    "state": "OPEN",
+    "title": "Window GEMV plan sharing accepts incompatible rate layouts and can overrun packed words"
+   },
+   "298": {
+    "state": "OPEN",
+    "title": "Explicit toolkit selection after torch import does not update the compiler the native loaders use"
+   },
+   "299": {
+    "state": "OPEN",
+    "title": "[P1] Refuse missing schedule evidence before exempting a screen arm from matched-pair proofs"
    },
    "3": {
     "state": "CLOSED",
@@ -1588,6 +1720,30 @@
    "30": {
     "state": "CLOSED",
     "title": "Measurement runs do not record which compiled build served, and the determinism knob is untested"
+   },
+   "300": {
+    "state": "OPEN",
+    "title": "[P1] Bind legacy shard assembly to the source checkpoint and fulfilled plan"
+   },
+   "301": {
+    "state": "OPEN",
+    "title": "[P1] Keep one plan snapshot from export planning through publication"
+   },
+   "302": {
+    "state": "OPEN",
+    "title": "[P1] Invalidate or freeze the Hessian source behind its cached capture seal"
+   },
+   "303": {
+    "state": "OPEN",
+    "title": "[P1] Dense TP loading mistakes an undersized wire for a replicated layer when global shape is ignored"
+   },
+   "304": {
+    "state": "OPEN",
+    "title": "[P2] can_shard reports rotated artifacts as cuttable although slice_unit always refuses them"
+   },
+   "305": {
+    "state": "OPEN",
+    "title": "[P1] Standalone stock export still leaves fused activation scales for vLLM's clipping-side max reduction"
    },
    "31": {
     "state": "CLOSED",

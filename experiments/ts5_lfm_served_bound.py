@@ -18,6 +18,7 @@ import threading
 
 sys.path[:0] = [str(Path.cwd() / "src"), str(Path.cwd())]
 from tessera.serving_parts import source_identity, sha256_file
+from tessera.serving.build_identity import incomplete_reason, is_complete
 from experiments.ts5_stage_cleanup import cleanup_stage
 
 
@@ -170,7 +171,10 @@ try:
         build = json.loads((OUT / "student_tessera.build.json").read_text())
         meta = json.loads((OUT / "student_tessera.meta.json").read_text())
         teacher_meta = json.loads((TEACHER / "teacher_bf16.meta.json").read_text())
-        assert build["complete"] is True and build["identity"]["eager"] is True
+        # Derived, not the sidecar's stored verdict: that field is a cached
+        # answer from whichever rule stamped it (#279).
+        assert is_complete(build), incomplete_reason(build)
+        assert build["identity"]["eager"] is True
         assert build["identity"]["compiled_forward"] is False
         assert build["identity"]["image"] == IMAGE and build["identity"]["image_digest"] == IMAGE.split("@", 1)[1]
         assert meta["role"] == "student" and meta["regime"]["name"] == teacher_meta["regime"]["name"] == "prefill"
