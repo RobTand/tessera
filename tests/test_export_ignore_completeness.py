@@ -158,6 +158,12 @@ def test_the_exported_ignore_names_every_passed_through_linear(tmp_path, monkeyp
     assert not leaves, f"ignore names unmerged roles vLLM never builds as modules: {leaves}"
     assert "model.visual.patch_embed.proj" not in ignore, (
         "a Conv3d was named as a Linear")
+    # The embedding is passed through like any other non-body tensor, so its
+    # name comes from the tensor that was written, under whatever layout the
+    # model has (#139): a hard-coded ``model.embed_tokens`` names a module
+    # this nested checkpoint does not have and misses the one it does.
+    assert "model.language_model.embed_tokens" in ignore, sorted(ignore)
+    assert "model.embed_tokens" not in ignore, sorted(ignore)
 
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the encoder is a GPU job")

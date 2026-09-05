@@ -1965,8 +1965,11 @@ def export_checkpoint_streaming(
         quantized_params=sum(u.params for u in units),
         grid_digest=grid_digest(grid),
     )
+    # ``total_size`` is what the loader reads to size the download: the bytes
+    # of the shard files as written (headers included), never the payload
+    # accountant's sum, which undercounts by every safetensors header (#138).
     (out / "model.safetensors.index.json").write_text(json.dumps(
-        {"metadata": {"total_size": report.total_bytes},
+        {"metadata": {"total_size": sum((out / shard).stat().st_size for shard in shards)},
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, trellis_weighting, table,
