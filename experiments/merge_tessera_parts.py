@@ -119,11 +119,20 @@ PROJECTED_BY_TABLE = ("trellis.span", "body.kind", "body.window_bits", "body.see
 #: unenforced.  ``tests/test_merge_guard.py`` asserts each name resolves in a
 #: config the exporter actually wrote, and gives each one its own failing case.
 #:
-#: The three ``hessian.*`` fields are the capture's identity (``HESSIAN_IDENTITY``
-#: in ``tessera.export``): the sha of the calibration text, the fit token count
-#: and the sha of the token ids.  The rest of the provenance (model, seqlen,
-#: source split) rides along for an auditor and is not compared, because these
-#: three already decide whether two captures are the same capture.
+#: The ``hessian.*`` fields are the capture's identity.  The three token
+#: fields (``HESSIAN_IDENTITY`` in ``tessera.export``) name the fit prefix --
+#: the sha of the calibration text, the fit token count and the sha of the
+#: token ids -- but they CANNOT decide whether two captures are the same
+#: capture: ``capture_h_full.py`` hashes the ids flat and then reshapes them
+#: to ``[-1, seqlen]``, so one prefix captured at 512 and at 1024 agrees on
+#: all three while running different attention contexts and accumulating
+#: different H (tessera#214).  So the guard also compares the model and the
+#: sequence layout by name, and ``capture_sha256`` -- the exporter's sealed
+#: digest of the actual H content plus that context
+#: (``ActivationSource.capture_sha256``) -- which separates two captures even
+#: when every recorded token field coincides.  A part whose block lacks any
+#: of these refuses below ("Re-export with a current exporter"), because a
+#: field absent from every part compares equal and passes vacuously.
 SHARED_ACTIVATION = (
     "activation_aware.ldlq_sigma",
     "activation_aware.ldlq_block",
@@ -134,6 +143,9 @@ SHARED_ACTIVATION = (
     "activation_aware.hessian.text_sha256",
     "activation_aware.hessian.fit_tokens",
     "activation_aware.hessian.fit_ids_sha256",
+    "activation_aware.hessian.model",
+    "activation_aware.hessian.seqlen",
+    "activation_aware.hessian.capture_sha256",
 )
 
 _MISSING = object()

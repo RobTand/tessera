@@ -141,6 +141,11 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
+`export_tessera_serving.fused_module` is the one statement of that roster --
+q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
+and the converter's `fused_key` delegates to it rather than restating two of
+its rows (tessera#211), so the plan-time fused check and the export-time one
+read one rule.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
@@ -176,6 +181,17 @@ validator before serving, using the merged `export_identity.options.plan` or
 an explicit `--plan-json` that must agree with it; its routed-MoE summary must
 name the same population too. Existing version-one parts remain readable and
 their containers do not change.
+
+The direct (non-partitioned) export runs the same validator against its own
+emitted roles and declared schemes before it writes `config.json`, and every
+path that used to demote an explicit quantized target to BF16 passthrough in
+silence now refuses before the first encode, naming the tensor and the field:
+a shape the grid cannot cut, a `--layers` smoke bound that excludes a planned
+tensor, a fused group whose explicitly planned members cannot share one
+scheme, and `--passthrough-unrouted` reaching a module the plan names.
+Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
+fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
+(tessera#211).
 
 ## 3. Bytes: priced == served
 
@@ -668,10 +684,15 @@ declares the `routed_moe` scheme through
 `scheme.validate_tessera_moe_scheme` -- the reader is the gate, so the writer
 is held to it before the config is written rather than at load. Everything the
 route would refuse at load has a plan-time twin (`plan_expert_stack`): a family
-with no expert route, an expert index set that is not `0..E-1`, a missing
-projection, geometry that differs across experts, and rows or columns the route
-cannot cut. A dense Linear failing the last of those is passed through; a stack
-cannot be, because vLLM builds one method for the whole of it. The construction
+with no expert route, an expert population that is not exactly the source
+config's declared `0..E-1` -- an interior gap, a missing tail expert, or a
+truncated contiguous prefix alike, because `E` comes from config.json
+(`_stack_config_geometry`, the same contract the packed path has always proved
+against; tessera#213), a missing projection, geometry that differs across
+experts or from the config's `hidden_size`/`moe_intermediate_size`, and rows
+or columns the route cannot cut. A dense Linear failing the last of those is
+passed through when it was implicitly planned; a stack cannot be, because vLLM
+builds one method for the whole of it. The construction
 gate covers the stack too, through the census's `offered_non_linear` row --
 a `RoutedExperts` stack is not a `LinearBase`, so it is recorded there and a
 classifier reading only `offered` called it `absent`. An unplanned stack is

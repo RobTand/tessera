@@ -193,7 +193,10 @@ def test_the_plan_converter_asks_the_exporter_rather_than_restating_the_rule():
     e4m3 = grid_for_name("E4M3")
     assert plan.module_scheme_key(e4m3, 900) == _exporter().module_scheme_key(e4m3, 900)
     source = (ROOT / "experiments" / "plan_from_layer_config.py").read_text()
-    assert "from export_tessera_serving import module_scheme_key" in source
+    # The scheme key AND the fused roster are both imported from the exporter
+    # (#37, #211): a copied-back constant of either fails here.
+    assert "from export_tessera_serving import fused_module, module_scheme_key" in source
+    assert plan.fused_module.__module__ == "export_tessera_serving"
     assert "chosen[m][0], chosen[m][1]) for m in present" not in source
 
 

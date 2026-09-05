@@ -193,7 +193,7 @@ def test_lfm_expert_spellings_form_one_canonical_runtime_stack(tmp_path):
     assert stacks[stack][0]["down_proj"][0].endswith(".0.w2.weight")
 
     planned = export.plan_expert_stack(
-        stack, stacks[stack], export.grid_for("E4M3"), 1024
+        stack, stacks[stack], export.grid_for("E4M3"), 1024, config=config
     )
     by_role = {unit["projection"]: unit for unit in planned["units"]
                if unit["expert"] == 0}

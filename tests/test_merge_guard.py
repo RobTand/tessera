@@ -262,6 +262,9 @@ def plain_config(tmp_path_factory):
     ("activation_aware.hessian.text_sha256", "c" * 64),
     ("activation_aware.hessian.fit_tokens", 65536),
     ("activation_aware.hessian.fit_ids_sha256", "d" * 64),
+    ("activation_aware.hessian.model", "/models/somewhere-else"),
+    ("activation_aware.hessian.seqlen", 1024),
+    ("activation_aware.hessian.capture_sha256", "e" * 64),
 ])
 def test_each_activation_field_refuses_on_its_own(aware_config, field, other):
     """Every field gets its own case: a combined one cannot tell a working
@@ -721,6 +724,80 @@ def test_a_plain_trailing_leg_over_a_plain_base_is_legal():
     kwargs = source.for_unit("unit.weight", 4, scale_plane=ScalePlaneKind.S6B)
     assert "refit_metric" not in kwargs
     assert "refit_metric_trailing" not in kwargs
+
+
+# --------------------------------------------------------------------------
+# Tessera#214: calibration identity is the capture, not three token fields.
+#
+# CPU-only by construction, like the trailing-leg block above: everything here
+# stops at ``config_block`` and the guard, and ``guard_template`` carries the
+# exact block ``_write_config`` embeds.
+# --------------------------------------------------------------------------
+
+
+def test_parts_at_different_capture_seqlens_are_two_artifacts(guard_template):
+    """The #214 repro: ``capture_h_full.py`` reshapes ONE token prefix to
+    ``[-1, seqlen]`` and hashes the flat ids (no shape), so captures at 512
+    and 1024 share ``text_sha256``, ``fit_tokens`` and ``fit_ids_sha256``
+    while running different attention contexts and producing different H.
+    Three token fields cannot certify identical Hessians; the guard reads the
+    sequence layout beside them and refuses by name."""
+    a = copy.deepcopy(guard_template)
+    b = copy.deepcopy(guard_template)
+    assert merge.dotted(a, "activation_aware.hessian.seqlen") == 512
+    _set(b, "activation_aware.hessian.seqlen", 1024)
+    with pytest.raises(SystemExit, match="activation_aware.hessian.seqlen"):
+        merge.check_configs([("part512", a), ("part1024", b)])
+    merge.check_configs([("part512", a), ("part512b", copy.deepcopy(guard_template))])
+
+
+def test_two_captures_with_the_same_token_metadata_are_told_apart_by_content(guard_template):
+    """The actual capture content is sealed and compared: two H populations
+    that agree on every recorded token field are still two Hessians, and no
+    metadata coincidence may certify them identical."""
+    a = copy.deepcopy(guard_template)
+    b = copy.deepcopy(guard_template)
+    a["activation_aware"] = ActivationSource(
+        hessians=_hessians(["u.weight"], seed=1, cols=8),
+        provenance=_provenance()).config_block()
+    b["activation_aware"] = ActivationSource(
+        hessians=_hessians(["u.weight"], seed=2, cols=8),
+        provenance=_provenance()).config_block()
+    with pytest.raises(SystemExit, match="capture_sha256"):
+        merge.check_configs([("partA", a), ("partB", b)])
+
+
+def test_an_identical_capture_across_disjoint_parts_still_merges(guard_template):
+    block = ActivationSource(hessians=_hessians(["u.weight"], seed=1, cols=8),
+                             provenance=_provenance()).config_block()
+    a = copy.deepcopy(guard_template)
+    b = copy.deepcopy(guard_template)
+    a["activation_aware"] = copy.deepcopy(block)
+    b["activation_aware"] = copy.deepcopy(block)
+    base = merge.check_configs([("partA", a), ("partB", b)])
+    assert base["activation_aware"]["hessian"]["capture_sha256"] == \
+        block["hessian"]["capture_sha256"]
+
+
+def test_the_capture_seal_is_stamped_by_the_source_itself():
+    """``config_block`` is what ``_write_config`` embeds, so the seal and its
+    context ride in every activation-aware config.  Content, model identity
+    and sequence layout each move the seal; nothing else stamps it."""
+    def source_with(seed=1, **over):
+        return ActivationSource(hessians=_hessians(["u.weight"], seed=seed, cols=8),
+                                provenance=_provenance(**over))
+
+    block = source_with().config_block()
+    seal = block["hessian"]["capture_sha256"]
+    assert isinstance(seal, str) and len(seal) == 64
+    assert block["hessian"]["model"] == "Qwen/Qwen3-0.6B"
+    assert block["hessian"]["seqlen"] == 512
+    json.loads(json.dumps(block))
+    assert source_with().config_block()["hessian"]["capture_sha256"] == seal
+    assert source_with(seed=2).config_block()["hessian"]["capture_sha256"] != seal
+    assert source_with(seqlen=1024).config_block()["hessian"]["capture_sha256"] != seal
+    assert source_with(model="/models/somewhere-else").config_block()[
+        "hessian"]["capture_sha256"] != seal
 
 
 # --------------------------------------------------------------------------

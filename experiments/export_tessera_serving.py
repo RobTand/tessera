@@ -168,7 +168,7 @@ from tessera.stock import (  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
-    partition_owner, sha256_file, summarize_modules)
+    partition_owner, sha256_file, summarize_modules, validate_explicit_plan)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -815,7 +815,7 @@ def packed_expert_stacks(expert_shapes):
 
 
 def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
-                      source_layout: str = MOE_SOURCE_UNPACKED):
+                      source_layout: str = MOE_SOURCE_UNPACKED, config: dict):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -829,13 +829,18 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     * a family with no expert route -- ``scheme.MOE_BUILDERS`` is the one home
       for that rule, and its absences are measured (the NVFP4 oracle's
       ``swiglu_limit`` clamp, a 16-bit stack being the passthrough already);
-    * an expert index set that is not ``0..E-1`` -- the parameter is
-      ``[E, ...]`` and the loader indexes it by ``expert_id``, so a gap is a
-      row of zeros served as an expert;
+    * an expert population that is not exactly the source config's declared
+      ``0..E-1`` -- the parameter is ``[E, ...]`` and the loader indexes it by
+      ``expert_id``, so a gap is a row of zeros served as an expert, and a
+      truncated contiguous prefix (a missing TAIL expert) is the same defect
+      that ``range(len(indices))`` could never see (#213).  The declared count
+      comes from ``config.json``, the same geometry contract the packed path
+      has always proved against;
     * a missing projection -- ``w13`` is the gate/up PAIR, and a stack missing
       one has no second half for the tile;
-    * geometry that differs across experts -- one stack is one tile, so one
-      shape;
+    * geometry that differs across experts, or that disagrees with the
+      config's ``hidden_size``/``moe_intermediate_size`` -- one stack is one
+      tile, and its dimensions are the model's;
     * rows or columns the route's mainloop cannot take.  A dense Linear that
       fails this is passed through, which is safe because it is one module; a
       routed stack cannot be half passed through, because vLLM builds ONE
@@ -847,14 +852,22 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     except ValueError as exc:
         raise SystemExit(
             f"the plan gives the expert stack {stack} grid {grid.name} ({family}): {exc}") from exc
+    declared, config_hidden, config_inter = _stack_config_geometry(config, stack)
     indices = sorted(experts)
-    if indices != list(range(len(indices))):
-        missing = sorted(set(range(max(indices) + 1)) - set(indices))
+    if indices != list(range(declared)):
+        missing = sorted(set(range(declared)) - set(indices))
+        extra = sorted(set(indices) - set(range(declared)))
+        problems = []
+        if missing:
+            problems.append(f"is missing expert(s) {missing[:8]}")
+        if extra:
+            problems.append(f"carries undeclared expert(s) {extra[:8]}")
         raise SystemExit(
-            f"the expert stack {stack} is missing expert(s) {missing[:8]} of "
-            f"{max(indices) + 1}. The wire parameter is [E, ...] and the loader writes row "
-            "expert_id, so a gap is not a smaller stack -- it is a row of zeros decoded as an "
-            "expert. Refusing rather than renumbering.")
+            f"the expert stack {stack} {' and '.join(problems)} of the {declared} the source "
+            "config declares (n_routed_experts/num_experts/num_local_experts). The wire "
+            "parameter is [E, ...] and the loader writes row expert_id, so a gap or a "
+            "truncated population is not a smaller stack -- it is a row of zeros decoded as "
+            "an expert. Refusing rather than renumbering.")
     geometry: dict[str, tuple] = {}
     for index in indices:
         found = experts[index]
@@ -873,6 +886,12 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                     "shape; a stack whose experts disagree cannot be [E, rows, cols].")
     hidden = geometry["gate_proj"][1]
     inter = geometry["gate_proj"][0]
+    if (hidden, inter) != (config_hidden, config_inter):
+        raise SystemExit(
+            f"the expert stack {stack} holds gate_proj [{inter}, {hidden}] but the source "
+            f"config declares hidden_size={config_hidden} and intermediate size "
+            f"{config_inter}. One stack is one tile and its geometry is the model's; "
+            "refusing rather than serving rows the runtime never computes.")
     for projection, shape in geometry.items():
         want = (hidden, inter) if projection == "down_proj" else (inter, hidden)
         if shape != want:
@@ -912,8 +931,15 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
             "source_layout": source_layout, "groups": groups, "units": units}
 
 
-def _packed_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
-    """The three dimensions a packed source must prove against config.json."""
+def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
+    """The three dimensions a source expert stack must prove against config.json.
+
+    One contract for both source layouts (#213): the packed path has always
+    read it, and the unpacked path reads the same three numbers, because a
+    per-expert 2-D source can silently be a truncated population -- a missing
+    tail expert leaves a perfectly contiguous ``0..E-2`` -- and only the
+    model's own config says what ``E`` is.
+    """
     text = config.get("text_config", config)
     hidden = text.get("hidden_size")
     inter = text.get("moe_intermediate_size", text.get("intermediate_size"))
@@ -923,7 +949,7 @@ def _packed_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
     if not all(isinstance(value, int) and value > 0
                for value in (experts, hidden, inter)):
         raise SystemExit(
-            f"cannot validate packed expert stack {stack}: config.json must declare positive "
+            f"cannot validate expert stack {stack}: config.json must declare positive "
             "integer expert count (n_routed_experts/num_experts/num_local_experts), "
             f"hidden_size, and moe_intermediate_size/intermediate_size; got experts={experts!r} "
             f"hidden_size={hidden!r} intermediate_size={inter!r}")
@@ -952,7 +978,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
             "supported conventions describe one fused gate/up tensor and one down tensor; "
             "a different roster needs its own explicit source layout.")
 
-    experts, hidden, inter = _packed_config_geometry(config, stack)
+    experts, hidden, inter = _stack_config_geometry(config, stack)
     expected = {
         MOE_SOURCE_OUT_FIRST_CHUNKED: {
             "gate_up_proj": (experts, 2 * inter, hidden),
@@ -980,7 +1006,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
             "down_proj": (f"{stack}.{expert}.down_proj.weight", (hidden, inter)),
         }
     record = plan_expert_stack(
-        stack, synthetic, grid, q256, source_layout=source_layout)
+        stack, synthetic, grid, q256, source_layout=source_layout, config=config)
     for unit in record["units"]:
         projection = unit["projection"]
         physical_projection = ("gate_up_proj" if projection in
@@ -1069,7 +1095,8 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
             layout = choice.get("source_layout", MOE_SOURCE_UNPACKED)
             if layout != MOE_SOURCE_UNPACKED:
                 raise SystemExit(f"{stack}: unpacked source requires source_layout={MOE_SOURCE_UNPACKED}")
-            planned = plan_expert_stack(stack, unpacked_stacks[stack], grid, choice["q256"])
+            planned = plan_expert_stack(stack, unpacked_stacks[stack], grid,
+                                        choice["q256"], config=source_config)
         result[stack] = dict(planned, grid=grid.name)
     return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
 
@@ -1369,7 +1396,8 @@ def main():
                 source_layout=source_layout, config=src_config)
         else:
             record = plan_expert_stack(
-                stack, stacks[stack], grid, q256, source_layout=source_layout)
+                stack, stacks[stack], grid, q256, source_layout=source_layout,
+                config=src_config)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
@@ -1403,11 +1431,24 @@ def main():
         print(f"  {len(routed_passthrough)} routed expert tensors across layers {layers} stay "
               f"BF16 and are named in ignore (no plan entry names their stack); "
               f"e.g. {sorted(routed_passthrough)[0]}", flush=True)
+    # An EXPLICIT quantized plan entry is an obligation (#211): the merge path
+    # holds a partitioned export to it through validate_explicit_plan, and the
+    # direct export is held to the same rule -- a target the plan names may be
+    # refused here, before the first encode, but never silently demoted to
+    # BF16 passthrough.  Implicit --grid/--q256 defaults keep their deliberate
+    # passthrough fallbacks; explicit "PASSTHROUGH"/"BF16" stays a passthrough.
+    explicit = {name for name, spec in overrides.items() if spec is not None}
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
         layer = body_layer(name)
         if args.layers is not None and layer >= args.layers:
+            if name in explicit:
+                raise SystemExit(
+                    f"the plan gives {name} a rung, but --layers {args.layers} stops before "
+                    f"its layer {layer}. One of the two is wrong and guessing which would "
+                    "either pass through a tensor the plan asked for or encode past the "
+                    "smoke bound. Name it PASSTHROUGH, or raise --layers.")
             passthrough.append(name); continue
         if name in overrides and overrides[name] is None:
             passthrough.append(name); continue
@@ -1415,6 +1456,14 @@ def main():
             passthrough.append(name); continue
         grid, q256 = overrides.get(name, (default_grid, args.q256))
         if rows % (grid.arity * 32) or cols % 16:
+            if name in explicit:
+                raise SystemExit(
+                    f"the plan names {name} at {grid.name} q256={q256}, but its shape "
+                    f"[{rows}, {cols}] cannot be cut on that grid: rows must be a whole "
+                    f"number of tuples (grid.arity * 32 = {grid.arity * 32}) and columns a "
+                    "multiple of 16. An explicit rung is an obligation, so this is refused "
+                    "rather than silently demoted to BF16 passthrough; name the tensor "
+                    "PASSTHROUGH to keep it at source precision deliberately.")
             passthrough.append(name); continue
         plan[name] = (grid, q256, rows, cols)
     # Group by vLLM module: every role quantizable, and every role on the same
@@ -1434,6 +1483,18 @@ def main():
             modules[key] = list(members)
         else:
             why = "not every role is quantizable" if not all(m in plan for m in members) else f"roles disagree {sorted(recipes)}"
+            named = sorted(m for m in members if m in explicit)
+            if named:
+                # The exporter's resolution for a disagreeing group is a whole-
+                # group BF16 passthrough, and for implicitly planned members
+                # that is the deliberate default.  For a member the plan NAMES
+                # quantized it is a silent demotion of an explicit rung (#211).
+                raise SystemExit(
+                    f"fused module {key}: {why}, and the plan explicitly quantizes {named}. "
+                    "vLLM builds one method per fused module, so the exporter would pass the "
+                    "whole group through as BF16 -- a checkpoint that does not implement its "
+                    "plan. Plan every member of the group onto one scheme (family, grid, "
+                    "body, scale plane), or name them all PASSTHROUGH.")
             print(f"  passthrough {key}: {why}; vLLM builds one method per fused module", flush=True)
             for m in members:
                 if m in plan:
@@ -1468,6 +1529,21 @@ def main():
     if unrouted:
         message = _unrouted_refusal(unrouted, list(src_config.get("architectures") or ()))
         if args.passthrough_unrouted:
+            # The flag resolves modules the DEFAULT planned; a module the plan
+            # explicitly quantizes is an obligation (#211), and shedding it
+            # here would publish a checkpoint validate_explicit_plan refuses
+            # at merge and nothing used to refuse in the direct path.
+            named = sorted(
+                module for module in unrouted
+                if module in stack_plan
+                or any(m in explicit for m in modules.get(module, ())))
+            if named:
+                raise SystemExit(
+                    f"--passthrough-unrouted would pass through {named}, but the plan "
+                    "explicitly gives them a rung. An explicit rung is an obligation "
+                    "(serving_parts.validate_explicit_plan); passing these modules through "
+                    "would publish a checkpoint that does not implement its plan. Remove "
+                    "them from the plan (or name them PASSTHROUGH) to export the rest.")
             print(f"  --passthrough-unrouted: {message}", flush=True)
             for module in unrouted:
                 if module in stack_plan:
@@ -1898,6 +1974,26 @@ def main():
             f"e.g. {unnamed[:3]}. The plugin refuses a Linear it is neither told to decode nor "
             "told to leave alone, so this checkpoint would fail at load.")
     ignore = sorted(set(ignore))
+    # THE PLAN IS VALIDATED BEFORE PUBLICATION (#211), by the same gate the
+    # whole-layer merge runs: every explicit quantized entry must be emitted
+    # and declared at its planned grid and rung.  The refusals above make each
+    # known demotion path explicit before the encode; this holds whatever is
+    # actually about to be published to the plan, so no path -- present or
+    # future -- can publish a config.json that does not implement it.  A
+    # partitioned export carries the full plan but emits only its owned
+    # layers; its validation belongs to merge_serving_parts, which already
+    # runs this call on the assembled whole.
+    if not args.partition:
+        try:
+            validate_explicit_plan(
+                json.loads(args.plan_json.read_text()) if args.plan_json else None,
+                module_records, config_groups,
+                source_tensors={name for names in shards.values() for name in names})
+        except ValueError as exc:
+            raise SystemExit(
+                f"explicit plan verification failed before publication: {exc}. The emitted "
+                "roles do not implement the plan this export was given; refusing to write "
+                "config.json.") from exc
     moe_passthrough_modules = {m for source in (expert_shapes, routed_shapes)
                                for name, shape in source.items()
                                for m in ignored_modules(name, shape)
@@ -1945,6 +2041,11 @@ def main():
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
+        # The plan CONTENT, not only its pathname: the merged path seals
+        # options.plan into export_identity, and a direct export used to
+        # record a path that may not outlive the run, so a later sidecar
+        # check without --plan-json could not recover the obligation (#211).
+        "plan": json.loads(args.plan_json.read_text()) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
         # What the SERVING gate decided, in the artifact rather than in a shell

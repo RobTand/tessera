@@ -348,6 +348,117 @@ def test_the_shapes_come_from_the_checkpoint_itself():
     assert shapes == one_layer_shapes(layers=28)
 
 
+# -- the fused roster is the exporter's, not a restatement (#211) --------------
+
+
+def lfm_shapes():
+    """An LFM dense MLP: ``feed_forward.w1/w3`` fuse into one ``w13`` Linear."""
+    return {f"model.layers.0.feed_forward.{role}.weight": (128, 128)
+            for role in ("w1", "w2", "w3")}
+
+
+def test_the_fused_roster_is_derived_from_the_exporter():
+    """Rule 3: the expected set comes from the code that owns it.
+
+    ``export_tessera_serving.fused_module`` is the producer's one statement of
+    which source leaves vLLM merges into one module.  The converter's
+    ``fused_key`` restated two of its rows and missed the rest -- shared-expert
+    gate/up and LFM ``w1/w3`` -> ``w13`` -- so plans over those groups skipped
+    the fused invariant entirely (#211).  Derive the expectation from the
+    exporter so a roster change there cannot silently strand this check again.
+    """
+    import export_tessera_serving as exporter
+
+    for qname in ("model.layers.3.self_attn.q_proj",
+                  "model.layers.3.self_attn.o_proj",
+                  "model.layers.3.mlp.gate_proj",
+                  "model.layers.3.mlp.down_proj",
+                  "model.layers.3.mlp.shared_experts.up_proj",
+                  "model.layers.3.feed_forward.w1",
+                  "model.layers.3.feed_forward.w2",
+                  "model.layers.3.feed_forward.w3",
+                  "model.layers.3.mlp.experts.7.gate_proj"):
+        expected = exporter.fused_module(qname + ".weight")
+        got = PLAN.fused_key(qname)
+        if expected is None:
+            assert got is None, qname
+        else:
+            module, members = expected
+            assert got == (module, tuple(m[: -len(".weight")] for m in members)), qname
+
+
+def test_an_lfm_w1_tessera_w3_bf16_pair_is_refused_as_a_fused_disagreement():
+    """The #211 converter repro: w1/w2 Tessera, w3 BF16, all 128x128.
+
+    The serving exporter merges LFM's dense ``w1``/``w3`` into one ``w13``
+    Linear and passes the whole group through when the members disagree, so a
+    plan quantizing w1 and leaving w3 BF16 prices an encode that will not
+    happen.  The converter's local roster did not know ``w13`` and built this
+    plan with ``fused_disagreements == []``.
+    """
+    config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w2": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w3": "BF16"}
+    with pytest.raises(SystemExit, match="do not share one"):
+        build(config, lfm_shapes(), with_control=False)
+
+
+def test_the_lfm_disagreement_demotes_the_w13_group_under_the_override():
+    config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w2": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w3": "BF16"}
+    plan, provenance = build(config, lfm_shapes(), allow_disagreement=True,
+                             with_control=False)
+    assert plan["model.layers.0.feed_forward.w1.weight"] == "BF16"
+    assert plan["model.layers.0.feed_forward.w3.weight"] == "BF16"
+    assert plan["model.layers.0.feed_forward.w2.weight"] == {"grid": "E4M3", "q256": 1024}
+    assert [d["module"] for d in provenance["fused_disagreements"]] == \
+           ["model.layers.0.feed_forward.w13"]
+    entry = provenance["fused_disagreements"][0]
+    assert entry["planned_as"] == "BF16"
+    assert provenance["totals"]["demoted_to_bf16_params"] == \
+        sum(entry["demoted_params"].values())
+
+
+def test_demotion_accounting_counts_only_members_the_allocation_priced():
+    """``totals.demoted_to_bf16_params`` is, by its own docstring, "params the
+    allocation gave a Tessera rung and the plan gives BF16".  A member the
+    allocation itself chose BF16 was never demoted -- the plan agrees with the
+    allocation about it -- and counting it over-reports the one number whose
+    job is to say how far the served allocation drifted from the chosen one.
+    """
+    config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w2": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w3": "BF16"}
+    _plan, provenance = build(config, lfm_shapes(), allow_disagreement=True,
+                              with_control=False)
+    entry = provenance["fused_disagreements"][0]
+    assert entry["demoted_params"] == {"model.layers.0.feed_forward.w1": 128 * 128}
+    assert provenance["totals"]["demoted_to_bf16_params"] == 128 * 128
+
+
+def test_an_agreeing_lfm_pair_plans_member_by_member():
+    """Differing rungs on one family are still not a disagreement (#37)."""
+    config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w2": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w3": tessera("TESSERA_E4M3_K1_R920")}
+    plan, provenance = build(config, lfm_shapes(), with_control=False)
+    assert provenance["fused_disagreements"] == []
+    assert plan["model.layers.0.feed_forward.w1.weight"] == {"grid": "E4M3", "q256": 1024}
+    assert plan["model.layers.0.feed_forward.w3.weight"] == {"grid": "E4M3", "q256": 920}
+
+
+def test_shared_expert_gate_up_is_the_exporters_fused_group_too():
+    """``mlp.shared_experts.gate_proj/up_proj`` merge exactly as the body MLP's do."""
+    shapes = {f"model.layers.0.mlp.shared_experts.{role}.weight": (128, 128)
+              for role in ("gate_proj", "up_proj", "down_proj")}
+    config = {"model.layers.0.mlp.shared_experts.gate_proj": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.mlp.shared_experts.up_proj": "BF16",
+              "model.layers.0.mlp.shared_experts.down_proj": tessera("TESSERA_E4M3_K1_R1024")}
+    with pytest.raises(SystemExit, match="do not share one"):
+        build(config, shapes, with_control=False)
+
+
 def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
     _plan, provenance = build(uniform_config(), one_layer_shapes(), prismaquant=PQ_TREE)
     rows = {u["qname"]: u for u in provenance["units"]}

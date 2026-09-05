@@ -35,7 +35,9 @@ def main() -> int:
     shards, _shapes, _packed, routed = exporter.quantizable(args.src)
     stacks = exporter.expert_stacks(routed)
     stack = min(stacks, key=lambda name: (exporter.body_layer(name), name))
-    plan = exporter.plan_expert_stack(stack, stacks[stack], E4M3_GRID, args.q256)
+    plan = exporter.plan_expert_stack(
+        stack, stacks[stack], E4M3_GRID, args.q256,
+        config=json.loads((args.src / "config.json").read_text()))
     expert = min(unit["expert"] for unit in plan["units"])
     selected = [unit for unit in plan["units"] if unit["expert"] == expert]
     weight_map = {name: shard for shard, names in shards.items() for name in names}
