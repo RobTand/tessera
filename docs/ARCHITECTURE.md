@@ -6,7 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
-`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df` plus the
+`b83fd17`, CI at `2147909` plus the publish-environment key of #150,
+packaging metadata at `54cd1df` plus the
 version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
@@ -1383,11 +1384,19 @@ before the job builds anything it refuses a commit that is not reachable from
 whatever history it happens to hold). Every other outcome is a refusal too: a
 shallow checkout, or a branch the runner could not read.
 
-What the trigger still lacks is a GitHub `environment` gating the OIDC token.
-Naming one here only works once the PyPI Trusted Publisher is configured with
-the same name, so the workflow change and the PyPI-side change have to land
-together -- #17's question, and Rob's alone. This section claims no
-`environment`.
+The job also runs in the GitHub `environment` named `pypi`, which is what
+gates the OIDC token: the ancestry script decides *which commit* may publish,
+and the environment is where a person decides *whether to*, before the
+credentials exist. Half of that gate is not in this repository and cannot be.
+The environment is created in repository settings and protects nothing until a
+required reviewer is added to it; its deployment rule has to admit tags, since
+"protected branches only" refuses a tag-triggered run; and PyPI's Trusted
+Publisher must name the same environment, because the environment is one of
+the claims the token exchange matches. So this section claims only the
+workflow key -- `tests/test_ci_workflow.py` asserts it is job-level, which is
+the half a test in this tree can read. Whether the protection exists is #17's
+question and Rob's alone, and until it is answered this key buys the ordering,
+not the review.
 
 Every `uses:` in the file names a commit SHA, with the version it was in a
 trailing comment. A tag or a branch (`@v4`, `@release/v1`) is a ref another

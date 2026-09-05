@@ -123,6 +123,38 @@ def test_publish_gates_the_tag_before_it_builds_anything():
     )
 
 
+#: A job-level key sits at four spaces; a step's own keys are deeper.  The
+#: depth is the discriminator, so `environment:` under some future step cannot
+#: be mistaken for the gate on the job.
+JOB_ENVIRONMENT = re.compile(r"^    environment:\s*(?P<name>\S+)\s*$", re.M)
+
+
+def test_publish_runs_inside_a_protected_environment():
+    """The ancestry check says *which commit*; the environment says *who says so*.
+
+    Reachability from master is a property of the commit, and a commit is on
+    master because a review put it there -- but nothing in the tag path asks a
+    person before the OIDC token is minted.  A GitHub ``environment`` is the
+    only place that question can be asked, because it is the only gate that
+    sits between the job being scheduled and its credentials existing.  The
+    protection itself lives in repository settings, which no test in this tree
+    can read; what is asserted here is the half that lives in the file, and
+    without which the settings half has nothing to attach to.
+
+    Job-level, by indentation: an ``environment:`` on a step gates nothing.
+    """
+    text = (WORKFLOWS / "ci.yml").read_text(encoding="utf-8")
+    publish = _job_block(text, "publish")
+    found = JOB_ENVIRONMENT.search(publish)
+    assert found is not None, (
+        "the publish job declares no job-level `environment:`, so the OIDC "
+        "token is minted with no gate between a pushed tag and PyPI"
+    )
+    assert found.group("name") not in {"", "~", "null"}, (
+        f"publish names environment {found.group('name')!r}, which gates nothing"
+    )
+
+
 # --- the script's own behaviour, on real repositories -----------------------
 
 GIT_ENV = {

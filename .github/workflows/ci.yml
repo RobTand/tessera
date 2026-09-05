@@ -119,6 +119,19 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: pure
     runs-on: ubuntu-latest
+    # The ancestry step below says which commit may publish; this says who has
+    # to agree before the job's OIDC token exists at all.  It is the only gate
+    # that sits before the credentials, so a tag pushed by mistake waits here.
+    #
+    # The environment itself is NOT in this file and cannot be: it is created
+    # in repository Settings -> Environments, and it protects nothing until a
+    # required reviewer is added there.  Its deployment rule must admit tags
+    # ("Selected branches and tags", pattern `v*`) -- "protected branches only"
+    # refuses a tag-triggered run outright.  And PyPI's Trusted Publisher for
+    # this project must name the same environment, because the environment is
+    # one of the claims the token exchange matches.  Naming an environment here
+    # while PyPI names none is a mismatch, so the two land together.
+    environment: pypi
     permissions:
       id-token: write
     steps:
