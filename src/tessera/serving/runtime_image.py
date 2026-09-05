@@ -32,7 +32,7 @@ on stdout so a *program* -- not only a human reading a log -- can read the
 refusal, the resolved digests, and the exact ``docker pull`` that fixes it.
 
 SCOPE. The default pin governs one repository: the vanilla vLLM image named
-by ``versions.attested_on.image``. An explicit digest reference for ANY
+by ``versions.default_serve_image``. An explicit digest reference for ANY
 repository is additionally checked against that exact reference's presence
 in ``RepoDigests``. Its caller has already selected bytes, so accepting an
 absent or differently stamped image would not preserve that selection.
@@ -41,8 +41,10 @@ against the unrelated default pin; they cannot establish an exact-runtime
 census context. This does not change the default image or its policy.
 
 ONE DEFAULT. The default digest lives in ``runtime_contract.json`` at
-``versions.attested_on.image``. Runtime-scoped lane cells separately name the
-images their receipts cover; they do not move that default. Harness defaults
+``versions.default_serve_image`` (schema v6, #131; ``versions.attested_on.image``
+before it). Runtime-scoped lane cells separately name the images their
+receipts cover, and the validator requires the default to be one of them; the
+cells do not move that default. Harness defaults
 read the contract, while an explicitly selected image is recorded as the
 measurement's identity rather than copied into another default.
 """
@@ -73,7 +75,7 @@ __all__ = [
 ]
 
 #: Where the one literal lives.  Read, never copied.
-PIN_CONTRACT_FIELD = ("versions", "attested_on", "image")
+PIN_CONTRACT_FIELD = ("versions", "default_serve_image")
 
 #: The two variables a container launcher writes so a process INSIDE the
 #: container can check which image it is running in.  The names live here and

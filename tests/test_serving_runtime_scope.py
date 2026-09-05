@@ -1,4 +1,16 @@
-"""Attested route cells are bounded by the image and execution they measured."""
+"""Attested route cells are bounded by the image, execution and toolchain they measured.
+
+Schema v5 gave every cell its ``runtime`` scope -- the exact image and the
+execution modes a receipt covers.  Schema v6 (#131) adds the TOOLCHAIN the
+cell's own receipt records, ``vllm`` and ``torch``, because until then the
+only place a version lived was the global ``versions.attested_on`` block,
+which named vLLM 0.28.0 for cells measured on ``0.28.1rc1.dev397``.  Two
+helpers, one home for the key sets: :func:`cell_runtime_scope` reads the
+scope (the census's join key; the version keys are optional there so an
+observation-side fixture that carries only a scope keeps working) and
+:func:`cell_runtime_versions` requires the whole closed object, which is
+what the validator calls.
+"""
 from __future__ import annotations
 
 import copy
@@ -10,24 +22,39 @@ from tessera.serving import contract as runtime_contract
 
 IMAGE = "example/runtime@sha256:" + "a" * 64
 OTHER_IMAGE = "example/runtime@sha256:" + "b" * 64
+RUNTIME = {"image": IMAGE, "execution_modes": ["eager", "compiled"],
+           "vllm": "0.99.0", "torch": "2.99.0+cu999"}
 
 
 def _scoped_contract():
     contract = runtime_contract.load_serving_contract()
     for cell in contract["lane_eligibility"]["cells"]:
-        cell["runtime"] = {"image": IMAGE, "execution_modes": ["eager", "compiled"]}
+        cell["runtime"] = copy.deepcopy(RUNTIME)
+    contract["versions"]["default_serve_image"] = IMAGE
     return contract
 
 
-def test_every_published_cell_names_its_measured_runtime():
+def test_every_published_cell_names_its_measured_runtime_and_toolchain():
     contract = runtime_contract.load_serving_contract()
-    assert contract["lane_eligibility"]["schema"] == "tessera.lane-eligibility.v5"
+    assert contract["lane_eligibility"]["schema"] == "tessera.lane-eligibility.v6"
     for cell in contract["lane_eligibility"]["cells"]:
         image, modes = runtime_contract.cell_runtime_scope(cell)
-        assert image and modes
-        if cell["structure"] == "dense":
-            assert image == contract["versions"]["attested_on"]["image"]
-            assert modes == ("eager", "compiled")
+        vllm, torch = runtime_contract.cell_runtime_versions(cell)
+        assert image and modes and vllm and torch
+        assert set(cell["runtime"]) == (runtime_contract.RUNTIME_SCOPE_KEYS
+                                        | runtime_contract.RUNTIME_VERSION_KEYS)
+
+
+def test_one_image_carries_one_toolchain():
+    """Two cells naming one image and two vLLM builds would be two runtimes
+    under one digest, which a digest cannot be."""
+    contract = runtime_contract.load_serving_contract()
+    by_image = {}
+    for cell in contract["lane_eligibility"]["cells"]:
+        by_image.setdefault(cell["runtime"]["image"], set()).add(
+            runtime_contract.cell_runtime_versions(cell))
+    assert all(len(versions) == 1 for versions in by_image.values()), by_image
+    assert len(by_image) == 2, "the dense pin and the EUGR MoE image, nothing else"
 
 
 @pytest.mark.parametrize("image", [None, 1, "", "example/runtime:latest",
@@ -62,7 +89,38 @@ def test_cell_runtime_scope_is_a_closed_object(scope):
         runtime_contract.cell_runtime_scope({"runtime": scope})
 
 
-def test_a_cell_may_not_borrow_the_global_dense_image_pin():
+def test_cell_runtime_versions_requires_the_whole_closed_object():
+    assert runtime_contract.cell_runtime_versions({"runtime": RUNTIME}) == ("0.99.0", "2.99.0+cu999")
+    with pytest.raises(ValueError, match=r"runtime is missing \['torch', 'vllm'\]"):
+        runtime_contract.cell_runtime_versions(
+            {"runtime": {"image": IMAGE, "execution_modes": ["eager"]}})
+    with pytest.raises(ValueError, match=r"runtime is missing \['torch'\]"):
+        runtime_contract.cell_runtime_versions(
+            {"runtime": {"image": IMAGE, "execution_modes": ["eager"], "vllm": "0.99.0"}})
+    with pytest.raises(ValueError, match=r"unknown field\(s\) \['device'\]"):
+        runtime_contract.cell_runtime_versions(
+            {"runtime": {**RUNTIME, "device": "NVIDIA GB10 (sm_121)"}})
+    for field in ("vllm", "torch"):
+        for bad in ("", None, 28):
+            with pytest.raises(ValueError, match=f"runtime.{field} must be a non-empty string"):
+                runtime_contract.cell_runtime_versions({"runtime": {**RUNTIME, field: bad}})
+
+
+def test_the_validator_requires_the_toolchain_on_every_cell():
+    contract = _scoped_contract()
+    del contract["lane_eligibility"]["cells"][0]["runtime"]["vllm"]
+    with pytest.raises(ValueError, match=r"runtime is missing \['vllm'\]"):
+        runtime_contract.validate_serving_contract(contract)
+
+
+def test_the_validator_refuses_two_toolchains_under_one_image():
+    contract = _scoped_contract()
+    contract["lane_eligibility"]["cells"][1]["runtime"]["vllm"] = "0.99.1"
+    with pytest.raises(ValueError, match="one image cannot be two runtimes"):
+        runtime_contract.validate_serving_contract(contract)
+
+
+def test_a_cell_may_not_borrow_the_global_default_image_pin():
     contract = runtime_contract.load_serving_contract()
     for cell in contract["lane_eligibility"]["cells"]:
         cell.pop("runtime", None)
@@ -100,11 +158,15 @@ def test_different_runtime_scopes_cannot_reuse_one_cell_id():
         runtime_contract.validate_serving_contract(contract)
 
 
-def test_runtime_id_suffix_is_derived_from_the_entire_scope():
+def test_runtime_id_suffix_is_derived_from_the_scope_not_the_toolchain():
+    """The suffix distinguishes disjoint SCOPES; a toolchain is a property of
+    the image, so it must not fork the id (two ids for one scope would be the
+    table-order defect the suffix exists to close)."""
     cell = {"runtime": {"image": IMAGE, "execution_modes": ["eager", "compiled"]}}
     reverse = {"runtime": {"image": IMAGE, "execution_modes": ["compiled", "eager"]}}
     suffix = runtime_contract.cell_runtime_id_suffix(cell)
     assert suffix == runtime_contract.cell_runtime_id_suffix(reverse)
+    assert suffix == runtime_contract.cell_runtime_id_suffix({"runtime": RUNTIME})
     for variant in ({"image": OTHER_IMAGE, "execution_modes": ["eager", "compiled"]},
                     {"image": IMAGE, "execution_modes": ["eager"]}):
         assert suffix != runtime_contract.cell_runtime_id_suffix({"runtime": variant})

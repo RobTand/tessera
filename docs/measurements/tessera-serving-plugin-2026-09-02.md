@@ -144,6 +144,18 @@ read off `emit_route` telemetry rather than inferred:
 `kl_tool compare` between the two dumps; 0.0000 with 100% top-1 means the
 two runtimes produced the same logits.
 
+*Noted 2026-09-04 for the contract v17 `evidence` field:* every KL in this
+table is a `kl_tool` **top-1024 teacher/student-intersection lower bound**
+(`/mnt/shared/tessera-kl/qwen_tessera_{e8,k2}-*.meta.json` record
+`requested_top_k: 1024, full_vocab: false`), scored in the **prefill**
+regime -- the only regime the tool had on 2026-09-02
+(`tessera-decode-regime-kl-2026-09-03.md` §1). The `-graph` rows are the
+compiled forward, the others eager; `resident` and `streamed` are the two
+residencies. These rows are what the `..._batch` cells of the E2M1x2 and
+E4M3-resident scopes cite; the `e8-streamed` rows ran the torch window
+decode under `streamed` (§3 census table), a launch set no streamed E4M3
+cell publishes since #111, so they attest no current cell.
+
 | arm | reference dump (Gridbook lane) | mutual KL >= | confident | top-1 | plugin KL-vs-BF16 | gridbook KL-vs-BF16 |
 |---|---|---|---|---|---|---|
 | e8-resident | `qwen_gridbook_e8-resident` | 0.0000 | 0.0000 | 100.0% | 0.4660 | 0.4660 |

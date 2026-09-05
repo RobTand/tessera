@@ -337,7 +337,7 @@ def test_the_route_table_names_the_body_its_own_loader_refuses_by_name():
 def _contract_with_a_dense_only_rung(q256: int) -> dict:
     """The packaged contract, with ``q256`` attested by the DENSE E4M3 cells only.
 
-    At contract v16 the dense and routed-MoE E4M3 cells attest one rung
+    In the packaged contract the dense and routed-MoE E4M3 cells attest one rung
     each, and it is the same one, so the packaged table cannot show a rung
     one structure attests and the other does not.  This copy adds ``q256``
     to the format row and to every dense E4M3 cell, and leaves the two

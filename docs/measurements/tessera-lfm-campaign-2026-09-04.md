@@ -532,3 +532,13 @@ Final independent read-only review found no blocking scope, provenance or
 negative-matrix defect. Its prose and verification-attribution findings were
 fixed in the separate commits recorded in §10. Contract raw SHA256 remains
 `75137c73bce8837713b427d977beb0eec280faccb39fd3225acf1b3bd00eb0b1`.
+
+**Note, 2026-09-04, after this campaign (#131, #133).** Contract v17 / lane-
+eligibility schema v6 gives the two `routed_moe` cells the toolchain this
+receipt records (`runtime.vllm 0.28.1rc1.dev397+gfd4a15126.d20260904`,
+`runtime.torch 2.13.0+cu130`, the EUGR digest) and an `evidence` field: the
+batch cell `kl_lower_bound` on §8's prefill top-1024 bound, the decode cell
+`route_only` on §7's census, both with `smoke: repetitive` from the paragraph
+above. The v16 SHA quoted in §10 and §11 is the file these sections were run
+against; the v17 file's raw SHA256 is
+`ba3a3c69027a11f7bf9ef570867c58d608d0865c3e6a17dfeea53ba43ce055e6`.

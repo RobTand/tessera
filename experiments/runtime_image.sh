@@ -8,7 +8,7 @@
 # tag is not a pin: upstream can repoint it, two boxes can hold two builds
 # under it, and every receipt would still record the same four words.  The pin
 # is a digest reference and it lives in ONE place --
-# src/tessera/serving/runtime_contract.json's versions.attested_on.image -- read
+# src/tessera/serving/runtime_contract.json's versions.default_serve_image -- read
 # from here, never copied into a script.  See src/tessera/serving/runtime_image.py
 # for the rule and the RepoDigests-not-.Id trap. Explicit digest references
 # are checked for every repository; other repositories' floating tags remain

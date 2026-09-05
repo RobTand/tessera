@@ -16,6 +16,8 @@ Tessera bytes, so the table travels inside it and a producer reads it through
 from __future__ import annotations
 
 import copy
+from pathlib import Path
+import re
 
 import pytest
 
@@ -28,6 +30,41 @@ from tessera.serving.contract import (
     load_serving_contract,
     validate_serving_contract,
 )
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+#: Placeholder the LAWS table carries for the dense image; the pinning test
+#: resolves it through :func:`_dense_runtime_image` at test time, so a
+#: checkout without ``docs/`` fails one test instead of collection.
+_DENSE_IMAGE_FROM_RECEIPT = "<the image the migration receipt records>"
+
+
+def _dense_runtime_image() -> str:
+    """The vanilla vLLM image the eight dense cells were measured on, read
+    from the receipt that records it rather than copied here: the pin lives
+    in ``runtime_contract.json`` and ``tests/test_runtime_image_pin.py``
+    refuses a second copy of its digest under ``tests/``.  The migration
+    receipt is exempt (it records), so the LAWS table reads it from there."""
+    receipt = ROOT / "docs/measurements/runtime-scope-migration-2026-09-04.md"
+    found = sorted(set(re.findall(r"vllm/vllm-openai@sha256:[0-9a-f]{64}", receipt.read_text())))
+    assert len(found) == 1, found
+    return found[0]
+
+
+def _resolved(laws: dict[str, object]) -> dict[str, object]:
+    runtime = laws["runtime"]
+    if runtime["image"] is _DENSE_IMAGE_FROM_RECEIPT:
+        laws = {**laws, "runtime": {**runtime, "image": _dense_runtime_image()}}
+    return laws
+
+
+#: The toolchain the dense receipts record, verbatim:
+#: ``tessera-window-gemv-served-2026-09-03.md`` :75 and
+#: ``tessera-bf16-route-served-2026-09-02.md`` :39 (vLLM 0.28.0, torch
+#: 2.13.0+cu130).  The v5 global block wrote ``2.13.0`` without the suffix.
+_DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager", "compiled"],
+                  "vllm": "0.28.0", "torch": "2.13.0+cu130"}
 
 #: The eight preserved dense cells the served Tessera receipts cover:
 #: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896), on the E4M3 window wire
@@ -55,6 +92,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     "tessera_e2m1_k2_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
@@ -65,6 +103,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     "tessera_e4m3_k1_dense_sm121_decode_resident": {
         "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
@@ -75,6 +114,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     # THE CELL THE CENSUS BOUGHT.  Before #111 this rung's decode regime
     # published the materialised pair, in every case, on a document whose own
@@ -88,6 +128,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     "tessera_e4m3_k1_dense_sm121_batch_resident": {
         "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
@@ -98,6 +139,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     # TWO LAUNCHES, because the batch regime is every M > 1 forward and not
     # only a first prefill (``contract.CENSUS_PHASE_REGIMES`` says so in its
@@ -117,6 +159,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     "tessera_bf16_k1_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
@@ -127,6 +170,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
     "tessera_bf16_k1_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
@@ -137,6 +181,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
         "predicates": [],
+        "runtime": _DENSE_RUNTIME,
     },
 }
 
@@ -162,7 +207,10 @@ for _regime in ("decode", "batch"):
         "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "predicates": [], "runtime": {
             "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
-            "execution_modes": ["eager"]}}
+            "execution_modes": ["eager"],
+            # docs/measurements/census/lfm25-8b-a1b-served-r4.json ``versions``;
+            # tests/test_lfm_measured_cells.py ties the cells to that receipt.
+            "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
 
 
 @pytest.fixture(scope="module")
@@ -365,7 +413,7 @@ def test_the_cells_are_pinned_field_for_field(contract):
     assert sorted(cells) == sorted(_CELL_LAWS)
     for cell_id, laws in _CELL_LAWS.items():
         got = cells[cell_id]
-        for field, value in laws.items():
+        for field, value in _resolved(laws).items():
             assert got[field] == value, f"{cell_id}.{field}"
 
 

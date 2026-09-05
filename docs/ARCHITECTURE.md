@@ -8,7 +8,7 @@ the code that owns it.
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
 `b83fd17`, CI at `2147909` plus the publish-environment key of #150,
 packaging metadata at `54cd1df` plus the
-version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
+version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v17, lane-eligibility schema v6. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -331,7 +331,8 @@ routed cells attest exactly q256 1024.
 ### 4.4a "The pinned runtime" is a digest, and a harness refuses without it
 
 The pin is one string, `runtime_contract.json`'s
-`versions.attested_on.image`, and it is a digest reference
+`versions.default_serve_image` (schema v6, #131; `versions.attested_on.image`
+before it), and it is a digest reference
 (`vllm/vllm-openai@sha256:...`), not a tag: a tag is a name upstream can
 repoint, so two boxes can hold two builds under it while every receipt
 records the same four words (issue #100). `tessera.serving.runtime_image`
@@ -703,13 +704,50 @@ an exact `image` manifest reference and a nonempty, distinct `execution_modes`
 list (`eager`, `compiled`). Image and execution mode participate in overlap
 and lookup alongside platform, family, structure, token-count regime and
 residency. A missing context or mismatched image/mode is unattested; the global
-`versions.attested_on` image is never an implicit cell fallback. Its existing
+serve-image pin (`versions.attested_on.image` at v5, `versions.default_serve_image`
+since v6) is never an implicit cell fallback. Its existing
 dense pin remains unchanged. The eight dense cells preserve both measured
 execution modes on that pin; the migration receipt records the historical
 headers and their contemporaneous global image binding separately, because
 those older census files did not each record a digest. Existing cell IDs stay
 stable, with an optional hash of canonical runtime scope to distinguish
 disjoint variants; IDs must be unique, and explicit fields decide eligibility.
+
+Lane eligibility schema v6 (contract v17, #131 and #133) makes a cell name
+its own evidence instead of borrowing a global. `versions.attested_on` is
+gone: it did double duty -- the toolchain the contract was written against
+and the runtime the cells were measured on -- and was false for the two
+`routed_moe` cells (measured on the EUGR image under vLLM
+`0.28.1rc1.dev397+gfd4a15126.d20260904`, not `vllm/vllm-openai` under
+0.28.0). Each cell's `runtime` now carries `vllm` and `torch` as its own
+receipt records them, beside the v5 `image` and `execution_modes`
+(`contract.RUNTIME_SCOPE_KEYS` / `RUNTIME_VERSION_KEYS`;
+`cell_runtime_versions` requires the closed object, `cell_runtime_scope`
+stays the census's lenient join reader), and the validator refuses two
+toolchains under one digest. `versions` is closed to `{tessera,
+plugin_entry_point, default_serve_image}` and every field is checked;
+`default_serve_image` is the pin of §4.4a and must be an image some cell
+attests. Every cell also carries a required, closed `evidence` object --
+`{grade, kl: [{kind, top_k, regime, execution_modes, receipt}], smoke:
+{status, receipt}}` (`contract.EVIDENCE_KL_KINDS`, `EVIDENCE_SMOKE_STATUSES`,
+`EVIDENCE_GRADES`, `EVIDENCE_RECEIPT_ROOT`) -- so a gate can read what
+grade of evidence a cell rests on, never prose. The premise this corrects:
+every served KL in this repository, dense and MoE alike, is a `kl_tool`
+top-1024 teacher/student-intersection lower bound, so no cell grades
+`kl_full_vocab`; what separates the cells is the regime the bound was
+scored in, the execution modes, the smoke on record, and the population. A
+`kl` entry must be in the cell's own regime (a prefill bound written into a
+decode cell is refused -- the confusion #133 is about), and `grade` is
+derived from the entries and checked, like `executes`: `route_only` when
+nothing attests quality in the cell's regime, else `kl_lower_bound`, else
+`kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
+every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
+`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
+`routed_moe` cells record a repetitive one. `qualification` is not
+overloaded with the grade; whether a `route_only` `routed_moe` cell should
+stay `device_qualified` is #133's open decision. Receipt existence is
+`tests/test_cell_evidence.py`'s (the wheel ships no docs); the LAWS tables
+are that file and `tests/test_serving_contract.py`.
 
 A cell's `predicates` list narrows the cell to units for which every
 `{fact, op, value}` row holds, and the validator refuses anything outside the
@@ -920,7 +958,13 @@ PrismaQuant's parser pinned `tessera.lane-eligibility.v3` exactly
 (`prismaquant/tessera_runtime_contract.py:120` at its `1eb88c4e`) and refuses
 unknown cell keys, so it fails closed (loudly, not silently) against v4 and
 the v5 this tree publishes until that repository widens it
-(RobTand/prismaquant#189 carries the v5 reader).
+(RobTand/prismaquant#189 carries the v5 reader). Schema v6 (contract v17,
+#131/#133) is not additive either -- `runtime.vllm`/`runtime.torch` and
+`evidence` are new required cell keys and `versions` is renamed -- so the
+RobTand/prismaquant#189 reader must widen once more; the v3 pin fails closed against v6 exactly
+as against v4 and v5, and a reader that took `versions.attested_on` through
+`.get` (`tessera_runtime_contract.py:1168` at `1eb88c4e`) now reads `None`
+there and must move to `default_serve_image` and the per-cell toolchain.
 
 ### 4.5a A served KL names which FORWARD it scored
 

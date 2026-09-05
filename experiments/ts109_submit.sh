@@ -16,7 +16,7 @@
 # other box cannot see, and the worker's closure check would refuse it.
 #
 # WHAT ELSE HAS TO BE ON THE BOX YOU NAME.  The checkout travels; these do not.
-#   * the pinned serve image, by digest (contract ``versions.attested_on.image``)
+#   * the pinned serve image, by digest (contract ``versions.default_serve_image``)
 #   * ``/home/rob/dq-runs/venvs/prismaquant-cu130`` for the driver's python
 #   * ``$SRC/{armA,armB}`` -- ONE inode, which the A/B checks at run start, so
 #     copy armA and re-make armB with ``cp -al`` rather than copying twice

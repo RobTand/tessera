@@ -1,7 +1,7 @@
 """The serve-image pin is a digest, and a mismatch refuses (issue #100).
 
 NOTE ON WHAT IS *NOT* HERE: the digest itself.  The pin lives in exactly one
-place -- ``runtime_contract.json``'s ``versions.attested_on.image`` -- and a
+place -- ``runtime_contract.json``'s ``versions.default_serve_image`` -- and a
 test that repeated the 64-hex string would be the second copy the whole design
 exists to avoid: it would pass while the pin was wrong, and it would have to be
 edited every time the runtime is re-attested.  These tests pin the RULE (the
@@ -114,7 +114,7 @@ def test_the_pin_is_the_contract_field_and_nothing_else_holds_it():
 def test_a_tag_in_the_contract_is_refused_rather_than_honoured():
     """The gate must not be able to become vacuous by a contract edit."""
     tagged = json.loads(json.dumps(CONTRACT))
-    tagged["versions"]["attested_on"]["image"] = "vllm/vllm-openai:latest"
+    tagged["versions"]["default_serve_image"] = "vllm/vllm-openai:latest"
     with pytest.raises(RuntimeImageError, match="not a digest reference"):
         pinned_reference(tagged)
 

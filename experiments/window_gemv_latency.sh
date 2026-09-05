@@ -49,7 +49,8 @@ VLLM_CACHE=${VLLM_CACHE:-$RUNS/vllm-cache-lat-$ARM}
 # The pin, not a floating tag.  This wrapper and the gate that requires it
 # landed on two branches that never saw each other, so `latest` survived a
 # merge into a tree whose contract had already replaced it with a digest
-# (contract v10, `versions.attested_on.image`).  A latency number is a claim
+# (contract v10, `versions.attested_on.image`; `versions.default_serve_image`
+# since contract v17).  A latency number is a claim
 # about a runtime, and a claim about a runtime is attested (principle 14):
 # `latest` names whichever image the box last pulled.
 source "$(dirname "$0")/runtime_image.sh"
