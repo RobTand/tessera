@@ -327,6 +327,61 @@ def test_reader_fails_closed_on_an_unknown_trellis():
         read_unit_artifact(serialize(forged, region))
 
 
+def _blob_with_alphabet_corrupted(corrupt):
+    """A byte-self-consistent artifact whose ALPHABET plane was rewritten by
+    ``corrupt(alphabet_bytes)`` at build time -- hashes, descriptors and the
+    terminal all agree with the corrupted bytes, so only *semantic* validation
+    can refuse it.  The mixed 2/3 schedule puts two rates on the plane."""
+    import tessera.unit_artifact as unit_artifact
+
+    _, unit = _unit(diagonals=False)
+    real = unit_artifact._forest_planes
+
+    def planes(rates, forests):
+        alphabet, descendant = real(rates, forests)
+        return corrupt(alphabet), descendant
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(unit_artifact, "_forest_planes", planes)
+        _, _, blob = build_unit_artifact(
+            unit, "alphabet-contradiction", FORESTS, 640, CODE, fixture_id=None
+        )
+    return blob
+
+
+@pytest.mark.parametrize("corrupt, shape", [
+    # Every byte outside the 16-code grid -- the audit's case (tessera#209).
+    (lambda a: bytes(0xFF for _ in a), "out-of-grid"),
+    # Every byte a legal grid code, but the first two anchors swapped: only a
+    # reader that checks ALPHABET against the DESCENDANT tree roots sees it.
+    (lambda a: bytes([a[1], a[0]]) + a[2:], "in-grid contradiction"),
+])
+def test_the_alphabet_plane_is_read_not_just_skipped(corrupt, shape):
+    """tessera#209: ``_read_forest_planes`` sliced only DESCENDANT and stepped
+    ``a_off`` past ALPHABET without reading a byte, so an artifact whose
+    ALPHABET plane contradicted its own descendant forest was accepted -- with
+    all hashes agreeing -- and decoded exactly as if the plane said what it
+    should.  The plane declares the anchors; the wire grammar is closed, so
+    two authoritative descriptions of one forest must not be allowed to
+    disagree."""
+    blob = _blob_with_alphabet_corrupted(corrupt)
+    with pytest.raises(GrammarError, match="ALPHABET"):
+        read_unit_artifact(blob)
+
+
+def test_a_short_alphabet_plane_still_refuses_by_the_totals_not_a_crash():
+    """A manifest may declare an ALPHABET extent smaller than the schedule
+    needs, so a *short* slice can reach the per-rate loop.  That case has its
+    own refusal -- the exact plane-totals check -- and the anchor-agreement
+    gate must fall through to it: a prefix-agreeing truncation must not turn
+    the mismatch reporter into an unnamed IndexError."""
+    import tessera.unit_artifact as unit_artifact
+
+    alphabet, descendant = unit_artifact._forest_planes((2, 3), FORESTS)
+    with pytest.raises(GrammarError, match="forest planes hold"):
+        unit_artifact._read_forest_planes((2, 3), alphabet[:-1], descendant)
+
+
 @pytest.mark.parametrize("q256,released", [(640, 0), (768, 2000), (256, 500)])
 def test_wire_round_trip_without_diagonals(q256, released):
     """The *recommended* recipe has segment 2a off, so it is the configuration
