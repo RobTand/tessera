@@ -73,6 +73,16 @@ hash/size, logical path and generated filename fingerprint must all agree.
 Other closure-looking tracked files remain source. Original-head and dirty
 stamps are never substituted for the actual source hash. Post-materialization
 dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
+identity above its first import of the code under test and the publication is
+bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
+rather than attesting a tree nothing tested. Under `-n`, each worker reports
+its own entry-bound identity through xdist's `workeroutput` and the
+controller's population is `unknown` unless every executing process agrees with
+it -- the controller runs no tests, so its own hash describes its filesystem
+until they do. The `tessera.suite_source.v1` receipt string is unchanged: the
+span and worker fields are additive, and `verified` became harder to earn, never
+easier.
 The merge receipt keeps raw commit agreement and effective-source agreement
 separate; legacy populations cannot establish the latter. Population pass
 counts alone still do not establish a same-source merge check.

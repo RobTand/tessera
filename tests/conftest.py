@@ -10,6 +10,23 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+CHECKOUT = Path(__file__).resolve().parents[1]
+
+from tessera._dev.suite_source import agreed_source, measured_source  # noqa: E402
+
+#: The source identity of the tree this session is about to import, captured
+#: HERE -- above the first import of the code under test, and therefore before
+#: any of it is in memory.  Sampling it at the terminal summary instead named
+#: whatever the checkout held when the run ENDED: a shared tree fast-forwarded
+#: cleanly mid-run publishes a verified identity for a tree nothing tested,
+#: because Python keeps the modules it already imported (#219).
+SOURCE_AT_ENTRY = measured_source(CHECKOUT)
+
+#: What each xdist worker said its own source was.  The controller writes the
+#: population and executes nothing, so its hash describes its filesystem until
+#: the processes that did the running agree with it.
+_WORKER_SOURCES: dict = {}
+
 import box_artifacts  # noqa: E402 -- the one home for out-of-tree roots
 
 from tessera.container import serialize  # noqa: E402
@@ -464,7 +481,40 @@ def pytest_report_header(config):
     return lines
 
 
+def published_source_identity(root=None):
+    """The identity this run may attest, bound to the run and to its workers.
+
+    Two questions, both of which used to be answered by hashing the tree at
+    the end and hoping: did the source move while this session was running
+    (bound to ``SOURCE_AT_ENTRY``), and did the processes that actually
+    executed the tests measure the same one (``agreed_source``).
+    """
+
+    return agreed_source(
+        measured_source(root or CHECKOUT, entry=SOURCE_AT_ENTRY),
+        _WORKER_SOURCES)
+
+
+def pytest_testnodedown(node, error):
+    """Controller-side: keep the source identity that worker reported.
+
+    ``workeroutput`` is xdist's own channel back from the process that ran the
+    tests, which is the only process whose source identity is a fact about the
+    execution rather than about a filesystem.
+    """
+
+    output = getattr(node, "workeroutput", None) or {}
+    name = getattr(getattr(node, "gateway", None), "id", None) or str(node)
+    _WORKER_SOURCES[name] = output.get("tessera_source_identity")
+
+
 def pytest_sessionstart(session):
+    # A worker ships this back to the controller with its report; set it as
+    # early as possible, because xdist sends `workeroutput` on its own hook
+    # and this must already be in the dict by then.
+    workeroutput = getattr(session.config, "workeroutput", None)
+    if workeroutput is not None:
+        workeroutput["tessera_source_identity"] = SOURCE_AT_ENTRY
     # xdist workers inherit the controller's verdict; one refusal, not one per
     # worker.
     if hasattr(session.config, "workerinput"):
@@ -691,11 +741,17 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
     """
 
     import json
-    from tessera._dev.suite_source import measured_source
 
     worker = _worker_id(config)
     if worker:
         path = path.with_name(f"{path.stem}.{worker}{path.suffix}")
+    identity = published_source_identity()
+    workeroutput = getattr(config, "workeroutput", None)
+    if workeroutput is not None:
+        # The worker's own entry-bound identity, replacing the entry identity
+        # it published at session start: a worker whose source moved under it
+        # says so to the controller too, not only in its own share.
+        workeroutput["tessera_source_identity"] = identity
 
     stats = terminalreporter.stats
     payload = {
@@ -712,7 +768,7 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
         "worker_id": worker,
         "xdist_workers": _worker_count(config),
         "commit": _measured_commit(),
-        "source_identity": measured_source(Path(__file__).resolve().parents[1]),
+        "source_identity": identity,
         "cuda": present,
         "device": detail,
         "strict_cuda": _strict_cuda(config),
