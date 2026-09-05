@@ -461,6 +461,25 @@ own refusals of the same fields (`lane_planes`, `kernel_window`,
 -- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
 the refusal through each consumer on real wire bytes.
 
+The **slicing capability API** owes the same answer, and since tessera#304 it
+gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+cut", so the refusals that are properties of the *unit* rather than of the cut
+-- an `R_in`-only rotation, whose column blocks a cut would break into pieces
+that decode to plausible wrong weights, and a scale block that straddles two
+output rows -- live in one predicate, `slicing._unsliceable_reason`, which
+`can_shard` returns `False` from and `slice_unit` raises verbatim. Neither is
+expressible as a granularity: they refuse *every* cut, the identity slice
+included, so `shard_granularity` reports the arithmetic granularity of a unit
+the predicate has already admitted. tessera#235 aligned the two on block
+geometry and left rotation answered only in the cutter, so `can_shard` reported
+a rotated artifact cuttable on both axes while `slice_unit` had always refused
+it -- a capability answer a producer or operator could not act on. The
+predicate takes the three facts every view carries (rotation state, block
+width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
+one answer. Unrotated capability and shard reconstruction are unchanged. If
+rotated slicing is ever implemented, both paths move together and its complete
+reconstruction semantics are proved with them.
+
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 
 The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
