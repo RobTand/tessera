@@ -44,6 +44,7 @@ __all__ = [
     "hadamard_block",
     "apply_rotation",
     "undo_rotation",
+    "rotation_block_for",
     "diagonal_bits",
 ]
 
@@ -240,6 +241,25 @@ def _block_size(columns: int, cap: int = 128) -> int:
     while size * 2 <= cap and columns % (size * 2) == 0:
         size *= 2
     return size
+
+
+def rotation_block_for(state: RotationState, columns: int) -> int:
+    """The rotation block a ``columns``-wide artifact carries: derived, never
+    stored.
+
+    The wire has no rotation-block field, so writer and reader must agree on
+    it as a pure function of what the wire does carry -- the rotation state
+    and the geometry's width.  This is ``apply_rotation``'s own default
+    (``_block_size``: the largest power of two dividing the width, capped at
+    128) stated once, read by ``unit_artifact``'s writer to refuse any unit
+    rotated at a block the wire cannot represent, and by both body parsers to
+    rebuild the block instead of assuming 128 (tessera#210 -- below 128
+    columns the assumption was a reshape error in the reader; elsewhere it
+    substituted a rotation the encoder never applied).
+    """
+    if state is RotationState.NONE:
+        return 1
+    return _block_size(columns)
 
 
 def apply_rotation(

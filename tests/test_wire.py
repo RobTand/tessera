@@ -166,6 +166,64 @@ def test_wire_round_trip_is_exact(q256, released):
     assert torch.equal(read_unit_artifact(blob), reference)
 
 
+@pytest.mark.parametrize("cols", [32, 64, 96, 128, 256])
+def test_a_rotated_unit_round_trips_at_every_column_width(cols):
+    """tessera#210: the wire carries no rotation-block field, so the reader
+    must re-derive the block from the same canonical rule the encoder used
+    (largest power of two dividing the width, capped at 128) instead of
+    assuming 128.  Below 128 columns the assumption was a reshape error; at a
+    non-power-of-two multiple it substituted a rotation the encoder never
+    applied."""
+    from tessera.manifest import RotationState
+
+    torch.manual_seed(3)
+    weights = torch.randn(8, cols) * 0.02
+    unit = encode_unit(
+        weights, {3: FORESTS[3]}, (3,) * cols, CODE,
+        rotation=RotationState.R_IN_ONLY, scale_refit=0,
+    )
+    reference = reconstruct_unit(unit, FORESTS[3], CODE)
+    _, _, blob = build_unit_artifact(unit, "unit0", {3: FORESTS[3]}, 768, CODE)
+    assert torch.equal(read_unit_artifact(blob), reference)
+
+
+def test_a_rotated_window_body_round_trips_below_the_hadamard_cap():
+    """The window parser rebuilt rotation_block=128 unconditionally too; the
+    rule is one rule for both body encodings (tessera#210)."""
+    from tessera.alphabet import E2M1_GRID
+    from tessera.manifest import BodyKind, RotationState
+
+    torch.manual_seed(4)
+    weights = torch.randn(8, 64) * 0.02
+    unit = encode_unit(
+        weights, E2M1_GRID, (3,) * 64, CODE, body=BodyKind.WINDOW,
+        window_bits=6, rotation=RotationState.R_IN_ONLY, scale_refit=1,
+    )
+    assert unit.rotation_block == 64
+    reference = reconstruct_unit(unit, E2M1_GRID, None)
+    _, _, blob = build_unit_artifact(unit, "unit0", E2M1_GRID, 768, CODE)
+    assert torch.equal(read_unit_artifact(blob), reference)
+
+
+def test_the_writer_refuses_a_rotation_block_the_wire_cannot_carry():
+    """The block is derived, never stored: a unit rotated at any other block
+    would read back under a substituted rotation and decode to plausible
+    wrong weights, so the writer refuses it by name (tessera#210)."""
+    import dataclasses
+
+    from tessera.manifest import RotationState
+
+    torch.manual_seed(5)
+    weights = torch.randn(8, 64) * 0.02
+    unit = encode_unit(
+        weights, {3: FORESTS[3]}, (3,) * 64, CODE,
+        rotation=RotationState.R_IN_ONLY, scale_refit=0,
+    )
+    bad = dataclasses.replace(unit, rotation_block=32)
+    with pytest.raises(GrammarError, match="rotation_block"):
+        build_unit_artifact(bad, "unit0", {3: FORESTS[3]}, 768, CODE)
+
+
 def test_reader_takes_bytes_and_nothing_else():
     """No forests, no scale tensor, no ConvCode passed alongside.  If the
     reader needed the encoder's context the format would not be a format."""
