@@ -174,3 +174,17 @@ def test_a_compliant_passthrough_export_still_publishes(tmp_path, monkeypatch):
     out = _run(tmp_path, monkeypatch, {name: _tensor(32, 32, 0)},
                {name: "PASSTHROUGH"}, "--layers", "0")
     assert (out / "config.json").exists()
+
+
+def test_the_manifest_records_the_plan_content_not_only_its_path(tmp_path, monkeypatch):
+    """The merged path seals options.plan into export_identity; the direct
+    manifest stored only a pathname, so a later sidecar check without
+    --plan-json could not recover the obligation (#211).  The content rides
+    in the manifest beside the path."""
+    name = BODY + "0.mlp.down_proj.weight"
+    plan = {name: "PASSTHROUGH"}
+    out = _run(tmp_path, monkeypatch, {name: _tensor(32, 32, 0)}, plan,
+               "--layers", "0")
+    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    assert manifest["plan"] == plan
+    assert manifest["plan_json"] is not None

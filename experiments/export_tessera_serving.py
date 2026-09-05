@@ -2033,6 +2033,11 @@ def main():
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
+        # The plan CONTENT, not only its pathname: the merged path seals
+        # options.plan into export_identity, and a direct export used to
+        # record a path that may not outlive the run, so a later sidecar
+        # check without --plan-json could not recover the obligation (#211).
+        "plan": json.loads(args.plan_json.read_text()) if args.plan_json else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
         # What the SERVING gate decided, in the artifact rather than in a shell
