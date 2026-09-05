@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T17:24:33Z",
+ "generated": "2026-09-05T18:35:39Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -340,7 +340,7 @@
     "title": "A pool job that holds no GPU slot can still see and use CUDA"
    },
    "175": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "CI cannot install the now-required private Tessera package"
    },
    "176": {
@@ -483,9 +483,25 @@
     "state": "OPEN",
     "title": "tests: bound the cluster-campaign waits by producer liveness, not the clock"
    },
+   "207": {
+    "state": "CLOSED",
+    "title": "pq-decisions: #175 receipt (no token needed), #87 reopened + driver replays the candidate decision"
+   },
+   "208": {
+    "state": "OPEN",
+    "title": "#87 first paired quantized campaign: Qwen3-0.6B BF16 control vs native NVFP4 on Sparky, one exclusive action, accept = 0 newly-broken pairs on screen and held-out"
+   },
+   "209": {
+    "state": "OPEN",
+    "title": "[P2] Stop swallowing the dead-vendored-override refusal at the remaining 22 call sites (#202)"
+   },
    "21": {
     "state": "CLOSED",
     "title": "Allocator: opt-in gate_up/down role split, hard-gated on per-role serving-profile support"
+   },
+   "210": {
+    "state": "OPEN",
+    "title": "[P3] Two homes for text-only staging: stage_text_only and stage_text_only_under_work_root duplicate the default strip-key list"
    },
    "22": {
     "state": "CLOSED",
@@ -1654,7 +1670,7 @@
     "title": "Post-merge audit prose batch; FUSED_INPUT_SCALE_ULP is declared policy (#283)"
    },
    "285": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] build_forest on the 65536-value / arity-2 serialisable grids reached ~73 GB RSS; cell and allocation not characterised"
    },
    "286": {
@@ -1682,7 +1698,7 @@
     "title": "[P1] conftest's xdist-only pytest_testnodedown hook breaks collection without xdist; CI 'pure' job red since 23288e1"
    },
    "291": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Finalize each worker source identity before xdist sends workerfinished"
    },
    "292": {
@@ -1698,7 +1714,7 @@
     "title": "[P1] Require a real producer and established attempt binding before adopting resumed exit status"
    },
    "295": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Refuse explicit convolutional codes the artifact reader cannot recover at write time"
    },
    "296": {
@@ -1710,7 +1726,7 @@
     "title": "Window GEMV plan sharing accepts incompatible rate layouts and can overrun packed words"
    },
    "298": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Explicit toolkit selection after torch import does not update the compiler the native loaders use"
    },
    "299": {
@@ -1730,7 +1746,7 @@
     "title": "[P1] Bind legacy shard assembly to the source checkpoint and fulfilled plan"
    },
    "301": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Keep one plan snapshot from export planning through publication"
    },
    "302": {
@@ -1742,7 +1758,7 @@
     "title": "[P1] Dense TP loading mistakes an undersized wire for a replicated layer when global shape is ignored"
    },
    "304": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] can_shard reports rotated artifacts as cuttable although slice_unit always refuses them"
    },
    "305": {
@@ -1762,16 +1778,64 @@
     "title": "Make the promotion legs a property of the promotion, not of its factory"
    },
    "309": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] pure CI job red on master: six test bodies in torch-free modules reach torch"
    },
    "31": {
     "state": "CLOSED",
     "title": "serving/config.py's MoE refusal recommends a flag the pinned build refuses"
    },
+   "310": {
+    "state": "CLOSED",
+    "title": "Skip, not fail, the six torch-reaching bodies the torch-free collector admits"
+   },
+   "311": {
+    "state": "CLOSED",
+    "title": "Decide the two parked policy items: keep tessera_gemm's strided-x copy (documented), no sidecar rotation field"
+   },
+   "312": {
+    "state": "CLOSED",
+    "title": "ts-285: BF16 R=11 is the 73 GB build_forest cell; refuse a forest no wire can carry"
+   },
+   "313": {
+    "state": "CLOSED",
+    "title": "contract v21: record a routed-MoE greedy smoke the BF16 source does not degenerate on (prismaquant#198)"
+   },
+   "314": {
+    "state": "CLOSED",
+    "title": "Finalize each worker's source identity before xdist sends workerfinished (#291)"
+   },
+   "315": {
+    "state": "CLOSED",
+    "title": "Keep one plan snapshot from export planning through publication (#301)"
+   },
+   "316": {
+    "state": "CLOSED",
+    "title": "Adopt an explicit CUDA toolkit into the global the build reads (#298)"
+   },
+   "317": {
+    "state": "OPEN",
+    "title": "[P1] Two files with one canonical module name: the shadowed file gets no graph node and no edges"
+   },
+   "318": {
+    "state": "CLOSED",
+    "title": "ts-wire: refuse unreadable convolutional codes at write (#295); one sliceability predicate (#304)"
+   },
+   "319": {
+    "state": "OPEN",
+    "title": "experiments: refuse unclassified screen arms (#299) and join the standalone stock A-side scale (#305)"
+   },
    "32": {
     "state": "CLOSED",
     "title": "plan_shard refuses replicated-KV QKV under GQA when tp_size > num_kv_heads"
+   },
+   "320": {
+    "state": "OPEN",
+    "title": "serving: plan a TP shard from the layer's contract, not the tile's shape (#303)"
+   },
+   "321": {
+    "state": "OPEN",
+    "title": "Selector: three under-selections in tools/impacted_tests.py (#292, #293, #317)"
    },
    "33": {
     "state": "CLOSED",
