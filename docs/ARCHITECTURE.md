@@ -8,7 +8,8 @@ the code that owns it.
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
-base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
+base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,
+RELEASE cut capability correction #350; CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
 prismaquant#198), lane-eligibility schema v9; whole-unit RELEASE rewrite
@@ -836,9 +837,20 @@ a rotated artifact cuttable on both axes while `slice_unit` had always refused
 it -- a capability answer a producer or operator could not act on. The
 predicate takes the three facts every view carries (rotation state, block
 width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
-one answer. Unrotated capability and shard reconstruction are unchanged. If
-rotated slicing is ever implemented, both paths move together and its complete
-reconstruction semantics are proved with them.
+one answer. This shared refusal preserves otherwise admissible unrotated cuts
+and their reconstruction. If rotated slicing is ever implemented, both paths
+move together and its complete reconstruction semantics are proved with them.
+
+RELEASE also constrains the **requested column window** (#350), through one
+`slicing._release_cut_reason` shared by `can_shard` and `_slice_release`.
+A released parent with a partial trailing superblock, such as 384 or 640
+columns at a 256-column superblock, is refused for full-width row cuts and
+the identity cut: its retained width is neither a union of complete
+superblocks nor inside one. It remains possible to cut complete superblocks
+or the final partial block on its own, so `unsliceable_reason` stays `None`.
+The capability check applies this restriction after granularity, on the
+column width each rank would retain; encoded, parsed and manifest views
+read the same rule. An unreleased parent keeps its row-cut capability.
 
 **And the refusal carries the reason, not a remedy that cannot exist** (#329).
 Aligning the predicate moved the rotated population from `slice_unit`'s raise

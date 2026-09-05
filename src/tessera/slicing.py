@@ -181,7 +181,7 @@ def _unsliceable_reason(rotation, block, columns) -> "str | None":
       planes are indexed ``(row * cols + col) // block``, so when the block does
       not divide the width no rectangle of the weight is a run of the plane.
 
-    ``can_shard`` returns ``False`` exactly when this returns a sentence and
+    ``can_shard`` returns ``False`` when this returns a sentence and
     ``slice_unit`` raises exactly that sentence, so the capability API cannot
     promise a cut the cutter refuses.  That is the whole content of tessera#235
     -- and tessera#304, which found rotation still answered in only one of the
@@ -276,13 +276,19 @@ def _manifest_granularity(manifest):
     arity = geometry.rows * geometry.columns // (geometry.columns * _steps_of(manifest))
     row = arity * (manifest.span if manifest.body is BodyKind.TCQ else 1)
     col = 1 if block is None else block
-    released = max(
-        terminal.plane_elements[manifest.plane_order.index(PlaneKind.RELEASE)]
-        for terminal in manifest.terminals
-    )
-    if len(set(manifest.rates)) > 1 or released:
+    if len(set(manifest.rates)) > 1 or _released_positions(manifest):
         col = _lcm(col, geometry.superblock_columns)
     return row, col
+
+
+def _released_positions(unit) -> int:
+    """The release extent used by the capability checks, from either view."""
+    from .manifest import Manifest
+
+    if isinstance(unit, Manifest):
+        index = unit.plane_order.index(PlaneKind.RELEASE)
+        return max(terminal.plane_elements[index] for terminal in unit.terminals)
+    return unit.released_positions
 
 
 def _steps_of(manifest) -> int:
@@ -346,7 +352,10 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
     second reading of the same wire: the granularity below is the one
     ``slice_unit`` measures its offsets against, and the refusals that do not
     depend on the cut -- rotation and a straddling scale block -- come from
-    ``_unsliceable_reason``, the sentence ``slice_unit`` raises.  A predicate
+    ``_unsliceable_reason``, the sentence ``slice_unit`` raises. RELEASE's
+    column-window check is shared with ``_slice_release`` too: a row split
+    retains the full width, which may include a partial trailing superblock
+    the release cutter cannot retain (tessera#350). A predicate
     that answered ``True`` where the cutter raises is worse than no predicate
     -- the loader asks first precisely so it can name a
     ``tensor_parallel_size`` in the refusal (tessera#235); rotation was the
@@ -363,7 +372,13 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
         return False
     row_gran, col_gran = shard_granularity(unit, superblock, arity)
     extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
-    return extent % tp == 0 and (extent // tp) % granularity == 0
+    if extent % tp or (extent // tp) % granularity:
+        return False
+    width = cols if axis == "row" else cols // tp
+    # Equal column shards have identical widths and, with RELEASE present,
+    # the granularity above aligns every offset to a superblock. Checking the
+    # first window therefore covers every rank; row shards retain all columns.
+    return _release_cut_reason(_released_positions(unit), 0, width, superblock) is None
 
 
 def _slicing_facts(unit, superblock: int, arity: int):
@@ -380,6 +395,7 @@ def _slicing_facts(unit, superblock: int, arity: int):
 
     if isinstance(unit, Manifest):
         rows, cols = unit.geometry.rows, unit.geometry.columns
+        superblock = unit.geometry.superblock_columns
         kind = unit.scale_plane.kind
         block = (
             None
@@ -405,8 +421,8 @@ def unsliceable_reason(unit, superblock: int = 256, arity: int = 1) -> "str | No
     returns ``False`` for two quite different populations: a unit no cut of
     which is expressible at all (rotation, a straddling scale block --
     :func:`_unsliceable_reason`), and a unit whose wire is fine but whose
-    *granularity* does not divide the requested split.  Only the second has a
-    ``tensor_parallel_size`` remedy, and a caller that could not tell them
+    requested geometry or *granularity* is unsupported. Only the second can
+    have a different-cut remedy, and a caller that could not tell them
     apart offered a divisor for a unit no divisor can cut (tessera#329).
 
     Takes the same three shapes of argument ``can_shard`` does and reads them
@@ -788,6 +804,22 @@ def _slice_block_plane(plane, rows, columns, block, r0, r1, c0, c1, name):
     return field[r0:r1, c0 // block : c1 // block].reshape(-1).contiguous()
 
 
+def _release_cut_reason(released: int, c0: int, c1: int, superblock: int) -> "str | None":
+    """The RELEASE window restriction shared by capability and the cutter.
+
+    This is a property of the requested columns, not of the whole unit:
+    a released partial-tail parent can still yield whole-superblock cuts.
+    """
+    width = c1 - c0
+    if released and (c0 % superblock or (width % superblock and width > superblock)):
+        return (
+            f"a unit with {released} released positions cuts "
+            f"only on superblock boundaries: columns [{c0}, {c1}) is neither a "
+            f"union of {superblock}-column superblocks nor inside one"
+        )
+    return None
+
+
 def _slice_release(unit, rows, columns, r0, r1, c0, c1, superblock):
     """Restrict the RELEASE plane, and report the shard's per-superblock counts.
 
@@ -805,16 +837,12 @@ def _slice_release(unit, rows, columns, r0, r1, c0, c1, superblock):
     if unit.release_index.numel() == 0:
         return empty, empty, ()
     width = c1 - c0
-    if c0 % superblock or (width % superblock and width > superblock):
-        raise GrammarError(
-            f"a unit with {unit.release_index.numel()} released positions cuts "
-            f"only on superblock boundaries: columns [{c0}, {c1}) is neither a "
-            f"union of {superblock}-column superblocks nor inside one"
-        )
-    # The guard above admits only widths where the ceiling and the floor agree
-    # -- a union of whole superblocks, or a cut inside one -- so this is the
-    # same number either way; it counts through ``grammar`` so the shard path
-    # and the whole-unit path can never drift apart.
+    reason = _release_cut_reason(unit.release_index.numel(), c0, c1, superblock)
+    if reason is not None:
+        raise GrammarError(reason)
+    # The guard admits whole superblocks or a prefix inside one block: the
+    # count is width // superblock in the first case and one in the second.
+    # Count through ``grammar`` so the shard and whole-unit paths agree.
     blocks = superblock_count(width, superblock)
     flat = unit.release_index.long()
     row = flat // columns
