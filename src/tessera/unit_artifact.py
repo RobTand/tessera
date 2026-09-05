@@ -607,7 +607,12 @@ def build_unit_artifact(
         # Refuse where the bytes are decided (tessera#229): a zero, negative
         # or non-finite factor decodes finite weights to zero or NaN, and the
         # artifact would stay well-formed while doing it.  The rule and its
-        # message live with the transform (``diagonals``).
+        # message live with the transform (``diagonals``), and the rule
+        # includes the dtype: the pair is FP16 words already, so the cast
+        # inside ``pack_fp16`` is the identity here and the bytes are the
+        # factors the encoder balanced with (tessera#286 -- a wider pair
+        # used to pass on its own values and store inf, zero or a rounded
+        # word).
         from .diagonals import require_invertible_diagonals
 
         require_invertible_diagonals(unit.diagonals)

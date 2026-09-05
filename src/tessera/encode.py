@@ -2412,6 +2412,10 @@ def encode_unit(
     # silently breaks the slice-equals-whole property ``compensate.py`` relies
     # on to be preprocessing rather than surgery.  Passing the whole matrix's
     # fit in is how a compensated encode stays reproducible from its target.
+    # A supplied pair is FP16 words, exactly what the wire will carry:
+    # ``apply_diagonals`` below refuses a wider dtype by field name, so the
+    # factors this encode balances with, reports ``sse`` against and returns
+    # on the unit are the bytes the writer packs (tessera#286).
     if diagonals is not None and with_diagonals:
         raise GrammarError(
             "with_diagonals=True fits its own; pass one or the other, not both"
