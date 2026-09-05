@@ -127,6 +127,8 @@ __all__ = [
     "CONTRACT_SCHEMA",
     "PAYLOAD_FAMILY_BY_ROUTE",
     "LANE_ELIGIBILITY_SCHEMA",
+    "EVIDENCE_PAYLOAD_RELATIONS",
+    "EVIDENCE_WEIGHT_ERROR_RELATIONS",
     "FORMAT_KIND",
     "REQUIRES_PLUGIN",
     "contract_path",
@@ -147,7 +149,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v7"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v8"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -234,6 +236,11 @@ EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab")
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
+
+#: Schema v8 (#198) scopes historical evidence to the encoder that wrote it.
+#: These comparisons describe one named unit in weight space, never served KL.
+EVIDENCE_PAYLOAD_RELATIONS = ("identical", "different")
+EVIDENCE_WEIGHT_ERROR_RELATIONS = ("lower", "equal", "higher")
 
 #: A smoke's CONTROL (schema v7, #195): the reference the same prompt was run
 #: against, so a consumer can tell "this route degenerates" from "this prompt
@@ -1286,6 +1293,46 @@ def derive_smoke_attribution(smoke: Mapping[str, Any]) -> str:
     return "not_shared_with_reference"
 
 
+def _evidence_artifact(payload: Any, where: str) -> dict[str, Any] | None:
+    """A historical artifact and a scoped re-encode screen, or no record.
+
+    Null means no encoder-reproduction evidence was recorded. It does not
+    mean the current encoder reproduces any of the cell's served artifacts.
+    A non-null record describes only the named commit and unit; it is not an
+    assertion about every unit or about whatever encoder a future tag ships.
+    """
+    if payload is None:
+        return None
+    _require_keys(payload, where, required={"id", "encoder_commit", "reencode"})
+    artifact_id = payload["id"]
+    if (not isinstance(artifact_id, str) or not artifact_id
+            or "\\" in artifact_id or any(c.isspace() for c in artifact_id)
+            or any(p in ("", ".", "..") for p in artifact_id.split("/"))):
+        raise ValueError(f"{where}.id must be a portable relative artifact identifier")
+    reencode = payload["reencode"]
+    spot = f"{where}.reencode"
+    _require_keys(reencode, spot, required={
+        "encoder_commit", "unit", "payload", "metric", "weight_error", "receipt"})
+    for record, at in ((payload, where), (reencode, spot)):
+        commit = record["encoder_commit"]
+        if not isinstance(commit, str) or re.fullmatch(r"[0-9a-f]{40}", commit) is None:
+            raise ValueError(f"{at}.encoder_commit must be a full lowercase Git SHA-1")
+    unit = reencode["unit"]
+    if not isinstance(unit, str) or not unit.strip():
+        raise ValueError(f"{spot}.unit must name the single unit compared")
+    if reencode["payload"] not in EVIDENCE_PAYLOAD_RELATIONS:
+        raise ValueError(f"{spot}.payload must be one of {EVIDENCE_PAYLOAD_RELATIONS}")
+    if reencode["metric"] != "weight_sse":
+        raise ValueError(f"{spot}.metric must be 'weight_sse'; this screen is not served KL")
+    if reencode["weight_error"] not in EVIDENCE_WEIGHT_ERROR_RELATIONS:
+        raise ValueError(f"{spot}.weight_error must be one of {EVIDENCE_WEIGHT_ERROR_RELATIONS}")
+    if reencode["payload"] == "identical" and reencode["weight_error"] != "equal":
+        raise ValueError(f"{spot}.weight_error must be 'equal' for an identical payload")
+    _require_receipt_path(reencode["receipt"], spot)
+    return {"id": artifact_id, "encoder_commit": payload["encoder_commit"],
+            "reencode": dict(reencode)}
+
+
 def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                   regimes: Any = None) -> dict[str, Any]:
     """The parsed ``evidence`` a cell states, or raise (#133).
@@ -1297,13 +1344,17 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
     written into a decode cell is the confusion this field exists to refuse),
     ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
-    a repository path.  ``smoke`` is ``{status, receipt}`` with ``status``
+    a repository path. ``smoke`` is ``{status, receipt, attribution, control}`` with ``status``
     from :data:`EVIDENCE_SMOKE_STATUSES` and a receipt exactly when a smoke
-    was recorded.  ``grade`` must equal :func:`derive_evidence_grade`.
+    was recorded. ``artifact`` is null when no encoder comparison was
+    recorded, otherwise the historical artifact and its single-unit screen.
+    It never contributes to ``grade``, which must equal
+    :func:`derive_evidence_grade`.
     """
     payload = cell.get("evidence")
     at = f"{where}.evidence"
-    _require_keys(payload, at, required={"grade", "kl", "smoke"})
+    _require_keys(payload, at, required={"grade", "kl", "smoke", "artifact"})
+    artifact = _evidence_artifact(payload["artifact"], f"{at}.artifact")
     grade = payload["grade"]
     if grade not in EVIDENCE_GRADES:
         raise ValueError(f"{at}.grade {grade!r} is not one of {list(EVIDENCE_GRADES)}")
@@ -1419,7 +1470,7 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         raise ValueError(
             f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
             "off the entries, never asserted beside them")
-    return {"grade": grade, "kl": parsed_kl,
+    return {"grade": grade, "kl": parsed_kl, "artifact": artifact,
             "smoke": {"status": status, "receipt": smoke_receipt,
                       "attribution": attribution, "control": parsed_control}}
 

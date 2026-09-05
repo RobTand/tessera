@@ -1,0 +1,68 @@
+{
+  "schema": "tessera.encoder-evidence-screen.v1",
+  "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
+  "checkpoint": "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
+  "source": "/home/rob/models/Qwen3-0.6B/model.safetensors",
+  "target": "model.layers.0.mlp.down_proj",
+  "source_tensor_sha256": "01cc5c354c8ac9cf4917157d74beceb0b3ce3f38d9bdec271ae691bded0b2e3b",
+  "source_dtype": "torch.bfloat16",
+  "shape": [
+    1024,
+    3072
+  ],
+  "config_sha256": "a7c2bf6954d29fce876ebc993f13862179bc9160ff2ca38d52be088dd3691c2d",
+  "scheme": {
+    "family": "TESSERA_FP8",
+    "grid": "E4M3",
+    "body": "WINDOW",
+    "plane": "CHANNEL",
+    "q256": 1024,
+    "rows": 1024,
+    "columns": 3072,
+    "wire_bytes": 1592064,
+    "roles": [
+      [
+        "down_proj",
+        1024
+      ]
+    ]
+  },
+  "encoding": "encode_linear_planes defaults; no Hessian; verify=True",
+  "metric": "sum((read_unit_artifact(blob) - source_weight)**2), float64 reduction",
+  "source_energy": 2165.9749716594874,
+  "arms": {
+    "historical": {
+      "blob_sha256": "2378bb6469ad5c6120e7021293963604b3e8b4ef312c9fa61aaf99ef66779106",
+      "header_minor": 3,
+      "plane_region_sha256": "dfdd52ad9475a45f1a1e065a1fe2fe92e98c94e90d9d48a99caaa212baea95fa",
+      "plane_region_bytes": 1591296,
+      "encoder_fixture_id": null,
+      "blob_bytes": 1592031,
+      "blob_bpp": 4.048744201660156,
+      "sse": 11.069609364171521,
+      "relative_sse": 0.005110682029575997,
+      "relative_rmse": 0.07148903433097972
+    },
+    "current": {
+      "blob_sha256": "c7a1297922c83f0a4557412050f01fa483edbe35bcb80ba6195651b0ebb72563",
+      "header_minor": 7,
+      "plane_region_sha256": "402bb8eb6376b33329882b4a8b3d3d16cd9ef7807d05d8441fbc600bb937421a",
+      "plane_region_bytes": 1591296,
+      "encoder_fixture_id": "220ee0aaed5fd628f6fe92c02b08cbdf90b6e26b76313fa505a9b32fecbf973c",
+      "blob_bytes": 1592035,
+      "blob_bpp": 4.048754374186198,
+      "sse": 11.069408978146207,
+      "relative_sse": 0.0051105895141831895,
+      "relative_rmse": 0.07148838726802549
+    }
+  },
+  "differing_region_bytes": 63952,
+  "first_difference": 16838,
+  "last_difference": 1591290,
+  "same_payload": false,
+  "current_over_historical_sse": 0.9999818976425706,
+  "device": "NVIDIA GB10",
+  "torch": "2.13.0+cu130",
+  "cuda": "13.0",
+  "served_kl_measured": false
+}
