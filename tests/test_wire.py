@@ -13,13 +13,18 @@ from unittest import mock
 import pytest
 import torch
 
-from tessera.alphabet import build_forest
+from tessera.alphabet import SERIALISABLE_GRIDS, build_forest
 from tessera.container import parse
 from tessera.decode import materialize_nvfp4, reconstruct_unit
 from tessera.encode import _pack_scales, encode_unit
 from tessera.errors import GrammarError
-from tessera.grammar import bresenham_rate_schedule, root_from_q256
-from tessera.trellis import ConvCode
+from tessera.grammar import (
+    alphabet_size,
+    bresenham_rate_schedule,
+    completion_capacity,
+    root_from_q256,
+)
+from tessera.trellis import _ODS_GENERATORS, SUBSET_COUNT, ConvCode
 from tessera.grammar import release_quota, superblock_widths
 from tessera.unit_artifact import (
     build_unit_artifact,
@@ -496,3 +501,74 @@ def test_a_compiled_chain_that_falls_back_is_counted_and_says_so_once():
     finally:
         decode._FUSION_FALLBACKS.pop("probe", None)
         decode._FUSION_LAST_ERROR.pop("probe", None)
+
+
+def test_the_fused_decode_guard_bounds_the_anchor_plane_not_only_the_body():
+    """``picked.rate <= 8`` is the BODY word's bound, not the anchor plane's.
+
+    The fused decode chain casts four things to ``uint8``: the body word
+    (``rate`` bits at span 1, so ``2^rate`` values), the anchor plane
+    ``subsets`` (a partition of ``range(2^(rate+1))``), the completion word
+    (an index into ``reachable``'s ``2^level`` columns) and -- via
+    ``_conv_state_stream`` running on a ``uint8`` select stream -- the
+    convolutional register (``2^memory`` states).  The guard named only the
+    first of those, and the anchor plane is the tighter one: at rate 8 the
+    body still fits a byte and ``subsets`` runs to 511, so the cast wraps and
+    the decode is silently wrong rather than refused.
+
+    So the guard has to ask about the quantities, not about a rate that
+    happens to bound one of them.
+    """
+    from tessera import decode
+
+    anchors = alphabet_size(8, cap=8)
+    assert anchors == 512, "rate 8 has 2^9 anchors; the old guard admitted it"
+    subsets = torch.tensor(
+        [list(range(anchors))[offset::SUBSET_COUNT] for offset in range(SUBSET_COUNT)]
+    )
+    assert not torch.equal(subsets.to(torch.uint8).long(), subsets), (
+        "the hazard is that the anchor plane does not survive the cast"
+    )
+    assert decode._byte_chain_overflow(anchors=subsets.numel()) == "anchors=512"
+    # The body word at that same rate does fit, which is why the old spelling
+    # looked right: 8 bits of body, 9 bits of anchor index.
+    assert decode._byte_chain_overflow(body_words=1 << 8) is None
+    # And a code no reader builds -- memory 9 needs explicit generators -- is
+    # refused rather than fused into a wrapped register.
+    assert decode._byte_chain_overflow(states=1 << 9) == "states=512"
+
+
+def test_every_grid_the_fused_decode_reaches_still_fits_its_bytes():
+    """A rule pin, not a roster: the reachable set is derived.
+
+    ``decode_unit`` fuses only under ``narrow`` (``grid.size <= 256``), and a
+    256-code grid caps the rate at ``payload_bits - 1 = 7``, which caps the
+    anchor plane at 256.  So the corrected guard admits exactly what master
+    admitted and no artifact's decode moves.  Both halves are asserted over
+    the grids the package declares serialisable and the memory orders the
+    reader searches, so a new grid or a new code order is checked here without
+    anyone editing a list.
+    """
+    from tessera import decode
+
+    for grid in SERIALISABLE_GRIDS.values():
+        for rate in range(1, grid.rate_cap + 1):
+            level = completion_capacity(rate, grid.rate_cap)
+            for memory in _ODS_GENERATORS:
+                verdict = decode._byte_chain_overflow(
+                    body_words=1 << rate,
+                    anchors=alphabet_size(rate, cap=grid.rate_cap),
+                    states=1 << memory,
+                    completions=1 << level,
+                )
+                if grid.size <= 1 << 8:
+                    assert verdict is None, (grid.name, rate, memory, verdict)
+                    continue
+                # A grid wider than a byte is outside the fused chain's reach
+                # already; the predicate agrees with ``narrow`` about that
+                # rather than contradicting it.
+                assert (verdict is None) == (
+                    alphabet_size(rate, cap=grid.rate_cap) <= 1 << 8
+                    and 1 << rate <= 1 << 8
+                    and 1 << level <= 1 << 8
+                ), (grid.name, rate, memory, verdict)
