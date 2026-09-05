@@ -488,6 +488,26 @@ refusals, the wider-dtype refusals through every consumer for both fields
 whatever the encoder accepts reconstructs identically before and after the
 wire.
 
+### 3.6 The Triton kernel lane is the oracle side, and it may copy a strided activation
+
+`tessera.kernel` is Tessera's own decode-in-the-mainloop kernel: the Triton
+GEMVs and the prefill `tessera_gemm`. It is the *oracle side* of the NVFP4
+port and not a serving lane -- `serving/ext.py` states that no tile-language
+kernel appears on the serving path and nothing there imports it, and the
+repository's own import graph agrees: no module under `src/` or `tools/`
+reaches `tessera.kernel`; its importers are the kernel benchmarks under
+`experiments/` and the tests (`tests/test_kernel_shape_guards.py` pins that
+from `tools/impacted_tests.py`'s graph, not from a list). That placement is
+what decides one guard the lane deliberately does not have (tessera#266):
+`tessera_gemm` **copies** a non-contiguous `x` with `contiguous()` rather
+than refusing it, as the GEMVs do through `kernel._dense_activation`. On a
+served lane a silent copy is a hidden allocation -- memory and bandwidth the
+pricing does not see -- and would be refused by name; here every caller
+hands the wrapper a fresh contiguous batch, the copy is free, and a refusal
+would only move the same `contiguous()` into the benchmark. The docstring
+says so. The day a route or the encoder imports `tessera.kernel`, that test
+fails naming the importer, and the copy becomes a refusal.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
