@@ -119,7 +119,14 @@ def test_the_home_actually_holds_the_clause():
 # every entry point reads it
 # --------------------------------------------------------------------------
 
+# The four entry points below are the torch half of the tree: this module's
+# own import is torch-free (the clause lives in ``alphabet``), so the ``pure``
+# job collects it, and a body that reaches torch must skip there rather than
+# fail (tessera#309).
+
+
 def test_materialize_fp8_refuses_a_non_hardware_byte_grid():
+    pytest.importorskip("torch")
     from tessera.decode import materialize_fp8
 
     with pytest.raises(GrammarError) as exc:
@@ -128,7 +135,7 @@ def test_materialize_fp8_refuses_a_non_hardware_byte_grid():
 
 
 def test_the_window_code_table_refuses_a_non_hardware_byte_grid():
-    import torch
+    torch = pytest.importorskip("torch")
 
     from tessera.kernel_window import window_code_table
 
@@ -142,6 +149,7 @@ def test_the_window_gemv_loader_refuses_a_non_hardware_byte_grid():
     above the clause passes and the clause itself is what refuses.  The probe
     is arity 1 on purpose: an arity-2 grid is already refused by the
     published ``grid_arities`` requirement, which would make this vacuous."""
+    pytest.importorskip("torch")
     from tessera.kernel_window_gemv import lane_refusal_for_parsed, prepare_from_parsed
     from tessera.unit_artifact import parse_unit_artifact
 
@@ -160,6 +168,7 @@ def test_the_fp8_route_refuses_a_non_hardware_byte_grid():
     """A grid the ROUTES entry NAMES but whose codes are not hardware bytes:
     the route-membership leg is derived from ``scheme.ROUTES`` and is not the
     thing under test here, so the probe borrows E4M3's name."""
+    pytest.importorskip("torch")
     from types import SimpleNamespace
 
     from tessera.serving.fp8_route import prepare_tessera_fp8_module

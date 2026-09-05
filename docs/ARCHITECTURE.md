@@ -1950,7 +1950,10 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 **`pure`** runs on every push to master and every pull request, in an
 interpreter with pytest and nothing else: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
-could not), an import of the byte layer that asserts torch never entered the
+could not -- the collector reads a module's *import*, so a test body that
+reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
+and `tests/test_collection_probe.py` runs the two modules that once did not
+with torch hidden, #309), an import of the byte layer that asserts torch never entered the
 process, the empty-denylist refusal (build item 11), and the wheel and sdist check
 above. It proves the parser's dependency boundary and what both
 distributions contain.
