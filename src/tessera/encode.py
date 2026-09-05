@@ -2472,18 +2472,7 @@ def encode_unit(
             reachable = blocks[:, :: 1 << (depth - level)]
             per_pos = vectors[reachable][a]              # [steps, n, D, arity]
             want = sub.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
-            # The completion bits choose among the descendants the anchor
-            # reaches, under the SAME metric the trellis scored the anchor
-            # with: per-position weights, summed over the tuple's coordinates
-            # (``viterbi_columns``' ``sq * wrows``).  At arity 1 the sum has
-            # one term and a positive scalar cancels in the argmin, which is
-            # why every artifact written so far is unaffected; at arity > 1
-            # the coordinates carry different weights and the unweighted pick
-            # is a different code.
-            err = (want - per_pos) ** 2
-            if sub_w is not None:
-                err = err * sub_w.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
-            c_bits = err.sum(dim=3).argmin(dim=2)
+            c_bits = _completion_choice(want, per_pos, sub_w, steps, arity)
             anchors[:, which] = a
             body_bits[:, which] = b.to(body_dtype)
             completion_bits[:, which] = c_bits
@@ -2898,6 +2887,32 @@ def encode_unit(
         channel_sigma=reach_channel_sigma,
         table_reach=table_reach,
     )
+
+
+def _completion_choice(
+    want: torch.Tensor, per_pos: torch.Tensor,
+    weights: "torch.Tensor | None", steps: int, arity: int,
+) -> torch.Tensor:
+    """Which descendant each position spends its completion bits on.
+
+    The second rate axis's only decision, in one place.  The completion bits
+    choose among the descendants the anchor reaches, under the SAME metric the
+    trellis scored the anchor with: per-position weights, summed over the
+    tuple's coordinates (``viterbi_columns``' ``sq * wrows``).  At arity 1 the
+    sum has one term and a positive scalar cancels in the argmin, which is why
+    every artifact written so far is unaffected; at arity > 1 the coordinates
+    carry different weights and the unweighted pick is a different code.
+
+    ``per_pos`` is ``[steps, n, D, arity]`` and ``D`` is the reachable set.  At
+    ``completion=0`` -- the exporter's default, and every rung at its body cap
+    -- ``D`` is 1 and this returns zeros whatever the metric says, which is the
+    reason a fixture at a rung with headroom is the only thing that watches it
+    (tessera#143).
+    """
+    err = (want - per_pos) ** 2
+    if weights is not None:
+        err = err * weights.reshape(steps, arity, -1).permute(0, 2, 1).unsqueeze(2)
+    return err.sum(dim=3).argmin(dim=2)
 
 
 def _canonical_release_order(

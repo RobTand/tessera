@@ -54,8 +54,8 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Seven narrower blind spots, named because a reader would otherwise assume them
-covered.  The first three are *surfaces no fixture reaches* (tessera#143), and
+Six narrower blind spots, named because a reader would otherwise assume them
+covered.  The first two are *surfaces no fixture reaches* (tessera#143), and
 they are stated first because they are the ones a reader is likeliest to assume
 away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
 structure, and "shipping" is doing load-bearing work in that sentence.
@@ -63,27 +63,28 @@ structure, and "shipping" is doing load-bearing work in that sentence.
 * **The RELEASE plane.**  ``encode_linear`` has no ``released_positions``
   keyword, so no fixture can carry a release at all; the placement rule lives
   in ``encode._canonical_release_order`` and moves nothing here.
-* **The completion axis.**  Every fixture spends the exporter's default of
-  zero, so the completion argmin has one descendant and cannot choose wrongly.
 * **Shards.**  ``slicing.slice_unit`` is a second byte-producing path -- the
   INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
   descriptor -- and nothing an encode alone produces, so no fixture reaches it.
 
-``experiments/audit_byte_baseline.py`` covers all three: its ``layout`` matrix
+``experiments/audit_byte_baseline.py`` covers both: its ``layout`` matrix
 and its release rows write every plane a reader reads, and
 ``tests/test_audit_byte_baseline.py`` derives that claim from
 ``planes.SHARD_PLANE_ORDER`` rather than restating it.  It is the *offline*
 instrument, run either side of a change on purpose; closing a surface here
 instead makes it always-on, and is what the S6b case below does.
 
-Two are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no recipe
-selects, through the same caller-facing ``scale_plane=`` override an S6b
+Three are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
+recipe selects, through the same caller-facing ``scale_plane=`` override an S6b
 artifact is written by, so ``encode._pack_scales`` and ``encode._refit_scales``
 now move this digest; ``e2m1-768/diagonals`` does the same for segment 2a, so
-``diagonals.fit_diagonals`` does too.  Each costs nothing anyone can measure --
-one encode on a plan the E2M1 case already built -- and each re-bases nothing,
-because it carries a ``compatibility_baseline`` (the third remaining blind spot
-below, and the rule the same paragraph states).
+``diagonals.fit_diagonals`` does too; and ``e2m1-256/completion`` spends the
+second rate axis at a rung with headroom, so ``encode._completion_choice`` is
+offered more than one descendant and its pick reaches bytes.  Each costs
+nothing anyone can measure -- the first two encode on a plan the E2M1 case
+already built, the third builds the small forests one rung lower -- and each
+re-bases nothing, because it carries a ``compatibility_baseline`` (the third
+remaining blind spot below, and the rule the same paragraph states).
 
 The remaining four:
 
@@ -261,6 +262,11 @@ _S6B_BASELINE = (
 #: Segment-2a diagonals, the same way (tessera#143).
 _DIAGONALS_BASELINE = (
     "585a857c3c97b618c8d8921325d65c333a5274fc3f016cef119f884f878c5189"
+)
+
+#: The completion axis, the same way (tessera#143).
+_COMPLETION_BASELINE = (
+    "6eefb0383789d3532c957e9b6a828a8b3a7947686e5d2f6979e383d5520c76ca"
 )
 
 _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
@@ -512,6 +518,19 @@ def fixtures() -> "tuple[Fixture, ...]":
             "e2m1-768/diagonals", "E2M1", 768,
             encode=MappingProxyType({"with_diagonals": True}),
             compatibility_baseline=_DIAGONALS_BASELINE,
+        ),
+        # The completion axis (tessera#143).  Every case above spends the
+        # exporter's default of zero completion bits, and so does every rung
+        # sitting at its body cap -- E2M1 at 768 and E2M1x2 at 896 both have
+        # ``cap - R == 0`` -- so ``encode._completion_choice`` was offered one
+        # descendant and could not choose wrongly.  This is the one case at a
+        # rung with headroom: 256 leaves two bits of it, which is what puts
+        # bytes on the COMPLETION plane at all.  The rung is the declared input
+        # here, exactly as it is for every case above.
+        Fixture(
+            "e2m1-256/completion", "E2M1", 256,
+            encode=MappingProxyType({"completion": 2}),
+            compatibility_baseline=_COMPLETION_BASELINE,
         ),
     )
 

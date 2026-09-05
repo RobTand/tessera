@@ -316,6 +316,41 @@ def test_the_identity_sees_the_segment_2a_diagonals(identity, monkeypatch):
     assert moved != identity
 
 
+def test_the_identity_sees_the_completion_axis(identity, monkeypatch):
+    """tessera#143: the second rate axis's only decision.
+
+    ``_completion_choice`` runs on every TCQ column group, but at
+    ``completion=0`` -- the exporter's default, and every rung at its body cap
+    -- the reachable set has one member and the argmin returns zeros whatever
+    the metric says. So "it was called" proves nothing here; the guard is that
+    some fixture offered it more than one descendant, and before
+    ``e2m1-256/completion`` existed none did.
+
+    Rotating the pick by one is a byte move that stays legal: the completion
+    bits index the same reachable table the decoder rebuilds from the
+    descendant plane, so the artifact still round-trips.
+    """
+    import tessera.encode as enc
+
+    plain = enc._completion_choice
+    widths = []
+
+    def next_descendant(want, per_pos, weights, steps, arity):
+        widths.append(per_pos.shape[2])
+        chosen = plain(want, per_pos, weights, steps, arity)
+        return (chosen + 1) % per_pos.shape[2]
+
+    monkeypatch.setattr(enc, "_completion_choice", next_descendant)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert max(widths, default=0) > 1, (
+        f"no fixture offered the completion argmin more than one descendant "
+        f"(widths seen: {sorted(set(widths))}), so rotating its pick was a "
+        f"no-op and this asserts nothing"
+    )
+    assert moved != identity
+
+
 def test_an_override_fixture_is_not_counted_as_wire_coverage():
     """A case that overrides the encode writes different planes than the wire.
 
