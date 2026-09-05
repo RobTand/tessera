@@ -757,7 +757,14 @@ closed grammar (`contract.CELL_PREDICATE_FACTS`: `payload_family`, `k`,
 values typed per op; one row per `(fact, op)`). Until #134 the field was
 required and never read, so `["anything"]` validated. Every published cell
 carries `[]`: each is unconditional over its scope. A consumer that cannot
-resolve a predicate refuses the cell, never skips the rule.
+resolve a predicate refuses the cell, never skips the rule, and that refusal
+is now a gate rather than a sentence: `contract.refuse_unevaluated_predicates`
+raises on any cell whose `predicates` is non-empty, and both consumers of a
+cell call it -- `scheme.attested_cells` (so the export gate and
+`refuse_unserveable_wire` with it) and `census.cell_launch_agreement`. Neither
+selects on a predicate, so the first narrowed cell would otherwise have been
+read as unconditional. Publishing one is a consumer change, not a document
+change.
 
 The census requires `--runtime-image` as an exact digest reference, checked
 before loading vLLM, and since #132 that flag is a CROSS-CHECK rather than the

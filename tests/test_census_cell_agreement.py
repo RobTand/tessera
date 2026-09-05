@@ -146,6 +146,24 @@ def test_a_small_batch_gemv_record_is_covered_by_the_batch_cell(cells):
     assert len(stale_problems) == 2
 
 
+def test_a_cell_that_narrows_itself_is_refused_by_the_matcher(cells):
+    """The pre-fix failure this test was written for::
+
+        Failed: DID NOT RAISE ValueError
+
+    The matcher keys a cell by (family, residency, regime, rung).  A
+    predicate is what that key cannot carry, so a cell narrowed to some units
+    would have reported agreement -- or a disagreement -- for every unit of
+    its scope.  Refused in the module that owns the grammar
+    (``contract.refuse_unevaluated_predicates``) until a consumer resolves it.
+    """
+    narrowed = copy.deepcopy(cells)
+    cell = next(c for c in narrowed if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_streamed")
+    cell["predicates"] = [{"fact": "k", "op": "multiple_of", "value": 16}]
+    with pytest.raises(ValueError, match="no consumer in this build evaluates them"):
+        _agree(narrowed)
+
+
 def test_a_rung_no_cell_covers_is_unattested_and_not_a_problem(cells):
     """Absence is the only negative signal a closed-world table has.
 

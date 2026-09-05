@@ -712,13 +712,20 @@ def attested_cells(family: str, structure: str,
     ``reader_rate_range_q256`` is the dense route's reader, and the routed
     route runs a different consuming kernel (#135).  Returns the cells in
     contract order, ``[]`` when none attests the pair; the caller decides
-    whether an empty list is a refusal.
+    whether an empty list is a refusal.  A cell that states a ``predicates``
+    narrowing is REFUSED rather than returned: this filter reads family and
+    structure, which cannot resolve a predicate, and a narrowed cell read as
+    unconditional is the failure the grammar exists to prevent
+    (``contract.refuse_unevaluated_predicates``).
     """
-    from .contract import load_serving_contract
+    from .contract import load_serving_contract, refuse_unevaluated_predicates
 
     payload = load_serving_contract() if contract is None else contract
-    return [cell for cell in payload["lane_eligibility"]["cells"]
-            if cell["family"] == family and cell["structure"] == structure]
+    cells = [cell for cell in payload["lane_eligibility"]["cells"]
+             if cell["family"] == family and cell["structure"] == structure]
+    for cell in cells:
+        refuse_unevaluated_predicates(cell, f"lane_eligibility cell {cell.get('id')}")
+    return cells
 
 
 def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
