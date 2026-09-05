@@ -99,6 +99,7 @@ ROOTS: dict[str, Root] = {
             "KL_TOOL_DIR",
             "/home/rob/dq-runs",
             "kl_tool.py and kl_estimator.py, the untracked served-KL instrument",
+            opt_in=True,
         ),
     )
 }
