@@ -40,10 +40,14 @@ ROWS = 32
 
 #: These write-side cases run on a LUT plane, and that is forced, not a
 #: preference.  Issue #57's rule is strictly stronger on S6b -- a group there
-#: is 32 weights, two halves sharing one base exponent, so ``_pack_scales``
-#: refuses ``cols % 32`` at ENCODE time and an S6b unit can no longer exist at
-#: an off-16 width for the writer to refuse.  A LUT plane's group IS the
-#: 16-column half, so it is the plane on which this rule is the binding one.
+#: is 32 weights, two halves sharing one base exponent -- so every off-16 width
+#: an S6b unit could take is also off-32, and both ``_pack_scales`` at encode
+#: and ``build_unit_artifact`` at write refuse it on that rule whether or not
+#: the 16-rule is there (``grammar.require_scale_groups``, tessera#260; the
+#: writer used to enforce this 16-rule alone, which is what let an S6b unit
+#: assembled outside ``encode_unit`` be written at 48 columns).  A LUT plane's
+#: group IS the 16-column half, so it is the plane on which this rule is the
+#: binding one.
 #: The materialise-side cases need no plane at all: ``materialize_nvfp4``'s
 #: group is NVFP4's own 16.
 

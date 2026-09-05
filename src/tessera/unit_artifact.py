@@ -32,6 +32,7 @@ from .grammar import (
     RELEASE_BITS,
     require_column_groups,
     require_release_defined,
+    require_scale_groups,
     completion_capacity,
     completion_limit_from_elements,
     completion_widths as completion_widths_for,
@@ -460,6 +461,18 @@ def build_unit_artifact(
     # artifacts.
     if plane_kind is not ScalePlaneKind.CHANNEL:
         require_column_groups(cols, int(unit.half))
+    # An S6b plane owes the stronger rule too, and owes it HERE for the same
+    # reason: a group's two halves share one base exponent within one octave,
+    # so a group that begins in one output row and ends in the next couples
+    # magnitudes nothing relates (tessera#57).  ``encode._pack_scales`` refuses
+    # it, but an ``EncodedUnit`` does not have to come from ``encode_unit`` --
+    # ``parse_unit_artifact`` rebuilds one from planes, ``slice_unit`` returns
+    # one, a caller can restrict one by hand -- so the encoder's refusal is not
+    # the wire's, and a 48-column S6b unit wrote, parsed and decoded while
+    # ``slicing._slice_block_plane`` refused every cut of it including the
+    # identity slice (tessera#260).  Same function, same words, one rule.
+    if plane_kind is ScalePlaneKind.S6B:
+        require_scale_groups(cols, int(unit.group))
     if plane_kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
             raise GrammarError("a LUT scale plane needs the unit's table")
