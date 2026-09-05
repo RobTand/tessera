@@ -58,14 +58,24 @@ TREE_PARTITION = "tree"
 
 
 def _two_means(points: torch.Tensor, iterations: int = 12) -> torch.Tensor:
-    """Split one cell in two.  Seeded on the principal axis, so no RNG."""
+    """Split one cell in two.  Seeded on the principal axis, so no RNG.
+
+    Distances are direct squared differences -- subtract first, then square.
+    The GEMM expansion ``||x||^2 - 2<x,c> + ||c||^2`` (``torch.cdist``'s
+    matmul path) subtracts large nearly-equal terms on uncentred data, and at
+    float32 the small squared separations cancel to zero: a cloud of 64
+    distinct values translated to 10000 fitted two centroids that tied at
+    zero distance for half its points and erased that half (tessera#227).
+    The direct form's error scales with the *separation*, not the magnitude,
+    which is what an assignment rule needs.
+    """
     mean = points.mean(0)
     centred = points - mean
     axis = torch.linalg.eigh((centred.T @ centred).double())[1][:, -1].float()
     spread = (centred @ axis).std().clamp(min=1e-12)
     centroids = torch.stack([mean - axis * spread, mean + axis * spread])
     for _ in range(iterations):
-        assign = torch.cdist(points, centroids).argmin(1)
+        assign = (points.unsqueeze(1) - centroids.unsqueeze(0)).square().sum(2).argmin(1)
         for side in (0, 1):
             if int((assign == side).sum()):
                 centroids[side] = points[assign == side].mean(0)
@@ -146,8 +156,12 @@ def learn_tree_codebook(
         # A point may only descend into its own parent's two children, which is
         # what keeps the tree a tree: re-assigning globally would let a point
         # cross cells and break the ancestor property this grid exists for.
-        left = torch.cdist(points, nxt[0::2]).gather(1, assign[:, None]).squeeze(1)
-        right = torch.cdist(points, nxt[1::2]).gather(1, assign[:, None]).squeeze(1)
+        # Distances against each point's own pair only, by direct subtraction:
+        # the all-node cdist both materialised an n x 2^level matrix nothing
+        # read and cancelled on uncentred data (tessera#227, as in _two_means).
+        # The tie stays with the left child, as before.
+        left = (points - nxt[0::2][assign]).square().sum(1)
+        right = (points - nxt[1::2][assign]).square().sum(1)
         assign = 2 * assign + (right < left).long()
         level = nxt
 
