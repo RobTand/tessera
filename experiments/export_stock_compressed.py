@@ -12,9 +12,11 @@ Arms this writes, one per invocation:
 
   --grid E2M1x2 --q256 896 --activations w4a4 --input-scales DONOR
         Tessera as an NVFP4 encoder, served W4A4 on the CUTLASS FP4 route.
-        The static ``input_global_scale`` every W4A4 Linear needs is copied
-        per Linear from DONOR (a production PrismaQuant NVFP4 export of the
-        same model: the same calibration the comparator arm serves with).
+        The static ``input_global_scale`` every W4A4 Linear needs comes from
+        DONOR (a production PrismaQuant NVFP4 export of the same model: the
+        same calibration the comparator arm serves with) -- per Linear for an
+        unfused one, and for a fused group the ONE joined value
+        ``fused.shared_input_global_scale`` accepts, written on every member.
   --grid E4M3 --q256 1024
         Tessera-8 as a per-channel FP8 encoder, served W8A8.
   --fp8-rtn
@@ -23,8 +25,11 @@ Arms this writes, one per invocation:
         writer, so the two FP8 arms differ in nothing but the encoder.
 
 Fused groups (q/k/v, gate/up) are one vLLM Linear with one
-``weight_global_scale``; ``share_global`` moves each group onto one power of
-two exactly or the export refuses.  A ``--plan-json`` may name a grid and
+``weight_global_scale`` and one A-side ``input_global_scale``;
+``share_global`` moves each group onto one power of two exactly or the export
+refuses, and ``fused.shared_input_global_scale`` joins the donated A-side
+scales -- the MIN, the join's one home -- or refuses the donor by name.  A
+``--plan-json`` may name a grid and
 rung per tensor (or ``"BF16"``) so an allocation drives the export; the
 default is one rung everywhere.
 """
@@ -51,6 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from export_checkpoint_driver import BASES, build_plan  # noqa: E402
 from tessera.alphabet import E4M3_GRID, tuple_grid  # noqa: E402
 from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # noqa: E402
+from tessera.fused import shared_input_global_scale  # noqa: E402
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, NVFP4_PACK_QUANTIZED, declared_format, materialize_stock,
     share_global, stock_bytes, stock_dequant, stock_kind, vllm_fp4_predicate)
@@ -244,6 +250,44 @@ def main():
                     "boundary.")
             fused_expected[key] = set(roster)
 
+    # THE A-SIDE STATIC SCALE, joined here and nowhere else (#305).  vLLM's
+    # NVFP4 method reduces a fused module's member scales with
+    # ``layer.input_global_scale.max()`` and then stores every group-16 block
+    # scale as ``e4m3(block_amax / 6 * scale)`` clamped at 448 -- capacity over
+    # amax, INVERSE in the activation range -- so the max member scale is the
+    # SMALLEST calibrated range and every wider member's peak clips silently.
+    # The module's one GEMM quantises ONE input tensor for every member, so the
+    # value served is the MIN: ``fused.shared_input_global_scale``, the join's
+    # one home (PR #275; its declared one-bf16-ULP divergence bound, #283 / PR
+    # #284, refuses a donor that is two calibrations rather than joining it).
+    # This exporter used to copy each donor member through unchanged and join
+    # the WEIGHT globals only, leaving vLLM's reduction to pick the quantizer.
+    #
+    # Resolved from the PLANNED roster, before the output directory exists:
+    # a group whose siblings straddle source shards must not publish an
+    # unjoined member into an earlier output shard, and a donor beyond the
+    # bound must be refused beside the other pre-encode refusals above rather
+    # than at the shard boundary that completes the group (#212's schedule).
+    input_scales = None
+    if not args.fp8_rtn and args.activations == "w4a4" and any(g.arity and g.name != "E4M3" for g, _ in plan.values()):
+        if args.input_scales is None:
+            raise SystemExit("W4A4 needs --input-scales (a donor export's per-Linear input_global_scale)")
+        input_scales = {}
+        with safe_open(str(args.input_scales), framework="pt") as handle:
+            for key in handle.keys():
+                if key.endswith(".input_global_scale"):
+                    input_scales[key] = handle.get_tensor(key).to(torch.float32)
+    fused_input_scale: dict[str, float] = {}
+    if input_scales is not None:
+        for key, roster in sorted(fused_expected.items()):
+            scale_keys = [f"{module_of(m)}.input_global_scale" for m in sorted(roster)]
+            missing = [k for k in scale_keys if k not in input_scales]
+            if missing:
+                raise SystemExit(
+                    f"no {missing} in {args.input_scales}; W4A4 cannot serve {key}")
+            fused_input_scale[key] = shared_input_global_scale(
+                [input_scales[k] for k in scale_keys], scale_keys)
+
     args.out.mkdir(parents=True, exist_ok=True)
     index_path = args.src / "model.safetensors.index.json"
     if index_path.exists():
@@ -256,16 +300,6 @@ def main():
         for path in sorted(args.src.glob("*.safetensors")):
             with safe_open(str(path), framework="pt") as handle:
                 shards[path.name] = list(handle.keys())
-
-    input_scales = None
-    if not args.fp8_rtn and args.activations == "w4a4" and any(g.arity and g.name != "E4M3" for g, _ in plan.values()):
-        if args.input_scales is None:
-            raise SystemExit("W4A4 needs --input-scales (a donor export's per-Linear input_global_scale)")
-        input_scales = {}
-        with safe_open(str(args.input_scales), framework="pt") as handle:
-            for key in handle.keys():
-                if key.endswith(".input_global_scale"):
-                    input_scales[key] = handle.get_tensor(key).to(torch.float32)
 
     units: dict[str, dict] = {}
     groups: dict[str, dict[str, dict[str, torch.Tensor]]] = {}
@@ -324,9 +358,28 @@ def main():
                     nvfp4_modules.append(module)
                     if input_scales is not None:
                         scale_key = f"{module}.input_global_scale"
-                        if scale_key not in input_scales:
-                            raise SystemExit(f"no {scale_key} in {args.input_scales}; W4A4 cannot serve it")
-                        payload[scale_key] = input_scales[scale_key]
+                        if fused is None:
+                            # Its own vLLM Linear, its own input tensor: the
+                            # donor's value for this Linear, nothing joined.
+                            if scale_key not in input_scales:
+                                raise SystemExit(f"no {scale_key} in {args.input_scales}; W4A4 cannot serve it")
+                            payload[scale_key] = input_scales[scale_key]
+                        else:
+                            # A fused member carries the JOINED value, not its
+                            # own -- the group's one A-side scale, resolved
+                            # above from the planned roster (#305).
+                            key, _members = fused
+                            if key not in fused_input_scale:
+                                raise SystemExit(
+                                    f"{name}: fused group {key} has no joined "
+                                    "input_global_scale; the A-side join is "
+                                    "resolved from the planned roster before "
+                                    "the first encode and every NVFP4 member "
+                                    "of a fused group must appear in it")
+                            payload[scale_key] = torch.tensor(
+                                [fused_input_scale[key]], dtype=torch.float32)
+                        record["input_global_scale"] = float(
+                            payload[scale_key].reshape(-1)[0])
                 else:
                     fp8_modules.append(module)
                 units[name] = record

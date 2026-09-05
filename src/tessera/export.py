@@ -1059,8 +1059,11 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
       over the identical CHANNEL plane at the identical L, with the table
       snapped to bf16 instead of E4M3 and the source spread stated at 1.0.
       Its decoded tile is a plain BF16 tensor (W16A16).  The TCQ body is
-      not reachable on this grid at all: a 65536-anchor forest is what the
-      encoder already refuses, and the window body never scores it.
+      not reachable on this grid at all, and is refused by name rather than
+      built: ``alphabet.require_forest_grid`` declines a registered grid
+      whose forest planes cannot carry its codes.  The window body never
+      scores the grid, which is the whole reason a 65536-code alphabet is
+      admitted.
     * **E4M3**, every rung: ``E4M3_RECIPE`` -- the window body over the
       CHANNEL plane, L=14.  0.93x EXL3 K4 at 4.0 bpp and 0.92-0.95x at 5.0
       on the wire (0.985x / 1.016x at L=12), before LDLQ; the coset trellis

@@ -238,6 +238,29 @@ recalibration (one amax over the members' shared input, which is what both
 repos' calibrators already emit), not a wider bound. Changing the policy
 means changing the constant and this paragraph in one commit.
 
+**Every exporter that writes a fused A-side scale calls that one helper.**
+`experiments/export_stock_compressed.py`, the sanctioned standalone CLI for the
+stock compressed-tensors arms, copied each donor member's `input_global_scale`
+through unchanged and joined the *weight* globals only, so a donor whose
+siblings differ at all -- inside the accepted bound -- served an activation
+quantizer chosen by vLLM's `.max()` reduction instead of by the rule above
+(tessera#305: donor `[4.0, 4.015625, 4.0]` was written through verbatim, and
+the runtime's max picked 4.015625 where the helper answers 4.0). It now
+resolves one value per fused group through `shared_input_global_scale` and
+writes that value on every member, so `priced == written == served` holds for
+the A side of this arm as it already did for the serving exporter's twin. The
+join is resolved from the **planned** fused roster before the output directory
+is created, which is what makes it correct for siblings that straddle source
+shards: an earlier output shard can no longer publish an unjoined member
+before a later shard delivers the rest of the group (#212's completion
+schedule is unchanged), and a donor beyond the declared bound is refused
+beside the other pre-encode refusals rather than at the shard boundary that
+completes the group. An unfused NVFP4 Linear is its own vLLM Linear with its
+own input tensor and keeps its own donor value. The per-unit
+`input_global_scale` in `tessera_stock_manifest.json` records what was
+actually written, so the join is read off the receipt rather than inferred
+from the donor.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
@@ -338,6 +361,24 @@ is input-only by decision: it "contains nothing an encode alone can produce".
 see an **encoder** change: same arguments, different bytes out. That gap
 merged two differently-encoded halves once already (issue #78), and closing it
 is issue #101.
+
+Because the profile id is a *digest* of those arguments, two of them — the
+convolutional code and the payload grid — have no field of their own, and the
+reader recovers them only by recomputing the digest over a closed search
+(`trellis.replayable_codes` × `alphabet.SERIALISABLE_GRIDS`). So the roster the
+reader searches is what the writer may publish, and since tessera#295 that is
+one predicate with one home: `build_unit_artifact` refuses a TCQ body whose
+`ConvCode` is outside `trellis.require_replayable_code` — by memory order and
+octal generators, at the serialization boundary — instead of writing bytes that
+fail closed in whatever process later loads them. `ConvCode(memory=3,
+generators=(0o17, 0o15))`, the published memory-3 pair with its taps
+transposed, is a legal rate-1/2 code the encoder and `reconstruct_unit` both
+serve, and it was writable and unreadable at the same version. Every pair the
+reader searches — each memory order's published default and the superseded
+memory-3 `(0o5, 0o7)` — still writes and reads back, research encode/decode of
+any legal pair is untouched (only *publishing* is gated), a WINDOW body binds
+no code and is not checked, and no wire field was added: the eleven legacy
+artifacts under `tests/data/legacy/` re-serialise to identical bytes.
 
 The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 **derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
@@ -491,6 +532,25 @@ route applies an input rotation the sidecar must name it (`shared` in
 `FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
 contract bumps, and `require_untransformed` learns that consumer; not before.
 
+The **slicing capability API** owes the same answer, and since tessera#304 it
+gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+cut", so the refusals that are properties of the *unit* rather than of the cut
+-- an `R_in`-only rotation, whose column blocks a cut would break into pieces
+that decode to plausible wrong weights, and a scale block that straddles two
+output rows -- live in one predicate, `slicing._unsliceable_reason`, which
+`can_shard` returns `False` from and `slice_unit` raises verbatim. Neither is
+expressible as a granularity: they refuse *every* cut, the identity slice
+included, so `shard_granularity` reports the arithmetic granularity of a unit
+the predicate has already admitted. tessera#235 aligned the two on block
+geometry and left rotation answered only in the cutter, so `can_shard` reported
+a rotated artifact cuttable on both axes while `slice_unit` had always refused
+it -- a capability answer a producer or operator could not act on. The
+predicate takes the three facts every view carries (rotation state, block
+width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
+one answer. Unrotated capability and shard reconstruction are unchanged. If
+rotated slicing is ever implemented, both paths move together and its complete
+reconstruction semantics are proved with them.
+
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and
@@ -577,6 +637,99 @@ hands the wrapper a fresh contiguous batch, the copy is free, and a refusal
 would only move the same `contiguous()` into the benchmark. The docstring
 says so. The day a route or the encoder imports `tessera.kernel`, that test
 fails naming the importer, and the copy becomes a refusal.
+
+### 3.7 A registered grid whose forest has no wire has no forest
+
+The ALPHABET and DESCENDANT planes carry a TCQ forest one *plane element* per
+code, and that element is a byte (`PayloadGrid.code_bytes`). So a registered
+grid wider than 256 codes has no TCQ wire at all — which is why the recipe
+table gives BF16 a window recipe at every rung, and why `wire_recipe`'s
+`body=BodyKind.TCQ` override (`_resolve_recipe`, honoured on any grid) was the
+one path that could ask for a forest nothing could write. It asked
+expensively: the scalar builder's `_mass_balanced_blocks` materialises
+`anchors x grid.size` candidate pairs and holds two such containers at once,
+so BF16 costs **65.7 GiB at R=11 and ~130 GiB at R=12** — measured per cell in
+`docs/measurements/build-forest-memory-2026-09-05.md`, which is what
+tessera#285's unattributed 73 GB kill was. `E2M1x2`, the only *shipping* grid
+the same filter selects, peaks at 34 MB at every rate: arity > 1 routes to
+`_build_forest_kd`, which builds no cross product, so there is nothing to
+stream on the path anything actually uses.
+
+`alphabet.require_forest_grid` now refuses at the top of `build_forest`,
+naming the grid, its code count and the plane that cannot carry it, before the
+first allocation. It is **derived, not listed**: membership of
+`SERIALISABLE_GRIDS` (the closed set of wire commitments, and what
+`wire_recipe` dispatches on) intersected with `_forest_plane_failure` (the one
+spelling of the plane-width rule, which `AnchorForest._refuse_unserialisable`
+also reads, so the refusal at the build and the refusal at the plane cannot
+disagree). Today that intersection is exactly BF16;
+`tests/test_forest_grid_roster.py` derives the same set from
+`export.recipe_table` so the two homes are pinned together. E4M3 is outside it
+— its shipping recipe is the window body too, but 256 codes fit the planes, so
+its TCQ body stays reachable by override. Unregistered grids are outside it
+whatever their width: `_refuse_unserialisable`'s promise that "encoding,
+decoding and measuring on any grid stay open" is what keeps a free 1024-code
+tuple grid buildable, and narrowing that would close a research surface rather
+than close #285.
+
+### 3.8 A tensor-parallel rank serves the slice its layer's contract names
+
+The artifact is TP-agnostic: every rank loads the whole container, and
+`serving.sharding.plan_shard` decides which rows or columns of each role
+this rank serves before `shard_parsed_roles` cuts them (`layout.slice_unit`)
+and the route's kernel runs on the slice. Priced == written == served holds
+across ranks only if the plan is exact: a rank serving rows another rank also
+serves, or rows no rank serves, is a module priced once and served as
+something else, and nothing downstream can see it -- the decoder returns the
+arrangement it was handed and the sidecar agrees with the wire it was written
+beside.
+
+**The plan is read off the LAYER, never inferred from the tile.** vLLM's
+`create_weights` hands a dense method the layer object, this rank's tile
+(`input_size_per_partition`, `output_partition_sizes`) and the module's global
+shape (`input_size`, `output_size`); `LinearBase.__init__` sets the layer's own
+`tp_rank`/`tp_size` (`0, 1` under `disable_tp`, a sub-group's coordinates for
+`DCPGroupColumnParallelLinear`) and `QKVParallelLinear` states its
+`num_kv_head_replicas`. `plan_shard_for_layer` takes all of it. The global
+shape against the tile selects among exactly three vLLM relations -- equal
+(served WHOLE: `ReplicatedLinear`, or any Linear at one rank), the output
+times `tp_size` over the whole input (an OUTPUT cut: ColumnParallel and its
+merged/QKV forms), the input times `tp_size` under the whole output (an INPUT
+cut: RowParallel) -- and a layer whose shape is none of them is refused with
+both shapes. The wire is then held to that statement: served whole it must
+be the module, cut on the input its width must be `input_size`, cut on the
+output each role's rows must be the member's COMPLETE extent under the
+layer's declared replication, `out_partition_i * (tp_size // replicas_i)`,
+with the rank's shard at index `tp_rank // replicas_i`. Replication is never
+inferred from a role holding fewer shards than there are ranks; it is the
+layer's own `num_kv_head_replicas`, read verbatim, ones when the attribute is
+absent, and refused by name when it is declared on a layer that is not three
+members (`MinimaxM3QKVParallelLinearWithIndexer`'s four partitions are not
+planned), does not divide the world, or appears on a module served whole or
+cut on its input. TP coordinates are the layer's, not the process's:
+`vllm.distributed` is not consulted, and a layer without `tp_rank`/`tp_size`
+is refused rather than defaulted to one rank.
+
+Two defects closed there. **A whole wire the size of one rank's tile** (a
+`[64, 256]` wire loaded into a ColumnParallel layer of `256x256` at TP=4)
+agrees with the tile on every local number, and reading only the tile handed
+it back as a replicated whole module on every rank -- four ranks each
+computing the same 64 rows for a layer whose all-gather expected 256 distinct
+ones (tessera#303). It is now refused by role name, with the wire's rows and
+the extent the layer's contract requires, before any `wire_bytes` parameter
+is registered; a `ReplicatedLinear` of the same tile shape declares
+`output_size == 64` and is served whole as before. **KV replication by
+divisibility** accepted any role whose row count divided into fewer shards
+than ranks and called it replicated; a wire holding 256 rows of a role the
+layer says is 512 is now "rows [256, 512) exist on no rank", and the same
+shape with replication declared plans each rank's head from the declaration.
+`tests/test_serving_sharding.py` holds the planner's arithmetic for every
+relation, the boundary rule of #234 on both whole paths, and every refusal
+above; `tests/test_serving_tp_axes.py` drives the undersized wire, a
+correctly shaped TP=4 control, a `disable_tp` Linear inside a TP=4 process,
+GQA/MQA replication read off the layer, and a coordinate-less layer through
+the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
+stand-ins.
 
 ## 4. Allocation and the uniform gate
 
@@ -1862,6 +2015,25 @@ roster is wrong and would let a receipt exempt an arm by deleting its proof.
 `plane_moved=false` is recorded and deliberately not required: an arm whose
 lever reached nothing is an ineffective arm, which is a result and not a
 broken comparison.
+
+**The evidence that derives it is established before the obligations are.**
+`schedule` and the refit's coupled-landing diagnostics decide what an arm is,
+so they are evidence exactly as the proofs are, and a receipt that does not
+record them has not shown an arm to be exempt -- it has failed to say what the
+arm is. Reading them with a `.get()` and answering "not a trailing pair" made
+*deleting one field* a way past every matched-pair check, over an explicitly
+recorded `codes_identical: false` -- the very failure the validator exists to
+catch (tessera#299). Unknown is now refused by name and never exempts:
+`classify_trailing_pair` returns the reason a receipt could not be classified
+beside its answer, an arm whose `schedule` is absent, empty or unparseable and
+an arm whose `refit` records no per-call diagnostics are both refused as
+unclassified, and any matched-pair leg such an arm *did* record is still read,
+so a recorded failure cannot be cleared by removing the field that classifies
+the comparison. The control's schedule is the one exception in scope: it is
+the baseline every other arm in the unit is classified against, so losing it
+exempts all of them at once and refuses the whole document, exactly as a
+failed drift control does. A complete receipt is unaffected -- the committed
+coupled-landing screens still exempt `B-GS+CL` on the diagnostics they record.
 
 #### The fifth leg: a screen taken off the wire does not promote
 

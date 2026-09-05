@@ -53,41 +53,81 @@ two-rank serve is therefore something this build will attempt and nothing has
 measured, and that distinction is machine-readable rather than a footnote.
 
 WHICH AXIS, AND WHICH ROWS.  vLLM's parallel Linears split one of the two axes
-and tell the method by the sizes they ask for, so the axis is DERIVED from the
-shapes rather than sniffed off a class name:
+and tell the method so at ``create_weights``, with the TILE this rank computes
+(``input_size_per_partition``, ``output_partition_sizes``) AND the module's
+GLOBAL shape (``input_size``, ``output_size``), and every ``LinearBase`` sets
+its own ``tp_rank``/``tp_size`` before that call.  The axis is DERIVED from
+those numbers rather than sniffed off a class name, and it is the global shape
+against the tile, times the layer's world, that names it:
 
+* ``ReplicatedLinear`` -- and any ``LinearBase`` at ``tp_size == 1`` -- asks for
+  the WHOLE: ``output_size == sum(output_partition_sizes)`` and ``input_size ==
+  input_size_per_partition``.  Nothing is cut; the wire must be the module.
 * ``ColumnParallelLinear`` / ``MergedColumnParallelLinear`` / ``QKVParallelLinear``
-  split the OUTPUT.  Each fused role is split INDEPENDENTLY -- q, k and v each
-  give every rank its own rows -- and ``output_partition_sizes`` is that
-  per-role answer, one entry per member, in the container's stacking order.
-  So the question "which rows does this rank hold" is asked ONCE PER ROLE,
-  against the role's own rows, and never of the container as a whole.
-* ``RowParallelLinear`` splits the INPUT: ``input_size_per_partition * tp ==
-  columns``.  One role, cut along columns, and there the split is even.
+  split the OUTPUT: ``output_size == sum(output_partition_sizes) * tp_size``
+  and ``input_size == input_size_per_partition``.  Each fused role is split
+  INDEPENDENTLY -- q, k and v each give every rank its own rows -- and
+  ``output_partition_sizes`` is that per-role answer, one entry per member, in
+  the container's stacking order.  So the question "which rows does this rank
+  hold" is asked ONCE PER ROLE, against the role's own rows, and never of the
+  container as a whole.
+* ``RowParallelLinear`` splits the INPUT: ``input_size == input_size_per_partition
+  * tp_size`` and ``output_size == sum(output_partition_sizes)``.  One width,
+  cut along columns, and there the split is even.
 
-A ROLE IS NOT ALWAYS CUT ``tp`` WAYS.  Under grouped-query attention with
-``num_kv_heads < tp`` vLLM REPLICATES the KV heads: every rank gets a whole
-head, so ``num_kv_heads`` distinct shards are shared by ``tp`` ranks and two
-ranks legitimately hold the SAME k/v rows.  The number of distinct shards is
-therefore a property of the role and not of the world::
+A layer whose numbers satisfy none of the three has stated a geometry this
+plugin does not serve, and is refused with both shapes.
 
-    shards_i   = role_rows_i // out_partition_i      # exact, or the shapes disagree
-    replicas_i = tp_size // shards_i                 # ranks per shard, 1 when even
-    index_i    = tp_rank // replicas_i               # which shard THIS rank holds
+THE TILE ALONE CANNOT SAY WHETHER A WIRE IS WHOLE.  A ``[64, 64]`` wire under a
+TP=4 ``ColumnParallelLinear`` over ``[256, 64]`` agrees with that rank's
+``[64, 64]`` tile on every local number, and so does a ``[64, 64]`` wire under a
+``ReplicatedLinear`` over ``[64, 64]``.  The first is a quarter of a module --
+rows ``[64, 256)`` on no rank -- and the second is the module.  A plan that read
+only the tile handed both back as a replicated whole (tessera#303); the
+layer's ``output_size`` is the fact that tells them apart, so the plan is fed
+it and refuses the undersized wire by the role's name, on every rank.
+
+A ROLE IS NOT ALWAYS CUT ``tp`` WAYS -- AND THE LAYER SAYS WHEN.  Under
+grouped-query attention with ``num_kv_heads < tp`` vLLM REPLICATES the KV
+heads: every rank gets a whole head, so ``num_kv_heads`` distinct shards are
+shared by ``tp`` ranks and two ranks legitimately hold the SAME k/v rows.  That
+replication is a STATEMENT of ``QKVParallelLinear`` -- ``num_kv_head_replicas
+= tp_size // total_num_kv_heads`` in its ``__init__``, and its ``weight_loader``
+reads ``shard_rank = self.tp_rank // self.num_kv_head_replicas`` -- and it is
+read off the layer (``layer_replicas``), never inferred from the numbers.  It
+cannot be: an MQA k under TP=8 (64 rows on the wire, 64 asked for) is
+numerically the undersized ``[64, 1024]`` wire of a plain ``[512, 1024]``
+ColumnParallel Linear, and only the declaration separates the whole head from
+the tile.  Nor is the padded aggregate enough on its own -- ``QKVParallelLinear``
+pads ``output_size`` to ``num_kv_heads * head * tp`` per KV member, so the
+aggregate is compared with the tile times the world, and each member's
+complete extent is then the layer's own arithmetic::
+
+    replicas_i = 1, or QKVParallelLinear.num_kv_head_replicas for k and v
+    shards_i   = tp_size // replicas_i               # distinct ranges of the role
+    whole_i    = out_partition_i * shards_i          # == role_rows_i, or refused by name
+    index_i    = tp_rank // replicas_i               # which range THIS rank holds
     rows_i     = (index_i * out_partition_i, (index_i + 1) * out_partition_i)
 
-That is vLLM's own arithmetic, read back off the two numbers it hands the
-loader rather than re-derived from head geometry it never passes: ``linear.py``
-``QKVParallelLinear.weight_loader`` computes ``shard_rank = self.tp_rank //
-self.num_kv_head_replicas`` and ``start_idx = shard_rank * shard_size``, and
-``num_kv_head_replicas = tp_size // total_num_kv_heads`` is exactly
-``tp_size // shards_i`` when ``out_partition_i`` is one head.  No branch on a
-member's NAME, no ``num_heads``/``head_size`` in this module's signature: the
-sizes carry the answer, and summing them away was the whole defect (#32).
+No branch on a member's NAME, no ``num_heads``/``head_size`` in this module's
+signature: the layer's declared shape and replication carry the answer.
+Summing the sizes away was the first defect here (#32); reading the tile
+without the layer's global shape and contract was the second (#303).
 
 ``shards_i`` is also what ``tessera.layout.can_shard`` must be asked -- it
 answers "into how many EQUAL shards", and asking it ``tp_size`` for a
 replicated role would test a finer cut than the one being made.
+
+THE TP COORDINATES ARE THE LAYER'S.  ``LinearBase.__init__`` sets ``tp_rank``/
+``tp_size`` -- ``(0, 1)`` under ``disable_tp``, the caller's own pair for an
+effective group (``DCPGroupColumnParallelLinear``), the process's otherwise --
+and reconciles every parameter to them "which correctly accounts for
+disable_tp" (its own comment).  This module reads exactly those two
+attributes (``layer_tp_coordinates``) and nothing from ``vllm.distributed``: a
+process-global answer is wrong for a one-rank layer inside a group, and the
+dense methods are handed only ``LinearBase`` instances
+(``TesseraConfig.get_quant_method``), so a layer without the pair is refused by
+name rather than defaulted.
 
 MoE: expert parallelism assigns WHOLE units to ranks (no cut at all, the
 granularity is one expert), and tensor parallelism inside an expert is the same
@@ -116,9 +156,11 @@ __all__ = [
     "RoleShard",
     "ShardPlan",
     "plan_shard",
+    "plan_shard_for_layer",
+    "layer_tp_coordinates",
+    "layer_replicas",
     "can_shard",
     "shard_granularity",
-    "tp_rank_and_size",
 ]
 
 #: The output axis: ColumnParallel and its merged/QKV forms give a rank its own
@@ -339,24 +381,92 @@ class ShardPlan:
             f"{[r.name for r in self.roles]}, which is what the scheme declared")
 
 
-def tp_rank_and_size() -> Tuple[int, int]:
-    """This process's tensor-parallel coordinates, ``(1, 0)``-safe off vLLM.
+def _check_tp_coordinates(prefix: str, tp_rank: int, tp_size: int) -> Tuple[int, int]:
+    tp_rank, tp_size = int(tp_rank), int(tp_size)
+    if tp_size < 1 or not 0 <= tp_rank < tp_size:
+        raise ValueError(f"{prefix}: nonsensical TP coordinates rank {tp_rank} of {tp_size}")
+    return tp_rank, tp_size
 
-    Read from vLLM rather than from an environment variable: the TP group is a
-    fact of the engine's own parallel state, and a serve that disagreed with it
-    would shard against a group it is not in.
+
+def layer_tp_coordinates(prefix: str, layer) -> Tuple[int, int]:
+    """The LAYER's ``(tp_rank, tp_size)``, read off it -- never the process's.
+
+    Every vLLM ``LinearBase`` sets both in its ``__init__``, before it calls
+    ``create_weights``: ``(0, 1)`` when built with ``disable_tp``, the pair its
+    caller passed when it belongs to an effective group
+    (``DCPGroupColumnParallelLinear``), and the process's parallel state
+    otherwise -- and ``update_param_tp_status`` then reconciles every parameter
+    to THESE, not to the global rank, "which correctly accounts for disable_tp"
+    (vLLM's own comment).  So the coordinates a plan must be made for are the
+    layer's, and ``vllm.distributed`` would answer a different question for a
+    one-rank layer inside a four-rank process (tessera#303).
+
+    A layer without the pair is refused BY NAME, not defaulted to one rank:
+    ``TesseraConfig.get_quant_method`` hands the dense methods only
+    ``LinearBase`` instances, every one of which carries the pair, so an object
+    without them is not a vLLM Linear and its TP identity is not a thing this
+    module may guess.
     """
-    try:
-        from vllm.distributed import (get_tensor_model_parallel_rank,
-                                      get_tensor_model_parallel_world_size)
-    except Exception:                       # pragma: no cover - no vLLM (producer side)
-        return 0, 1
-    try:
-        return int(get_tensor_model_parallel_rank()), int(get_tensor_model_parallel_world_size())
-    except Exception:
-        # Called outside an initialised parallel state (unit tests, the
-        # producer): one rank is the honest answer, not a guess at a topology.
-        return 0, 1
+    tp_rank = getattr(layer, "tp_rank", None)
+    tp_size = getattr(layer, "tp_size", None)
+    if tp_rank is None or tp_size is None:
+        raise ValueError(
+            f"{prefix}: the layer handed to create_weights is a {type(layer).__name__} carrying "
+            f"tp_rank={tp_rank!r}, tp_size={tp_size!r}. Every vLLM LinearBase sets both before "
+            f"create_weights (0 of 1 under disable_tp, the group's otherwise) and the shard plan "
+            f"is made for the LAYER's coordinates, not the process's; a layer without them has no "
+            f"tensor-parallel identity to plan for, and one rank is not assumed.")
+    return _check_tp_coordinates(prefix, tp_rank, tp_size)
+
+
+#: The attribute ``QKVParallelLinear`` publishes its KV replication under, and
+#: its ``weight_loader`` reads (``shard_rank = self.tp_rank //
+#: self.num_kv_head_replicas`` for the k and v shards).  One name, vLLM's.
+KV_REPLICAS_ATTRIBUTE = "num_kv_head_replicas"
+
+
+def layer_replicas(prefix: str, layer, members) -> Tuple[int, ...]:
+    """How many ranks hold each member's shard, as the LAYER declares it.
+
+    Returns one integer per member, in stacking order.  ``1`` everywhere for a
+    Linear that declares nothing -- Column/Row/Replicated and the merged
+    gate/up form cut every member ``tp_size`` ways or not at all -- and
+    ``(1, R, R)`` for a ``QKVParallelLinear``, whose ``num_kv_head_replicas`` is
+    vLLM's statement that k and v are held by ``R`` ranks each while q is cut
+    evenly (``linear.py``: ``shard_rank = tp_rank if id == "q" else tp_rank //
+    num_kv_head_replicas``).
+
+    READ, NOT INFERRED.  The old plan derived replication from the numbers --
+    "fewer distinct shards than ranks, by divisibility" -- which accepted a
+    wire the size of one rank's tile as a replicated whole under any Linear
+    (tessera#303).  Replication is a fact about the layer and only the layer
+    states it; a Linear without the attribute has none.
+
+    The attribute is ``QKVParallelLinear``'s and describes exactly three
+    members.  A layer carrying it over any other member count -- one role, or
+    the indexer variant's four (``index_k`` is cut ``tp`` ways, not replicated)
+    -- is a statement this function does not know how to map onto the scheme's
+    roles, and it is refused by name rather than guessed at.
+    """
+    members = tuple(str(name) for name in members)
+    declared = getattr(layer, KV_REPLICAS_ATTRIBUTE, None)
+    if declared is None:
+        return (1,) * len(members)
+    replicas = int(declared)
+    if replicas < 1:
+        raise ValueError(
+            f"{prefix}: the layer declares {KV_REPLICAS_ATTRIBUTE}={declared!r}, which is not a "
+            f"count of ranks per KV shard; vLLM's QKVParallelLinear computes it as "
+            f"tp_size // total_num_kv_heads, at least 1.")
+    if len(members) != 3:
+        raise ValueError(
+            f"{prefix}: the layer declares {KV_REPLICAS_ATTRIBUTE}={replicas}, which is "
+            f"QKVParallelLinear's statement about three members (q cut evenly, k and v held by "
+            f"{replicas} ranks each), but the scheme declares {len(members)} role"
+            f"{'' if len(members) == 1 else 's'} {list(members)}. Which of them the replication "
+            f"covers is not something this plan may guess, so the module is refused rather than "
+            f"served with a replication it cannot place.")
+    return (1, replicas, replicas)
 
 
 def shard_granularity(unit) -> Optional[Tuple[int, int]]:
@@ -402,64 +512,118 @@ def can_shard(unit, shards: int, axis: str) -> Optional[bool]:
     return bool(_can_shard(unit, int(shards), axis))
 
 
+def _require_whole_output_boundaries(shape: str, roles, out_partitions) -> None:
+    """A whole output is every role's rows, MEMBER BY MEMBER.
+
+    EQUAL TOTALS ARE NOT EQUAL BOUNDARIES.  A container that stacks q/k/v as
+    [4, 8, 4] and a layer that reads [8, 4, 4] agree on 16 and on nothing
+    else, and the load would succeed serving four q rows and the first four k
+    rows as this layer's q.  Nothing downstream sees it -- the decoder returns
+    the role arrangement it was handed, and the sidecar agrees with the wire
+    it was written beside -- so the boundaries are compared HERE, where both
+    lists are in hand, on every path that serves the output whole (#234).
+    """
+    disagree = [(name, role_rows, out)
+                for (name, role_rows), out in zip(roles, out_partitions)
+                if out != role_rows]
+    if disagree:
+        name, role_rows, out = disagree[0]
+        raise ValueError(
+            f"{shape}, which is every output row of the module -- but not at the "
+            f"checkpoint's boundaries. Its role {name!r} is {role_rows} rows on the wire and "
+            f"this rank asks for {out} of them; the declared roles stack as "
+            f"{[(n, r) for n, r in roles]} and the layer's output partitions are "
+            f"{list(out_partitions)}. Equal totals are not equal boundaries: a container "
+            f"decoded at the wire's boundaries and consumed at the layer's serves one role's "
+            f"rows as another's, which no decoder can detect. The checkpoint and the serve "
+            f"disagree about how this module is fused.")
+
+
+def _require_no_replication(prefix: str, roles, replicas, served: str) -> None:
+    """Replication is a statement about a CUT output; anywhere else it
+    contradicts the shape the layer gave, and the contradiction is refused."""
+    for (name, _rows), factor in zip(roles, replicas):
+        if factor != 1:
+            raise ValueError(
+                f"{prefix}: the layer declares {factor} replicas of its role {name!r} "
+                f"({KV_REPLICAS_ATTRIBUTE}) but its shape says the module is {served}; "
+                f"replication describes how a CUT output is shared across ranks, so the layer "
+                f"contradicts itself and the module is refused rather than planned on one half "
+                f"of the statement.")
+
+
 def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int,
-               tp_rank: Optional[int] = None, tp_size: Optional[int] = None) -> ShardPlan:
-    """Decide, from the sizes vLLM asks for, which slice of each role this rank is.
+               tp_rank: int, tp_size: int, input_size: int, output_size: int,
+               replicas=None) -> ShardPlan:
+    """Decide, from what the LAYER declares, which slice of each role this rank is.
 
     ``roles`` is the checkpoint's ``[(name, rows)]`` in stacking order --
-    ``validate_tessera_scheme``'s own field -- and ``out_partitions`` is vLLM's
-    ``output_partition_sizes``, the per-member output size THIS RANK computes.
-    Both are LISTS on purpose: a fused container's members are cut
-    independently, and summing them to two scalars is what made a
-    replicated-KV QKV module unplannable (#32).  ``columns`` and ``in_size``
-    stay scalars because the input axis is one width, evenly split.
+    ``validate_tessera_scheme``'s own field -- and ``columns`` its width; that
+    is the WIRE.  Everything else is the LAYER: ``out_partitions`` is vLLM's
+    ``output_partition_sizes`` and ``in_size`` its ``input_size_per_partition``
+    (the tile THIS RANK computes); ``input_size``/``output_size`` are the
+    module's GLOBAL shape as the layer states it; ``tp_rank``/``tp_size`` are
+    the layer's own coordinates (``layer_tp_coordinates``); ``replicas`` is one
+    integer per member, how many ranks hold each member's shard
+    (``layer_replicas``, ``None`` meaning one everywhere).  The routes call
+    ``plan_shard_for_layer``, which reads the last two off the layer.
 
-    THE TWO LISTS ARE PAIRED BY POSITION, and that is a dependency worth
-    stating: vLLM passes no names with ``output_partition_sizes``, so the
-    correspondence rests on the container's stacking order being the layer's.
-    It is not assumed blind -- ``parse_tessera_blob_for_scheme`` refuses a
-    container whose members are not exactly the declared roles in order, that
-    order is the row order the exporter packed (``fused.pack_fused``), and it
-    is the order the SERVED tp=1 tile is stacked in, so a mis-ordering would
-    already be wrong at one rank.  The per-role checks below are the only
-    cross-check available here; they catch a mis-ordering whenever the roles
-    differ in size, and cannot when they do not.
+    ``roles``/``out_partitions``/``replicas`` are LISTS on purpose: a fused
+    container's members are cut independently, and summing them to two scalars
+    is what made a replicated-KV QKV module unplannable (#32).  ``columns`` and
+    ``in_size`` stay scalars because the input axis is one width, evenly split.
+
+    THE GLOBAL SHAPE AGAINST THE TILE NAMES THE AXIS.  With ``tile =
+    (sum(out_partitions), in_size)`` there are exactly three vLLM Linear
+    relations -- ``(input_size, output_size)`` equal to the tile (served
+    WHOLE: ``ReplicatedLinear``, or any Linear at one rank), the output times
+    ``tp_size`` (an OUTPUT cut: ColumnParallel and its merged/QKV forms), or the
+    input times ``tp_size`` (an INPUT cut: RowParallel) -- and a layer that
+    satisfies none is refused with both shapes.  The wire is then held to the
+    layer's statement: served whole, it must be the module; cut on the input,
+    its width must be ``input_size``; cut on the output, each role's rows must
+    be the member's COMPLETE extent under the layer's replication,
+    ``out_i * (tp_size // replicas_i)``.  A wire the size of one rank's tile
+    agrees with the tile on every local number, and reading only the tile
+    handed it back as a replicated whole module on every rank (tessera#303);
+    the refusal names the role, the wire's rows, and the extent the layer's
+    contract requires.
+
+    THE LISTS ARE PAIRED BY POSITION, and that is a dependency worth stating:
+    vLLM passes no names with ``output_partition_sizes``, so the correspondence
+    rests on the container's stacking order being the layer's.  It is not
+    assumed blind -- ``parse_tessera_blob_for_scheme`` refuses a container
+    whose members are not exactly the declared roles in order, that order is
+    the row order the exporter packed (``fused.pack_fused``), and it is the
+    order the SERVED tp=1 tile is stacked in, so a mis-ordering would already
+    be wrong at one rank.  The per-role checks below are the only cross-check
+    available here; they catch a mis-ordering whenever the roles differ in
+    size, and cannot when they do not.
 
     THE TOTALS ARE NEVER THE ANSWER ON THEIR OWN.  Two lists that sum alike
     can name different boundaries -- ``[4, 8, 4]`` and ``[8, 4, 4]`` are both
-    16 rows -- and a plan built on the sums would hand back the whole module
-    while the layer read one role's rows as another's.  So the lengths and,
-    wherever the output is whole, the per-member extents are compared BEFORE
-    any branch: the whole-module shortcut is reached only by a request that
-    agrees with the checkpoint member by member.
+    16 rows -- so the lengths, and wherever the output is served whole the
+    per-member extents, are compared before a plan is returned (#234).
 
     Refuses -- with the module's shape, the role and the relation that failed --
     when the request is neither the whole module nor a split this wire can
     express.  A checkpoint and a serve disagreeing about a module's geometry is
-    the failure worth being loud about; head replication is NOT that failure,
-    and does not get that message.
+    the failure worth being loud about; head replication the layer DECLARES is
+    NOT that failure, and does not get that message.
     """
-    if tp_rank is None or tp_size is None:
-        derived_rank, derived_size = tp_rank_and_size()
-        tp_rank = derived_rank if tp_rank is None else tp_rank
-        tp_size = derived_size if tp_size is None else tp_size
     roles = tuple((str(name), int(rows)) for name, rows in roles)
     out_partitions = tuple(int(size) for size in out_partitions)
     if not roles:
         raise ValueError(f"{prefix}: a module has at least one role; the scheme declared none")
     columns, in_size = int(columns), int(in_size)
-    tp_rank, tp_size = int(tp_rank), int(tp_size)
-    if tp_size < 1 or not 0 <= tp_rank < tp_size:
-        raise ValueError(f"{prefix}: nonsensical TP coordinates rank {tp_rank} of {tp_size}")
+    input_size, output_size = int(input_size), int(output_size)
+    tp_rank, tp_size = _check_tp_coordinates(prefix, tp_rank, tp_size)
     rows = sum(role_rows for _name, role_rows in roles)
     out_size = sum(out_partitions)
     shape = (f"{prefix}: tessera module is {rows}x{columns}; rank {tp_rank} of {tp_size} wants "
-             f"{out_size}x{in_size}")
+             f"{out_size}x{in_size} of a layer declared {output_size}x{input_size}")
 
-    # THE TWO LISTS ARE ONE LIST, and that is asked ONCE, before any branch.
-    # It used to be asked only where the output is cut, so the two ways a
-    # module can be served WHOLE -- one rank, and a replicated Linear inside a
-    # group -- reached their shortcut on the totals alone.
+    # THE LISTS ARE ONE LIST, and that is asked ONCE, before any branch.
     if len(out_partitions) != len(roles):
         raise ValueError(
             f"{shape}. The checkpoint declares {len(roles)} roles "
@@ -467,84 +631,140 @@ def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int
             f"partitions {list(out_partitions)}; a fused container's members and a layer's "
             f"output partitions are the same list in the same order, so the two disagree about "
             f"how this module is fused -- which is a checkpoint/serve mismatch, not a shard.")
-    if out_size == rows:
-        # EQUAL TOTALS ARE NOT EQUAL BOUNDARIES.  A whole output is every
-        # role's rows, member by member: a container that stacks q/k/v as
-        # [4, 8, 4] and a layer that reads [8, 4, 4] agree on 16 and on
-        # nothing else, and the load succeeds serving four q rows and the
-        # first four k rows as this layer's q.  Nothing downstream sees it --
-        # the decoder returns the role arrangement it was handed, and the
-        # sidecar agrees with the wire it was written beside -- so the
-        # boundaries are compared HERE, where both lists are in hand.
-        disagree = [(name, role_rows, out)
-                    for (name, role_rows), out in zip(roles, out_partitions)
-                    if out != role_rows]
-        if disagree:
-            name, role_rows, out = disagree[0]
+    replicas = (1,) * len(roles) if replicas is None else tuple(int(r) for r in replicas)
+    if len(replicas) != len(roles):
+        raise ValueError(
+            f"{shape}. The layer declares {len(replicas)} replica counts {list(replicas)} for "
+            f"{len(roles)} roles {[name for name, _ in roles]}; replication is stated once per "
+            f"member, in stacking order.")
+    for (name, _role_rows), factor in zip(roles, replicas):
+        if factor < 1 or tp_size % factor:
             raise ValueError(
-                f"{shape}, which is every output row of the module -- but not at the "
-                f"checkpoint's boundaries. Its role {name!r} is {role_rows} rows on the wire and "
-                f"this rank asks for {out} of them; the declared roles stack as "
-                f"{[(n, r) for n, r in roles]} and the layer's output partitions are "
-                f"{list(out_partitions)}. Equal totals are not equal boundaries: a container "
-                f"decoded at the wire's boundaries and consumed at the layer's serves one role's "
-                f"rows as another's, which no decoder can detect. The checkpoint and the serve "
-                f"disagree about how this module is fused.")
+                f"{shape}. The layer declares {factor} replicas of its role {name!r} over "
+                f"{tp_size} ranks, which is not a whole number of ranks per shard: replication "
+                f"means tp_size / replicas distinct shards, each held by exactly `replicas` "
+                f"ranks (vLLM: num_kv_head_replicas = tp_size // total_num_kv_heads, and its "
+                f"own divide() refuses a remainder). The layer is malformed.")
 
-    if out_size == rows and in_size == columns:
-        # Whole module.  True at tp_size == 1, and also on a replicated Linear
-        # inside a TP group -- which is a whole unit per rank, not a cut.
+    layer_whole = output_size == out_size and input_size == in_size
+    if layer_whole:
+        # ReplicatedLinear inside a group, or any Linear at one rank: the layer
+        # says the tile IS the module, so the wire must be exactly the module.
+        # This is the ONLY way a whole wire at tp_size > 1 is a plan: by the
+        # layer's declaration, never by the wire happening to match the tile.
+        if out_size != rows or in_size != columns:
+            if tp_size == 1:
+                raise ValueError(
+                    f"{prefix}: tessera module is {rows}x{columns} but the layer wants "
+                    f"{out_size}x{in_size} on one rank; a wire is bound to its shape")
+            raise ValueError(
+                f"{shape}, which is a module served whole on every rank of {tp_size} "
+                f"(ReplicatedLinear: the layer's global shape is the tile it asks for). The "
+                f"wire is {rows}x{columns} and the layer {output_size}x{input_size}; a wire is "
+                f"bound to its shape, and a replicated module is that shape on every rank.")
+        _require_whole_output_boundaries(shape, roles, out_partitions)
+        _require_no_replication(prefix, roles, replicas, f"served whole on every rank of {tp_size}")
         return ShardPlan(prefix, rows, columns, rows, columns, tp_rank, tp_size, None,
                          tuple(RoleShard(name, role_rows, 0, role_rows, 1)
                                for name, role_rows in roles))
     if tp_size == 1:
         raise ValueError(
-            f"{prefix}: tessera module is {rows}x{columns} but the layer wants "
-            f"{out_size}x{in_size} on one rank; a wire is bound to its shape")
-    if out_size == rows:
-        # The output is whole, so the cut is on the input: RowParallelLinear.
-        # One width over the ranks, evenly -- there is no per-role structure on
-        # this axis, because every role reads every input feature.
-        if in_size * tp_size != columns:
+            f"{prefix}: tessera module is {rows}x{columns}; the layer wants {out_size}x{in_size} "
+            f"on one rank and declares itself {output_size}x{input_size}, which is not the tile. "
+            f"On one rank a layer asks for its whole shape, and a wire is bound to its shape.")
+
+    output_cut = output_size == out_size * tp_size and input_size == in_size
+    input_cut = input_size == in_size * tp_size and output_size == out_size
+    if not output_cut and not input_cut:
+        raise ValueError(
+            f"{shape}: the layer's global shape is neither the tile (ReplicatedLinear, served "
+            f"whole), nor the tile's output times {tp_size} over the whole input "
+            f"({out_size * tp_size}x{in_size}: ColumnParallel and its merged/QKV forms), nor "
+            f"the whole output over the tile's input times {tp_size} ({out_size}x"
+            f"{in_size * tp_size}: RowParallel). A vLLM parallel Linear splits exactly one axis, "
+            f"and this layer's declaration matches none of the three, so there is no cut to "
+            f"plan.")
+
+    if input_cut:
+        # RowParallelLinear: the output is whole, the input is one width over
+        # the ranks, evenly -- there is no per-role structure on this axis,
+        # because every role reads every input feature.
+        if input_size != columns:
             raise ValueError(
-                f"{shape}, which holds every output row but is not a 1/{tp_size} split of its "
-                f"{columns} input columns; a row-parallel Linear gives each rank the same "
-                f"{columns}/{tp_size} of them, and every role reads every input feature so "
-                f"there is no per-member range on this axis.")
+                f"{shape}, which cuts the input {tp_size} ways: a row-parallel Linear over "
+                f"{input_size} input features gives each rank {in_size} of them. The wire has "
+                f"{columns} columns, not {input_size}"
+                + (f" -- exactly a rank's tile. A whole wire the width of one rank's share is "
+                   f"not a replicated module: this layer declared its input {input_size} wide, "
+                   f"and columns [{columns}, {input_size}) exist on no rank."
+                   if columns == in_size else
+                   f"; the checkpoint and the serve disagree about this module's input width."))
+        _require_whole_output_boundaries(shape, roles, out_partitions)
+        _require_no_replication(prefix, roles, replicas, f"cut on its input {tp_size} ways")
         c0 = tp_rank * in_size
         return ShardPlan(prefix, rows, columns, rows, in_size, tp_rank, tp_size, AXIS_COLUMNS,
                          tuple(RoleShard(name, columns, c0, c0 + in_size, tp_size)
                                for name, _role_rows in roles))
-    if in_size != columns:
+
+    # ColumnParallelLinear and its merged/QKV forms: the input is whole and
+    # each member's rows are cut into tp_size // replicas_i distinct shards.
+    if input_size != columns:
         raise ValueError(
-            f"{shape}, which cuts BOTH axes. A vLLM parallel Linear splits exactly one: the "
-            f"output (ColumnParallel and its merged/QKV forms) or the input (RowParallel).")
+            f"{shape}, which cuts the output {tp_size} ways over the whole input -- and the "
+            f"layer's input is {input_size} features while the wire has {columns} columns. "
+            f"The checkpoint and the serve disagree about this module's input width.")
     placed = []
-    for (name, role_rows), out in zip(roles, out_partitions):
-        if out <= 0 or role_rows % out:
+    for (name, role_rows), out, factor in zip(roles, out_partitions, replicas):
+        if out <= 0:
             raise ValueError(
-                f"{shape}. Its role {name!r} is {role_rows} rows and this rank asks for {out} of "
-                f"them, which does not divide {role_rows}: vLLM gives every rank the SAME size "
-                f"for a member, so a member's rows are a whole number of equal shards. The "
-                f"checkpoint and the serve disagree about this module's geometry.")
-        shards = role_rows // out
-        if shards > tp_size:
+                f"{shape}. Its role {name!r} asks for {out} output rows on this rank; vLLM "
+                f"gives every rank a positive share of every member.")
+        shards = tp_size // factor
+        whole = out * shards
+        contract = (f"{shards} shards of {out}"
+                    + (f", each held by {factor} ranks as the layer declares"
+                       if factor != 1 else ""))
+        if whole != role_rows:
+            if role_rows < whole:
+                raise ValueError(
+                    f"{shape}. Its role {name!r} is {role_rows} rows on the wire, but this "
+                    f"layer's contract makes its complete extent {whole} rows ({contract}): "
+                    f"the wire holds {role_rows} of {whole}"
+                    + (f" -- exactly a rank's tile. A whole wire the size of one rank's share "
+                       f"is not a replicated module: the layer declared no replication of this "
+                       f"role, and rows [{role_rows}, {whole}) exist on no rank."
+                       if role_rows == out and factor == 1 else
+                       f", and rows [{role_rows}, {whole}) exist on no rank.")
+                    + " The checkpoint and the serve disagree about this module's geometry.")
             raise ValueError(
-                f"{shape}. Its role {name!r} is {role_rows} rows in shards of {out}, which is "
-                f"{shards} shards for only {tp_size} ranks: this rank asks for less than "
-                f"1/{tp_size} of the role, so some of its rows would be served by nobody. The "
-                f"checkpoint and the serve disagree about this module's geometry.")
-        if tp_size % shards:
-            raise ValueError(
-                f"{shape}. Its role {name!r} is {role_rows} rows in shards of {out}, which is "
-                f"{shards} shards for {tp_size} ranks -- and {shards} does not divide {tp_size}, "
-                f"so there is no whole number of ranks per shard. A role held by fewer shards "
-                f"than there are ranks is REPLICATED (this is how vLLM serves KV heads under "
-                f"GQA), and replication needs {tp_size}/{shards} to be an integer.")
-        index = tp_rank // (tp_size // shards)
+                f"{shape}. Its role {name!r} is {role_rows} rows on the wire, but this "
+                f"layer's contract covers only {whole} of them ({contract}): rows [{whole}, "
+                f"{role_rows}) would be served by nobody, and an all-gather would return a "
+                f"tile with rows no rank computed. The checkpoint and the serve disagree about "
+                f"this module's geometry.")
+        index = tp_rank // factor
         placed.append(RoleShard(name, role_rows, index * out, index * out + out, shards))
     return ShardPlan(prefix, rows, columns, out_size, columns, tp_rank, tp_size, AXIS_ROWS,
                      tuple(placed))
+
+
+def plan_shard_for_layer(prefix: str, layer, *, roles, columns: int, input_size_per_partition,
+                         output_partition_sizes, input_size, output_size) -> ShardPlan:
+    """``plan_shard`` fed from the LAYER: what a route calls at ``create_weights``.
+
+    Takes exactly what vLLM passes to ``LinearMethodBase.create_weights`` and
+    reads the two facts it does not pass off the layer object -- its own TP
+    coordinates (``layer_tp_coordinates``) and its declared KV replication
+    (``layer_replicas``).  Nothing is read from the process's parallel state,
+    and nothing about the layer's geometry is inferred from the tile alone
+    (tessera#303).
+    """
+    tp_rank, tp_size = layer_tp_coordinates(prefix, layer)
+    replicas = layer_replicas(prefix, layer, (name for name, _rows in roles))
+    return plan_shard(prefix, roles=roles, columns=columns,
+                      out_partitions=output_partition_sizes,
+                      in_size=input_size_per_partition, tp_rank=tp_rank, tp_size=tp_size,
+                      input_size=input_size, output_size=output_size, replicas=replicas)
 
 
 def _unit_extent(unit) -> Tuple[int, int]:
