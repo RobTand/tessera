@@ -512,3 +512,39 @@ importlib.util.spec_from_file_location("mod", TARGET)
 
     assert found == set()
     assert unknown
+
+
+@pytest.mark.parametrize(("shape", "template"), _ENTRY_POINTS)
+@pytest.mark.parametrize("links", ["absolute", "relative", "mixed"])
+def test_link_cycles_share_a_bounded_budget(tmp_path, monkeypatch, shape, template, links):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "a").symlink_to(root / "b" if links != "relative" else "b")
+    (root / "b").symlink_to(root / "a" if links == "absolute" else "a")
+    _guard_resolve_to_root(monkeypatch, root)
+    original = os.readlink
+    followed = []
+
+    def bounded_readlink(path, *args, **kwargs):
+        if Path(path).name in {"a", "b"}:
+            followed.append(path)
+            assert len(followed) <= 41, "symlink cycle exceeded its traversal budget"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "readlink", bounded_readlink)
+    found, unknown = _scan(template.format(outside=str(root / "a")), root)
+    assert found == set()
+    assert unknown
+
+
+@pytest.mark.parametrize("absolute", [False, True])
+def test_link_parent_semantics_retain_exact_edge(tmp_path, monkeypatch, absolute):
+    root = tmp_path / "repo"
+    (root / "nested" / "child").mkdir(parents=True)
+    (root / "nested" / "target.py").write_text("VALUE = 1\n")
+    (root / "link").symlink_to(root / "nested" / "child" if absolute else "nested/child")
+    _guard_resolve_to_root(monkeypatch, root)
+    found, unknown = _scan('from pathlib import Path\nimport runpy\n'
+                          'runpy.run_path(Path("link") / ".." / "target.py")', root)
+    assert found == {root / "nested" / "target.py"}
+    assert not unknown
