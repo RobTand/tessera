@@ -256,9 +256,11 @@ def import_graph(
            set[tuple[str, str]], dict[str, str]]:
     """The graph, the collection-probe reverse edges, and what would not read.
 
-    ``importers`` is keyed by module name and, for a file read by an explicit
-    path that is not Python, by its repository-relative path -- so a JSON spec
-    or a shell harness a module reads is a node like any other.  ``unreadable``
+    ``importers`` is keyed by node.  A node is a file's dotted module name;
+    or its repository-relative path, both for a file read by an explicit path
+    that is not Python -- so a JSON spec or a shell harness a module reads is
+    a node like any other -- and for a Python file whose dotted name another
+    file already answers to (#317).  ``unreadable``
     maps the repository-relative path of every file that would not parse or
     read to the failure, and each of those files is a ``WILDCARD`` importer:
     the graph does not know what it depends on (#293).
