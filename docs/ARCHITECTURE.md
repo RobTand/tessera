@@ -117,7 +117,13 @@ incomplete, and a pre-v3 population cannot answer the execution question, so it
 is not green. Each arm's own result stays readable in the receipt's
 `arm_results`, which is deliberately not the merge verdict and never sets the
 exit status.
-`tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
+`tools/impacted_tests.py` fails open to the full run and never under-selects:
+that is its whole contract. Every gap in what the graph can prove resolves
+towards running more tests -- an ambiguous spelling edges to every file it can
+name, a module whose dependencies cannot be established selects its consumers,
+and an unresolvable scope forces the whole suite. A narrowed list is a claim
+that the graph read everything relevant, so where it did not, the answer is
+`full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
@@ -134,7 +140,25 @@ import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
 file is also a node under every name an import root on `sys.path` gives it:
 `tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
 `box_artifacts`, which is how every test in the tree spells it. An ambiguous
-alias edges to every candidate.
+alias edges to every candidate, and owning the canonical name is not
+precedence: a root `helper.py` and a `tests/helper.py` are both `helper`, the
+import root `tests/conftest.py` inserts is the one pytest actually executes for
+`from helper import VALUE`, and the graph models no precedence between them. It
+therefore resolves the union of canonical and alias candidates, deduplicated by
+file, rather than letting the canonical name hide the candidate that runs
+(#292).
+A node's identity is its **file**, never its name, because a dotted name is a
+spelling and a spelling can name two files: `_module_name` strips a leading
+`src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
+importable here because `tests/conftest.py` puts `src/` and `tests/` on
+`sys.path`. Every file therefore gets a node -- under its dotted name, or under
+its repository-relative path when another file already answers to that name,
+the same path-keyed node the graph gives a non-Python data file -- and the
+shared spelling edges to both. Dropping the second file gave it no node, so it
+was never parsed and its own imports were not edges at all: a leaf change whose
+only route to a test ran through the shadowed file selected nothing and said
+`none` (#317). A path load resolves through the file, not through the name it
+spells, for the same reason.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
@@ -149,11 +173,18 @@ an unknown module only for a module that can parse or execute Python source
 resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
 Python dependency once something runs them, and treating every unnameable read
 as "any module in the tree" is what held the verdict at `full` for every change
-(#148). A conftest that execs the `test_*.py` files below it is probing its
+(#148). A file that will not parse or read states no dependency, which is not
+the same as having none: it is the same unknown from the other end, so it too
+may import anything, its consumers are selected, and an unreadable conftest
+forces the population it gates. Reading a failed parse as an empty dependency
+set is what let a leaf change select nothing while collecting its unparseable
+importer would have failed (#293). A conftest that execs the `test_*.py` files
+below it is probing its
 collection targets, and that edge is excluded from the walk that forces full --
 as a dependency it closes a cycle that makes one uncertain test file uncertain
 for the whole population. The selector reports those unresolved importers in its
-receipt.
+receipt, and reports every unreadable source beside the parse or read failure
+that named it, because that one is repairable.
 One-directory conftest globs resolve to ordinary edges; recursive, escaping or
 otherwise unresolved path expressions retain the conservative fallback.
 Parameter, return and annotated-assignment expressions retain potential loader
