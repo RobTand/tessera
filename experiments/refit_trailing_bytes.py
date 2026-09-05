@@ -38,6 +38,23 @@ nothing.
     PYTHONPATH=src python experiments/refit_trailing_bytes.py A_DIR B_DIR \
         --wire-a A_TESSERA --wire-b B_TESSERA \
         --out experiments/results/refit_trailing_bytes.json
+
+**The exit status says which of three things happened** (tessera#269), because
+one caller's expected reading is the refusal: ``refit_trailing_serve.sh
+compare-drift`` runs this tool to report that the 2026-09-02 bytes are NOT the
+matched pair, so it cannot read a nonzero status as "the tool failed" and it
+cannot read a zero one as "it ran".  Until #269 a computed
+``verdict: "NOT the matched pair"`` and an uncaught exception both exited 1,
+and the two are not the same event: one has a receipt and one has none.
+
+===== ==================================================================
+``0`` ``EXIT_MATCHED`` -- a verdict was computed: **the matched pair**.
+``3`` ``EXIT_NOT_MATCHED`` -- a verdict was computed: **NOT the matched
+      pair**.  The receipt at ``--out`` is written first and describes it.
+``1`` ``EXIT_TOOL_FAILED`` -- **no verdict**: an uncaught exception, or one
+      of this module's ``SystemExit`` refusals.  Nothing was decided, and
+      whatever sits at ``--out`` was left there by an earlier run.
+===== ==================================================================
 """
 from __future__ import annotations
 
@@ -51,6 +68,18 @@ from safetensors import safe_open
 
 SUFFIXES = (".weight", ".weight_scale", ".weight_packed",
             ".weight_global_scale", ".input_global_scale")
+
+# The exit-code contract, named once here because a second process reads it:
+# ``refit_trailing_serve.sh compare-drift`` accepts EXIT_MATCHED and
+# EXIT_NOT_MATCHED as readings of its stage and refuses anything else.  A shell
+# script cannot import a Python constant, so those two numbers are written out
+# there as well, and `tests/test_refit_trailing_bytes.py` pins the two lists
+# against each other.  See the module docstring for what each one means.
+EXIT_MATCHED = 0
+EXIT_NOT_MATCHED = 3
+EXIT_TOOL_FAILED = 1   # what Python already returns for an uncaught exception
+                       # and for ``raise SystemExit("message")``; named so the
+                       # third outcome is stated rather than implied.
 
 # What this intervention is allowed to move, stated once and totally.
 #
@@ -106,6 +135,10 @@ def raw(t: torch.Tensor) -> torch.Tensor:
 
 
 def main() -> int:
+    """Compare the two exports and return the exit code the docstring states:
+    ``EXIT_MATCHED`` or ``EXIT_NOT_MATCHED`` for a verdict, and never for
+    anything else -- a run that reached no verdict raises instead, which is
+    ``EXIT_TOOL_FAILED``."""
     ap = argparse.ArgumentParser()
     ap.add_argument("a")
     ap.add_argument("b")
@@ -117,6 +150,18 @@ def main() -> int:
     args = ap.parse_args()
 
     ta, tb = load(Path(args.a)), load(Path(args.b))
+    # An absent, empty or unreadable export dir globs to nothing and raises
+    # nothing, so before tessera#269 it fell through to a "NOT the matched
+    # pair" verdict computed over zero tensors -- and that verdict is exactly
+    # the reading `compare-drift` accepts.  A comparison that compared nothing
+    # is the tool failing, and it says which side.
+    for side, given, loaded in (("a", args.a, ta), ("b", args.b, tb)):
+        if not loaded:
+            raise SystemExit(
+                f"refit_trailing_bytes: {side} ({given}) holds no *.safetensors "
+                f"tensor ending in one of {list(SUFFIXES)}; an absent or "
+                "unreadable export compares nothing, which is this tool "
+                "failing and not a verdict about a pair")
     shared = sorted(set(ta) & set(tb))
     by_suffix: dict = collections.defaultdict(
         lambda: {"same": 0, "different": 0, "names_different": []})
@@ -186,7 +231,10 @@ def main() -> int:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(record, indent=1))
         print(f"wrote {args.out}")
-    return 0 if record["verdict"] == "the matched pair" else 1
+    # A verdict, either way -- and the receipt above describes it.  The tool
+    # failing to reach one is EXIT_TOOL_FAILED and never returned from here.
+    return (EXIT_MATCHED if record["verdict"] == "the matched pair"
+            else EXIT_NOT_MATCHED)
 
 
 if __name__ == "__main__":

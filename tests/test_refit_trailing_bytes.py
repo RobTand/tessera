@@ -11,9 +11,16 @@ passthrough weight or activation quantizer had also moved still returned 0 with
 
 The pairs here are three-tensor toys: what is exercised is the deciding
 predicate, not an encoder.
+
+It also owns the tool's **exit-code contract**, because a second process reads
+it: ``refit_trailing_serve.sh compare-drift`` exists to report "NOT the matched
+pair", so that verdict cannot share a status with the tool failing to reach any
+verdict at all (tessera#269).  Zero is the matched pair, three is the computed
+NOT-matched verdict, one is the tool failing.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,8 +31,17 @@ from safetensors.torch import save_file
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL = REPO / "experiments" / "refit_trailing_bytes.py"
+WRAPPER = REPO / "experiments" / "refit_trailing_serve.sh"
 
 UNIT = "model.layers.0.mlp.down_proj"
+
+
+def tool_module():
+    """The module itself, for the constants it owns."""
+    sys.path.insert(0, str(REPO / "experiments"))
+    import refit_trailing_bytes as tool
+
+    return tool
 
 
 def base_tensors() -> dict:
@@ -142,12 +158,67 @@ def test_a_moved_wire_length_is_still_refused(tmp_path):
     assert record["wire"]["wire_bytes_equal"] is False
 
 
+def test_the_not_matched_verdict_is_not_the_tool_failing(tmp_path):
+    """The verdict this stage exists to report gets its own status, and the
+    receipt is written before it is returned: ``compare-drift`` reads a 3 as a
+    reading and anything else as the tool failing (tessera#269)."""
+    def touch_codes(b):
+        b[f"{UNIT}.weight_packed"] = torch.arange(
+            1, 17, dtype=torch.int32).reshape(4, 4)
+
+    proc, record = run_tool(tmp_path, *make_pair(tmp_path, mutate=touch_codes))
+    assert record["verdict"] == "NOT the matched pair"
+    assert proc.returncode != 1, \
+        "the computed verdict shares its status with the tool failing"
+    assert proc.returncode == tool_module().EXIT_NOT_MATCHED, (
+        proc.stdout + proc.stderr)
+
+
+def test_a_missing_manifest_is_the_tool_failing_not_a_verdict(tmp_path):
+    """``--wire-a`` at a directory with no ``tessera_serving_manifest.json``
+    reaches no verdict at all, so it must not be reported as one."""
+    a, b = make_pair(tmp_path)
+    (a / "tessera_serving_manifest.json").unlink()
+    proc, record = run_tool(tmp_path, a, b)
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+    assert record is None, "a failed run wrote a receipt"
+
+
+def test_an_export_with_no_tensors_is_the_tool_failing_not_a_verdict(tmp_path):
+    """An absent or unreadable export dir loads zero tensors and compares
+    nothing.  Before tessera#269 that fell out as "NOT the matched pair" --
+    which is exactly the reading ``compare-drift`` accepts, so an absent
+    ``$INCUMBENT`` would have certified a drift receipt built from nothing."""
+    _, b = make_pair(tmp_path)
+    proc, record = run_tool(tmp_path, tmp_path / "not-exported", b, wire=False)
+    assert "no *.safetensors" in proc.stderr, \
+        f"nothing was compared and the tool returned {proc.returncode} anyway"
+    assert record is None, "a run that compared nothing wrote a receipt"
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+
+
+def test_the_exit_codes_are_named_once_and_the_shell_reads_the_same_numbers():
+    """Three outcomes, three codes, named in the module that owns them.  The
+    numbers themselves are the contract, because a second process reads them,
+    and ``refit_trailing_serve.sh`` cannot import a Python constant -- so its
+    own list of accepted codes is pinned here against the module's."""
+    tool = tool_module()
+    assert (tool.EXIT_MATCHED, tool.EXIT_NOT_MATCHED, tool.EXIT_TOOL_FAILED) \
+        == (0, 3, 1)
+    declared = re.search(r'drift_reading_codes="([0-9 ]+)"',
+                         WRAPPER.read_text())
+    assert declared, "compare-drift declares no accepted exit codes"
+    assert {int(c) for c in declared.group(1).split()} == {
+        tool.EXIT_MATCHED, tool.EXIT_NOT_MATCHED}
+
+
 def test_every_loaded_suffix_has_a_declared_policy():
     """The policy is a total function of what the loader reads: adding a
     suffix to ``SUFFIXES`` without saying whether it may move is a refusal,
     not a silently-ignored tensor."""
-    sys.path.insert(0, str(REPO / "experiments"))
-    import refit_trailing_bytes as tool
+    tool = tool_module()
 
     assert set(tool.SUFFIXES) == set(tool.CHANGE_POLICY)
     assert set(tool.CHANGE_POLICY.values()) <= {

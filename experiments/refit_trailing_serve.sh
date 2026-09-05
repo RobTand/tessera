@@ -35,6 +35,28 @@
 #   refit_trailing_serve.sh compare-drift      # what the encoder moved since 09-02
 #   refit_trailing_serve.sh serve a4h1|bjac    # dump + KL against the same teacher
 #
+# **A stage exits 0 only if it completed, and every stage's tool decides that,
+# not the `echo STEP_DONE` at the bottom.**  This script runs under
+# `set -uo pipefail` and NOT errexit, so a failed tool inside a pipeline is
+# recorded by pipefail for that pipeline and then discarded, because the
+# pipeline is the branch's last command and the unconditional
+# `echo "STEP_DONE ..."; date` after the `case` becomes the script's status.
+# Each branch therefore captures `${PIPESTATUS[0]}` itself:
+#
+#   export         non-zero if the export command failed (checked inline).
+#   compare        exits PIPESTATUS[0] -- ANY non-zero is a failure here,
+#                  including refit_trailing_bytes.py's 3, because this pair
+#                  IS expected to be the matched pair.
+#   compare-drift  0 and 3 are both readings (the verdict this stage exists to
+#                  report is "NOT the matched pair"); anything else is the tool
+#                  failing and is refused by name.  tessera#269.
+#   serve          exits the KL comparator's status, and refuses a compare that
+#                  exited 0 without writing a receipt.  tessera#251.
+#
+# A stage that names a receipt also moves an earlier run's file aside before
+# running, so the file standing at that path was written by the run that just
+# reported, and never by an older one it would otherwise certify.
+#
 set -uo pipefail
 REPO="${TESSERA_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 PY="${TESSERA_PY:-/home/rob/dq-runs/venvs/prismaquant-cu130/bin/python}"
@@ -94,11 +116,44 @@ compare-drift)
   # The SAME recipe, two encoders: 2026-09-02's ldlqH1 against today's a4h1.
   # Nothing here is a promotion input; it is the reading that says why the
   # 09-02 bytes cannot be this A/B's control.
+  #
+  # This stage's expected reading IS a refusal -- "NOT the matched pair" is the
+  # whole point of it -- so it cannot propagate PIPESTATUS[0] the way `compare`
+  # and `serve` do, and it must not discard it either: until tessera#269 a
+  # missing $INCUMBENT, an unreadable manifest and the expected verdict all
+  # exited 1, and the unconditional `echo STEP_DONE` below made every one of
+  # them a completed stage with status 0.
+  drift_receipt=experiments/results/refit_trailing_encoder_drift.json
+  # An earlier run's receipt sits at the path a reader looks in, and nothing in
+  # it says which run wrote it.  Move it aside BY NAME first, so what stands
+  # there afterwards was written by this attempt or by nobody -- the pattern
+  # tessera#251 gave the `serve` branch, for a stage whose refusal is a result.
+  if [ -f "$drift_receipt" ]; then
+    mv "$drift_receipt" "$drift_receipt.stale"
+    echo "moved the previous drift receipt to $drift_receipt.stale; what stands" \
+         "at $drift_receipt after this run was written by this run" >&2
+  fi
   $PY experiments/refit_trailing_bytes.py \
       "$INCUMBENT" "$RUNS/a4h1-stock-twin" \
       --wire-a "$INCUMBENT_WIRE" --wire-b "$RUNS/a4h1-tessera" \
-      --out experiments/results/refit_trailing_encoder_drift.json \
+      --out "$drift_receipt" \
       2>&1 | tee "$RUNS/compare_drift.log" | tail -40
+  rc=${PIPESTATUS[0]}
+  # refit_trailing_bytes.py's EXIT_MATCHED and EXIT_NOT_MATCHED: a verdict was
+  # computed, either way, and either is a reading of this stage.  A shell
+  # script cannot import a Python constant, so the numbers are repeated here
+  # and tests/test_refit_trailing_bytes.py pins this list against the module's.
+  drift_reading_codes="0 3"
+  case " $drift_reading_codes " in
+    *" $rc "*) ;;
+    *) echo "REFUSED: refit_trailing_bytes failed (exit $rc), not a drift" \
+            "reading; log at $RUNS/compare_drift.log" >&2
+       exit "$rc" ;;
+  esac
+  if [ ! -f "$drift_receipt" ]; then
+    echo "REFUSED: refit_trailing_bytes exited $rc and wrote no $drift_receipt" >&2
+    exit 1
+  fi
   ;;
 serve)
   # serve ARM -- a4h1 | bjac | incumbent.  `incumbent` re-serves the 2026-09-02
