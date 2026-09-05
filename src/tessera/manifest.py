@@ -252,7 +252,9 @@ WINDOW_BITS_MAX = 20
 #: fails inside the codec with a 21-digit integer and no mention of a scale
 #: (#33).  Refuse it here, where the field has a name.  The bound itself is
 #: the codec's to state -- ``canonical.fits_uint`` -- because a second copy of
-#: it here would be a second thing to forget to change.
+#: it here would be a second thing to forget to change.  A power of two is
+#: not exempt: ``2**-131`` is dyadic and float-exact and its denominator
+#: needs 132 bits, which is where a LUT plane on the BF16 grid lands.
 def _require_wire_ratio(field: str, value: Fraction) -> None:
     if fits_uint(value.numerator) and fits_uint(value.denominator):
         return
@@ -261,11 +263,16 @@ def _require_wire_ratio(field: str, value: Fraction) -> None:
         f"as the exact ratio {value.numerator}/{value.denominator}, whose "
         f"{'numerator' if not fits_uint(value.numerator) else 'denominator'} "
         f"needs {max(value.numerator, value.denominator).bit_length()} bits and "
-        "the canonical codec's varints hold 64.  A scale reaches this state by "
-        "being a float that is not a dyadic rational of modest denominator -- "
-        "the shipped planes snap the global to a power of two, which encodes in "
-        "a handful of bytes.  Snap it, or carry the residue in the per-row or "
-        "per-entry scale instead of the global."
+        "the canonical codec's varints hold 64.  Two ways here.  A float that "
+        "is not a dyadic rational of modest denominator: snap it, or carry the "
+        "residue in the per-row or per-entry scale instead of the global.  Or "
+        "a power of two whose exponent the codec's varint cannot hold -- the "
+        "shipped planes snap the global to a power of two, and that helps only "
+        "while the exponent is inside the varint: the LUT global sits six "
+        "binades under the largest target normalised by the grid's peak, so a "
+        "grid whose peak dwarfs the weights (BF16's 2**128) lands here on any "
+        "weight, and E2M1/E4M3 only on a unit whose largest |w| is below "
+        "peak * 2**-57, a dead tensor.  Encode it on a grid the weights reach."
     )
 
 

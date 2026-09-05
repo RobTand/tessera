@@ -1554,6 +1554,18 @@ def _pack_scales_lut(
     (the least-squares refit can raise a scale past its amax) and seventeen
     binades below.  Weighting each half by the energy of its normalised
     weights approximates the ``<u, u>`` the refit will use once codes exist.
+
+    The global is ``2**(floor(log2(amax / (peak * headroom))) - 6)`` and the
+    refits never move it, so it is writable exactly when that exponent fits
+    the ratio codec's varint (``canonical.fits_uint``, 64 bits: exponents
+    down to -63), i.e. while ``amax >= peak * headroom * 2**-57``.  On E2M1
+    (peak 6) that is ``amax >= 4.2e-17`` and on E4M3 (peak 448)
+    ``3.1e-15`` -- a dead tensor -- but on the BF16 grid (peak 2**128) it is
+    ``amax >= 2**71``, so a LUT plane there is refused by the manifest on any
+    weight; BF16 ships the CHANNEL plane, whose global is the median row
+    scale's binade and carries no grid peak.  Measured: E2M1 at amax 2**-50
+    writes and at 2**-55 is refused; BF16 with ``scale_plane=LUT`` is refused
+    at 2**-132 on ``randn`` weights.
     """
     flat = weights.reshape(-1)
     halves = flat.reshape(-1, half)
