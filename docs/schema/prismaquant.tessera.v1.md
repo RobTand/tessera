@@ -584,9 +584,18 @@ terminal's count, but the bits sharing that byte would be the plane's *next*
 element's real content -- the next granule's, on a granular plane -- so such
 a terminal would verify only while that content happened to be zero.
 `Manifest` refuses any count at which `count × element_bits` is not a whole
-number of bytes, on every plane (§3b). A level count
-`steps × N_l` is byte-aligned for every real shape (rows are multiples of 8),
-but nothing derives that; the refusal is where the rule lives.
+number of bytes, on every plane (§3b). And it must end on the descriptor's
+**alignment boundary**, for the same reason one byte wider:
+`PlaneDescriptor.byte_length` rounds a partial extent up to
+`alignment_bytes`, the reader requires those padding bytes to be zero, and in
+the full region the bytes that rounding claims as padding are the next
+element's real content -- so a writer whose ladder held such a rung emitted
+an artifact whose own declared length its parser refused. `Manifest` refuses
+a partial cut whose content bytes are not a multiple of the plane's
+`alignment_bytes` (vacuous at the writer's default `alignment_bytes = 1`). A
+level count `steps × N_l` is byte-aligned for every real shape (rows are
+multiples of 8), but nothing derives that; the refusal is where the rule
+lives.
 
 **Reading.** The header minor is the layout: `Manifest.decode` sets `LEGACY`
 below 7 and `LADDER` from it, and `__post_init__` holds the descriptor order
@@ -754,7 +763,9 @@ read different bytes:
   granules. Its running prefix sums are the depths a terminal may be cut at.
 - A cut strictly inside a granular plane ends on a byte (§1h): `Manifest`
   refuses a granule boundary at which `count × element_bits` is not a whole
-  number of bytes, whatever the granularity.
+  number of bytes, whatever the granularity -- and on the descriptor's
+  alignment boundary: a partial cut whose content bytes are not a multiple of
+  the plane's `alignment_bytes` is refused for the reason §1h gives.
 - `geometry.quantizable_params` is at most `rows × columns`. It is the
   denominator of every bpp figure the artifact quotes, so an unbounded value
   understates the rate by however much it likes. Below the position count is
@@ -834,7 +845,9 @@ the order they were met:
    and the full extent included. A count in the middle of a granule prices
    exactly and describes a stream no granule boundary matches (2026-09-02
    audit §2 P0-3); a cut strictly inside any plane, granular or not, that is
-   not a whole number of bytes is refused for the reason §1h gives.
+   not a whole number of bytes is refused for the reason §1h gives, and so
+   is one whose content bytes are not a multiple of the plane's
+   `alignment_bytes`.
 2. **Every terminal carries `payload_digest`** over its own byte prefix — 32
    bytes per terminal. The whole-artifact digest covers only the untruncated
    bytes, so without this a truncation carries no integrity check at all

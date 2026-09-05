@@ -233,6 +233,56 @@ def test_a_granule_boundary_off_a_byte_is_not_a_legal_cut():
     assert _manifest(geometry8, rates8, planes8, region8, (ok, one)).terminals == (ok, one)
 
 
+def test_a_cut_off_the_planes_alignment_boundary_is_not_a_legal_cut():
+    """The byte rule's sibling above ``alignment_bytes=1``.
+
+    A partial cut's byte length rounds up to the descriptor's alignment
+    (``PlaneDescriptor.byte_length``), and the reader requires the padding
+    bytes to be zero (``container.verify_plane_region``) -- but in the full
+    region the bytes at that offset are the plane's *next* granule's real
+    content.  A rate-1 unit at 3 rows has 12-byte completion levels; at
+    alignment 8 the depth-1 rung's COMPLETION extent rounds to 16 bytes, so
+    the four bytes it calls padding are the depth-2 level's nonzero words:
+    the writer used to emit that artifact and its own declared rung was then
+    refused by the parser.  Refused at manifest construction instead, where
+    the bytes are decided.  At alignment 4 the same cut ends on the boundary
+    and every declared rung reads back from its own byte prefix, nonzero
+    next-level content and all."""
+    geometry = Geometry(
+        rows=3, columns=32, superblock_columns=8, group_weights=32,
+        half_weights=16, quantizable_params=96,
+    )
+    rates = bresenham_rate_schedule(root_from_q256(256), 32)
+    payloads = {
+        PlaneKind.ALPHABET: ALPHABET_BLOB, PlaneKind.DESCENDANT: DESCENDANT_BLOB,
+        PlaneKind.COMPLETION: bytes([255]) * 24,
+    }
+    full = TerminalSpec("t-c2", (2,) * 32, with_scale_base=False)
+    shallow = TerminalSpec("t-c1", (1,) * 32, with_scale_base=False)
+
+    def ladder(alignment_bytes):
+        planes = build_planes(
+            geometry, rates, ALPHABET_BLOB, DESCENDANT_BLOB, payloads=payloads,
+            alignment_bytes=alignment_bytes, spec=full,
+        )
+        region = build_plane_region(planes, payloads)
+        rungs = tuple(
+            build_terminal(geometry, rates, spec, planes, len(ALPHABET_BLOB),
+                           len(DESCENDANT_BLOB), plane_region=region)
+            for spec in (full, shallow)
+        )
+        return planes, region, rungs
+
+    planes, region, rungs = ladder(alignment_bytes=8)
+    with pytest.raises(ManifestError, match="alignment boundary"):
+        _manifest(geometry, rates, planes, region, rungs)
+    planes, region, rungs = ladder(alignment_bytes=4)
+    blob = serialize(_manifest(geometry, rates, planes, region, rungs), region)
+    for rung in rungs:
+        cut = blob[: len(blob) - (len(region) - rung.exact_bytes)]
+        assert parse(cut).terminal == rung
+
+
 def test_a_cut_inside_a_whole_plane_must_end_on_a_byte_too():
     """The byte rule is not a granule rule.  An S6b refinement rung
     (``TerminalSpec.scale_refine_halves``, schema D3) cuts a WHOLE_PLANE
