@@ -147,6 +147,68 @@ def _export(tmp_path, monkeypatch, tensors, plan, *extra):
     return out
 
 
+
+def _encode_canonical_wire(matrix, expert, projection, device="cuda"):
+    """Encode ONE canonical expert matrix the way the export loop encodes it.
+
+    The anchor for every value assertion below is this call, not a second
+    export: two exports share the write loop, so a wire relabelled inside it,
+    or an expert index off by one in ``expert_units``, is common to both and
+    cancels out of any export-versus-export comparison.  This re-encodes the
+    fixture's own ``[rows, columns]`` matrix with the same arguments the loop
+    passes (``grid``, ``q256``, the unit's canonical ``name``, ``verify``) and
+    frames it with the same ``pack_fused`` call, so the bytes it returns are
+    what the shard MUST hold for that expert and that projection -- and a
+    swapped expert, a transposed slice or a swapped gate/up half is a
+    mismatch rather than a correctly-named wrong wire.
+    """
+    from tessera.export import encode_linear_planes
+    from tessera.fused import pack_fused
+
+    exported, _unit, _forests = encode_linear_planes(
+        matrix.to(device, torch.float32).contiguous(),
+        grid=export.grid_for("E4M3"), q256=1024,
+        name=f"{STACK}.{expert}.{projection}.weight", verify=True)
+    return pack_fused([(projection, exported.rows, exported.blob)])
+
+
+def _written_wires(out: Path):
+    """Every expert wire in the shard, as bytes, keyed ``(expert, projection)``."""
+    with safetensors_torch.safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        return {(expert, projection):
+                bytes(handle.get_tensor(f"{STACK}.{expert}.{projection}.wire").tolist())
+                for expert in range(EXPERTS) for projection in export.EXPERT_PROJECTIONS}
+
+
+def _assert_wires_are_the_per_expert_encode(wires, sources):
+    """Each wire is the encode of ITS expert's matrix, and no two are the same.
+
+    The distinctness line is not decoration.  A value check whose expected
+    side is constant across the stack passes on a write loop that writes one
+    blob everywhere, which is the shape of the defect it exists to catch.
+    """
+    assert len(set(wires.values())) == EXPERTS * len(export.EXPERT_PROJECTIONS), (
+        "the stack's wires are not pairwise distinct, so equality below would be vacuous")
+    for (expert, projection), blob in sorted(wires.items()):
+        want = _encode_canonical_wire(sources[(expert, projection)], expert, projection)
+        assert blob == want, (
+            f"{STACK}.{expert}.{projection}.wire is not the encode of that expert's "
+            f"{projection}: {len(blob)} bytes written, {len(want)} bytes expected from the "
+            "source matrix. A wrong expert index, a transposed slice or a swapped gate/up "
+            "half writes a correctly-named, correctly-shaped, wrong-valued wire.")
+
+
+def _canonical_sources(tensors):
+    """``{(expert, projection): matrix}`` -- the unpacked spelling of the fixture.
+
+    ``_packed_checkpoint`` is built by stacking exactly these tensors, so it
+    is the same logical stack under a different physical convention and this
+    is the expected side for either.
+    """
+    return {(expert, projection): tensors[f"{STACK}.{expert}.{projection}.weight"]
+            for expert in range(EXPERTS) for projection in export.EXPERT_PROJECTIONS}
+
+
 # --------------------------------------------------------------------------
 # The stack is the plannable unit
 # --------------------------------------------------------------------------
@@ -367,6 +429,12 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
                                                w2_wire=w2, w2_wire_len=w2_len))
     assert len(back13) == EXPERTS and len(back2) == EXPERTS
 
+    # The same value-level check the packed path gets: the containers above
+    # were parsed for role, geometry and stride, which a wire carrying another
+    # expert's bytes satisfies exactly as well as its own.
+    _assert_wires_are_the_per_expert_encode(
+        _written_wires(out), _canonical_sources(_checkpoint()))
+
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     assert manifest["routed_moe"]["disposition"] == "quantized"
     assert manifest["routed_moe"]["quantized_stacks"] == [STACK]
@@ -408,6 +476,33 @@ def test_a_packed_stack_is_written_as_canonical_per_expert_wires(
                for projection in export.EXPERT_PROJECTIONS)
     assert not any(n.startswith(f"{STACK}.gate_up_proj") or
                    n.startswith(f"{STACK}.down_proj") for n in names)
+
+    # THE VALUES, not the roster.  Everything above this line is a name or a
+    # manifest field, and the fixture is square by construction
+    # (``hidden == 2 * intermediate``), so a wrong transpose or a swapped
+    # gate/up half writes wires with the right names and the right shapes and
+    # every assertion above still passes.  This is the check that fails on
+    # one: each wire must be the encode of ITS expert's canonical matrix.
+    wires = _written_wires(out)
+    _assert_wires_are_the_per_expert_encode(wires, _canonical_sources(_checkpoint()))
+
+    # And the last hop, on the PACKED export's OWN declaration.  The bytes are
+    # equal to the unpacked export's, but the sidecar is not: this scheme
+    # carries ``source_layout``, and nothing had ever handed one to the
+    # loader.  ``prepare_tessera_moe_experts`` is what
+    # ``process_weights_after_loading`` calls, so what it returns here is what
+    # the runtime's fused-MoE kernel would be handed for a packed source.
+    from tessera.serving.moe_route import prepare_tessera_moe_experts
+
+    prepared = prepare_tessera_moe_experts(
+        {"w13": [[wires[(expert, "gate_proj")], wires[(expert, "up_proj")]]
+                 for expert in range(EXPERTS)],
+         "w2": [[wires[(expert, "down_proj")]] for expert in range(EXPERTS)]},
+        declared, STACK, device="cuda")
+    assert tuple(prepared.w13_weight.shape) == (EXPERTS, 2 * MOE_INTER, HIDDEN)
+    assert tuple(prepared.w2_weight.shape) == (EXPERTS, HIDDEN, MOE_INTER)
+    assert prepared.w13_weight.dtype == torch.float8_e4m3fn
+    assert (prepared.w13_weight_scale > 0).all() and (prepared.w2_weight_scale > 0).all()
 
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     assert manifest["routed_moe"]["quantized_source_tensors"] == 2

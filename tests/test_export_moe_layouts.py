@@ -285,6 +285,112 @@ def test_packed_orientation_refuses_a_stack_that_fits_neither_way():
     assert "neither axis order fits" in str(caught.value), str(caught.value)
 
 
+#: Decidable dims the E4M3 encoder can also cut: ``2 * 32 != 128``, so a
+#: packed ``gate_up_proj`` orients, and both groups' rows are whole tuples
+#: (``grid.arity * 32 == 32``) with columns a multiple of 16.  ``PACKED_INTER``
+#: below orients too but is 48, which the encoder cannot cut -- fine for the
+#: classification tests that use it, useless for one that must reach the plan.
+DECIDABLE_HIDDEN, DECIDABLE_INTER = 128, 32
+
+#: The two closed conventions, as the shapes each one's ``gate_up_proj`` and
+#: ``down_proj`` must have, and the orientation both of them state.
+_LAYOUT_SHAPES = {
+    "out_first_chunked": ("out_first", lambda h, i: {"gate_up_proj": (EXPERTS, 2 * i, h),
+                                                     "down_proj": (EXPERTS, h, i)}),
+    "in_first_interleaved": ("in_first", lambda h, i: {"gate_up_proj": (EXPERTS, h, 2 * i),
+                                                       "down_proj": (EXPERTS, i, h)}),
+}
+
+
+def _packed_sources(shapes: dict):
+    """``packed_expert_stacks`` over one stack's physical projections."""
+    stack = "model.language_model.layers.1.mlp.experts"
+    named = {f"{stack}.{projection}.weight": shape for projection, shape in shapes.items()}
+    return stack, export.packed_expert_stacks(named)[stack]
+
+
+@pytest.mark.parametrize("source_layout", sorted(_LAYOUT_SHAPES))
+def test_the_declared_layout_and_the_inferred_orientation_are_one_predicate(source_layout):
+    """The plan's shape table IS ``packed_expert_orientation``, not a second opinion.
+
+    #136 asks whether the exporter answers "which axis is the output" twice:
+    once by inference from the config dims, once by the plan's declaration.
+    It does not.  ``plan_packed_expert_stack`` accepts EXACTLY the shape
+    triple the declared convention implies from ``hidden_size`` and
+    ``moe_intermediate_size``, and ``packed_expert_orientation`` returns
+    "out_first" on precisely ``a == out and b == in`` -- the same comparison
+    over the same two numbers, for both physical projections and both
+    conventions.  So a decidable contradiction is already refused, by the
+    shape check, before any encode; the inference cannot disagree with the
+    declaration because it is the same question asked in the same terms.
+
+    This is the check rather than a call from the plan into the inference:
+    such a call would add no refusal (the case it would catch is refused
+    already) and, on the ambiguous shapes below, would refuse the one case an
+    explicit declaration exists for.  A guard that can only fire where
+    something else already refused, and misfires where it does not, is not a
+    gate.
+    """
+    hidden, inter = DECIDABLE_HIDDEN, DECIDABLE_INTER
+    config = _config(hidden=hidden, inter=inter)
+    orientation, declared_shapes = _LAYOUT_SHAPES[source_layout]
+    other_layout = next(name for name in _LAYOUT_SHAPES if name != source_layout)
+    other_orientation, contradicting_shapes = _LAYOUT_SHAPES[other_layout]
+
+    # The inference reads the declared convention's shapes as its orientation,
+    # and the other convention's as the opposite one. Both are decidable here.
+    stack, sources = _packed_sources(declared_shapes(hidden, inter))
+    for projection, (name, shape) in sources.items():
+        assert export.packed_expert_orientation(name, shape, config) == orientation
+    _stack, contradicting = _packed_sources(contradicting_shapes(hidden, inter))
+    for projection, (name, shape) in contradicting.items():
+        assert export.packed_expert_orientation(name, shape, config) == other_orientation
+
+    # The plan accepts the first and refuses the second, naming the declared
+    # convention and the shape it implies -- the refusal the inference would
+    # have produced, in the planner's own words.
+    planned = export.plan_packed_expert_stack(
+        stack, sources, export.grid_for("E4M3"), 1024,
+        source_layout=source_layout, config=config)
+    assert planned["source_layout"] == source_layout
+    assert len(planned["units"]) == EXPERTS * 3
+
+    with pytest.raises(SystemExit) as caught:
+        export.plan_packed_expert_stack(
+            stack, contradicting, export.grid_for("E4M3"), 1024,
+            source_layout=source_layout, config=config)
+    message = str(caught.value)
+    assert f"source_layout={source_layout!r}" in message, message
+    assert "from config.json" in message, message
+
+
+@pytest.mark.parametrize("source_layout", sorted(_LAYOUT_SHAPES))
+def test_an_explicit_layout_survives_an_ambiguous_shape(source_layout):
+    """Where the dims cannot decide, the declaration must -- and does.
+
+    ``hidden == 2 * moe_intermediate`` is GLM-5.3-Flash's own geometry, and it
+    makes ``gate_up_proj`` square: the two conventions' shape triples coincide
+    and the inference refuses (``both axis orders fit``).  The plan does not,
+    because the plan is not inferring.  This is the case that makes calling
+    the inference from the plan path wrong rather than redundant.
+    """
+    hidden, inter = AMBIGUOUS_HIDDEN, AMBIGUOUS_INTER
+    config = _config(hidden=hidden, inter=inter)
+    _orientation, declared_shapes = _LAYOUT_SHAPES[source_layout]
+    stack, sources = _packed_sources(declared_shapes(hidden, inter))
+    assert sources["gate_up_proj"][1] == (EXPERTS, hidden, hidden), sources["gate_up_proj"]
+
+    with pytest.raises(SystemExit) as caught:
+        export.packed_expert_orientation(*sources["gate_up_proj"], config)
+    assert "both axis orders fit" in str(caught.value), str(caught.value)
+
+    planned = export.plan_packed_expert_stack(
+        stack, sources, export.grid_for("E4M3"), 1024,
+        source_layout=source_layout, config=config)
+    assert planned["source_layout"] == source_layout
+    assert len(planned["units"]) == EXPERTS * 3
+
+
 def test_a_packed_stack_is_recognised_by_name(tmp_path):
     """SYNTHETIC packed source: the split must route it to ``expert_shapes``."""
     t = _unpacked_checkpoint()
