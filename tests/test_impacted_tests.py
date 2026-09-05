@@ -104,7 +104,7 @@ def test_a_closure_shaped_tracked_file_is_not_ownership_proof(
 
 def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeypatch):
     from test_suite_source import _snapshot
-    from tessera.suite_source import measured_source
+    from tessera._dev.suite_source import measured_source
 
     repo, requests, _, stamp = _snapshot(tmp_path, "gpu")
     empty = subprocess.check_output(
@@ -498,7 +498,7 @@ TOOL = Path(__file__).resolve().parents[1] / "tools" / "driver.py"
 def test_generic_annotation_shadow_does_not_borrow_or_pollute_outer_paths(tmp_path):
     import ast
     from types import SimpleNamespace
-    from tessera.source_dependencies import file_imports
+    from tessera._dev.source_dependencies import file_imports
 
     source = '''\
 from importlib.util import spec_from_file_location as load_spec
@@ -764,7 +764,7 @@ def test_a_narrowed_selection_covers_what_importing_actually_reaches(tmp_path):
 def test_an_unnameable_data_read_is_not_an_unknown_python_dependency(tmp_path):
     """#148: a module that reads bytes it never parses is reading data.
 
-    Calling that "any module in the tree" is what put ``tessera.suite_source``
+    Calling that "any module in the tree" is what put ``tessera._dev.suite_source``
     -- which hashes the tree and executes none of it -- in the conftest's
     dependency closure, and every run at ``full``.
     """

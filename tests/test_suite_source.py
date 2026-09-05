@@ -81,7 +81,7 @@ def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None):
 
 
 def _measure(fixture, **kwargs):
-    module = importlib.import_module("tessera.suite_source")
+    module = importlib.import_module("tessera._dev.suite_source")
     root, requests, _, _ = fixture
     return module.measured_source(root, request_root=requests, owner="e" * 64, **kwargs)
 

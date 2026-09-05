@@ -675,7 +675,7 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
     """
 
     import json
-    from tessera.suite_source import measured_source
+    from tessera._dev.suite_source import measured_source
 
     worker = _worker_id(config)
     if worker:

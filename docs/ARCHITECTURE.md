@@ -35,7 +35,7 @@ Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
-The sealed inner command also uses `tessera.suite_deadline`, launched through
+The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
 KILL after a five-second grace. The leader remains unreaped during the grace,
@@ -80,7 +80,7 @@ An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
 by explicit path gets an edge to that file only, because loading by path does
 not.
 Explicit Python file loaders also contribute dependency edges: the non-executing
-`tessera.source_dependencies` resolver follows finite `Path` expressions,
+`tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
@@ -1306,6 +1306,26 @@ dependencies into an empty directory and imported with the source tree off
 the path, and prints the wheel's own file list; CI runs it on every push and
 the publish job runs it on the bytes it is about to upload.
 
+**What the wheel deliberately does not ship.** `src/tessera/_dev/` is the
+repository's own tooling -- the merge-suite deadline helper
+(`_dev/suite_deadline.py`), the PrismaBuild source-identity reader
+(`_dev/suite_source.py`), and the import-graph analyser behind
+`tools/impacted_tests.py` (`_dev/source_dependencies.py`). It lives under
+`src/` because `tools/` imports it by module name, and until #151 it
+therefore installed into every consumer's `site-packages`. One line of
+packaging config drops it -- `[tool.setuptools.packages.find] exclude =
+["tessera._dev*"]` -- so the modules are named by a pattern the build reads,
+not by a roster kept beside it. `exclude` is intent, and a rename, a
+namespace sweep or a stale `build/` tree reinstates a package silently, so
+the proof is on the artifact: `tools/check_wheel.py` reads that same config
+and refuses any wheel or sdist member whose dotted package matches, and
+`tests/test_packaging.py` refuses a pattern matching no package (which would
+excuse the artifact by excluding nothing) and any shipped module that names
+`tessera._dev` (which would install an ImportError no checkout can see).
+`suite_source`'s receipt schema string, `tessera.suite_source.v1`, is a wire
+identifier already stamped on receipts under `/mnt/shared` and read back by
+`tools/merge_suite.py`; it did not move with the module.
+
 The **sdist is the source that rebuilds that wheel, and nothing else**. It
 is deliberately not a runnable test suite: a testable sdist is a claim this
 tree cannot back, because the suite reads `tools/`, `docs/` and
@@ -1319,7 +1339,10 @@ wheel's own namelist* -- every source the wheel ships, under `src/`, plus
 the build inputs -- and refuses anything else, in either direction, and
 `tests/test_packaging.py` refuses a `MANIFEST.in` directive naming a path
 that has moved (which would silently stop excluding anything). Measured on
-this tree: the sdist rebuilds a wheel with an identical 76-entry namelist.
+this tree at `4f2f95a`: the sdist rebuilds a wheel with an identical
+72-entry namelist (66 payload paths plus six `dist-info` entries), and holds
+76 paths by the count `check_wheel` prints (the archive's own root entry and
+the regenerated `egg-info` excluded), none of them a test module.
 
 Three extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
 host, `kernels` installs Triton, and `native` installs the `ninja` both of

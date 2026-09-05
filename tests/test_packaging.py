@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import re
+from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
@@ -168,6 +169,57 @@ def test_the_contract_states_no_version_the_distribution_does_not_have():
             f"runtime_contract versions.plugin_entry_point "
             f"{versions['plugin_entry_point']!r} != the declared entry point "
             f"{expected!r}")
+
+
+def _excluded_packages() -> list[str]:
+    """``[tool.setuptools.packages.find] exclude`` -- the one place the
+    distribution says which packages in the tree it does not ship."""
+    find = _pyproject()["tool"]["setuptools"]["packages"]["find"]
+    return list(find.get("exclude", []))
+
+
+def test_every_excluded_package_pattern_matches_a_package():
+    """A pattern that matches nothing excludes nothing.
+
+    ``tessera._dev`` is repository tooling -- the merge-suite deadline helper,
+    the source-identity reader, the import-graph analyser -- that lives under
+    ``src/`` because ``tools/`` imports it by module name.  One config pattern
+    keeps it out of the wheel, which is why there is no roster of module names
+    anywhere; but a rename would leave the pattern behind still looking like a
+    policy while shipping the modules again.  ``tools/check_wheel.py`` refuses
+    the built artifact; this refuses the vacuous pattern that would let the
+    artifact pass by excluding nothing at all."""
+    patterns = _excluded_packages()
+    assert patterns, (
+        "packages.find declares no exclude, so every package under src/ ships, "
+        "including the repository's own tooling")
+    packages = {
+        ".".join(path.relative_to(SRC).parts)
+        for path in SRC.rglob("*")
+        if path.is_dir() and "__pycache__" not in path.parts
+    }
+    for pattern in patterns:
+        assert any(fnmatch(package, pattern) for package in packages), (
+            f"packages.find exclude {pattern!r} matches no package under "
+            f"{SRC}; it excludes nothing and the modules it named ship")
+
+
+def test_no_runtime_module_imports_the_excluded_tooling():
+    """The exclusion is only safe while nothing shipped needs what it drops.
+
+    An import of ``tessera._dev`` from a shipped module would install a
+    package whose first call is an ImportError on a consumer's box, and no
+    test that runs from this checkout would ever see it -- the tree has the
+    modules the wheel does not."""
+    offenders = []
+    for path in sorted(SRC.joinpath("tessera").rglob("*.py")):
+        if "_dev" in path.relative_to(SRC).parts or "__pycache__" in path.parts:
+            continue
+        if "tessera._dev" in path.read_text(encoding="utf-8"):
+            offenders.append(str(path.relative_to(SRC)))
+    assert not offenders, (
+        "shipped modules name tessera._dev, which the wheel does not carry: "
+        f"{offenders}")
 
 
 def test_the_sdist_policy_names_paths_that_exist():

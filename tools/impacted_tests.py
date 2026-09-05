@@ -14,7 +14,7 @@ reverse-reachable tests for any non-inert change, and an unresolved *loader*
 reaching a conftest forces full -- a conftest that can run code it cannot name
 makes every test below it unpredictable. An unresolved *read* does not: bytes
 become a Python dependency only when something parses or executes them, and
-``tessera.source_dependencies`` says which readers can. Reading that
+``tessera._dev.source_dependencies`` says which readers can. Reading that
 distinction the other way is what made this tool return ``full`` for every
 change this repository can make (#148): one module hashes every tracked file,
 the root conftest imports it, and the whole tree was uncertain forever.
@@ -38,7 +38,7 @@ Other kinds of coupling do not have ordinary import edges:
   in ``OPAQUE``.
 
 PrismaBuild snapshots add one generated source-closure member. Only the exact
-member independently verified by ``tessera.suite_source`` against the sealed
+member independently verified by ``tessera._dev.suite_source`` against the sealed
 action is removed before classification. A matching basename is not ownership
 proof; unverified closure-shaped changes force a full selection. A snapshot
 commit is intentionally parentless. When
@@ -69,8 +69,8 @@ from collections import defaultdict, deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from tessera.suite_source import measured_source  # noqa: E402
-from tessera.source_dependencies import WILDCARD, file_imports  # noqa: E402
+from tessera._dev.suite_source import measured_source  # noqa: E402
+from tessera._dev.source_dependencies import WILDCARD, file_imports  # noqa: E402
 
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.

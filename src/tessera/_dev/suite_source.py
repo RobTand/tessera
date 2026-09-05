@@ -14,6 +14,10 @@ import re
 import stat
 import subprocess
 
+#: A receipt identifier, not an import path.  Receipts carrying this
+#: string are already on /mnt/shared and are read back by
+#: ``tools/merge_suite.py``, so the module moving under ``_dev`` does
+#: not move the wire; the version suffix is what a change would use.
 SCHEMA = "tessera.suite_source.v1"
 REQUEST_ROOT = Path("/mnt/shared/prismabuild-fleet/cas/requests")
 

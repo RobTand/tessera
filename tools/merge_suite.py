@@ -77,7 +77,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from tessera.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
+from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
 
 PBRUN = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py")
 SHARED_ROOT = Path("/mnt/shared")

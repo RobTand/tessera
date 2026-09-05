@@ -1,4 +1,4 @@
-"""``tessera.suite_deadline``: the per-attempt deadline never waits without a bound.
+"""``tessera._dev.suite_deadline``: the per-attempt deadline never waits without a bound.
 
 After SIGKILL the runner waits for the group leader.  A leader that cannot be
 reaped (a D-state process on a wedged GPU is the case this tree has met) made
@@ -9,7 +9,7 @@ deliberate and untouched.
 
 import subprocess
 
-from tessera import suite_deadline
+from tessera._dev import suite_deadline
 
 
 class _Unreapable:
