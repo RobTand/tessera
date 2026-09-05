@@ -1540,6 +1540,20 @@ def tessera_gemm(
     Unlike :func:`tessera_gemv_wide` this reduces inside one program and stores
     rather than atomically adding, so the result is deterministic run to run and
     *may* be cited in a bit-identical claim.
+
+    A non-contiguous ``x`` (a column slice, a transpose) is **copied**, not
+    refused: the kernel addresses ``x`` as ``offs_m * cols + offs_k``, the
+    row-major storage of a ``[M, cols]`` tensor, so a strided view would be
+    read as a different matrix, and the boundary makes the addressing true
+    with ``contiguous()`` -- a copy of ``M * cols`` floats when the view is
+    strided, free when it is not.  That copy is a convenience this wrapper can
+    afford because nothing priced or served calls it: ``tessera.kernel`` is
+    the oracle side of the NVFP4 port and no module under ``src/`` or
+    ``tools/`` imports it (``tests/test_kernel_shape_guards.py`` pins that
+    from the repository's import graph), and its callers -- the prefill
+    benchmark, the tests -- hand it fresh contiguous batches.  A served lane
+    may not hide an allocation from its caller; the day this wrapper joins
+    one, the copy becomes a refusal by name (#266).
     """
     if x.ndim != 2 or x.shape[1] != cols:
         raise GrammarError(
@@ -1552,7 +1566,8 @@ def tessera_gemm(
     # it was handed: ``batch[:, ::2]`` and a transpose both pass the check
     # above and address a different matrix.  Normalised here for the same
     # reason ``_dense_activation`` normalises the GEMVs' -- the addressing is
-    # the contract, so the boundary makes it true.
+    # the contract, so the boundary makes it true.  The docstring says why a
+    # copy is acceptable here and where it would not be.
     x = x.contiguous()
     _require_byte_aligned_rows(rows)
     _require_history_fits_the_pad(memory)
