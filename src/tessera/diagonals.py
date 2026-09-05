@@ -45,6 +45,7 @@ __all__ = [
     "apply_rotation",
     "undo_rotation",
     "rotation_block_for",
+    "transport_metric",
     "diagonal_bits",
 ]
 
@@ -301,3 +302,67 @@ def undo_rotation(
     work = rotated.reshape(-1, cols // block, block)
     matrix = hadamard_block(block, rotated.device)
     return (work @ matrix.T).reshape(rotated.shape)
+
+
+def transport_metric(
+    metric: torch.Tensor,
+    state: RotationState,
+    block: "int | None" = None,
+    diagonals: "Diagonals | None" = None,
+) -> torch.Tensor:
+    """Carry an input-activation metric into the encoder's working basis.
+
+    The transport rule (tessera#231), stated once where the basis change
+    lives.  The encoder quantises ``Wwork = Dv^-1 (W R) Du^-1``
+    (:func:`apply_rotation` then :func:`apply_diagonals`), so
+    ``W = Dv Wwork Du R^T`` and the activations its working rows meet are
+    ``xwork = Du R^T x``.  A source second-moment ``H = E[x x^T]`` therefore
+    becomes
+
+        ``H' = Du R^T H R Du``
+
+    and the source output loss of a working-coordinate error ``E`` is
+    ``sum_r sv_r^2 E_r H' E_r^T`` -- the row factors ride separately because
+    they weight rows, not columns (``encode_unit`` threads them into the
+    shared LUT-table fit, the one cross-row decision).  Deriving an LDL
+    factor or a diagonal-power objective from the *untransported* H prices a
+    different quadratic than the encode minimises, which is the mispricing
+    tessera#231 measured.
+
+    A 1-D (diagonal) metric stays 1-D under ``NONE`` rotation -- ``h' = su^2
+    h`` -- and is densified first under a real one, because a diagonal is not
+    diagonal in a rotated basis.  Regularisation is applied by the caller
+    AFTER this transport, in the basis the factorisation runs in: under the
+    orthogonal ``R`` alone the two orders agree, but ``Du`` rescales a
+    source-basis ridge into a column-dependent one, which is not the
+    stabiliser the solve asked for.
+    """
+    if metric.ndim not in (1, 2):
+        raise GrammarError(
+            f"a refit metric is per-column [cols] or a full [cols, cols] "
+            f"Hessian, got shape {tuple(metric.shape)}"
+        )
+    work = metric.to(torch.float32)
+    if state is not RotationState.NONE:
+        cols = work.shape[-1]
+        size = block if block is not None else _block_size(cols)
+        if size > 1:
+            if cols % size:
+                raise GrammarError(
+                    f"{cols} metric columns is not a multiple of rotation "
+                    f"block {size}"
+                )
+            if work.ndim == 1:
+                work = torch.diag(work)
+            matrix = hadamard_block(size, work.device)
+            # ``R^T H R`` for the block-diagonal R, one axis at a time.
+            work = (work.reshape(cols, -1, size) @ matrix).reshape(cols, cols)
+            work = (work.T.reshape(cols, -1, size) @ matrix).reshape(cols, cols).T
+    if diagonals is not None:
+        require_invertible_diagonals(diagonals)
+        su = diagonals.su.to(torch.float32)
+        if work.ndim == 1:
+            work = work * su * su
+        else:
+            work = work * su.unsqueeze(0) * su.unsqueeze(1)
+    return work

@@ -1687,8 +1687,19 @@ def _refit_scales_lut_metric(
     gauss_seidel: bool = False,
     exact_fit: bool = False,
     coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
 ):
     """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
+
+    ``row_weight`` is the source-basis row weighting ``sv^2`` when segment-2a
+    diagonals are present (tessera#231): the objective the export prices is
+    ``sum_r sv_r^2 E_r H' E_r^T``, and while every per-row quantity below --
+    targets, steps, line searches, landing argmins -- cancels a positive
+    per-row factor exactly, the sixteen-entry table is SHARED across rows, so
+    its fit weights and every cross-row cost comparison must carry it or the
+    plane is chosen for the balanced coordinates instead of the objective.
+    ``None`` -- every encode without diagonals -- is byte for byte the refit
+    that was always here.
 
     ``_refit_scales_lut`` minimises the plain squared error, for which a
     16-block's scale is ``<w, u> / <u, u>`` over its own sixteen columns and
@@ -1803,6 +1814,14 @@ def _refit_scales_lut_metric(
     from .scale_channel import check_refit_metric
 
     check_refit_metric(metric, cols)
+    rw = None
+    if row_weight is not None:
+        if row_weight.numel() != rows:
+            raise GrammarError(
+                f"a row weight holds one factor per output row: "
+                f"{row_weight.numel()} for {rows} rows"
+            )
+        rw = row_weight.to(W.dtype).to(W.device).reshape(rows, 1)
     if metric.ndim == 1:
         h = metric.to(W.dtype).to(W.device).reshape(1, nb, half)
         A = (Ub * Ub * h).sum(dim=2)
@@ -1810,7 +1829,8 @@ def _refit_scales_lut_metric(
         target = torch.where(A > 0, B / A.clamp_min(1e-30), S)
 
         def cost(C: torch.Tensor) -> float:
-            return float((A * C * C - 2.0 * B * C).sum())
+            q = A * C * C - 2.0 * B * C
+            return float(q.sum() if rw is None else (q * rw).sum())
     else:
         H = metric.to(W.dtype).to(W.device)
         Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
@@ -1853,12 +1873,17 @@ def _refit_scales_lut_metric(
 
         def cost(C: torch.Tensor) -> float:
             Ec = W - C.repeat_interleave(half, dim=1) * U
-            return float(((Ec @ H) * Ec).sum())
+            q = (Ec @ H) * Ec
+            return float(q.sum() if rw is None else (q * rw).sum())
 
     stepped = target if _REFIT_DIAG is None else target.clone()
     valid = (A > 0) & (target > 0)
     target = torch.where(valid, target, S)
     weights = torch.where(valid, A, torch.zeros_like(A))
+    if rw is not None:
+        # The shared-table fit's weights carry the row factors; the per-row
+        # revert/target logic above already cancelled them exactly.
+        weights = weights * rw
 
     flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
 
@@ -1918,7 +1943,7 @@ def _refit_scales_lut_metric(
             )
         best_eff, best_index, best, coupled = _coupled_landing(
             W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
-            _lut_values(best_bytes, global_scale), half, best)
+            _lut_values(best_bytes, global_scale), half, best, row_weight=rw)
         best_index = best_index.reshape(-1)
         won = won + "+coupled"
     if _REFIT_DIAG is not None:
@@ -1967,7 +1992,8 @@ def _refit_scales_lut_metric(
     return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
 
 
-def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
+def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
+                     row_weight=None):
     """Re-assign every block to the table entry minimising the FULL quadratic
     given every other block where it now stands -- the landing (c) above with
     the cross-block terms kept.
@@ -1998,10 +2024,16 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
     eps = torch.finfo(torch.float32).eps
     prev = start_cost
     sweeps = moves = 0
+    # ``row_weight`` (tessera#231) weights the COST sums only: every per-row
+    # quantity -- conditional optima, argmins, gains -- cancels a positive
+    # per-row factor exactly, so the moves are the moves; what the factor
+    # changes is what one sweep's total is worth against the stop rule, which
+    # must be measured on the same functional the refit compares candidates on.
+    rw = None if row_weight is None else row_weight.reshape(rows, 1)
     while True:
         E = W - C.repeat_interleave(half, dim=1) * U
         G = E @ H
-        now = float((G * E).sum())
+        now = float(((G * E) if rw is None else (G * E * rw)).sum())
         if sweeps and (now >= prev or prev - now <= eps * prev):
             break
         prev = now
@@ -2033,7 +2065,8 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
     # last completed sweep; the final plane is at or below it, so read it once
     # more so the record is the plane's own number.
     E = W - C.repeat_interleave(half, dim=1) * U
-    final = float(((E @ H) * E).sum())
+    q = (E @ H) * E
+    final = float(q.sum() if rw is None else (q * rw).sum())
     return C, I, final, {"cost": final, "sweeps": sweeps, "moves": moves}
 
 
@@ -2049,6 +2082,7 @@ def _refit_scales_lut(
     gauss_seidel: bool = False,
     exact_fit: bool = False,
     coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -2069,7 +2103,19 @@ def _refit_scales_lut(
         return _refit_scales_lut_metric(
             work, units, half, table_bytes, index, effective, global_scale, metric,
             gauss_seidel=gauss_seidel, exact_fit=exact_fit,
-            coupled_landing=coupled_landing,
+            coupled_landing=coupled_landing, row_weight=row_weight,
+        )
+    if row_weight is not None:
+        # The plain refit deliberately minimises the balanced-coordinate
+        # error -- the weights-only encode, byte for byte what it always was.
+        # A source-basis row factor belongs to the metric-aware objective
+        # (tessera#231); accepted here it would quietly change encodes that
+        # asked for no metric, so it is refused instead.
+        raise GrammarError(
+            "row_weight carries the metric-aware refit's source-basis sv^2 "
+            "factors, and without refit_metric the refit minimises the "
+            "balanced-coordinate error by design: the argument would change "
+            "an encode that asked for no metric"
         )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
@@ -2188,6 +2234,20 @@ def encode_unit(
     body's reach, and is CHANNEL-only for the same reason -- a block scale
     already tracks its own sixteen weights.  Both are encoder settings; neither
     is wire.
+
+    **The metric's basis is the working basis** -- the coordinates of the
+    matrix the body actually quantises, after ``rotation`` and after the
+    diagonals divide (tessera#231).  ``refit_metric``,
+    ``refit_metric_trailing`` and ``ldl`` are all read against ``work``, so a
+    caller that rotates or balances must transport a source-coordinate H
+    first: ``H' = Du R^T H R Du`` (``diagonals.transport_metric`` states the
+    rule; ``ActivationSource.for_unit`` is the boundary that applies it and
+    refactors the LDL from the transported, then regularised, H').  With no
+    transform the two bases coincide and nothing changes.  The row half of
+    the transport -- the source objective weights row ``r`` by ``sv_r^2`` --
+    is the encoder's own job because only it holds the fit: per-row refit
+    decisions cancel the factor exactly, and the one cross-row decision, the
+    LUT plane's shared table, is handed ``sv^2`` below.
 
     ``refit_metric_trailing`` swaps the objective of the trailing refit only
     (issue #75): inner passes minimise ``refit_metric``, the last refit
@@ -2810,6 +2870,14 @@ def encode_unit(
                 work, units, half, table_bytes, refine, effective, global_scale,
                 metric=metric_now, gauss_seidel=refit_gauss_seidel,
                 exact_fit=refit_lut_exact,
+                # The source-basis row factors (tessera#231): with segment-2a
+                # diagonals the metric-aware objective weights row r by
+                # sv_r^2.  Per-row decisions cancel the factor; the shared
+                # sixteen-entry table does not, so the refit is told.
+                row_weight=(
+                    None if fitted is None or metric_now is None
+                    else fitted.sv.to(device=device, dtype=torch.float32).pow(2)
+                ),
                 coupled_landing=(
                     refit_coupled_landing == "every"
                     or (refit_coupled_landing == "trailing" and last)

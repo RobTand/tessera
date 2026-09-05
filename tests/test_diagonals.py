@@ -199,6 +199,65 @@ def test_the_writer_refuses_non_invertible_diagonals():
         build_unit_artifact(bad, "u", {3: forest}, 768, code, fixture_id=None)
 
 
+def test_transport_metric_carries_the_quadratic_into_the_encoded_basis():
+    """tessera#231: the encoder quantises ``Wwork = Dv^-1 W R Du^-1``, so the
+    activations its rows meet are ``xwork = Du R^T x`` and the metric in the
+    encoded basis is ``H' = Du R^T H R Du``.  The invariant that defines the
+    transport: for any working-coordinate error row ``e``, the source-output
+    quadratic of the row it came from is ``sv_r^2 * (e H' e^T)``."""
+    from tessera.diagonals import Diagonals, transport_metric
+
+    g = torch.Generator().manual_seed(5)
+    cols, rows = 64, 8
+    x = torch.randn(4 * cols, cols, generator=g)
+    H = (x.T @ x) / x.shape[0]
+    sv = (torch.rand(rows, generator=g) * 3 + 0.5).to(torch.float16)
+    su = (torch.rand(cols, generator=g) * 3 + 0.5).to(torch.float16)
+    fitted = Diagonals(sv=sv, su=su)
+    E_work = torch.randn(rows, cols, generator=g)
+    R = hadamard_block(64)
+
+    got = transport_metric(H, RotationState.R_IN_ONLY, 64, fitted)
+    # The source-coordinate error of a working-coordinate error E is
+    # Dv E Du R^T; its H-quadratic must equal the sv^2-weighted H'-quadratic.
+    E_src = (sv.float()[:, None] * E_work * su.float()[None, :]) @ R.T
+    want = ((E_src @ H) * E_src).sum()
+    have = ((E_work @ got) * E_work * sv.float().pow(2)[:, None]).sum()
+    assert torch.isclose(want, have, rtol=1e-4)
+    # Distinguishable from the source-basis metric wherever the transform is
+    # nontrivial -- the mispricing tessera#231 is about.
+    assert not torch.allclose(got, H)
+
+
+def test_transport_metric_keeps_a_diagonal_metric_diagonal_without_rotation():
+    """Under NONE rotation a diagonal metric transports as ``su^2 h`` and must
+    stay 1-D: the separable refit paths key on the metric's rank."""
+    from tessera.diagonals import Diagonals, transport_metric
+
+    h = torch.arange(1.0, 17.0)
+    su = torch.full((16,), 2.0, dtype=torch.float16)
+    fitted = Diagonals(sv=torch.ones(4, dtype=torch.float16), su=su)
+    got = transport_metric(h, RotationState.NONE, 1, fitted)
+    assert got.ndim == 1
+    assert torch.allclose(got, h * 4.0)
+    # And the identity transport is the metric itself.
+    same = transport_metric(h, RotationState.NONE, 1, None)
+    assert torch.allclose(same, h)
+
+
+def test_transport_metric_densifies_a_diagonal_metric_under_rotation():
+    """A diagonal source H is dense in the rotated basis; forwarding the
+    diagonal power as if nothing moved is the mispricing tessera#231 shows."""
+    from tessera.diagonals import transport_metric
+
+    h = torch.arange(1.0, 33.0)
+    got = transport_metric(h, RotationState.R_IN_ONLY, 32, None)
+    R = hadamard_block(32)
+    want = R.T @ torch.diag(h) @ R
+    assert got.ndim == 2
+    assert torch.allclose(got, want, atol=1e-5)
+
+
 def test_two_sided_rotation_is_refused_as_a_serving_branch():
     """S7: two-sided is a weight-space measurement state, not a branch.
 

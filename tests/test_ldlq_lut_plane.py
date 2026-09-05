@@ -169,6 +169,67 @@ def _cost(work, units, effective, half, M):
     return float(((e @ M) * e).sum())
 
 
+def test_the_shared_table_fit_reads_the_output_row_weights():
+    """tessera#231: under segment-2a diagonals the source output loss weights
+    row ``r``'s working-coordinate quadratic by ``sv_r^2``.  Every per-row
+    decision cancels the factor, but the sixteen-entry table is SHARED across
+    rows, so the fit and the candidate comparison must read the weights --
+    otherwise the plane is chosen for the balanced coordinates, not the
+    objective."""
+    rows = 12
+    work, units, half, table, index, eff, glob = _lut_fixture(
+        seed=21, rows=rows, cols=256)
+    H = _hessian(cols=256, seed=21, device="cpu", coupling=4.0)
+    rw = torch.ones(rows)
+    rw[:2] = 1e4                    # two rows dominate the true objective
+    plain = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                              metric=H)
+    weighted = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                 metric=H, row_weight=rw)
+
+    def weighted_cost(effective):
+        e = work - effective.reshape(rows, -1).repeat_interleave(
+            half, dim=1) * units
+        return float((((e @ H) * e) * rw[:, None]).sum())
+
+    assert not torch.equal(weighted[2], plain[2])
+    assert weighted_cost(weighted[2]) < weighted_cost(plain[2])
+
+
+def test_encode_unit_weights_the_shared_fit_by_the_diagonal_rows(monkeypatch):
+    """The plumbing half of the claim above: with fitted diagonals and a
+    metric, ``encode_unit`` hands ``sv^2`` to the LUT refit; without
+    diagonals it hands nothing and the refit is byte for byte what it was."""
+    import tessera.encode as encode_mod
+    from tessera.alphabet import build_forest
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+
+    seen = []
+    real = encode_mod._refit_scales_lut
+
+    def spy(*args, **kw):
+        seen.append(kw.get("row_weight"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(encode_mod, "_refit_scales_lut", spy)
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    g = torch.Generator().manual_seed(9)
+    w = torch.randn(16, 64, generator=g) * 0.02
+    w[3, :] *= 7.0                      # a loud row, so sv is not uniform
+    x = torch.randn(256, 64, generator=g)
+    H = (x.T @ x) / 256
+    unit = encode_unit(w, forest, (3,) * 64, code, scale_plane=ScalePlaneKind.LUT,
+                       with_diagonals=True, refit_metric=H, scale_refit=1)
+    assert seen and seen[-1] is not None
+    assert torch.allclose(seen[-1], unit.diagonals.sv.float().pow(2))
+    seen.clear()
+    encode_unit(w, forest, (3,) * 64, code, scale_plane=ScalePlaneKind.LUT,
+                refit_metric=H, scale_refit=1)
+    assert seen and seen[-1] is None
+
+
 def test_an_identity_metric_is_the_plain_refit():
     """The derivation's own claim: at ``H = I`` the cross-block terms vanish
     because blocks have disjoint support, and ``s* = <w,u>/<u,u>`` again."""

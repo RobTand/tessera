@@ -598,7 +598,10 @@ class ActivationSource:
 
     def for_unit(self, tensor_name: str, in_features: int,
                  device: "str | torch.device" = "cpu",
-                 scale_plane: "ScalePlaneKind | None" = None) -> dict:
+                 scale_plane: "ScalePlaneKind | None" = None,
+                 rotation: "RotationState" = RotationState.NONE,
+                 with_diagonals: bool = False,
+                 weight: "torch.Tensor | None" = None) -> dict:
         """The ``encode_linear`` keyword arguments this unit's Hessian implies.
 
         Refuses a missing key and a shape mismatch.  Both would otherwise be
@@ -610,6 +613,23 @@ class ActivationSource:
         trailing objective and the Gauss-Seidel sweep likewise.  It is the
         reason a mixed-plane export can carry a sweep at all: the resolution
         happens per unit, at the plane the encode resolved (tessera#107).
+
+        ``rotation`` and ``with_diagonals`` are the unit's S5 transforms, and
+        this is the boundary where the metric's basis is fixed (tessera#231):
+        the captured H is in source coordinates, the encode quantises
+        ``Wwork = Dv^-1 W R Du^-1``, and every quantity derived here -- the
+        LDL factor, its block budget, the refit metrics, a diagonal-power
+        objective -- must be derived from the *transported*
+        ``H' = Du R^T H R Du`` (``diagonals.transport_metric`` states the
+        rule) or it prices a quadratic the encode does not minimise.
+        Regularisation is applied after the transport, in the basis the
+        factorisation runs in.  ``with_diagonals`` needs ``weight``: the
+        transport needs ``Du``, which is the encoder's own deterministic
+        ``fit_diagonals`` of the rotated weight, recomputed here from the
+        same tensor by the same function.  Everything ``encode_unit``
+        receives from this call is therefore in ITS working basis, which is
+        the one basis convention that also holds trivially for the
+        untransformed default.
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -624,6 +644,32 @@ class ActivationSource:
         if H.ndim != 2 or H.shape[0] != H.shape[1] or H.shape[0] != in_features:
             raise GrammarError(
                 f"{key}: H is {tuple(H.shape)} for {in_features} input features"
+            )
+        rotation = RotationState(rotation)
+        fitted = None
+        if with_diagonals:
+            from .diagonals import apply_rotation, fit_diagonals
+
+            if weight is None:
+                raise GrammarError(
+                    f"{key}: with_diagonals needs the unit's weight -- the "
+                    "metric transport needs Du, and Du is the encoder's own "
+                    "fit of the rotated weight. Priced from the source-basis "
+                    "H instead, the encode would minimise a different "
+                    "quadratic than the one recorded (tessera#231)"
+                )
+            if weight.ndim != 2 or weight.shape[1] != in_features:
+                raise GrammarError(
+                    f"{key}: weight is {tuple(weight.shape)} for "
+                    f"{in_features} input features"
+                )
+            rotated, _ = apply_rotation(weight, rotation)
+            fitted = fit_diagonals(rotated)
+        if rotation is not RotationState.NONE or fitted is not None:
+            from .diagonals import rotation_block_for, transport_metric
+
+            H = transport_metric(
+                H, rotation, rotation_block_for(rotation, in_features), fitted
             )
         kwargs: dict = {"refit_reach_floor": bool(self.refit_reach_floor)}
         if self.ldlq_sigma is not None:
@@ -1517,7 +1563,9 @@ def export_checkpoint(
                 **_recipe_kwargs(resolve(plan[name])),
                 **(activation.for_unit(
                     name, tensor.shape[1], tensor.device,
-                    scale_plane=resolve(plan[name]).scale_plane)
+                    scale_plane=resolve(plan[name]).scale_plane,
+                    rotation=rotation, with_diagonals=with_diagonals,
+                    weight=tensor)
                    if activation is not None else {}),
             )
             units.append(unit)
@@ -1938,7 +1986,9 @@ def export_checkpoint_streaming(
                         **_recipe_kwargs(resolve(plan[name])),
                         **(activation.for_unit(
                             name, tensor.shape[1], device,
-                            scale_plane=resolve(plan[name]).scale_plane)
+                            scale_plane=resolve(plan[name]).scale_plane,
+                            rotation=rotation, with_diagonals=with_diagonals,
+                            weight=tensor.to(device))
                            if activation is not None else {}),
                     )
                     units.append(unit)
