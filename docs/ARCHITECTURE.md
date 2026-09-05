@@ -6,8 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-05): code tip
-`5acc2a6`, CI at `df1bc20`, packaging metadata at `cd3190a`; contract v17,
-lane-eligibility schema v6. Re-stamp this
+`5acc2a6`, CI at `df1bc20`, packaging metadata at `cd3190a`; contract v18,
+lane-eligibility schema v7. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -751,8 +751,10 @@ plugin_entry_point, default_serve_image}` and every field is checked;
 `default_serve_image` is the pin of §4.4a and must be an image some cell
 attests. Every cell also carries a required, closed `evidence` object --
 `{grade, kl: [{kind, top_k, regime, execution_modes, receipt}], smoke:
-{status, receipt}}` (`contract.EVIDENCE_KL_KINDS`, `EVIDENCE_SMOKE_STATUSES`,
-`EVIDENCE_GRADES`, `EVIDENCE_RECEIPT_ROOT`) -- so a gate can read what
+{status, receipt, attribution, control}}` (`contract.EVIDENCE_KL_KINDS`,
+`EVIDENCE_SMOKE_STATUSES`, `EVIDENCE_GRADES`, `EVIDENCE_RECEIPT_ROOT`,
+and schema v7's `EVIDENCE_SMOKE_ATTRIBUTIONS`, `EVIDENCE_CONTROL_REFERENCES`,
+`EVIDENCE_CONTROL_OUTCOMES`) -- so a gate can read what
 grade of evidence a cell rests on, never prose. The premise this corrects:
 every served KL in this repository, dense and MoE alike, is a `kl_tool`
 top-1024 teacher/student-intersection lower bound, so no cell grades
@@ -767,6 +769,27 @@ every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_str
 `tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
 `routed_moe` cells record a repetitive one. `qualification` is not
 overloaded with the grade.
+
+A smoke also names the **control** it was compared against (schema v7,
+contract v18, #195), because `status` alone was deciding admission and could
+not carry the decision. Both `routed_moe` cells record `repetitive`; the BF16
+**source**, given the same prompt on the same pinned image, eager, returns the
+identical completion character for character
+(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition is
+the model and the prompt. That fact lived in prose while PrismaQuant's pin
+refused the whole routed-MoE lane on `status` -- right under the rule it was
+given, wrong about the runtime. So `smoke.control` is `null` or the closed
+`{reference, outcome, receipt}` of a reference run
+(`reference: bf16_source`; `outcome: identical_completion |
+different_completion`, which says the completions match or differ and never
+that the reference was healthy), and `smoke.attribution` is **derived** from it
+and checked the way `grade` is derived from `kl`: no control `unattributed`,
+`identical_completion` `shared_with_reference`, `different_completion`
+`not_shared_with_reference`. A consumer refuses on `status == "repetitive"`
+**and** `attribution != "shared_with_reference"`, never on `status` alone. The
+two MoE cells carry the control; the eight dense cells are `unattributed`, six
+having run no smoke and the two BF16 cells no reference arm. No status word,
+grade, rung, route or byte moved.
 
 Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read
@@ -1016,7 +1039,12 @@ the v5 this tree publishes until that repository widens it
 RobTand/prismaquant#189 reader must widen once more; the v3 pin fails closed against v6 exactly
 as against v4 and v5, and a reader that took `versions.attested_on` through
 `.get` (`tessera_runtime_contract.py:1168` at `1eb88c4e`) now reads `None`
-there and must move to `default_serve_image` and the per-cell toolchain.
+there and must move to `default_serve_image` and the per-cell toolchain. Schema v7 (contract v18, #195) is not additive for
+the same reason and one more: `evidence.smoke` gains the required
+`attribution` and `control` keys, and a v6 reader goes on deciding off
+`smoke.status` a decision that `status` alone no longer carries -- which is
+the failure the version exists to announce. RobTand/prismaquant#192, which
+carries the pin, moves its predicate to `attribution`.
 
 ### 4.5a A served KL names which FORWARD it scored
 
