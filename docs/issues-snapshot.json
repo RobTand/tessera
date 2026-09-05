@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T14:56:54Z",
+ "generated": "2026-09-05T16:07:34Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -380,7 +380,7 @@
     "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
    },
    "184": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "run-pipeline accepts COST_PATH_OVERRIDE for Tessera but never consumes the prepriced file"
    },
    "185": {
@@ -388,19 +388,19 @@
     "title": "Thread explicit Tessera runtime scope through campaign, allocator and export"
    },
    "186": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign resume admits anchors without source/calibration/recipe identity"
    },
    "187": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse incomplete MoE campaigns and capture explicit packed expert inputs"
    },
    "188": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Consume validated prepriced cost overrides without running cost builders"
    },
    "189": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind Tessera raw census replay to priced runtime and artifact scope"
    },
    "19": {
@@ -408,11 +408,11 @@
     "title": "register_qwen3() silently stops overriding on newer transformers (broken by 5.13.1; good on 5.6.0)"
    },
    "190": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add opt-in paired no-new-boundary-failures decision"
    },
    "191": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind Tessera campaign resume to current inputs and exact priced wire"
    },
    "192": {
@@ -435,6 +435,18 @@
     "state": "CLOSED",
     "title": "Tessera lane: carry the priced inputs from allocator to executor to cost-table identity (#193, #194, #195)"
    },
+   "197": {
+    "state": "OPEN",
+    "title": "test_selected_export_units_resolve_their_own_structure passes alone and fails in the full suite: model-profile registry state leaks between tests"
+   },
+   "198": {
+    "state": "OPEN",
+    "title": "Routed-MoE admission: PrismaQuant refuses on smoke.status alone while contract v20 attributes the repetition to the BF16 source (needs-decision)"
+   },
+   "199": {
+    "state": "OPEN",
+    "title": "test_resume_after_coordinator_death_recovers_owned_helper_receipt: an 8s wall-clock deadline mostly spent on interpreter start, so it flakes with box load"
+   },
    "2": {
     "state": "CLOSED",
     "title": "Possibly Useful Theoretical Basis"
@@ -442,6 +454,10 @@
    "20": {
     "state": "CLOSED",
     "title": "Allocator: bit-exact re-encode pricing, gated on an identity activation path"
+   },
+   "200": {
+    "state": "OPEN",
+    "title": "Restore profile-detection process globals between tests (fixes #197 order dependence)"
    },
    "21": {
     "state": "CLOSED",
@@ -1542,7 +1558,7 @@
     "title": "Fail closed on absent evidence in the construction, census, lane-preflight and build-identity gates"
    },
    "269": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] compare-drift cannot tell its expected verdict from its tool failing"
    },
    "27": {
@@ -1573,9 +1589,41 @@
     "state": "CLOSED",
     "title": "Fused A-side static scale: join to the MIN member scale; refuse divergence beyond one bf16 ULP"
    },
+   "276": {
+    "state": "CLOSED",
+    "title": "[P2] PR #272's body is a PrismaQuant PR body; the tessera diff's attestation is only in the commit messages"
+   },
+   "277": {
+    "state": "CLOSED",
+    "title": "[P3] \"scalar 256-code hardware grid\" is spelled four times as literals (window GEMV, FP8 route, Triton lane, materialize_fp8), never derived from the grid"
+   },
+   "278": {
+    "state": "CLOSED",
+    "title": "[P3] refit_trailing_bytes polices only the five suffixes it loads; a bias/input_scale that moved still certifies \"the matched pair\""
+   },
+   "279": {
+    "state": "CLOSED",
+    "title": "[P3] build_identity.compare trusts a stored complete=true from pre-#205 stamps; schema /2 not bumped"
+   },
    "28": {
     "state": "CLOSED",
     "title": "runtime_contract.json does not publish the plugin CUDA extension basenames a serve fingerprint must match"
+   },
+   "280": {
+    "state": "CLOSED",
+    "title": "compare-drift: tell the verdict from the tool failing, and decide the pair over every tensor"
+   },
+   "281": {
+    "state": "CLOSED",
+    "title": "Give \"a scalar 256-code hardware grid\" one home, on the grid (#277)"
+   },
+   "282": {
+    "state": "CLOSED",
+    "title": "Derive a build identity's completeness where it is read, not from its stamp (#279)"
+   },
+   "283": {
+    "state": "OPEN",
+    "title": "[P3] FUSED_INPUT_SCALE_ULP (2^-7) is called derived but describes no calibrator; PrismaQuant's join has no bound"
    },
    "29": {
     "state": "CLOSED",
