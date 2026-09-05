@@ -613,11 +613,14 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #:     halving (``docs/measurements/tessera16-alphabet-floor-2026-09-02.md``).
 #:
 #: ``E4M3^2`` is **not** here and its absence is a cost refusal, not a plane
-#: one: 65536 codes is exactly what the *TCQ* encoder already refuses to score
-#: per step (``tuple_grid``'s own limit), and the tuple grids have no window
-#: recipe that would dodge it.  BF16 reaches the same code count and is
-#: admitted because the window body never scores the grid -- it scores
-#: ``2^window_bits`` states -- so the two are not the same question.
+#: one: at 65536 codes it sits exactly ON ``tuple_grid``'s own limit -- the
+#: widest code space that constructor will build, because the *TCQ* Viterbi
+#: scores every anchor at every step -- and the tuple grids have no window
+#: recipe that would dodge it.  (``tuple_grid`` admits it: the limit refuses
+#: ``size > 1 << 16``, and 65536 is not greater than 65536.  What keeps it off
+#: the wire is this registry, not that constructor.)  BF16 reaches the same
+#: code count and is admitted because the window body never scores the grid --
+#: it scores ``2^window_bits`` states -- so the two are not the same question.
 #:
 #: **Free (Lloyd-Max) grids are deliberately absent.**  Their values are fitted
 #: to the tensor and are not reproducible by a reader from any identifier, so
