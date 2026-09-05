@@ -157,6 +157,7 @@ def _imports(
     own: str,
     root: Path,
     unreadable: dict[str, str] | None = None,
+    nodes: dict[Path, str] | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
@@ -166,6 +167,11 @@ def _imports(
     ``pkg/mod.py`` by path does not, and a conftest that reaches a test file
     by path is probing its own collection targets rather than depending on
     them.
+
+    ``nodes`` maps a file to the node the graph holds it under, which is the
+    only thing that can answer a *path* load: the dotted name a path spells
+    can belong to another file (#317), so deriving the node from the name
+    would attribute the edge to the wrong one.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
@@ -214,9 +220,11 @@ def _imports(
     paths, unknown = file_imports(tree, path, root)
     loaded, data = set(), set()
     for target in paths:
-        name = _module_name(target, root)
-        if name:
-            loaded.add(name)
+        held = nodes.get(target) if nodes is not None else None
+        if held is None:
+            held = _module_name(target, root)
+        if held:
+            loaded.add(held)
         else:
             data.add(str(target.relative_to(root)))
     if unknown:
@@ -259,11 +267,30 @@ def import_graph(
         p for p in root.rglob("*.py")
         if not any(part in SKIP_DIRS for part in p.parts)
     ]
+    # Every file gets a node, and a node's identity is its file.  A dotted
+    # name is only a *spelling*, and a spelling can name more than one file:
+    # ``_module_name`` strips a leading ``src/``, so ``helper.py`` and
+    # ``src/helper.py`` are both ``helper``.  Keeping the first and dropping
+    # the second left that file out of the graph entirely -- never parsed, so
+    # its own imports were not edges, so a test reaching a changed module only
+    # through it was not selected and the verdict was a confident ``none``
+    # (#317).  The loser therefore gets a node under its own repository path,
+    # which is what the graph already does for the data files a module reads,
+    # and both files answer to the shared spelling the way an ambiguous alias
+    # does (#292).  ``module_of`` keeps each node's dotted name, which is what
+    # relative imports climb from.
     by_name: dict[str, Path] = {}
+    module_of: dict[str, str] = {}
     for path in files:
         name = _module_name(path, root)
-        if name:
-            by_name.setdefault(name, path)
+        if not name:
+            continue
+        node = name if name not in by_name else str(path.relative_to(root))
+        by_name[node] = path
+        module_of[node] = name
+    # A path never spells a module name, so a path-keyed node cannot collide
+    # with a dotted one, and one file is one node either way.
+    nodes = {path: node for node, path in by_name.items()}
     # The other spellings the same files have on the import roots that are
     # actually on ``sys.path``.  An alias can be ambiguous -- two import roots
     # can each hold a ``helper.py``, and one of those roots can be the
@@ -271,10 +298,13 @@ def import_graph(
     # gets the edge, because the graph cannot tell which one ran and a dropped
     # edge is the failure mode this tool refuses.
     aliases: dict[str, set[str]] = defaultdict(set)
-    for name, path in by_name.items():
+    for node, path in by_name.items():
+        canonical = module_of[node]
+        if canonical != node:
+            aliases[canonical].add(node)
         alias = _package_name(path, root)
-        if alias and alias != name:
-            aliases[alias].add(name)
+        if alias and alias not in (node, canonical):
+            aliases[alias].add(node)
 
     def _targets(candidate: str) -> tuple[str, ...]:
         """Every file this spelling can name, deduplicated by path.
@@ -304,11 +334,12 @@ def import_graph(
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
     unreadable: dict[str, str] = {}
-    for name, path in by_name.items():
-        statements, loaded, data = _imports(path, name, root, unreadable)
+    for node, path in by_name.items():
+        statements, loaded, data = _imports(
+            path, module_of[node], root, unreadable, nodes)
         for target in statements:
             if target == WILDCARD:
-                importers[WILDCARD].add(name)
+                importers[WILDCARD].add(node)
                 continue
             # Attribute the edge to the longest known module prefix: an import
             # of tessera.encode.foo is an edge to tessera.encode.  Importing a
@@ -326,21 +357,26 @@ def import_graph(
                     continue
                 for resolved in known:
                     if not matched or by_name[resolved].name == "__init__.py":
-                        importers[resolved].add(name)
+                        importers[resolved].add(node)
                 matched = True
         for target in loaded:
             # An exact path names an exact file.  It does not execute the
             # packages above it, so it gets no prefix edges.
-            importers[target].add(name)
+            importers[target].add(node)
             if _is_collection_probe(path, by_name.get(target)):
-                probes.add((target, name))
+                probes.add((target, node))
         for target in data:
-            importers[target].add(name)
+            importers[target].add(node)
     return by_name, importers, probes, unreadable
 
 
 def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
-    """Module name -> file, and module name -> the modules that import it."""
+    """Node -> file, and node -> the nodes that import it.
+
+    A node is a file's dotted module name, or its repository-relative path
+    when another file already answers to that name (#317) and for the
+    non-Python files a module reads by an explicit path.
+    """
     by_name, importers, _, _ = import_graph(root)
     return by_name, importers
 

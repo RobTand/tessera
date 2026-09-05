@@ -131,6 +131,18 @@ import root `tests/conftest.py` inserts is the one pytest actually executes for
 therefore resolves the union of canonical and alias candidates, deduplicated by
 file, rather than letting the canonical name hide the candidate that runs
 (#292).
+A node's identity is its **file**, never its name, because a dotted name is a
+spelling and a spelling can name two files: `_module_name` strips a leading
+`src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
+importable here because `tests/conftest.py` puts `src/` and `tests/` on
+`sys.path`. Every file therefore gets a node -- under its dotted name, or under
+its repository-relative path when another file already answers to that name,
+the same path-keyed node the graph gives a non-Python data file -- and the
+shared spelling edges to both. Dropping the second file gave it no node, so it
+was never parsed and its own imports were not edges at all: a leaf change whose
+only route to a test ran through the shadowed file selected nothing and said
+`none` (#317). A path load resolves through the file, not through the name it
+spells, for the same reason.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather

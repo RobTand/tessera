@@ -1206,6 +1206,80 @@ def test_this_repository_has_no_unreadable_source():
     assert result["unreadable_sources"] == {}, result["unreadable_sources"]
 
 
+def _shadowed_repo(tmp_path: Path) -> Path:
+    """Two files with one canonical name, and the shadowed one is what runs.
+
+    ``_module_name`` strips a leading ``src/``, so ``helper.py`` and
+    ``src/helper.py`` are both ``helper``.  ``tests/conftest.py`` inserts
+    ``src/`` and then its own directory, exactly as this repository's does at
+    lines 11-12, so ``from helper import VALUE`` resolves to ``src/helper.py``
+    -- the file the graph dropped.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "helper.py": "VALUE = 'root'\n",
+        "src/helper.py": "from pkg.leaf import VALUE\n",
+        "tests/conftest.py": '''
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        ''',
+        "tests/test_consumer.py": _IMPORT_ROOT_PROBE,
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+    return repo
+
+
+def test_a_file_shadowed_on_its_canonical_name_still_has_a_node(tmp_path):
+    """#317: every file gets a node, so every file's own imports are edges."""
+
+    repo = _shadowed_repo(tmp_path)
+
+    by_name, _, _, _ = impacted.import_graph(repo)
+    analysed = {str(p.relative_to(repo)) for p in by_name.values()}
+    assert {"helper.py", "src/helper.py"} <= analysed, sorted(analysed)
+
+
+def test_a_shadowed_files_own_imports_are_not_lost(tmp_path):
+    """#317: the under-selection the missing node caused.
+
+    ``src/helper.py`` was never parsed, so the ``pkg.leaf -> helper`` edge did
+    not exist and a change to the leaf selected nothing at all -- while pytest
+    imports that very file for ``from helper import VALUE``.
+    """
+
+    repo = _shadowed_repo(tmp_path)
+    executed = _helper_pytest_executes(repo, tmp_path / "probe.out")
+    assert executed == "src/helper.py", (
+        f"the fixture is not the shadowing case if pytest runs {executed}")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_consumer.py" in result["tests"], result
+    assert "tests/test_unrelated.py" not in result["tests"], result
+
+
+@pytest.mark.parametrize("changed", ["helper.py", "src/helper.py"])
+def test_either_file_spelling_one_name_selects_the_bare_consumer(tmp_path, changed):
+    """Which of the two `sys.path` gives the importer is unmodelled, so union."""
+
+    repo = _shadowed_repo(tmp_path)
+
+    result = impacted.select(repo, [changed])
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
 def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
     """A resolved non-Python read was an unknown; it is the exact edge it is."""
 
