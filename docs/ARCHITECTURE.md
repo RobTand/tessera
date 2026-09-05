@@ -441,7 +441,22 @@ stock twin exporter -- refuses a transformed unit at load, naming the field
 own refusals of the same fields (`lane_planes`, `kernel_window`,
 `kernel_window_gemv`). Untransformed wires -- every shipping export default
 -- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
-the refusal through each consumer on real wire bytes.
+the refusal through each consumer on real wire bytes. The sidecar scheme
+(`config_groups[..].scheme`, the fields `scheme._parse_container` compares
+the wire against) carries **no rotation or diagonals field, on purpose**:
+the field would be needed for `priced == written == served` only if a route
+applied a transform at serve time, and none does -- the served set of
+transforms is exactly {none}, every consumer reads `unit.rotation` /
+`unit.diagonals` off the wire itself (`require_untransformed`, the lane
+packers, `wire_facts_of_parsed`) and refuses anything else by name, the
+exporter has no rotation input and materialises every member's stock twin
+through the same refusal, and the lane predicate publishes both classes as
+refused (`lane.requires`, contract v20) -- so a sidecar copy would be a
+second statement of a fact the wire already carries, with one legal value,
+and a `fused_module.fields` entry PrismaQuant pins for nothing. The day a
+route applies an input rotation the sidecar must name it (`shared` in
+`FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
+contract bumps, and `require_untransformed` learns that consumer; not before.
 
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 
