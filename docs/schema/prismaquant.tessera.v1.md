@@ -577,13 +577,14 @@ longer count array and the single-count inversion. A plane written at depth 0
 has no levels and declares no granules (`counts = ()`), the one granular
 plane allowed to.
 
-**A rule the cut adds.** A cut strictly inside a granular plane must end on a
-byte. D4 requires the final content byte's slack to be zero and
-`container.verify_plane_region` checks it from the terminal's count, but the
-bits sharing that byte would be the *next* granule's real content, so such a
-terminal would verify only while that content happened to be zero.
-`Manifest` refuses a granule boundary at which `count × element_bits` is not
-a whole number of bytes, for every granular plane (§3b). A level count
+**A rule the cut adds.** A cut strictly inside a plane must end on a byte,
+whether the plane has granules or not. D4 requires the final content byte's
+slack to be zero and `container.verify_plane_region` checks it from the
+terminal's count, but the bits sharing that byte would be the plane's *next*
+element's real content -- the next granule's, on a granular plane -- so such
+a terminal would verify only while that content happened to be zero.
+`Manifest` refuses any count at which `count × element_bits` is not a whole
+number of bytes, on every plane (§3b). A level count
 `steps × N_l` is byte-aligned for every real shape (rows are multiples of 8),
 but nothing derives that; the refusal is where the rule lives.
 
@@ -595,7 +596,9 @@ and carry the other. Minors 0–6 read exactly as before:
 master `da2b371` (the last tree before this minor; `tests/data/legacy/`),
 tensor for tensor, order for order. A minor-7 artifact is refused by every
 earlier reader, as it must be — an earlier reader would index the count array
-by the wrong order.
+by the wrong order. Within a minor-7 artifact every plane is read at the
+terminal's count, so a rung the manifest admits is one the reader decodes or
+refuses by name (§3c, item 3).
 
 **Writing.** Every artifact this tree writes is minor 7. Unlike every minor
 before it, this one moves the writer for every unit and not only for the
@@ -769,7 +772,9 @@ writes has exactly one legal length. The rules below are exercised by
 artifacts laid out directly (`layout.build_terminal`) — and, since minor 7, on
 top of an encode too: `tests/test_audit_container_accounting.py` adds shorter
 completion rungs to the exporter's own bytes and reads each from a byte
-prefix.
+prefix. Since minor 7 the reader reads every plane at the **terminal's**
+count (`unit_artifact.parse_unit_artifact`); what each shorter count means,
+and which counts mean nothing and are refused by name, is item 3 below.
 
 **Why an encode could not be truncated before minor 7 — history.** This
 paragraph is the one home of that record; the docstrings in `container`,
@@ -796,9 +801,26 @@ the order they were met:
    `test_a_shallower_completion_rung_reads_from_a_byte_prefix_of_an_encode`.
 3. The reader sized `SCALE_REFINE` from the geometry, so the one S6b prefix
    that passed the manifest failed in `unpack_uniform`: `need 2048 bits for
-   512 elements of 4 bits, the plane holds 0`. This one is the reader's, not
-   the wire's, and is pinned as it stands
-   (`test_the_reader_still_sizes_the_s6b_refinement_from_the_geometry`).
+   512 elements of 4 bits, the plane holds 0`. **Removed at minor 7, on the
+   reader's side:** `parse_unit_artifact` reads every plane at the terminal's
+   count. What a shorter count means, plane by plane. COMPLETION: the first
+   depth levels (item 2). S6b `SCALE_REFINE`: the first halves refined and
+   every later half at its group's po2 base (D3 -- the all-zero word);
+   `TerminalSpec.scale_refine_halves` spells the rung, byte-aligned (§1h),
+   and `with_scale_refine=False` is the T-po2 case. RELEASE: the first codes
+   in plane order, on the first positions of the placement the writer ranked
+   at the plane's *full* count (`unit_artifact._release_placement`; before
+   minor 7 a whole unit's plane was *respread* at the terminal's count, which
+   put every code past the first superblock's share on a position the encoder
+   never chose). Every other plane -- ALPHABET, DESCENDANT, INITIAL_STATE,
+   BODY, SCALE_BASE, the LUT plane's index nibble (no base to fall back on),
+   and the DIAG_SU/DIAG_SV pair, which travels together -- means nothing short
+   of whole and is refused **by name** (`unit_artifact._refuse_partial_planes`)
+   where it used to die in `wire.unpack_*` naming neither the plane nor the
+   rule. `test_a_po2_rung_of_an_s6b_unit_reads_at_the_po2_base`,
+   `test_a_refinement_prefix_leaves_the_later_halves_at_the_po2_base`,
+   `test_a_release_rung_is_the_first_codes_in_plane_order`,
+   `test_planes_with_no_prefix_meaning_are_refused_by_name`.
 
 1. **Every terminal is a prefix.** In canonical plane order a terminal declares
    full planes, then at most one partially-present plane, then nothing. A
@@ -811,8 +833,8 @@ the order they were met:
    **granule boundary** — a running prefix sum of that plane's `counts`, `0`
    and the full extent included. A count in the middle of a granule prices
    exactly and describes a stream no granule boundary matches (2026-09-02
-   audit §2 P0-3); a boundary that is not a whole number of bytes is refused
-   for the reason §1h gives.
+   audit §2 P0-3); a cut strictly inside any plane, granular or not, that is
+   not a whole number of bytes is refused for the reason §1h gives.
 2. **Every terminal carries `payload_digest`** over its own byte prefix — 32
    bytes per terminal. The whole-artifact digest covers only the untruncated
    bytes, so without this a truncation carries no integrity check at all

@@ -186,7 +186,10 @@ the D5 plane order puts COMPLETION behind every plane a decode needs and
 ahead of RELEASE only, and COMPLETION is cut by depth level, so a shallower
 completion rung is a byte prefix (`docs/schema/prismaquant.tessera.v1.md`
 §1h; `tests/test_audit_container_accounting.py` lays one on the exporter's
-bytes and reads it back). Whether the exporter writes a ladder is a separate
+bytes and reads it back), and the reader reads every plane at the terminal's
+count -- a shorter S6b refinement, completion depth or release plane means
+what schema §3c item 3 says, every other plane is whole or refused by name
+(`unit_artifact._refuse_partial_planes`). Whether the exporter writes a ladder is a separate
 decision, and on today's recipe table (every default rung at `completion=0`)
 there is no rung to shorten: no release note may claim truncatable artifacts,
 and nothing has measured that truncation is worth bytes anywhere

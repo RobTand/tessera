@@ -948,22 +948,24 @@ class Manifest:
                         f"{count} elements, which is not a granule boundary "
                         f"of {sorted(allowed)}"
                     )
-                # A cut strictly inside a plane must also end on a byte.  A
-                # terminal's byte prefix rounds its last plane's bits up to
-                # whole bytes (``container.plane_ranges``), and D4 requires
-                # the slack bits of that final byte to be zero -- but the bits
-                # sharing that byte belong to the *next* granule, which is
-                # real content.  Such a terminal would verify only while that
+                # A cut strictly inside a plane must also end on a byte,
+                # whether the plane has granules or not.  A terminal's byte
+                # prefix rounds its last plane's bits up to whole bytes
+                # (``container.plane_ranges``), and D4 requires the slack bits
+                # of that final byte to be zero -- but the bits sharing that
+                # byte belong to the plane's *next* element, which is real
+                # content.  Such a terminal would verify only while that
                 # content happened to be zero (``verify_plane_region``), which
                 # is not a legal length, it is a coincidence.  8 is the codec's
                 # byte width, the one constant the wire is allowed to have.
-                if allowed is not None and 0 < count < extent and (count * widths[index]) % 8:
+                if 0 < count < extent and (count * widths[index]) % 8:
                     raise ManifestError(
                         f"terminal {terminal.slot_id!r} cuts {kind.name} at "
                         f"{count} elements = {count * widths[index]} bits, which "
-                        "is not a whole number of bytes: the next granule's "
-                        "leading bits would share the terminal's final byte, "
-                        "where the zero-slack rule (schema D4) must hold"
+                        "is not a whole number of bytes: the plane's next "
+                        "element's leading bits would share the terminal's "
+                        "final byte, where the zero-slack rule (schema D4) "
+                        "must hold"
                     )
                 if count < extent:
                     truncated = True

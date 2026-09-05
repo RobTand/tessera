@@ -689,6 +689,12 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     Nothing here comes from the encoder: the forests come off the ALPHABET and
     DESCENDANT planes, the scales off segment 2b, the convolutional code out of
     the manifest's encoder profile.
+
+    Every plane is read at the **terminal's** count, not at the count the
+    geometry would give a whole unit (tessera#144, obstacle 3): a terminal
+    shorter than the writer's is a rung of the ladder the wire admits since
+    minor 7, and what each shorter count means -- or that it means nothing,
+    and is refused by name -- is ``_refuse_partial_planes``'s docstring.
     """
     from .container import plane_ranges
     from .diagonals import Diagonals
@@ -701,6 +707,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     chunks = {}
     for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
         chunks[descriptor.kind] = art.plane_region[offset : offset + content]
+    _refuse_partial_planes(manifest, terminal)
 
     # Neither the ConvCode nor the payload grid is stored field-by-field; the
     # profile id commits to both.  Recovering them by search over the published
@@ -916,22 +923,90 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
         scale_base = empty
         scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
     else:
+        # Whole, by ``_refuse_partial_planes``: every group needs its octave,
+        # so the base plane has no prefix meaning and ``n_base`` is the
+        # descriptor's count here.
         scale_base = unpack_uniform(
-            chunks[PlaneKind.SCALE_BASE],
-            geometry.positions // geometry.group_weights,
+            chunks[PlaneKind.SCALE_BASE], n_base,
             NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
         )
         scale_lut = None
+    halves = geometry.positions // geometry.half_weights
+    width = NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE]
+    if n_refine == halves:
+        scale_refine = unpack_uniform(
+            chunks[PlaneKind.SCALE_REFINE], halves, width, device
+        )
+    else:
+        # An S6b refinement prefix (schema D3): the terminal carries the
+        # first ``n_refine`` halves' words and every later half sits at its
+        # group's po2 base, which is the all-zero word -- ``d = 0, m = 0``
+        # in ``wire.scales_from_planes`` is 2^(E-127) exactly.  T-po2 is the
+        # ``n_refine == 0`` case.  A LUT plane never arrives here short:
+        # its index nibble has no base to fall back on, and
+        # ``_refuse_partial_planes`` refused it by name.
+        carried = unpack_uniform(
+            chunks[PlaneKind.SCALE_REFINE], n_refine, width, device
+        )
+        scale_refine = torch.zeros(
+            halves, dtype=carried.dtype, device=carried.device
+        )
+        scale_refine[:n_refine] = carried
     return dict(
         scale_base=scale_base,
-        scale_refine=unpack_uniform(
-            chunks[PlaneKind.SCALE_REFINE],
-            geometry.positions // geometry.half_weights,
-            NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE], device,
-        ),
+        scale_refine=scale_refine,
         scale_plane=plane.kind, scale_lut=scale_lut,
         scale_global=float(plane.global_scale), scale_rows=None,
     )
+
+
+def _refuse_partial_planes(manifest, terminal) -> None:
+    """Refuse, by name, a terminal carrying part of a plane no prefix of
+    which decodes.
+
+    The manifest admits any byte-aligned cut of a plane with no granule
+    structure (``Manifest._validate_terminal_prefixes``): cutting is the
+    layout's business, meaning is the reader's.  Since minor 7 the reader
+    reads every plane at the terminal's count (tessera#144, obstacle 3), and
+    these counts mean nothing short of whole -- the forests, the body, a
+    shard's start states, the block-scale base, and on a LUT plane the index
+    nibble, which has no base to fall back on; the rank-1 pair travels
+    together or not at all.  What a shorter count *does* mean, plane by
+    plane: COMPLETION, the first depth levels (``wire.unpack_levels``); an
+    S6b SCALE_REFINE, the first halves refined and the rest at their po2
+    base (schema D3, ``_read_scale_planes``); RELEASE, the first codes in
+    plane order (``_release_placement``).  Before this the same terminals
+    died in ``wire.unpack_*`` as ``need N bits ... the plane holds M``,
+    naming neither the plane nor the rule.
+    """
+    extent = {descriptor.kind: descriptor.element_count for descriptor in manifest.planes}
+    count = dict(zip(manifest.plane_order, terminal.plane_elements))
+    kind_of_plane = manifest.scale_plane.kind
+    whole = {
+        PlaneKind.ALPHABET, PlaneKind.DESCENDANT, PlaneKind.INITIAL_STATE,
+        PlaneKind.BODY, PlaneKind.SCALE_BASE,
+    }
+    if kind_of_plane is ScalePlaneKind.LUT:
+        whole.add(PlaneKind.SCALE_REFINE)
+    # In wire order, so the refusal names the first plane the terminal got
+    # wrong -- a prefix that stops inside the pair has emptied every plane
+    # after it too, and those are not the finding.
+    for kind in manifest.plane_order:
+        if kind in whole and count[kind] != extent[kind]:
+            raise GrammarError(
+                f"{kind.name} is not truncatable: terminal "
+                f"{terminal.slot_id!r} carries {count[kind]} of {extent[kind]} "
+                "elements, and no prefix of the plane decodes"
+            )
+        if kind is PlaneKind.DIAG_SU and kind_of_plane is not ScalePlaneKind.CHANNEL:
+            pair = (count[PlaneKind.DIAG_SU], count[PlaneKind.DIAG_SV])
+            full = (extent[PlaneKind.DIAG_SU], extent[PlaneKind.DIAG_SV])
+            if pair not in ((0, 0), full):
+                raise GrammarError(
+                    "the rank-1 pair DIAG_SU/DIAG_SV travels whole or not at all: "
+                    f"terminal {terminal.slot_id!r} carries {pair[0]} of {full[0]} "
+                    f"and {pair[1]} of {full[1]} elements"
+                )
 
 
 def _shard_state(manifest, chunks, device):
@@ -968,18 +1043,43 @@ def _release_placement(manifest, decoded, cols: int, n_released: int):
 
     superblock = manifest.geometry.superblock_columns
     descriptor = manifest.plane(PlaneKind.RELEASE)
+    if descriptor is None:
+        return _canonical_release_order(decoded, cols, superblock, n_released)
     if (
         manifest.shard is not None
-        and descriptor is not None
         and descriptor.count_granularity is CountGranularity.PER_SUPERBLOCK
     ):
-        if sum(descriptor.counts) != n_released:
+        # A rung of a shard's plane is its first whole superblocks: the plane
+        # is written superblock by superblock (``decode.release_order``) and
+        # the manifest admits only a granule boundary, so the terminal's
+        # count is a prefix sum of the descriptor's.  Checked here too --
+        # this is the reader that would place the codes wrongly otherwise.
+        prefix, running = {0}, 0
+        for count in descriptor.counts:
+            running += count
+            prefix.add(running)
+        if n_released not in prefix:
             raise GrammarError(
-                f"the RELEASE plane's superblock counts sum to "
-                f"{sum(descriptor.counts)}, the terminal declares {n_released}"
+                f"the terminal's {n_released} released positions is not a "
+                "superblock prefix of the RELEASE plane's counts "
+                f"{list(descriptor.counts)}"
             )
-        return release_order(decoded, cols, superblock, descriptor.counts)
-    return _canonical_release_order(decoded, cols, superblock, n_released)
+        return release_order(decoded, cols, superblock, descriptor.counts)[:n_released]
+    # A whole unit's placement is the canonical order at the *plane's* total
+    # -- the total the writer placed and ranked -- and a shorter terminal
+    # reads its first ``n_released`` codes against the first ``n_released``
+    # positions of that same order (tessera#144, obstacle 3).  Respreading
+    # the quota at the terminal's count instead, as this did before minor 7,
+    # ranks a different set and lands every code past the first superblock's
+    # share on a position the encoder never chose.
+    if n_released > descriptor.element_count:
+        raise GrammarError(
+            f"the terminal declares {n_released} released positions, the "
+            f"RELEASE plane holds {descriptor.element_count}"
+        )
+    return _canonical_release_order(
+        decoded, cols, superblock, descriptor.element_count
+    )[:n_released]
 
 
 def _as_unit(manifest, fields: dict, chunks, device, code):
@@ -1058,6 +1158,7 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     chunks = {}
     for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
         chunks[descriptor.kind] = art.plane_region[offset : offset + content]
+    _refuse_partial_planes(manifest, terminal)
 
     def elements(kind: PlaneKind) -> int:
         return terminal.plane_elements[wire.index(kind)]

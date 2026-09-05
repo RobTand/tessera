@@ -22,7 +22,7 @@ import pytest
 
 from conftest import ALPHABET_BLOB, DESCENDANT_BLOB, make_artifact
 from tessera.container import SCHEMA_MINOR, SCHEMA_MINORS_READ, parse, serialize
-from tessera.errors import ManifestError, PlaneLayoutError, TesseraError
+from tessera.errors import GrammarError, ManifestError, PlaneLayoutError, TesseraError
 from tessera.grammar import (
     bresenham_rate_schedule,
     completion_level_counts,
@@ -231,6 +231,50 @@ def test_a_granule_boundary_off_a_byte_is_not_a_legal_cut():
         TerminalSpec("t-c1", (1,) * 36, with_scale_base=False, with_scale_refine=False),
     )
     assert _manifest(geometry8, rates8, planes8, region8, (ok, one)).terminals == (ok, one)
+
+
+def test_a_cut_inside_a_whole_plane_must_end_on_a_byte_too():
+    """The byte rule is not a granule rule.  An S6b refinement rung
+    (``TerminalSpec.scale_refine_halves``, schema D3) cuts a WHOLE_PLANE
+    plane of 4-bit words: three halves are 12 bits and the fourth half's
+    leading nibble would share the terminal's final byte; two halves are a
+    byte and the cut is legal."""
+    spec = TerminalSpec(
+        "t", tuple(3 - rate for rate in bresenham_rate_schedule(root_from_q256(256), 32)),
+        with_scale_base=True, with_scale_refine=True,
+    )
+    geometry, rates, planes, region = _unit(spec=spec)
+    refine = next(p for p in planes if p.kind is PlaneKind.SCALE_REFINE)
+    assert refine.count_granularity is CountGranularity.WHOLE_PLANE
+    assert refine.element_count == 16 and refine.element_bits == 4
+    full = _terminal(geometry, rates, planes, region, spec)
+    three = _terminal(
+        geometry, rates, planes, region,
+        TerminalSpec("t-3h", (0,) * 32, with_scale_base=True,
+                     with_scale_refine=True, scale_refine_halves=3),
+    )
+    with pytest.raises(ManifestError, match="12 bits, which is not a whole number of bytes"):
+        _manifest(geometry, rates, planes, region, (full, three))
+    two = _terminal(
+        geometry, rates, planes, region,
+        TerminalSpec("t-2h", (0,) * 32, with_scale_base=True,
+                     with_scale_refine=True, scale_refine_halves=2),
+    )
+    wire = plane_order(False, PlaneLayout.LADDER)
+    assert two.plane_elements[wire.index(PlaneKind.SCALE_REFINE)] == 2
+    assert _manifest(geometry, rates, planes, region, (full, two)).terminals == (full, two)
+    with pytest.raises(GrammarError, match="17 refinement halves of 16"):
+        _terminal(
+            geometry, rates, planes, region,
+            TerminalSpec("t-17h", (0,) * 32, with_scale_base=True,
+                         with_scale_refine=True, scale_refine_halves=17),
+        )
+    with pytest.raises(GrammarError, match="but declares no SCALE_REFINE plane"):
+        _terminal(
+            geometry, rates, planes, region,
+            TerminalSpec("t-none", (0,) * 32, with_scale_base=True,
+                         with_scale_refine=False, scale_refine_halves=2),
+        )
 
 
 def test_a_zero_depth_completion_plane_declares_no_levels():

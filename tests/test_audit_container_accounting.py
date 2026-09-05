@@ -550,27 +550,232 @@ def test_a_level_cut_is_the_first_levels_of_the_plane_not_the_top_bits_of_each_w
     assert level_one == pack_levels(top_bits, (1,) * 256)
 
 
-def test_the_reader_still_sizes_the_s6b_refinement_from_the_geometry():
-    """tessera#144, obstacle 3 -- pinned as it stands after the wire moved.
+def _record(manifest, art, slot, **counts):
+    """A terminal at explicit per-plane counts (``KIND=count``), priced the
+    way ``build_terminal`` prices one, for rungs ``TerminalSpec`` cannot
+    spell.  Every plane after the first shortened one is emptied, so the
+    record is a prefix and only the shortened plane is under test."""
+    import dataclasses
 
-    On an S6B plane the T-po2 terminal (po2 base, no refinement, no
-    completion) is a legal prefix of the minor-7 order and passes the
-    manifest; ``parse_unit_artifact`` then reads SCALE_REFINE at the
-    geometry's count and fails in ``unpack_uniform``.  D3 says what that rung
-    means -- later halves at the po2 base -- and the reader does not yet say
-    it.  The class the old order called T-C3 (completion without refinement)
-    is no longer a prefix at all, because the refinement now leads the axis.
+    from tessera.container import plane_ranges
+
+    full = manifest.terminals[0]
+    wire = manifest.plane_order
+    extent = {d.kind: d.element_count for d in manifest.planes}
+    elements = list(full.plane_elements)
+    for kind, count in counts.items():
+        elements[wire.index(PlaneKind[kind])] = count
+    short = next((i for i, kind in enumerate(wire) if elements[i] < extent[kind]), None)
+    if short is not None:
+        elements[short + 1:] = [0] * (len(elements) - short - 1)
+    probe = dataclasses.replace(full, slot_id=slot, plane_elements=tuple(elements))
+    exact = sum(total for _d, _o, _c, total in plane_ranges(manifest, probe))
+    return dataclasses.replace(
+        probe, exact_bytes=exact,
+        exact_bpp=Fraction(8 * exact, manifest.geometry.quantizable_params),
+        payload_digest=hashlib.sha256(art.plane_region[:exact]).digest(),
+    )
+
+
+def _with_records(art, manifest, records):
+    import dataclasses
+
+    ladder = dataclasses.replace(manifest, terminals=(manifest.terminals[0], *records))
+    return serialize(ladder, art.plane_region)
+
+
+def test_a_po2_rung_of_an_s6b_unit_reads_at_the_po2_base():
+    """tessera#144, obstacle 3, inverted: the reader reads at the terminal's
+    count.
+
+    Pinned before this commit, on this exact encode: the T-po2 rung (po2
+    base, no refinement, no completion) passed the manifest and the reader
+    died in ``unpack_uniform`` -- ``need 2048 bits for 512 elements of 4
+    bits, the plane holds 0`` -- because it sized SCALE_REFINE from the
+    geometry.  D3 says what the rung means: every half at its group's po2
+    base, which is the all-zero refinement word.
     """
-    from tessera.manifest import ManifestError, ScalePlaneKind
-    from tessera.unit_artifact import read_unit_artifact
+    import dataclasses
+
+    from tessera.decode import reconstruct_unit
+    from tessera.manifest import ScalePlaneKind
+    from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
 
     torch.manual_seed(0)
     blob, art, manifest, full = _e2m1_completion_encode(
         512, scale_plane=ScalePlaneKind.S6B
     )
+    whole = parse_unit_artifact(blob)
+    assert int(whole.unit.scale_refine.sum()) > 0   # the refinement is not decorative
     s6b = dict(with_scale_base=True, with_scale_refine=False)
     laddered, (t_po2,) = _laddered(art, manifest, [_rung("t-po2", 0, manifest.rates, **s6b)])
-    with pytest.raises(GrammarError, match="need 2048 bits for 512 elements of 4 bits"):
-        read_unit_artifact(_cut(laddered, art, t_po2))
-    with pytest.raises(ManifestError, match="not a prefix: COMPLETION carries"):
-        _laddered(art, manifest, [_rung("t-c3", 3, manifest.rates, **s6b)])
+    cut = _cut(laddered, art, t_po2)
+    back = parse_unit_artifact(cut)
+    assert back.manifest.terminals == (full, t_po2)
+    assert back.unit.completion_limit == 0
+    assert back.unit.scale_refine.shape == whole.unit.scale_refine.shape
+    assert int(back.unit.scale_refine.sum()) == 0
+    assert torch.equal(back.unit.scale_base, whole.unit.scale_base)
+    base_only = dataclasses.replace(
+        whole.unit, scale_refine=torch.zeros_like(whole.unit.scale_refine)
+    )
+    expect = reconstruct_unit(base_only, whole.forests, whole.code, completion=0)
+    assert torch.equal(read_unit_artifact(cut), expect)
+    assert not torch.equal(
+        expect, reconstruct_unit(whole.unit, whole.forests, whole.code, completion=0)
+    )
+
+
+def test_a_refinement_prefix_leaves_the_later_halves_at_the_po2_base():
+    """D3's prefix semantics on the wire: ``scale_refine_halves=k`` carries
+    the first ``k`` halves' words, the rest read as the po2 base.  An odd
+    number of 4-bit halves is not a byte and the manifest refuses it."""
+    import dataclasses
+
+    from tessera.decode import reconstruct_unit
+    from tessera.manifest import ManifestError, ScalePlaneKind
+    from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
+
+    torch.manual_seed(0)
+    blob, art, manifest, full = _e2m1_completion_encode(
+        512, scale_plane=ScalePlaneKind.S6B
+    )
+    wire = manifest.plane_order
+    whole = parse_unit_artifact(blob)
+    halves = whole.unit.scale_refine.numel()
+    k = halves // 2
+    assert int(whole.unit.scale_refine[k:].sum()) > 0
+    rung = _rung("t-half", 0, manifest.rates, with_scale_base=True,
+                 with_scale_refine=True, scale_refine_halves=k)
+    laddered, (t_half,) = _laddered(art, manifest, [rung])
+    assert t_half.plane_elements[wire.index(PlaneKind.SCALE_REFINE)] == k
+    back = parse_unit_artifact(_cut(laddered, art, t_half))
+    assert torch.equal(back.unit.scale_refine[:k], whole.unit.scale_refine[:k])
+    assert int(back.unit.scale_refine[k:].sum()) == 0
+    prefix = dataclasses.replace(
+        whole.unit,
+        scale_refine=torch.cat([
+            whole.unit.scale_refine[:k],
+            torch.zeros_like(whole.unit.scale_refine[k:]),
+        ]),
+    )
+    expect = reconstruct_unit(prefix, whole.forests, whole.code, completion=0)
+    assert torch.equal(read_unit_artifact(_cut(laddered, art, t_half)), expect)
+    odd = _rung("t-odd", 0, manifest.rates, with_scale_base=True,
+                with_scale_refine=True, scale_refine_halves=k + 1)
+    with pytest.raises(ManifestError, match=f"{4 * (k + 1)} bits, which is not a whole number of bytes"):
+        _laddered(art, manifest, [odd])
+
+
+def test_planes_with_no_prefix_meaning_are_refused_by_name():
+    """A LUT index plane, the body, the forests and the rank-1 pair have no
+    prefix semantics; the manifest admits a byte-aligned cut of each (cutting
+    is the layout's business) and the reader refuses it by name, where it
+    used to die in ``wire.unpack_*`` naming neither the plane nor the rule."""
+    from tessera.manifest import ManifestError
+    from tessera.unit_artifact import parse_unit_artifact
+
+    torch.manual_seed(0)
+    blob, art, manifest, full = _e2m1_completion_encode(512)
+    wire = manifest.plane_order
+    # The LUT plane's index nibble: T-po2's spelling on a LUT unit is a unit
+    # with no scales at all.
+    laddered, (no_index,) = _laddered(
+        art, manifest,
+        [_rung("t-noidx", 0, manifest.rates, with_scale_base=False, with_scale_refine=False)],
+    )
+    with pytest.raises(GrammarError, match="SCALE_REFINE is not truncatable"):
+        parse_unit_artifact(_cut(laddered, art, no_index))
+    # BODY at its first superblock: a granule boundary, whole bytes, a prefix.
+    body = manifest.plane(PlaneKind.BODY)
+    assert len(body.counts) == 2 and body.counts[0] * body.element_bits % 8 == 0
+    half_body = _record(manifest, art, "t-body", BODY=body.counts[0])
+    with pytest.raises(GrammarError, match="BODY is not truncatable"):
+        parse_unit_artifact(_cut(_with_records(art, manifest, [half_body]), art, half_body))
+    # ALPHABET short by one code (8-bit words, so any count is a byte).
+    alphabet = full.plane_elements[wire.index(PlaneKind.ALPHABET)]
+    short_alphabet = _record(manifest, art, "t-alpha", ALPHABET=alphabet - 1)
+    with pytest.raises(GrammarError, match="ALPHABET is not truncatable"):
+        parse_unit_artifact(
+            _cut(_with_records(art, manifest, [short_alphabet]), art, short_alphabet)
+        )
+    # The rank-1 pair travels together: DIAG_SU whole and DIAG_SV absent is a
+    # prefix in the minor-7 order and means nothing.
+    torch.manual_seed(1)
+    blob, art, manifest, full = _e2m1_completion_encode(256, with_diagonals=True)
+    wire = manifest.plane_order
+    assert full.plane_elements[wire.index(PlaneKind.DIAG_SU)] == 256
+    su_only = _record(manifest, art, "t-su", DIAG_SV=0)
+    assert su_only.plane_elements[wire.index(PlaneKind.DIAG_SU)] == 256
+    with pytest.raises(GrammarError, match="DIAG_SU/DIAG_SV travels whole or not at all"):
+        parse_unit_artifact(_cut(_with_records(art, manifest, [su_only]), art, su_only))
+    # And a cut inside the pair is not a byte-aligned cut the manifest admits
+    # either way: fp16 words are whole bytes, so this one reaches the reader.
+    part_sv = _record(manifest, art, "t-sv", DIAG_SV=8)
+    with pytest.raises(GrammarError, match="DIAG_SU/DIAG_SV travels whole or not at all"):
+        parse_unit_artifact(_cut(_with_records(art, manifest, [part_sv]), art, part_sv))
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="the encoder is a CUDA path")
+def test_a_release_rung_is_the_first_codes_in_plane_order():
+    """A shorter RELEASE terminal reads its codes against the first positions
+    of the placement the writer ranked at the plane's full count -- on two
+    superblocks, a 128-of-256 rung is the first superblock's 128 -- not
+    against a quota respread at 128, which would put 64 of them on the second
+    superblock's positions and the codes on positions the encoder never
+    chose."""
+    import dataclasses
+
+    from tessera.alphabet import SERIALISABLE_GRIDS
+    from tessera.decode import reconstruct_unit
+    from tessera.export import (
+        DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF, DEFAULT_SCALE_REFIT, _plan_for,
+        wire_recipe,
+    )
+    from tessera.layout import TerminalSpec
+    from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
+
+    grid = next(g for g in SERIALISABLE_GRIDS.values() if g.name == "E2M1")
+    q256, columns, released = 768, 512, 256
+    recipe = wire_recipe(grid, q256)
+    rates, forests = _plan_for(grid, q256, columns, recipe.body, None)
+    weight = (torch.randn(16, columns, generator=torch.Generator().manual_seed(10)) * 0.02).cuda()
+    unit = encode_unit(
+        weight, forests, rates, DEFAULT_CODE, completion=0, released_positions=released,
+        group=DEFAULT_GROUP, half=DEFAULT_HALF, scale_refit=DEFAULT_SCALE_REFIT,
+        span=recipe.span, scale_plane=recipe.scale_plane, trellis_weighting="scale",
+        body=recipe.body, window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma,
+    )
+    _m, _r, blob = build_unit_artifact(unit, "u", forests, q256 * grid.arity, DEFAULT_CODE)
+    art = parse(blob)
+    manifest, full = art.manifest, art.manifest.terminals[0]
+    wire = manifest.plane_order
+    superblock = manifest.geometry.superblock_columns
+    assert columns // superblock == 2
+    assert full.plane_elements[wire.index(PlaneKind.RELEASE)] == released
+    whole = parse_unit_artifact(blob, device="cuda")
+    half = released // 2
+    spec = TerminalSpec(
+        "t-r128", (0,) * columns, released_positions=half,
+        with_scale_base=full.plane_elements[wire.index(PlaneKind.SCALE_BASE)] > 0,
+        with_scale_refine=full.plane_elements[wire.index(PlaneKind.SCALE_REFINE)] > 0,
+        with_diagonals=full.plane_elements[wire.index(PlaneKind.DIAG_SU)] > 0,
+    )
+    laddered, (rung,) = _laddered(art, manifest, [spec])
+    assert rung.plane_elements[wire.index(PlaneKind.RELEASE)] == half
+    cut = _cut(laddered, art, rung)
+    back = parse_unit_artifact(cut, device="cuda")
+    assert torch.equal(back.unit.release_index, whole.unit.release_index[:half])
+    assert torch.equal(back.unit.release_code, whole.unit.release_code[:half])
+    # The first superblock's share, and only its: the observable difference
+    # from a respread at 128, whose quota would be 64 + 64.
+    assert bool(((back.unit.release_index % columns) < superblock).all())
+    prefix = dataclasses.replace(
+        whole.unit,
+        release_index=whole.unit.release_index[:half],
+        release_code=whole.unit.release_code[:half],
+    )
+    expect = reconstruct_unit(prefix, whole.forests, whole.code)
+    assert torch.equal(read_unit_artifact(cut, device="cuda"), expect)
+    assert not torch.equal(expect, reconstruct_unit(whole.unit, whole.forests, whole.code))

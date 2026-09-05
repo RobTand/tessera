@@ -162,6 +162,12 @@ class TerminalSpec:
     #: state one column starts from.  Zero -- the default, and every whole
     #: unit -- declares the plane absent and the pinned zero start.
     state_bits: int = 0
+    #: How many leading halves of an S6b unit's SCALE_REFINE plane this
+    #: terminal carries.  Schema D3 gives the plane prefix semantics -- the
+    #: halves a terminal does not carry sit at their group's po2 base -- and
+    #: this is the spelling of that rung.  ``None`` defers to
+    #: ``with_scale_refine``: the whole plane, or none of it.
+    scale_refine_halves: "int | None" = None
 
 
 def _counts_for(
@@ -227,6 +233,12 @@ def _counts_for(
         return rows
     if kind is PlaneKind.SCALE_REFINE:
         if spec is not None and not spec.with_scale_refine:
+            if spec.scale_refine_halves:
+                raise GrammarError(
+                    f"terminal {spec.slot_id!r} carries "
+                    f"{spec.scale_refine_halves} refinement halves but declares "
+                    "no SCALE_REFINE plane"
+                )
             return 0
         if positions % geometry.half_weights:
             raise GrammarError(
@@ -234,7 +246,15 @@ def _counts_for(
                 f"{geometry.half_weights}-weight halves; a floored count "
                 "would silently leave the trailing weights scaleless"
             )
-        return positions // geometry.half_weights
+        halves = positions // geometry.half_weights
+        if spec is None or spec.scale_refine_halves is None:
+            return halves
+        if not 0 <= spec.scale_refine_halves <= halves:
+            raise GrammarError(
+                f"terminal {spec.slot_id!r} carries "
+                f"{spec.scale_refine_halves} refinement halves of {halves}"
+            )
+        return spec.scale_refine_halves
     if kind is PlaneKind.RELEASE:
         return max_released if spec is None else spec.released_positions
     if kind is PlaneKind.INITIAL_STATE:
