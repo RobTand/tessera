@@ -154,6 +154,49 @@ def test_a_replicated_linear_inside_a_tp_group_is_a_whole_unit():
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
 
 
+def test_equal_totals_with_disagreeing_role_boundaries_are_refused_by_name():
+    """A fused module the two sides stack DIFFERENTLY is not a whole module.
+
+    Wire roles q/k/v of ``[4, 8, 4]`` and a layer asking for ``[8, 4, 4]``
+    total 16 either way, so a planner that compares only the totals hands back
+    a whole-module plan and the load succeeds.  The wire is decoded as four q
+    rows then eight k rows while the consumer reads the first eight as q, and
+    nothing downstream can catch it: the decoder returns the role arrangement
+    it was given, and a self-consistent wire agrees with its own sidecar.  So
+    the refusal has to be here, and it has to name the member that failed.
+
+    Both cases the shortcut covered are checked -- ``tp_size == 1`` and a
+    module replicated inside a TP group -- plus the same disagreement under a
+    row-parallel (input) cut, where the output is whole too.
+    """
+    roles = [("q_proj", 4), ("k_proj", 8), ("v_proj", 4)]
+    for rank, tp, in_size in ((0, 1, 64), (2, 4, 64), (1, 2, 32)):
+        with pytest.raises(ValueError) as e:
+            plan_shard("qkv", roles=roles, columns=64, out_partitions=[8, 4, 4],
+                       in_size=in_size, tp_rank=rank, tp_size=tp)
+        msg = str(e.value)
+        assert "'q_proj'" in msg, "the refusal names the member that failed"
+        assert "4 rows" in msg and "asks for 8" in msg
+        assert "Equal totals are not equal boundaries" in msg
+
+
+def test_a_fused_container_and_a_layer_that_stack_differently_are_refused():
+    """The list lengths are the same rule as the boundaries, asked once.
+
+    A three-role container against a layer offering one output partition is
+    the same checkpoint/serve disagreement about how a module is fused, and it
+    has to be refused for a whole module too -- not only for a cut, which is
+    the one branch that used to ask.
+    """
+    roles = [("q_proj", 512), ("k_proj", 256), ("v_proj", 256)]
+    with pytest.raises(ValueError) as e:
+        plan_shard("qkv", roles=roles, columns=2048, out_partitions=[1024],
+                   in_size=2048, tp_rank=0, tp_size=1)
+    msg = str(e.value)
+    assert "3 roles" in msg and "1 output partition" in msg
+    assert "how this module is fused" in msg
+
+
 def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
     """GQA with ``num_kv_heads < tp``: two ranks hold the SAME k/v rows.
 
