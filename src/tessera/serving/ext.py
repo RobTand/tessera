@@ -139,11 +139,20 @@ FALLBACK_STATUSES = (FALLBACK_SUBSTITUTED, FALLBACK_REFUSED)
 #: lane stamps, and (optionally) what a unit's WIRE must be before the lane can
 #: read it at all.
 LANE_FIELDS = ("decoder", "requires")
-#: The wire predicates a ``lane.requires`` block may state.  Every one of them
-#: is decidable from a PLAN -- a ``(grid, q256)`` pair -- which is the whole
-#: point: a lane a checkpoint cannot reach must be refused where the plan is
-#: made, not discovered at load after the encode is paid for (issue #104).
-LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane")
+#: The wire predicates a ``lane.requires`` block may state.  The first four
+#: are functions of a ``(grid, q256)`` pair; the rest are the DECORATION
+#: classes a unit can carry beyond its rung -- RELEASE overrides, diagonals,
+#: rotation, a TP shard's start state, the grid's arity -- which the loader
+#: refuses by name and the published predicate therefore states too (#264):
+#: a predicate narrower than the loader made the byte-time preflight publish
+#: READABLE, exit 0, for wire every module refuses at load.  The plan-time
+#: gate decides them from the plan's own statement (the exporter writes
+#: whole, undecorated units; a caller planning otherwise says so); the
+#: byte-time gate reads them off the wire, which is where a start state --
+#: a property of a LATER slice, ``layout.slice_unit`` -- is caught.
+LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
+                           "release_overrides", "diagonals", "rotation",
+                           "start_state", "grid_arities")
 
 #: The NVFP4 span-2 decoder's lane.  It publishes no ``requires`` block: its
 #: eligibility is the route's own -- grid, body, span and rung, all already
@@ -181,6 +190,28 @@ NVFP4_LANE = {"decoder": "native_span2"}
 #: ``kernel_roster`` is torch-free precisely so that this module can derive
 #: them: a lane predicate published here now cannot outlive the rates the
 #: kernel instantiates.
+#:
+#: THE BLOCK IS THE LANE'S WHOLE PREDICATE (#264).  Four conditions here
+#: against nine the loader refuses was the defect: ``prepare_from_parsed``
+#: also refuses, by name, RELEASE overrides, diagonals, rotation, a TP
+#: shard's start state (``layout.slice_unit`` stamps ``initial_state``; the
+#: kernel supplies ``state_{-1} = 0`` itself) and a grid of the wrong arity
+#: -- and none of that was published, so the plan-time and byte-time gates,
+#: which read THIS block, declared READABLE wire the loader refuses module
+#: by module.  The five decoration classes are published as what the lane
+#: does not read (``false`` / ``["none"]`` / ``[1]``), and every gate --
+#: ``scheme.refuse_unreachable_lane``, ``scheme.lane_wire_report``, the
+#: loader itself and ``bf16_route.gemv_refusal_for_unit`` -- decides them
+#: through one function, ``scheme.decide_lane_requirements``, over this
+#: block, so the predicate and the loader cannot drift.
+#:
+#: ONE loader clause is deliberately NOT here: ``prepare_from_parsed``'s
+#: scalar-256-``native`` grid check.  That is an entry-point fact of the
+#: E4M3 table build, not a lane fact -- the SAME extension reads BF16 window
+#: wire through ``prepare_value_unit``, whose grid is scalar with 65536
+#: codes -- so publishing size/native would declare wire unreadable
+#: that the lane serves.  ``grid_arities`` is the lane-wide part: the kernel
+#: decodes one code per position, whatever the alphabet.
 WINDOW_GEMV_LANE = {
     "decoder": "window_gemv",
     "requires": {
@@ -188,6 +219,11 @@ WINDOW_GEMV_LANE = {
         "window_bits": list(WINDOW_BITS_SUPPORTED),
         "body": "window",
         "plane": "channel",
+        "release_overrides": False,
+        "diagonals": False,
+        "rotation": ["none"],
+        "start_state": False,
+        "grid_arities": [1],
     },
 }
 

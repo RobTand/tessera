@@ -782,6 +782,117 @@ def test_the_plan_gate_takes_the_plan_facts_and_refuses_them(monkeypatch):
         refuse_unreachable_lane(LANE, **ok, grid_arity=2)
 
 
+def test_the_published_predicate_is_the_full_requirement_set():
+    """The contract publishes EVERY class the loader refuses -- the roster IS
+    the decision here (#264, decided and delegated), so it is pinned: four
+    conditions published against nine refused is the defect itself.
+
+    The one loader clause deliberately NOT here is ``prepare_from_parsed``'s
+    scalar-256-native grid check: an entry-point fact of the E4M3 table
+    build, not a lane fact -- the same extension reads BF16 window wire
+    through ``prepare_value_unit``, whose grid is scalar with 65536 codes,
+    so publishing size/native would call wire unreadable that the lane
+    serves.  ``grid_arities`` is the lane-wide part (one code per
+    position)."""
+    assert lane_requirements(LANE) == FULL_REQUIRES
+
+
+def test_the_live_case_a_tp_row_shard_is_refused_at_preflight(tmp_path, monkeypatch, capsys):
+    """#264's live failure, end to end off serialized bytes: a TP row shard
+    (``layout.slice_unit`` stamps ``initial_state``) must be UNREACHABLE at
+    preflight, exit 1, with the start state named.
+
+    PRE-FIX (b4e5231): ``lane tessera_window_gemv (requires {'column_rates':
+    [1, 2, 4], 'window_bits': [14], 'body': 'window', 'plane': 'channel'}):
+    READABLE -- 1/1 units readable`` and exit 0, while
+    ``prepare_from_parsed`` refuses the same bytes by name -- so an
+    experiment built to measure the lane measured the fallback."""
+    _reparsed, blob = _shard_reparse()
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "shard", {"model.layers.0.mlp.down_proj": blob})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    out = capsys.readouterr().out
+    assert "UNREACHABLE" in out and "READABLE" not in out.replace("UNREACHABLE", "")
+    assert "start_state" in out and "shard start state" in out
+
+
+def _rotated_blob():
+    """Real rotated wire: the readable recipe, R_IN_ONLY, off the encoder."""
+    import torch
+
+    from tessera.alphabet import E4M3_GRID
+    from tessera.export import encode_linear_planes
+    from tessera.manifest import RotationState
+
+    torch.manual_seed(0)
+    weight = torch.randn(32, 128) * 0.02
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024, name="unit", verify=False,
+        rotation=RotationState.R_IN_ONLY)
+    return exported.blob
+
+
+def test_a_rotated_unit_is_refused_at_preflight(tmp_path, monkeypatch, capsys):
+    """A second missing class end to end: rotated wire at a readable rung was
+    READABLE, exit 0, pre-fix (b4e5231) while the loader refuses 'the unit is
+    rotated; not read here'."""
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "rotated",
+                            {"model.layers.0.mlp.down_proj": _rotated_blob()})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    out = capsys.readouterr().out
+    assert "UNREACHABLE" in out and "rotation R_IN_ONLY" in out
+
+
+def test_every_published_requirement_has_a_violating_case():
+    """Rule 3 on the grown roster: derive the classes from the PUBLISHED
+    block, flip one fact per class, and require a refusal naming it -- so a
+    requirement added to the contract without a violating case here fails
+    this test rather than passing vacuously."""
+    from tessera.serving.scheme import lane_wire_report
+
+    violate = {
+        "column_rates": ("rates", (3, 4)),
+        "window_bits": ("window_bits", 12),
+        "body": ("body", "TCQ"),
+        "plane": ("plane", "LUT"),
+        "release_overrides": ("release_overrides", 2),
+        "diagonals": ("diagonals", True),
+        "start_state": ("start_state", True),
+        "rotation": ("rotation", "R_IN_ONLY"),
+        "grid_arities": ("grid_arity", 2),
+    }
+    published = lane_requirements(LANE)
+    missing = sorted(set(published) - set(violate))
+    assert not missing, f"published requirement(s) {missing} have no violating case here"
+    facts = _facts(READABLE_WIRE)
+    for name in published:
+        fact, value = violate[name]
+        report = lane_wire_report(LANE, dict(facts, **{fact: value}))
+        assert not report["readable"], name
+        assert any(name in refusal for refusal in report["refusals"]), (name, report)
+
+
+def test_a_lane_predicate_with_an_unknown_rotation_state_is_refused(monkeypatch):
+    def _bad_rotation(entry):
+        entry["lane"]["requires"]["rotation"] = ["widdershins"]
+
+    payload = _mutated_lane(monkeypatch, _bad_rotation)
+    with pytest.raises(ValueError, match="rotation"):
+        validate_serving_contract(payload)
+
+
+def test_a_lane_predicate_with_a_non_boolean_carry_is_refused(monkeypatch):
+    def _bad_start_state(entry):
+        entry["lane"]["requires"]["start_state"] = "no"
+
+    payload = _mutated_lane(monkeypatch, _bad_start_state)
+    with pytest.raises(ValueError, match="start_state"):
+        validate_serving_contract(payload)
+
+
 def test_the_plan_gate_refuses_a_requirement_it_has_not_learned(monkeypatch):
     """#206's rule, applied to the PLAN side too: the old gate silently skipped
     requirements it did not know, so a contract that grew one would have been
