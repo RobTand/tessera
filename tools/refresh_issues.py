@@ -49,7 +49,10 @@ def build() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
-                    help="exit 1 if the committed snapshot is missing an issue")
+                    help="exit 1 if the committed snapshot and the repository "
+                         "disagree: an issue the snapshot lacks, one it still "
+                         "lists that the repository no longer has, or one "
+                         "whose state moved")
     a = ap.parse_args()
     fresh = build()
     if a.check:
@@ -61,11 +64,21 @@ def main() -> int:
         for repo, issues in fresh["repos"].items():
             known = old.get("repos", {}).get(repo, {})
             missing = sorted(set(issues) - set(known), key=int)
+            # The other direction, which nothing checked: an ID the snapshot
+            # still lists and the repository no longer has -- deleted, or
+            # transferred out. `tests/test_issue_refs.py` builds its allowed
+            # set straight out of this file, so a stale ID keeps validating
+            # every documentation reference to an issue that is gone (#220).
+            removed = sorted(set(known) - set(issues), key=int)
             moved = sorted(
                 (n for n in set(issues) & set(known)
                  if issues[n]["state"] != known[n]["state"]), key=int)
             if missing:
                 print(f"{repo}: not in the snapshot: {missing}", file=sys.stderr)
+                stale = True
+            if removed:
+                print(f"{repo}: in the snapshot but not in the repository: "
+                      f"{removed}", file=sys.stderr)
                 stale = True
             if moved:
                 print(f"{repo}: state changed: {moved}", file=sys.stderr)

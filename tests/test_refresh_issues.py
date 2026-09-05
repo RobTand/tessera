@@ -33,3 +33,60 @@ def test_fetch_keeps_issues_and_pull_requests_across_pages(monkeypatch):
     assert set(found) == {str(row["number"]) for page in pages for row in page}
     assert found["12"] == {"title": "merged fix", "state": "CLOSED"}
     assert found["4"]["state"] == "OPEN"
+
+
+def _module():
+    spec = importlib.util.spec_from_file_location(
+        "refresh_issues", Path(__file__).resolve().parents[1] / "tools/refresh_issues.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _check(monkeypatch, tmp_path, snapshot, fresh):
+    """Run ``--check`` against a committed snapshot and a fetch that answers."""
+
+    module = _module()
+    path = tmp_path / "issues-snapshot.json"
+    path.write_text(json.dumps({
+        "generated": "2026-09-05T00:00:00Z",
+        "default_repo": "example/repo",
+        "repos": {"example/repo": snapshot},
+    }))
+    monkeypatch.setattr(module, "SNAPSHOT", path)
+    monkeypatch.setattr(module, "REPOS", ("example/repo",))
+    monkeypatch.setattr(module, "fetch", lambda repo: fresh)
+    monkeypatch.setattr(module.sys, "argv", ["refresh_issues.py", "--check"])
+    return module.main()
+
+
+def test_check_refuses_an_id_the_source_no_longer_has(monkeypatch, tmp_path, capsys):
+    """#220: a deleted or transferred issue stayed 'current' forever.
+
+    ``--check`` compared fresh-minus-known and the states of the intersection,
+    and never looked at known-minus-fresh. The offline reference gate builds
+    its allowed IDs straight out of that snapshot, so every documentation
+    reference to an issue that has left the repository kept resolving.
+    """
+
+    status = _check(monkeypatch, tmp_path,
+                    snapshot={"7": {"title": "still here", "state": "OPEN"},
+                              "8": {"title": "transferred away", "state": "OPEN"}},
+                    fresh={"7": {"title": "still here", "state": "OPEN"}})
+
+    assert status == 1
+    assert "8" in capsys.readouterr().err
+
+
+def test_check_accepts_a_snapshot_that_matches_its_source(monkeypatch, tmp_path):
+    same = {"7": {"title": "still here", "state": "OPEN"}}
+    assert _check(monkeypatch, tmp_path, snapshot=same, fresh=dict(same)) == 0
+
+
+def test_check_still_refuses_a_new_id_and_a_changed_state(monkeypatch, tmp_path):
+    known = {"7": {"title": "still here", "state": "OPEN"}}
+    assert _check(monkeypatch, tmp_path, snapshot=known, fresh={
+        **known, "9": {"title": "filed since", "state": "OPEN"}}) == 1
+    assert _check(monkeypatch, tmp_path, snapshot=known, fresh={
+        "7": {"title": "still here", "state": "CLOSED"}}) == 1
