@@ -138,7 +138,19 @@ def cuda_home_with_nvcc() -> "str | None":
 def _ensure_toolchain_on_path() -> None:
     """``cpp_extension.load`` shells out to ninja and nvcc; a venv keeps ninja
     in its bin and the CUDA toolkit may be under a versioned root -- put both
-    on PATH."""
+    on PATH.
+
+    The toolkit root is resolved UNCONDITIONALLY, because the resolver is not
+    only a PATH lookup: it ADOPTS what it finds -- ``os.environ["CUDA_HOME"]``
+    and ``cpp_extension.CUDA_HOME``, the module global ``load()`` actually
+    builds its nvcc path from.  An nvcc already on PATH says nothing about
+    that global: torch resolves ``CUDA_HOME`` to ``/usr/local/cuda`` whenever
+    the path merely exists, so an alternatives symlink to a toolkit WITHOUT a
+    compiler fails the build while a complete one answers ``which nvcc``
+    (issue #243).  PATH presence decides only whether PATH itself needs the
+    root's ``bin`` prepended.  An explicit ``CUDA_HOME``/``CUDA_PATH`` in the
+    environment still wins: the resolver returns it untouched or refuses.
+    """
     import shutil
     extra = []
     if shutil.which("ninja") is None:
@@ -147,10 +159,9 @@ def _ensure_toolchain_on_path() -> None:
             extra.append(ninja.BIN_DIR)
         except Exception:
             extra.append(os.path.join(sys.prefix, "bin"))
-    if shutil.which("nvcc") is None:
-        root = cuda_home_with_nvcc()
-        if root:
-            extra.append(os.path.join(root, "bin"))
+    root = cuda_home_with_nvcc()   # always: repairs torch's cached CUDA_HOME
+    if root and shutil.which("nvcc") is None:
+        extra.append(os.path.join(root, "bin"))
     if extra:
         os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "")])
 

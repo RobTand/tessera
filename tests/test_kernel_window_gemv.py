@@ -522,6 +522,63 @@ def test_the_value_family_refuses_a_shard_start_state():
                               initial_state=torch.zeros(cols, dtype=torch.int64))
 
 
+# ---------------------- the toolchain repair (issue #243) --------------------
+#
+# ``_ext`` builds through ``cpp_extension.load``, which takes its nvcc from
+# the module global ``cpp_extension.CUDA_HOME`` -- NOT from PATH.  So finding
+# an nvcc on PATH must not skip the repair of that global: torch resolves
+# ``CUDA_HOME`` to ``/usr/local/cuda`` whenever the path merely exists, and an
+# alternatives symlink to a compiler-less toolkit fails the build while a
+# complete toolkit answers ``which nvcc``.  CPU-only and fully mocked: the
+# selection is what is pinned, no compilation runs.
+
+
+def test_the_toolchain_repair_runs_even_when_an_nvcc_is_already_on_path(tmp_path, monkeypatch):
+    import shutil as shutil_mod
+
+    from torch.utils import cpp_extension
+
+    kg = _kg_no_build()
+    complete = tmp_path / "cuda-complete"
+    (complete / "bin").mkdir(parents=True)
+    nvcc = complete / "bin" / "nvcc"
+    nvcc.write_text("#!/bin/sh\necho fake nvcc\n")
+    nvcc.chmod(0o755)
+    incomplete = tmp_path / "cuda-incomplete"        # exists, holds no compiler
+    (incomplete / "include").mkdir(parents=True)
+
+    real_which = shutil_mod.which
+
+    def which(cmd, *args, **kwargs):
+        if cmd == "nvcc":
+            return str(nvcc)                          # PATH already finds one
+        if cmd == "ninja":
+            return "/usr/bin/ninja"                   # no PATH repair needed
+        return real_which(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("shutil.which", which)
+    # register PATH/CUDA_HOME/CUDA_PATH for teardown restore, then clear them
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        monkeypatch.setenv(var, "registered-for-restore")
+        monkeypatch.delenv(var)
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
+
+    kg._ensure_toolchain_on_path()
+    assert cpp_extension.CUDA_HOME == str(complete), (
+        "an nvcc on PATH must not skip repairing torch's cached CUDA_HOME -- "
+        "cpp_extension.load builds <CUDA_HOME>/bin/nvcc, not PATH's compiler")
+    assert os.environ.get("CUDA_HOME") == str(complete)
+
+    # an explicit operator choice is preserved, never second-guessed: with
+    # CUDA_HOME set the resolver returns it or refuses, and repairs nothing
+    monkeypatch.setenv("CUDA_HOME", str(incomplete))
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
+    kg._ensure_toolchain_on_path()
+    assert cpp_extension.CUDA_HOME == str(incomplete)
+    assert os.environ["CUDA_HOME"] == str(incomplete)
+
+
 # ---------------------- the compiled arm (RobTand/tessera#52) -------------------
 #
 # Every route in ``tessera.serving`` is served eager AND compiled, and this
