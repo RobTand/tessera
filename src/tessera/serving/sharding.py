@@ -606,12 +606,11 @@ def unsliceable_reason(unit) -> Optional[str]:
     """``layout.unsliceable_reason``, or None when the cutter is absent.
 
     WHY the wire refuses this unit outright, in the words of the module that
-    decided it.  ``can_shard`` answers a boolean for two populations that need
-    two different refusals -- a unit no cut of which is expressible (rotation,
-    a straddling scale block) and a unit whose granularity merely does not
-    divide the split -- and this is how the seam tells them apart without
-    re-deriving either.  ``None`` means "no whole-unit obstruction, or this
-    build has no cutter"; both are only ever read after ``can_shard`` has
+    decided it. ``can_shard`` can refuse the unit outright (rotation, a
+    straddling scale block), the requested cut's geometry, or its granularity.
+    This reports only the first, without re-deriving the rule. ``None`` means
+    "no whole-unit obstruction, or this build has no cutter"; both are only
+    ever read after ``can_shard`` has
     already said no, and the no-cutter case is refused above the callers.
     """
     try:
@@ -621,16 +620,24 @@ def unsliceable_reason(unit) -> Optional[str]:
     return _reason(unit)
 
 
+def shard_cut_reason(unit, shards: int, axis: str) -> Optional[str]:
+    """The cutter's requested-window obstruction, if this build exposes it."""
+    try:
+        from tessera.layout import shard_cut_reason as _reason
+    except Exception:
+        return None
+    return _reason(unit, int(shards), axis)
+
+
 def _cannot_cut(unit, plan: "ShardPlan", role: "RoleShard", extent: int) -> str:
     """The refusal for a role ``can_shard`` said no to.  ONE HOME for the text.
 
-    TWO REFUSALS, BECAUSE THERE ARE TWO REASONS, and only one of them has a
-    remedy.  A granularity that does not divide the split is a property of the
-    CUT: another ``tensor_parallel_size`` fixes it, and naming the granularity
-    is naming the number the operator acts on (tessera#235).  Rotation and a
-    straddling scale block are properties of the UNIT: they refuse every cut,
-    the identity slice included, so no divisor exists and offering one is an
-    instruction that cannot be followed.
+    A granularity that does not divide the split may be fixed by another TP
+    degree, so its message names that number (tessera#235). Rotation and a
+    straddling scale block refuse every cut, including the identity. RELEASE
+    can instead refuse a requested column window: changing a row split's TP
+    degree never changes its retained width. Both geometry cases need the
+    cutter's reason, without an impossible divisor remedy.
 
     Until tessera#304 made ``can_shard`` correctly answer ``False`` for a
     rotated unit, this branch never saw one -- the seam fell through to
@@ -650,6 +657,13 @@ def _cannot_cut(unit, plan: "ShardPlan", role: "RoleShard", extent: int) -> str:
             f"tensor_parallel_size above 1 can serve it: there is no divisor to offer. Serve "
             f"this model with tensor_parallel_size=1, or export this Linear without the "
             f"structure named above.")
+    reason = shard_cut_reason(unit, role.shards, plan.axis)
+    if reason is not None:
+        return (
+            f"{plan.prefix}: role {role.name!r} cannot be cut {role.shards} ways on the "
+            f"{plan.axis} axis ({extent} {plan.axis}s) -- {reason}. Serve with "
+            "tensor_parallel_size=1, or export this Linear with geometry that "
+            "supports the requested cut.")
     granularity = shard_granularity(unit)
     row_gran, col_gran = granularity if granularity is not None else (None, None)
     gran = row_gran if plan.axis == AXIS_ROWS else col_gran

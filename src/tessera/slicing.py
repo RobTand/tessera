@@ -339,6 +339,33 @@ def _steps_of(manifest) -> int:
     )
 
 
+def _require_shard_request(tp: int, axis: str) -> None:
+    if tp < 1:
+        raise GrammarError(f"tp must be positive, got {tp}")
+    if axis not in ("row", "column"):
+        raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
+
+
+def shard_cut_reason(
+    unit, tp: int, axis: str, superblock: int = 256, arity: int = 1,
+) -> "str | None":
+    """A cut-specific obstruction beyond whole-unit and granularity checks.
+
+    ``unsliceable_reason`` answers whether *every* cut is forbidden. This
+    answers about the requested equal shards: a RELEASE partial tail can
+    obstruct row cuts while column windows of the same unit remain valid.
+    Callers still check divisibility and granularity; ``None`` alone is not
+    admission. ``can_shard`` combines these rules into the binding answer.
+    """
+    _require_shard_request(tp, axis)
+    unit, _rows, cols, _block, _rotation, superblock, _arity = _slicing_facts(
+        unit, superblock, arity)
+    width = cols if axis == "row" else cols // tp
+    # RELEASE granularity aligns all equal-column offsets, so one window
+    # covers every rank. Row shards retain the entire column width.
+    return _release_cut_reason(_released_positions(unit), 0, width, superblock)
+
+
 def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -> bool:
     """Can ``unit`` be cut into ``tp`` equal shards along ``axis``?
 
@@ -361,10 +388,7 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
     ``tensor_parallel_size`` in the refusal (tessera#235); rotation was the
     population still answered in only one of the two places (tessera#304).
     """
-    if tp < 1:
-        raise GrammarError(f"tp must be positive, got {tp}")
-    if axis not in ("row", "column"):
-        raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
+    _require_shard_request(tp, axis)
     unit, rows, cols, block, rotation, superblock, arity = _slicing_facts(
         unit, superblock, arity
     )
@@ -374,11 +398,7 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
     extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
     if extent % tp or (extent // tp) % granularity:
         return False
-    width = cols if axis == "row" else cols // tp
-    # Equal column shards have identical widths and, with RELEASE present,
-    # the granularity above aligns every offset to a superblock. Checking the
-    # first window therefore covers every rank; row shards retain all columns.
-    return _release_cut_reason(_released_positions(unit), 0, width, superblock) is None
+    return shard_cut_reason(unit, tp, axis, superblock, arity) is None
 
 
 def _slicing_facts(unit, superblock: int, arity: int):

@@ -90,6 +90,7 @@ _SLICING_NAMES = frozenset({
     "shard_granularity",
     "can_shard",
     "unsliceable_reason",
+    "shard_cut_reason",
     "_slicing_facts",
     "SLICEABLE_SCHEMA_MINOR",
     "tp_agnostic_at_minor",
@@ -632,7 +633,6 @@ def build_terminal(
 # needs torch and the byte-layout half must not.  The cutter names stay
 # available as ``tessera.layout`` attributes through the lazy re-export above,
 # so no caller moves.
-
 
 
 

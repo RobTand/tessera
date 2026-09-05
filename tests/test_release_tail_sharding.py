@@ -127,3 +127,33 @@ def test_released_partial_tail_capability_matches_the_cutter(partial_tail, view)
             with pytest.raises(GrammarError, match="only on superblock boundaries"):
                 slice_unit(released, rows=(rank * rows // tp, (rank + 1) * rows // tp))
         assert not can_shard(obj, tp, "row", **options)
+
+
+def test_partial_tail_serving_refusal_names_the_cut_without_an_impossible_divisor(
+    partial_tail,
+):
+    """Both serving seams must preserve the cutter's geometry obstruction."""
+    from tessera.serving.sharding import (
+        RoleShard, ShardPlan, _shard_unit_for_rank, check_shard_granularity,
+    )
+
+    _plain, released = partial_tail
+    rows, columns = (released.manifest.geometry.rows,
+                     released.manifest.geometry.columns)
+    assert unsliceable_reason(released) is None  # Column cuts still exist.
+    role = RoleShard("weight", rows, 0, rows // 2, 2)
+    plan = ShardPlan("partial-tail", rows, columns, rows // 2, columns,
+                     0, 2, "row", (role,))
+    for tp in range(1, rows + 1):
+        if rows % tp == 0:
+            assert not can_shard(released, tp, "row")
+    with pytest.raises(GrammarError) as cutter:
+        slice_unit(released, rows=(role.lo, role.hi))
+    with pytest.raises(ValueError) as seam:
+        _shard_unit_for_rank(released, plan, role)
+    with pytest.raises(ValueError) as check:
+        check_shard_granularity(plan, role, released)
+    assert str(seam.value) == str(check.value)
+    assert str(cutter.value) in str(seam.value)
+    assert "tensor_parallel_size that divides" not in str(seam.value)
+    assert "tensor_parallel_size=1" in str(seam.value)

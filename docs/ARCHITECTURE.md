@@ -14,7 +14,7 @@ CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
 prismaquant#198), lane-eligibility schema v9; whole-unit RELEASE rewrite
-placement guard #349 (2026-09-05). Re-stamp this
+placement guard #349 and cut-specific refusal diagnostics (2026-09-05). Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -864,6 +864,13 @@ or the final partial block on its own, so `unsliceable_reason` stays `None`.
 The capability check applies this restriction after granularity, on the
 column width each rank would retain; encoded, parsed and manifest views
 read the same rule. An unreleased parent keeps its row-cut capability.
+`slicing.shard_cut_reason`, also exposed through `layout`, carries that
+cut-specific obstruction to both serving refusal sites. A retained partial
+tail is named in the cutter's own words, without offering a TP divisor that
+cannot change the row cut's retained width. The ordinary granularity message
+still names another divisor where one can work; whole-unit obstructions keep
+their existing `unsliceable_reason` message. A cut reason alone does not
+replace the complete `can_shard` admission check.
 
 **And the refusal carries the reason, not a remedy that cannot exist** (#329).
 Aligning the predicate moved the rotated population from `slice_unit`'s raise
