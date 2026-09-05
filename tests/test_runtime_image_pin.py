@@ -367,13 +367,40 @@ def test_the_cli_prints_the_pin_the_wrappers_default_to():
     assert proc.stdout.strip() == pinned_reference()
 
 
+def experiment_shell_scripts() -> list:
+    """Every shell script under ``experiments/``, at any depth.
+
+    One enumerator, because two legs of this file read the same population
+    for two rules and read it differently: the container gate walked the top
+    level while the pin-override gate walked the tree, so a script in a
+    campaign subdirectory was held to one rule and not the other.  A
+    campaign directory is where a wrapper is most likely to be copied and
+    edited, which is exactly where the gate must still reach.
+    """
+    return sorted((ROOT / "experiments").rglob("*.sh"))
+
+
+def test_the_wrapper_scan_reaches_a_campaign_subdirectory():
+    """The pre-fix failure this test was written for::
+
+        AssertionError: experiments/*.sh only; a campaign subdirectory's
+        wrapper is held to neither rule
+        assert []
+
+    ``experiments/allocated_serve_2026-09-02/`` holds seven scripts that the
+    top-level glob never saw."""
+    nested = [p for p in experiment_shell_scripts() if p.parent != ROOT / "experiments"]
+    assert nested, (
+        "experiments/*.sh only; a campaign subdirectory's wrapper is held to "
+        "neither rule")
+
+
 def test_every_wrapper_that_starts_a_container_gates_and_names_no_digest():
     """The wrappers' own text: a `docker run` behind no gate is the defect."""
-    exp = ROOT / "experiments"
     starters = sorted(
-        p for p in exp.glob("*.sh")
+        p for p in experiment_shell_scripts()
         if re.search(r"^\s*(exec\s+)?docker run", p.read_text(), re.M))
-    assert starters, "no container-starting wrapper found; the glob moved"
+    assert starters, "no container-starting wrapper found; the scan moved"
     for path in starters:
         text = path.read_text()
         assert "runtime_image_require" in text, (
@@ -391,7 +418,7 @@ def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
     )
     offenders = [
         str(path.relative_to(ROOT))
-        for path in sorted((ROOT / "experiments").rglob("*.sh"))
+        for path in experiment_shell_scripts()
         if assignment.search(path.read_text())
     ]
     assert offenders == [], (
