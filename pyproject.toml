@@ -52,6 +52,15 @@ tessera = "tessera.serving:register"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# `tessera._dev` is the repository's own tooling -- the merge-suite deadline
+# helper, the PrismaBuild source-identity reader, the import-graph analyser
+# behind `tools/impacted_tests.py`.  It lives under `src/` because `tools/`
+# imports it by module name rather than by path; it is not part of what a
+# consumer installs, and every module in it is named by this one pattern
+# rather than by a roster kept somewhere else.  `tools/check_wheel.py` reads
+# this list and then reads the built wheel and sdist, so the exclusion is
+# proved on the artifact and not on this line's intent.
+exclude = ["tessera._dev*"]
 
 [tool.setuptools.package-data]
 # The packaged runtime contract a producer reads through importlib.resources,

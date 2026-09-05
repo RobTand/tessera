@@ -21,10 +21,19 @@ contents by sweeping directories, which is how 149 test modules shipped
 without the ``conftest.py`` that collects them (issue #151); a sweep is not
 a decision, and this is where the decision is enforced.
 
+In the other direction it holds what must *not* ship.  ``pyproject.toml``'s
+``[tool.setuptools.packages.find] exclude`` keeps the repository's own
+tooling (``tessera._dev``) out of the distribution; that line is intent, and
+a moved module, a namespace sweep or a stale ``build/`` tree reinstates the
+package without saying so.  The patterns are read from that config -- there
+is no roster of module names here -- and matched against the wheel's and the
+sdist's own namelists.
+
 Usage: ``python tools/check_wheel.py dist/tessera_quant-*.whl [dist/*.tar.gz]``
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import subprocess
@@ -83,13 +92,61 @@ print("wheel check passed:", tessera.__file__, tessera.__version__)
 """
 
 
+def _pyproject() -> dict:
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
 def declared() -> dict[str, str]:
     """The distribution's identity, from its one declaration."""
-    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    project = _pyproject()["project"]
     entry_points = project["entry-points"]["vllm.general_plugins"]
     assert list(entry_points) == ["tessera"], entry_points
     return {"name": project["name"], "version": project["version"],
             "entry_point": entry_points["tessera"]}
+
+
+def excluded_packages() -> list[str]:
+    """The packages the build is configured not to ship.
+
+    Read from ``[tool.setuptools.packages.find] exclude`` rather than listed
+    here, so this file holds no second roster of module names to fall out of
+    date with the config that actually drives the build.
+    """
+    find = _pyproject()["tool"]["setuptools"]["packages"]["find"]
+    return list(find.get("exclude", []))
+
+
+def _package_of(member: str) -> str | None:
+    """The dotted package a distribution member belongs to, or ``None``.
+
+    ``tessera/_dev/suite_source.py`` -> ``tessera._dev``.  Only Python
+    modules carry a package; data files are covered by the package-data
+    table, which cannot name a package ``find`` excluded.
+    """
+    if not member.endswith(".py"):
+        return None
+    return os.path.dirname(member).replace("/", ".") or None
+
+
+def refuse_excluded(label: str, members: set[str], patterns: list[str]) -> int:
+    """Refuse a built artifact that ships a package the config excludes.
+
+    ``exclude`` is a statement of intent that setuptools may or may not have
+    carried out -- a moved module, a namespace sweep, a stale ``build/``
+    directory all reinstate it silently.  This reads the artifact's own
+    namelist and matches it against the patterns with setuptools' own
+    ``fnmatch`` semantics.
+    """
+    shipped = sorted(
+        member for member in members
+        if (package := _package_of(member)) is not None
+        and any(fnmatch.fnmatch(package, pattern) for pattern in patterns)
+    )
+    if shipped:
+        print(f"{label} ships {len(shipped)} module(s) from a package "
+              f"{patterns} excludes: {shipped}", file=sys.stderr)
+        return 1
+    return 0
 
 
 #: What an sdist carries beyond the wheel's own sources: the inputs that
@@ -137,6 +194,15 @@ def check_sdist(sdist: Path, wheel_payload: set[str], want: dict[str, str]) -> i
         print(f"{sdist.name} cannot rebuild the wheel: {absent[:5]} missing",
               file=sys.stderr)
         return 1
+    # Belt to the braces above rather than new coverage: `held == expected`
+    # already excludes anything the wheel does not ship, so an sdist carrying
+    # an excluded package is refused as `unwanted`.  This says *why* in the
+    # message when that is the reason, and keeps holding if the derivation
+    # above is ever loosened.
+    stripped = {name[len("src/"):] for name in held if name.startswith("src/")}
+    status = refuse_excluded(sdist.name, stripped, excluded_packages())
+    if status:
+        return status
     print(f"sdist check passed: {sdist.name}, {len(held)} path(s)")
     return 0
 
@@ -186,8 +252,11 @@ def main(argv: list[str]) -> int:
         # stand in for the wheel.
         check = f"DECLARED = {json.dumps(json.dumps(want))}\n" + CHECK
         subprocess.run([sys.executable, "-c", check], check=True, cwd=tmp, env=env)
+    payload = {name for name in names if ".dist-info/" not in name}
+    status = refuse_excluded(wheel.name, payload, excluded_packages())
+    if status:
+        return status
     if sdists:
-        payload = {name for name in names if ".dist-info/" not in name}
         return check_sdist(sdists[0], payload, want)
     return 0
 
