@@ -194,3 +194,22 @@ def test_a_member_scale_the_route_would_refuse_is_refused_here_by_name():
         shared_input_global_scale([], [])
     with pytest.raises(GrammarError, match="one name per scale"):
         shared_input_global_scale([4.0, 4.0], ["q_proj"])
+
+
+def test_a_spread_beyond_one_bf16_ulp_is_two_calibrations_and_refused():
+    """The bound is derived, not chosen: the route casts the A tensor to bf16
+    before the quantiser sees it, so scales from ONE calibration agree to
+    within one step of that lattice (2^-7, the dtype's eps).  Exactly one ULP
+    passes; anything wider is two calibrations and refuses by name."""
+    from tessera.fused import FUSED_INPUT_SCALE_ULP
+    assert FUSED_INPUT_SCALE_ULP == 2.0 ** -7 == torch.finfo(torch.bfloat16).eps
+    ulp = 2.0 ** -7
+    assert shared_input_global_scale(
+        [4.0, 4.0 * (1.0 + ulp)], ["q", "k"]) == 4.0
+    with pytest.raises(GrammarError, match="bf16") as caught:
+        shared_input_global_scale(
+            [4.0, 4.0 * (1.0 + 2.0 ** -6)], ["q_proj", "k_proj"])
+    message = str(caught.value)
+    assert "q_proj=4" in message and "k_proj=4.0625" in message
+    with pytest.raises(GrammarError, match="two calibrations"):
+        shared_input_global_scale([6.0 / 8.0, 6.0 / 4.0], ["gate", "up"])

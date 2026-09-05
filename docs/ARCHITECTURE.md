@@ -197,7 +197,16 @@ divergence against PrismaQuant's `unify_fused_sibling_input_global_scales`
 carries the joined value on every member for the same reason: vLLM reduces
 whatever the members carry into one scale per fused module -- warning, not
 refusing, when they differ -- and the twin exists to execute the A side this
-export serves.
+export serves. The join accepts only members that agree to within one bf16
+ULP (`fused.FUSED_INPUT_SCALE_ULP` = `torch.finfo(torch.bfloat16).eps` =
+2^-7): the route casts every A tensor to bf16 before the quantiser sees it,
+so a calibrated amax is an observation of a bf16 tensor and scales from ONE
+calibration land within one step of that lattice. A wider spread is two
+calibrations -- mixed draws, mixed policies, or a group never calibrated
+jointly -- and is refused where the bytes are decided rather than joined
+into a distribution nobody measured; the fix is a joint recalibration (one
+amax over the members' shared input, which is what both repos' calibrators
+already emit), not a wider bound.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 

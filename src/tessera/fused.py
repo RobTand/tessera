@@ -223,6 +223,19 @@ def shared_lut_global(
     )
 
 
+#: One bf16 ULP, relative -- the derived bound between "one calibration,
+#: spelled twice" and "two calibrations".  The NVFP4 route casts every A
+#: tensor to bf16 before the native quantiser sees it
+#: (``serving.nvfp4_route``; ``native_ops.native_fp4_quant`` refuses anything
+#: but BF16/FP16), so a calibrated amax is an observation of a bf16 tensor:
+#: any arithmetic that faithfully read the same tensor lands within one step
+#: of its lattice, and ``input_global_scale`` (capacity over amax) inherits
+#: the same relative bound.  A wider spread cannot be an observation of one
+#: tensor.  ``torch.finfo(torch.bfloat16).eps`` = 2^-7, the lattice's
+#: relative step -- a dtype's precision, not a chosen tolerance.
+FUSED_INPUT_SCALE_ULP = float(torch.finfo(torch.bfloat16).eps)
+
+
 def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" = None) -> float:
     """One A-side static scale for a fused module: the MIN member scale.
 
@@ -240,6 +253,13 @@ def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" =
     they differ: a degenerate no-op over equal values, not a join rule.
     PrismaQuant's ``unify_fused_sibling_input_global_scales`` states the same
     min-scale / max-amax rule at calibration time.)
+
+    Members that diverge beyond ``FUSED_INPUT_SCALE_ULP`` are refused rather
+    than joined: they are two calibrations (mixed draws, mixed policies, or a
+    group that was never calibrated jointly), and a joined value would serve
+    a distribution nobody measured.  The fix is a joint recalibration -- one
+    amax over the members' shared input, which is what both calibrators
+    already emit -- not a wider tolerance here.
     """
     if not scales:
         raise GrammarError("shared_input_global_scale needs at least one member scale")
@@ -254,4 +274,16 @@ def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" =
                 f"{name}: input_global_scale must be a finite positive scalar "
                 f"(the route's load gate refuses anything else), got {value!r}")
         values.append(value)
-    return min(values)
+    low, high = min(values), max(values)
+    if high > low * (1.0 + FUSED_INPUT_SCALE_ULP):
+        spread = ", ".join(f"{n}={v:g}" for n, v in zip(names, values))
+        raise GrammarError(
+            "fused members' input_global_scale values diverge beyond one bf16 "
+            f"ULP (max/min = {high / low:.6g} > 1 + 2^-7): {spread}. The members "
+            "of a fused module quantise ONE bf16 input tensor, so scales from "
+            "one calibration agree to within one step of its lattice; this "
+            "spread is two calibrations, and a joined value would serve a "
+            "distribution nobody measured. Recalibrate the group jointly -- "
+            "one amax over the shared input, the minimum scale -- rather than "
+            "widening this bound.")
+    return low
