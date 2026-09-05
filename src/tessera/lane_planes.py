@@ -390,11 +390,19 @@ def _window_code_table(codes: torch.Tensor, grid, device) -> torch.Tensor:
     return table.to(torch.int32).contiguous()
 
 
-def _pack_window_unit(unit, grid) -> dict:
-    """``pack_unit_for_kernel``'s window branch.  See its docstring."""
-    from .manifest import ScalePlaneKind
-    from .wire import nvfp4_scale_bytes
+def _require_no_post_decode_transforms(unit) -> None:
+    """Refuse the three operations no GEMV on this lane applies.
 
+    A released position is overwritten from the RELEASE plane, diagonals are
+    a rank-1 factor outside the dot product and a rotation is a basis change
+    -- none of which any kernel here reads, on either body.  Accepting one
+    serves the transformed quantisation space as if it were
+    ``reconstruct_unit(unit) @ x``: a plausible, wrong answer with no error.
+
+    One rule, one home: the window branch stated these first and the TCQ
+    branch did not state them at all, which is how a span-2 unit with a
+    rotation packed and served silently.
+    """
     if unit.release_index.numel():
         raise GrammarError(
             "this unit has released positions, which overwrite decoded codes "
@@ -410,6 +418,14 @@ def _pack_window_unit(unit, grid) -> dict:
             f"this unit is rotated ({unit.rotation.name}); undoing the rotation "
             "is a basis change the kernel lane does not apply"
         )
+
+
+def _pack_window_unit(unit, grid) -> dict:
+    """``pack_unit_for_kernel``'s window branch.  See its docstring."""
+    from .manifest import ScalePlaneKind
+    from .wire import nvfp4_scale_bytes
+
+    _require_no_post_decode_transforms(unit)
     steps, cols = unit.body_bits.shape
     rows = steps * grid.arity
     device = unit.body_bits.device
@@ -471,15 +487,18 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     WINDOW, which has no forest; ``code`` is unused by the window branch for
     the same reason.  ``gemv_from_packed`` reads the ``"kind"`` key back.
 
-    The TCQ branch refuses what the span-2 kernel does not read: a mixed-rate
-    schedule (one forest per unit there) and an S6b plane at span 2 (that
-    kernel reads the LUT plane's nibbles; the shipping wire is span 2 over a
-    LUT plane).  The window branch reads both scale planes and any mixed
-    schedule, and refuses instead the three post-decode transforms no GEMV on
-    this lane applies: released positions, diagonals, a rotation.
+    Both branches refuse the three post-decode transforms no GEMV on this
+    lane applies -- released positions, diagonals, a rotation -- through the
+    one function that states them (``_require_no_post_decode_transforms``).
+    Beyond that the TCQ branch refuses what the span-2 kernel does not read:
+    a mixed-rate schedule (one forest per unit there) and an S6b plane at
+    span 2 (that kernel reads the LUT plane's nibbles; the shipping wire is
+    span 2 over a LUT plane).  The window branch reads both scale planes and
+    any mixed schedule.
     """
     from .manifest import BodyKind, ScalePlaneKind
 
+    _require_no_post_decode_transforms(unit)
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
         grid = forest.grid if isinstance(forest, AnchorForest) else forest
         return _pack_window_unit(unit, grid)

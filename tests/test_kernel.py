@@ -527,6 +527,54 @@ def test_a_wide_alphabet_code_survives_the_window_packer_and_its_gemv():
         assert torch.equal(got, reference[:, k]), f"column {k}"
 
 
+@pytest.mark.parametrize("span2_unit", ["E2M1"], indirect=True)
+def test_the_span2_lane_refuses_the_transforms_its_gemv_never_applies(span2_unit):
+    """What packing accepts has to be what the GEMV executes.
+
+    The window branch refuses released positions, diagonals and a rotation by
+    name, because no kernel on this lane undoes any of them.  The TCQ branch
+    dispatches to ``tessera_gemv_tuple_span2``, whose accumulation applies
+    none of them either -- and it used to take a unit carrying any of the
+    three without a word, serving the transformed quantisation space as if it
+    were ``reconstruct_unit(unit) @ x``.
+
+    Release is undefined at arity > 1 (a k-tuple code has no per-position
+    code to override), so that leg runs over a scalar grid at span 2.
+    """
+    from tessera.errors import GrammarError
+    from tessera.kernel import pack_unit_for_kernel
+    from tessera.manifest import ScalePlaneKind
+
+    forest, rate = span2_unit["forest"], span2_unit["rate"]
+    torch.manual_seed(9)
+    rows, cols = 32, 64
+    w = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    common = dict(completion=0, span=2, scale_plane=ScalePlaneKind.LUT)
+    tuple_forests, scalar_forests = {rate: forest}, {3: build_forest(3)}
+
+    def encode(forests, r, **kw):
+        return encode_unit(w, forests, (r,) * cols, CODE, **common, **kw)
+
+    # not over-broad: the same shape with none of the three still packs
+    pack_unit_for_kernel(encode(tuple_forests, rate), forest, CODE)
+    pack_unit_for_kernel(encode(scalar_forests, 3), scalar_forests[3], CODE)
+
+    rotated = encode(tuple_forests, rate, rotation=RotationState.R_IN_ONLY)
+    assert rotated.rotation is not RotationState.NONE
+    with pytest.raises(GrammarError, match="rotated"):
+        pack_unit_for_kernel(rotated, forest, CODE)
+
+    diagonal = encode(tuple_forests, rate, with_diagonals=True)
+    assert diagonal.diagonals is not None
+    with pytest.raises(GrammarError, match="diagonals"):
+        pack_unit_for_kernel(diagonal, forest, CODE)
+
+    released = encode(scalar_forests, 3, released_positions=8)
+    assert int(released.release_index.numel()) == 8
+    with pytest.raises(GrammarError, match="released positions"):
+        pack_unit_for_kernel(released, scalar_forests[3], CODE)
+
+
 # --- prefill: the same planes, decoded into a tile instead of a vector -------
 
 
