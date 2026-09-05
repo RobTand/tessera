@@ -413,6 +413,10 @@ def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
         assert f"{field} global scale" in message
         assert "132 bits" in message
         assert "exponent the codec's varint cannot hold" in message
+        # One message for two planes: it names no mechanism that is only one
+        # plane's.  The CHANNEL global is the median row scale's binade and
+        # never sees a grid peak; the LUT derivation lives on _pack_scales_lut.
+        assert "grid's peak" not in message
 
 
 # ------------------------------------------------- the E4M3 plane's top binade

@@ -156,6 +156,14 @@ def channel_global(scale: torch.Tensor) -> float:
     fp16 holds five decades; a global keeps every row's stored word normal
     whatever the tensor's magnitude, and a power of two keeps the product
     ``word * global`` exact in fp32.
+
+    The manifest writes it as a ratio, so it is writable exactly while the
+    median row scale's binade is inside the codec's varint
+    (``canonical.fits_uint``, 64 bits: exponents down to -63).  No grid peak
+    enters: the row scale is ``rms / sigma``.  Measured with ``encode_linear``
+    on ``randn`` rows: E4M3 (sigma ~2**7) writes at median row rms ``2**-40``
+    and is refused at ``2**-60``; BF16 (sigma 1) writes at ``2**-63`` and is
+    refused at ``2**-64`` -- a dead tensor either way.
     """
     positive = scale[torch.isfinite(scale) & (scale > 0)]
     if positive.numel() == 0:
