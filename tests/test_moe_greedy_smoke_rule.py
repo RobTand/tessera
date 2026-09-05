@@ -80,8 +80,57 @@ def test_a_cycle_the_completion_leaves_again_does_not_count():
 @pytest.mark.parametrize("tokens", [[], [5], [5, 5]])
 def test_short_completions(tokens):
     verdict = smoke.classify(tokens)
-    # [5, 5] is p=1 observed twice: a cycle covering the whole (2-token) completion.
-    assert verdict["status"] == ("repetitive" if tokens == [5, 5] else "recorded")
+    # [] is no completion at all and reads ``not_recorded`` (below).  [5] is a
+    # one-token completion with no cycle.  [5, 5] is p=1 observed twice: a cycle
+    # covering the whole (2-token) completion.
+    expected = {(): "not_recorded", (5,): "recorded", (5, 5): "repetitive"}[tuple(tokens)]
+    assert verdict["status"] == expected
+
+
+def test_an_empty_completion_is_not_a_completion():
+    """``recorded`` is a verdict ABOUT a completion, so nothing is not one (#327).
+
+    The rule detects cycles, and an empty token list trivially has none -- which
+    made ``classify([])`` return ``recorded``, the same word a coherent 372-token
+    answer gets.  That is a hole in a machine condition and not a hypothetical:
+    the aggregation a cell's ``evidence.smoke.status`` is derived from asks
+    whether some prompt read ``recorded`` on BOTH arms, so two arms that each
+    returned ``""`` for one prompt would together manufacture a positive record
+    out of two non-answers.  ``not_recorded`` is the vocabulary's own word for
+    "no completion came back" and is what the empty list means.
+    """
+    verdict = smoke.classify([])
+    assert verdict["status"] == "not_recorded"
+    assert (verdict["tokens"], verdict["period"], verdict["periodic_suffix"]) == (0, 0, 0)
+    assert verdict["coverage"] == 0.0
+    assert verdict["whole_completion_periodic"] is False
+
+
+def test_two_empty_arms_cannot_manufacture_a_positive_record(tmp_path):
+    """The hole above, closed where the pair is joined: ``both_recorded`` and
+    ``positive_record`` are what an aggregation reads, and neither may count a
+    (prompt, form) pair on which neither arm said anything."""
+    import json
+
+    def receipt(arm, ids):
+        return {"schema": "tessera.moe-greedy-smoke/1", "arm": arm, "rule": smoke.RULE,
+                "tokenizer": {"tokenizer_json_sha256": "t"}, "prompts_sha256": "p",
+                "results": [{"id": "P9", "form": "campaign", "interface": "raw_completion",
+                             "request": {"max_tokens": 64}, "completion": "",
+                             "finish_reason": "stop", "token_ids": ids,
+                             "status": "recorded", "tokens": 0, "period": 0,
+                             "periodic_suffix": 0, "coverage": 0.0}]}
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text(json.dumps(receipt("bf16", [])))
+    b.write_text(json.dumps(receipt("tessera", [])))
+    out = tmp_path / "pair.json"
+    smoke.main(["compare", str(a), str(b), "--out", str(out)])
+    pair = json.loads(out.read_text())
+    (row,) = pair["rows"]
+    assert row["bf16"]["status"] == row["tessera"]["status"] == "not_recorded"
+    assert row["both_recorded"] is False
+    assert pair["positive_record"] == []
 
 
 def test_compare_scores_the_stored_token_ids_under_the_current_rule(tmp_path):
