@@ -398,9 +398,13 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
 
 #: How far a population may predate the attempt whose status is being read
 #: before the two are refused as different attempts.  The file's mtime is the
-#: NFS server's clock and the claim time is the worker's, so this is a skew
-#: allowance, not a duration: a suite that ran under an earlier attempt is
-#: hours old, not minutes.
+#: NFS server's clock and the claim time is the worker's, so what this covers
+#: is clock skew between the two, not a run's duration.  The value is asserted,
+#: not measured: nobody has characterised the skew between the boxes, and ten
+#: minutes is chosen on the conservative side for this check -- a suite that
+#: ran under an earlier attempt is hours old, not minutes, so a too-generous
+#: allowance misreads no real population; a too-tight one would refuse a
+#: genuine attempt's output over a clock.  Measure the skew before tightening.
 ATTEMPT_CLOCK_SLACK_S = 600.0
 
 
