@@ -12,13 +12,15 @@ those widths are refused instead of mis-grouped -- the smaller change the issue
 names, matching the ``cols % half`` refusal ``kernel._require_column_groups``
 already performs.
 
-Issue #260 is the same rule at the writer.  An ``EncodedUnit`` does
+Issue #260 is the same rule at the other two stages.  An ``EncodedUnit`` does
 not have to come from ``encode_unit`` -- ``parse_unit_artifact`` rebuilds one
 from planes, ``slice_unit`` returns one, a caller can restrict one by hand --
-so the encoder's refusal is not the wire's.  The **writer** owes it too,
-because that is where the bytes are decided.  All three stages call one
-function (``grammar.require_scale_groups``) rather than restating one
-sentence -- the encoder alone used to carry two copies of it.
+so the encoder's refusal is not the wire's.  The **writer** owes it, because
+that is where the bytes are decided, and the **reader** owes it, because an
+artifact from a nonconforming encoder is byte-self-consistent and only the
+reader's own gate can catch it.  All four stages call one function
+(``grammar.require_scale_groups``) rather than restating one sentence -- the
+encoder alone used to carry two copies of it.
 """
 import sys
 from dataclasses import replace
@@ -152,12 +154,51 @@ def test_whole_group_s6b_widths_still_write_and_decode():
     )
 
 
-def test_the_32_weight_group_rule_has_one_home():
-    """One rule, one place it is written; three stages that owe it.
+def test_parse_unit_artifact_refuses_an_off_group_s6b_artifact_on_disk():
+    """An artifact already on disk at such a width is byte-self-consistent --
+    every hash agrees with it -- so the writer's gate cannot be the only one:
+    the reader must refuse it by name rather than hand back a unit no consumer
+    can cut and whose groups couple unrelated rows (the shape of tessera#208's
+    reserved SCALE_BASE word).  The write gate is disarmed here to stand in for
+    the nonconforming encoder that produced the bytes.
 
-    The pack, the refit and the writer all refuse the same widths, so the
-    temptation is three copies of the same sentence -- and the encoder already
-    carried two of them, character for character.  This pins that every
+    Nothing legitimate is orphaned by this: every S6b artifact this encoder has
+    written went through ``encode._pack_scales``, and
+    ``test_every_committed_fixture_still_parses`` reads the whole legacy set
+    back."""
+    import tessera.unit_artifact as unit_artifact
+
+    parsed = _fixture()
+    off, _ = _widths(parsed.unit)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(unit_artifact, "require_scale_groups",
+                      lambda *args, **kwargs: None, raising=False)
+        _, _, blob = _build(parsed, off)
+    with pytest.raises(
+        GrammarError, match=rf"whole number of {parsed.unit.group}-weight"
+    ):
+        parse_unit_artifact(blob)
+
+
+def test_every_committed_fixture_still_parses():
+    """The reader's gate is not over-broad, on the population that decides it:
+    the committed legacy artifacts are every plane kind and body this wire has
+    shipped, and each one still parses.  A gate at acceptance can orphan bytes
+    that already exist, so the set that exists is what has to be read back --
+    not a rebuilt one."""
+    fixtures = sorted(S6B_FIXTURE.parent.glob("*.tessera"))
+    assert fixtures, "the legacy fixture set is the population this gate risks"
+    for path in fixtures:
+        again = parse_unit_artifact(path.read_bytes())
+        assert again.manifest.geometry.columns > 0, path.name
+
+
+def test_the_32_weight_group_rule_has_one_home():
+    """One rule, one place it is written; four stages that owe it.
+
+    The pack, the refit, the writer and the reader all refuse the same widths,
+    so the temptation is four copies of the same sentence -- and the encoder
+    already carried two of them, character for character.  This pins that every
     stage *calls* ``grammar.require_scale_groups`` rather than restating it, by
     checking the message each raises against the owner's, and that the sentence
     is written in exactly one file.

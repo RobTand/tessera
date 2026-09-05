@@ -419,14 +419,20 @@ def require_scale_groups(cols: int, group: int) -> None:
     the plane kind before calling this, exactly as it does for the sibling.
 
     It lives here for the same reason the sibling does: every stage that
-    touches the wire owes it, and a sentence stated in three modules is three
+    touches the wire owes it, and a sentence stated in four places is four
     rules that will drift.  The encoder (``encode._pack_scales`` and
-    ``encode._refit_scales``) and the writer (``unit_artifact.
-    build_unit_artifact``) both raise from here.  The encoder's two copies were
-    the whole of the rule until RobTand/tessera#260: an ``EncodedUnit`` need
-    not come from ``encode_unit`` -- a parse, a slice or a hand restriction
-    produces one too -- so an off-group S6b unit reached the writer, which
-    enforced only the weaker rule, and was written, parsed and decoded.
+    ``encode._refit_scales``), the writer (``unit_artifact.
+    build_unit_artifact``) and the reader (``unit_artifact.
+    parse_unit_artifact``, once for both bodies) all raise from here.
+
+    The encoder's two copies -- character for character the same sentence --
+    were the whole of the rule until RobTand/tessera#260.  An ``EncodedUnit``
+    need not come from ``encode_unit``: a parse, a slice or a hand restriction
+    produces one too.  So an off-group S6b unit reached the writer, which
+    enforced only the weaker rule, and was written, parsed and decoded.  The
+    reader's refusal is a tightening and not a schema change -- it can only
+    refuse an artifact no Tessera encoder produced, because the encoder has
+    always refused the width.
     """
     if group <= 0 or cols % group:
         raise GrammarError(

@@ -774,6 +774,21 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     manifest, terminal = art.manifest, art.terminal
     geometry, rates = manifest.geometry, manifest.rates
     rows, cols = geometry.rows, geometry.columns
+    # #57's rule, read back.  An S6b artifact at a width that is not a whole
+    # number of groups is byte-self-consistent -- every hash agrees with it --
+    # so the writer's gate cannot be the only one: an artifact from a
+    # nonconforming encoder is refused here, at acceptance, rather than handed
+    # back as a unit no consumer can cut (``slicing._slice_block_plane``
+    # refuses every cut of it, the identity slice included) and whose
+    # base-scale groups pair two unrelated output rows under one exponent
+    # (tessera#260, the shape of tessera#208's reserved SCALE_BASE word).  It
+    # orphans nothing: every S6b artifact this encoder has written went
+    # through ``encode._pack_scales``, which refuses the same widths, and each
+    # committed legacy fixture is a whole number of groups.  Before the body
+    # branch, because a WINDOW body carries the same block plane.  Through the
+    # same ``grammar.require_scale_groups`` the encoder and the writer call.
+    if manifest.scale_plane.kind is ScalePlaneKind.S6B:
+        require_scale_groups(cols, geometry.group_weights)
 
     chunks = {}
     for descriptor, offset, content, _total in plane_ranges(manifest, terminal):

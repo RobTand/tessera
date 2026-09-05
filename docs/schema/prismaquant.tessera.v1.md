@@ -777,6 +777,23 @@ read different bytes:
   denominator of every bpp figure the artifact quotes, so an unbounded value
   understates the rate by however much it likes. Below the position count is
   legitimate — that is what the exclusion convention is for.
+- `geometry.columns` is a whole number of `group_weights` on an **S6B** scale
+  plane. A group's two halves share one E8M0 base within one octave (§2b), so
+  a group that begins in one output row and ends in the next asks two
+  unrelated magnitudes to lie within an octave of each other; and at
+  `columns % group_weights == half_weights` a row holds an odd number of
+  halves, so the width cannot be tiled per row at all and
+  `slicing._slice_block_plane` refuses every cut of such a unit, the identity
+  slice included. The encoder, the writer and the reader refuse it by the same
+  predicate, `grammar.require_scale_groups` (tessera#57, tessera#260). Read
+  the reader half as a tightening, not a schema change: no bytes move, no
+  minor moves, and no artifact can depend on the older lenient reading,
+  because every S6b artifact this tree has written went through
+  `encode._pack_scales`, which has always refused the width. On a **LUT**
+  plane the binding rule is the weaker one — a whole number of `half_weights`,
+  refused at write by `grammar.require_column_groups` (tessera#56) — because a
+  LUT group *is* the half and shares no exponent with anything. A **CHANNEL**
+  plane has one word per output row and no column structure, and owes neither.
 
 ## 3c. Truncation, integrity, and canonical bytes
 
