@@ -165,8 +165,13 @@ def window_plan_cache_clear() -> None:
 
     For tests, and for a caller that wants the residency back.  It clears the
     calling thread's maps only, which is the same scope they are built in.
+    Each dropped plan is drained first: its traceback may still be in flight
+    on the stream of the call that used it, and freeing the buffers under it
+    would hand the allocator memory that stream is still reading.
     """
     plans, seen = _window_maps()
+    for plan in plans.values():
+        plan.drain()
     plans.clear()
     seen.clear()
 
@@ -482,7 +487,8 @@ class _WindowPlan:
                  "steps", "fan", "low", "back_u8", "nmax", "width",
                  "bl", "bc", "warps", "scan_unroll", "grid", "cgrid", "bs",
                  "cbc", "owns_input", "tuples", "wrows", "table", "front_all",
-                 "back", "cur", "nxt", "ctl", "desc", "batches", "graph")
+                 "back", "cur", "nxt", "ctl", "desc", "batches", "graph",
+                 "done")
 
     def __init__(self, *, device, rows, cols, arity, size, rate, chunk,
                  has_weights, owns_input):
@@ -534,6 +540,41 @@ class _WindowPlan:
         else:
             self.tuples = self.wrows = self.table = None
         self.graph = None
+        # The fence a cache hit waits on before touching this plan's scratch:
+        # recorded after the LAST reader of ``back`` (the traceback launch),
+        # which the epilogue's ``float(final.sum())`` does NOT cover -- that
+        # sync happens before the traceback is launched, not after.
+        self.done = None
+
+    def wait_previous(self):
+        """Order this call's writes after the previous call's last reader.
+
+        Thread-local caching stops two THREADS from sharing a plan; it does
+        not stop one thread from replaying a cached plan under a second CUDA
+        stream while the first stream's traceback is still reading
+        ``self.back`` (issue #244).  Waiting on ``done`` from the new call's
+        current stream closes that: it is a stream-level wait, free when the
+        two streams are one, and never a device-wide synchronize.
+        """
+        if self.done is not None:
+            torch.cuda.current_stream(self.device).wait_event(self.done)
+
+    def record_done(self):
+        """Record the fence ``wait_previous`` waits on, after the traceback."""
+        if self.done is None:
+            self.done = torch.cuda.Event()
+        self.done.record(torch.cuda.current_stream(self.device))
+
+    def drain(self):
+        """Host-wait until this plan's last reader has finished.
+
+        For eviction and cache clearing: after this the plan's buffers may be
+        freed even though the caching allocator only orders their reuse
+        against the stream they were allocated on, not the stream the last
+        call ran them on.
+        """
+        if self.done is not None:
+            self.done.synchronize()
 
     def bind(self, targets, vectors, weights):
         """Point the plan at this call's inputs, copying only if it owns them.
@@ -669,7 +710,7 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     plan = fresh(True)
     plans[key] = plan
     while len(plans) > _WINDOW_PLAN_CACHE:
-        plans.popitem(last=False)
+        plans.popitem(last=False)[1].drain()
     return plan, True
 
 
@@ -700,6 +741,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     plan, wants_graph = _plan_for_call(
         device=device, rows=rows, cols=cols, arity=arity, size=size, rate=rate,
         chunk=chunk, has_weights=weights is not None)
+    plan.wait_previous()      # a cache hit on another stream must not overwrite
     plan.bind(targets, vectors, weights)
     if wants_graph and plan.graph is None:
         plan.capture()
@@ -723,4 +765,10 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
             RATE=rate, SHIFT=window_bits - rate, BC=tb,
             num_warps=4, enable_fp_fusion=False,
         )
+    if plan.owns_input:
+        # A persistent plan outlives this call and the traceback above is
+        # launched AFTER the last host sync, so it is still reading
+        # ``plan.back`` when this returns; the event is what the next cache
+        # hit (possibly on another stream) orders itself behind.
+        plan.record_done()
     return states, sse
