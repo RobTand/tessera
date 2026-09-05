@@ -24,8 +24,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+from typing import TYPE_CHECKING
 
 from .errors import GrammarError
+
+if TYPE_CHECKING:  # ``alphabet`` imports this module, so the grid type is a
+    from .alphabet import PayloadGrid  # noqa: F401  # name here, not an import.
 
 __all__ = [
     "NATIVE_CODE_BITS",
@@ -45,6 +49,8 @@ __all__ = [
     "superblock_count",
     "superblock_widths",
     "release_quota",
+    "release_defined_on",
+    "require_release_defined",
     "bits_per_position",
     "prefix_cardinality",
     "validate_descendant_map",
@@ -460,6 +466,51 @@ def release_quota(
     for index in order[:leftover]:
         counts[index] += 1
     return tuple(counts)
+
+
+def release_defined_on(grid: "PayloadGrid") -> bool:
+    """Whether a release can name a code on ``grid`` at all.
+
+    A release replaces one position's code with **any** code of the grid, and
+    the RELEASE plane stores that code in ``RELEASE_BITS`` bits whatever the
+    grid (doc S6; the normative element width in doc S3 is this same
+    constant).  So release is defined exactly where the grid's code space fits
+    that width: ``grid.size <= 2**RELEASE_BITS``.
+
+    Derived from ``RELEASE_BITS``, never from a roster of grid names -- the day
+    the plane widens, this predicate is the one thing that moves, and a roster
+    would still name E2M1 (rule 3).  Widening it is a wire change, not an
+    encoder one.
+    """
+    return grid.size <= (1 << RELEASE_BITS)
+
+
+def require_release_defined(grid: "PayloadGrid") -> None:
+    """Refuse a released unit on a grid the RELEASE plane cannot name.
+
+    One rule, one home (rule 4): the writer asks this before it does any work,
+    and **both readers ask it before they place a release**, because the two
+    questions are the same question and answering them differently is how an
+    artifact this tree's own encoder calls undefined gets parsed anyway.  Such
+    an artifact does not fail loudly on the read path -- the RELEASE plane is a
+    legal 4-bit field on any grid, so its codes land on positions chosen by the
+    reader's own ranking and decode to values no encoder chose (tessera#180,
+    finding S5).  Refusing at read is the same doctrine ``canonical.Reader.enum``
+    already applies to an ordinal no conforming encoder can produce.
+
+    The message names the grid, the plane's width and the grid's code count, so
+    a reader of it learns *why* release is undefined here rather than that it
+    is; without that the refusal arrives from ``wire.pack_uniform`` at write as
+    "value out of range for a 4-bit field", naming neither release nor the grid.
+    """
+    if release_defined_on(grid):
+        return
+    raise GrammarError(
+        f"release is not defined over grid {grid.name}: the RELEASE plane "
+        f"stores {RELEASE_BITS} bits per released position and the grid has "
+        f"{grid.size} codes, so an override cannot name most of them. "
+        f"Release is a {1 << RELEASE_BITS}-code grid's dial."
+    )
 
 
 def superblock_quota_ok(

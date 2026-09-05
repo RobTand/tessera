@@ -53,7 +53,12 @@ from tessera.encode import (
     encode_unit,
     grid_value_table,
 )
-from tessera.grammar import RELEASE_BITS, release_quota, superblock_count
+from tessera.grammar import (
+    RELEASE_BITS,
+    release_defined_on,
+    release_quota,
+    superblock_count,
+)
 from tessera.errors import GrammarError, ManifestError
 from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
 from tessera.layout import (
@@ -779,24 +784,30 @@ def test_release_order_generalises_the_release_quota(cols):
     ],
     ids=["window", "tcq"],
 )
-def test_release_placement_ranks_by_the_units_own_grid(body, plane, q256):
-    """Both readers rank released positions by the **resolved grid's** values.
+def test_release_is_refused_at_read_on_a_grid_wider_than_the_plane(body, plane, q256):
+    """Both readers refuse a release on a grid the RELEASE plane cannot name.
 
-    S9 stores no indices: the reader re-derives the placement by decoding
-    without release and ranking by descending decoded magnitude, so the value
-    table it ranks with has to be the one the encoder ranked with
-    (``encode.encode_unit`` takes ``grid_value_table(grid)``).  Both readers
-    reached for the 16-entry E2M1 table instead, which is a restatement of one
-    grid's roster: on E4M3 the pre-release codes run to 255 and the gather
-    walks off the end of it.
+    This test used to prove the other doctrine.  Under #163 it pinned the
+    *acceptance* of exactly these bytes: the readers were taught to rank
+    released positions by the resolved grid's value table rather than by the
+    16-entry E2M1 one, so that an E4M3 unit carrying releases parsed instead of
+    walking off the end of that table.  The ranking fix was right and stays --
+    ``grid_value_table(grid)`` is still what both readers use -- but accepting
+    the artifact was the wrong half of it, because the same PR taught
+    ``encode.encode_unit`` to call this byte string undefined.  Two rules for
+    one wire is the defect (tessera#180, finding S5), and AGENTS rule 5 picks
+    the refusing side: a release names a whole payload code, ``RELEASE_BITS``
+    cannot spell most of E4M3's 256, and the codes that *do* fit land on
+    positions the reader itself ranked and decode to values no encoder chose.
+    Nothing is silent about it any more.
 
-    The unit here is built by hand rather than by ``encode_unit`` because the
-    RELEASE plane is ``grammar.RELEASE_BITS`` = 4 bits wide whatever the grid,
-    so the encoder's own release codes -- an argmin over all 256 E4M3 values --
-    do not fit it and ``wire.pack_uniform`` refuses them at write.  Codes that
-    *do* fit make a wire-legal artifact: the manifest, the terminal and the
-    plane all validate, and the reader accepts it.  What the reader must not do
-    is crash after accepting it.
+    The unit is built by hand rather than by ``encode_unit`` for the same
+    reason: the encoder refuses this call, so only a non-conforming writer
+    could produce these bytes -- which is precisely the writer a reader has to
+    be closed against.  ``build_unit_artifact`` is left unguarded so this test
+    can *be* that writer; the artifact it makes is wire-legal in every other
+    respect (the manifest, the terminal and the plane all validate), and it is
+    the reader that says no.
     """
     grid = GRIDS["E4M3"]
     rows, cols, superblock, released = 8, 256, 256, 8
@@ -817,10 +828,10 @@ def test_release_placement_ranks_by_the_units_own_grid(body, plane, q256):
 
     forest = grid if body is BodyKind.WINDOW else forests
     code = None if body is BodyKind.WINDOW else CODE
-    pre = decode_codes_mixed(unit, forest, code, apply_release=False)
-    assert int(pre.max()) > 15, (
-        "this case exists to carry codes past the end of the E2M1 table"
+    assert not release_defined_on(grid), (
+        "this case exists to carry a release on a grid wider than the plane"
     )
+    pre = decode_codes_mixed(unit, forest, code, apply_release=False)
     decoded = grid_value_table(grid)[pre.int()] * unit_scale_field(unit, rows, cols)
     want = _canonical_release_order(decoded, cols, superblock, released)
 
@@ -830,9 +841,8 @@ def test_release_placement_ranks_by_the_units_own_grid(body, plane, q256):
         unit, "e4m3-release", forest, q256 * grid.arity, code
     )
 
-    parsed = parse_unit_artifact(blob)
-    assert torch.equal(parsed.unit.release_index.cpu(), want.cpu())
-    assert torch.equal(parsed.unit.release_code.cpu(), unit.release_code.cpu())
+    with pytest.raises(GrammarError, match=f"stores {RELEASE_BITS} bits"):
+        parse_unit_artifact(blob)
 
 
 def test_release_is_refused_on_a_grid_wider_than_the_release_plane():

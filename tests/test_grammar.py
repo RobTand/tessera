@@ -22,7 +22,9 @@ from tessera.grammar import (
     completion_capacity,
     descendant_set_size,
     prefix_cardinality,
+    release_defined_on,
     release_quota,
+    require_release_defined,
     root_from_q256,
     superblock_count,
     superblock_quota_ok,
@@ -248,3 +250,52 @@ def test_release_quota_refuses_a_negative_total():
 def test_superblock_widths_refuses_a_zero_column_unit():
     with pytest.raises(GrammarError, match="must be positive"):
         superblock_widths(0, 256)
+
+
+def test_release_is_defined_exactly_where_the_plane_can_name_a_code():
+    """The predicate tracks the RELEASE plane's normative width, not a roster.
+
+    A release stores a whole payload code, so the set of grids that admit one
+    is a function of ``planes.NORMATIVE_ELEMENT_BITS[RELEASE]`` -- the width
+    that binds every descriptor on the wire -- and of nothing else.  Derived
+    here from that table rather than restated as a list of grid names, so a
+    plane widening moves the expectation with the code (rule 3).
+    """
+    from tessera.alphabet import SERIALISABLE_GRIDS
+    from tessera.planes import NORMATIVE_ELEMENT_BITS, PlaneKind
+
+    width = NORMATIVE_ELEMENT_BITS[PlaneKind.RELEASE]
+    assert width == RELEASE_BITS, "doc S3's element table is doc S6's constant"
+    defined = {
+        grid.name for grid in SERIALISABLE_GRIDS.values() if release_defined_on(grid)
+    }
+    want = {
+        grid.name
+        for grid in SERIALISABLE_GRIDS.values()
+        if grid.size <= 1 << width
+    }
+    assert defined == want
+    # The predicate has to discriminate, or it is not a rule: at least one
+    # serialisable grid admits release and at least one does not.
+    assert defined and defined != {grid.name for grid in SERIALISABLE_GRIDS.values()}
+
+
+def test_require_release_defined_names_the_grid_the_width_and_the_codes():
+    """The refusal teaches why, not that: a reader of the message has to be
+    able to tell a plane too narrow for this grid from every other reason a
+    release could be rejected."""
+    from tessera.alphabet import SERIALISABLE_GRIDS
+
+    wide = next(
+        grid for grid in SERIALISABLE_GRIDS.values() if not release_defined_on(grid)
+    )
+    narrow = next(
+        grid for grid in SERIALISABLE_GRIDS.values() if release_defined_on(grid)
+    )
+    assert require_release_defined(narrow) is None
+    with pytest.raises(GrammarError) as excinfo:
+        require_release_defined(wide)
+    message = str(excinfo.value)
+    assert wide.name in message
+    assert str(RELEASE_BITS) in message
+    assert str(wide.size) in message
