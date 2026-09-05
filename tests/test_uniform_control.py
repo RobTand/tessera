@@ -272,6 +272,114 @@ def test_require_no_larger_refuses_the_fatter_arm_even_when_it_is_close():
                             require_no_larger=True)
 
 
+# ------------------------------------- what a byte match may be built out of
+#
+# tessera#225: the match is a *ratio of two counted bit totals*, so every one
+# of the four numbers it reads has a domain the count itself gives it.  Before
+# this section the gate converted them and compared -- `relative_slack`
+# returned a flattering 0 for a candidate of zero bits, and -1001 for a
+# negative one, and `assert_byte_matched(0, 800, 1)` returned an accepted
+# object either way.  A comparison whose denominator is missing is not a
+# comparison, and the arms are refused by field name rather than divided.
+
+
+#: Not a whole positive count of bits: zero and negative are not totals a wire
+#: can weigh, a half-bit is not a bit the accountant produces (every rung of
+#: every grid prices integral at every shape swept in this file), and NaN /
+#: infinity / a string / None are not counts at all.
+NOT_A_BIT_TOTAL = (0, -800, 3.5, Fraction(1, 2), float("nan"), float("inf"),
+                   None, "eight")
+
+#: Not an exact positive parameter count.  ``3.7`` matters on its own: the old
+#: ``int(varying_params)`` truncated it to 3 and reported a bpp over the wrong
+#: denominator rather than refusing.
+NOT_A_PARAM_COUNT = (0, -1, 3.7, float("nan"), float("inf"), None, "seven")
+
+#: Not a tolerance.  ``max_relative_slack >= 1`` admits a "control" of twice
+#: the candidate's bytes or of none of them, which is the whole failure #3
+#: names; negative admits nothing and NaN admits everything (`x <= nan` is
+#: False, so it refuses -- but it is still not a number a gate may hold).
+NOT_A_TOLERANCE = (Fraction(-1, 1000), Fraction(1), 2, float("nan"),
+                   float("inf"), None, "loose")
+
+
+@pytest.mark.parametrize("bad", NOT_A_BIT_TOTAL)
+def test_a_bit_total_that_is_not_a_whole_positive_count_is_refused(bad):
+    """Both arms, by field name, before anything is divided (tessera#225).
+
+    ``assert_byte_matched(0, 800, 1)`` and ``assert_byte_matched(-800,
+    800000, 1)`` are the issue's own calls: they returned accepted objects
+    reporting relative_slack 0 and -1001.
+    """
+    with pytest.raises(TesseraError, match="candidate_bits"):
+        assert_byte_matched(bad, 800, 1)
+    with pytest.raises(TesseraError, match="control_bits"):
+        assert_byte_matched(800, bad, 1)
+
+
+@pytest.mark.parametrize("bad", NOT_A_PARAM_COUNT)
+def test_a_parameter_count_that_is_not_an_exact_positive_integer_is_refused(bad):
+    with pytest.raises(TesseraError, match="varying_params"):
+        assert_byte_matched(800, 800, bad)
+
+
+@pytest.mark.parametrize("bad", NOT_A_TOLERANCE)
+def test_a_tolerance_that_is_not_a_fraction_below_one_is_refused(bad):
+    with pytest.raises(TesseraError, match="max_relative_slack"):
+        assert_byte_matched(800, 800, 1, max_relative_slack=bad)
+
+
+def test_the_invariants_hold_on_the_dataclass_and_not_only_on_the_assertion():
+    """``ByteMatch`` is public, so the domain lives on it and not above it."""
+    with pytest.raises(TesseraError, match="candidate_bits"):
+        ByteMatch(Fraction(0), Fraction(800), 1)
+    with pytest.raises(TesseraError, match="varying_params"):
+        ByteMatch(Fraction(800), Fraction(800), 0)
+    match = ByteMatch(Fraction(800), Fraction(800), 1)
+    assert match.relative_slack == 0 and match.byte_matched
+
+
+def _unmatched_pair():
+    """The issue's own factory pair: 3.16% apart, 31.6x the tolerance.
+
+    Two units either side of the E2M1x2 coset cap, with only those two rungs
+    offered, so the search must land in the 0.241-bpp hole this module
+    documents.  ``assert_match=False`` is the diagnostic path.
+    """
+    units = [
+        PlannedUnit("a", "E2M1x2", 895, 1024, 3072),
+        PlannedUnit("b", "E2M1x2", 896, 1024, 3072),
+    ]
+    return uniform_control(units, rungs=[895, 896], assert_match=False)
+
+
+def test_a_measured_verdict_needs_the_byte_match_to_have_actually_held():
+    """"Beat the byte-matched uniform" requires the byte match (tessera#225).
+
+    The unmatched plan stays representable -- that is what ``assert_match=
+    False`` is for -- but it is representable as an *unqualified* diagnostic,
+    not as the verdict the architecture's §4.7 gate publishes.
+    """
+    control = _unmatched_pair()
+    assert control.match.byte_matched is False
+    assert float(control.match.relative_slack) == pytest.approx(0.0315542, abs=1e-6)
+    with pytest.raises(ControlNotByteMatchedError, match="byte_matched"):
+        control_block(control, candidate_kl=0.5, control_kl=0.6)
+    block = control_block(control)
+    assert block["verdict"]["measured"] is False
+    assert block["control"]["match"]["byte_matched"] is False
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -0.1])
+def test_the_verdict_reads_only_a_finite_non_negative_kl(bad):
+    """A KL is finite and non-negative; a verdict divides two of them."""
+    control = uniform_control(body(ALLOCATED_4_0))
+    with pytest.raises(TesseraError, match="candidate_kl"):
+        control_block(control, candidate_kl=bad, control_kl=0.1746)
+    with pytest.raises(TesseraError, match="control_kl"):
+        control_block(control, candidate_kl=0.3485, control_kl=bad)
+
+
 def test_the_bracket_says_whether_the_axis_or_the_search_owns_the_slack():
     control = uniform_control(body(ALLOCATED_4_0))
     bracket = control.bracket

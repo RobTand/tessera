@@ -149,6 +149,126 @@ GRID_NAMES = ("E2M1", "E2M1x2", "E4M3", "BF16")
 _BITS_CACHE: "dict[tuple, Fraction]" = {}
 
 
+# ------------------------------------------------------------- the domains
+#
+# Every number a verdict in this module reads has a domain its own definition
+# gives it, and a gate that converts a number and then compares it has already
+# lost the argument: NaN is False against every ordered comparison, an infinity
+# satisfies any ``<=`` bar it is handed, a zero denominator turns a ratio into
+# whatever the fallback branch says, and ``int()`` truncates a fractional count
+# into a denominator nobody has.  So conversion and domain are one step here,
+# and a value outside its domain is refused **by field name** before anything
+# is compared (AGENTS.md rule 5; tessera#224, tessera#225).
+#
+# The domains are read off the quantities, never off round numbers (rule 2): a
+# wire bit total is counted, a parameter count is counted, a byte-match
+# tolerance is a fraction of the candidate's own bits, an error ratio is a
+# quotient of two positive errors, and a KL divergence is non-negative.
+
+
+def _bit_total(value, *, field: str, where: str) -> Fraction:
+    """A wire bit total: a whole number of bits, and more than none of them.
+
+    Bits are *counted* -- :func:`unit_wire_bits` prices integral at every rung
+    of every grid on every shape ``tests/test_uniform_control.py`` sweeps, and
+    :func:`bits_from_manifest` reads whole bytes -- so a fractional total is an
+    accounting defect rather than a rounding, and an arm of zero or negative
+    bits is not an arm.  Zero is the one that mattered: it made
+    :attr:`ByteMatch.relative_slack` report a perfect match for a candidate
+    nobody weighed (tessera#225).
+    """
+    reason = (
+        f"{where}: {field} is a whole positive number of wire bits, got "
+        f"{value!r} -- the byte match is a ratio over the candidate's own "
+        "bits, so a zero, negative, fractional or non-numeric total is "
+        "refused here rather than compared"
+    )
+    try:
+        bits = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if bits.denominator != 1 or bits <= 0:
+        raise TesseraError(reason)
+    return bits
+
+
+def _exact_count(value, *, field: str, where: str) -> int:
+    """A count of things: an exact positive integer, never a truncation."""
+    reason = (
+        f"{where}: {field} is an exact positive count, got {value!r} -- "
+        "int() would truncate a fractional count silently and report a bpp "
+        "over a denominator nothing has"
+    )
+    try:
+        count = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if count.denominator != 1 or count <= 0:
+        raise TesseraError(reason)
+    return int(count)
+
+
+def _tolerance(value, *, field: str, where: str) -> Fraction:
+    """A byte-match tolerance: a fraction of the candidate's bits in [0, 1).
+
+    Zero is legal and means "exact".  One is not: at a relative slack of 1 the
+    control weighs twice the candidate's bytes or none of them, which is the
+    comparison this module exists to refuse, so a tolerance that would admit
+    it is refused where it enters instead of at every arm it later passes.
+    """
+    reason = (
+        f"{where}: {field} is a fraction of the candidate's bits in [0, 1), "
+        f"got {value!r} -- at 1 the control may weigh twice the candidate or "
+        "none of it, which is not a control"
+    )
+    try:
+        slack = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if not 0 <= slack < 1:
+        raise TesseraError(reason)
+    return slack
+
+
+def _error_ratio(value, *, field: str, where: str, error=TesseraError) -> float:
+    """A quotient of two positive errors: finite and strictly positive."""
+    reason = (
+        f"{where}: {field} is a positive finite ratio of two errors, got "
+        f"{value!r} -- NaN loses every ordered comparison silently and an "
+        "infinity clears any bar written as one"
+    )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise error(reason) from exc
+    if not math.isfinite(number) or number <= 0:
+        raise error(reason)
+    return number
+
+
+def _kl(value, *, field: str, where: str, error=TesseraError) -> float:
+    """A KL divergence: finite and non-negative, by its own definition.
+
+    Zero is admissible and means the two distributions agree; it is not a
+    number any served arm has produced, and it is not this gate's business to
+    say it cannot be.  Negative and non-finite are, because a divergence that
+    is neither orders below every bar it is compared against and reads as a
+    pass (tessera#224, tessera#225).
+    """
+    reason = (
+        f"{where}: {field} is a finite non-negative KL divergence, got "
+        f"{value!r} -- a negative or unmeasurable divergence sorts below "
+        "every bar it is compared to and reads as a pass"
+    )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise error(reason) from exc
+    if not math.isfinite(number) or number < 0:
+        raise error(reason)
+    return number
+
+
 def grid_for_name(name: str) -> PayloadGrid:
     """``"E2M1x2" -> tuple_grid(E2M1_GRID, 2)``, the exporter's ``--grid`` vocabulary.
 
@@ -462,12 +582,31 @@ class ByteMatch:
     *varies* -- the Tessera ones.  A BF16 unit is identical in both arms, so
     including it would shrink the reported slack without changing anything, and
     the honest denominator for a rate-axis claim is the rate axis.
+
+    **The four numbers are validated here and not above here** (tessera#225).
+    This class is public and :func:`uniform_control` builds one directly, so a
+    domain enforced only in :func:`assert_byte_matched` would be a domain with
+    two doors.  Every field is converted exactly and refused by name: whole
+    positive bit totals, an exact positive parameter count, and a tolerance
+    that is a fraction of the candidate's own bits.  Before that,
+    ``assert_byte_matched(0, 800, 1)`` returned an *accepted* match whose
+    ``relative_slack`` was 0 -- a perfect control for an arm of no bytes.
     """
 
     candidate_bits: Fraction
     control_bits: Fraction
     varying_params: int
     max_relative_slack: Fraction = DEFAULT_MAX_RELATIVE_SLACK
+
+    def __post_init__(self) -> None:
+        where = "a byte match"
+        for field in ("candidate_bits", "control_bits"):
+            object.__setattr__(self, field, _bit_total(
+                getattr(self, field), field=field, where=where))
+        object.__setattr__(self, "varying_params", _exact_count(
+            self.varying_params, field="varying_params", where=where))
+        object.__setattr__(self, "max_relative_slack", _tolerance(
+            self.max_relative_slack, field="max_relative_slack", where=where))
 
     @property
     def slack_bits(self) -> Fraction:
@@ -476,8 +615,7 @@ class ByteMatch:
 
     @property
     def relative_slack(self) -> Fraction:
-        if not self.candidate_bits:
-            return Fraction(0)
+        """``|slack| / candidate``, always over a denominator that exists."""
         return abs(self.slack_bits) / self.candidate_bits
 
     @property
@@ -543,19 +681,19 @@ def assert_byte_matched(
     ``require_no_larger`` additionally refuses a control that outweighs the
     candidate, for a claim that must stay conservative against the allocation
     whichever arm wins.
+
+    The four inputs are converted and domain-checked by :class:`ByteMatch`
+    itself, so an invalid total refuses by field name here rather than
+    arriving as a ``relative_slack`` of zero (tessera#225).
     """
-    match = ByteMatch(
-        Fraction(candidate_bits),
-        Fraction(control_bits),
-        int(varying_params),
-        Fraction(max_relative_slack),
-    )
+    match = ByteMatch(candidate_bits, control_bits, varying_params,
+                      max_relative_slack)
     if not match.byte_matched:
         raise ControlNotByteMatchedError(
             f"{where}: {int(match.control_bits)} bits against the candidate's "
             f"{int(match.candidate_bits)} -- {float(match.relative_slack) * 100:.4f}% "
-            f"apart, over the {float(max_relative_slack) * 100:.4f}% a control may "
-            f"be.  The {match.fatter_arm} arm is the fatter one, so the "
+            f"apart, over the {float(match.max_relative_slack) * 100:.4f}% a control "
+            f"may be.  The {match.fatter_arm} arm is the fatter one, so the "
             "comparison would price those bytes as quality."
         )
     if require_no_larger and not match.control_is_no_larger:
@@ -790,6 +928,17 @@ def control_block(
     Without them it states, equally explicitly, that the control was built and
     **not served** -- which is a different claim from a passing gate and must
     not read like one.
+
+    **A measured verdict requires the byte match to have held** (tessera#225).
+    ``uniform_control(..., assert_match=False)`` builds an unmatched pair on
+    purpose -- that is how the E2M1x2 coset hole is *reported* rather than
+    papered over -- and such a pair stays representable here, as the unserved
+    block, which is an explicitly unqualified diagnostic.  What it may not
+    become is the measured verdict, whose own sentence is "against the
+    byte-matched uniform": on the issue's pair that read as a victory while
+    the arms were 3.16% apart in bytes, 31.6x the tolerance, so the winning
+    arm was simply the one holding the extra bytes.  Both KLs are validated
+    for the same reason the totals are: the verdict divides them.
     """
     block = {
         "schema": CONTROL_SCHEMA,
@@ -809,7 +958,20 @@ def control_block(
             "detail": "the control was built and priced; neither arm was served",
         }
     else:
-        candidate_kl, control_kl = float(candidate_kl), float(control_kl)
+        where = f"the {candidate_label} arm against its uniform control"
+        if not control.match.byte_matched:
+            raise ControlNotByteMatchedError(
+                f"{where}: byte_matched is False -- {int(control.match.control_bits)} "
+                f"bits against the candidate's {int(control.match.candidate_bits)}, "
+                f"{float(control.match.relative_slack) * 100:.4f}% apart against the "
+                f"{float(control.match.max_relative_slack) * 100:.4f}% a control may "
+                "be.  A measured verdict here would read 'against the byte-matched "
+                "uniform' for a pair that is not byte matched, pricing the "
+                "difference in bytes as quality; the unserved block is what an "
+                "unmatched plan may carry."
+            )
+        candidate_kl = _kl(candidate_kl, field="candidate_kl", where=where)
+        control_kl = _kl(control_kl, field="control_kl", where=where)
         ratio = candidate_kl / control_kl if control_kl else float("inf")
         block["verdict"] = {
             "metric": metric,
