@@ -16,6 +16,7 @@ are compared, and a single combined case cannot tell a working comparison from
 one that short-circuits on the first field.
 """
 import copy
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -798,6 +799,153 @@ def test_the_capture_seal_is_stamped_by_the_source_itself():
     assert source_with(seqlen=1024).config_block()["hessian"]["capture_sha256"] != seal
     assert source_with(model="/models/somewhere-else").config_block()[
         "hessian"]["capture_sha256"] != seal
+
+
+# --------------------------------------------------------------------------
+# Tessera#302: the seal and the H the encoder is handed are one snapshot.
+#
+# ``capture_sha256`` is memoised (an export calls ``config_block`` per unit
+# through the cache intake), but ``hessians`` is the caller's own mapping of
+# the caller's own tensors and ``for_unit`` reads it live.  The codex probe:
+# seal, edit ``H[0, 0]`` in place, and the same source hands the encoder a
+# metric of 9 under a config that still seals the metric of 1.  CPU-only, like
+# the #214 block: nothing here encodes.
+# --------------------------------------------------------------------------
+
+
+def _sealed_source(names=("u.weight",), seed=1, cols=8):
+    """A source over ``_hessians`` whose caller still holds the mapping."""
+    from tessera.manifest import ScalePlaneKind
+
+    hessians = _hessians(list(names), seed=seed, cols=cols)
+    source = ActivationSource(hessians=hessians, provenance=_provenance(),
+                              ldlq_sigma=None, refit_objective="hessian")
+    seal = source.config_block()["hessian"]["capture_sha256"]
+    return source, hessians, seal, ScalePlaneKind.CHANNEL
+
+
+def test_an_in_place_hessian_edit_after_the_seal_refuses_at_for_unit():
+    """The codex probe.  Before the edit the unit is handed the sealed H;
+    after it the same source must not hand the encoder a different one under
+    the seal it already published."""
+    source, hessians, seal, plane = _sealed_source()
+    before = source.for_unit("u.weight", 8, scale_plane=plane)["refit_metric"]
+    assert torch.equal(before, hessians["u"])
+    hessians["u"][0, 0] = 9.0
+    with pytest.raises(GrammarError, match=r"'u'.*sealed") as caught:
+        source.for_unit("u.weight", 8, scale_plane=plane)
+    assert seal[:16] in str(caught.value)
+    # A fresh source over the edited capture seals what it actually holds.
+    fresh = ActivationSource(hessians=hessians, provenance=_provenance(),
+                             ldlq_sigma=None, refit_objective="hessian")
+    assert fresh.capture_sha256() != seal
+    assert fresh.for_unit("u.weight", 8, scale_plane=plane)["refit_metric"][0, 0] == 9.0
+
+
+def test_a_replaced_hessian_entry_after_the_seal_refuses_at_for_unit():
+    """Mapping replacement, entry by entry: the frozen dataclass cannot rebind
+    ``hessians``, but the caller can rebind what the mapping holds."""
+    source, hessians, seal, plane = _sealed_source()
+    hessians["u"] = _hessians(["u.weight"], seed=2, cols=8)["u"]
+    with pytest.raises(GrammarError, match=r"'u'.*sealed"):
+        source.for_unit("u.weight", 8, scale_plane=plane)
+
+
+def test_a_mapping_whose_roster_moved_after_the_seal_refuses_to_publish():
+    """A unit added or dropped after the seal is not in the capture the seal
+    names: both the publication path and the consumption path refuse, and the
+    refusal names the unit."""
+    source, hessians, seal, plane = _sealed_source(names=("u.weight", "v.weight"))
+    hessians["w"] = _hessians(["w.weight"], seed=3, cols=8)["w"]
+    with pytest.raises(GrammarError, match=r"\['w'\]"):
+        source.capture_sha256()
+    with pytest.raises(GrammarError, match=r"\['w'\]"):
+        source.config_block()
+    with pytest.raises(GrammarError, match=r"'w'.*sealed"):
+        source.for_unit("w.weight", 8, scale_plane=plane)
+    del hessians["w"], hessians["v"]
+    with pytest.raises(GrammarError, match=r"\['v'\]"):
+        source.capture_sha256()
+
+
+def test_a_provenance_edit_after_the_seal_refuses_to_publish():
+    """The seal covers the identity and context fields; a config that carried
+    an edited ``seqlen`` beside the old seal would misdescribe the bytes."""
+    source, _, seal, _ = _sealed_source()
+    source.provenance["seqlen"] = 1024
+    with pytest.raises(GrammarError, match="seqlen"):
+        source.config_block()
+
+
+def test_an_unchanged_source_keeps_its_cached_seal_and_hashes_one_unit_per_unit(monkeypatch):
+    """The efficiency the memo exists for: the capture is digested once, and
+    proving a unit costs that unit's H, never the capture again."""
+    import tessera.cached_unit as cached_unit
+    import tessera.export as export_module
+
+    calls = []
+    real = cached_unit.tensor_identity
+
+    def counted(tensor):
+        calls.append(tensor.shape)
+        return real(tensor)
+
+    monkeypatch.setattr(cached_unit, "tensor_identity", counted)
+    names = ("a.weight", "b.weight", "c.weight")
+    source = ActivationSource(hessians=_hessians(list(names), seed=1, cols=8),
+                              provenance=_provenance(), ldlq_sigma=None,
+                              refit_objective="hessian")
+    seal = source.capture_sha256()
+    assert len(calls) == len(names)
+    assert source.capture_sha256() == seal
+    assert source.config_block()["hessian"]["capture_sha256"] == seal
+    assert len(calls) == len(names), "an unchanged source rehashed its capture"
+    from tessera.manifest import ScalePlaneKind
+
+    source.for_unit("b.weight", 8, scale_plane=ScalePlaneKind.CHANNEL)
+    assert len(calls) == len(names) + 1, "proving one unit rehashed the capture"
+    assert export_module.ActivationSource is ActivationSource
+
+
+def test_the_first_for_unit_seals_before_it_hands_anything_out():
+    """A source that never published still seals on first use, so a capture
+    edited between two ``for_unit`` calls is caught the same way -- and the
+    seal it later publishes is the H the first unit was actually encoded
+    against, not whatever the mapping holds at ``_write_config`` time."""
+    from tessera.manifest import ScalePlaneKind
+
+    hessians = _hessians(["u.weight", "v.weight"], seed=1, cols=8)
+    source = ActivationSource(hessians=hessians, provenance=_provenance(),
+                              ldlq_sigma=None, refit_objective="hessian")
+    source.for_unit("u.weight", 8, scale_plane=ScalePlaneKind.CHANNEL)
+    expected = ActivationSource(hessians=copy.deepcopy(hessians),
+                                provenance=_provenance()).capture_sha256()
+    hessians["v"][0, 0] += 1.0
+    with pytest.raises(GrammarError, match=r"'v'.*sealed"):
+        source.for_unit("v.weight", 8, scale_plane=ScalePlaneKind.CHANNEL)
+    assert source.capture_sha256() == expected
+
+
+def test_the_seal_construction_is_the_one_the_214_exporter_wrote():
+    """Parts already on disk carry seals computed by the #214 exporter; a
+    re-export from the same capture must still merge with them, so the digest
+    is pinned to its documented construction rather than to a memo."""
+    from tessera.cached_unit import tensor_identity
+    from tessera.export import CAPTURE_CONTEXT, HESSIAN_IDENTITY
+
+    hessians = _hessians(["u.weight", "v.weight"], seed=1, cols=8)
+    provenance = _provenance()
+    identity = {f: provenance.get(f) for f in HESSIAN_IDENTITY}
+    identity.update({f: provenance.get(f) for f in CAPTURE_CONTEXT})
+    digest = hashlib.sha256()
+    digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
+                              "identity": identity},
+                             sort_keys=True, default=str).encode())
+    for name in sorted(hessians):
+        digest.update(b"\0" + name.encode() + b"\0")
+        digest.update(tensor_identity(hessians[name])["sha256"].encode())
+    source = ActivationSource(hessians=hessians, provenance=provenance)
+    assert source.capture_sha256() == digest.hexdigest()
 
 
 # --------------------------------------------------------------------------

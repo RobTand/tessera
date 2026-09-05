@@ -7,24 +7,38 @@ safe because input shards share no state -- a disjoint subset writes exactly
 the files one box would -- and the merge is the same fact read backwards: the
 shard *files* need no rewriting, only the two summaries that describe them.
 
-Three things are checked rather than assumed, because a merge that silently
-drops a shard produces a checkpoint that loads and is wrong:
+Nothing below is assumed, because a merge that silently drops a shard, or
+binds a stranger's shard, produces a checkpoint that loads and is wrong.  The
+contract is the one ``tessera.serving_parts.merge_serving_parts`` already
+holds its parts to (tessera#300), proved in this order and before a byte is
+copied or a config written:
 
-  * **No shard is claimed twice.** Overlapping ranges would let one part's file
-    overwrite the other's.
-  * **The union covers the source's shard list exactly.** A missing input shard
-    means a range was mistyped or a part died early, and the resulting index
-    would name tensors no file holds.
-  * **Every weight_map entry resolves to a file that exists**, after the move.
+  * **The encoding is one encoding.** ``check_configs``: same grid, same
+    code, same geometry, same rotation, and the same **Hessian** where one
+    shaped the bytes -- two halves encoded differently are two artifacts.
+  * **Every part was cut from ``--source``.** Each part stamps
+    ``source_part_identity`` of what it read (config and auxiliary hashes, the
+    whole tensor inventory, sha256 per shard read); the merge takes the same
+    identity of ``--source`` once and proves each entry against it.  A part
+    with no stamp -- an older exporter, or the in-memory ``export_checkpoint``
+    -- is refused by name, not merged on the strength of its filenames.
+  * **The parts were cut to one plan, and each fulfilled its slice.** Every
+    part stamps the whole plan; they must agree.  For each part, the tensors
+    it owns (the source inventory restricted to its shards) must appear in
+    its index and its actual shard headers exactly as the plan says -- blob
+    present and raw tensor absent for a planned name, raw for the rest, each
+    in the shard it came from -- and every planned blob is parsed
+    (``tessera.container.parse``, the reader's own fail-closed check) and its
+    manifest must name that tensor at that rung and geometry.
+  * **No shard is claimed twice, and the union is the source's shard list.**
+    Both read off the content-verified inventory rather than a filename set.
 
 Accounting is summed, not recomputed: `quantized_bytes`/`quantized_params` are
 the accountant's own totals from each half, and body bpp is re-derived from the
-sum so it cannot drift from the bytes.  The rest of the config must be
-*identical* between halves -- same grid, same code, same geometry, same
-rotation, and the same **Hessian** where one shaped the bytes -- and the merge
-refuses if it is not, since two halves encoded differently are two artifacts,
-not one.  `check_configs` is that comparison, split out so the guard can be
-tested field by field rather than only through a full merge.
+sum so it cannot drift from the bytes.  `check_configs` is split out so the
+encoding guard can be tested field by field rather than only through a full
+merge; `check_assembly` is the source/plan proof, split out for the same
+reason.
 """
 import argparse
 import json
@@ -50,8 +64,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 #: Two subtractions, each a decision rather than a list:
 #: ``SHARED_WHEN_WRITTEN`` is the pair older exporters legitimately lack, and
 #: the activation block has its own class below.  Everything else the exporter
-#: writes and does not sum -- ``accounting``, ``plan`` and ``rungs_q256`` are
-#: per-part by construction -- is compared.
+#: writes is compared here except ``CONFIG_PER_PART_FIELDS``: ``accounting``
+#: and ``rungs_q256`` are summed or unioned, and ``plan`` and ``source`` are
+#: the assembly contract ``check_assembly`` proves rather than compares.
 
 
 def shared_fields():
@@ -281,6 +296,192 @@ def check_configs(parts):
     return base
 
 
+def _unsealed(name, stamp, schema):
+    """Why a part's ``source`` block cannot bind it to ``--source``, or ``None``."""
+    if stamp is _MISSING:
+        return (f"{name} is unsealed: its tessera_config.json carries no 'source' "
+                f"block, so nothing binds it to the checkpoint --source names -- it "
+                f"was written by an exporter before tessera#300, and shard filenames "
+                f"are not an identity. Re-export it with a current exporter "
+                f"(export_checkpoint_streaming stamps the source it read).")
+    if stamp is None:
+        return (f"{name} carries 'source': null -- the in-memory export_checkpoint "
+                f"wrote tensors it was handed and read no checkpoint, so nothing binds "
+                f"it to --source. A shard-split part comes from "
+                f"export_checkpoint_streaming; re-export it from the source.")
+    if not isinstance(stamp, dict) or stamp.get("schema") != schema:
+        return (f"{name} carries a 'source' block this merge does not read "
+                f"({stamp.get('schema') if isinstance(stamp, dict) else type(stamp).__name__!r}; "
+                f"this merge proves {schema!r}). Re-export it with a current exporter.")
+    return None
+
+
+def _difference(a, b, differ):
+    """The keys two tensor mappings disagree on, for a refusal that names them;
+    ``differ`` says what a changed value means (a rung, a shard)."""
+    only_a = sorted(set(a) - set(b))
+    only_b = sorted(set(b) - set(a))
+    moved = sorted(t for t in set(a) & set(b) if a[t] != b[t])
+    return (f"{len(only_a) + len(only_b) + len(moved)} tensor(s): only in the first "
+            f"{only_a[:3]}, only in the second {only_b[:3]}, {differ} {moved[:3]}")
+
+
+def check_assembly(parts, source, blob_suffix, arity):
+    """Prove every part against ``--source`` and against the one plan.
+
+    ``parts`` is ``[(path, index, config), ...]``; ``blob_suffix`` and
+    ``arity`` (the grid's) are the exporter's, encoding fields
+    ``check_configs`` has already found equal across the parts.  A plan rung
+    is a PER-POSITION rate and a manifest's ``root_q256`` the per-code one,
+    ``arity`` positions to a code (``encode_linear_planes`` says why), so the
+    blob is held to ``plan[name] * arity``.
+    Returns ``(plan, identity, owner)``: the plan every part stamped, the
+    ``source_part_identity`` of ``--source`` over all its shards (what the
+    merged config records), and ``{shard: part path}``.  Raises ``SystemExit``
+    naming the part, shard or tensor at fault, and reads nothing it is not
+    proving -- so the cost is one pass over the source (the pass
+    ``merge_serving_parts`` pays) plus one over the planned blobs.
+
+    Order matters for the words a refusal uses: a part from another checkpoint
+    is refused as that before its blobs are opened, and two plans are refused
+    as two plans before either is proved fulfilled.
+    """
+    from safetensors import safe_open
+
+    from tessera.container import parse
+    from tessera.errors import TesseraError
+    from tessera.serving_parts import (SOURCE_PART_SCHEMA, source_part_identity,
+                                       tensor_names)
+
+    # --- every part was cut from --source ------------------------------------
+    for part, _, config in parts:
+        why = _unsealed(part.name, config.get("source", _MISSING), SOURCE_PART_SCHEMA)
+        if why:
+            raise SystemExit(why)
+    identity = source_part_identity(source)
+    owner = {}
+    for part, index, config in parts:
+        stamp = config["source"]
+        for field in ("config_sha256", "auxiliary_sha256"):
+            if stamp.get(field) != identity[field]:
+                raise SystemExit(
+                    f"{part.name} was cut from a different checkpoint than {source}: "
+                    f"its stamped {field} is {stamp.get(field)!r}, the source's is "
+                    f"{identity[field]!r}")
+        if stamp.get("tensors") != identity["tensors"]:
+            raise SystemExit(
+                f"{part.name} was cut from a checkpoint with a different tensor "
+                f"inventory than {source}: "
+                f"{_difference(stamp.get('tensors') or {}, identity['tensors'], 'in another shard')}")
+        files = stamp.get("files") or {}
+        for shard, digest in sorted(files.items()):
+            if shard not in identity["files"]:
+                raise SystemExit(
+                    f"{part.name} read {shard}, which {source} does not hold")
+            if digest != identity["files"][shard]:
+                raise SystemExit(
+                    f"{part.name} was cut from a different {shard} than {source} holds: "
+                    f"the part read sha256 {digest}, the source's is "
+                    f"{identity['files'][shard]} -- same filename, other bytes, so this "
+                    f"is not a part of the checkpoint being published")
+        claimed = set(index["weight_map"].values())
+        if claimed != set(files):
+            raise SystemExit(
+                f"{part.name}'s index names shards {sorted(claimed - set(files))} its "
+                f"source stamp did not read, or omits {sorted(set(files) - claimed)} "
+                f"it did; the part's own index and receipt disagree")
+        for shard in files:
+            if shard in owner:
+                raise SystemExit(
+                    f"shard {shard} is claimed by both {owner[shard].name} and "
+                    f"{part.name}: the ranges overlap, and one part's file "
+                    f"would overwrite the other's")
+            owner[shard] = part
+    expected = set(identity["files"])
+    if set(owner) != expected:
+        missing, extra = sorted(expected - set(owner)), sorted(set(owner) - expected)
+        raise SystemExit(
+            f"the parts cover {len(owner)} of the source's {len(expected)} "
+            f"shards. missing {missing[:5]}{'...' if len(missing) > 5 else ''}"
+            f"  unexpected {extra[:5]}")
+
+    # --- one plan, stamped whole by every part --------------------------------
+    plans = [(part.name, config.get("plan")) for part, _, config in parts]
+    for name, plan in plans:
+        if not isinstance(plan, dict):
+            raise SystemExit(f"{name} carries no plan dict; re-export it")
+    first_name, plan = plans[0]
+    for name, other in plans[1:]:
+        if other != plan:
+            raise SystemExit(
+                f"parts were cut to different plans: {first_name} and {name} disagree "
+                f"on {_difference(plan, other, 'at different rungs')} -- one checkpoint has one plan and "
+                f"every part stamps the whole of it, so these are not parts of one "
+                f"export; re-export them under one plan")
+
+    # --- each part fulfilled its slice of it, in its actual output ------------
+    for part, index, config in parts:
+        files = config["source"]["files"]
+        owned = {t: s for t, s in identity["tensors"].items() if s in files}
+        slice_ = {t: q for t, q in plan.items() if t in owned}
+        wanted = {(t + blob_suffix if t in slice_ else t): s for t, s in owned.items()}
+        local = index["weight_map"]
+        if local != wanted:
+            raw = sorted(t for t in slice_ if t in local)
+            encoded = sorted(t for t in owned if t not in slice_ and t + blob_suffix in local)
+            absent = sorted(set(wanted) - set(local))
+            extra = sorted(set(local) - set(wanted))
+            moved = sorted(k for k in set(wanted) & set(local) if wanted[k] != local[k])
+            raise SystemExit(
+                f"{part.name} did not implement the plan for the tensors it owns: "
+                f"planned but written raw {raw[:3]}, unplanned but written as blobs "
+                f"{encoded[:3]}, owned but absent {absent[:3]}, present but unowned "
+                f"{extra[:3]}, in another shard than the source's {moved[:3]}")
+        for shard in sorted(files):
+            actual = tensor_names(part / shard)
+            in_shard = {k for k, s in wanted.items() if s == shard}
+            if actual != in_shard:
+                raise SystemExit(
+                    f"{part.name}/{shard}: the index says {sorted(in_shard)[:3]}... "
+                    f"but the file's header holds {sorted(actual)[:3]}... "
+                    f"(missing {sorted(in_shard - actual)[:3]}, unexpected "
+                    f"{sorted(actual - in_shard)[:3]})")
+        if set(config.get("rungs_q256", [])) != set(slice_.values()):
+            raise SystemExit(
+                f"{part.name} records rungs_q256 {sorted(config.get('rungs_q256', []))} "
+                f"but its slice of the plan uses {sorted(set(slice_.values()))}")
+        for tensor, q256 in sorted(slice_.items()):
+            key = tensor + blob_suffix
+            with safe_open(str(part / owned[tensor]), framework="pt") as handle:
+                blob = handle.get_tensor(key).numpy().tobytes()
+            try:
+                manifest = parse(blob).manifest
+            except TesseraError as exc:
+                raise SystemExit(
+                    f"{part.name}: {key} is not a Tessera artifact this reader accepts "
+                    f"({type(exc).__name__}: {exc}); nothing under that name can be "
+                    f"published as {tensor}'s encoding") from exc
+            branch = manifest.branch
+            if branch.unit_id != tensor:
+                raise SystemExit(
+                    f"{part.name}: the blob under {key} is the encoding of "
+                    f"{branch.unit_id!r}, not of {tensor}")
+            if branch.root_q256 != q256 * arity:
+                raise SystemExit(
+                    f"{part.name}: {tensor} was encoded at q256 "
+                    f"{branch.root_q256 / arity:g} per position ({branch.root_q256} "
+                    f"per code) but the plan says {q256}; the config would price "
+                    f"bytes that were never cut")
+            with safe_open(str(source / owned[tensor]), framework="pt") as handle:
+                shape = tuple(handle.get_slice(tensor).get_shape())
+            geometry = (manifest.geometry.rows, manifest.geometry.columns)
+            if geometry != shape:
+                raise SystemExit(
+                    f"{part.name}: {tensor}'s blob encodes a {geometry} unit but the "
+                    f"source tensor is {shape}")
+    return plan, identity, owner
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("parts", nargs="+", help="the part directories, in any order")
@@ -302,49 +503,40 @@ def main():
 
     loaded = [load(p) for p in args.parts]
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
+    source = Path(args.source)
 
-    # --- the three checks ------------------------------------------------
-    seen, weight_map = {}, {}
+    # --- config: identical where it must be ------------------------------
+    base = check_configs([(part.name, config) for part, _, config in loaded])
+
+    # --- source and plan: proved, before anything is written --------------
+    plan, identity, seen = check_assembly(loaded, source, base["blob_suffix"],
+                                          int(base["grid"]["arity"]))
+    weight_map = {}
     for part, index, _ in loaded:
         for key, shard in index["weight_map"].items():
-            if shard in seen and seen[shard] != part:
-                raise SystemExit(
-                    f"shard {shard} is claimed by both {seen[shard].name} and "
-                    f"{part.name}: the ranges overlap, and one part's file "
-                    f"would overwrite the other's")
-            seen[shard] = part
             if key in weight_map:
                 raise SystemExit(f"tensor {key} appears in two parts")
             weight_map[key] = shard
 
-    src_index = Path(args.source) / "model.safetensors.index.json"
-    expected = set(json.loads(src_index.read_text())["weight_map"].values())
-    got = set(seen)
-    if got != expected:
-        missing, extra = sorted(expected - got), sorted(got - expected)
-        raise SystemExit(
-            f"the parts cover {len(got)} of the source's {len(expected)} "
-            f"shards. missing {missing[:5]}{'...' if len(missing) > 5 else ''}"
-            f"  unexpected {extra[:5]}")
-
-    # --- config: identical where it must be, summed where it adds --------
-    base = check_configs([(part.name, config) for part, _, config in loaded])
+    # --- summed where it adds ---------------------------------------------
     acct = {"quantized_params": 0, "quantized_bytes": 0, "passthrough_bytes": 0}
-    plan, rungs = {}, set()
+    rungs = set()
     for _, _, config in loaded:
         for key in acct:
             acct[key] += int(config["accounting"][key])
-        plan.update(config.get("plan", {}))
-        rungs.update(config.get("rungs_q256", []))
+        rungs.update(config["rungs_q256"])
     bpp = Fraction(acct["quantized_bytes"] * 8, acct["quantized_params"])
     acct["body_bpp"] = float(bpp)
     acct["body_bpp_exact"] = [bpp.numerator, bpp.denominator]
     base["accounting"] = acct
     base["plan"] = plan
     base["rungs_q256"] = sorted(rungs)
+    # The merged checkpoint is bound to the whole source the parts were proved
+    # against: the same block a part carries, with every shard's hash.
+    base["source"] = identity
     base["merged_from"] = [p.name for p, _, _ in loaded]
 
+    out.mkdir(parents=True, exist_ok=True)
     # --- move the files ---------------------------------------------------
     move = shutil.move if args.move else shutil.copy2
     for shard, part in sorted(seen.items()):
