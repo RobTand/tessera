@@ -99,10 +99,12 @@ the checks `slice_unit` applies, not asserted beside them.
   rows no rectangle of the unit is a run of the plane — not even the whole of
   it. `slice_unit` refuses every cut of such a unit and `can_shard` refuses the
   unit, from one predicate (`_block_straddles_rows`), rather than reporting a
-  granularity that would not have sliced (tessera#235). No writer produces one:
-  `encode._pack_scales` refuses an S6b width that is not a whole number of
-  32-weight groups (tessera#57) and `build_unit_artifact` refuses any block
-  plane's width that is not a whole number of `half`-groups (tessera#56).
+  granularity that would not have sliced (tessera#235). No *encoder* produces
+  one — `encode._pack_scales` refuses an S6b width that is not a whole number of
+  32-weight groups (tessera#57) — but the *writer* enforces only the weaker
+  `half`-group rule (`build_unit_artifact`, tessera#56), so one assembled
+  without going through `encode_unit` is still writable and parseable
+  (tessera#260), which is why the cutter is asked about it at all.
 
 **Columns.** The scale plane's block, raised to the superblock by releases or a
 mixed rate schedule.

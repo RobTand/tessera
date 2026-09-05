@@ -108,13 +108,14 @@ def _block_straddles_rows(block: "int | None", columns: int) -> bool:
     two answering separately is what let a loader be told "yes" and then
     handed a ``GrammarError`` (tessera#235).
 
-    No Tessera writer produces such a unit.  ``encode._pack_scales`` refuses a
-    width that is not a whole number of S6b groups -- a group's two halves
+    No Tessera *encoder* produces such a unit: ``encode._pack_scales`` refuses
+    a width that is not a whole number of S6b groups -- a group's two halves
     share one base exponent within one octave, so a group spanning two rows
-    would couple unrelated magnitudes (tessera#57) -- and
-    ``unit_artifact.build_unit_artifact`` refuses a width that is not a whole
-    number of ``half``-groups (tessera#56).  A reader still parses one, so the
-    cutter is still asked about it.
+    would couple unrelated magnitudes (tessera#57).  The *writer* refuses only
+    the weaker ``half``-group rule (``build_unit_artifact``, tessera#56), so a
+    unit assembled without going through ``encode_unit`` can still be written
+    and parsed at an off-group width (tessera#260) -- which is precisely why
+    the cutter is asked about one and has to answer.
     """
     return block is not None and bool(columns % block)
 
@@ -631,7 +632,7 @@ def _slice_block_plane(plane, rows, columns, block, r0, r1, c0, c1, name):
         raise GrammarError(
             f"{name}: a {block}-weight block does not divide this unit's {columns} columns, so a "
             f"block spans two output rows and no cut of it -- the identity slice included -- is a "
-            f"run of the plane. No writer produces such a unit (tessera#56, tessera#57)"
+            f"run of the plane. No encoder writes such a unit (tessera#57)"
         )
     if c0 % block or (c1 - c0) % block:
         raise GrammarError(
