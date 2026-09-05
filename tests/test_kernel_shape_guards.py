@@ -33,6 +33,7 @@ only that a legal shape gets *past* the guards; what the launch then does
 with placeholder planes is not this file's business.
 """
 
+import importlib.util
 import inspect
 import sys
 from pathlib import Path
@@ -40,7 +41,8 @@ from pathlib import Path
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 #: The shape grammar these tests pin lives in ``tessera.kernel``, which imports
 #: Triton at module scope.  Triton is a CUDA-only dependency, so on an x86 CI
@@ -243,3 +245,80 @@ def test_a_legal_shape_is_not_refused(name):
         raise AssertionError(f"a legal shape was refused: {exc}") from None
     except Exception:
         pass                                   # not a shape refusal; not ours
+
+
+# ---------------------------------------------------------------------------
+# The one guard this lane deliberately does NOT have, and the premise it rests on
+# ---------------------------------------------------------------------------
+
+def _repo_import_graph():
+    """The repository's own import graph, from the tool that owns it.
+
+    ``tools/impacted_tests.py`` walks every ``import`` in the tree so a
+    change can find the tests that reach it; the same walk answers who reaches
+    ``tessera.kernel``.  Reading it from there rather than restating a list
+    of the module's importers is the point: a list is right on the day it is
+    written and silent the day a route grows an import.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "impacted_tests", ROOT / "tools" / "impacted_tests.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module, module.build_graph(ROOT)
+
+
+def test_the_prefill_gemm_copies_a_strided_activation_and_is_off_the_served_path():
+    """``tessera_gemm`` *copies* a non-contiguous ``x`` rather than refusing it.
+
+    A silent copy is a hidden allocation -- memory and bandwidth the pricing
+    never sees -- which is exactly why the SERVED lanes may not hide one from
+    the caller and why the choice was flagged when #238 introduced it.  The
+    copy is kept because this wrapper is not on that path: ``tessera.kernel``
+    is the oracle side of the NVFP4 port (``serving/ext.py``: "no
+    tile-language kernel appears on the serving path ... nothing here imports
+    it"), its callers are the prefill benchmark and these tests, and every
+    one of them hands it a fresh contiguous batch, so the copy costs nobody
+    anything and a refusal would only move the same ``contiguous()`` into the
+    caller.  Three things make that a decision rather than an accident:
+
+    * the premise is pinned from the repository's own import graph -- no
+      module under ``src/`` or ``tools/`` reaches ``tessera.kernel``, so the
+      day a route or the encoder does, this test names it and the copy has to
+      become a refusal (or the caller has to pass contiguous tensors);
+    * a strided batch of the right shape is *not* refused by name -- it gets
+      past the guards to the launch, the same way ``test_a_legal_shape_is_not_
+      refused`` reads the other guards' "not over-broad" half (the launch's
+      own answer is ``tests/test_kernel.py``'s, on a device);
+    * the wrapper says so where a caller reads it, in its docstring.
+    """
+    tool, (by_name, importers) = _repo_import_graph()
+    seeds = {name for name, path in by_name.items()
+             if path == ROOT / "src" / "tessera" / "kernel.py"}
+    assert seeds == {"tessera.kernel"}, seeds
+    reaching = tool._reverse_reachable(seeds, importers) - seeds
+    on_a_lane = sorted(
+        name for name in reaching
+        if by_name[name].relative_to(ROOT).parts[0] in ("src", "tools"))
+    assert not on_a_lane, (
+        f"{on_a_lane} reach tessera.kernel from the library or its tools: the "
+        "prefill GEMM's silent contiguous() copy of a strided activation was "
+        "accepted because nothing priced or served calls it. Now something does, "
+        "so refuse the stride by name at the wrapper or make that caller pass a "
+        "contiguous activation -- a hidden copy on a served path is a cost the "
+        "pricing does not see")
+
+    backing = torch.zeros(3, 2 * GOOD_COLS)
+    strided = backing[:, ::2]
+    assert tuple(strided.shape) == (3, GOOD_COLS) and not strided.is_contiguous()
+    try:
+        kernel.tessera_gemm(strided, _u8(), _u8(), _f32(), _u8(), 1.0,
+                            GOOD_ROWS, GOOD_COLS, half=HALF)
+    except GrammarError as exc:                # pragma: no cover - the failure
+        raise AssertionError(f"a strided activation was refused: {exc}") from None
+    except Exception:
+        pass                                   # the launch, on a host tensor; not ours
+
+    doc = inspect.getdoc(kernel.tessera_gemm) or ""
+    assert "contiguous" in doc and "cop" in doc, (
+        "the copy is a documented convenience or it is a hidden one; "
+        "tessera_gemm's docstring must say a non-contiguous x is copied")

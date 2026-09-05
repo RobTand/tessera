@@ -37,9 +37,14 @@ torch itself was built against.  It corrects ``cpp_extension.CUDA_HOME`` as
 well as the environment, because ``load()`` reads that module global and it is
 frozen at import.  ``CUDA_HOME``/``CUDA_PATH`` set in the
 environment always wins: an operator naming a toolkit is a decision, not a
-guess to be second-guessed.  ``ninja`` is looked for beside ``sys.executable``
-when it is not on ``PATH``, because a venv invoked by absolute path (every
-non-login ssh) has its own ``bin`` off ``PATH``.
+guess to be second-guessed.  Winning means being ADOPTED into that same frozen
+global, not merely returned -- a root selected after torch's import was
+reported as chosen while the previously frozen one kept compiling (issue
+#298) -- and it is adopted whether or not it holds a compiler, so a refusal
+never hands the build back to the toolkit the operator displaced.  Only what
+the resolver RETURNS is gated on completeness.  ``ninja`` is looked for beside
+``sys.executable`` when it is not on ``PATH``, because a venv invoked by
+absolute path (every non-login ssh) has its own ``bin`` off ``PATH``.
 
 FALLBACK.  There is one, and it is explicit: ``tessera.stock.materialize_stock``
 produces the same tile in pure torch, and ``ops.prepare_tessera_module`` uses it
@@ -362,16 +367,36 @@ def _resolve_cuda_home(torch) -> str | None:
     have reached had ``/usr/local/cuda`` not existed, then the versioned roots.
     Nothing here is a threshold or a preference: the test is whether a path
     holds an executable ``bin/nvcc``.
+
+    Whatever it answers, the root the build compiles under when this returns
+    is the root this function last adopted -- returning one while
+    ``cpp_extension.CUDA_HOME`` names another is the defect in issue #298, and
+    ``_nvcc_for_build()`` is the reading that has to agree.
     """
     explicit = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
     if explicit:
-        return explicit if _has_nvcc(explicit) else None
+        # The choice is ADOPTED, not merely reported.  A selection made after
+        # torch's import reaches the build only through
+        # ``cpp_extension.CUDA_HOME`` (issue #298), and it is adopted whether
+        # or not the root holds a compiler: a refused selection that left the
+        # displaced toolkit in that global would build with a compiler nobody
+        # named.  Only the RETURN value is gated on completeness, so an
+        # incomplete explicit root still reports "no toolkit" -- and the build
+        # that then fails, fails under the root the operator named.
+        displaced = _torch_cuda_home()
+        _adopt_cuda_home(explicit)
+        if _has_nvcc(explicit):
+            return explicit
+        if displaced and displaced != explicit and _has_nvcc(displaced):
+            print(f"[tessera-serving] ERROR: the toolkit named by CUDA_HOME/CUDA_PATH "
+                  f"({explicit}) holds no bin/nvcc, so no native build is selected; "
+                  f"{displaced} was already loaded by torch and is NOT used in its "
+                  f"place. Name a complete toolkit, or unset both variables to let "
+                  f"the resolver search.", file=sys.stderr, flush=True)
+        return None
 
     candidates: list[str] = []
-    try:
-        from torch.utils.cpp_extension import CUDA_HOME as TORCH_CUDA_HOME
-    except Exception:  # noqa: BLE001 -- an old torch without the symbol
-        TORCH_CUDA_HOME = None
+    TORCH_CUDA_HOME = _torch_cuda_home()
     if TORCH_CUDA_HOME:
         candidates.append(TORCH_CUDA_HOME)
     found = shutil.which("nvcc")
@@ -392,6 +417,21 @@ def _resolve_cuda_home(torch) -> str | None:
     return None
 
 
+def _torch_cuda_home() -> str | None:
+    """The toolkit root ``cpp_extension.load`` builds with RIGHT NOW.
+
+    One reader for one fact, because three spellings of "ask torch which
+    toolkit it froze at import" is three answers waiting to disagree: the
+    search's first candidate, the root an explicit selection displaces and
+    :func:`_nvcc_for_build`'s compiler are all this value.
+    """
+    try:
+        from torch.utils import cpp_extension
+    except Exception:  # noqa: BLE001 -- no torch, no build, nothing to name
+        return None
+    return getattr(cpp_extension, "CUDA_HOME", None)
+
+
 def _adopt_cuda_home(root: str) -> None:
     """Make ``root`` the toolkit this process builds with.
 
@@ -400,14 +440,20 @@ def _adopt_cuda_home(root: str) -> None:
     frozen at IMPORT time, so the environment variable alone arrives too late
     for a torch that is already imported; and the environment variable is what
     the compiler's own subprocesses and any later import will read.
+
+    The module global is assigned unconditionally.  It used to be left alone
+    whenever it already named a root holding an ``nvcc``, which is a no-op on
+    the search path -- that root is the search's own first candidate, so the
+    two agree whenever it is complete -- and wrong on the explicit path, where
+    it left an operator's named toolkit reported as selected while the
+    previous one did the compiling (issue #298).
     """
     os.environ["CUDA_HOME"] = root
     try:
         from torch.utils import cpp_extension
     except Exception:  # noqa: BLE001 -- nothing to correct without torch
         return
-    if not _has_nvcc(getattr(cpp_extension, "CUDA_HOME", None)):
-        cpp_extension.CUDA_HOME = root
+    cpp_extension.CUDA_HOME = root
 
 
 #: Headers ``ATen/cuda/CUDAContextLight.h`` includes unconditionally.  If the
@@ -660,11 +706,7 @@ def _nvcc_for_build() -> "str | None":
     """
     if "PYTORCH_NVCC" in os.environ:
         return os.environ.get("PYTORCH_NVCC")
-    try:
-        from torch.utils import cpp_extension
-    except Exception:  # noqa: BLE001 -- no torch, no build, nothing to name
-        return None
-    home = getattr(cpp_extension, "CUDA_HOME", None)
+    home = _torch_cuda_home()
     return os.path.join(home, "bin", "nvcc") if home else None
 
 

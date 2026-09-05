@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 20,
+ "contract_version": 21,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -660,14 +660,10 @@
      "grade": "route_only",
      "kl": [],
      "smoke": {
-      "status": "repetitive",
-      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md",
-      "attribution": "shared_with_reference",
-      "control": {
-       "reference": "bf16_source",
-       "outcome": "identical_completion",
-       "receipt": "docs/measurements/moe-evidence-debt-2026-09-04.md"
-      }
+      "status": "recorded",
+      "receipt": "docs/measurements/moe-smoke-recorded-2026-09-05.md",
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -704,14 +700,10 @@
      }
     ],
      "smoke": {
-      "status": "repetitive",
-      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md",
-      "attribution": "shared_with_reference",
-      "control": {
-       "reference": "bf16_source",
-       "outcome": "identical_completion",
-       "receipt": "docs/measurements/moe-evidence-debt-2026-09-04.md"
-      }
+      "status": "recorded",
+      "receipt": "docs/measurements/moe-smoke-recorded-2026-09-05.md",
+      "attribution": "unattributed",
+      "control": null
      }
     }
    }
@@ -1090,6 +1082,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 21,
+   "date": "2026-09-05",
+   "change": "Both routed_moe cells' evidence.smoke read 'recorded' (#198), on a Tessera measurement: docs/measurements/moe-smoke-recorded-2026-09-05.md. WHAT WAS WRONG: the cells published smoke.status 'repetitive' with a control saying the BF16 source returns the same ' France is France is ...' (v18), and a status-only consumer kept refusing the whole routed-MoE lane -- rightly under its rule, because a control that degenerates too removes the evidence AGAINST the route without adding any FOR it. Principle 5's 'generates correctly' leg had no positive record for routed MoE; the honest fix is a positive record, which is a measurement and not a predicate change on either side. WHAT WAS MEASURED: the E4M3/q1024 LFM2.5-8B-A1B student (seal-bound, read-only) and its BF16 source, one arm at a time on the same pinned image, eager, resident, TP=1, no speculative decoding, the checkpoint's generation_config defaults in force; seven prompts in two request forms (the campaign's shape; pure greedy), every completion kept verbatim on both arms. Raw continuation -- the v17 prompt and three passages ending mid-sentence -- ends in a cycle on the SOURCE on all eight (prompt, form) pairs and on the student on seven: the checkpoint is the instruct model and a raw continuation is not its trained interface. Through the checkpoint's own chat_template.jinja (byte-identical on both arms) three questions carrying the same content read 'recorded' on BOTH arms in BOTH forms: no cycle, an on-topic answer, the model's own EOS on all six student completions. The rule: repetitive iff the completion ends in a cycle (some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods) on the student tokenizer's canonical encoding; the v17 observation is its positive control and reads repetitive on both arms in the same receipt. The completions are not identical between arms and nothing is claimed about that: this is greedy coherence, not closeness; the batch cell's KL entry is the closeness record and does not move. WHAT MOVED ON THE TABLE: both routed_moe cells' smoke is {status recorded, receipt the file above, attribution unattributed, control null} -- the shape the two BF16 cells already record theirs in. The v18 control is retired from the cells and not from the record: the v8 control vocabulary attributes a SYMPTOM ('identical_completion' says the reference returned the same text, 'different_completion' that it did not), and a recorded smoke has none to attribute -- the arms' recorded completions differ, so 'identical_completion' would be false of them and 'different_completion' would derive not_shared_with_reference, a phrase written for a symptom the reference lacks, said of a healthy pair. Null is what is true; attribution is what the validator derives for it, not hand-written. What the control established stands and is re-measured in the receipt (the v17 prompt identical on both arms, character for character). A schema that could say 'reference arm run, both healthy' would be v9 and no consumer has asked for it. No rung, route, activation contract, launch, grade, KL entry, qualification, TP/EP bound or byte moved; the decode cell still grades route_only and the evidence debt of docs/measurements/moe-evidence-debt-2026-09-04.md is one leg shorter, not closed. ADDITIVE for readers: lane-eligibility schema stays v8 (no field changed shape); a v8 consumer that refused on status 'repetitive' now admits on status 'recorded' with no change of its own, which is the point. NOT a claim the route is fault-free: a smoke is one prompt family under one runtime, and the receipt says so."
+  },
   {
    "contract_version": 20,
    "date": "2026-09-05",
