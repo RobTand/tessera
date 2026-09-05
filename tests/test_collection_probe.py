@@ -84,6 +84,10 @@ def test_the_conftest_collects_without_xdist_installed():
 _TORCH_FREE_MODULES_WITH_TORCH_REACHING_BODIES = (
     "test_hardware_byte_grid.py",
     "test_serving_native_extensions.py",
+    # The forest-body roster: the refusal lives in ``alphabet``, so this
+    # module's import is torch-free, and two bodies read the other home of
+    # the same fact out of ``export`` (tessera#285).
+    "test_forest_grid_roster.py",
 )
 
 
