@@ -84,7 +84,15 @@ def test_a_partial_trailing_superblock_gets_its_own_granule():
 
 
 def test_a_granule_counts_are_the_true_per_superblock_sums():
-    """Not a spread of the total: the sum over each superblock's own columns."""
+    """Not a spread of the total: the sum over each superblock's own columns.
+
+    BODY is cut per superblock in both layouts.  COMPLETION was, under minors
+    0-6, and still is under ``PlaneLayout.LEGACY``; since minor 7 it is cut
+    per depth level (schema 1h), and the level counts are the same kind of
+    true sum -- over the columns that *have* that level, not a spread.
+    """
+    from tessera.planes import PlaneLayout
+
     geometry = Geometry(
         rows=4,
         columns=20,
@@ -99,6 +107,18 @@ def test_a_granule_counts_are_the_true_per_superblock_sums():
     spec = TerminalSpec("t", tuple(3 - rate for rate in rates), with_scale_base=False)
     planes = build_planes(geometry, rates, ALPHABET_BLOB, DESCENDANT_BLOB, spec=spec)
     by_kind = {plane.kind: plane for plane in planes}
+    assert by_kind[PlaneKind.BODY].counts == _true_body_counts(rates, 4, 1, 8)
+    # Widths 3 - rate: four columns of 2 and four of 0 in the first eight,
+    # eight of 1 in the next eight, two of 2 and two of 0 in the last four.
+    # Level 1 is held by 4 + 8 + 2 = 14 columns, level 2 by 4 + 0 + 2 = 6,
+    # at 4 steps each.
+    assert by_kind[PlaneKind.COMPLETION].counts == (4 * 14, 4 * 6)
+
+    legacy = build_planes(
+        geometry, rates, ALPHABET_BLOB, DESCENDANT_BLOB, spec=spec,
+        layout=PlaneLayout.LEGACY,
+    )
+    by_kind = {plane.kind: plane for plane in legacy}
     assert by_kind[PlaneKind.BODY].counts == _true_body_counts(rates, 4, 1, 8)
     assert by_kind[PlaneKind.COMPLETION].counts == (
         sum(3 - rate for rate in rates[0:8]) * 4,
@@ -316,7 +336,7 @@ def geometry_plane_order():
 def test_d2_terminal_must_cut_at_a_superblock_quota_boundary():
     """``planes.py`` declares the last non-empty plane is cut at a
     per-superblock quota boundary; nothing enforced it."""
-    with pytest.raises(ManifestError, match="quota boundary"):
+    with pytest.raises(ManifestError, match="granule boundary"):
         _manifest_with_terminal_body_count(50)
 
 

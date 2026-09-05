@@ -180,14 +180,20 @@ their containers do not change.
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
-declares one terminal per unit, and the wire refuses a shorter one added to an
-encode before the reader is consulted (the D5 plane order puts the scale index
-after COMPLETION, and COMPLETION is cut by superblock, not by depth). The
-multi-terminal truncation ladder is a capability of the layout and container
-layers only; whether it is planned or retired is tessera#144, priced in
-`docs/reports/tessera-terminal-ladder-2026-09-04.md` and pinned by
-`tests/test_audit_container_accounting.py`. No release note may claim
-truncatable artifacts until that decision moves the wire.
+declares one terminal per unit, at the depth it used. Since schema minor 7
+(2026-09-05, tessera#144) the wire *can* carry a shorter rung on that encode:
+the D5 plane order puts COMPLETION behind every plane a decode needs and
+ahead of RELEASE only, and COMPLETION is cut by depth level, so a shallower
+completion rung is a byte prefix (`docs/schema/prismaquant.tessera.v1.md`
+§1h; `tests/test_audit_container_accounting.py` lays one on the exporter's
+bytes and reads it back). Whether the exporter writes a ladder is a separate
+decision, and on today's recipe table (every default rung at `completion=0`)
+there is no rung to shorten: no release note may claim truncatable artifacts,
+and nothing has measured that truncation is worth bytes anywhere
+(`docs/reports/tessera-terminal-ladder-2026-09-04.md`). Every artifact this
+tree writes is minor 7; minors 0–6 read unchanged (`tests/test_ladder_wire.py`
+holds the reader to eleven pre-change artifacts under `tests/data/legacy/`),
+and the encoder identity moved with the terminal records.
 
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
 per unit, checked by `experiments/check_wire_against_plan.py`. A plan that
@@ -211,7 +217,8 @@ The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 at fixed arguments and the result is hashed, so the value moves exactly when
 the encoder's output moves and never when a comment or a refactor does. It is
 a sibling of the profile id and never an input to it. It rides in the manifest
-at schema minor 6 and in `tessera_config.json`; `merge_tessera_parts.py`
+from schema minor 6 (minor 7 carries the same field) and in
+`tessera_config.json`; `merge_tessera_parts.py`
 compares the stamped value across parts. `encoder_identity.resumable` states
 the rule for whether a cached unit may be reused. The explicit expert-cache
 intake below calls it and pays the memoized CPU fixture once; merge guards
@@ -225,7 +232,8 @@ Issue #87 is the first post-identity encoder move: a CHANNEL row raised to the
 body's reach now lands that lower bound upward instead of rounding below it by
 one fp16 ulp. The behaviour-derived identity moves as a consequence, so a
 default artifact written by this encoder carries `encoder_fixture_id` and uses
-the already-defined minor-6 envelope; minor 6 is the identity-bearing
+the already-defined minor-6 envelope (minor 7 since tessera#144, which
+carries the same field); minor 6 is the identity-bearing
 container, not a new reach-floor field or a wider reach schema. An untagged
 artifact names the pre-#87 encoder and `encoder_identity.resumable` refuses it
 under the new encoder. Tests that assert an older record minor explicitly ask

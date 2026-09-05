@@ -26,6 +26,7 @@ import torch
 
 from tessera.alphabet import E2M1_GRID, build_forest, tuple_grid
 from tessera.container import parse
+from tessera.planes import PlaneLayout
 from tessera.decode import reconstruct_unit, replay_body
 from tessera.encode import (
     _pack_scales_lut,
@@ -193,7 +194,7 @@ def test_wire_round_trip_at_span_two_over_a_lut_plane(q256, diagonals):
     # This test pins the span record's minor, independently of the encoder
     # identity stamped by a default production build.
     _, region, blob = build_unit_artifact(
-        unit, "unit0", FORESTS1, q256, CODE, fixture_id=None
+        unit, "unit0", FORESTS1, q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS1, CODE))
     art = parse(blob)
@@ -236,7 +237,7 @@ def test_span_one_over_s6b_is_still_a_minor_zero_artifact():
     unit = encode_unit(w, FORESTS2, (7,) * 512, CODE)
     assert unit.span == 1 and unit.scale_plane is ScalePlaneKind.S6B
     manifest, _, blob = build_unit_artifact(
-        unit, "unit0", FORESTS2, 7 * 256, CODE, fixture_id=None
+        unit, "unit0", FORESTS2, 7 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob[10] == 0
     assert manifest.schema_minor == 0

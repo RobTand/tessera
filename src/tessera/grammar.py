@@ -39,6 +39,7 @@ __all__ = [
     "C_FULL_BITS",
     "alphabet_size",
     "completion_capacity",
+    "completion_level_counts",
     "forest_plane_bytes",
     "descendant_set_size",
     "bresenham_rate_schedule",
@@ -161,6 +162,30 @@ def completion_limit_from_elements(
         if sum(min(limit, c) for c in caps) * steps == elements:
             return None if limit == ceiling else limit
     return _unrecoverable(elements, steps)
+
+
+def completion_level_counts(
+    widths: "tuple[int, ...]", steps: int
+) -> "tuple[int, ...]":
+    """Per-level element counts of a level-major COMPLETION plane (minor 7).
+
+    Level ``l`` holds one bit -- bit ``l`` of the position's completion word,
+    counted from the most significant -- for every column whose width reaches
+    ``l``, at every trellis step.  The running prefix sum through level ``l``
+    is therefore ``sum(min(l, c_j)) * steps``: exactly the count
+    :func:`completion_limit_from_elements` already inverts, which is what lets
+    a terminal cut at a level boundary declare its depth with no new field.
+    A plane written at depth 0 has no levels and declares no granules.
+    """
+    if steps < 0:
+        raise GrammarError(f"negative step count: {steps}")
+    if any(width < 0 for width in widths):
+        raise GrammarError(f"negative completion width in {widths}")
+    depth = max(widths, default=0)
+    return tuple(
+        steps * sum(1 for width in widths if width >= level)
+        for level in range(1, depth + 1)
+    )
 
 
 def _unrecoverable(elements: int, steps: int):

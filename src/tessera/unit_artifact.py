@@ -55,10 +55,19 @@ from .manifest import (
     ScalePlane,
     ScalePlaneKind,
 )
-from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
+from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
 from .scale_channel import default_channel_sigma
 from .trellis import ConvCode, _ODS_GENERATORS
-from .wire import pack_body, pack_fp16, pack_uniform, unpack_body, unpack_fp16, unpack_uniform
+from .wire import (
+    pack_body,
+    pack_fp16,
+    pack_levels,
+    pack_uniform,
+    unpack_body,
+    unpack_fp16,
+    unpack_levels,
+    unpack_uniform,
+)
 
 __all__ = ["build_unit_artifact", "read_unit_artifact", "encoder_profile_id"]
 
@@ -329,6 +338,7 @@ def build_unit_artifact(
     alignment_bytes: int = 1,
     container: ContainerClass = ContainerClass.GRIDBOOK,
     fixture_id: "bytes | None | object" = _AUTO,
+    layout: PlaneLayout = PlaneLayout.LADDER,
 ):
     """Serialise one encoded Linear.  Returns ``(manifest, region, blob)``.
 
@@ -339,6 +349,15 @@ def build_unit_artifact(
     of itself.  Pass an explicit value only to reproduce another encoder's
     bytes; ``None`` writes no field and therefore the minor the artifact would
     have had before the field existed.
+
+    ``layout`` is the wire (``planes.PlaneLayout``): the default is the
+    current one, minor 7.  ``LEGACY`` reproduces a minor 0-6 artifact byte
+    for byte -- the old plane order and the superblock-cut, per-position
+    COMPLETION packing -- and is a parameter rather than a patched constant
+    because ``encoder_identity`` memoises the first identity it resolves for
+    the whole process, so a patched default would bind the fixtures too.
+    It exists so a test can build the artifact a reader must still read; the
+    exporter never passes it.
     """
     # Every per-code plane is one row per CODE, and a code covers ``arity``
     # consecutive rows of the weight.  ``geometry`` is declared in **weight**
@@ -493,6 +512,7 @@ def build_unit_artifact(
         else None
     )
     has_diagonals = unit.diagonals is not None
+    layout = PlaneLayout(layout)
     payloads = {
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
@@ -503,7 +523,14 @@ def build_unit_artifact(
         # against is their one home (tessera#183, M10's neighbours).
         PlaneKind.SCALE_BASE: pack_uniform(
             unit.scale_base, NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE]),
-        PlaneKind.COMPLETION: pack_body(unit.completion_bits, widths),
+        # Level-major since minor 7, so a shallower rung is a byte prefix of
+        # the plane; per-position words, column-major, is what minors 0-6
+        # wrote (``wire.pack_levels`` says why the order changed).
+        PlaneKind.COMPLETION: (
+            pack_levels(unit.completion_bits, widths)
+            if layout is PlaneLayout.LADDER
+            else pack_body(unit.completion_bits, widths)
+        ),
         PlaneKind.SCALE_REFINE: pack_uniform(
             unit.scale_refine, NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE]),
         # ``RELEASE_BITS``, not a literal: the descriptor's element width
@@ -564,6 +591,7 @@ def build_unit_artifact(
         with_row_scale=row_scale,
         state_bits=state_bits,
         release_counts=release_counts,
+        layout=layout,
     )
     region = build_plane_region(planes, payloads)
     terminal = build_terminal(
@@ -604,6 +632,7 @@ def build_unit_artifact(
         shard=shard,
         reach=reach,
         encoder_fixture_id=_resolve_fixture_id(fixture_id),
+        layout=layout,
     )
     return manifest, region, serialize(manifest, region)
 
@@ -778,10 +807,14 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         # BODY stays uint8 -- the replay is bandwidth-bound over it -- but
         # COMPLETION indexes the reachable-descendant table, and a uint8 index
         # tensor is a *boolean mask* in torch, not an integer index.  The two
-        # planes share a reader and must not share a dtype.
-        completion_bits=unpack_body(
-            chunks[PlaneKind.COMPLETION], widths, steps, device
-        ).long(),
+        # planes must not share a dtype.  Which packing the plane is in is
+        # the header minor's to say (``manifest.layout``): level-major from
+        # minor 7, per-position words before it.
+        completion_bits=(
+            unpack_levels(chunks[PlaneKind.COMPLETION], widths, steps, device)
+            if manifest.layout is PlaneLayout.LADDER
+            else unpack_body(chunks[PlaneKind.COMPLETION], widths, steps, device).long()
+        ),
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,

@@ -25,9 +25,13 @@ from .exact import bits_to_bytes
 
 __all__ = [
     "PlaneKind",
+    "PlaneLayout",
     "NORMATIVE_ELEMENT_BITS",
     "SHARD_PLANE_ORDER",
+    "LEGACY_PLANE_ORDER",
+    "LEGACY_SHARD_PLANE_ORDER",
     "plane_order",
+    "layout_of",
     "IndexDomain",
     "Storage",
     "BitOrder",
@@ -53,29 +57,62 @@ class PlaneKind(IntEnum):
     INITIAL_STATE = 9  # shard: the trellis state each column starts from
 
 
-#: Wire order, which is also the truncation order (schema 1a decision D5).
+class PlaneLayout(IntEnum):
+    """Which wire order, and which COMPLETION cut, an artifact's planes use.
+
+    Not a wire field: the container's schema minor implies it (``LEGACY`` for
+    minors 0-6, ``LADDER`` from minor 7), and ``Manifest.decode`` sets it from
+    the header.  It is a value rather than a boolean so a third layout, if one
+    is ever needed, has a name and not a negation.
+    """
+
+    #: Minors 0-6: COMPLETION sits between SCALE_BASE and DIAG_SU and is cut
+    #: by superblock of columns at full depth.  Read, never written, since
+    #: minor 7 -- except by ``layout=PlaneLayout.LEGACY``, which reproduces a
+    #: pre-minor-7 artifact byte for byte and exists so a test can build one.
+    LEGACY = 0
+    #: Minor 7 (2026-09-05): COMPLETION sits after SCALE_REFINE, ahead of
+    #: RELEASE only, and is cut by depth level (``CountGranularity.PER_LEVEL``),
+    #: so a shallower completion rung is a byte prefix of the plane.
+    LADDER = 1
+
+
+#: Wire order, which is also the truncation order (schema 1a decision D5, as
+#: revised at minor 7 -- ``PlaneLayout.LADDER``).
 #:
-#: A terminal is a prefix of this sequence, with the last non-empty plane cut at
-#: a per-superblock quota boundary.  The order is forced by the terminal classes
-#: of doc S6: T-po2 is body + po2 base + partial completion, T-C3 adds C-full,
-#: and T-nvfp4-class adds the refinement and release planes on top.  The two
-#: blob planes lead because nothing else decodes without them.
+#: A terminal is a prefix of this sequence, with the last non-empty plane cut
+#: at a granule boundary (a superblock of BODY, a depth level of COMPLETION).
+#: The order is forced by what a truncated reading needs: everything a decode
+#: at *any* completion depth consumes -- the two blob planes, the body, the
+#: block scales (S6b base and its refinement, or the LUT plane's index nibble
+#: on SCALE_REFINE), the diagonals, a CHANNEL plane's row scale on DIAG_SV --
+#: precedes COMPLETION, so cutting the completion axis short keeps every one
+#: of them.  RELEASE follows COMPLETION and nothing else could: §9 places
+#: releases by ranking the pre-release decode at the *written* depth
+#: (``unit_artifact._release_placement``), so a shallower COMPLETION reading
+#: moves the positions the RELEASE codes land on, and a rung that shortens
+#: COMPLETION cannot keep RELEASE.  The prefix rule then forces RELEASE last.
 #:
-#: The classes are what the order makes *possible*, not what an encode carries:
-#: ``unit_artifact.build_unit_artifact`` declares one terminal, of the
-#: T-nvfp4 class, so a written unit has a single legal length.  This order is
-#: also the first thing that stops a shorter terminal being added to one: the
-#: LUT plane's index (SCALE_REFINE) sits after COMPLETION, so no terminal can
-#: shorten the completion axis and keep the scales (schema §3c, tessera#144).
+#: The consequence for doc S6's terminal classes: T-po2 (body + po2 base and
+#: nothing after) is still a prefix; "completion without refinement" no longer
+#: is, because the refinement now leads the completion axis.  The ladder a
+#: writer *may* declare runs po2 base -> block scales (+ diagonals) ->
+#: completion depth 1..c -> release.  What a writer *does* declare is its own
+#: business: ``unit_artifact.build_unit_artifact`` still declares exactly one
+#: terminal, at the depth the encoder used (schema §3c, tessera#144).
+#:
+#: Every plane an artifact today's recipe table writes is empty at COMPLETION,
+#: so the plane *region* of such a unit is byte-identical under either order;
+#: only the manifest's descriptor order and the terminal's count array move.
 CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
     PlaneKind.ALPHABET,
     PlaneKind.DESCENDANT,
     PlaneKind.BODY,
     PlaneKind.SCALE_BASE,
-    PlaneKind.COMPLETION,
     PlaneKind.DIAG_SU,
     PlaneKind.DIAG_SV,
     PlaneKind.SCALE_REFINE,
+    PlaneKind.COMPLETION,
     PlaneKind.RELEASE,
 )
 
@@ -93,10 +130,43 @@ CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
 #: table the body indexes.
 #:
 #: A whole unit never writes this plane, so ``CANONICAL_PLANE_ORDER`` is
-#: unchanged and every artifact written before this schema minor is
-#: byte-identical -- including its ``plane_elements`` count array, which stays
+#: unchanged by it and a whole unit's ``plane_elements`` count array stays
 #: nine entries long.
 SHARD_PLANE_ORDER: tuple[PlaneKind, ...] = (
+    PlaneKind.ALPHABET,
+    PlaneKind.DESCENDANT,
+    PlaneKind.INITIAL_STATE,
+    PlaneKind.BODY,
+    PlaneKind.SCALE_BASE,
+    PlaneKind.DIAG_SU,
+    PlaneKind.DIAG_SV,
+    PlaneKind.SCALE_REFINE,
+    PlaneKind.COMPLETION,
+    PlaneKind.RELEASE,
+)
+
+
+#: The orders every artifact written at minors 0-6 uses (``PlaneLayout.LEGACY``):
+#: COMPLETION between SCALE_BASE and DIAG_SU.  Kept verbatim so those bytes
+#: keep meaning what they meant, and so a test can write one.  The position
+#: was doc S6's: T-po2 = body + po2 base + partial completion, T-C3 adds
+#: C-full, T-nvfp4-class adds refinement and release -- a ladder in which a
+#: LUT plane's index nibble sat *after* the completion axis, which is what
+#: made every completion rung un-truncatable on the wire the recipe table
+#: writes (the first obstacle of tessera#144).
+LEGACY_PLANE_ORDER: tuple[PlaneKind, ...] = (
+    PlaneKind.ALPHABET,
+    PlaneKind.DESCENDANT,
+    PlaneKind.BODY,
+    PlaneKind.SCALE_BASE,
+    PlaneKind.COMPLETION,
+    PlaneKind.DIAG_SU,
+    PlaneKind.DIAG_SV,
+    PlaneKind.SCALE_REFINE,
+    PlaneKind.RELEASE,
+)
+
+LEGACY_SHARD_PLANE_ORDER: tuple[PlaneKind, ...] = (
     PlaneKind.ALPHABET,
     PlaneKind.DESCENDANT,
     PlaneKind.INITIAL_STATE,
@@ -110,15 +180,41 @@ SHARD_PLANE_ORDER: tuple[PlaneKind, ...] = (
 )
 
 
-def plane_order(has_initial_state: bool) -> "tuple[PlaneKind, ...]":
-    """The wire/truncation order for a unit, by whether it carries a state.
+def plane_order(
+    has_initial_state: bool, layout: PlaneLayout
+) -> "tuple[PlaneKind, ...]":
+    """The wire/truncation order for a unit: by its state plane and its layout.
 
     Every consumer that indexes ``TerminalRecord.plane_elements`` positionally
     -- the container's ``plane_ranges`` and ``verify_plane_region``, the
-    accountant, the layout builder, the reader -- takes its order from here,
-    so the two orders cannot drift apart in one of them.
+    accountant, the layout builder, the reader -- takes its order from here
+    (through ``Manifest.plane_order``, which knows both arguments), so the
+    four orders cannot drift apart in one of them.  ``layout`` has no default
+    on purpose: a caller that does not know which wire it is on must not be
+    handed the current one.
     """
-    return SHARD_PLANE_ORDER if has_initial_state else CANONICAL_PLANE_ORDER
+    if PlaneLayout(layout) is PlaneLayout.LADDER:
+        return SHARD_PLANE_ORDER if has_initial_state else CANONICAL_PLANE_ORDER
+    return LEGACY_SHARD_PLANE_ORDER if has_initial_state else LEGACY_PLANE_ORDER
+
+
+def layout_of(kinds, has_initial_state: bool) -> PlaneLayout:
+    """Which layout a full descriptor sequence is in, or a refusal.
+
+    For a caller holding every plane's descriptor in wire order -- the layout
+    builder's output -- the sequence itself says which wire it is on, so
+    ``build_terminal`` derives the layout here rather than taking it as a
+    second parameter that could disagree with the first.
+    """
+    kinds = tuple(kinds)
+    for layout in PlaneLayout:
+        if kinds == plane_order(has_initial_state, layout):
+            return layout
+    raise PlaneLayoutError(
+        f"plane sequence {[kind.name for kind in kinds]} is neither the "
+        f"{'shard' if has_initial_state else 'whole-unit'} wire order of "
+        f"{[layout.name for layout in PlaneLayout]}"
+    )
 
 
 #: Normative per-plane element width (schema 1a, review finding F3).
@@ -157,6 +253,11 @@ class CountGranularity(IntEnum):
     WHOLE_PLANE = 0
     PER_SUPERBLOCK = 1
     PER_BLOCK = 2
+    #: Minor 7: one granule per completion depth level, the plane laid out
+    #: level-major (``wire.pack_levels``).  A COMPLETION plane under
+    #: ``PlaneLayout.LADDER`` declares this and nothing else does; a plane
+    #: written at depth 0 has no levels and declares no granules.
+    PER_LEVEL = 3
 
 
 class PayloadDtype(IntEnum):
@@ -273,7 +374,11 @@ class PlaneDescriptor:
                     f"{self.kind.name}: WHOLE_PLANE granularity declares "
                     f"{len(self.counts)} counts, expected exactly 1"
                 )
-        elif not self.counts:
+        elif not self.counts and self.count_granularity is not CountGranularity.PER_LEVEL:
+            # A superblock-cut plane always spans at least one superblock, so
+            # an empty count vector there describes nothing.  A level-cut
+            # plane at depth 0 has no levels: the empty vector is its exact
+            # description, and ``element_count`` is 0.
             raise PlaneLayoutError(
                 f"{self.kind.name}: {self.count_granularity.name} granularity "
                 "declares no granules"

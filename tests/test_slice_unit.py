@@ -68,11 +68,13 @@ from tessera.layout import (
     shard_granularity,
     slice_unit,
 )
+from tessera.container import SCHEMA_MINOR
 from tessera.manifest import BodyKind, ScalePlaneKind, ShardOrigin
 from tessera.planes import (
     CANONICAL_PLANE_ORDER,
     SHARD_PLANE_ORDER,
     PlaneKind,
+    PlaneLayout,
     plane_order,
 )
 from tessera.trellis import TCQ, ConvCode
@@ -81,27 +83,36 @@ from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
 CODE = ConvCode(memory=6)
 GRIDS = {g.name: g for g in SERIALISABLE_GRIDS.values()}
 
-#: The bytes the post-#87 encoder writes for three small units, one per shipping
-#: wire recipe.  The reach landing moved the behaviour-derived encoder identity,
-#: so these include that identity in the existing minor-6 envelope; their
-#: payload and envelope are pinned together because those are the bytes served.
+#: The bytes the encoder writes for three small units, one per shipping wire
+#: recipe, in the minor-7 envelope (tessera#144): the COMPLETION descriptor
+#: moved behind SCALE_REFINE, the header minor byte is 7, and the
+#: behaviour-derived encoder identity moved with them.  Their payload and
+#: envelope are pinned together because those are the bytes served.
 CURRENT_ENCODER_UNIT_DIGESTS = {
     "e4m3-window-channel": (
-        "00fe4f529499a0731a3cf790039cd9b4fc9bfadfa020b6496e91d2f1b78d445e", 21194),
+        "26e006ff7e8ab53332ddd69c745b489ee42f9b116d409aeff7a21713a5c7bd3e", 21192),
     "e2m1-tcq-lut-release": (
-        "5761de4132f951f526556ebac79aa2520c1b47badc559c8690223ed2f1998f67", 8435),
+        "0087d4081d8a2fcda249f009c4aa87efb7ca72480ba0d041bfe3b6c6420c971e", 8431),
     "e2m1x2-subcap-window-lut": (
-        "1573acfc0ac5ff28ae2be9f46d8a8123ac3a8fa4e8feb344272551843f1d3731", 8094),
+        "200948c181bc57b9797cfbd52bf7c7940e66e74a7c0e76f4becab307cee3c99e", 8092),
 }
 
 #: The same, for the encoder-free artifact ``conftest.make_artifact`` builds --
 #: the one that exercises the layout, manifest and container alone, which is
-#: precisely the code this schema minor touches.
-HEAD_LAYOUT_DIGESTS = {
-    (512, 8, 32, 8):
+#: precisely the code a schema minor touches.  The LEGACY rows are the
+#: constants pinned at minor 6, untouched: the minor 0-6 writer still writes
+#: them byte for byte.  The LADDER rows are what minor 7 writes for the same
+#: payloads -- the COMPLETION descriptor moved and the header minor byte
+#: reads 7 -- derived by building them, never by editing the constant.
+LAYOUT_DIGESTS = {
+    (PlaneLayout.LEGACY, 512, 8, 32, 8):
         "cb39f35e686e8858485917c81ab4c53c3b1464d83559ac49dcbbda24fdd783a3",
-    (640, 16, 64, 16):
+    (PlaneLayout.LEGACY, 640, 16, 64, 16):
         "0e88573aaa13af73d8fc13d8dab0a16b5f52257f70085493ee5f20bd30b73787",
+    (PlaneLayout.LADDER, 512, 8, 32, 8):
+        "db62a1ef6896890c54bb5d82b3319a377526a1be0ad34fea4d827b315c84cad1",
+    (PlaneLayout.LADDER, 640, 16, 64, 16):
+        "232154ae4d05dd579f29da520abb8d7f0ac81d5ee44bdfdcfbdd455d0142863b",
 }
 
 #: The shipped Qwen3-0.6B E4M3 checkpoint: real units at the shipping wire.
@@ -187,23 +198,27 @@ def _s6b_unit(device=DEVICE, rows=32):
 # ------------------------------------------------- nothing at offset 0 moved
 
 
-@pytest.mark.parametrize("key,digest", sorted(HEAD_LAYOUT_DIGESTS.items()))
-def test_layout_bytes_are_what_head_wrote(key, digest):
-    """The encoder-free artifact is byte-identical across the schema bump.
+@pytest.mark.parametrize("key,digest", sorted(LAYOUT_DIGESTS.items()))
+def test_layout_bytes_are_what_each_layout_writes(key, digest):
+    """The encoder-free artifact is pinned per plane layout.
 
     ``make_artifact`` builds a complete unit out of fixed payloads through
     ``build_planes`` / ``build_terminal`` / ``Manifest.encode`` / ``serialize``
-    -- every file this minor touches and no encoder at all.  A minor that
-    added a tenth plane descriptor, or a tenth entry to every count array,
-    would move these hashes; this one does not, because a whole unit still
-    writes the nine-plane canonical order it always wrote.
+    -- every file a schema minor touches and no encoder at all.  Minor 7
+    moved these bytes on purpose (the COMPLETION descriptor now follows
+    SCALE_REFINE, and the header says 7), so the LADDER rows are new; the
+    LEGACY rows are the minor-6 constants, and ``layout=PlaneLayout.LEGACY``
+    must still write them exactly -- that is the reader's compatibility
+    promise seen from the writer's side.
     """
     from conftest import make_artifact
 
-    q256, rows, columns, superblock = key
+    layout, q256, rows, columns, superblock = key
     _m, _region, blob = make_artifact(
-        q256=q256, rows=rows, columns=columns, superblock_columns=superblock
+        q256=q256, rows=rows, columns=columns, superblock_columns=superblock,
+        layout=layout,
     )
+    assert blob[10] == (SCHEMA_MINOR if layout is PlaneLayout.LADDER else 0)
     assert hashlib.sha256(blob).hexdigest() == digest
 
 
@@ -252,7 +267,8 @@ def test_shipped_checkpoint_units_reparse_identically():
             manifest.branch.root_q256, parsed.code or CODE,
             superblock=manifest.geometry.superblock_columns,
             container=manifest.branch.container,
-            fixture_id=manifest.encoder_fixture_id)
+            fixture_id=manifest.encoder_fixture_id,
+            layout=manifest.layout)
         assert again == member.blob, member.name
 
 
@@ -365,7 +381,7 @@ def test_shard_round_trips_through_bytes(units, label, axis):
             assert state is not None
             assert state.element_count == back.manifest.geometry.columns
             assert back.manifest.plane_order is SHARD_PLANE_ORDER
-            assert back.manifest.schema_minor == 4
+            assert back.manifest.schema_minor == SCHEMA_MINOR
         else:
             assert state is None
             assert back.manifest.plane_order is CANONICAL_PLANE_ORDER
@@ -1380,12 +1396,19 @@ def test_can_shard_matches_what_slice_unit_accepts(units):
 
 def test_plane_order_is_the_only_place_the_two_orders_live():
     """The shard order is the canonical order with one plane wedged in ahead
-    of BODY -- the only position a legal truncation cannot separate them."""
-    assert plane_order(False) is CANONICAL_PLANE_ORDER
-    assert plane_order(True) is SHARD_PLANE_ORDER
-    assert PlaneKind.INITIAL_STATE not in CANONICAL_PLANE_ORDER
-    assert [k for k in SHARD_PLANE_ORDER if k is not PlaneKind.INITIAL_STATE] == list(
-        CANONICAL_PLANE_ORDER
+    of BODY -- the only position a legal truncation cannot separate them.
+    True of both layouts: the minor-7 pair and the minor 0-6 pair it reads."""
+    from tessera.planes import (
+        LEGACY_PLANE_ORDER, LEGACY_SHARD_PLANE_ORDER, PlaneLayout,
     )
-    body = SHARD_PLANE_ORDER.index(PlaneKind.BODY)
-    assert SHARD_PLANE_ORDER.index(PlaneKind.INITIAL_STATE) == body - 1
+
+    for layout, whole, shard in (
+        (PlaneLayout.LADDER, CANONICAL_PLANE_ORDER, SHARD_PLANE_ORDER),
+        (PlaneLayout.LEGACY, LEGACY_PLANE_ORDER, LEGACY_SHARD_PLANE_ORDER),
+    ):
+        assert plane_order(False, layout) is whole
+        assert plane_order(True, layout) is shard
+        assert PlaneKind.INITIAL_STATE not in whole
+        assert [k for k in shard if k is not PlaneKind.INITIAL_STATE] == list(whole)
+        body = shard.index(PlaneKind.BODY)
+        assert shard.index(PlaneKind.INITIAL_STATE) == body - 1

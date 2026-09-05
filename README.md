@@ -146,11 +146,12 @@ The exhaustive tests are the point. Four results worth naming:
   all 101 tests passed. Every terminal now carries a digest of its own byte
   prefix, plane digests cover real bytes, padding is forced zero, and a terminal
   must be a genuine *prefix* — the property the truncation contract rested on
-  and nothing checked. Scope: this is the layout and container layer. The
-  encoder declares one terminal per unit, so no artifact Tessera ships is
-  truncatable today; the ladder is exercised by artifacts the tests lay out
-  directly, and the wire itself refuses a shorter terminal added to an encode
-  (schema §3c; tessera#144).
+  and nothing checked. Scope: the encoder declares one terminal per unit, so
+  no artifact Tessera ships is truncatable today. Since schema minor 7 the
+  wire can carry a shorter completion rung on an encode — the plane order and
+  the COMPLETION cut were the obstacles (schema §1h, §3c) — but whether the
+  exporter writes one is a separate decision, and nothing has measured that
+  it would be worth bytes (tessera#144).
 
 - **All 65,536 §6b words classified**, legal-set digest frozen at
   `da398624…a1b3`. The codec reaches **all seven** positive E4M3FN subnormals

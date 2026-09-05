@@ -20,7 +20,7 @@ from tessera.layout import (  # noqa: E402
     build_planes,
     build_terminal,
 )
-from tessera.planes import PlaneKind  # noqa: E402
+from tessera.planes import PlaneKind, PlaneLayout  # noqa: E402
 from tessera.manifest import (  # noqa: E402
     ArrangementMode,
     BranchIdentity,
@@ -45,8 +45,20 @@ def make_geometry(rows=8, columns=32, superblock_columns=8):
     )
 
 
-def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8):
-    """Build a complete, self-consistent artifact plus its terminal ladder."""
+def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8,
+                  layout=PlaneLayout.LADDER):
+    """Build a complete, self-consistent artifact plus its terminal ladder.
+
+    The ladder is the one the layout's wire order admits.  Under the minor-7
+    order (``planes.CANONICAL_PLANE_ORDER``): T-po2 keeps the po2 base and
+    nothing after it; T-C3 adds the diagonals, the refinement and the whole
+    completion axis and stops short of RELEASE; T-nvfp4 adds the releases.
+    Under the minor 0-6 order (``PlaneLayout.LEGACY``) T-C3 is "completion
+    without refinement" -- a prefix there, and no longer one once the scale
+    index leads the completion axis -- so ``layout=PlaneLayout.LEGACY``
+    builds exactly the artifact this helper built before minor 7, byte for
+    byte (``test_slice_unit.LAYOUT_DIGESTS`` holds it to that).
+    """
     geometry = make_geometry(rows, columns, superblock_columns)
     root = root_from_q256(q256)
     rates = bresenham_rate_schedule(root, columns)
@@ -61,19 +73,22 @@ def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8):
         DESCENDANT_BLOB,
         max_released=4,
         payloads=payloads,
+        layout=layout,
     )
     plane_region = build_plane_region(planes, payloads)
 
+    full = tuple(3 - rate for rate in rates)
+    if layout is PlaneLayout.LADDER:
+        c3 = TerminalSpec("t-c3", full, with_scale_base=True,
+                          with_scale_refine=True, with_diagonals=True)
+    else:
+        c3 = TerminalSpec("t-c3", full, with_scale_base=True)
     specs = [
         TerminalSpec("t-po2", (0,) * columns, with_scale_base=True),
-        TerminalSpec(
-            "t-c3",
-            tuple(3 - rate for rate in rates),
-            with_scale_base=True,
-        ),
+        c3,
         TerminalSpec(
             "t-nvfp4",
-            tuple(3 - rate for rate in rates),
+            full,
             released_positions=4,
             with_scale_base=True,
             with_scale_refine=True,
@@ -107,6 +122,7 @@ def make_artifact(q256=512, rows=8, columns=32, superblock_columns=8):
         planes=planes,
         terminals=terminals,
         payload_digest=hashlib.sha256(plane_region).digest(),
+        layout=layout,
     )
     return manifest, plane_region, serialize(manifest, plane_region)
 

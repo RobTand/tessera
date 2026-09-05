@@ -109,7 +109,12 @@ The remaining four:
   at is the same encoder, looked at harder.  That preserves the identity of unchanged artifacts without hiding the
   newly-covered byte move.  The baseline is measured history and is never
   bumped; a true rollback removes the contribution again, so the identity
-  rolls back if and only if every other fixture output does too.
+  rolls back if and only if every other fixture output does too.  Since
+  schema minor 7 (tessera#144) every witness contributes: the plane layout
+  moved every fixture's terminal record, so no live contribution matches a
+  baseline measured under minors 0-6.  That is the encoder's output moving
+  for every artifact, which is what the identity is for; the baselines stay
+  as recorded.
 * **Device.**  The fixtures run on CPU by construction, so the digest is one
   value for the fleet rather than one per accelerator.  Nothing about that is
   left to the environment: every accelerated branch dispatches on the *tensor's*

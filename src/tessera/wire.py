@@ -33,6 +33,8 @@ __all__ = [
     "unpack_uniform",
     "pack_body",
     "unpack_body",
+    "pack_levels",
+    "unpack_levels",
     "pack_fp16",
     "unpack_fp16",
     "scales_from_planes",
@@ -213,6 +215,87 @@ def unpack_body(
             continue
         take = _body_bits(rate, rows, span)
         out[:, column] = _column_from_bits(bits[cursor : cursor + take], rate, span, rows)
+        cursor += take
+    return torch.from_numpy(out).to(device or "cpu")
+
+
+def _level_columns(widths: np.ndarray, level: int) -> np.ndarray:
+    """The columns whose completion word reaches ``level`` (1-based), in
+    schedule order -- the columns a level-major level holds a bit for."""
+    return np.nonzero(widths >= level)[0]
+
+
+def pack_levels(completion_bits: torch.Tensor, widths: "tuple[int, ...]") -> bytes:
+    """Pack the COMPLETION plane level-major (schema minor 7).
+
+    For each depth level ``l = 1..max(widths)``, for each column whose width
+    reaches ``l`` (schedule order), every step: bit ``l`` of that position's
+    completion word, counted from the most significant.  The descendant map
+    is a tree read most-significant-bit first, so the first ``l`` levels of
+    the plane are exactly the words a depth-``l`` reading needs
+    (``decode.decode_codes_mixed`` shifts the low bits away) -- which is what
+    makes a shallower rung a *byte prefix* of the plane rather than the top
+    bits of every word.  ``pack_body`` (per-position words, column-major)
+    packs the same bits in the order minors 0-6 wrote them.
+    """
+    steps, cols = completion_bits.shape
+    if len(widths) != cols:
+        raise GrammarError(f"{len(widths)} completion widths for {cols} columns")
+    array = completion_bits.detach().cpu().numpy().astype(np.int64)
+    width = np.asarray(widths, dtype=np.int64)
+    if width.size and width.min() < 0:
+        raise GrammarError(f"negative completion width in {widths}")
+    if array.size and (
+        (array < 0).any() or (array >= (np.int64(1) << width)[None, :]).any()
+    ):
+        raise GrammarError(
+            "a completion word is out of range for its column's width: the "
+            "word holds exactly the bits the terminal declares for the column"
+        )
+    chunks = []
+    for level in range(1, int(width.max()) + 1 if width.size else 1):
+        columns = _level_columns(width, level)
+        shift = width[columns] - level
+        bits = ((array[:, columns] >> shift[None, :]) & 1).astype(np.uint8)
+        # Column-major within the level, as every position-domain plane is.
+        chunks.append(bits.T.ravel())
+    return np.packbits(
+        np.concatenate(chunks) if chunks else np.zeros(0, np.uint8), bitorder="big"
+    ).tobytes()
+
+
+def unpack_levels(
+    data: bytes, widths: "tuple[int, ...]", steps: int, device=None
+) -> torch.Tensor:
+    """The inverse of :func:`pack_levels` at the widths a terminal declares.
+
+    ``widths`` are the per-column widths of the reading -- the depth the
+    terminal's COMPLETION count resolves to (``grammar.completion_widths`` at
+    ``completion_limit_from_elements``), not the depth the unit was written
+    at.  A terminal cut at level ``l`` holds exactly the first ``l`` levels,
+    so the plane's content bits are ``sum(widths) * steps`` whichever depth
+    was written, and the words come back ``widths[j]`` bits wide.
+    """
+    if steps < 0:
+        raise GrammarError(f"negative step count: {steps}")
+    width = np.asarray(widths, dtype=np.int64)
+    if width.size and width.min() < 0:
+        raise GrammarError(f"negative completion width in {widths}")
+    total = int(width.sum()) * steps if width.size else 0
+    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
+    bits = raw[:total]
+    if bits.size != total:
+        raise GrammarError(
+            f"COMPLETION needs {total} bits, the plane holds {bits.size}"
+        )
+    refuse_dirty_slack(raw, total, "COMPLETION")
+    out = np.zeros((steps, len(widths)), dtype=np.int64)
+    cursor = 0
+    for level in range(1, int(width.max()) + 1 if width.size else 1):
+        columns = _level_columns(width, level)
+        take = steps * columns.size
+        chunk = bits[cursor : cursor + take].reshape(columns.size, steps).T
+        out[:, columns] = (out[:, columns] << 1) | chunk.astype(np.int64)
         cursor += take
     return torch.from_numpy(out).to(device or "cpu")
 

@@ -24,7 +24,6 @@ relied on:
     (``tests/test_kernel_window.py``);
   * the exporter records the body and replays a config at its own meaning.
 """
-import dataclasses
 import itertools
 from fractions import Fraction
 
@@ -39,7 +38,7 @@ from tessera.alphabet import (
     tuple_grid,
 )
 from tessera.calculator import terminal_rate
-from tessera.container import parse, serialize
+from tessera.container import SCHEMA_MINOR, parse, serialize
 from tessera.decode import decode_codes_mixed, reconstruct_unit, replay_window
 from tessera.encode import (
     encode_unit,
@@ -60,7 +59,7 @@ from tessera.export import (
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
 from tessera.scale_channel import default_channel_sigma, initial_channel_scale
 from tessera.manifest import WINDOW_BITS_MAX, BodyKind, ScalePlaneKind
-from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
+from tessera.planes import PlaneKind, PlaneLayout
 from tessera.trellis import ConvCode
 from tessera.unit_artifact import (
     build_unit_artifact,
@@ -79,7 +78,8 @@ def _weights(rows=64, cols=512, seed=0):
 
 
 def _elements(blob: bytes, kind: PlaneKind) -> int:
-    return parse(blob).terminal.plane_elements[CANONICAL_PLANE_ORDER.index(kind)]
+    art = parse(blob)
+    return art.terminal.plane_elements[art.manifest.plane_order.index(kind)]
 
 
 # ------------------------------------------------------------ the trellis
@@ -278,7 +278,7 @@ def test_wire_round_trip_of_a_window_body(grid, q256, window, plane, diagonals):
     # This assertion pins the WINDOW record's own lowest minor, not the
     # independent encoder-identity envelope.
     manifest, region, blob = build_unit_artifact(
-        unit, "unit0", grid, q256, CODE, fixture_id=None
+        unit, "unit0", grid, q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, grid, None))
     assert blob[10] == 2, "schema minor 2"
@@ -331,7 +331,7 @@ def test_tcq_artifacts_are_byte_identical_and_keep_their_minor():
     assert unit.body is BodyKind.TCQ and unit.window_bits == 0 and unit.window_codes is None
     manifest, _, blob = build_unit_artifact(
         unit, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE,
-        fixture_id=None,
+        fixture_id=None, layout=PlaneLayout.LEGACY,
     )
     assert blob[10] == 0 and manifest.schema_minor == 0
     assert manifest.body is BodyKind.TCQ and manifest.window_bits == 0
@@ -340,13 +340,13 @@ def test_tcq_artifacts_are_byte_identical_and_keep_their_minor():
                         scale_plane=ScalePlaneKind.LUT)
     m2, _, blob2 = build_unit_artifact(
         span2, "unit0", {7: build_forest(7, grid=K2)}, 7 * 256, CODE,
-        fixture_id=None,
+        fixture_id=None, layout=PlaneLayout.LEGACY,
     )
     assert blob2[10] == 1 and m2.schema_minor == 1
     # a minor-2 manifest cannot be squeezed into minor 1
     win = encode_unit(w, K2, (7,) * 512, CODE, body=WINDOW, window_bits=9)
     mw, _, _ = build_unit_artifact(
-        win, "unit0", K2, 7 * 256, CODE, fixture_id=None
+        win, "unit0", K2, 7 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert mw.schema_minor == 2
     with pytest.raises(ManifestError, match="needs minor 2"):
@@ -461,13 +461,11 @@ def test_encode_linear_and_the_config_carry_the_window_body(tmp_path):
     exported = encode_linear(w, grid=K2, q256=6 * 128, name="w", body=WINDOW, window_bits=10,
                              window_seed=7, window_sigma=2.5)
     art = parse(exported.blob)
-    # A non-default reach spelling needs minor 5 (issue #77).  The live header
-    # is minor 6 because this encoder also carries its behaviour identity; take
-    # that sibling field away and the record's own lower bound remains 5.
-    assert exported.blob[10] == art.manifest.schema_minor
-    assert dataclasses.replace(
-        art.manifest, encoder_fixture_id=None
-    ).schema_minor == 5
+    # A non-default reach spelling needs minor 5 (issue #77); the record's own
+    # lower bound is pinned on the LEGACY layout in ``test_profile_reach``.
+    # A live header is the current minor: since minor 7 the plane layout, not
+    # the reach record or the identity field, is what sets it.
+    assert exported.blob[10] == art.manifest.schema_minor == SCHEMA_MINOR
     assert art.manifest.body is WINDOW and art.manifest.window_bits == 10
     assert art.manifest.reach is not None
     assert (art.manifest.reach.window_seed, art.manifest.reach.window_sigma,
