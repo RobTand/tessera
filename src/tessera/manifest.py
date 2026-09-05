@@ -27,6 +27,7 @@ from fractions import Fraction
 from .canonical import DIGEST_BYTES, Reader, Writer, digest, fits_uint
 from .errors import ManifestError
 from .exact import Fraction as _Fraction  # re-export guard
+from .exact import bits_to_bytes
 from .grammar import (
     RateSchedule,
     bresenham_rate_schedule,
@@ -440,7 +441,33 @@ class ReachParams:
                     f"the reach record's {name} presence flag must be 0 or 1, "
                     f"got {flag}"
                 )
-            sigmas.append(None if not flag else float(reader.ratio()))
+            if not flag:
+                sigmas.append(None)
+                continue
+            # Exactness is checked on the wire's own ratio, BEFORE rounding to
+            # float: the constructor sees only the float, so a check placed
+            # there can never see the ratio it was meant to judge.  The rule is
+            # representability, not a tolerance (Fraction(float(r)) == r): the
+            # producer was told a float and writes that float's exact ratio, so
+            # any other ratio was written by no encoder this record can name --
+            # and accepting it would collapse distinct on-wire spreads onto one
+            # reconstructed value and change the record's bytes on a canonical
+            # read/write cycle.
+            exact = reader.ratio()
+            value = float(exact)
+            if Fraction(value) != exact:
+                nearest = Fraction(value)
+                raise ManifestError(
+                    f"the reach record's {name} is the exact ratio "
+                    f"{exact.numerator}/{exact.denominator}, which no float "
+                    f"holds: the nearest float re-encodes as "
+                    f"{nearest.numerator}/{nearest.denominator}, so accepting "
+                    "it would change the record's bytes on a canonical "
+                    "read/write cycle. The encoder writes its float sigma's "
+                    "exact ratio; a spread must satisfy "
+                    "Fraction(float(value)) == value"
+                )
+            sigmas.append(value)
         return cls(seed, *sigmas)
 
 
@@ -896,6 +923,7 @@ class Manifest:
         wire = self.plane_order
         extents = [0] * len(wire)
         widths = [0] * len(wire)
+        aligns = [1] * len(wire)
         order = {kind: index for index, kind in enumerate(wire)}
         # The quota boundaries a granular plane may be cut at: its running
         # prefix sums, 0 and the full extent included.  ``planes.py`` states
@@ -908,6 +936,7 @@ class Manifest:
         for descriptor in self.planes:
             extents[order[descriptor.kind]] = descriptor.element_count
             widths[order[descriptor.kind]] = descriptor.element_bits
+            aligns[order[descriptor.kind]] = descriptor.alignment_bytes
             if descriptor.count_granularity in (
                 CountGranularity.PER_SUPERBLOCK,
                 CountGranularity.PER_BLOCK,
@@ -965,6 +994,29 @@ class Manifest:
                         "is not a whole number of bytes: the plane's next "
                         "element's leading bits would share the terminal's "
                         "final byte, where the zero-slack rule (schema D4) "
+                        "must hold"
+                    )
+                # ... and on the descriptor's alignment boundary, for the same
+                # reason one byte wider.  ``PlaneDescriptor.byte_length`` rounds
+                # a partial extent up to ``alignment_bytes``, and the reader
+                # requires those padding bytes to be zero
+                # (``container.verify_plane_region``) -- but a cut plane's
+                # remaining elements follow its content immediately in the full
+                # region, so the bytes that rounding claims as padding are the
+                # next element's real content.  Such a terminal reads only
+                # while that content happens to be zero, which is not a legal
+                # length, it is a coincidence -- and the writer validates only
+                # its fullest terminal, so without this refusal it emits an
+                # artifact whose own declared rung its parser rejects.
+                content = bits_to_bytes(count * widths[index])
+                if 0 < count < extent and content % aligns[index]:
+                    raise ManifestError(
+                        f"terminal {terminal.slot_id!r} cuts {kind.name} at "
+                        f"{count} elements = {content} content bytes, which is "
+                        f"not on the plane's {aligns[index]}-byte alignment "
+                        "boundary: the alignment padding the cut's byte length "
+                        "rounds up to would overlap the plane's next element's "
+                        "real content, where the zero-padding rule (schema D4) "
                         "must hold"
                     )
                 if count < extent:

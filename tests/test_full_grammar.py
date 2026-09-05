@@ -7,7 +7,12 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from tessera.alphabet import build_forest  # noqa: E402
-from tessera.decode import decode_codes, reconstruct_unit, replay_body  # noqa: E402
+from tessera.decode import (  # noqa: E402
+    decode_codes,
+    decode_codes_mixed,
+    reconstruct_unit,
+    replay_body,
+)
 from tessera.diagonals import apply_diagonals, apply_rotation  # noqa: E402
 from tessera.encode import _pack_scales, encode_unit  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
@@ -96,6 +101,55 @@ def test_release_overrides_survive_the_inverse_path():
     assert unit.released_positions == released
     codes = decode_codes(unit, FORESTS[3], CODE)
     assert torch.equal(codes.reshape(-1)[unit.release_index], unit.release_code)
+
+
+@pytest.mark.parametrize("released", [0, 8])
+def test_single_forest_decode_reads_the_written_completion_depth(released):
+    """The two public TCQ decoders agree on a unit written below capacity.
+
+    A rate-1 column may spend up to ``cap - rate = 2`` completion bits, so
+    ``completion=1`` is a real intermediate rung: the stored word indexes the
+    *written*-depth descendant table, not the full-capacity one.  The
+    single-forest wrapper used to read it at full capacity anyway, which
+    turned a valid unit into plausible wrong codes -- and an explicitly
+    shallower read into an IndexError, because the stored word was never
+    narrowed with the table.  Both reads must match the encoder's own codes
+    and the mixed decoder, release overrides included.
+    """
+    weights = _weights(rows=8, cols=32)
+    forest = FORESTS[1]
+    depth = forest.cap - forest.rate
+    unit = encode_unit(
+        weights, forest, (1,) * weights.shape[1], CODE,
+        completion=1, scale_refit=0, released_positions=released,
+    )
+    assert 0 < unit.completion_limit < depth, (
+        "the trigger is a written depth strictly between zero and capacity"
+    )
+    codes = decode_codes(unit, forest, CODE)
+    assert torch.equal(codes.long(), unit.codes.long()), (
+        f"default read disagrees with the encoder on "
+        f"{int((codes.long() != unit.codes.long()).sum())} of "
+        f"{unit.codes.numel()} codes"
+    )
+    assert torch.equal(codes, decode_codes_mixed(unit, forest, CODE))
+    if released:
+        assert torch.equal(
+            codes.reshape(-1)[unit.release_index], unit.release_code.to(codes.dtype)
+        )
+    # A truncating read narrows the word with the table; the wrappers agree.
+    shallow = decode_codes(unit, forest, CODE, completion=0)
+    assert torch.equal(shallow, decode_codes_mixed(unit, forest, CODE, completion=0))
+
+
+def test_single_forest_decode_refuses_a_rate_the_forest_does_not_hold():
+    """``decode_codes`` is the uniform-rate spelling; a unit whose schedule
+    names another rate needs a forest per rate and is refused by name."""
+    weights = _weights()
+    rates = bresenham_rate_schedule(root_from_q256(640), weights.shape[1])
+    unit = encode_unit(weights, FORESTS, rates, CODE)
+    with pytest.raises(GrammarError, match="decode_codes_mixed"):
+        decode_codes(unit, FORESTS[3], CODE)
 
 
 def test_every_code_is_a_legal_e2m1_nibble():

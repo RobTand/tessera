@@ -595,7 +595,17 @@ def decode_codes(
     code: ConvCode,
     completion: int | None = None,
 ) -> torch.Tensor:
-    """Full decode from stored planes to E2M1 nibbles, in wire order."""
+    """Full decode from stored planes to E2M1 nibbles, in wire order.
+
+    The uniform-rate spelling of :func:`decode_codes_mixed`, and a delegation
+    rather than a copy: the written-depth rule -- ``completion_limit`` bounds
+    every read, and a truncating read narrows the stored completion word
+    along with the descendant table -- lives there, once.  This wrapper used
+    to carry its own read at the forest's full capacity, so a unit written at
+    an intermediate completion depth decoded to plausible wrong codes here
+    while the mixed decoder read it correctly, and an explicitly shallower
+    read died as an IndexError because the stored word was never narrowed.
+    """
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
         # This is the single-forest TCQ path; a window body has no forest and
         # replays through ``decode_codes_mixed``.  Refuse rather than replay a
@@ -605,24 +615,14 @@ def decode_codes(
             "decode_codes is the TCQ path; a window body decodes through "
             "decode_codes_mixed / reconstruct_unit with its grid"
         )
-    depth = forest.cap - forest.rate
-    completion = depth if completion is None else completion
-    device = unit.body_bits.device
-    anchors = replay_body(
-        unit.body_bits, forest, code, getattr(unit, "span", 1),
-        getattr(unit, "initial_state", None),
-    )
-    # A code is a nibble only while the grid is E2M1.  Above 256 codes a uint8
-    # table silently wraps, so the dtype follows the grid -- and it stays uint8
-    # below that so the single-rate and mixed-rate decoders agree on the dtype
-    # of a nibble.  They did not, and the release scatter caught it.
-    code_dtype = torch.uint8 if forest.grid.size <= 256 else torch.int32
-    blocks = torch.tensor(forest.blocks, device=device, dtype=code_dtype)
-    reachable = blocks[:, :: 1 << (depth - completion)]
-    codes = reachable[anchors, unit.completion_bits]
-    if unit.release_index.numel():
-        codes.reshape(-1)[unit.release_index] = unit.release_code.to(code_dtype)
-    return codes
+    stray = set(unit.rates) - {forest.rate}
+    if stray:
+        raise GrammarError(
+            f"decode_codes holds one rate-{forest.rate} forest and the unit's "
+            f"rates field also names rate(s) {sorted(stray)}: a mixed-rate "
+            "unit decodes through decode_codes_mixed with a forest per rate"
+        )
+    return decode_codes_mixed(unit, forest, code, completion)
 
 
 def dequantize(codes: torch.Tensor, scale: torch.Tensor, grid=None) -> torch.Tensor:

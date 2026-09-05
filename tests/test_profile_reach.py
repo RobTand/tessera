@@ -288,3 +288,42 @@ def test_a_resolved_channel_spread_spelled_as_window_sigma_is_the_default(
     s6b = dict(common, scale_plane=ScalePlaneKind.S6B)
     assert (encoder_profile_id(window_sigma=None, **s6b)
             != encoder_profile_id(window_sigma=resolved, **s6b))
+
+
+def test_a_reach_ratio_no_float_holds_is_refused_and_a_float_ratio_round_trips():
+    """#254.  The wire carries sigmas as exact ratios and the record promises
+    to refuse a stored spread that is not exactly representable as its float
+    value -- but ``decode`` rounded the ratio to float before construction,
+    so the check could only ever see the rounded number.  ``1/3`` was
+    accepted as ``0.3333333333333333`` and re-encoded as
+    ``6004799503160661/18014398509481984``: an accepted canonical record
+    whose bytes change on a read/write cycle, and two distinct on-wire
+    spreads collapsing to one reconstructed profile input.  Exactness, not a
+    tolerance: a ratio is legal exactly when ``Fraction(float(r)) == r``.
+    Both sigma slots, both directions."""
+    from fractions import Fraction
+
+    from tessera.canonical import Reader, Writer
+    from tessera.errors import ManifestError
+    from tessera.manifest import ReachParams
+
+    def record(position, ratio):
+        writer = Writer().uint(7)  # seed
+        for slot in range(2):
+            if slot == position:
+                writer.uint(1).ratio(ratio)
+            else:
+                writer.uint(0)
+        return writer.bytes
+
+    for position, name in ((0, "window_sigma"), (1, "channel_sigma")):
+        raw = record(position, Fraction(3, 4))  # exactly a float
+        decoded = ReachParams.decode(Reader(raw))
+        assert getattr(decoded, name) == 0.75
+        out = Writer()
+        decoded.encode(out)
+        assert out.bytes == raw, (
+            f"an accepted canonical {name} record must round-trip unchanged"
+        )
+        with pytest.raises(ManifestError, match=f"{name}.*no float holds"):
+            ReachParams.decode(Reader(record(position, Fraction(1, 3))))
