@@ -411,14 +411,20 @@ def test_no_sidecar_consumer_gates_on_the_stored_verdict():
     """Nothing outside the rule's home may read a sidecar's ``complete`` (#279).
 
     Derived over the tree rather than pinned as a roster (rule 3): any shipped
-    or experiment module that handles a ``.build.json`` and then reads
+    or experiment file that handles a ``.build.json`` and then reads
     ``["complete"]`` off it is gating on a cached verdict, which is exactly the
     defect -- and it reads as a check while the rule that issued it has moved.
     ``build_identity`` itself is the one home and is excluded by name.
+
+    Shell scripts are scanned too, and not for tidiness: the ts113 campaign's
+    ``validate_build`` gate is an inline Python heredoc inside a ``.sh``, so a
+    scan of ``*.py`` alone reports a clean tree while a live gate reads the
+    stored field.
     """
     home = ROOT / "src" / "tessera" / "serving" / "build_identity.py"
     offenders = []
     for path in sorted((ROOT / "experiments").rglob("*.py")) + \
+            sorted((ROOT / "experiments").rglob("*.sh")) + \
             sorted((ROOT / "src").rglob("*.py")):
         if path == home:
             continue
@@ -426,7 +432,8 @@ def test_no_sidecar_consumer_gates_on_the_stored_verdict():
         if ".build.json" not in text:
             continue
         for n, line in enumerate(text.splitlines(), 1):
-            if '["complete"]' in line or "['complete']" in line:
+            if '["complete"]' in line or "['complete']" in line \
+                    or 'get("complete")' in line or "get('complete')" in line:
                 offenders.append(f"{path.relative_to(ROOT)}:{n}: {line.strip()}")
     assert offenders == [], (
         "these read a build sidecar's stored verdict; call "
