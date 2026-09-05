@@ -244,17 +244,24 @@ def _gemv_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
 
+    # A split ends where the *split* ends, not where the matrix does.  ``span``
+    # is a column count, not a whole number of ``BLOCK_K`` tiles, so the last
+    # tile of a split generally overhangs it -- 32 columns of overhang at the
+    # wrappers' own defaults (cols=512, SPLIT_K=16, BLOCK_K=64).  Masked
+    # against ``cols`` alone, that overhang is columns the next program also
+    # accumulates, and every one of them enters the dot product twice.
     span = tl.cdiv(cols, SPLIT_K)
     start = pid_k * span
-    for k0 in range(start, tl.minimum(start + span, cols), BLOCK_K):
+    stop = tl.minimum(start + span, cols)
+    for k0 in range(start, stop, BLOCK_K):
         offs_k = k0 + tl.arange(0, BLOCK_K)
-        live = (offs_k[:, None] < cols) & (offs_n[None, :] < rows)
+        live = (offs_k[:, None] < stop) & (offs_n[None, :] < rows)
         nibble = _decode_tile(
             body_ptr, lut_ptr, offs_n, offs_k, live, rows, col_stride_bits, memory, rate
         )
         value = tl.load(value_ptr + nibble, mask=live, other=0.0)
         weight = value * _apply_scale_kn(scale_ptr, offs_n, offs_k, live, cols, half)
-        xs = tl.load(x_ptr + offs_k, mask=offs_k < cols, other=0.0)
+        xs = tl.load(x_ptr + offs_k, mask=offs_k < stop, other=0.0)
         acc += tl.sum(weight * xs[:, None], axis=0)
 
     tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=offs_n < rows)
@@ -279,17 +286,21 @@ def _nvfp4_gemv_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
 
+    # The same split-end mask as ``_gemv_kernel``: the comparator partitions K
+    # the same way, so it double-counts the same columns, and a comparator that
+    # reports a doubled dot product as NVFP4's answer corrupts a measurement.
     span = tl.cdiv(cols, SPLIT_K)
     start = pid_k * span
-    for k0 in range(start, tl.minimum(start + span, cols), BLOCK_K):
+    stop = tl.minimum(start + span, cols)
+    for k0 in range(start, stop, BLOCK_K):
         offs_k = k0 + tl.arange(0, BLOCK_K)
-        live = (offs_n[:, None] < rows) & (offs_k[None, :] < cols)
+        live = (offs_n[:, None] < rows) & (offs_k[None, :] < stop)
         flat = offs_n[:, None].to(tl.int64) * cols + offs_k[None, :].to(tl.int64)
         byte = tl.load(packed_ptr + flat // 2, mask=live, other=0).to(tl.int32)
         nibble = tl.where(flat % 2 == 0, byte & 0xF, (byte >> 4) & 0xF)
         value = tl.load(value_ptr + nibble, mask=live, other=0.0)
         weight = value * _apply_scale(scale_ptr, offs_n, offs_k, live, cols, half)
-        xs = tl.load(x_ptr + offs_k, mask=offs_k < cols, other=0.0)
+        xs = tl.load(x_ptr + offs_k, mask=offs_k < stop, other=0.0)
         acc += tl.sum(weight * xs[None, :], axis=1)
 
     tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=offs_n < rows)

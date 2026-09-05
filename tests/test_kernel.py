@@ -70,6 +70,61 @@ def test_dequant_kernel_is_bit_exact_against_the_reference_decoder(unit):
     assert torch.equal(got, unit["reference"])
 
 
+def test_the_legacy_gemvs_count_every_column_exactly_once(unit):
+    """A split whose width is not a whole number of ``BLOCK_K`` tiles.
+
+    Both legacy GEMVs give program ``pid_k`` the columns ``[pid_k * span,
+    pid_k * span + span)`` for ``span = cdiv(cols, SPLIT_K)``, and then step
+    through them ``BLOCK_K`` at a time.  At the wrappers' own defaults over
+    these 512 columns ``span`` is 32 and ``BLOCK_K`` is 64, so the *tile* runs
+    32 columns past the split it belongs to -- and the tile is masked against
+    ``cols``, not against the end of its split, so the neighbouring program
+    accumulates those columns a second time.
+
+    The two wrappers partition K identically, so agreeing with each other
+    would prove nothing about either; each is compared against the reference
+    decode instead.  A one-hot column is the sharp probe -- nothing is summed,
+    so a doubled column is exactly ``2 * W[:, k]``.
+    """
+    from tessera.kernel import build_code_lut, nvfp4_gemv, tessera_gemv
+
+    rows, cols = unit["rows"], unit["cols"]
+    reference = unit["reference"]
+    body = torch.frombuffer(
+        bytearray(pack_body(unit["unit"].body_bits, unit["rates"]) + b"\x00"),
+        dtype=torch.uint8,
+    ).to("cuda")
+    lut = build_code_lut(unit["forests"][3], CODE)
+    packed, e4m3, gs = materialize_nvfp4(
+        unit["codes"], unit["unit"].scale_base, unit["unit"].scale_refine,
+        unit["unit"].group, unit["unit"].half,
+    )
+    # 32 and 96 are the first columns of splits 1 and 3 under the defaults --
+    # the ones the previous split's 64-wide tile also reaches.
+    for k in (0, 32, 63, 96, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        assert torch.equal(
+            tessera_gemv(x, body, lut, unit["e4m3"], gs, rows, cols),
+            reference[:, k],
+        ), f"tessera_gemv column {k}"
+        assert torch.equal(
+            nvfp4_gemv(x, packed, e4m3, gs, rows, cols), reference[:, k]
+        ), f"nvfp4_gemv column {k}"
+
+    # And a whole dot product at a split width that is neither a multiple of
+    # BLOCK_K nor a divisor of cols: cdiv(512, 5) = 103.
+    torch.manual_seed(2)
+    x = torch.randn(cols, device="cuda")
+    want = reference @ x
+    for split_k in (5, 16):
+        got = tessera_gemv(x, body, lut, unit["e4m3"], gs, rows, cols,
+                           split_k=split_k)
+        assert (got - want).norm() / want.norm() < 1e-5, f"tessera split_k={split_k}"
+        got = nvfp4_gemv(x, packed, e4m3, gs, rows, cols, split_k=split_k)
+        assert (got - want).norm() / want.norm() < 1e-5, f"nvfp4 split_k={split_k}"
+
+
 def test_sliced_planes_round_trip_through_the_wire_body(unit):
     """The resident layout is a permutation of the wire body, not new data."""
     from tessera.kernel import SELECT_PAD, pack_kernel_planes
