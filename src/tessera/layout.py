@@ -373,10 +373,11 @@ def build_planes(
     unit -- leaves the plane and the order exactly as they were.
 
     ``release_counts`` puts the RELEASE plane's per-superblock counts *on the
-    wire*.  A whole unit leaves it ``None``: its counts are the Bresenham
-    spread of the total, which the reader regenerates.  A shard cannot, and
-    must not -- its counts are the restriction of its parent's, which is a
-    different vector.
+    wire*.  A whole unit leaves it ``None``: its counts are
+    ``grammar.release_quota`` of the total -- the total at a uniform release
+    density, awarded by largest remainder -- which the reader regenerates.  A
+    shard cannot, and must not -- its counts are the restriction of its
+    parent's, which is a different vector.
 
     ``with_row_scale=True`` declares a CHANNEL scale plane's row field: the
     DIAG_SV plane is present at ``rows`` fp16 words with DIAG_SU absent.
