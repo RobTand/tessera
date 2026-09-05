@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from fractions import Fraction
+import hashlib
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -219,15 +220,28 @@ DEFAULT_REFIT_OBJECTIVE = MappingProxyType({
 })
 
 
-#: The three provenance fields that name *which* Hessian shaped the bytes.
-#: ``capture_h_full.py`` writes all three: the sha of the calibration text,
-#: the number of fit tokens, and the sha of the token ids themselves.  Two
-#: captures that agree on all three are the same capture; two that differ on
-#: any of them are different Hessians, and parts built against them are two
-#: artifacts rather than one.  Required at construction rather than read with
-#: ``.get`` -- an identity of ``None`` compares equal to another ``None``,
-#: which is exactly how a merge guard goes vacuous.
+#: The three provenance fields that name *which* token prefix a Hessian was
+#: fit on.  ``capture_h_full.py`` writes all three: the sha of the calibration
+#: text, the number of fit tokens, and the sha of the token ids themselves.
+#: Two captures that differ on any of them are different Hessians -- but
+#: agreement does NOT make them the same capture: the ids are hashed FLAT (no
+#: shape) and then reshaped to ``[-1, seqlen]``, so captures of one prefix at
+#: two sequence lengths agree on all three while running different attention
+#: contexts (tessera#214).  Capture identity is the sealed
+#: ``capture_sha256`` in :meth:`ActivationSource.config_block` -- the H
+#: content plus model/source identity and the sequence layout -- with these
+#: three beside it so a refusal can name the field that moved.  Required at
+#: construction rather than read with ``.get`` -- an identity of ``None``
+#: compares equal to another ``None``, which is exactly how a merge guard
+#: goes vacuous.
 HESSIAN_IDENTITY = ("text_sha256", "fit_tokens", "fit_ids_sha256")
+
+#: Ride-along provenance sealed into ``capture_sha256`` beside the content:
+#: which model produced the activations, on what source text, laid out at
+#: which sequence length.  Read with ``.get`` for the seal (an old capture
+#: without one seals ``None`` and its content still separates it), but the
+#: legacy merge guard compares ``model`` and ``seqlen`` by name as well.
+CAPTURE_CONTEXT = ("model", "seqlen", "source")
 
 
 def _check_refit_objective(obj: str) -> None:
@@ -715,12 +729,46 @@ class ActivationSource:
             ldlq_sigma=sigma, **settings,
         )
 
+    def capture_sha256(self) -> str:
+        """Seal the capture this source holds: content plus effective identity.
+
+        The three ``HESSIAN_IDENTITY`` token fields cannot tell two captures
+        of one token prefix apart when only the sequence layout differs
+        (tessera#214), and no token metadata can tell two H populations apart
+        at all.  This digest can: it covers the identity fields, the
+        ``CAPTURE_CONTEXT`` provenance (model, sequence layout, source), and
+        the per-unit H content itself, through ``cached_unit.tensor_identity``
+        -- the same digest mechanism the exact-unit cache already seals H
+        with.  Stamped into ``config_block()['hessian']['capture_sha256']``
+        and compared by the legacy part-merge guard; computed once per source
+        (an export calls ``config_block`` per unit through the cache intake).
+        """
+        sealed = getattr(self, "_capture_sha256", None)
+        if sealed is not None:
+            return sealed
+        from .cached_unit import tensor_identity
+
+        digest = hashlib.sha256()
+        identity = {field: self.provenance.get(field) for field in HESSIAN_IDENTITY}
+        identity.update({field: self.provenance.get(field) for field in CAPTURE_CONTEXT})
+        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
+                                  "identity": identity},
+                                 sort_keys=True, default=str).encode())
+        for name in sorted(self.hessians):
+            digest.update(b"\0" + name.encode() + b"\0")
+            digest.update(tensor_identity(self.hessians[name])["sha256"].encode())
+        sealed = digest.hexdigest()
+        object.__setattr__(self, "_capture_sha256", sealed)
+        return sealed
+
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.
 
         Every field here is compared by the merge guard, and the whole block
         is what tells a reader that these bytes are **not** reproducible from
-        the weights alone.
+        the weights alone.  ``hessian`` is the capture's own provenance with
+        the sealed ``capture_sha256`` stamped beside it, because the three
+        token fields alone cannot certify two captures identical (#214).
         """
         return {
             "ldlq_sigma": self.ldlq_sigma,
@@ -749,7 +797,7 @@ class ActivationSource:
             "refit_gauss_seidel": (bool(self.refit_gauss_seidel)
                                    if isinstance(self.refit_gauss_seidel, bool)
                                    else dict(self.refit_gauss_seidel)),
-            "hessian": dict(self.provenance),
+            "hessian": dict(self.provenance, capture_sha256=self.capture_sha256()),
             "note": "encoder-side only: the wire, the decoder and the lane are "
                     "unchanged, but this encode is not reproducible from the "
                     "weights alone -- it needs this Hessian.",
