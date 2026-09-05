@@ -18,6 +18,10 @@ placement guard #349 and cut-specific refusal diagnostics (2026-09-05). Re-stamp
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
+Re-stamped 2026-09-05 on `codex/audit4-input-handoff` for the producer's
+priced-input snapshot intake (PrismaQuant #231; §2.3). Wire, encoder recipes
+and runtime contract remain at the versions above.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -626,6 +630,29 @@ re-exported; nothing about them is known to be wrong, but nothing can say which
 bytes survived in their output directories, which is the whole finding. The
 151 GiB GLM export predates tessera#300 and was already refused as unsealed, so
 this adds no cost there.
+
+### 2.3 Priced inputs remain bound across the process handoff
+
+`export_tessera_serving.py --priced-inputs BUILD --priced-inputs-sha256 SHA`
+accepts the preflight's build anchor and the SHA-256 returned directly with
+its publication. Both flags are required together. `PricedInputsSnapshot`
+reads the bytes once, checks their digest against the argument, and reads the
+closed `priced_inputs` block: schema `tessera.priced_export_inputs.v1`,
+`hessian_capture_sha256` (a capture seal or explicit null), and
+`input_global_scales` (the exact selected F32 scalar values, keyed by
+`<module>.input_global_scale`). Other build-envelope fields remain the
+caller's provenance. A missing/malformed block refuses.
+
+The gate compares that expected seal to the actual loaded `ActivationSource`
+and the expected values to the scalar map copied from the actual safetensors
+read, before output directories or shards are created. Each scalar must have
+one element. It reuses the existing capture seal, so every dense or cached
+expert H consumption remains checked by its owner. The capture file and scale
+file can be republished at the same paths: replacement before intake refuses
+if it changes a priced input; replacement after intake cannot change the
+owned tensors and float values used by the encode. The build expectation is
+also protected against replacement by its argument digest. Standalone exports
+without an external allocation binding retain their existing behavior.
 
 ## 3. Bytes: priced == served
 
