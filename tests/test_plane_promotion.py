@@ -16,6 +16,7 @@ coordinator's gate, not this issue's, and this file does not re-derive it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 
@@ -229,6 +230,89 @@ def test_the_invariants_hold_on_the_promotion_and_not_only_on_the_assertion():
         PlanePromotion(**(hand_built | {"geomean": 0.5}))
     with pytest.raises(TesseraError, match="unit_wins"):
         PlanePromotion(**(hand_built | {"wins": 9}))
+
+
+# ------------------------------ the legs, on the object as well (tessera#287)
+#
+# #224 put the *domains* on `PlanePromotion` and left the five legs in
+# `assert_plane_promotion`, so evidence whose numbers are all valid and which
+# every leg refuses could still be built by hand or by `dataclasses.replace`
+# and published by `promotion_block` as `promoted=True`: a served regression, a
+# screen that loses every unit, a served number for a different arm, a
+# landing-disabled ceiling read. The five legs now live in one home that the
+# factory and the constructor both call.
+
+
+def _geo(ratios) -> float:
+    """The geomean the gate derives, restated so a fixture cannot drift."""
+    return math.exp(math.fsum(map(math.log, ratios)) / len(ratios))
+
+
+#: Every unit lost: a winning geomean is impossible from here.
+_LOSING = (1.0100, 1.0200, 1.0300, 1.0400, 1.0500, 1.0600)
+#: One unit carries a winning geomean -- #65's own failure, in a synthetic set.
+_MINORITY = (0.5000, 1.0100, 1.0100, 1.0100, 1.0100, 1.0100)
+
+#: ``(field change, the refusal it must raise)``. One failed leg each, every
+#: number in its own domain and the derived pair consistent with its units, so
+#: nothing here is refused by #224's checks -- only by the leg it fails.
+FAILED_LEGS = {
+    "a GLM regression above the pinned bar": (
+        {"glm_ratio": 1.2}, "above the"),
+    "a screen that loses every unit": (
+        {"unit_ratios": _LOSING, "geomean": _geo(_LOSING), "wins": 0},
+        "nothing to promote"),
+    "a geomean carried by a minority of the units": (
+        {"unit_ratios": _MINORITY, "geomean": _geo(_MINORITY), "wins": 1},
+        "per-unit wins"),
+    "a served KL measured on another arm": (
+        {"served_arm": "h^1.0"}, "not evidence"),
+    "a served regression against the incumbent": (
+        {"served_kl": 0.7000}, "does not beat"),
+    "no served KL at all": (
+        {"served_kl": None}, "not a result"),
+    "a screen taken off the wire": (
+        {"landing": "none"}, "not a wire"),
+}
+
+
+def _accepted() -> PlanePromotion:
+    """The gate's own accepted object, which the cases below mutate."""
+    return assert_plane_promotion(**LEGITIMATE)
+
+
+@pytest.mark.parametrize(
+    "change,refusal", list(FAILED_LEGS.values()), ids=list(FAILED_LEGS))
+def test_a_failed_leg_cannot_be_hand_built(change, refusal):
+    """Direct construction is supported; publishing a failed leg is not."""
+    fields = dataclasses.asdict(_accepted())
+    with pytest.raises(PromotionRefusedError, match=refusal):
+        PlanePromotion(**(fields | change))
+
+
+@pytest.mark.parametrize(
+    "change,refusal", list(FAILED_LEGS.values()), ids=list(FAILED_LEGS))
+def test_a_failed_leg_cannot_be_replaced_into_an_accepted_promotion(change, refusal):
+    """`dataclasses.replace` re-runs the constructor, so it re-runs the legs."""
+    with pytest.raises(PromotionRefusedError, match=refusal):
+        dataclasses.replace(_accepted(), **change)
+
+
+def test_a_legitimate_promotion_survives_both_doors():
+    """The one thing this must not do: stop legitimate direct objects building.
+
+    `test_the_invariants_hold_on_the_promotion_and_not_only_on_the_assertion`
+    establishes direct construction as supported, so the fix is a leg that
+    accepts what the factory accepts -- rebuilt field for field, and replaced
+    through with a tighter GLM bar -- and publishes it identically.
+    """
+    accepted = _accepted()
+    rebuilt = PlanePromotion(**dataclasses.asdict(accepted))
+    assert rebuilt == accepted
+    assert promotion_block(rebuilt) == promotion_block(accepted)
+    tighter = dataclasses.replace(accepted, glm_bar=0.95)
+    assert tighter.glm_bar == 0.95
+    assert promotion_block(tighter)["verdict"]["promoted"] is True
 
 
 def test_the_lut16_default_is_the_arm_this_gate_leaves_standing():

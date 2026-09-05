@@ -122,8 +122,12 @@ covers 22 of 22 expert stacks and 2,112 projections in decode (M=1) and
 prefill (M=64). Quality is a top-1,024 intersection KL **lower bound** of
 0.0832 over 4,096 prefill positions, with an upper bound of 1.179 at the
 declared probability floor, and 85.1% top-1 agreement with the BF16 teacher.
-There is no full-vocabulary KL and no decode KL. The greedy smoke produced
-repetitive text that is recorded and unexplained. No numeric quality cutoff
+There is no full-vocabulary KL and no decode KL. The campaign's greedy smoke
+produced repetitive text, and so does the BF16 source on the same prompt; a
+later smoke through the checkpoint's own chat template records both arms
+answering without a cycle
+([moe-smoke-recorded-2026-09-05.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/moe-smoke-recorded-2026-09-05.md)).
+No numeric quality cutoff
 exists in the cell-promotion contract, so this is not a quality pass: it is a
 dispatch attestation plus a bounded prefill comparison
 ([tessera-lfm-campaign-2026-09-04.md](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-lfm-campaign-2026-09-04.md)

@@ -7,7 +7,8 @@ the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
-packaging metadata at `cd3190a`; contract v19, lane-eligibility schema v8. Re-stamp this
+packaging metadata at `cd3190a`; contract v21 (routed-MoE smoke recorded,
+prismaquant#198), lane-eligibility schema v8. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -459,7 +460,22 @@ stock twin exporter -- refuses a transformed unit at load, naming the field
 own refusals of the same fields (`lane_planes`, `kernel_window`,
 `kernel_window_gemv`). Untransformed wires -- every shipping export default
 -- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
-the refusal through each consumer on real wire bytes.
+the refusal through each consumer on real wire bytes. The sidecar scheme
+(`config_groups[..].scheme`, the fields `scheme._parse_container` compares
+the wire against) carries **no rotation or diagonals field, on purpose**:
+the field would be needed for `priced == written == served` only if a route
+applied a transform at serve time, and none does -- the served set of
+transforms is exactly {none}, every consumer reads `unit.rotation` /
+`unit.diagonals` off the wire itself (`require_untransformed`, the lane
+packers, `wire_facts_of_parsed`) and refuses anything else by name, the
+exporter has no rotation input and materialises every member's stock twin
+through the same refusal, and the lane predicate publishes both classes as
+refused (`lane.requires`, contract v20) -- so a sidecar copy would be a
+second statement of a fact the wire already carries, with one legal value,
+and a `fused_module.fields` entry PrismaQuant pins for nothing. The day a
+route applies an input rotation the sidecar must name it (`shared` in
+`FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
+contract bumps, and `require_untransformed` learns that consumer; not before.
 
 The **slicing capability API** owes the same answer, and since tessera#304 it
 gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
@@ -524,6 +540,26 @@ refusals, the wider-dtype refusals through every consumer for both fields
 (overflow, underflow and a mere rounding, FP32 and FP64), and the rule that
 whatever the encoder accepts reconstructs identically before and after the
 wire.
+
+### 3.6 The Triton kernel lane is the oracle side, and it may copy a strided activation
+
+`tessera.kernel` is Tessera's own decode-in-the-mainloop kernel: the Triton
+GEMVs and the prefill `tessera_gemm`. It is the *oracle side* of the NVFP4
+port and not a serving lane -- `serving/ext.py` states that no tile-language
+kernel appears on the serving path and nothing there imports it, and the
+repository's own import graph agrees: no module under `src/` or `tools/`
+reaches `tessera.kernel`; its importers are the kernel benchmarks under
+`experiments/` and the tests (`tests/test_kernel_shape_guards.py` pins that
+from `tools/impacted_tests.py`'s graph, not from a list). That placement is
+what decides one guard the lane deliberately does not have (tessera#266):
+`tessera_gemm` **copies** a non-contiguous `x` with `contiguous()` rather
+than refusing it, as the GEMVs do through `kernel._dense_activation`. On a
+served lane a silent copy is a hidden allocation -- memory and bandwidth the
+pricing does not see -- and would be refused by name; here every caller
+hands the wrapper a fresh contiguous batch, the copy is free, and a refusal
+would only move the same `contiguous()` into the benchmark. The docstring
+says so. The day a route or the encoder imports `tessera.kernel`, that test
+fails naming the importer, and the copy becomes a refusal.
 
 ## 4. Allocation and the uniform gate
 
@@ -1073,16 +1109,16 @@ derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 `kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
 every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
-`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
-`routed_moe` cells record a repetitive one. `qualification` is not
+`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, and
+so -- since contract v21 -- do the `routed_moe` cells. `qualification` is not
 overloaded with the grade.
 
-A smoke also names the **control** it was compared against (schema v7,
+A smoke can also name the **control** it was compared against (schema v7,
 contract v18, #195), because `status` alone was deciding admission and could
-not carry the decision. Both `routed_moe` cells record `repetitive`; the BF16
-**source**, given the same prompt on the same pinned image, eager, returns the
-identical completion character for character
-(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition is
+not carry the decision. Under v18 both `routed_moe` cells recorded
+`repetitive`, and the BF16 **source**, given the same prompt on the same pinned
+image, eager, returned the identical completion character for character
+(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition was
 the model and the prompt. That fact lived in prose while PrismaQuant's pin
 refused the whole routed-MoE lane on `status` -- right under the rule it was
 given, wrong about the runtime. So `smoke.control` is `null` or the closed
@@ -1093,10 +1129,34 @@ that the reference was healthy), and `smoke.attribution` is **derived** from it
 and checked the way `grade` is derived from `kl`: no control `unattributed`,
 `identical_completion` `shared_with_reference`, `different_completion`
 `not_shared_with_reference`. A consumer refuses on `status == "repetitive"`
-**and** `attribution != "shared_with_reference"`, never on `status` alone. The
-two MoE cells carry the control; the eight dense cells are `unattributed`, six
-having run no smoke and the two BF16 cells no reference arm. No status word,
-grade, rung, route or byte moved.
+**and** `attribution != "shared_with_reference"`, never on `status` alone.
+
+The control turned out to be half the fix (prismaquant#198): a reference
+that degenerates too removes the evidence *against* the route without adding
+any *for* it, and a status-only consumer went on refusing -- rightly, since
+principle 5's "generates correctly" leg had no positive record for routed
+MoE. Contract **v21** supplies the record
+(`docs/measurements/moe-smoke-recorded-2026-09-05.md`): the same student and
+its source, one arm at a time on the same pinned image, eager, resident,
+seven prompts in two request forms, every completion kept on both arms. Raw
+continuation -- the v17 prompt and three passages ending mid-sentence -- ends
+in a cycle on the **source** on every (prompt, form) pair: the checkpoint is
+the instruct model and a raw continuation is not its trained interface.
+Through the checkpoint's own `chat_template.jinja` (byte-identical on both
+arms) three questions carrying the same content read `recorded` on **both**
+arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --
+under a rule the receipt states and `tests/test_moe_greedy_smoke_rule.py`
+pins (repetitive iff the completion *ends* in a cycle of at least two full
+periods; the v17 observation is its positive control). The two `routed_moe`
+cells now record `{status: recorded, receipt: that file, attribution:
+unattributed, control: null}`, the shape the two BF16 cells use. The v18
+control is retired from the cells, not from the record: the outcome vocabulary
+attributes a *symptom*, a recorded smoke has none, the arms' recorded
+completions are not identical (greedy coherence is claimed, closeness is not
+-- that is the batch cell's KL entry), and `null` is what is true; the v17
+prompt is re-measured identical on both arms in the same receipt. So today no
+cell carries a control and all ten are `unattributed`. No grade, rung, route
+or byte moved; the decode cell still grades `route_only`.
 
 Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read
@@ -1700,10 +1760,25 @@ two are spelled apart rather than sharing one word that fits neither. The
 `glm_bar` override **tightens the pinned `GLM_GATE` and never relaxes it**:
 comparing only against the caller's own bar let `glm_ratio=1.5` promote under
 `glm_bar=2.0`, the coordinator's cross-check answering to the arm it checks.
-The domains live on `PlanePromotion` as well as in the assertion, because the
-class is public and `promotion_block`'s "only a promotion this gate accepted
-reaches here" has to be true by construction; the `geomean` and `wins` it
-publishes must be the pair the promotion's own unit ratios make.
+**The legs live where the domains do: on the object** (tessera#287).
+`PlanePromotion` is public and `dataclasses.replace` rebuilds it, so
+`promotion_block`'s "only a promotion this gate accepted reaches here" is a
+claim about the *type* or it is a claim about one caller. #224 put the domains
+there and left the five legs in `assert_plane_promotion`, which left the
+sentence false for evidence whose every number is valid: `replace(accepted,
+glm_ratio=1.2)`, `served_kl=0.7` against a 0.6 bar, `served_arm` naming another
+arm, `landing="none"`, or a unit set that loses every unit with a consistent
+geomean beside it — all five built, and `promotion_block` published each as
+`promoted=True`. The five legs are now one function,
+`control._require_promotion_legs`, and `PlanePromotion.__post_init__` calls it
+after the domains and the derived pair: the factory derives `geomean` and
+`wins` from the unit ratios and builds the object, and the object refuses
+itself, so the factory, a hand-built promotion and a replaced one are one door
+rather than three. Direct construction stays supported — that is what the
+public class is for — and a legitimate hand-built promotion still builds; what
+it can no longer do is publish a leg it failed. The `geomean` and `wins` it
+publishes must still be the pair the promotion's own unit ratios make, and
+`served_kl` is therefore never `None` on an object that exists.
 
 No default moves by this, and `tests/test_plane_promotion.py` is what makes
 that checkable rather than asserted: it runs the receipt's own six-unit
@@ -1972,7 +2047,10 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 **`pure`** runs on every push to master and every pull request, in an
 interpreter with pytest and nothing else: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
-could not), an import of the byte layer that asserts torch never entered the
+could not -- the collector reads a module's *import*, so a test body that
+reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
+and `tests/test_collection_probe.py` runs the two modules that once did not
+with torch hidden, #309), an import of the byte layer that asserts torch never entered the
 process, the empty-denylist refusal (build item 11), and the wheel and sdist check
 above. It proves the parser's dependency boundary and what both
 distributions contain.
