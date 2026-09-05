@@ -161,3 +161,213 @@ def test_compare_scores_the_stored_token_ids_under_the_current_rule(tmp_path):
     assert (row["bf16"]["period"], row["bf16"]["periodic_suffix"]) == (1, 31)
     assert row["tessera"]["status"] == "recorded"
     assert pair["positive_record"] == []
+
+
+# --- the launch boundary the in-process tests cannot see (#341) --------------
+#
+# Everything above imports the instrument into a process that ALREADY holds a
+# matching ``tessera.serving.contract``, because the conftest put this
+# checkout's ``src`` on ``sys.path`` before pytest collected anything.  The
+# wrapper does not: it runs ``$PY $TS/experiments/moe_greedy_smoke.py`` in a
+# fresh interpreter, and until #341 nothing bound that interpreter to the
+# checkout ``$TS`` selected, so the aggregation import resolved against
+# whatever Tessera the host happened to carry.  These tests cross that
+# boundary in a subprocess, which is the only place the defect is visible.
+
+CHECKOUT = Path(__file__).resolve().parents[1]
+WRAPPER = CHECKOUT / "experiments" / "moe_greedy_smoke_pair.sh"
+
+
+def _ambient_package(tmp_path, *, body):
+    """A stand-in Tessera on the host, importable and NOT this checkout's.
+
+    ``body`` is the whole of ``tessera/serving/contract.py``.  The pre-v22
+    package is spelled by what it LACKS -- it has the v7 control vocabulary the
+    argument parser reads and no ``derive_smoke_status`` -- which is exactly the
+    shape of a host that installed Tessera before contract v22.
+    """
+    root = tmp_path / "ambient"
+    (root / "tessera" / "serving").mkdir(parents=True)
+    (root / "tessera" / "__init__.py").write_text("")
+    (root / "tessera" / "serving" / "__init__.py").write_text("")
+    (root / "tessera" / "serving" / "contract.py").write_text(body)
+    return root
+
+
+#: A host still carrying the package that shipped before contract v22.
+_PRE_V22 = "EVIDENCE_CONTROL_REFERENCES = ('bf16_source',)\n"
+
+
+def _receipts(tmp_path):
+    """Two ordinary non-empty matching per-arm receipts, one per arm."""
+    import json
+
+    ids = {"recorded": list(range(40)), "repetitive": [1, 2] * 8}
+    plan = [("P0", "campaign", "prompt", "repetitive", "repetitive"),
+            ("P4", "campaign", "messages", "recorded", "recorded")]
+    paths = {}
+    for arm, column in (("bf16", 4), ("tessera", 3)):
+        results = []
+        for prompt, form, key, student, source in plan:
+            verdict = student if arm == "tessera" else source
+            results.append({"id": prompt, "form": form,
+                            "interface": ("chat_template" if key == "messages"
+                                          else "raw_completion"),
+                            "request": {"max_tokens": 64, key: "x"},
+                            "completion": f"{arm}-{prompt}", "finish_reason": "stop",
+                            "token_ids": ids[verdict]})
+        path = tmp_path / f"smoke_{arm}.json"
+        path.write_text(json.dumps(
+            {"schema": "tessera.moe-greedy-smoke/1", "arm": arm, "rule": smoke.RULE,
+             "tokenizer": {"tokenizer_json_sha256": "t"}, "prompts_sha256": "p",
+             "results": results}))
+        paths[arm] = str(path)
+    return paths
+
+
+def _run_compare(tmp_path, ambient, out):
+    """The wrapper-owned join, launched the way the wrapper launches it.
+
+    ``cwd`` is outside the checkout and ``PYTHONPATH`` is the ambient package
+    alone, so nothing but the instrument's own resolution can put this
+    checkout's ``tessera`` in reach.  ``-P`` keeps the script's directory off
+    ``sys.path`` so ``experiments/`` cannot stand in for the package either.
+    """
+    import os
+    import subprocess
+    import sys
+
+    paths = _receipts(tmp_path)
+    env = {**os.environ, "PYTHONPATH": str(ambient)}
+    env.pop("PYTHONHOME", None)
+    return subprocess.run(
+        [sys.executable, "-P", str(_PATH), "compare", paths["bf16"], paths["tessera"],
+         "--out", str(out), "--subject", "tessera", "--reference", "bf16_source"],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True)
+
+
+def test_the_join_reads_the_aggregation_from_its_own_checkout(tmp_path):
+    """#341: selecting the instrument must select the aggregation it calls.
+
+    The wrapper runs ``$PY $TS/experiments/moe_greedy_smoke.py compare
+    --subject ...`` and the pre-fix invocation bound no import path, so
+    ``_contract_record``'s ``from tessera.serving.contract import
+    derive_smoke_status`` resolved against the HOST's Tessera.  A host still
+    carrying the pre-v22 package has no such name, so both expensive serves ran
+    and the run then died at the final join with an ImportError, writing no
+    ``pair.json``.  Installing the plugin inside the student container does not
+    move the host interpreter.
+
+    Here the only importable Tessera on ``PYTHONPATH`` is a pre-v22 stand-in,
+    and the join must still succeed -- by resolving the aggregation from the
+    checkout the instrument itself lives in -- and must emit the derived record.
+    """
+    import json
+
+    out = tmp_path / "pair.json"
+    done = _run_compare(tmp_path, _ambient_package(tmp_path, body=_PRE_V22), out)
+    assert done.returncode == 0, f"stdout={done.stdout}\nstderr={done.stderr}"
+    assert out.is_file(), "the join wrote no pair.json"
+    emitted = json.loads(out.read_text())["contract_record"]
+    assert emitted["derived"] == {"status": "recorded",
+                                  "attribution": "shared_with_reference"}
+    assert emitted["record"]["instrument"] == "experiments/moe_greedy_smoke.py"
+    assert emitted["record"]["rule"] == smoke.RULE
+
+
+def test_the_join_also_runs_with_no_ambient_tessera_at_all(tmp_path):
+    """The absent-package half of the same boundary: a host that never
+    installed Tessera is the commoner case, and it failed the same way."""
+    import json
+
+    out = tmp_path / "pair.json"
+    done = _run_compare(tmp_path, tmp_path / "empty", out)
+    assert done.returncode == 0, f"stdout={done.stdout}\nstderr={done.stderr}"
+    assert json.loads(out.read_text())["contract_record"]["derived"]["status"] == "recorded"
+
+
+def test_the_wrapper_refuses_a_missing_aggregation_before_it_serves_anything(tmp_path):
+    """The cost half of #341 (`experiments/runtime_image.sh`'s own rule).
+
+    Binding the instrument to its own checkout fixes the wrong-code half; it
+    cannot help a checkout that genuinely has no aggregation to supply -- an
+    `experiments/` tree deployed without its `src/`, say -- and discovering
+    that AFTER two serves is what this finding is expensive about.  So the
+    wrapper proves the join possible before it touches docker, the box's one
+    serve lock, or either arm.
+
+    `$TS` here is a checkout carrying the instrument and its shell helpers and
+    NO `src/`, run by a real interpreter with nothing ambient to fall back on.
+    The wrapper must refuse by name, and the `docker` recorder on PATH must
+    stay empty.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    checkout = tmp_path / "checkout"          # experiments/, deliberately no src/
+    shutil.copytree(CHECKOUT / "experiments", checkout / "experiments")
+    assert not (checkout / "src").exists()
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    called = tmp_path / "docker-was-called"
+    docker = bin_dir / "docker"
+    docker.write_text(f'#!/bin/sh\necho "$@" >> {called}\nexit 0\n')
+    docker.chmod(0o755)
+    # A real interpreter, with the script's own directory off sys.path so
+    # `experiments/` cannot stand in for the package: the checkout's `src` is
+    # the only thing that could supply the aggregation, and it is not there.
+    python = bin_dir / "python-bare"
+    python.write_text(f'#!/bin/sh\nexec {sys.executable} -P "$@"\n')
+    python.chmod(0o755)
+
+    out = tmp_path / "out"
+    env = {**os.environ,
+           "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+           "TS": str(checkout), "PY": str(python),
+           "IMAGE": "example/image@sha256:" + "0" * 64,
+           "EXT": str(tmp_path / "ext"), "VLLM_CACHE": str(tmp_path / "cache")}
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run(
+        ["bash", str(WRAPPER), str(tmp_path / "source"), str(tmp_path / "artifact"),
+         str(tmp_path / "seal.json"), str(out)],
+        cwd=str(tmp_path), env=env, capture_output=True, text=True)
+    combined = done.stdout + done.stderr
+    assert done.returncode != 0, f"the wrapper did not refuse: {combined}"
+    assert "REFUSED" in combined and "aggregation" in combined, combined
+    assert not called.exists(), (
+        "the wrapper reached docker before checking the join it ends with; the whole "
+        "point of the preflight is that a mismatch cannot burn a serve")
+    assert not (out / "pair.json").exists()
+    # The refusal is in the run's own log, not only on a terminal nobody kept.
+    assert "REFUSED" in (out / "driver.log").read_text()
+
+
+def test_the_wrapper_preflights_with_the_instrument_it_will_join_with(tmp_path):
+    """The preflight must be the join's OWN import, not a restatement of it.
+
+    A preflight that lists the symbols it expects is a second copy of the rule,
+    and the day the two disagree it waves through a run that fails after both
+    serves.  So `preflight` and the join take the same names from the same
+    `aggregation()`, and a real checkout answers it with where the contract
+    actually resolved from.
+    """
+    import json
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ}
+    env.pop("PYTHONPATH", None)
+    done = subprocess.run([sys.executable, "-P", str(_PATH), "preflight"],
+                          cwd=str(tmp_path), env=env, capture_output=True, text=True)
+    assert done.returncode == 0, f"stdout={done.stdout}\nstderr={done.stderr}"
+    said = json.loads(done.stdout)
+    assert said["ok"] is True
+    assert said["checkout"] == str(CHECKOUT)
+    assert said["contract_module"] == str(CHECKOUT / "src/tessera/serving/contract.py"), (
+        "the preflight resolved the contract from somewhere other than the checkout "
+        "holding the instrument, which is the defect #341 is about")
+    assert said["lane_eligibility_schema"].startswith("tessera.lane-eligibility.v")
