@@ -16,8 +16,6 @@ import os
 import shutil
 import subprocess
 
-import pytest
-
 WRAPPER = Path(__file__).resolve().parents[1] / "experiments" / "serve_and_dump_kl.sh"
 
 #: A curl faithful enough to fail the way the real one does: it writes the
