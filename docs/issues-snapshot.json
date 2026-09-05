@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T17:10:08Z",
+ "generated": "2026-09-05T17:42:00Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -340,7 +340,7 @@
     "title": "A pool job that holds no GPU slot can still see and use CUDA"
    },
    "175": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "CI cannot install the now-required private Tessera package"
    },
    "176": {
@@ -460,7 +460,7 @@
     "title": "Restore profile-detection process globals between tests (fixes #197 order dependence)"
    },
    "201": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] _resolve swallows _refuse_dead_vendored_override: a dead vendored override yields DefaultProfile silently instead of refusing by name"
    },
    "202": {
@@ -468,7 +468,7 @@
     "title": "[P2] 22 call sites still swallow the dead-vendored-override refusal one level up (#201 follow-up)"
    },
    "203": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Let the dead-vendored-override refusal escape profile detection (#201)"
    },
    "204": {
@@ -478,6 +478,22 @@
    "205": {
     "state": "OPEN",
     "title": "[P1] Use the served Tessera activation contract in assignment-KL hooks and cache scoring"
+   },
+   "206": {
+    "state": "OPEN",
+    "title": "tests: bound the cluster-campaign waits by producer liveness, not the clock"
+   },
+   "207": {
+    "state": "CLOSED",
+    "title": "pq-decisions: #175 receipt (no token needed), #87 reopened + driver replays the candidate decision"
+   },
+   "208": {
+    "state": "OPEN",
+    "title": "#87 first paired quantized campaign: Qwen3-0.6B BF16 control vs native NVFP4 on Sparky, one exclusive action, accept = 0 newly-broken pairs on screen and held-out"
+   },
+   "209": {
+    "state": "OPEN",
+    "title": "[P2] Stop swallowing the dead-vendored-override refusal at the remaining 22 call sites (#202)"
    },
    "21": {
     "state": "CLOSED",
@@ -1654,19 +1670,19 @@
     "title": "[P3] build_forest on the 65536-value / arity-2 serialisable grids reached ~73 GB RSS; cell and allocation not characterised"
    },
    "286": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Supplied FP32 diagonals pass the invertibility guard before FP16 serialization changes their meaning"
    },
    "287": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Public PlanePromotion construction publishes failed eligibility checks as promoted"
    },
    "288": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Valid zero-KL controls produce an undefined infinite ratio and nonstandard JSON receipts"
    },
    "289": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Say what a ratio over a zero control is, once, and in JSON"
    },
    "29": {
@@ -1674,7 +1690,7 @@
     "title": "computation_graph.py records different vllm_ir overloads across builds of one cache key"
    },
    "290": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] conftest's xdist-only pytest_testnodedown hook breaks collection without xdist; CI 'pure' job red since 23288e1"
    },
    "291": {
@@ -1745,9 +1761,45 @@
     "state": "OPEN",
     "title": "[P1] Standalone stock export still leaves fused activation scales for vLLM's clipping-side max reduction"
    },
+   "306": {
+    "state": "CLOSED",
+    "title": "Declare the xdist-only pytest_testnodedown hook optional so the pure CI job collects again (#290)"
+   },
+   "307": {
+    "state": "CLOSED",
+    "title": "Require supplied channel diagonals to be the FP16 words the wire stores (#286)"
+   },
+   "308": {
+    "state": "CLOSED",
+    "title": "Make the promotion legs a property of the promotion, not of its factory"
+   },
+   "309": {
+    "state": "CLOSED",
+    "title": "[P2] pure CI job red on master: six test bodies in torch-free modules reach torch"
+   },
    "31": {
     "state": "CLOSED",
     "title": "serving/config.py's MoE refusal recommends a flag the pinned build refuses"
+   },
+   "310": {
+    "state": "CLOSED",
+    "title": "Skip, not fail, the six torch-reaching bodies the torch-free collector admits"
+   },
+   "311": {
+    "state": "CLOSED",
+    "title": "Decide the two parked policy items: keep tessera_gemm's strided-x copy (documented), no sidecar rotation field"
+   },
+   "312": {
+    "state": "OPEN",
+    "title": "ts-285: BF16 R=11 is the 73 GB build_forest cell; refuse a forest no wire can carry"
+   },
+   "313": {
+    "state": "CLOSED",
+    "title": "contract v21: record a routed-MoE greedy smoke the BF16 source does not degenerate on (prismaquant#198)"
+   },
+   "314": {
+    "state": "OPEN",
+    "title": "Finalize each worker's source identity before xdist sends workerfinished (#291)"
    },
    "32": {
     "state": "CLOSED",

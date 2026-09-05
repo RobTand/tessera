@@ -126,6 +126,8 @@ method per module.
 from __future__ import annotations
 
 import argparse
+import copy
+import hashlib
 import json
 import re
 import shutil
@@ -287,6 +289,63 @@ MERGED_ALIASES = ((re.compile(r"^(.*\.)qkv\.weight$"), "qkv_proj"),)
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
 BF16 = BF16_FAMILY
+
+
+class PlanSnapshot:
+    """The ``--plan-json`` file as ONE logical object, read once and never reread.
+
+    Four separate consumers used to open the path for themselves -- the
+    override loop that drives planning, a partition's sealed
+    ``export_identity``, the pre-publication gate, and the manifest's
+    provenance block -- and an export is long.  A planner that regenerates or
+    atomically replaces its output part-way through therefore let the encoded
+    artifact and the published plan describe different allocations, and the
+    gate could not catch it because it reread the replacement too: a tensor
+    written as an E4M3 q1024 wire was published as ``PASSTHROUGH`` and
+    accepted (#301).
+
+    The plan that drove the encode is the plan that is published.  This object
+    is that snapshot; the file is not consulted again, so a replacement during
+    the export is neither adopted nor able to fail the run half-written.  Its
+    ``sha256`` is over the exact bytes read and is printed with the plan, so
+    the export log says which revision of a mutable file this artifact
+    implements.  Every consumer that *stores* the plan takes ``published()``
+    -- its own deep copy -- so no reader can mutate what another one writes.
+    """
+
+    __slots__ = ("path", "sha256", "entries")
+
+    def __init__(self, path: Path, text: str):
+        self.path = Path(path)
+        self.sha256 = hashlib.sha256(text.encode()).hexdigest()
+        try:
+            entries = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"--plan-json {self.path} is not valid JSON: {exc}") from exc
+        if not isinstance(entries, dict):
+            raise SystemExit(
+                f"--plan-json {self.path} must be a JSON object mapping tensor or "
+                "stack names to entries")
+        # The same shape ``validate_explicit_plan`` holds the plan to at
+        # publication, asked at ARGUMENT time: a malformed entry is a typo in
+        # the run's instructions, and finding it after the first encode costs
+        # the encode.
+        for name, spec in entries.items():
+            if spec in ("PASSTHROUGH", "BF16"):
+                continue
+            if not isinstance(spec, dict) or "grid" not in spec or "q256" not in spec:
+                raise SystemExit(
+                    f"--plan-json {self.path} has an invalid entry {name!r}: an entry is "
+                    '"PASSTHROUGH"/"BF16" or an object carrying "grid" and "q256"')
+        self.entries = entries
+
+    @classmethod
+    def read(cls, path: Path) -> "PlanSnapshot":
+        return cls(Path(path), Path(path).read_text())
+
+    def published(self) -> dict:
+        """A private copy, for a consumer that keeps or serialises the plan."""
+        return copy.deepcopy(self.entries)
 
 
 def grid_for(name: str):
@@ -1252,6 +1311,14 @@ def main():
         activation = ActivationSource.from_capture(args.hessian, **settings)
 
     default_grid = grid_for(args.grid)
+    # THE PLAN IS READ ONCE, HERE, and this snapshot is the only plan the rest
+    # of the run knows about: planning, a partition's sealed identity, the
+    # pre-publication gate and the manifest all read it rather than the file
+    # (#301).  A ``--plan-json`` path is a mutable file and an export is long.
+    plan_snapshot = PlanSnapshot.read(args.plan_json) if args.plan_json else None
+    if plan_snapshot is not None:
+        print(f"plan: {plan_snapshot.path} sha256={plan_snapshot.sha256} "
+              f"({len(plan_snapshot.entries)} entries), read once", flush=True)
     # Every path into the encode loop passes through here: a tensor takes the
     # default (grid, q256) or a --plan-json override, and both are gated before
     # a single unit is encoded.
@@ -1284,8 +1351,8 @@ def main():
             "than letting checkpoint or shard order choose which bytes are served.")
     overrides = {}
     source_layout_overrides: dict[str, str] = {}
-    if args.plan_json:
-        for name, spec in json.loads(args.plan_json.read_text()).items():
+    if plan_snapshot is not None:
+        for name, spec in plan_snapshot.entries.items():
             if spec in ("BF16", "PASSTHROUGH"):
                 # The bare string is PASSTHROUGH -- copy the source tensor,
                 # quantise nothing.  ``{"grid": "BF16", "q256": N}`` is the
@@ -1601,7 +1668,7 @@ def main():
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
                                   "cached_expert_units"}}
-        options["plan"] = json.loads(args.plan_json.read_text()) if args.plan_json else None
+        options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
         for key in ("hessian", "input_scales"):
             path = getattr(args, key)
             options[key + "_sha256"] = sha256_file(path) if path else None
@@ -2002,7 +2069,7 @@ def main():
     if not args.partition:
         try:
             validate_explicit_plan(
-                json.loads(args.plan_json.read_text()) if args.plan_json else None,
+                plan_snapshot.entries if plan_snapshot is not None else None,
                 module_records, config_groups,
                 source_tensors={name for names in shards.values() for name in names})
         except ValueError as exc:
@@ -2061,7 +2128,9 @@ def main():
         # options.plan into export_identity, and a direct export used to
         # record a path that may not outlive the run, so a later sidecar
         # check without --plan-json could not recover the obligation (#211).
-        "plan": json.loads(args.plan_json.read_text()) if args.plan_json else None,
+        # It is the SNAPSHOT that drove the encode, not whatever the path
+        # holds now -- the file is not reread here (#301).
+        "plan": plan_snapshot.published() if plan_snapshot is not None else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
         # What the SERVING gate decided, in the artifact rather than in a shell

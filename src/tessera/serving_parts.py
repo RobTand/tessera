@@ -159,14 +159,21 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
     Implicit/default dense planning has no complete plan roster to compare.
     Unplanned expert stacks, in contrast, always pass through in the exporter,
     so the explicit stack set must equal both emitted and declared stack sets.
+
+    An explicit ``"PASSTHROUGH"``/``"BF16"`` entry is an obligation too -- a
+    NEGATIVE one, and it used to be the single plan statement nothing checked:
+    the loop below skipped those entries, so a quantized wire emitted for a
+    tensor the published plan says was passed through was accepted by this
+    gate (#301).  A plan is complete in both directions or it is prose.
     """
     if plan is None:
         return
     if not isinstance(plan, dict):
         raise ValueError("explicit export plan must be an object")
-    requested = {}
+    requested, passthrough = {}, set()
     for name, spec in plan.items():
         if spec in ("PASSTHROUGH", "BF16"):
+            passthrough.add(name)
             continue
         if not isinstance(spec, dict) or "grid" not in spec or "q256" not in spec:
             raise ValueError(f"explicit export plan has invalid entry {name!r}")
@@ -174,6 +181,23 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
     planned_stacks = {name for name in requested if name.endswith(".experts")}
     emitted_stacks = {name for name, module in modules.items()
                       if module.get("structure") == "routed_moe"}
+    all_roles = [role for module in modules.values() for role in module.get("roles", ())]
+    # THE NEGATIVE OBLIGATIONS, before the positive ones: a contradiction here
+    # names the tensor and the entry that was contradicted, which the stack
+    # coverage difference below cannot.
+    for name in sorted(passthrough):
+        spelling = plan[name]
+        if name in emitted_stacks:
+            raise ValueError(
+                f"explicit plan stack {name}: planned {spelling} but a routed_moe "
+                "module was emitted for it")
+        emitted = [role for role in all_roles
+                   if name in (role.get("tensor"), role.get("source_tensor"))]
+        if emitted:
+            raise ValueError(
+                f"explicit plan tensor {name}: planned {spelling} but {len(emitted)} "
+                f"quantized role(s) were emitted for it, e.g. {emitted[0].get('grid')} "
+                f"q256={emitted[0].get('q256')}")
     stack_schemes = {}
     for group in config_groups.values():
         scheme = group.get("scheme", {})
@@ -192,7 +216,6 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             f"extra declared={sorted(set(stack_schemes) - planned_stacks)}")
     from .serving.scheme import MOE_GROUP_PROJECTIONS, validate_tessera_moe_scheme
 
-    all_roles = [role for module in modules.values() for role in module.get("roles", ())]
     for name, spec in requested.items():
         wanted_grid, wanted_rung = spec["grid"], int(spec["q256"])
         if wanted_grid == "E2M1x1":  # tuple_grid's arity-one spelling

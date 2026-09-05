@@ -8,6 +8,7 @@ one this tree provides (tessera#154).
 """
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -76,3 +77,41 @@ def test_the_conftest_collects_without_xdist_installed():
         cwd=root / "tests", capture_output=True, text=True, timeout=600)
     assert "PluginValidationError" not in proc.stderr + proc.stdout, proc.stderr[-2000:]
     assert proc.returncode == 0, (proc.returncode, proc.stderr[-2000:])
+
+
+#: Modules the torch-free collector admits -- their imports are torch-free by
+#: design -- whose test bodies once reached for torch anyway (tessera#309).
+_TORCH_FREE_MODULES_WITH_TORCH_REACHING_BODIES = (
+    "test_hardware_byte_grid.py",
+    "test_serving_native_extensions.py",
+    # The forest-body roster: the refusal lives in ``alphabet``, so this
+    # module's import is torch-free, and two bodies read the other home of
+    # the same fact out of ``export`` (tessera#285).
+    "test_forest_grid_roster.py",
+)
+
+
+def test_a_collectable_module_does_not_reach_torch_inside_a_test_body():
+    """The collector classifies a module by its *import* (tessera#154), so a
+    body that imports torch in a module whose import is torch-free collects
+    in the ``pure`` job and then fails there instead of skipping -- six did,
+    and master read ``6 failed`` for three merges (tessera#309).  A box with
+    torch cannot see that, so hide torch from a child the way the job's
+    interpreter lacks it: ``sys.modules["torch"] = None`` makes every
+    ``import torch`` raise ``ModuleNotFoundError``, which ``importorskip``
+    turns into the skip the job expects and a bare import turns into the
+    failure it reported.  The probe is skipped in the child (the mark) so
+    this exercises the bodies, not the collector."""
+    tests = Path(__file__).resolve().parent
+    proc = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.modules['torch'] = None\n"
+         "import pytest\n"
+         "raise SystemExit(pytest.main(sys.argv[1:]))",
+         "-p", "no:xdist", "-p", "no:cacheprovider", "-q",
+         *_TORCH_FREE_MODULES_WITH_TORCH_REACHING_BODIES],
+        cwd=tests, capture_output=True, text=True, timeout=600,
+        env={**os.environ, conftest._PROBE_MARK: "1"})
+    tail = (proc.stdout + proc.stderr)[-3000:]
+    assert "No module named 'torch'" not in tail, tail
+    assert proc.returncode == 0, (proc.returncode, tail)

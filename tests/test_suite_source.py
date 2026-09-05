@@ -265,7 +265,8 @@ def test_a_population_measured_by_several_processes_must_agree(tmp_path):
 
     module = _module()
     root = _plain(tmp_path, "checkout")
-    identity = module.measured_source(root)
+    entry = module.measured_source(root)
+    identity = module.measured_source(root, entry=entry)
     other = dict(identity, sha256="f" * 64)
 
     assert module.agreed_source(identity, {}) == identity
@@ -282,6 +283,37 @@ def test_a_population_measured_by_several_processes_must_agree(tmp_path):
     silent = module.agreed_source(identity, {"gw0": identity, "gw1": None})
     assert silent["verification"] == "unknown", silent
     assert "gw1" in silent["reason"], silent
+
+
+def test_a_worker_that_reports_only_its_entry_identity_establishes_nothing(tmp_path):
+    """An entry identity is a seed; it was taken before the worker ran (#291).
+
+    It is a verified hash of the same clean tree, so every check the aggregate
+    used to make passed on it -- which is how a worker whose FINAL measurement
+    refused could be published as agreeing.  What separates the two is the
+    span: only ``measured_source(..., entry=...)`` measures across the tests
+    the worker actually ran, and only that record may establish agreement.
+    """
+
+    module = _module()
+    root = _plain(tmp_path, "checkout")
+    entry = module.measured_source(root)
+    identity = module.measured_source(root, entry=entry)
+
+    assert module.is_entry_bound(identity) is True, identity
+    assert module.is_entry_bound(entry) is False, entry
+    assert entry["verification"] == "verified" and entry["sha256"] == identity["sha256"]
+
+    seeded = module.agreed_source(identity, {"gw0": entry})
+    assert seeded["verification"] == "unknown", seeded
+    assert seeded["sha256"] is None, seeded
+    assert "entry" in seeded["workers"]["gw0"], seeded
+    assert "gw0" in seeded["reason"], seeded
+
+    # A worker whose own binding refused is named for that, not for the seed.
+    refused = module.agreed_source(
+        identity, {"gw0": dict(identity, verification="unknown", sha256=None)})
+    assert "verified source identity" in refused["workers"]["gw0"], refused
 
 
 def test_the_suite_publishes_an_entry_bound_identity_its_workers_agree_with():
@@ -305,16 +337,22 @@ def test_the_suite_publishes_an_entry_bound_identity_its_workers_agree_with():
         assert "measurement_span" in alone, alone
         assert "workers" not in alone, alone
 
+        # Entry-BOUND, and disagreeing on the hash: the branch that names what
+        # the other process measured.  An unbound record would be refused one
+        # step earlier, which is the subject of the xdist tests in
+        # ``tests/test_cuda_surface.py``.
         node = types.SimpleNamespace(
             gateway=types.SimpleNamespace(id="gw3"),
             workeroutput={"tessera_source_identity":
                           dict(conftest.SOURCE_AT_ENTRY, sha256="f" * 64,
-                               verification="verified")})
+                               verification="verified",
+                               measurement_span={"agrees": True})})
         conftest.pytest_testnodedown(node, None)
         disagreed = conftest.published_source_identity()
         assert disagreed["verification"] == "unknown", disagreed
         assert disagreed["sha256"] is None, disagreed
         assert "gw3" in disagreed["reason"], disagreed
+        assert "ffffffffffff" in disagreed["workers"]["gw3"], disagreed
     finally:
         conftest._WORKER_SOURCES.clear()
         conftest._WORKER_SOURCES.update(saved)
