@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T21:48:39Z",
+ "generated": "2026-09-05T21:56:27Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -548,11 +548,11 @@
     "title": "Tessera packed-expert bridge: price it, carry it, export it (#183, items 1-3)"
    },
    "221": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two homes for 'does this route execute the static NVFP4 activation contract': the campaign and export lane still compare the name, after #205 made it the spec's answer"
    },
    "222": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Routed export silently re-encodes from source when an allocation carries no projection at all"
    },
    "223": {
@@ -568,7 +568,7 @@
     "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
    },
    "226": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign and export lane: ask the contract, not the format name (#221)"
    },
    "227": {
@@ -576,11 +576,11 @@
     "title": "[P1] Bind Tessera cached scores and validation to the resolved activation-scale policy"
    },
    "228": {
-    "state": "OPEN",
-    "title": "Tessera export: name which path produced the routed-expert bytes (#222)"
+    "state": "CLOSED",
+    "title": "Tessera export: name which path produced the routed-expert bytes (#222) and stop bundling when no expert is selected (#229)"
    },
    "229": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Skip expert-wire bundling when the allocation keeps all experts in BF16"
    },
    "23": {
@@ -1994,7 +1994,7 @@
     "title": "Audit leftovers the Tier C pass documented rather than fixed"
    },
    "340": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind resumed metadata to the same bytes checked by the publication digest"
    },
    "341": {
@@ -2004,6 +2004,18 @@
    "342": {
     "state": "CLOSED",
     "title": "Bind the v22 smoke comparator to the checkout selected by its wrapper (#341)"
+   },
+   "343": {
+    "state": "CLOSED",
+    "title": "merge_suite: read a publication once, and bind the bytes that were read (#340)"
+   },
+   "344": {
+    "state": "OPEN",
+    "title": "export: a completed output is immutable, and its bytes are sealed (#337)"
+   },
+   "345": {
+    "state": "OPEN",
+    "title": "Restore the selector's never-under-select invariant, and bound its path resolution to the tree (#338, #339)"
    },
    "35": {
     "state": "CLOSED",

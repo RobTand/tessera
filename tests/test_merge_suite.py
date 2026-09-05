@@ -2167,48 +2167,85 @@ def real_publication(tmp_path_factory):
             "returncode": result.returncode, "population": population}
 
 
-def _pool_records_for(real, key="beef" + "0" * 60, population=None):
-    """The pool's half of the join, around a real run's stdout and file.
+def _reannounce(stdout, path, digest):
+    """The run's own stdout with its publication line re-announced.
 
-    The request and the outcome record are PrismaBuild's shapes and are built
-    here, because there is no pool on this box; the population's **producer
-    stamp** is the same -- ``suite_source._verified_stamp`` writes it only for
-    a checkout it verified against a sealed action, which a local run has
-    none of -- so it is injected into the population dict the reader is
-    handed while the file at the path stays byte-for-byte what the run wrote.
-
-    That division is the point rather than a compromise: everything the
-    attempt leg reads is the run's own -- the captured stdout, the file, the
-    counts in it -- and only the legs that are about the pool are synthetic.
+    Rebuilt through the same module ``tests/conftest.py`` writes it from, so
+    the FORMAT stays the producer's and only the digest value moves. The
+    assertion is half the point: the reader's own parser must find exactly one
+    publication line in a real run's terminal output.
     """
 
-    population = json.loads(json.dumps(population or real["population"]))
+    line = surface_publication.publication_line(
+        surface_publication.POPULATION, path, digest)
+    out, replaced = [], 0
+    for raw in stdout.splitlines():
+        if surface_publication.published_digests(raw, path):
+            out.append(line)
+            replaced += 1
+        else:
+            out.append(raw)
+    assert replaced == 1, (replaced, stdout)
+    return "\n".join(out) + "\n"
+
+
+def _pool_records_for(merge_suite, real, destination, key="beef" + "0" * 60,
+                      population=None, reannounce=True):
+    """The pool's half of the join, around a real run's stdout and file.
+
+    Everything the attempt leg reads is the run's own -- the sentence, the
+    summary line, the counts. Two things a box with no PrismaBuild cannot
+    produce are supplied here and named rather than hidden: the sealed request
+    and the outcome record, which are the pool's shapes; and the population's
+    **producer stamp**, which ``suite_source._verified_stamp`` writes only for
+    a checkout it verified against a sealed action.
+
+    The stamp goes into the **file**, and what the reader is handed is the
+    tool's own read of that file, so payload and digest are one snapshot by
+    construction. It is not injected into a dictionary beside the hashed bytes
+    any more: that separation is what #340 was about one level up, and a test
+    written that shape cannot notice a reader that reads a path twice.
+
+    ``reannounce`` is the price of the stamp -- it changes the bytes, so the
+    run's own digest is no longer the file's -- and it is the only thing about
+    the attempt's stdout that is not the run's own output. ``False`` leaves the
+    run's own line, digest included, which is what a negative case wants.
+    """
+
+    body = json.loads(json.dumps(population or real["population"]))
     # A tree with no git history -- an rsync'd checkout on the box that runs
     # the suite -- publishes ``commit: null``, and the tree leg is not what
-    # this test is about. Give both sides the same placeholder rather than
-    # make the test's verdict depend on how its box got its source.
-    commit = population.get("commit") or "0" * 40
-    population["commit"] = commit
+    # these tests are about. Give both sides the same placeholder rather than
+    # make the verdict depend on how the box got its source.
+    commit = body.get("commit") or "0" * 40
+    body["commit"] = commit
     snapshot = {"schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
                 "commit": commit, "subdirectory": "."}
     payload = {"params": {"command": [sys.executable, "-m", "pytest",
                                       CHILD_SUITE, "--surface-json",
-                                      str(real["surface"])],
+                                      str(destination)],
                           "checkout_snapshot": snapshot}}
     request_bytes = json.dumps(payload).encode()
-    population.setdefault("source_identity", {})["excluded_metadata"] = [{
+    body.setdefault("source_identity", {})["excluded_metadata"] = [{
         "path": f".pbrun-closure.{key[:16]}.json", "bytes": 153,
         "sha256": "d" * 64, "action_key": key,
         "request_sha256": hashlib.sha256(request_bytes).hexdigest()}]
+    destination.write_bytes(
+        (json.dumps(body, indent=2, sort_keys=False) + "\n").encode())
+    published = merge_suite._read_publication(destination)
+    stdout = real["stdout"].replace(str(real["surface"]), str(destination))
+    if reannounce:
+        stdout = _reannounce(stdout, destination, published.digest)
     outcome = {"attempts": 1, "claimed_host": "sparklina",
                "claimed_unix": time.time(), "status": "executed",
                "detail": {"returncode": real["returncode"],
                           "status": "executed", "elapsed_s": 1.0,
-                          "stdout": real["stdout"]}}
-    return key, payload, request_bytes, outcome, population
+                          "stdout": stdout}}
+    return key, payload, request_bytes, outcome, published
 
 
-def test_a_real_runs_stdout_binds_to_the_population_it_wrote(real_publication):
+def test_a_real_runs_stdout_binds_to_the_population_it_wrote(
+        real_publication, tmp_path):
     """The join, driven by a run this test did not write the output of.
 
     #331: the publication line was spelled once in ``tests/conftest.py`` and
@@ -2241,16 +2278,17 @@ def test_a_real_runs_stdout_binds_to_the_population_it_wrote(real_publication):
 
     merge_suite = _module()
     surface = real_publication["surface"]
-    key, payload, request_bytes, outcome, population = _pool_records_for(
-        real_publication)
-
-    assert merge_suite._binding_refusal(key, payload, request_bytes, outcome,
-                                        surface, population) is None
-
+    # Fully real, nothing substituted: the line the run printed, parsed by the
+    # reader's own parser, names the digest of the bytes the run wrote.
     announced = surface_publication.published_digests(
         real_publication["stdout"], surface, surface_publication.POPULATION)
     assert announced == [surface_publication.digest_bytes(
         surface.read_bytes())], announced
+
+    key, payload, request_bytes, outcome, published = _pool_records_for(
+        merge_suite, real_publication, tmp_path / "surface.gpu.json")
+    assert merge_suite._binding_refusal(
+        key, payload, request_bytes, outcome, published) is None
 
 
 def test_a_population_edited_after_publication_is_not_what_the_attempt_wrote(
@@ -2280,18 +2318,194 @@ def test_a_population_edited_after_publication_is_not_what_the_attempt_wrote(
     edited = json.loads(json.dumps(real_publication["population"]))
     edited["device"] = str(edited.get("device")) + " -- a second attempt's box"
     assert edited["counts"] == real_publication["population"]["counts"]
-    surface.write_bytes(
-        (json.dumps(edited, indent=2, sort_keys=False) + "\n").encode())
 
-    # The attempt's own stdout, unchanged, still naming this path: the run
-    # published here and something published over it.
-    real = {**real_publication, "surface": surface,
-            "stdout": real_publication["stdout"].replace(
-                str(real_publication["surface"]), str(surface))}
-    key, payload, request_bytes, outcome, population = _pool_records_for(
-        real, population=edited)
+    # The attempt's own stdout, its own digest, unchanged: the run published
+    # here and something published over it.
+    key, payload, request_bytes, outcome, published = _pool_records_for(
+        merge_suite, real_publication, surface, population=edited,
+        reannounce=False)
 
     refusal = merge_suite._binding_refusal(key, payload, request_bytes,
-                                           outcome, surface, population)
+                                           outcome, published)
     assert refusal is not None, refusal
     assert "is not the one that attempt wrote" in refusal, refusal
+
+
+def _two_publications(merge_suite, tmp_path):
+    """One receipt path, two attempts of one action, and their pool records.
+
+    A is the attempt that published and then died after its terminal summary:
+    verified source, the producer stamp, exit -11 (the pool requeues on any
+    non-zero exit, which is what makes a second attempt exist at all). B is the
+    retry: the same action, the same path, the **same counts**, its own bytes,
+    exit 0 -- and a source measurement that came out ``unknown``, which a
+    dirty checkout produces and which is receipt evidence rather than a pytest
+    failure. Neither the counts leg nor the exit status can tell them apart;
+    only the bytes can.
+
+    Returns everything a test needs to publish either one at any moment.
+    """
+
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir(exist_ok=True)
+    surface = receipt_dir / "surface.gpu.json"
+    key = "beef" + "0" * 60
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [(key, "done", 0, "sparky")])
+    request = _request_of(merge_suite.POOL_CAS_REQUESTS, key)
+
+    _gpu_population(surface, producer=request)
+    attempt_a = surface.read_bytes()
+    _gpu_population(surface, producer=None, device="the retry's box",
+                    source_identity={"schema": "tessera.suite_source.v1",
+                                     "verification": "unknown",
+                                     "snapshot_commit": "a" * 40,
+                                     "sha256": None,
+                                     "reason": "source checkout is dirty",
+                                     "excluded_metadata": []})
+    attempt_b = surface.read_bytes()
+    assert json.loads(attempt_a)["counts"] == json.loads(attempt_b)["counts"]
+
+    def outcome(raw, attempt, returncode):
+        digest = surface_publication.digest_bytes(raw)
+        return {"attempts": attempt, "claimed_host": f"attempt-{attempt}",
+                "claimed_unix": time.time(),
+                "status": "executed" if returncode == 0 else "failed",
+                "detail": {"returncode": returncode, "status": "executed",
+                           "elapsed_s": 511.4,
+                           "stdout": _attempt_stdout(surface, digest=digest)}}
+
+    outcome_path = merge_suite.POOL_QUEUE / "done" / f"{key}.json"
+    return {"receipt_dir": receipt_dir, "surface": surface, "key": key,
+            "outcome_path": outcome_path, "a": attempt_a, "b": attempt_b,
+            "outcome_a": outcome(attempt_a, 1, -11),
+            "outcome_b": outcome(attempt_b, 2, 0)}
+
+
+def _publish_between_the_reads(merge_suite, monkeypatch, publish):
+    """Run ``publish`` at the seam inside ``_resume``, then bind as usual.
+
+    ``_resume`` reads the population and then scans the pool. This lands a
+    producer between those two steps -- the only thing substituted is WHEN the
+    retry finishes, which is the pool's business and not this tool's; every
+    function whose behaviour is under test is the real one, called in the real
+    order. ``*args`` because the fix changes the callee's arity, so one test
+    body runs against both trees.
+    """
+
+    original = merge_suite._attach_pool_exit_status
+
+    def publish_then_attach(*args):
+        publish()
+        return original(*args)
+
+    monkeypatch.setattr(merge_suite, "_attach_pool_exit_status",
+                        publish_then_attach)
+
+
+def test_a_retry_that_republishes_between_the_read_and_the_bind_is_not_adopted(
+        tmp_path, monkeypatch):
+    """One pathname is not one publication, and a receipt may not blend two.
+
+    #340. ``_resume`` read the surface file twice: once through
+    ``_attach_surface``, whose parse became ``record["surface"]`` and fed the
+    verdict's source and coverage checks, and once inside the digest leg of
+    ``_binding_refusal``, which re-opened the same **name** to authenticate an
+    attempt. Nothing established that the two reads saw the same bytes, and a
+    requeue is exactly what makes them differ:
+
+    * A publishes a verified population and crashes after its summary;
+    * a resume loads A;
+    * retry B replaces the file -- same counts, unknown source, no producer
+      stamp -- and exits 0.
+
+    The resume then hashed B's bytes, accepted B's announced digest, kept
+    **A's** verified source and producer stamp on the record, adopted B's exit
+    0, and returned green. A source-verification bypass assembled from two
+    honest reads, and no test could see it because every test held the file
+    still.
+
+    Before the fix, on ``eae0c71``::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+
+    -- and the verdict on that record was ``green on 1 population(s): gpu``
+    while the file the digest had authenticated said ``verification:
+    unknown``.
+    """
+
+    merge_suite = _module()
+    scene = _two_publications(merge_suite, tmp_path)
+    scene["surface"].write_bytes(scene["a"])
+    scene["outcome_path"].write_text(json.dumps(scene["outcome_a"]))
+
+    def retry_finishes():
+        scene["surface"].write_bytes(scene["b"])
+        scene["outcome_path"].write_text(json.dumps(scene["outcome_b"]))
+
+    _publish_between_the_reads(merge_suite, monkeypatch, retry_finishes)
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
+                                 scene["receipt_dir"])
+
+    # The record is A, whole: the read it reports and the bytes it was parsed
+    # from are one publication, and B's status is not attached to them.
+    assert scene["surface"].read_bytes() == scene["b"], "B did publish"
+    assert record["surface"] == json.loads(scene["a"]), record["surface"]
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert "pool_action" not in record, record
+    refused = record["pool_actions_refused"]
+    assert any("is not the one that attempt wrote" in r for r in refused), \
+        refused
+    assert not merge_suite._verdict([record]).startswith("green on"), \
+        merge_suite._verdict([record])
+    # And the receipt names which publication it is about, so a later reader
+    # can ask the same question this test does.
+    assert record["surface_sha256"] == surface_publication.digest_bytes(
+        scene["a"]), record
+
+
+def test_the_binding_authenticates_the_publication_it_was_given(
+        tmp_path, monkeypatch):
+    """The reader is handed a snapshot, not a name to open again.
+
+    The other half of #340, and the one that says what the fix IS rather than
+    what it prevents. ``_keep_any_previous`` moves an earlier publication aside
+    when a retry writes, so the pathname a resume already read can be empty a
+    moment later -- through no fault of the measurement, which the resume
+    holds. A reader that re-opens the name calls that unverifiable; a reader
+    given the publication authenticates the bytes it actually has.
+
+    Nothing about A changes here: its own outcome record, its own announced
+    digest, its own status. Only the file moves.
+
+    Before the fix, on ``eae0c71``::
+
+        >       assert record["exit_status_observed"] is True, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': False, ...}
+        E       assert False is True
+
+    -- refused with "the population at this path cannot be read", which is a
+    statement about a pathname and not about the publication in hand.
+    """
+
+    merge_suite = _module()
+    scene = _two_publications(merge_suite, tmp_path)
+    scene["surface"].write_bytes(scene["a"])
+    scene["outcome_path"].write_text(json.dumps(scene["outcome_a"]))
+
+    _publish_between_the_reads(merge_suite, monkeypatch,
+                               lambda: scene["surface"].unlink())
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
+                                 scene["receipt_dir"])
+
+    assert record["exit_status_observed"] is True, record
+    assert record["returncode"] == -11, record
+    # A crashed after its summary, so the arm is red on its own status -- the
+    # point is that the row can still SAY so.
+    assert merge_suite._verdict([record]).startswith("red on"), \
+        merge_suite._verdict([record])
+    assert record["surface_sha256"] == surface_publication.digest_bytes(
+        scene["a"]), record
