@@ -168,7 +168,7 @@ from tessera.stock import (  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
-    partition_owner, sha256_file, summarize_modules)
+    partition_owner, sha256_file, summarize_modules, validate_explicit_plan)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -1395,11 +1395,24 @@ def main():
         print(f"  {len(routed_passthrough)} routed expert tensors across layers {layers} stay "
               f"BF16 and are named in ignore (no plan entry names their stack); "
               f"e.g. {sorted(routed_passthrough)[0]}", flush=True)
+    # An EXPLICIT quantized plan entry is an obligation (#211): the merge path
+    # holds a partitioned export to it through validate_explicit_plan, and the
+    # direct export is held to the same rule -- a target the plan names may be
+    # refused here, before the first encode, but never silently demoted to
+    # BF16 passthrough.  Implicit --grid/--q256 defaults keep their deliberate
+    # passthrough fallbacks; explicit "PASSTHROUGH"/"BF16" stays a passthrough.
+    explicit = {name for name, spec in overrides.items() if spec is not None}
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
         layer = body_layer(name)
         if args.layers is not None and layer >= args.layers:
+            if name in explicit:
+                raise SystemExit(
+                    f"the plan gives {name} a rung, but --layers {args.layers} stops before "
+                    f"its layer {layer}. One of the two is wrong and guessing which would "
+                    "either pass through a tensor the plan asked for or encode past the "
+                    "smoke bound. Name it PASSTHROUGH, or raise --layers.")
             passthrough.append(name); continue
         if name in overrides and overrides[name] is None:
             passthrough.append(name); continue
@@ -1407,6 +1420,14 @@ def main():
             passthrough.append(name); continue
         grid, q256 = overrides.get(name, (default_grid, args.q256))
         if rows % (grid.arity * 32) or cols % 16:
+            if name in explicit:
+                raise SystemExit(
+                    f"the plan names {name} at {grid.name} q256={q256}, but its shape "
+                    f"[{rows}, {cols}] cannot be cut on that grid: rows must be a whole "
+                    f"number of tuples (grid.arity * 32 = {grid.arity * 32}) and columns a "
+                    "multiple of 16. An explicit rung is an obligation, so this is refused "
+                    "rather than silently demoted to BF16 passthrough; name the tensor "
+                    "PASSTHROUGH to keep it at source precision deliberately.")
             passthrough.append(name); continue
         plan[name] = (grid, q256, rows, cols)
     # Group by vLLM module: every role quantizable, and every role on the same
@@ -1426,6 +1447,18 @@ def main():
             modules[key] = list(members)
         else:
             why = "not every role is quantizable" if not all(m in plan for m in members) else f"roles disagree {sorted(recipes)}"
+            named = sorted(m for m in members if m in explicit)
+            if named:
+                # The exporter's resolution for a disagreeing group is a whole-
+                # group BF16 passthrough, and for implicitly planned members
+                # that is the deliberate default.  For a member the plan NAMES
+                # quantized it is a silent demotion of an explicit rung (#211).
+                raise SystemExit(
+                    f"fused module {key}: {why}, and the plan explicitly quantizes {named}. "
+                    "vLLM builds one method per fused module, so the exporter would pass the "
+                    "whole group through as BF16 -- a checkpoint that does not implement its "
+                    "plan. Plan every member of the group onto one scheme (family, grid, "
+                    "body, scale plane), or name them all PASSTHROUGH.")
             print(f"  passthrough {key}: {why}; vLLM builds one method per fused module", flush=True)
             for m in members:
                 if m in plan:
@@ -1460,6 +1493,21 @@ def main():
     if unrouted:
         message = _unrouted_refusal(unrouted, list(src_config.get("architectures") or ()))
         if args.passthrough_unrouted:
+            # The flag resolves modules the DEFAULT planned; a module the plan
+            # explicitly quantizes is an obligation (#211), and shedding it
+            # here would publish a checkpoint validate_explicit_plan refuses
+            # at merge and nothing used to refuse in the direct path.
+            named = sorted(
+                module for module in unrouted
+                if module in stack_plan
+                or any(m in explicit for m in modules.get(module, ())))
+            if named:
+                raise SystemExit(
+                    f"--passthrough-unrouted would pass through {named}, but the plan "
+                    "explicitly gives them a rung. An explicit rung is an obligation "
+                    "(serving_parts.validate_explicit_plan); passing these modules through "
+                    "would publish a checkpoint that does not implement its plan. Remove "
+                    "them from the plan (or name them PASSTHROUGH) to export the rest.")
             print(f"  --passthrough-unrouted: {message}", flush=True)
             for module in unrouted:
                 if module in stack_plan:
@@ -1890,6 +1938,26 @@ def main():
             f"e.g. {unnamed[:3]}. The plugin refuses a Linear it is neither told to decode nor "
             "told to leave alone, so this checkpoint would fail at load.")
     ignore = sorted(set(ignore))
+    # THE PLAN IS VALIDATED BEFORE PUBLICATION (#211), by the same gate the
+    # whole-layer merge runs: every explicit quantized entry must be emitted
+    # and declared at its planned grid and rung.  The refusals above make each
+    # known demotion path explicit before the encode; this holds whatever is
+    # actually about to be published to the plan, so no path -- present or
+    # future -- can publish a config.json that does not implement it.  A
+    # partitioned export carries the full plan but emits only its owned
+    # layers; its validation belongs to merge_serving_parts, which already
+    # runs this call on the assembled whole.
+    if not args.partition:
+        try:
+            validate_explicit_plan(
+                json.loads(args.plan_json.read_text()) if args.plan_json else None,
+                module_records, config_groups,
+                source_tensors={name for names in shards.values() for name in names})
+        except ValueError as exc:
+            raise SystemExit(
+                f"explicit plan verification failed before publication: {exc}. The emitted "
+                "roles do not implement the plan this export was given; refusing to write "
+                "config.json.") from exc
     moe_passthrough_modules = {m for source in (expert_shapes, routed_shapes)
                                for name, shape in source.items()
                                for m in ignored_modules(name, shape)

@@ -115,7 +115,7 @@ from tessera.errors import TesseraError  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from export_tessera_serving import module_scheme_key  # noqa: E402
+from export_tessera_serving import fused_module, module_scheme_key  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
@@ -127,10 +127,6 @@ FAMILY = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)$")
 #: replaced it with the members' own rungs before an assignment is written, and
 #: one that reaches a plan means that expansion did not happen.
 GROUP = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_G(?P<option>\d+)$")
-
-#: The exporter's fused groups, as ``export_tessera_serving.FUSED`` spells them.
-FUSED = (("self_attn", "qkv_proj", ("q_proj", "k_proj", "v_proj")),
-         ("mlp", "gate_up_proj", ("gate_proj", "up_proj")))
 
 #: What the allocator may pick that is not a Tessera wire and is still fine.
 BF16_CHOICES = {"BF16", "bfloat16", "bf16"}
@@ -218,12 +214,20 @@ def layer_of(qname: str) -> int:
 
 
 def fused_key(qname: str):
-    """``(fused module qname, ordered member qnames)`` or ``None``."""
-    prefix, role = qname.rsplit(".", 1)
-    for block, fused, members in FUSED:
-        if prefix.endswith("." + block) and role in members:
-            return f"{prefix}.{fused}", tuple(f"{prefix}.{m}" for m in members)
-    return None
+    """``(fused module qname, ordered member qnames)`` or ``None``.
+
+    Delegated to ``export_tessera_serving.fused_module`` -- the exporter owns
+    the roster of source leaves vLLM merges into one module (q/k/v, every
+    non-routed gate/up including ``mlp.shared_experts``, LFM's dense
+    ``feed_forward.w1/w3`` -> ``w13``), and a restatement here is how this
+    converter came to check the fused invariant on two of those groups and
+    skip the rest (tessera#211).  One rule, one home.
+    """
+    fused = fused_module(qname + ".weight")
+    if fused is None:
+        return None
+    module, members = fused
+    return module, tuple(member[: -len(".weight")] for member in members)
 
 
 def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "Fraction | None":

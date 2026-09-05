@@ -141,6 +141,11 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
+`export_tessera_serving.fused_module` is the one statement of that roster --
+q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
+and the converter's `fused_key` delegates to it rather than restating two of
+its rows (tessera#211), so the plan-time fused check and the export-time one
+read one rule.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
@@ -176,6 +181,17 @@ validator before serving, using the merged `export_identity.options.plan` or
 an explicit `--plan-json` that must agree with it; its routed-MoE summary must
 name the same population too. Existing version-one parts remain readable and
 their containers do not change.
+
+The direct (non-partitioned) export runs the same validator against its own
+emitted roles and declared schemes before it writes `config.json`, and every
+path that used to demote an explicit quantized target to BF16 passthrough in
+silence now refuses before the first encode, naming the tensor and the field:
+a shape the grid cannot cut, a `--layers` smoke bound that excludes a planned
+tensor, a fused group whose explicitly planned members cannot share one
+scheme, and `--passthrough-unrouted` reaching a module the plan names.
+Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
+fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
+(tessera#211).
 
 ## 3. Bytes: priced == served
 
