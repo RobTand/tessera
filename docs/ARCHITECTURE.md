@@ -370,6 +370,24 @@ see an **encoder** change: same arguments, different bytes out. That gap
 merged two differently-encoded halves once already (issue #78), and closing it
 is issue #101.
 
+Because the profile id is a *digest* of those arguments, two of them — the
+convolutional code and the payload grid — have no field of their own, and the
+reader recovers them only by recomputing the digest over a closed search
+(`trellis.replayable_codes` × `alphabet.SERIALISABLE_GRIDS`). So the roster the
+reader searches is what the writer may publish, and since tessera#295 that is
+one predicate with one home: `build_unit_artifact` refuses a TCQ body whose
+`ConvCode` is outside `trellis.require_replayable_code` — by memory order and
+octal generators, at the serialization boundary — instead of writing bytes that
+fail closed in whatever process later loads them. `ConvCode(memory=3,
+generators=(0o17, 0o15))`, the published memory-3 pair with its taps
+transposed, is a legal rate-1/2 code the encoder and `reconstruct_unit` both
+serve, and it was writable and unreadable at the same version. Every pair the
+reader searches — each memory order's published default and the superseded
+memory-3 `(0o5, 0o7)` — still writes and reads back, research encode/decode of
+any legal pair is untouched (only *publishing* is gated), a WINDOW body binds
+no code and is not checked, and no wire field was added: the eleven legacy
+artifacts under `tests/data/legacy/` re-serialise to identical bytes.
+
 The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 **derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
 at fixed arguments and the result is hashed, so the value moves exactly when
@@ -522,6 +540,25 @@ route applies an input rotation the sidecar must name it (`shared` in
 `FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
 contract bumps, and `require_untransformed` learns that consumer; not before.
 
+The **slicing capability API** owes the same answer, and since tessera#304 it
+gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+cut", so the refusals that are properties of the *unit* rather than of the cut
+-- an `R_in`-only rotation, whose column blocks a cut would break into pieces
+that decode to plausible wrong weights, and a scale block that straddles two
+output rows -- live in one predicate, `slicing._unsliceable_reason`, which
+`can_shard` returns `False` from and `slice_unit` raises verbatim. Neither is
+expressible as a granularity: they refuse *every* cut, the identity slice
+included, so `shard_granularity` reports the arithmetic granularity of a unit
+the predicate has already admitted. tessera#235 aligned the two on block
+geometry and left rotation answered only in the cutter, so `can_shard` reported
+a rotated artifact cuttable on both axes while `slice_unit` had always refused
+it -- a capability answer a producer or operator could not act on. The
+predicate takes the three facts every view carries (rotation state, block
+width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
+one answer. Unrotated capability and shard reconstruction are unchanged. If
+rotated slicing is ever implemented, both paths move together and its complete
+reconstruction semantics are proved with them.
+
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 
 The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
@@ -586,6 +623,40 @@ hands the wrapper a fresh contiguous batch, the copy is free, and a refusal
 would only move the same `contiguous()` into the benchmark. The docstring
 says so. The day a route or the encoder imports `tessera.kernel`, that test
 fails naming the importer, and the copy becomes a refusal.
+
+### 3.7 A registered grid whose forest has no wire has no forest
+
+The ALPHABET and DESCENDANT planes carry a TCQ forest one *plane element* per
+code, and that element is a byte (`PayloadGrid.code_bytes`). So a registered
+grid wider than 256 codes has no TCQ wire at all — which is why the recipe
+table gives BF16 a window recipe at every rung, and why `wire_recipe`'s
+`body=BodyKind.TCQ` override (`_resolve_recipe`, honoured on any grid) was the
+one path that could ask for a forest nothing could write. It asked
+expensively: the scalar builder's `_mass_balanced_blocks` materialises
+`anchors x grid.size` candidate pairs and holds two such containers at once,
+so BF16 costs **65.7 GiB at R=11 and ~130 GiB at R=12** — measured per cell in
+`docs/measurements/build-forest-memory-2026-09-05.md`, which is what
+tessera#285's unattributed 73 GB kill was. `E2M1x2`, the only *shipping* grid
+the same filter selects, peaks at 34 MB at every rate: arity > 1 routes to
+`_build_forest_kd`, which builds no cross product, so there is nothing to
+stream on the path anything actually uses.
+
+`alphabet.require_forest_grid` now refuses at the top of `build_forest`,
+naming the grid, its code count and the plane that cannot carry it, before the
+first allocation. It is **derived, not listed**: membership of
+`SERIALISABLE_GRIDS` (the closed set of wire commitments, and what
+`wire_recipe` dispatches on) intersected with `_forest_plane_failure` (the one
+spelling of the plane-width rule, which `AnchorForest._refuse_unserialisable`
+also reads, so the refusal at the build and the refusal at the plane cannot
+disagree). Today that intersection is exactly BF16;
+`tests/test_forest_grid_roster.py` derives the same set from
+`export.recipe_table` so the two homes are pinned together. E4M3 is outside it
+— its shipping recipe is the window body too, but 256 codes fit the planes, so
+its TCQ body stays reachable by override. Unregistered grids are outside it
+whatever their width: `_refuse_unserialisable`'s promise that "encoding,
+decoding and measuring on any grid stay open" is what keeps a free 1024-code
+tuple grid buildable, and narrowing that would close a research surface rather
+than close #285.
 
 ## 4. Allocation and the uniform gate
 

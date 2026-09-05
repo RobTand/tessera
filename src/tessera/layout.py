@@ -97,6 +97,8 @@ _SLICING_NAMES = frozenset({
     "_manifest_granularity",
     "_steps_of",
     "_scale_columns_per_row",
+    "_block_straddles_rows",
+    "_unsliceable_reason",
     "_lcm",
 })
 
