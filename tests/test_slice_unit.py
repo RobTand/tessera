@@ -1465,6 +1465,107 @@ def test_can_shard_is_exactly_what_the_slicer_accepts_at_every_block_width(cpu_u
     assert ("cut", False) in seen, "a tiled width must still cut, or nothing is tested"
 
 
+def _declared_rotated(parsed):
+    """The same wire, declared ``R_in``-only, parsed back.
+
+    The rotation block is the one the reader derives from the width
+    (``diagonals.rotation_block_for``) because that is the only block
+    ``build_unit_artifact`` accepts (tessera#210) -- so this is a rotated
+    artifact a loader can really be handed, not a hand-made unit.
+    """
+    from tessera.diagonals import rotation_block_for
+    from tessera.manifest import RotationState
+
+    columns = parsed.manifest.geometry.columns
+    unit = replace(
+        parsed.unit,
+        rotation=RotationState.R_IN_ONLY,
+        rotation_block=rotation_block_for(RotationState.R_IN_ONLY, columns),
+    )
+    _m, _r, blob = build_unit_artifact(
+        unit, "rotated", parsed.forests, parsed.manifest.branch.root_q256,
+        parsed.code or CODE, fixture_id=None,
+    )
+    return _cpu_parse(blob)
+
+
+def test_can_shard_refuses_the_rotated_units_the_cutter_refuses(cpu_units):
+    """tessera#304: capability is the cutter's answer over the *transform*
+    domain too, not only over block geometry.
+
+    ``slice_unit`` refuses every rotated unit -- ``R_in``-only rotation is a
+    column-block structure a cut would break into pieces that decode to
+    plausible wrong weights -- while ``can_shard`` inspected only straddling
+    blocks and arithmetic granularity, so a producer or operator reading the
+    capability API was promised a cut that always raises.  #235 aligned the two
+    on block geometry; this is the population that alignment did not reach.
+
+    Both bodies and both block plane kinds the CPU fixtures carry, both axes,
+    every view a caller holds (bare unit, ``ParsedUnit``, ``Manifest``), and
+    TP1 -- the identity slice, which is refused too -- as well as TP>1.
+    """
+    from tessera.manifest import RotationState
+
+    cut = set()
+    for label, (_unit, _forests, grid, blob) in cpu_units.items():
+        parsed = _cpu_parse(blob)
+        rotated = _declared_rotated(parsed)
+        assert rotated.unit.rotation is RotationState.R_IN_ONLY
+        assert rotated.manifest.branch.rotation is RotationState.R_IN_ONLY
+        geometry = rotated.manifest.geometry
+        for axis in ("row", "column"):
+            extent = geometry.rows if axis == "row" else geometry.columns
+            for tp in (1, 2, 4):
+                assert can_shard(rotated, tp, axis) is False, (label, axis, tp)
+                assert can_shard(rotated.manifest, tp, axis) is False, (
+                    label, axis, tp)
+                assert can_shard(
+                    rotated.unit, tp, axis, geometry.superblock_columns,
+                    grid.arity) is False, (label, axis, tp)
+                lo, hi = _tp_ranges(extent, tp)[-1]
+                kwargs = {"rows": (lo, hi)} if axis == "row" else {"cols": (lo, hi)}
+                with pytest.raises(GrammarError, match="refusing to slice a rotated"):
+                    slice_unit(rotated, **kwargs)
+                # The control: unrotated, the same wire still cuts, and
+                # ``can_shard`` still says so.
+                if can_shard(parsed, tp, axis):
+                    slice_unit(parsed, **kwargs)
+                    cut.add((label, axis, tp))
+    assert cut, "no unrotated cut was accepted, so the refusal proves nothing"
+
+
+def test_the_rotation_refusal_has_one_home_over_every_view():
+    """The issue's own reproduction, on committed bytes and no encoder: a
+    ``R_in``-only E4M3 window artifact whose dimensions are otherwise
+    shardable.  ``can_shard`` answered ``True`` for both axes and ``slice_unit``
+    raised.  One predicate now answers both, so the refusal a loader is given
+    is the sentence the cutter would have raised."""
+    import pathlib
+
+    from tessera.slicing import _unsliceable_reason
+
+    legacy = pathlib.Path(__file__).parent / "data" / "legacy"
+    parsed = _cpu_parse(
+        (legacy / "e4m3-1024-window-channel-256c.tessera").read_bytes())
+    rotated = _declared_rotated(parsed)
+    assert can_shard(rotated, 2, "row") is False
+    assert can_shard(rotated.manifest, 2, "column") is False
+    with pytest.raises(GrammarError) as raised:
+        slice_unit(rotated, rows=(8, 16))
+    reason = _unsliceable_reason(
+        rotated.unit.rotation, _scale_columns_per_row(rotated.unit),
+        rotated.manifest.geometry.columns,
+    )
+    assert reason and str(raised.value) == reason
+    # The predicate is the whole of the disagreement: the same bytes without
+    # the declared rotation have no reason and cut.
+    assert _unsliceable_reason(
+        parsed.unit.rotation, _scale_columns_per_row(parsed.unit),
+        parsed.manifest.geometry.columns) is None
+    assert can_shard(parsed, 2, "row") is True
+    slice_unit(parsed, rows=(8, 16))
+
+
 def test_plane_order_is_the_only_place_the_two_orders_live():
     """The shard order is the canonical order with one plane wedged in ahead
     of BODY -- the only position a legal truncation cannot separate them.

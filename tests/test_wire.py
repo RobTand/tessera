@@ -24,7 +24,12 @@ from tessera.grammar import (
     completion_capacity,
     root_from_q256,
 )
-from tessera.trellis import _ODS_GENERATORS, SUBSET_COUNT, ConvCode
+from tessera.trellis import (
+    _ODS_GENERATORS,
+    SUBSET_COUNT,
+    ConvCode,
+    replayable_codes,
+)
 from tessera.grammar import release_quota, superblock_widths
 from tessera.unit_artifact import (
     build_unit_artifact,
@@ -401,6 +406,95 @@ def test_reader_fails_closed_on_an_unknown_trellis():
     forged = dc_replace(manifest, encoder_profile_id=bytes(32))
     with pytest.raises(GrammarError, match=r"matches no \(convolutional code, payload grid\) pair"):
         read_unit_artifact(serialize(forged, region))
+
+
+def test_the_writer_refuses_a_code_the_reader_cannot_replay():
+    """tessera#295: the writer hashed *any* pair it was handed while the reader
+    recovers only ``replayable_codes()``, so an encoder-supported pair produced
+    bytes the same version cannot load -- the reader's ``GrammarError`` arriving
+    in somebody else's process, from an artifact this tree wrote.
+
+    ``(0o17, 0o15)`` is the memory-3 published pair with its two output taps
+    reversed: a legal rate-1/2 code the encoder and the tensor decoder both
+    serve, and one no reader can name, because the wire carries no generator
+    field.  Refused where the bytes are decided, by the generators.
+    """
+    unreadable = ConvCode(memory=3, generators=(0o17, 0o15))
+    assert unreadable not in set(replayable_codes())
+    forests = {3: build_forest(3)}
+    weights = torch.randn(
+        (8, 32), generator=torch.Generator().manual_seed(0)) * 0.02
+    unit = encode_unit(weights, forests, (3,) * 32, unreadable, scale_refit=0)
+    # Research encode/decode stays available: only the artifact writer refuses.
+    assert torch.isfinite(reconstruct_unit(unit, forests, unreadable)).all()
+    with pytest.raises(GrammarError, match=r"0o17,0o15"):
+        build_unit_artifact(
+            unit, "explicit-generators", forests, 768, unreadable,
+            fixture_id=None,
+        )
+
+
+@pytest.mark.parametrize(
+    "code",
+    tuple(replayable_codes()),
+    ids=lambda c: f"m{c.memory}-g{'_'.join(oct(g)[2:] for g in c.generators)}",
+)
+def test_every_replayable_code_still_writes_and_reads_back(code):
+    """The guard is exactly the reader's roster, not a narrower one: every pair
+    ``replayable_codes()`` yields -- each memory order's published default and
+    the superseded memory-3 pair -- still writes and parses back to itself.
+    Derived from the registry rather than restated, so a pair added there is
+    covered the day it is added (AGENTS rule 3)."""
+    forests = {3: build_forest(3)}
+    weights = torch.randn(
+        (8, 32), generator=torch.Generator().manual_seed(1)) * 0.02
+    unit = encode_unit(weights, forests, (3,) * 32, code, scale_refit=0)
+    _m, _r, blob = build_unit_artifact(
+        unit, "replayable", forests, 768, code, fixture_id=None)
+    parsed = parse_unit_artifact(blob)
+    assert parsed.code == code
+    assert torch.equal(
+        read_unit_artifact(blob), reconstruct_unit(unit, forests, code))
+
+
+def test_the_writers_acceptance_is_the_readers_search():
+    """One rule, one home (AGENTS rule 4).  ``trellis.is_replayable_code`` is
+    the question ``read_unit_artifact``'s digest search answers, so the two
+    cannot drift into a writer that publishes what no reader recovers."""
+    from tessera.trellis import is_replayable_code
+
+    roster = frozenset(replayable_codes())
+    assert roster and all(is_replayable_code(code) for code in roster)
+    # A pair one transposition or one tap away from a published default is a
+    # different machine, and the digest names it exactly -- so it is not
+    # replayable unless the registry itself carries it.
+    for code in roster:
+        for other in (code.generators[::-1], (code.generators[0] ^ 1,
+                                              code.generators[1])):
+            near = ConvCode(memory=code.memory, generators=tuple(other))
+            assert is_replayable_code(near) is (near in roster), near
+
+
+def test_a_window_body_is_untouched_by_the_convolutional_code():
+    """A WINDOW body binds no code -- ``encoder_profile_id`` writes
+    ``body:window,L=...`` and never a ``conv:`` part -- so the writer's new
+    refusal must not reach the E4M3/BF16 window units the serving lane ships.
+    The same unit written under the default pair and under a pair no reader can
+    replay is the same bytes."""
+    import pathlib
+
+    legacy = pathlib.Path(__file__).parent / "data" / "legacy"
+    parsed = parse_unit_artifact(
+        (legacy / "e4m3-1024-window-channel-256c.tessera").read_bytes())
+    assert parsed.code is None
+    blobs = {
+        code: build_unit_artifact(
+            parsed.unit, parsed.manifest.branch.unit_id, parsed.forests,
+            parsed.manifest.branch.root_q256, code, fixture_id=None,
+        )[2]
+        for code in (ConvCode(), ConvCode(memory=3, generators=(0o17, 0o15)))
+    }
+    assert len(set(blobs.values())) == 1
 
 
 def _blob_with_alphabet_corrupted(corrupt):

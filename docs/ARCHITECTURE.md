@@ -339,6 +339,24 @@ see an **encoder** change: same arguments, different bytes out. That gap
 merged two differently-encoded halves once already (issue #78), and closing it
 is issue #101.
 
+Because the profile id is a *digest* of those arguments, two of them — the
+convolutional code and the payload grid — have no field of their own, and the
+reader recovers them only by recomputing the digest over a closed search
+(`trellis.replayable_codes` × `alphabet.SERIALISABLE_GRIDS`). So the roster the
+reader searches is what the writer may publish, and since tessera#295 that is
+one predicate with one home: `build_unit_artifact` refuses a TCQ body whose
+`ConvCode` is outside `trellis.require_replayable_code` — by memory order and
+octal generators, at the serialization boundary — instead of writing bytes that
+fail closed in whatever process later loads them. `ConvCode(memory=3,
+generators=(0o17, 0o15))`, the published memory-3 pair with its taps
+transposed, is a legal rate-1/2 code the encoder and `reconstruct_unit` both
+serve, and it was writable and unreadable at the same version. Every pair the
+reader searches — each memory order's published default and the superseded
+memory-3 `(0o5, 0o7)` — still writes and reads back, research encode/decode of
+any legal pair is untouched (only *publishing* is gated), a WINDOW body binds
+no code and is not checked, and no wire field was added: the eleven legacy
+artifacts under `tests/data/legacy/` re-serialise to identical bytes.
+
 The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 **derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
 at fixed arguments and the result is hashed, so the value moves exactly when
@@ -490,6 +508,25 @@ and a `fused_module.fields` entry PrismaQuant pins for nothing. The day a
 route applies an input rotation the sidecar must name it (`shared` in
 `FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
 contract bumps, and `require_untransformed` learns that consumer; not before.
+
+The **slicing capability API** owes the same answer, and since tessera#304 it
+gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+cut", so the refusals that are properties of the *unit* rather than of the cut
+-- an `R_in`-only rotation, whose column blocks a cut would break into pieces
+that decode to plausible wrong weights, and a scale block that straddles two
+output rows -- live in one predicate, `slicing._unsliceable_reason`, which
+`can_shard` returns `False` from and `slice_unit` raises verbatim. Neither is
+expressible as a granularity: they refuse *every* cut, the identity slice
+included, so `shard_granularity` reports the arithmetic granularity of a unit
+the predicate has already admitted. tessera#235 aligned the two on block
+geometry and left rotation answered only in the cutter, so `can_shard` reported
+a rotated artifact cuttable on both axes while `slice_unit` had always refused
+it -- a capability answer a producer or operator could not act on. The
+predicate takes the three facts every view carries (rotation state, block
+width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
+one answer. Unrotated capability and shard reconstruction are unchanged. If
+rotated slicing is ever implemented, both paths move together and its complete
+reconstruction semantics are proved with them.
 
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 

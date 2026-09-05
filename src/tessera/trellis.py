@@ -57,7 +57,15 @@ from dataclasses import dataclass
 from .alphabet import SUBSET_COUNT, AnchorForest, value_order
 from .errors import GrammarError
 
-__all__ = ["ConvCode", "TCQ", "SUBSET_COUNT", "body_bits"]
+__all__ = [
+    "ConvCode",
+    "TCQ",
+    "SUBSET_COUNT",
+    "body_bits",
+    "replayable_codes",
+    "is_replayable_code",
+    "require_replayable_code",
+]
 
 # ``SUBSET_COUNT`` is defined in ``alphabet`` -- the grid must refuse a code
 # space it cannot split -- and re-exported here, where it reads naturally.
@@ -101,6 +109,59 @@ def replayable_codes():
         yield ConvCode(memory=memory)
         for generators in _SUPERSEDED_GENERATORS.get(memory, ()):
             yield ConvCode(memory=memory, generators=generators)
+
+
+def spell_code(code: "ConvCode") -> str:
+    """``ConvCode`` as the profile id spells it: memory order and octal taps."""
+    return (
+        f"memory={code.memory}, generators="
+        f"({','.join(oct(g) for g in code.generators)})"
+    )
+
+
+def is_replayable_code(code: "ConvCode") -> bool:
+    """Will a reader recover this exact code from an artifact's profile id?
+
+    ``replayable_codes`` is the search ``unit_artifact.parse_unit_artifact``
+    runs; this is that same roster asked as a question, so the reader's
+    recovery and the writer's acceptance are one rule with one home (AGENTS
+    rule 4).  The digest binds the pair exactly, so membership is equality --
+    a transposed or one-tap-different pair is a different machine and matches
+    nothing.
+    """
+    return code in frozenset(replayable_codes())
+
+
+def require_replayable_code(code: "ConvCode") -> None:
+    """Refuse, by generators, a code no reader can name (tessera#295).
+
+    The wire carries no generator field: an artifact's convolutional code is
+    recovered only by recomputing ``encoder_profile_id`` over
+    ``replayable_codes`` and matching the digest.  So a pair outside that
+    roster is not an obscure artifact, it is an **unreadable** one -- the
+    encoder and the tensor decoder serve it happily, and the bytes it produces
+    fail closed in whatever process later tries to load them.  Refused here,
+    where the bytes are decided (AGENTS rule 5), rather than at load in
+    somebody else's process.
+
+    This forbids nothing an encode can do: ``encode_unit`` and
+    ``reconstruct_unit`` take any legal ``ConvCode``, and a research sweep over
+    generator pairs keeps its tensors.  What it forbids is *publishing* one.
+    """
+    if is_replayable_code(code):
+        return
+    roster = ", ".join(spell_code(c) for c in replayable_codes())
+    raise GrammarError(
+        f"convolutional code {spell_code(code)} is not one this wire can "
+        "publish: the artifact carries no generator field, so a reader "
+        "recovers the code only by matching encoder_profile_id against "
+        f"replayable_codes() -- {roster} -- and bytes written under this pair "
+        "would fail closed at load with 'encoder_profile_id matches no "
+        "(convolutional code, payload grid) pair this reader implements'. "
+        "Encode and reconstruct tensors with it directly if you are "
+        "researching generators; to ship it, add the pair to trellis's "
+        "registry so the reader can find it."
+    )
 
 
 @dataclass(frozen=True)
