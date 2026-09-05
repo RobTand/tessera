@@ -540,6 +540,13 @@ def build_unit_artifact(
         PlaneKind.RELEASE: pack_uniform(unit.release_code, RELEASE_BITS),
     }
     if has_diagonals:
+        # Refuse where the bytes are decided (tessera#229): a zero, negative
+        # or non-finite factor decodes finite weights to zero or NaN, and the
+        # artifact would stay well-formed while doing it.  The rule and its
+        # message live with the transform (``diagonals``).
+        from .diagonals import require_invertible_diagonals
+
+        require_invertible_diagonals(unit.diagonals)
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
     row_scale = plane_kind is ScalePlaneKind.CHANNEL
@@ -1118,15 +1125,22 @@ def _as_unit(manifest, fields: dict, chunks, device, code):
 
 def _read_diagonals(plane, chunks, rows, cols, device):
     """Segment 2a, present only when DIAG_SU is: under a CHANNEL plane DIAG_SV
-    is the row scale and there is no rank-1 pair to build."""
-    from .diagonals import Diagonals
+    is the row scale and there is no rank-1 pair to build.
+
+    The writer refuses a non-invertible pair before the bytes exist, and one
+    rule means the reader refuses the same words rather than decoding them: a
+    zero or non-finite factor multiplies every weight it touches to zero or
+    NaN with nothing else raising (tessera#229), and an artifact carrying one
+    was not written by this implementation.
+    """
+    from .diagonals import Diagonals, require_invertible_diagonals
 
     if plane.kind is ScalePlaneKind.CHANNEL or not chunks.get(PlaneKind.DIAG_SU):
         return None
-    return Diagonals(
+    return require_invertible_diagonals(Diagonals(
         sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
         su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
-    )
+    ))
 
 
 def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
