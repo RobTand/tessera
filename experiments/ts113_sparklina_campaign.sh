@@ -110,15 +110,19 @@ seal_stage() {
 
 validate_build() {
   local path=$1 artifact=$2
-  "$PY" - "$path" "$artifact" "$IMAGE" <<'PY'
+  PYTHONPATH="$WT/src" "$PY" - "$path" "$artifact" "$IMAGE" <<'PY'
 import json
 import sys
+
+from tessera.serving.build_identity import incomplete_reason
 
 path, artifact, image = sys.argv[1:]
 record = json.load(open(path, encoding="utf-8"))
 identity = record.get("identity", {})
 provenance = record.get("provenance", {})
-assert record.get("complete") is True, record
+# Derived, not the sidecar's stored verdict: that field is a cached answer
+# from whichever rule stamped it (#279).
+assert incomplete_reason(record) is None, incomplete_reason(record)
 assert identity.get("compiled_forward") is True, record
 assert identity.get("eager") is False, record
 assert identity.get("vllm_version") == "0.28.0", record

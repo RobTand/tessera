@@ -1455,6 +1455,32 @@ about the GEMM over it -- the tile is bit-exact 196/196 and the GEMM is
 reproducible only to that floor.
 `docs/measurements/tessera-gemv-a-side-2026-09-04.md` section 6d is the receipt.
 
+### 4.5c A served KL also names which BUILD it scored, and completeness is derived at read time
+
+A compiled vLLM artifact *replayed* is bit-identical; the same graph *rebuilt*
+is not (0.017117 KL / 95.65% top-1, 120 of 196 autotuned Triton kernels
+retuned). So each served dump carries a `<dump>.build.json` sidecar written by
+`tessera.serving.build_identity`, and `require_same_build` /
+`require_distinct_build` / `require_same_dispatch` refuse a pair whose arms
+cannot support the comparison. The fingerprint is over the *content* of the
+compile-cache slot -- the autotune choices -- not over vLLM's cache key, which
+held both of those two divergent builds.
+
+**Whether a sidecar may certify is decided by the reader, not by the sidecar.**
+`build_identity.incomplete_reason` is the one home of that rule: the stamper
+fills `complete` from it and every gate re-derives from the record's own fields
+(`identity.vllm_version`, `identity.compiled_forward`, `identity.aot`,
+`provenance.enforce_eager`, `provenance.cache_root`, `provenance.backbone`).
+The stored `complete` is a cached verdict, issued under whichever rule was in
+force on the day of the stamp, so it is kept for humans and read by nothing;
+`compare` reports `stored_complete_disagrees` when the two differ, in either
+direction, so the override is never silent. The reason is what an operator
+acts on: the repairs differ, and a record that predates a field says which
+re-stamp it needs. Tightening the rule therefore does not need a schema bump --
+`tessera.serve_build_identity/2` stands -- and a record stamped under an older
+rule reads honestly as incomplete instead of certifying on a verdict nobody
+would issue today.
+
 ### 4.6 The stock twin isolates the wire from the kernel
 
 `--stock-twin` writes the same wires materialised for vanilla vLLM, so a
