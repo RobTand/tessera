@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T01:25:10Z",
+ "generated": "2026-09-05T02:58:14Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -417,7 +417,7 @@
    },
    "192": {
     "state": "OPEN",
-    "title": "Tessera serving-runtime pin: ready the v0.1.0 flip, guarded until the tag exists"
+    "title": "Pin Tessera by exact commit and contract digest, and read lane-eligibility v6"
    },
    "2": {
     "state": "CLOSED",
@@ -926,7 +926,7 @@
     "title": "serving: census --runtime-image is operator-asserted, verified out of band"
    },
    "133": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: routed_moe cells carry dense status with screen-grade evidence"
    },
    "134": {
@@ -1122,16 +1122,76 @@
     "title": "Encode the five surfaces the wire never selects into the encoder identity"
    },
    "178": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Correct the encoder-identity docstring sentence written when the list had three surfaces"
+   },
+   "179": {
+    "state": "CLOSED",
+    "title": "core: a power-of-two LUT global scale below 2^-63 is not writable, and master is red on it"
    },
    "18": {
     "state": "CLOSED",
     "title": "BF16 route: (L, sigma) unsearched, and the GLM expert evidence is one tensor"
    },
+   "180": {
+    "state": "CLOSED",
+    "title": "core: encoder calls E4M3+RELEASE undefined while both readers accept it"
+   },
+   "181": {
+    "state": "OPEN",
+    "title": "serving: host paths ship inside the packaged contract"
+   },
+   "182": {
+    "state": "CLOSED",
+    "title": "tools: the serve-lock race test flakes under a loaded suite arm"
+   },
+   "183": {
+    "state": "OPEN",
+    "title": "core: RELEASE plane - unreachable arity refusal, thrice-hardcoded width, missing re-slice coverage"
+   },
+   "184": {
+    "state": "CLOSED",
+    "title": "tools: impacted_tests still looks for the old in-process collection probe"
+   },
+   "185": {
+    "state": "CLOSED",
+    "title": "Resolve the encoder identity before the recipe-table test patches wire_recipe"
+   },
+   "186": {
+    "state": "CLOSED",
+    "title": "Fix six findings from the v0.1.0 release review (S2, S4, M2, M3, M5, M6)"
+   },
+   "187": {
+    "state": "CLOSED",
+    "title": "Say what the NVFP4 route now refuses at load, and re-stamp the provenance line"
+   },
+   "188": {
+    "state": "CLOSED",
+    "title": "Keep the unwritable-global message plane-neutral"
+   },
+   "189": {
+    "state": "CLOSED",
+    "title": "Record the routed-MoE evidence debt behind #133's promotion"
+   },
    "19": {
     "state": "CLOSED",
     "title": "The attested menu path could not allocate at all, and only unit tests said otherwise"
+   },
+   "190": {
+    "state": "CLOSED",
+    "title": "Refuse release at read on a grid the RELEASE plane cannot name"
+   },
+   "191": {
+    "state": "OPEN",
+    "title": "Fix three RELEASE-plane defects: refusal order, hardcoded width, re-slice coverage"
+   },
+   "192": {
+    "state": "OPEN",
+    "title": "kl_tool: the decode regime cannot reach M=1 on hybrid conv/SSM models"
+   },
+   "193": {
+    "state": "CLOSED",
+    "title": "Key the serve-lock race test on its subprocesses, not on the clock"
    },
    "2": {
     "state": "CLOSED",
