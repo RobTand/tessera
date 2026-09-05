@@ -54,32 +54,27 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Five narrower blind spots, named because a reader would otherwise assume them
-covered.  The first is a *surface no fixture reaches* (tessera#143), and
-they are stated first because they are the ones a reader is likeliest to assume
-away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
-structure, and "shipping" is doing load-bearing work in that sentence.
+Four narrower blind spots, named because a reader would otherwise assume them
+covered.  None of them is a *plane* any more: :func:`fixtures` writes every
+kind in ``planes.SHARD_PLANE_ORDER``, and
+``tests/test_encoder_identity.py`` derives that claim from that tuple rather
+than restating it, so a plane added to the wire fails there until a fixture
+writes it.  ``experiments/audit_byte_baseline.py`` makes the same claim over
+its own matrices; it is the *offline* instrument, run either side of a change
+on purpose, and this one is always on.
 
-* **Shards.**  ``slicing.slice_unit`` is a second byte-producing path -- the
-  INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
-  descriptor -- and nothing an encode alone produces, so no fixture reaches it.
-
-``experiments/audit_byte_baseline.py`` covers it: its ``layout`` matrix
-and its release rows write every plane a reader reads, and
-``tests/test_audit_byte_baseline.py`` derives that claim from
-``planes.SHARD_PLANE_ORDER`` rather than restating it.  It is the *offline*
-instrument, run either side of a change on purpose; closing a surface here
-instead makes it always-on, and is what the S6b case below does.
-
-Four are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
+Five surfaces the wire never selects are closed rather than named
+(tessera#143).  ``e2m1-768/s6b`` encodes the plane no
 recipe selects, through the same caller-facing ``scale_plane=`` override an S6b
 artifact is written by, so ``encode._pack_scales`` and ``encode._refit_scales``
 now move this digest; ``e2m1-768/diagonals`` does the same for segment 2a, so
 ``diagonals.fit_diagonals`` does too; and ``e2m1-256/completion`` spends the
 second rate axis at a rung with headroom, so ``encode._completion_choice`` is
-offered more than one descendant and its pick reaches bytes; and
+offered more than one descendant and its pick reaches bytes;
 ``e2m1-768/release`` carries a release, which ``encode_linear`` has no keyword
-for, so ``encode._canonical_release_order`` moves this digest too.  Each costs
+for, so ``encode._canonical_release_order`` moves this digest too; and
+``e2m1-768/shard`` cuts the ``e2m1-768/tcq-lut`` bytes the way a rank does at
+load, so ``slicing``'s state replay and the shard layout do as well.  Each costs
 nothing anyone can measure -- the first two encode on a plan the E2M1 case
 already built, the third builds the small forests one rung lower -- and each
 re-bases nothing, because it carries a ``compatibility_baseline`` (the third
@@ -144,7 +139,16 @@ process pays it once. Issue #116 adds an eighth, baseline-neutral 16x128
 witness; its incremental time has not been isolated from that shared cold
 start. Almost all of the original 41 s difference is ``_plan_for`` building the
 window tables and anchor forests for the five distinct ``(grid, rung)`` pairs
--- work an exporter does anyway -- which is why the cost lands where it does:
+-- work an exporter does anyway -- which is why the cost lands where it does.
+
+Issue #143's five off-wire witnesses were measured against exactly that set, in
+fresh processes on sparklina (GB10, CPU only): **eight fixtures 40.74 s cold /
+1.32 s warm, thirteen fixtures 42.10 s cold / 2.12 s warm** -- +1.36 s cold and
++0.80 s warm.  Four of the five ride a plan an earlier case already builds, so
+they cost an encode each and no forest; only ``e2m1-256/completion`` builds
+anything, and one rung lower the forests are small (0.20 s measured, against
+the 41 s the rung above it costs).  Where the cost lands is unchanged:
+
 
 * An **export** computes it, once, before its first unit.  Against an encode
   that runs for hours it is not a cost anyone can measure.
@@ -163,7 +167,7 @@ import hashlib
 import math
 import random
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 __all__ = [
@@ -275,6 +279,18 @@ FIXTURE_RELEASES = 256
 #: The RELEASE plane, the same way (tessera#143).
 _RELEASE_BASELINE = (
     "c4e32d4ead731314b1d22081a6a2aeef0a6e1da9671874e5c9c2a6c6812c7075"
+)
+
+#: The row extent the shard fixture cuts.  ``r0`` is non-zero on purpose: the
+#: identity slice of a unit is that unit, byte for byte, and stores no state at
+#: all -- a cut at row 0 would write no INITIAL_STATE plane and watch nothing.
+#: Half the fixture's rows, on a boundary that is a whole number of scale
+#: blocks, which is what a row cut requires.
+FIXTURE_SHARD_ROWS = (FIXTURE_ROWS // 2, FIXTURE_ROWS)
+
+#: Shards, the same way (tessera#143).
+_SHARD_BASELINE = (
+    "73f5ccd5cb4e5f450b365d17ea3e12bdb95192169fa6c38f12ca1aedb0a227fd"
 )
 
 #: The completion axis, the same way (tessera#143).
@@ -439,6 +455,10 @@ class Fixture:
     #: ``encode_unit`` call instead, and a test pins that assembly against
     #: ``encode_linear`` at zero releases so it cannot drift from it.
     released_positions: "int | None" = None
+    #: ``(r0, r1)``: encode the whole unit, then cut this row extent out of the
+    #: bytes with ``slicing.slice_unit``, the way a rank does at load.  A second
+    #: byte-producing path, and the only one that writes INITIAL_STATE.
+    shard_rows: "tuple[int, int] | None" = None
 
     @property
     def grid(self):
@@ -463,7 +483,11 @@ class Fixture:
         on the E2M1 wire covers SCALE_BASE and covers ``(E2M1, TCQ, LUT16)``
         not at all.
         """
-        return not self.encode and self.released_positions is None
+        return (
+            not self.encode
+            and self.released_positions is None
+            and self.shard_rows is None
+        )
 
     @property
     def structure(self) -> tuple:
@@ -562,6 +586,18 @@ def fixtures() -> "tuple[Fixture, ...]":
             released_positions=FIXTURE_RELEASES,
             compatibility_baseline=_RELEASE_BASELINE,
         ),
+        # Shards (tessera#143).  ``slicing.slice_unit`` is a second
+        # byte-producing path and nothing an encode alone produces: the
+        # INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``'s wire order and
+        # the tenth ``plane_elements`` entry are written here and nowhere else,
+        # so a change to the state replay or to the shard layout moved real
+        # bytes at an unmoved identity.  Its parent is the ``e2m1-768/tcq-lut``
+        # encode, so the cost is a parse and a cut.
+        Fixture(
+            "e2m1-768/shard", "E2M1", 768,
+            shard_rows=FIXTURE_SHARD_ROWS,
+            compatibility_baseline=_SHARD_BASELINE,
+        ),
     )
 
 
@@ -614,6 +650,8 @@ def _fixture_blob(case: Fixture) -> bytes:
     from .export import ActivationSource, encode_linear, wire_recipe
     from .manifest import ScalePlaneKind
 
+    if case.shard_rows is not None:
+        return _shard_blob(case)
     if case.released_positions is not None:
         return _release_blob(case)
     weight = _unraised_boundary_fixture()[0] if case.unraised_boundary \
@@ -691,6 +729,28 @@ def _release_blob(case: Fixture) -> bytes:
     )
     _manifest, _region, blob = build_unit_artifact(
         unit, case.label, forests, case.q256 * case.grid.arity, DEFAULT_CODE,
+    )
+    return blob
+
+
+def _shard_blob(case: Fixture) -> bytes:
+    """A shard's bytes: the second byte-producing path, cut from the first.
+
+    The parent is the ordinary encode of the same case, so the identity binds
+    the cut and not a second copy of the encode -- and the cut is made from the
+    parent's *bytes*, through ``parse_unit_artifact``, exactly as a rank does
+    at load rather than from the encoder object that happens to be in this
+    process.
+    """
+    from .slicing import slice_unit
+    from .unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parent = _fixture_blob(replace(case, shard_rows=None))
+    parsed = parse_unit_artifact(parent)
+    shard = slice_unit(parsed, rows=case.shard_rows)
+    _manifest, _region, blob = build_unit_artifact(
+        shard, case.label, parsed.forests,
+        case.q256 * case.grid.arity, parsed.code,
     )
     return blob
 

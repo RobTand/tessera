@@ -407,6 +407,64 @@ def test_the_release_fixture_actually_places_releases():
     assert PlaneKind.RELEASE in _written_planes(case)
 
 
+def test_the_identity_sees_the_shard_state_replay(identity, monkeypatch):
+    """tessera#143: the second byte-producing path.
+
+    ``slicing._initial_state`` replays the trellis register a shard's first row
+    is entered from -- the one thing a cut is not a restriction of -- and
+    ``slice_unit`` is reached by no encode. Permuting the per-column start
+    states is a real byte move on the INITIAL_STATE plane; the guard is that
+    the replay produced states that a permutation actually changes, because a
+    uniform state would make the perturbation a no-op.
+    """
+    import tessera.slicing as sl
+
+    plain = sl._initial_state
+    perturbed = []
+
+    def permuted(unit, steps0, arity, code, parent_state):
+        state = plain(unit, steps0, arity, code, parent_state)
+        if state is None or state.numel() == 0:
+            return state
+        flipped = state.flip(0)
+        perturbed.append(not torch.equal(state, flipped))
+        return flipped
+
+    monkeypatch.setattr(sl, "_initial_state", permuted)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert any(perturbed), (
+        f"no fixture replayed a start state a permutation changes "
+        f"(seen: {perturbed}), so nothing was perturbed"
+    )
+    assert moved != identity
+
+
+def test_the_fixture_set_writes_every_plane_a_reader_reads():
+    """Coverage over planes, derived the way the structure rule is derived.
+
+    ``planes.SHARD_PLANE_ORDER`` is the wire order every reader indexes
+    ``plane_elements`` by, so it is the set of planes an artifact can carry. A
+    plane no fixture writes is a plane whose packing can move at an unmoved
+    identity -- which is what SCALE_BASE, DIAG_SU, COMPLETION, RELEASE and
+    INITIAL_STATE each were (tessera#143). Occupancy is measured off each
+    artifact's own manifest, never declared beside the case, and the expected
+    set comes from the module that owns it, so a plane added to the wire fails
+    here until a fixture writes it.
+    """
+    from tessera.planes import SHARD_PLANE_ORDER
+
+    written = frozenset().union(
+        *(_written_planes(case) for case in ei.fixtures())
+    )
+    missing = frozenset(SHARD_PLANE_ORDER) - written
+    assert not missing, (
+        f"no fixture writes {sorted(k.name for k in missing)}, so a change to "
+        f"how those planes are packed moves real bytes and leaves "
+        f"encoder_fixture_id where it was"
+    )
+
+
 def test_an_override_fixture_is_not_counted_as_wire_coverage():
     """A case that overrides the encode writes different planes than the wire.
 
