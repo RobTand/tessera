@@ -20,6 +20,7 @@ from fractions import Fraction
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
 from tessera.control import (
     BF16,
@@ -357,7 +358,11 @@ def test_grid_for_name_speaks_the_exporter_s_vocabulary():
         grid_for_name("E3M2")
 
 
-PQ_TREES = (Path("/home/rob/prismaquant"), Path("/home/rob/pq-wt/tessera-continuous"))
+PQ_TREES = tuple(
+    tree for tree in (box_artifacts.root("prismaquant"),
+                      box_artifacts.root("prismaquant_worktree"))
+    if tree is not None
+)
 
 
 @pytest.mark.parametrize("shape", [(2048, 4096), (96, 768), (1024, 3072)])

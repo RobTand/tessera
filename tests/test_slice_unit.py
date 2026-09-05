@@ -36,6 +36,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+import box_artifacts
 
 from tessera.alphabet import SERIALISABLE_GRIDS
 from tessera.decode import (
@@ -99,9 +100,7 @@ HEAD_LAYOUT_DIGESTS = {
 }
 
 #: The shipped Qwen3-0.6B E4M3 checkpoint: real units at the shipping wire.
-GBFAM = pathlib.Path(
-    "/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook"
-)
+GBFAM = box_artifacts.path("runs", *("gbfam", "qwen3-0.6b-tessera-e4m3-reach-gridbook"))
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 needs_cuda = pytest.mark.skipif(
@@ -230,7 +229,7 @@ def test_identity_slice_is_the_unit(units):
         assert parse_unit_artifact(again).manifest.shard is None
 
 
-@pytest.mark.skipif(not GBFAM.exists(), reason="the shipped checkpoint is not here")
+@box_artifacts.require("runs", *("gbfam", "qwen3-0.6b-tessera-e4m3-reach-gridbook"))
 def test_shipped_checkpoint_units_reparse_identically():
     """Units written at 8070ec6 still parse and rebuild to the same bytes."""
     from safetensors import safe_open

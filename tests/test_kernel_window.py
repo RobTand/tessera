@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import box_artifacts
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -29,12 +30,12 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a C
 #: The reach checkpoint of `docs/measurements/tessera-dense-reach-fix-2026-09-02.md`:
 #: 196 units, 112 modules, the E4M3 wire at 4.07 bpp, with the materialised
 #: stock twin beside it.
-REACH = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook")
-TWIN = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin")
-checkpoint = pytest.mark.skipif(
-    not (REACH / "model.safetensors").exists(),
-    reason="the reach checkpoint is not on this box",
-)
+_REACH = ("gbfam", "qwen3-0.6b-tessera-e4m3-reach-gridbook")
+_TWIN = ("gbfam", "qwen3-0.6b-tessera-e4m3-reach-stock-twin")
+REACH = box_artifacts.path("runs", *_REACH)
+TWIN = box_artifacts.path("runs", *_TWIN)
+checkpoint = box_artifacts.require("runs", *_REACH, "model.safetensors")
+stock_twin = box_artifacts.require("runs", *_TWIN, "model.safetensors")
 
 
 def _kw():
@@ -129,7 +130,7 @@ def test_every_reach_unit_decodes_byte_identically():
 
 @cuda
 @checkpoint
-@pytest.mark.skipif(not (TWIN / "model.safetensors").exists(), reason="no stock twin")
+@stock_twin
 def test_reach_units_match_the_stock_twin_tensors():
     """The fused tile is the *materialised checkpoint's* bytes.
 
@@ -154,7 +155,7 @@ def test_reach_units_match_the_stock_twin_tensors():
 
 @cuda
 @checkpoint
-@pytest.mark.skipif(not (TWIN / "model.safetensors").exists(), reason="no stock twin")
+@stock_twin
 def test_a_fused_module_stacks_into_the_twin_tensor():
     """The seam W2 calls: ``window_module_decode`` over a fused module's roles.
 

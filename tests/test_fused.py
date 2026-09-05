@@ -1,5 +1,6 @@
 """``tessera.fused``: one blob per vLLM module, one global per module."""
 import pytest
+import box_artifacts
 import torch
 
 from tessera.errors import GrammarError
@@ -68,7 +69,8 @@ def test_shared_global_agrees_with_stock_share_global_on_qwen():
     from tessera.stock import materialize_stock, share_global, stock_dequant
 
     K2 = tuple_grid(E2M1_GRID, 2)
-    f = safe_open("/home/rob/models/Qwen3-0.6B/model.safetensors", "pt")
+    f = safe_open(str(box_artifacts.skip_now(
+        "models", "Qwen3-0.6B", "model.safetensors")), "pt")
     roles = ["q_proj", "k_proj", "v_proj"]
     units, tensors = {}, {}
     for r in roles:

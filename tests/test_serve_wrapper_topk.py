@@ -5,6 +5,7 @@ import re
 import subprocess
 
 import pytest
+import box_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,7 +19,9 @@ def test_dump_receives_the_wrappers_requested_topk(wrapper, topk):
         assert assignment is not None
         command = assignment.group() + '\nprintf "%s\\n" "${ARGS[@]}"'
     else:
-        invocation = re.search(r"if ! (\$PY /home/rob/dq-runs/kl_tool.py dump .*?); then", body, re.S)
+        tool = box_artifacts.ROOTS["kl_instrument"].default + "/kl_tool.py"
+        invocation = re.search(
+            r"if ! (\$PY " + re.escape(tool) + r" dump .*?); then", body, re.S)
         assert invocation is not None
         command = 'capture() { printf "%s\\n" "$@"; }; PY=capture; ' + invocation.group(1)
     env = os.environ.copy()

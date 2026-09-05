@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import box_artifacts
 import torch
 
 from tessera.alphabet import E2M1_GRID, build_forest, tuple_grid
@@ -46,7 +47,8 @@ def test_lane_planes_never_imports_triton():
     import subprocess
     code = ("import sys; import tessera.lane_planes, tessera.fused, tessera.unit_artifact; "
             "print('triton' in sys.modules, 'tessera.kernel' in sys.modules)")
-    env = dict(os.environ, TMPDIR="/home/rob/tmp", PYTHONPATH=str(ROOT / "src"))
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(),
+               PYTHONPATH=str(ROOT / "src"))
     out = subprocess.run([sys.executable, "-c", code], env=env,
                          capture_output=True, text=True, check=True)
     assert out.stdout.split() == ["False", "False"], out.stdout

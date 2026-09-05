@@ -21,6 +21,7 @@ import subprocess
 import sys
 
 import pytest
+import box_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -354,7 +355,7 @@ def test_a_record_that_records_its_own_refusal_attests_nothing():
 # ------------------------------------------------------------- the wiring ---
 
 def _cli(*args, env_extra=None):
-    env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="",
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(), CUDA_VISIBLE_DEVICES="",
                PYTHONPATH=str(ROOT / "src"), **(env_extra or {}))
     return subprocess.run([sys.executable, "-m", "tessera.serving.runtime_image",
                            *args], env=env, capture_output=True, text=True)
@@ -417,7 +418,7 @@ def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path):
     script = (f'source "{ROOT}/experiments/runtime_image.sh"\n'
               'runtime_image_require vllm/vllm-openai:latest || exit 2\n'
               'echo "SHOULD NOT REACH"\n')
-    env = dict(os.environ, TMPDIR="/home/rob/tmp",
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(),
                PATH=f"{fake}:{os.environ['PATH']}")
     proc = subprocess.run(["bash", "-c", script], env=env,
                           capture_output=True, text=True)

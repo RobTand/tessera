@@ -31,10 +31,10 @@ import sys
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
-KL_TOOL_DIR = Path(os.environ.get("KL_TOOL_DIR", "/home/rob/dq-runs"))
-if not (KL_TOOL_DIR / "kl_tool.py").exists():
-    pytest.skip(f"no kl_tool.py under {KL_TOOL_DIR}", allow_module_level=True)
+KL_TOOL_DIR = box_artifacts.root("kl_instrument")
+box_artifacts.require_module("kl_instrument", "kl_tool.py")
 
 # The instrument is untracked and per-box, so the fleet can hold two versions
 # of it at once and did: sparklina's copy predated the decode regime while

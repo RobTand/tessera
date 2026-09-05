@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import box_artifacts  # noqa: E402 -- the one home for out-of-tree roots
 
 from tessera.container import serialize  # noqa: E402
 from tessera.grammar import bresenham_rate_schedule, root_from_q256  # noqa: E402
@@ -193,10 +196,28 @@ collect_ignore = _uncollectable()
 # statement is the count itself (principle 2).
 #
 # The *gate* is ``--strict-cuda`` (or ``TESSERA_STRICT_CUDA=1``, for a wrapper
-# that seals a command line).  It refuses the session outright when this
-# interpreter has no CUDA device, so a merge check cannot read green by
-# skipping the surface it was submitted to cover.  It asserts device presence,
-# which is exact, rather than classifying individual skips, which is not.
+# that seals a command line), and it has three legs, because device presence
+# alone was never the claim it was read as (tessera#152).
+#
+#   1. It refuses the session outright when this interpreter has no CUDA
+#      device.  Exact, and checkable before anything runs.
+#   2. At the end it refuses a run that touched no device.  A device the
+#      session never used is not coverage of the surface, and every other
+#      check is satisfied by a run that collected the suite and skipped it.
+#      "Touched" is measured, not declared: torch's own allocator counts the
+#      allocations a test made, so this is a floor rather than a roster, and a
+#      floor cannot manufacture a false green.
+#   3. At the end it refuses a run that skipped for a MISSING BOX ARTIFACT --
+#      the checkpoints and serve logs ``tests/box_artifacts.py`` resolves.
+#      Those are the gates of tessera#146: they hold the line between a
+#      captured encode and an eager one producing different bytes, and on a
+#      box without the directory they skipped quietly while the arm reported
+#      the surface covered.  An arm submitted to cover the surface must say so
+#      when it cannot, which means giving that box the roots (the skip reason
+#      names the variable) or not claiming the surface.
+#
+# Legs 2 and 3 read the population this file already publishes; there is no
+# second source of truth and no reason string is classified by pattern.
 #
 # Nothing here imports torch at module scope: the ``pure`` CI job imports this
 # file and asserts torch stayed out of ``sys.modules``.
@@ -227,10 +248,107 @@ def pytest_addoption(parser):
     )
 
 
+#: The two ways to spell the environment switch, and nothing else.  The first
+#: reading of it treated only ``("", "0", "false")`` as off, so ``False``,
+#: ``FALSE`` and ``no`` all armed the gate and so did every typo -- a gate that
+#: arms itself on a misspelling is one that will one day disarm itself on one
+#: (tessera#152).
+_STRICT_ENV = "TESSERA_STRICT_CUDA"
+_TRUTHY = ("1", "true", "yes", "on")
+_FALSY = ("", "0", "false", "no", "off")
+
+
 def _strict_cuda(config) -> bool:
     if config.getoption("--strict-cuda"):
         return True
-    return os.environ.get("TESSERA_STRICT_CUDA", "") not in ("", "0", "false")
+    raw = os.environ.get(_STRICT_ENV, "")
+    spelling = raw.strip().lower()
+    if spelling in _TRUTHY:
+        return True
+    if spelling in _FALSY:
+        return False
+    raise pytest.UsageError(
+        f"{_STRICT_ENV}={raw!r} is neither on nor off. Write one of "
+        f"{list(_TRUTHY)} or {list(_FALSY)}. A coverage gate may not guess "
+        "what an unrecognised spelling meant: guessing 'on' turns a typo into "
+        "a refusal, and guessing 'off' turns one into an unmeasured green "
+        "(tessera#152)."
+    )
+
+
+#: Recorded on an item whose call made the CUDA allocator hand out memory.
+#: ``user_properties`` rather than an attribute because xdist serialises it,
+#: so a worker's observation survives into the controller's aggregate.
+_CUDA_EXECUTED = "tessera_cuda_executed"
+
+
+def _cuda_allocations():
+    """How many device allocations this process has made, or ``None``.
+
+    Read from ``sys.modules`` rather than imported: this file must stay
+    torch-free for the ``pure`` job, and a test that has not imported torch
+    cannot have allocated on a device either.  ``None`` means the question is
+    unanswerable here and no claim is made from it.
+    """
+
+    torch = sys.modules.get("torch")
+    if torch is None:
+        return None
+    try:
+        if not torch.cuda.is_initialized():
+            return 0
+        return int(torch.cuda.memory_stats().get("allocation.all.allocated", 0))
+    except Exception:  # noqa: BLE001 -- an unanswerable probe is not an answer
+        return None
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_call(item):
+    """Did this test actually run on the device?
+
+    Declaring it with a marker would be a roster of forty-odd files that
+    passes on the day it is wrong (AGENTS.md rule 3), and classifying skip
+    reasons by regex is the guess this file already refuses to make.  The
+    allocator's own counter is neither: a test that ran on the device
+    allocated on it.  The converse does not hold -- a test that only reads
+    device properties allocates nothing -- so this UNDERCOUNTS, deliberately,
+    because the gate that reads it refuses at zero and an undercount can only
+    make that refusal easier to trip, never harder to.
+    """
+
+    before = _cuda_allocations()
+    try:
+        return (yield)
+    finally:
+        after = _cuda_allocations()
+        if before is not None and after is not None and after > before:
+            item.user_properties.append((_CUDA_EXECUTED, True))
+
+
+def _cuda_executed(terminalreporter) -> int:
+    """Tests whose call allocated on the device, over the whole run."""
+
+    total = 0
+    for outcome in ("passed", "failed"):
+        for report in terminalreporter.stats.get(outcome, []):
+            if getattr(report, "when", None) != "call":
+                continue
+            properties = getattr(report, "user_properties", ()) or ()
+            if any(key == _CUDA_EXECUTED for key, _ in properties):
+                total += 1
+    return total
+
+
+def _box_artifact_skips(reasons) -> dict:
+    """The skips that mean "this box has no copy of the evidence".
+
+    Not a pattern over prose: ``box_artifacts`` writes every one of these
+    sentences and stamps its own prefix on them, so this reads a declaration.
+    """
+
+    prefix = box_artifacts.ABSENT + ":"
+    return {reason: count for reason, count in reasons.items()
+            if reason.startswith(prefix)}
 
 
 def _cuda_device() -> tuple[bool, str]:
@@ -327,10 +445,74 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         for line in textwrap.wrap(" ".join(collect_ignore), width=72):
             write(f"    {line}")
 
+    executed = _cuda_executed(terminalreporter)
+    gated = _box_artifact_skips(counts)
+    write(f"tessera surface: {executed} test(s) allocated on the device")
+    if gated:
+        write("tessera surface: skipped for evidence this box does not hold --")
+        for reason, count in sorted(gated.items()):
+            write(f"    {count:5d}  {reason}")
+
     destination = config.getoption("--surface-json")
     if destination:
         _write_surface_json(Path(destination), config, terminalreporter,
-                            present, detail, counts)
+                            present, detail, counts, executed, gated)
+
+
+def _coverage_refusals(executed: int, gated: dict) -> list:
+    """Why this run may not claim the CUDA-gated surface, if it may not."""
+
+    problems = []
+    if executed == 0:
+        problems.append(
+            "no test in this run allocated on the CUDA device. A device this "
+            "session never used is not coverage of the surface it was "
+            "submitted to cover -- every other check here is satisfied by a "
+            "run that collected the suite and skipped all of it (tessera#152)."
+        )
+    for reason, count in sorted(gated.items()):
+        problems.append(
+            f"{count} test(s) skipped for evidence this box does not hold: "
+            f"{reason}. Those are the bit-exactness gates of tessera#146; an "
+            "arm that skips them is not covering the surface it claims. Give "
+            "this box the root named above, or do not run with --strict-cuda."
+        )
+    return problems
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session, exitstatus):
+    """Legs 2 and 3 of the gate, read off the population above.
+
+    They can only be evaluated once the run is over, so this is a refusal
+    after the fact rather than before it -- the same verdict, one summary
+    later.  Only the controller speaks, and only when nothing else already
+    made the run red: a coverage refusal must not overwrite a test failure.
+    """
+
+    if hasattr(session.config, "workerinput"):
+        return
+    if not _strict_cuda(session.config):
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:
+        return
+    from collections import Counter
+
+    counts = Counter(_skip_reason(report)
+                     for report in reporter.stats.get("skipped", []))
+    problems = _coverage_refusals(_cuda_executed(reporter),
+                                  _box_artifact_skips(counts))
+    if not problems:
+        return
+    reporter.write_line("")
+    for problem in problems:
+        reporter.write_line("--strict-cuda: " + problem)
+    reporter.write_line(
+        "--strict-cuda: refusing rather than reporting coverage this run "
+        "does not have.")
+    if exitstatus == 0:
+        session.exitstatus = int(pytest.ExitCode.USAGE_ERROR)
 
 
 def _measured_commit():
@@ -404,7 +586,7 @@ def _worker_count(config):
 
 
 def _write_surface_json(path, config, terminalreporter, present, detail,
-                        reasons):
+                        reasons, executed=0, gated=None):
     """The same population, as a table rather than as prose.
 
     A receipt that scrapes "1404 passed / 487 skipped" out of a terminal is
@@ -442,7 +624,12 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
         # v2: a file at the population's own path is now GUARANTEED to be a
         # whole run.  Under v1 it could be one worker's share, so the version
         # is what tells a reader which guarantee this file carries.
-        "schema": "tessera.test_surface.v2",
+        # v3: the population now states what it EXECUTED on the device, not
+        # only which device it saw.  A v2 reader may read a v3 file -- every
+        # field it knows is unchanged and in place -- so receipts stay
+        # backward-readable; what it cannot do is answer the coverage
+        # question, and merge_suite says so rather than assuming green.
+        "schema": "tessera.test_surface.v3",
         "role": "worker-share" if worker else "population",
         "worker_id": worker,
         "xdist_workers": _worker_count(config),
@@ -458,6 +645,13 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
         },
         "skip_reasons": dict(sorted(reasons.items(),
                                     key=lambda kv: (-kv[1], kv[0]))),
+        "cuda_surface": {
+            "executed": executed,
+            "measured_by": ("tests during whose call torch's CUDA allocator "
+                            "recorded a new allocation"),
+            "is_a_floor": True,
+            "box_artifact_skips": dict(sorted((gated or {}).items())),
+        },
         "not_collected": list(collect_ignore),
     }
     path.parent.mkdir(parents=True, exist_ok=True)

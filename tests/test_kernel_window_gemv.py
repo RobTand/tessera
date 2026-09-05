@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import box_artifacts
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -25,12 +26,11 @@ from tessera.unit_artifact import parse_unit_artifact                  # noqa: E
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
-REACH = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook")
-TWIN = Path("/home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin")
-checkpoint = pytest.mark.skipif(
-    not (REACH / "model.safetensors").exists(),
-    reason="the reach checkpoint is not on this box",
-)
+_REACH = ("gbfam", "qwen3-0.6b-tessera-e4m3-reach-gridbook")
+_TWIN = ("gbfam", "qwen3-0.6b-tessera-e4m3-reach-stock-twin")
+REACH = box_artifacts.path("runs", *_REACH)
+TWIN = box_artifacts.path("runs", *_TWIN)
+checkpoint = box_artifacts.require("runs", *_REACH, "model.safetensors")
 L = 14
 
 
@@ -266,9 +266,7 @@ def test_reach_matches_stock_twin_bytes():
     from safetensors import safe_open
 
     kg = _kg()
-    twin = TWIN / "model.safetensors"
-    if not twin.exists():
-        pytest.skip("no stock twin on this box")
+    twin = box_artifacts.skip_now("runs", *_TWIN, "model.safetensors")
     with safe_open(str(twin), framework="pt") as handle:
         keys = set(handle.keys())
         checked = 0

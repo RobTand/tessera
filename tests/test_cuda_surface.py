@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,7 +36,7 @@ def _child_env(**extra):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(ROOT / "src"), str(ROOT / "tests"), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
-    env.setdefault("TMPDIR", "/home/rob/tmp")
+    env.setdefault("TMPDIR", box_artifacts.scratch_tmpdir())
     env.setdefault("TRITON_CACHE_DIR", str(Path.home() / ".triton-cache"))
     env.update(extra)
     return env
@@ -65,7 +66,9 @@ import torch
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="ts112 synthetic gate")
 def test_gated():
-    assert torch.cuda.is_available()
+    # Allocates on purpose: the gate's second leg counts tests that actually
+    # used the device, so a synthetic of the CUDA surface has to use it.
+    assert torch.zeros(4, device="cuda").sum().item() == 0
 
 
 def test_plain():
@@ -206,6 +209,87 @@ def test_a_device_visible_run_says_so_and_runs_the_gated_test(tmp_path):
     assert _skipped_in_tail(result.stdout) == 0, out
 
 
+def test_an_unrecognised_spelling_of_the_switch_is_refused_by_name():
+    """A gate that guesses arms or disarms itself by accident (tessera#152).
+
+    Before this, ``_strict_cuda`` treated only ``("", "0", "false")`` as off,
+    so the run below refused::
+
+        E       assert 4 == 0
+        UsageError: --strict-cuda: torch ... reports no CUDA device
+
+    ``TESSERA_STRICT_CUDA=False`` is the spelling a shell wrapper writes when
+    it means off, and it armed the gate.
+    """
+
+    off = _run([STDLIB_ONLY_TEST, "-q"], CUDA_VISIBLE_DEVICES="",
+               TESSERA_STRICT_CUDA="False")
+    assert off.returncode == 0, off.stdout + off.stderr
+    assert " passed" in off.stdout, off.stdout
+
+    bad = _run([STDLIB_ONLY_TEST, "-q"], CUDA_VISIBLE_DEVICES="",
+               TESSERA_STRICT_CUDA="perhaps")
+    out = bad.stdout + bad.stderr
+    assert bad.returncode != 0, out
+    assert "is neither on nor off" in out and "perhaps" in out, out
+
+
+def test_the_population_states_what_it_executed_on_the_device(tmp_path):
+    """Device presence is not coverage, so the population publishes both.
+
+    Before this, ``payload["cuda_surface"]`` raised ``KeyError:
+    'cuda_surface'``: a run could see a device, skip the whole surface and
+    publish a table in which nothing said so.
+    """
+
+    pytest.importorskip("torch")
+    probe = _write_synthetic(tmp_path)
+    surface = tmp_path / "surface.json"
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    import json
+
+    block = json.loads(surface.read_text())["cuda_surface"]
+    # A device-less run executes none of it, and says so as a number.
+    assert block["executed"] == 0
+    assert block["is_a_floor"] is True
+    assert block["box_artifact_skips"] == {}
+
+
+def test_a_box_artifact_skip_is_declared_not_pattern_matched(tmp_path):
+    """The gates of tessera#146 skip with a reason this file can read.
+
+    Before this the population had nowhere to put them, so a run that skipped
+    every checkpoint-backed gate was indistinguishable from one that ran them.
+    """
+
+    pytest.importorskip("torch")
+    probe = tmp_path / "test_ts146_probe.py"
+    probe.write_text(
+        "import box_artifacts\n"
+        "@box_artifacts.require('runs', 'no-such-checkpoint-anywhere')\n"
+        "def test_needs_evidence():\n    assert False\n"
+    )
+    surface = tmp_path / "surface.json"
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="",
+    )
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+
+    import json
+
+    block = json.loads(surface.read_text())["cuda_surface"]
+    assert len(block["box_artifact_skips"]) == 1, block
+    reason = next(iter(block["box_artifact_skips"]))
+    assert "TESSERA_RUNS_DIR" in reason and "no-such-checkpoint-anywhere" in reason
+
+
 def test_the_population_is_published_as_a_table_not_scraped(tmp_path):
     """A receipt reads the run's own table, never a rendering of it.
 
@@ -227,7 +311,7 @@ def test_the_population_is_published_as_a_table_not_scraped(tmp_path):
     import json
 
     payload = json.loads(surface.read_text())
-    assert payload["schema"] == "tessera.test_surface.v2"
+    assert payload["schema"] == "tessera.test_surface.v3"
     assert payload["cuda"] is False
     assert payload["strict_cuda"] is False
     assert payload["counts"]["skipped"] == 1
@@ -435,7 +519,7 @@ def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):
     import json
 
     # The plain name is always the newest, so nothing that reads it changes.
-    assert json.loads(surface.read_text())["schema"] == "tessera.test_surface.v2"
+    assert json.loads(surface.read_text())["schema"] == "tessera.test_surface.v3"
     kept = sorted(tmp_path.glob("surface.superseded-*.json"))
     assert len(kept) == 1, sorted(p.name for p in tmp_path.iterdir())
     assert json.loads(kept[0].read_text())["counts"]["passed"] == 1

@@ -163,8 +163,16 @@ person or agent — changing the code.
   uncollected modules, and the skip reasons verbatim -- so read that block
   before believing a pass count, and quote it whenever you record one. A run
   that must cover the CUDA-gated surface says `--strict-cuda` (or
-  `TESSERA_STRICT_CUDA=1`), which refuses a device-less session instead of
-  skipping the surface and reporting green. **That surface is 467 tests** on
+  `TESSERA_STRICT_CUDA=1`; any spelling that is neither truthy nor falsy is
+  refused by name). It has three legs, because device presence alone was read
+  as more than it said (tessera#152): it refuses a device-less session before
+  anything runs; it refuses, at the end, a run in which no test allocated on
+  the device, measured from torch's own allocator counter and published as
+  `cuda_surface.executed`; and it refuses a run that skipped because this box
+  does not hold a checkpoint or serve log a gate needs, which
+  `tests/box_artifacts.py` resolves and names (tessera#146). A GPU box that
+  lacks those roots must be given them -- each skip reason names its
+  environment variable -- or it cannot claim the surface. **That surface is 467 tests** on
   `d11dc01`, measured on one commit by both arms: the device-less x86 arm's
   own histogram there names 467 skips whose verbatim reason is a CUDA or GPU
   path, and the GPU arm on the same commit skipped 13, none device-shaped.

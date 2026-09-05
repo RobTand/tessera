@@ -39,6 +39,8 @@ import tempfile
 
 import pytest
 
+import box_artifacts
+
 from tessera.serving.build_identity import (
     BuildIdentityError,
     SCHEMA,
@@ -249,7 +251,7 @@ def test_the_determinism_env_var_is_the_live_inductor_knob():
     prog = "import torch._inductor.config as c; print(int(bool(c.deterministic)))"
 
     def _run(value: str | None) -> str:
-        env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="")
+        env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(), CUDA_VISIBLE_DEVICES="")
         env.pop("TORCHINDUCTOR_DETERMINISTIC", None)
         if value is not None:
             env["TORCHINDUCTOR_DETERMINISTIC"] = value
@@ -302,7 +304,7 @@ def test_the_cli_writes_the_sidecar_a_later_comparison_reads(tmp_path):
     log = tmp_path / "serve.log"
     log.write_text(REPLAY_LOG)
     out = tmp_path / "arm.build.json"
-    env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="",
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(), CUDA_VISIBLE_DEVICES="",
                PYTHONPATH=str(ROOT / "src"))
     subprocess.run(
         [sys.executable, "-m", "tessera.serving.build_identity", "stamp",
@@ -353,7 +355,7 @@ def test_the_cli_refuses_a_cross_regime_pair_and_passes_a_pinned_one(tmp_path):
         paths[name] = tmp_path / f"{name}.build.json"
         paths[name].write_text(json.dumps(rec, indent=1) + "\n")
 
-    env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="",
+    env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(), CUDA_VISIBLE_DEVICES="",
                PYTHONPATH=str(ROOT / "src"))
 
     def _compare(a, b, require):
@@ -385,7 +387,7 @@ def test_the_shell_helper_forwards_the_knob_and_stamps(tmp_path):
     root = _cache(tmp_path, "c", xblock=1024, time_ms=0.51)
 
     def _sh(script: str, **extra) -> str:
-        env = dict(os.environ, TMPDIR="/home/rob/tmp", CUDA_VISIBLE_DEVICES="", **extra)
+        env = dict(os.environ, TMPDIR=box_artifacts.scratch_tmpdir(), CUDA_VISIBLE_DEVICES="", **extra)
         r = subprocess.run(["bash", "-euo", "pipefail", "-c",
                             f'source "{helper}"\n{script}'],
                            env=env, capture_output=True, text=True)
@@ -416,13 +418,11 @@ def test_every_serve_wrapper_stamps_its_dump(wrapper):
 
 # ------------------------------------------------------ the measured case ---
 
-_CACHES = Path("/home/rob/tessera-runs/tsplugin")
+_CACHES = box_artifacts.path("runs", "tsplugin")
 
 
-@pytest.mark.skipif(
-    not (_CACHES / "vllm-cache-fresh" / "torch_compile_cache" / "torch_aot_compile"
-         / AOT_KEY).is_dir(),
-    reason="the two surviving compile caches from 2026-09-02 are not on this box")
+@box_artifacts.require("runs", "tsplugin", "vllm-cache-fresh",
+                       "torch_compile_cache", "torch_aot_compile", AOT_KEY)
 def test_the_two_surviving_caches_are_told_apart():
     """The receipt's own two builds, one key, different fingerprints.
 
@@ -506,8 +506,9 @@ def test_an_unstamped_row_is_still_compared_but_never_silently(tmp_path, monkeyp
 # row: /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log:12 (eager)
 # and serve_qwen_stock_tessera-k2-graph.log:12 (compiled).
 
+_STOCK = box_artifacts.path("runs", "stock")
 _CFG = ("INFO 09-02 08:01:13 [core.py:122] Initializing a V1 LLM engine (v0.28.0) "
-        "with config: model='/home/rob/tessera-runs/stock/qwen3-0.6b-tessera-k2-q896-nvfp4', "
+        f"with config: model='{_STOCK}/qwen3-0.6b-tessera-k2-q896-nvfp4', "
         "quantization=compressed-tensors, enforce_eager={eager}, "
         "compilation_config={{'mode': <CompilationMode.{mode}: {lvl}>, "
         "'custom_ops': [{ops}], 'pass_config': {{'fuse_norm_quant': False}}}}, "
@@ -609,7 +610,7 @@ _SERVED_AGAINST_EAGER = {
     "compiled-ir": False,              # KL 0.24393,   top-1  69.45%
     "compiled-ops": False,             # KL 0.24892,   top-1  70.06%
 }
-_DISPATCH_RUN = Path("/home/rob/tessera-runs/compile-dispatch")
+_DISPATCH_RUN = box_artifacts.path("runs", "compile-dispatch")
 
 
 @pytest.mark.parametrize("arm,agrees", sorted(_SERVED_AGAINST_EAGER.items()))
@@ -627,10 +628,10 @@ def test_the_gate_answers_what_the_serve_measured(arm, agrees):
     fixture-based test still passed.
     """
 
-    eager_log = _DISPATCH_RUN / "serve_qwen_dispatch_eager.log"
-    arm_log = _DISPATCH_RUN / f"serve_qwen_dispatch_{arm}.log"
-    if not (eager_log.is_file() and arm_log.is_file()):
-        pytest.skip(f"{_DISPATCH_RUN} is not on this box")
+    eager_log = box_artifacts.skip_now(
+        "runs", "compile-dispatch", "serve_qwen_dispatch_eager.log")
+    arm_log = box_artifacts.skip_now(
+        "runs", "compile-dispatch", f"serve_qwen_dispatch_{arm}.log")
     a = read_serve_log(eager_log.read_text(errors="replace"))["dispatch"]
     b = read_serve_log(arm_log.read_text(errors="replace"))["dispatch"]
     assert a is not None and b is not None
@@ -659,20 +660,18 @@ def test_the_dispatch_is_part_of_the_build_identity(tmp_path):
 
 
 @pytest.mark.parametrize("log,expected", [
-    ("/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log",
+    ("serve_qwen_stock_tessera-k2.log",
      {"custom_ops": ["all"],
       "ir_op_priority": {"rms_norm": ["vllm_c", "native"],
                          "fused_add_rms_norm": ["vllm_c", "native"]}}),
-    ("/home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log",
+    ("serve_qwen_stock_tessera-k2-graph.log",
      {"custom_ops": ["none"],
       "ir_op_priority": {"rms_norm": ["native"],
                          "fused_add_rms_norm": ["native"]}}),
 ])
 def test_the_real_serve_logs_of_the_measured_pair(log, expected):
     """Against the two logs the 0.2473 stock-twin row was measured from."""
-    path = Path(log)
-    if not path.is_file():
-        pytest.skip(f"{log} is not on this box")
+    path = box_artifacts.skip_now("runs", "stock", log)
     assert read_serve_log(path.read_text(errors="replace"))["dispatch"] == expected
 
 
