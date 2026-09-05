@@ -76,6 +76,58 @@ def _require_byte_aligned_rows(rows: int) -> None:
         )
 
 
+def _require_history_fits_the_pad(memory: int) -> None:
+    """``memory`` history bits have to come out of the select plane's pad.
+
+    Every plane-reading kernel here takes a column's history as the window
+    ending at the current row and starting ``memory`` bits earlier, so row
+    0's window reaches ``memory`` bits into the ``SELECT_PAD`` zero bits the
+    packer writes ahead of each column -- and a deeper code would read the
+    previous column's last rows as its own initial state.
+
+    It is the width bound of the *reads* too, which is why one function
+    states it for all of them.  The sliced and prefill kernels take
+    ``memory + 1`` bits out of a 16-bit window whose first bit lands up to
+    seven bits into a byte, so ``memory + 1 + 7 <= 16``; the wide and tuple
+    kernels take them out of a 24-bit window at the constant offset
+    ``SELECT_PAD - memory``, which needs the same bound from the other side.
+    Both come to ``SELECT_PAD``.
+    """
+    if memory > SELECT_PAD:
+        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+
+
+def _require_point_window(rate: int, vec: int) -> None:
+    """A lane's point field, as the two k-tuple kernels actually read it.
+
+    Both read a lane's point bits as **two int32 halves**, ``vec // 2`` codes
+    of ``rate - 1`` bits each, accumulated a byte at a time.  Two conditions
+    follow from that extraction and neither is a preference:
+
+    - a half is a whole number of bytes, so ``rate - 1`` is even and
+      ``vec * (rate - 1)`` a multiple of 16;
+    - a half *fits* an int32, so ``(vec // 2) * (rate - 1) <= 32``.  Past
+      that the byte-at-a-time accumulation shifts the earliest bits out of
+      the register: at rate 11 a half holds 40 bits, the first eight are
+      gone, and half the codes in every lane decode to a different point
+      with nothing to say so.  ``tuple_grid(lloyd_max_grid(64), 2)`` is a
+      supported grid whose cap is exactly that rate.
+    """
+    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
+        raise GrammarError(
+            f"rate {rate}: the point window is split into two equal byte "
+            "halves, which needs an even (rate-1) and a whole number of bytes"
+        )
+    bits = (vec // 2) * (rate - 1)
+    if bits > 32:
+        raise GrammarError(
+            f"rate {rate}: a lane's {vec // 2} codes carry {bits} point bits "
+            f"per half-window, which the kernel accumulates in an int32 -- "
+            f"{bits - 32} bits would be shifted out before anything read them. "
+            "Narrow the rate, or widen the accumulator deliberately"
+        )
+
+
 def _dense_activation(x: torch.Tensor, cols: int) -> torch.Tensor:
     """``x`` as every GEMV in this module actually addresses it.
 
@@ -458,11 +510,18 @@ def _sliced_gemv_kernel(
         )
         for i in tl.static_range(half):
             k = g * half + i
-            # Seven adjacent bits of the select plane: rows n-memory..n.
+            # ``memory + 1`` adjacent bits of the select plane: rows
+            # n-memory..n.  The window is that wide because the history is
+            # that deep -- seven bits at the shipping memory=6 -- so both the
+            # shift and the mask are derived from ``memory`` and not written
+            # for one code.  Its last bit sits at offset ``(p % 8) + memory``
+            # of a 16-bit big-endian read, hence position 15 - that.
             p = k.to(tl.int64) * (rows + pad) + offs_n.to(tl.int64) + (pad - memory)
             lo = tl.load(select_ptr + p // 8, mask=live_n, other=0).to(tl.int32)
             hi = tl.load(select_ptr + p // 8 + 1, mask=live_n, other=0).to(tl.int32)
-            window = (((lo << 8) | hi) >> (9 - (p % 8).to(tl.int32))) & 0x7F
+            window = (((lo << 8) | hi) >> (15 - memory - (p % 8).to(tl.int32))) & (
+                (1 << (memory + 1)) - 1
+            )
 
             q = k.to(tl.int64) * rows * (rate - 1) + offs_n.to(tl.int64) * (rate - 1)
             byte = tl.load(point_ptr + q // 8, mask=live_n, other=0).to(tl.int32)
@@ -497,6 +556,7 @@ def tessera_gemv_sliced(
     from .encode import e2m1_value_table
 
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
@@ -648,9 +708,12 @@ def _wide_gemv_kernel(
             b2 = tl.load(select_ptr + p // 8 + 2, mask=live_base, other=0).to(tl.int32)
             wide = (b0 << 16) | (b1 << 8) | b2
             # `wide` is a 24-bit big-endian window from byte p//8.  Row base+v's
-            # seven history bits end at bit offset (p%8) + v + memory, and
-            # p%8 is the constant `pad - memory`, so the shift is 23 - pad - v.
-            window = (wide[:, None] >> (23 - pad - vec[None, :])) & 0x7F
+            # `memory + 1` history bits end at bit offset (p%8) + v + memory, and
+            # p%8 is the constant `pad - memory`, so the shift is 23 - pad - v
+            # whatever the memory -- but the mask is the window's own width.
+            window = (wide[:, None] >> (23 - pad - vec[None, :])) & (
+                (1 << (memory + 1)) - 1
+            )
 
             # Point plane: 2*VEC bits, byte-aligned.
             q = k.to(tl.int64) * rows * (rate - 1) + base.to(tl.int64) * (rate - 1)
@@ -702,6 +765,7 @@ def tessera_gemv_wide(
     # The other half of the same sentence, which used to live only in that
     # message: the derivation needs ``rows % 8 == 0`` too.
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
@@ -1012,7 +1076,9 @@ def tessera_gemv_tuple_span2(
 
     ``rate`` must be **odd**, as in ``tessera_gemv_tuple``: the point window is
     split into two equal byte halves, so ``rate - 1`` is even and
-    ``vec * (rate - 1)`` a whole number of bytes.  Enforced below."""
+    ``vec * (rate - 1)`` a whole number of bytes -- and each half must fit the
+    int32 it is accumulated in, which caps ``(vec // 2) * (rate - 1)`` at 32.
+    Both enforced below by ``_require_point_window``."""
     steps = rows // arity
     if rows % arity or steps % 16:
         raise GrammarError(
@@ -1024,13 +1090,8 @@ def tessera_gemv_tuple_span2(
             f"vec={vec}: the two-int32-halves split of the point window and the "
             "one-byte label read are derived for VEC=8"
         )
-    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
-        raise GrammarError(
-            f"rate {rate}: the point window is split into two equal byte "
-            "halves, which needs an even (rate-1) and a whole number of bytes"
-        )
-    if memory > SELECT_PAD:
-        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    _require_point_window(rate, vec)
+    _require_history_fits_the_pad(memory)
     if scale_table.numel() != 16 or scale_table.dtype != torch.float32:
         raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
     _require_column_groups(cols, half)
@@ -1306,8 +1367,10 @@ def tessera_gemv_tuple(
 
     ``rate`` must be **odd** -- the point window is split into two equal byte
     halves, which needs an even ``rate - 1`` and ``vec * (rate - 1)`` a whole
-    number of bytes.  Enforced below; stated here because a caller choosing a
-    schedule should not have to read the launch to find out."""
+    number of bytes -- and narrow enough that a half fits the int32 it is
+    accumulated in, which caps ``(vec // 2) * (rate - 1)`` at 32.  Enforced
+    below; stated here because a caller choosing a schedule should not have to
+    read the launch to find out."""
     steps = rows // arity
     if rows % arity or steps % 8:
         raise GrammarError(
@@ -1319,13 +1382,8 @@ def tessera_gemv_tuple(
             f"vec={vec}: the two-int32-halves split of the point window is "
             "derived for VEC=8. Another width needs the shifts re-derived."
         )
-    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
-        raise GrammarError(
-            f"rate {rate}: the point window is split into two equal byte "
-            "halves, which needs an even (rate-1) and a whole number of bytes"
-        )
-    if memory > SELECT_PAD:
-        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    _require_point_window(rate, vec)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
@@ -1407,10 +1465,13 @@ def _gemm_kernel(
         nn = n.to(tl.int64) if WIDE else n
         b = kk * (rows + pad) + (pad - memory) + nn
         byte = b >> 3
-        shift = 9 - (b & 7).to(tl.int32)
+        # ``memory + 1`` bits ending at offset ``(b & 7) + memory`` of a
+        # 16-bit big-endian read; both the shift and the mask follow from the
+        # history's depth rather than from the shipping memory=6.
+        shift = 15 - memory - (b & 7).to(tl.int32)
         s0 = tl.load(select_ptr + byte, mask=live, other=0).to(tl.int32)
         s1 = tl.load(select_ptr + byte + 1, mask=live, other=0).to(tl.int32)
-        window = (((s0 << 8) | s1) >> shift) & 0x7F
+        window = (((s0 << 8) | s1) >> shift) & ((1 << (memory + 1)) - 1)
 
         # Point plane: `rate - 1` bits, densely packed in row order.
         q = (kk * rows + nn) * (rate - 1)
@@ -1494,6 +1555,7 @@ def tessera_gemm(
     # the contract, so the boundary makes it true.
     x = x.contiguous()
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     M = x.shape[0]
     # Both planes are addressed in bits.  int32 holds the larger of the two up

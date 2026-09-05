@@ -253,6 +253,63 @@ def test_the_kernel_lane_refuses_a_body_that_carries_completion_bits(unit):
         build_code_lut(unit["forests"][2], CODE)
 
 
+@pytest.mark.parametrize("memory", [4, 8])
+def test_the_scalar_kernels_read_the_history_their_code_declares(memory):
+    """A history window is ``memory + 1`` bits wide, not seven.
+
+    ``_sliced_gemv_kernel``, ``_wide_gemv_kernel`` and ``_gemm_kernel`` all
+    masked the select-plane window to ``0x7F``, and two of them shifted it by
+    a constant derived for ``memory = 6`` -- while their wrappers took any
+    ``memory`` at all and ``build_history_lut``/``build_value_lut`` built the
+    matching table for it without a word.  ``ConvCode(memory=8)`` has
+    declared default generators and needs a nine-bit window; a shallower code
+    forms indices past the end of its own smaller table.  Both decode against
+    the reference here, and ``tests/test_kernel_shape_guards.py`` holds the
+    named refusal past the select pad.
+    """
+    from tessera.kernel import (
+        build_history_lut, build_value_lut, pack_kernel_planes, tessera_gemm,
+        tessera_gemv_sliced, tessera_gemv_wide,
+    )
+    from tessera.wire import nvfp4_scale_bytes
+
+    code = ConvCode(memory=memory)
+    forest = build_forest(3)
+    torch.manual_seed(19)
+    rows, cols = 64, 64
+    w = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    unit = encode_unit(w, {3: forest}, (3,) * cols, code,
+                       rotation=RotationState.NONE, with_diagonals=False)
+    reference = reconstruct_unit(unit, {3: forest}, code).float()
+    select, point = pack_kernel_planes(unit.body_bits, 3, memory)
+    e4m3, gs = nvfp4_scale_bytes(
+        unit.scale_base, unit.scale_refine, unit.group, unit.half
+    )
+    scales = e4m3.reshape(rows, cols // 16).t().contiguous()
+    nibbles = build_history_lut(forest, code)
+    values = build_value_lut(forest, code)
+    assert nibbles.numel() == (1 << (memory + 1)) * 4
+    for k in (0, 1, 7, 8, 33, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = tessera_gemv_wide(
+            x, select, point, values, scales, gs, rows, cols, memory=memory,
+            lanes=8, split_k=2,
+        )
+        assert torch.equal(got, reference[:, k]), f"wide, column {k}"
+        got = tessera_gemv_sliced(
+            x, select, point, nibbles, scales, gs, rows, cols, memory=memory,
+            block_n=64, split_k=2,
+        )
+        assert torch.equal(got, reference[:, k]), f"sliced, column {k}"
+        probe = torch.zeros(1, cols, device="cuda")
+        probe[0, k] = 1.0
+        got = tessera_gemm(
+            probe, select, point, values, scales, gs, rows, cols, memory=memory
+        )[0]
+        assert torch.equal(got, reference[:, k]), f"prefill, column {k}"
+
+
 # --- the k-tuple lane -----------------------------------------------------
 
 
