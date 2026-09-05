@@ -196,6 +196,7 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
     from .contract import cell_runtime_scope, refuse_unevaluated_predicates
+    from .scheme import eager_regime_problem
 
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
     unsupported_reason = (
@@ -266,6 +267,23 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 unattested += 1
                 unsupported += 1
                 continue
+            if execution_mode == "eager":
+                # THE PHASE LABEL IS NOT THE OBSERVATION.  The cell above was
+                # selected by the regime this phase DECLARES; what the machine
+                # ran is the record's own M, and the two are different facts.
+                # Resident FP8 publishes one launch pair for both regimes, so
+                # an eight-row forward filed under the decode phase agreed
+                # with the decode cell and was counted as decode evidence
+                # (#207).  A regime attestation is the shape that ran.
+                why = eager_regime_problem(record.get("shape"), regime)
+                if why is not None:
+                    unattested += 1
+                    problems.append(
+                        f"{phase}: {name} is keyed to cell {cell['id']!r}, which covers regime "
+                        f"{regime!r}, but {why}. The phase label is what the census asked for; "
+                        "the record's shape is what the machine ran, and only the second "
+                        "attests a regime.")
+                    continue
             covered += 1
             allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
@@ -287,7 +305,12 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                          "cells": dict(sorted(counts.items()))}
     block = {"schema": CELL_AGREEMENT_SCHEMA, "platform": platform, "structure": structure,
              "runtime": runtime, "phases": phases,
-             "agrees": None if not covered_total else not problems}
+             # A problem is a disagreement whether or not the record it was
+             # raised on survived to be counted: a record refused for
+             # attesting the wrong regime is NOT covered, and a block that
+             # read ``None`` there would publish "nothing to check" over an
+             # observation it had just refused.
+             "agrees": False if problems else (None if not covered_total else True)}
     if unsupported_reason:
         block["unsupported_reason"] = unsupported_reason
     return block, problems

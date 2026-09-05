@@ -62,6 +62,7 @@ covers it (principle 14); absence resolves ``unattested``.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 __all__ = [
@@ -92,6 +93,8 @@ __all__ = [
     "WINDOW_GEMV_SYMBOL",
     "MOE_GEMM_SYMBOL",
     "moe_census_symbol_base",
+    "eager_regime_problem",
+    "parse_eager_shape",
     "regime_of_m",
     "route_launches",
     "launch_pairs",
@@ -342,6 +345,49 @@ def regime_of_m(m: int) -> str:
     if int(m) < 1:
         raise ValueError(f"M={m} is not a forward; a regime is a shape a route was called on")
     return "decode" if int(m) == 1 else "batch"
+
+
+#: ``telemetry.route_shape``'s canonical concrete spelling.  Eager only: a
+#: compiled forward is shape-polymorphic and stamps ``M*`` on purpose, so a
+#: parser that accepted it would be reading a graph as a forward.
+_EAGER_SHAPE = re.compile(r"M([1-9][0-9]*):N([1-9][0-9]*):K([1-9][0-9]*)")
+
+
+def parse_eager_shape(value: Any) -> "tuple[int, int, int]":
+    """Read ``telemetry.route_shape``'s canonical concrete ``M:N:K`` spelling."""
+    match = _EAGER_SHAPE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise ValueError(f"eager shape must be canonical M<n>:N<n>:K<n>, got {value!r}")
+    return tuple(int(dimension) for dimension in match.groups())
+
+
+def eager_regime_problem(shape: Any, regime: Any) -> "str | None":
+    """Why an eager record does not exercise ``regime`` -- or ``None`` if it does.
+
+    THE PHASE LABEL IS THE REQUEST; ``M`` IS WHAT RAN.  A census names its
+    phases and a cell is keyed by the regime that phase maps to, so a gate
+    reading the label alone attests the forward it asked for rather than the
+    one the machine took: an eight-row observation filed under the decode
+    phase was counted as a covered decode launch, and resident FP8 publishes
+    the same pair in both regimes, so nothing downstream could see it (#207).
+
+    One home for the rule (``regime_of_m`` above owns the M -> regime map),
+    called by the shared cell matcher (``census.cell_launch_agreement``) and by
+    the census's own shape check, so the two cannot drift.  Absent or
+    unparseable evidence is a problem, not a pass: an attestation with no shape
+    behind it is the thing this check exists to refuse.
+    """
+    try:
+        m, _, _ = parse_eager_shape(shape)
+    except ValueError as exc:
+        return str(exc)
+    if regime is None:
+        return f"shape M{m} names no regime to be checked against"
+    observed = regime_of_m(m)
+    if observed != regime:
+        return (f"shape M{m} is a {observed}-regime forward and does not exercise the "
+                f"declared regime {regime}")
+    return None
 
 #: The op the window-GEMV lane dispatches through, in the spelling
 #: ``kernel_window_gemv`` registers it under.  It lives HERE, torch-free,

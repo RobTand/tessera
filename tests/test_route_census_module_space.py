@@ -201,7 +201,10 @@ def _moe_agreement_fixture(symbol="vllm.fused_moe.modular_kernel:TRITON"):
     image = "example/runtime@sha256:" + "1" * 64
     child = f"{STACK}.routed_experts"
     records = {"decode": {child: {"kind": "moe", "policy": "TESSERA_FP8:resident",
-        "symbol": symbol, "decoder": "torch_materialize_stock"}}}
+        # The one-row forward the decode cell covers: a record counted as
+        # decode evidence has to carry the shape that ran (#207).
+        "symbol": symbol, "decoder": "torch_materialize_stock",
+        "shape": "M1:N3584:K2048"}}}
     cell = {"id": "synthetic_moe_cell", "platform": "sm_121", "structure": "routed_moe",
         "family": "E4M3", "regime": "decode", "rungs_q256": [1024],
         "runtime": {"image": image, "execution_modes": ["eager"]},
@@ -218,7 +221,8 @@ def _moe_agreement_fixture(symbol="vllm.fused_moe.modular_kernel:TRITON"):
 def test_moe_agreement_joins_the_child_to_its_declared_rung_and_structure():
     records, cell, kwargs = _moe_agreement_fixture()
     records["decode"][DENSE] = {"kind": "dense", "policy": "TESSERA_FP8:resident",
-        "symbol": "torch._scaled_mm", "decoder": "torch_materialize_stock"}
+        "symbol": "torch._scaled_mm", "decoder": "torch_materialize_stock",
+        "shape": "M1:N1024:K3072"}
     dense_cell = dict(cell, id="synthetic_dense_cell", structure="dense",
                       executes=[{"symbol": "torch._scaled_mm",
                                  "decoder": "torch_materialize_stock"}])

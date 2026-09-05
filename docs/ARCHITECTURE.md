@@ -765,6 +765,18 @@ launches across shapes. A compiled routed-MoE record can agree only when the
 record and the runtime-scoped cell each name one launch. Unsupported records
 are counted as unattested and retained verbatim in the receipt.
 
+An eager record attests the regime its forward RAN, not the one its phase is
+named after. The phase label is what the census asked for; `M` is what the
+machine did, and resident FP8 publishes one launch pair for both regimes, so an
+eight-row forward filed under the decode phase used to be counted as covered,
+agreeing decode evidence (issue #207). `scheme.eager_regime_problem` owns that
+rule — `regime_of_m` for the map, `parse_eager_shape` for the spelling — and
+both readers call it: `census.cell_launch_agreement` refuses a covered eager
+record whose shape is absent, unparseable, or of the other regime, and the
+census's own `phase_shape_problems` now reads every record against its own
+phase instead of asking only whether the two phases differed somewhere. A
+refused record is counted unattested and its problem makes the block disagree.
+
 Lane eligibility schema v5 additionally requires each cell's `runtime` scope:
 an exact `image` manifest reference and a nonempty, distinct `execution_modes`
 list (`eager`, `compiled`). Image and execution mode participate in overlap
