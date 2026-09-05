@@ -24,7 +24,7 @@ def test_fetch_keeps_issues_and_pull_requests_across_pages(monkeypatch):
                 {"number": 9, "title": "older finding", "state": "CLOSED"},
             ]))
         assert argv[1] == "api"
-        assert "--paginate" in argv and "--slurp" in argv
+        assert "--paginate" in argv
         assert "repos/example/repo/issues?state=all&per_page=100" in argv
         return SimpleNamespace(stdout=json.dumps(pages))
 
@@ -90,3 +90,24 @@ def test_check_still_refuses_a_new_id_and_a_changed_state(monkeypatch, tmp_path)
         **known, "9": {"title": "filed since", "state": "OPEN"}}) == 1
     assert _check(monkeypatch, tmp_path, snapshot=known, fresh={
         "7": {"title": "still here", "state": "CLOSED"}}) == 1
+
+
+def test_fetch_reads_the_pages_gh_prints_without_slurp(monkeypatch):
+    """`--slurp` is gh 2.53 and later; this box has 2.45.
+
+    Without it `gh api --paginate` concatenates one array per page, which is
+    not a JSON document -- and requiring the flag made the refresher exit
+    `unknown flag: --slurp`, so the snapshot the offline reference gate reads
+    could not be regenerated from this box at all.
+    """
+
+    module = _module()
+    concatenated = (
+        '[{"number": 4, "title": "open finding", "state": "open"}]\n'
+        '[{"number": 9, "title": "older finding", "state": "closed"}]\n')
+
+    monkeypatch.setattr(module.subprocess, "run",
+                        lambda argv, **kw: SimpleNamespace(stdout=concatenated))
+    found = module.fetch("example/repo")
+    assert set(found) == {"4", "9"}
+    assert found["9"] == {"title": "older finding", "state": "CLOSED"}

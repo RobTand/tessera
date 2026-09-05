@@ -26,15 +26,42 @@ REPOS = ("RobTand/tessera", "RobTand/prismaquant")
 SNAPSHOT = Path(__file__).resolve().parent.parent / "docs" / "issues-snapshot.json"
 
 
+def rows(out: str):
+    """Every issue row in gh's paginated output, whatever shape it came in.
+
+    ``gh api --paginate`` prints one JSON array per page, concatenated, which
+    is not a JSON document; ``--slurp`` wraps those pages in a single array
+    and exists only in gh 2.53 and later.  Requiring it made this tool
+    unrunnable on a box with gh 2.45 -- ``unknown flag: --slurp`` -- and the
+    snapshot the offline reference gate reads cannot be refreshed from a box
+    that cannot run this.  Decoding values off the stream reads both shapes,
+    so the refresher does not depend on the gh version it happens to find.
+    """
+
+    decoder = json.JSONDecoder()
+    index = 0
+    while True:
+        while index < len(out) and out[index].isspace():
+            index += 1
+        if index >= len(out):
+            return
+        value, index = decoder.raw_decode(out, index)
+        for item in value:
+            if isinstance(item, list):       # a --slurp'd array of pages
+                yield from item
+            else:
+                yield item
+
+
 def fetch(repo: str) -> dict[str, dict]:
     out = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp",
+        ["gh", "api", "--paginate",
          f"repos/{repo}/issues?state=all&per_page=100"],
         capture_output=True, text=True, check=True,
     ).stdout
     return {
         str(row["number"]): {"title": row["title"], "state": row["state"].upper()}
-        for page in json.loads(out) for row in page
+        for row in rows(out)
     }
 
 
