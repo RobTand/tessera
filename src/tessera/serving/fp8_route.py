@@ -56,7 +56,7 @@ from .compile_identity import note_traced_dispatch
 from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate_tessera_scheme
-from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
+from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
                         note_lane_refusal, route_shape)
 from .window import PreparedWindow, prepare_window
@@ -247,7 +247,6 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
         # -- load -------------------------------------------------------
         def create_weights(self, layer, input_size_per_partition, output_partition_sizes,
                            input_size, output_size, params_dtype, **extra_weight_attrs):
-            in_size = int(input_size_per_partition)
             # See ``sharding``: the plan is the whole module at TP=1 and is the
             # shape check it replaces; at TP>1 it names the axis to cut on.  The
             # window body's L-bit pad IS state_{-1}, so this route cuts BOTH
@@ -255,9 +254,15 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # that stops cutting an axis stops serving it in one edit.
             # The LISTS, not their sums: ``output_partition_sizes`` is the
             # per-member answer and the declared roles are its counterpart, and
-            # a fused container's members are cut independently (#32).
-            plan = plan_shard(prefix, roles=declared["roles"], columns=columns,
-                              out_partitions=output_partition_sizes, in_size=in_size)
+            # a fused container's members are cut independently (#32).  The
+            # LAYER, not the tile: its global ``input_size``/``output_size``,
+            # its own TP coordinates and its declared KV replication decide
+            # whether a wire is the module or one rank's share; the tile's
+            # numbers alone cannot tell the two apart (tessera#303).
+            plan = plan_shard_for_layer(prefix, layer, roles=declared["roles"], columns=columns,
+                                        input_size_per_partition=input_size_per_partition,
+                                        output_partition_sizes=output_partition_sizes,
+                                        input_size=input_size, output_size=output_size)
             require_axis_supported(TESSERA_FP8, plan)
             weight_loader = extra_weight_attrs.get("weight_loader")
             # The whole container as one opaque blob: a blob has no output axis

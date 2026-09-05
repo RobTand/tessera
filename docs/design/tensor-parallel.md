@@ -140,10 +140,16 @@ digest off it, so the whole contract is one call.
 
 ```python
 parsed = parse_unit_artifact(blob, device=device)   # or the streamed reader
-# The row range is the MEMBER's own, off the size vLLM asked for -- not an even
-# split, because a replicated role is cut into fewer shards than there are ranks:
-shards = member_rows // out_partition          # exact, or the shapes disagree
-lo = (rank // (tp // shards)) * out_partition  # ranks per shard, 1 when even
+# Everything below is the LAYER's statement, read off the layer vLLM hands
+# create_weights (tp_rank/tp_size, input_size/output_size, and for
+# QKVParallelLinear num_kv_head_replicas); nothing is inferred from the tile.
+# The global shape against the tile names the axis: equal -> served whole
+# (ReplicatedLinear); output_size == sum(out_partitions) * tp -> output cut;
+# input_size == in_size_per_partition * tp -> input cut; anything else refused.
+replicas = num_kv_head_replicas if member in ("k", "v") else 1   # 1 unless declared
+shards = tp // replicas                        # distinct shards of this member
+assert member_rows == out_partition * shards   # or the wire is not this layer's module
+lo = (rank // replicas) * out_partition
 shard = slice_unit(parsed, rows=(lo, lo + out_partition))   # column-parallel Linear
 lo = rank * in_size_per_partition                           # the input axis IS even
 shard = slice_unit(parsed, cols=(lo, lo + in_size_per_partition))  # row-parallel
@@ -152,7 +158,7 @@ shard = slice_unit(parsed, cols=(lo, lo + in_size_per_partition))  # row-paralle
 | vLLM layer | what is split | the call | note |
 |---|---|---|---|
 | `ColumnParallelLinear` | output features = **rows** | `rows=(lo, hi)` | |
-| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **`plan_shard` agrees since #32:** it takes `output_partition_sizes` and the declared roles as **lists**, gives every member its own `RoleShard(lo, hi, shards)`, and asks `can_shard` with the member's own `shards` — which is `num_kv_heads`, not `tp`. It never reads the two lists' **sums** as agreement: the lengths, and wherever the output is whole the per-member extents, are compared before any branch, so a container stacked `[4, 8, 4]` against a layer that reads `[8, 4, 4]` is refused by member name rather than served as a whole module (tessera#234) |
+| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **`plan_shard` agrees since #32:** it takes `output_partition_sizes` and the declared roles as **lists**, gives every member its own `RoleShard(lo, hi, shards)`, and asks `can_shard` with the member's own `shards` — `tp // num_kv_head_replicas`, which is the layer's `num_kv_heads`, not `tp`. Since tessera#303 that replication is **read off the layer** (`layer_replicas`), never inferred from a role holding fewer shards than ranks, and the member's rows on the wire must equal `out_partition × shards` exactly — a wire holding one rank's tile of a ColumnParallel member is refused by name, not served whole on every rank. It never reads the two lists' **sums** as agreement: the lengths, and wherever the output is whole the per-member extents, are compared before any branch, so a container stacked `[4, 8, 4]` against a layer that reads `[8, 4, 4]` is refused by member name rather than served as a whole module (tessera#234) |
 | `RowParallelLinear` (`o_proj`, `down_proj`) | input features = **columns** | `cols=(lo, hi)` | |
 | `FusedMoE` with expert parallelism | whole experts | no slicing | EP moves units, it does not cut them |
 | `FusedMoE` with tensor parallelism inside an expert | as the dense cases | `rows=` for w1/w3, `cols=` for w2 | |
@@ -289,9 +295,14 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
   `ParsedUnit` whose manifest describes the rows this rank actually has — the
   shard record, the restricted release counts and all. `shard_parsed_roles` cuts
   fused roles independently on the row axis, each to the range `plan_shard`
-  derived from that member's own `output_partition_sizes` entry — so a KV role
-  vLLM replicates is cut into `num_kv_heads` shards rather than `tp` of them,
-  and two ranks holding the same rows is planned rather than refused (#32).
+  derived from that member's own `output_partition_sizes` entry and the
+  layer's declared `num_kv_head_replicas` — so a KV role vLLM replicates is
+  cut into `tp // replicas` (= `num_kv_heads`) shards rather than `tp` of
+  them, and two ranks holding the same rows is planned rather than refused
+  (#32). The plan is the layer's contract, not the tile's shape: `plan_shard`
+  takes the layer's own TP coordinates and global `input_size`/`output_size`,
+  and a wire the size of one rank's tile is refused rather than handed back
+  as a replicated module (tessera#303).
   Unit-tested at tp=2 on both axes and both shipping wires against the parent's
   own decoded slice, and at tp=4 over 2 shards for the replicated case
   (`tests/test_serving_sharding.py`); the E4M3/window route threads the start

@@ -41,7 +41,7 @@ from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
 from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_tessera_blob_for_scheme, \
     validate_tessera_scheme
-from .sharding import plan_shard, require_axis_supported, shard_parsed_roles
+from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import emit_route, route_shape
 
 __all__ = [
@@ -117,7 +117,6 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
         # -- load -------------------------------------------------------
         def create_weights(self, layer, input_size_per_partition, output_partition_sizes,
                            input_size, output_size, params_dtype, **extra_weight_attrs):
-            in_size = int(input_size_per_partition)
             # Which slice of the whole unit this rank serves.  At TP=1 the plan
             # is the whole module and this is the shape check it replaces; at
             # TP>1 it names the axis, and the axis is gated here rather than
@@ -126,9 +125,14 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # every rank before a byte is read (see ``sharding.ROUTE_TP_AXES``).
             # The LISTS, not their sums: ``output_partition_sizes`` is the
             # per-member answer and the declared roles are its counterpart, and
-            # a fused container's members are cut independently (#32).
-            plan = plan_shard(prefix, roles=declared["roles"], columns=columns,
-                              out_partitions=output_partition_sizes, in_size=in_size)
+            # a fused container's members are cut independently (#32).  The
+            # LAYER, not the tile: its global ``input_size``/``output_size``,
+            # its own TP coordinates and its declared KV replication decide
+            # whether a wire is the module or one rank's share (tessera#303).
+            plan = plan_shard_for_layer(prefix, layer, roles=declared["roles"], columns=columns,
+                                        input_size_per_partition=input_size_per_partition,
+                                        output_partition_sizes=output_partition_sizes,
+                                        input_size=input_size, output_size=output_size)
             require_axis_supported(TESSERA_NVFP4, plan)
             weight_loader = extra_weight_attrs.get("weight_loader")
             # The on-disk parameter names are the wire's, unchanged by the move
