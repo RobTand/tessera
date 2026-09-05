@@ -440,7 +440,14 @@ trellis weighting, Hessian provenance — which move bytes but are encoder
 settings, not decoder inputs, and are compared field-by-field in
 `tessera_config.json`, not by profile id.
 
-**Reading.** A minor-5 reader takes the record off the manifest and
+**Reading.** A stored sigma must be its float value's exact ratio: the
+producer is told a float and writes that float's exact ratio (D1), so
+`ReachParams.decode` refuses a ratio no float holds — `1/3`, say — on the
+wire's own ratio, before any rounding. The rule is representability
+(`Fraction(float(value)) == value`), not a tolerance; accepting a
+nonrepresentable ratio would collapse distinct on-wire spreads onto one
+reconstructed value and change the record's bytes on a canonical
+read/write cycle. A minor-5 reader takes the record off the manifest and
 recomputes the digest with it, so a manifest whose reach disagrees with the
 profile fails closed at the digest search like every earlier identity field.
 A manifest with no record recomputes the untagged digest, so every artifact

@@ -441,7 +441,33 @@ class ReachParams:
                     f"the reach record's {name} presence flag must be 0 or 1, "
                     f"got {flag}"
                 )
-            sigmas.append(None if not flag else float(reader.ratio()))
+            if not flag:
+                sigmas.append(None)
+                continue
+            # Exactness is checked on the wire's own ratio, BEFORE rounding to
+            # float: the constructor sees only the float, so a check placed
+            # there can never see the ratio it was meant to judge.  The rule is
+            # representability, not a tolerance (Fraction(float(r)) == r): the
+            # producer was told a float and writes that float's exact ratio, so
+            # any other ratio was written by no encoder this record can name --
+            # and accepting it would collapse distinct on-wire spreads onto one
+            # reconstructed value and change the record's bytes on a canonical
+            # read/write cycle.
+            exact = reader.ratio()
+            value = float(exact)
+            if Fraction(value) != exact:
+                nearest = Fraction(value)
+                raise ManifestError(
+                    f"the reach record's {name} is the exact ratio "
+                    f"{exact.numerator}/{exact.denominator}, which no float "
+                    f"holds: the nearest float re-encodes as "
+                    f"{nearest.numerator}/{nearest.denominator}, so accepting "
+                    "it would change the record's bytes on a canonical "
+                    "read/write cycle. The encoder writes its float sigma's "
+                    "exact ratio; a spread must satisfy "
+                    "Fraction(float(value)) == value"
+                )
+            sigmas.append(value)
         return cls(seed, *sigmas)
 
 
