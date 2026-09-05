@@ -38,7 +38,7 @@ Minor 1 appends two fields to the canonical manifest, **after**
 | `span` | uint | The trellis super-symbol length L (Wei multidimensional partition). One select bit per L consecutive positions of a column; positions `1..L-1` of a super-symbol store a two-bit subset label ahead of their point bits; position 0's label is `(super-label − Σ stored labels) mod 4`. BODY holds `L·R + L − 1` bits per super-symbol per column. `1` is the per-position trellis, byte for byte. |
 | `scale_plane.kind` | uint | `0` = S6b (SCALE_BASE E8M0 per group + SCALE_REFINE `(d,m)` nibble per half). `1` = LUT: SCALE_BASE is absent (count 0) and the SCALE_REFINE nibble indexes `table`. |
 | `scale_plane.table` | blob (LUT only) | 2..16 positive **normal** E4M3FN bytes (`0x08..0x7E`; subnormals are refused because the served plane is decoded as `2^(e-7)(1+m/8)`), strictly ascending. The half's scale is `e4m3(table[nibble]) × global_scale`. |
-| `scale_plane.global_scale` | ratio (LUT only) | Exact rational, representable as an fp32. The encoder writes a power of two. |
+| `scale_plane.global_scale` | ratio (LUT only) | Exact rational, representable as an fp32, both terms inside the ratio codec's 64-bit varints (`canonical.fits_uint`). The encoder writes a power of two, which fits only while its exponent does: the LUT global is placed six binades under the largest target normalised by the grid's peak, so a LUT plane on the BF16 grid (peak 2^128) is refused at write on any weight below 2^71. |
 
 **Reading.** The header's minor selects the manifest grammar: a minor-0
 manifest ends at `payload_digest` and means `span = 1, kind = S6b`. A reader
@@ -133,7 +133,7 @@ resolve, so a manifest carrying it declares the minor that can.
 | Field | Encoding | Meaning |
 |---|---|---|
 | `scale_plane.kind` | uint | `2` = CHANNEL: one scale per output channel. |
-| `scale_plane.global_scale` | ratio | Exact rational, representable as an fp32; the encoder writes a power of two. No `table`. |
+| `scale_plane.global_scale` | ratio | Exact rational, representable as an fp32, both terms inside the ratio codec's 64-bit varints; the encoder writes a power of two, the binade of the median row scale. No `table`. |
 
 **Planes under a CHANNEL plane.** The row scale rides the **DIAG_SV** plane
 — one fp16 per output row, the element segment 2a already declares — and

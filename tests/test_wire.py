@@ -383,7 +383,11 @@ def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
     The first person to hit it reads that and looks in the codec (#33).
 
     Dyadic rationals of modest denominator -- what every shipped plane snaps to
-    -- stay legal, including ones that are not powers of two.
+    -- stay legal, including ones that are not powers of two.  A power of two
+    is not exempt: ``2**-131``, where a LUT plane on the BF16 grid puts its
+    global (the targets are normalised by the grid's 2**128 peak), is dyadic,
+    float-exact, and has a 132-bit denominator.  It is refused by the same
+    rule, by name, and the message says which of the two roads led here.
     """
     from fractions import Fraction
 
@@ -403,6 +407,12 @@ def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
         assert f"{field} global scale" in message
         assert "3.7e-05" in message
         assert "denominator" in message
+        with pytest.raises(ManifestError) as excinfo:
+            maker(2.0**-131)
+        message = str(excinfo.value)
+        assert f"{field} global scale" in message
+        assert "132 bits" in message
+        assert "exponent the codec's varint cannot hold" in message
 
 
 # ------------------------------------------------- the E4M3 plane's top binade

@@ -10,6 +10,7 @@ sits) and pin the shipping table separately.
 import pytest
 import torch
 
+from tessera import encoder_identity
 from tessera.alphabet import E2M1_GRID, E4M3_GRID, tuple_grid
 from tessera.export import (
     PER_RUNG,
@@ -39,10 +40,19 @@ WINDOW_CHANNEL = WireRecipe(WINDOW, 1, ScalePlaneKind.CHANNEL, window_bits=8)
 
 
 def _sub_cap_window(grid, q256=None):
-    """The E2M1x2 flip the doc names: window below the cap, TCQ at it."""
+    """The E2M1x2 flip the doc names: window below the cap, TCQ at it.
+
+    Total over every grid the exporter encodes: a rung this double does not
+    override resolves through the shipping ``wire_recipe`` -- this module's
+    own binding, which the monkeypatch below does not touch -- never through
+    a recipe that is wrong for the grid.  It used to answer ``TCQ_RECIPE`` for
+    everything else, which on the BF16 grid is a LUT plane whose global lands
+    at 2**-131 (the targets are normalised by the grid's 2**128 peak), below
+    what the ratio codec writes.
+    """
     if grid == K2 and q256 is not None and q256 < CAP_Q256:
         return WINDOW_LUT
-    return TCQ_RECIPE
+    return wire_recipe(grid, q256)
 
 
 def _weights(rows=64, cols=256, seed=0):
@@ -78,6 +88,17 @@ def test_the_table_records_a_rung_dependent_recipe_as_ranges():
 
 
 def test_a_mixed_plan_exports_each_unit_at_its_rung_and_replays_it(tmp_path, monkeypatch):
+    # The encoder identity is memoised per process and built from the
+    # exporter's live defaults.  Resolve it before the recipe is patched: the
+    # patch changes an input (``encoder_profile_id``'s), not the encoder, so
+    # the encoder's own identity is the right stamp -- and one built under the
+    # patch would encode the fixtures at a foreign recipe and outlive this test
+    # in the memo.  Pre-fix, in a fresh process this was the first encode, the
+    # fixture build ran under the patch, and the BF16 fixture failed with
+    # ``ManifestError: the LUT global scale 3.6734198463196485e-40 is not
+    # writable to the wire: ... denominator needs 132 bits``; after any earlier
+    # encode in the same process it passed.
+    encoder_identity.encoder_fixture_id()
     monkeypatch.setattr("tessera.export.wire_recipe", _sub_cap_window)
     assert wire_recipe(K2, 640) != WINDOW_LUT           # the import is the unpatched name
     tensors = {"low": _weights(seed=1), "cap": _weights(seed=2)}
