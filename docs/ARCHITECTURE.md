@@ -898,6 +898,38 @@ GQA/MQA replication read off the layer, and a coordinate-less layer through
 the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
 stand-ins.
 
+**What the contract publishes about that replication: nothing, and the
+silence is the decision (#330).** `runtime_contract.json`'s `tensor_parallel`
+block publishes `max_world_size` -- an attestation, the largest world a
+served receipt covers -- beside `loader_axes`, what this build's loader does
+with each shard axis, and it names no replication rule at all. The rule the
+loader enforces is vLLM's own: `QKVParallelLinear` sets
+`num_kv_head_replicas = tp_size // total_num_kv_heads` and its
+`weight_loader` reads `shard_rank = tp_rank // num_kv_head_replicas`, and
+Tessera READS that off the layer (`sharding.KV_REPLICAS_ATTRIBUTE`,
+`layer_replicas`) rather than letting the artifact declare it -- the same
+TP-agnostic stance as the rest of this section, and the reason the wire never
+learns the topology. Publishing the rule in the contract would turn it into a
+claim a consumer PINS (PrismaQuant pins this contract) and Tessera must then
+keep, so that a vLLM change becomes a contract break rather than a loader
+bug. `max_world_size` is 1 on every family, so that claim would describe a
+path no receipt covers, and a rule asserted above its evidence is the same
+defect as a number asserted above its evidence -- only in the direction
+nobody checks for. So the contract stays silent, and the silence is gated
+rather than commented: `tests/test_serving_contract.py`
+(`test_the_contract_does_not_owe_a_replication_rule_it_has_not_attested`)
+fails the day `max_world_size` rises above 1 while the `tensor_parallel`
+block still nowhere names `sharding.KV_REPLICAS_ATTRIBUTE`, deriving the
+attested world from the packaged contract and the name from the loader's own
+constant rather than typing either, and naming the two exits -- publish the
+rule, or put the attestation back. What would have to be true to publish it
+is therefore a served TP>1 measurement: a two-rank serve with a per-rank
+census and a KL against the single-rank arm, which is what raises
+`max_world_size` in the first place and what `contract.py`'s outright refusal
+of `max_world_size != 1` is waiting for. (The adjacent question of what the
+ARTIFACT's own `tessera_config.json` says about TP is #328, and is not
+settled here.)
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
