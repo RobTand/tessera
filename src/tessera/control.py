@@ -269,6 +269,22 @@ def _kl(value, *, field: str, where: str, error=TesseraError) -> float:
     return number
 
 
+def _unit_ratios(values, *, where: str) -> "tuple[float, ...]":
+    """The per-unit error ratios a screen is made of: at least one, each valid."""
+    ratios = tuple(values)
+    if not ratios:
+        raise TesseraError(
+            f"{where}: no per-unit ratios -- a geomean presented without its "
+            "units is exactly what this gate exists to refuse"
+        )
+    return tuple(_error_ratio(r, field="unit_ratios", where=where) for r in ratios)
+
+
+def _unit_geomean(ratios: "Sequence[float]") -> float:
+    """The geometric mean of a unit set, in logs so a long set does not drift."""
+    return math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
+
+
 def grid_for_name(name: str) -> PayloadGrid:
     """``"E2M1x2" -> tuple_grid(E2M1_GRID, 2)``, the exporter's ``--grid`` vocabulary.
 
@@ -1273,8 +1289,32 @@ PROMOTION_SCHEMA = "tessera.plane_promotion.v1"
 #: The coordinator's cross-check on a LUT-plane promotion, restated here and
 #: not moved: the candidate's GLM six-expert geomean against the same wire
 #: without levers is no worse than 1.00x.  The 2026-09-02 receipt wrote it;
-#: issue #65 pins it.  A caller that holds a tighter bar passes it in.
+#: issue #65 pins it.  A caller that holds a tighter bar passes it in --
+#: ``glm_bar`` is a *tightening* override, enforced as one by
+#: :func:`_require_pinned_glm_bar` (tessera#224).
 GLM_GATE = 1.00
+
+
+def _require_pinned_glm_bar(glm_bar: float, *, where: str) -> None:
+    """A caller may hold a tighter GLM bar; it may not hold a looser one.
+
+    The one home for this rule (AGENTS.md rule 4), called by
+    :func:`assert_plane_promotion` before the cross-check it protects and by
+    :meth:`PlanePromotion.__post_init__` so the class cannot be built around
+    it.  Until tessera#224 the gate compared only against the caller's own
+    ``glm_bar``, so ``glm_ratio=1.5`` promoted under ``glm_bar=2.0``: a 50%
+    six-expert regression clearing a cross-check the arm being checked had
+    written.  Moving :data:`GLM_GATE` itself is a decision this gate does not
+    make; refusing a caller who tries to move it here is.
+    """
+    if glm_bar > GLM_GATE:
+        raise PromotionRefusedError(
+            f"{where}: glm_bar {glm_bar:.4g}x is looser than the pinned "
+            f"{GLM_GATE:.4g}x GLM gate, which no caller relaxes -- the "
+            "override exists to tighten the coordinator's cross-check, and at "
+            f"glm_bar={glm_bar:.4g} a {glm_bar:.4g}x six-expert regression "
+            "would promote (tessera#65, #224)"
+        )
 
 _PROMOTION_REASON = (
     "a per-plane default is set by a screen and a cross-check, and the screen "
@@ -1315,6 +1355,49 @@ class PlanePromotion:
     landing: str
     where: str
 
+    def __post_init__(self) -> None:
+        """The domains, on the object :func:`promotion_block` publishes.
+
+        ``promotion_block`` says "only a promotion this gate accepted reaches
+        here", and this is what makes that true rather than conventional: the
+        class is public, so a domain enforced only in
+        :func:`assert_plane_promotion` would be a domain with two doors
+        (tessera#224).  Each number is refused by field name, and the derived
+        pair -- ``geomean`` and ``wins`` -- must be the pair these very ratios
+        make, so a summary can never arrive beside a unit set it does not
+        summarise.
+        """
+        object.__setattr__(self, "unit_ratios",
+                           _unit_ratios(self.unit_ratios, where=self.where))
+        for field in ("glm_ratio", "glm_bar"):
+            object.__setattr__(self, field, _error_ratio(
+                getattr(self, field), field=field, where=self.where))
+        object.__setattr__(self, "served_bar", _kl(
+            self.served_bar, field="served_bar", where=self.where))
+        if self.served_kl is not None:
+            object.__setattr__(self, "served_kl", _kl(
+                self.served_kl, field="served_kl", where=self.where))
+        _require_pinned_glm_bar(self.glm_bar, where=self.where)
+        geomean = _unit_geomean(self.unit_ratios)
+        # The tolerance is float64's, not a judgement: an n-term reduction in
+        # the log domain rounds at most once per term, so n ulps of the value
+        # itself is the whole room a second correct computation of this number
+        # has.  Anything wider would be a different number wearing this one's
+        # name (AGENTS.md rule 2).
+        if not abs(float(self.geomean) - geomean) <= len(self.unit_ratios) * math.ulp(geomean):
+            raise TesseraError(
+                f"{self.where}: geomean {float(self.geomean):.6g} is not the "
+                f"geomean of these {len(self.unit_ratios)} unit ratios "
+                f"({geomean:.6g}) -- it is derived from them, never presented "
+                "beside them"
+            )
+        wins = sum(1 for r in self.unit_ratios if r < 1)
+        if int(self.wins) != wins:
+            raise TesseraError(
+                f"{self.where}: unit_wins {self.wins!r} is not the number of "
+                f"these unit ratios below 1 ({wins})"
+            )
+
     def to_json(self) -> dict:
         return {
             "schema": PROMOTION_SCHEMA,
@@ -1346,6 +1429,20 @@ def assert_plane_promotion(
     where: str = "the per-plane promotion",
 ) -> PlanePromotion:
     """Refuse a per-plane promotion its evidence does not carry.
+
+    **Before any leg, the evidence has to be evidence** (tessera#224).  Each
+    per-unit ratio, ``glm_ratio``, ``glm_bar``, ``served_kl`` and
+    ``served_bar`` is checked against the domain its own definition gives it
+    and refused by field name, because an ordered comparison is not a
+    validity check: ``not (nan <= bar)`` refuses, but ``not (-inf <= bar)``
+    passes, ``served_kl < inf`` passes for every KL there is, and a
+    ``glm_bar`` above :data:`GLM_GATE` passes a regression the pinned gate
+    forbids.  All six of the issue's cases promoted before this.  A ratio of
+    two errors is strictly positive -- zero is a division artifact, and the
+    geomean reads it in logs -- while a KL divergence may be zero, so those
+    two domains are spelled apart rather than sharing one word that fits
+    neither.  ``glm_bar`` may only ever tighten
+    (:func:`_require_pinned_glm_bar`).
 
     Five legs, in the order the receipt learned them.  The GLM cross-check
     is first and exactly as written: above ``glm_bar`` refuses, whatever the
@@ -1404,17 +1501,7 @@ def assert_plane_promotion(
     """
     if not isinstance(candidate, str) or not candidate:
         raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
-    ratios = tuple(float(r) for r in unit_ratios)
-    if not ratios:
-        raise TesseraError(
-            f"{where}: no per-unit ratios -- a geomean presented without its "
-            "units is exactly what this gate exists to refuse"
-        )
-    if any(not math.isfinite(r) or r <= 0 for r in ratios):
-        raise TesseraError(
-            f"{where}: a per-unit ratio is a positive finite error ratio, "
-            f"got {[float(r) for r in unit_ratios]!r}"
-        )
+    ratios = _unit_ratios(unit_ratios, where=where)
     if landing not in LUT_LANDING_MODES:
         raise GrammarError(
             f"{where}: unknown landing {landing!r}; one of "
@@ -1428,10 +1515,21 @@ def assert_plane_promotion(
             f"reorders the arms (tessera#85).  Only {LUT_LANDING_WIRE!r} "
             "promotes"
         )
-    glm_ratio, served_bar, glm_bar = float(glm_ratio), float(served_bar), float(glm_bar)
+    # Domains before comparisons (tessera#224).  An ordered comparison is not
+    # a validity check: `not (nan <= bar)` refuses but `not (-inf <= bar)`
+    # passes, `served_kl < inf` passes for every KL, and a caller-supplied
+    # `glm_bar` above the pinned one turns the coordinator's cross-check into
+    # a number the arm being checked chooses.  A ratio of two errors is
+    # strictly positive -- zero is a division artifact and its log is not a
+    # number -- while a KL divergence may be zero, so the two domains are
+    # spelled apart rather than sharing a "positive" that fits neither.
+    glm_ratio = _error_ratio(glm_ratio, field="glm_ratio", where=where)
+    glm_bar = _error_ratio(glm_bar, field="glm_bar", where=where)
+    served_bar = _kl(served_bar, field="served_bar", where=where)
     if served_kl is not None:
-        served_kl = float(served_kl)
-    geomean = math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
+        served_kl = _kl(served_kl, field="served_kl", where=where)
+    _require_pinned_glm_bar(glm_bar, where=where)
+    geomean = _unit_geomean(ratios)
     wins = sum(1 for r in ratios if r < 1)
 
     if not glm_ratio <= glm_bar:

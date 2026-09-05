@@ -1357,6 +1357,24 @@ receipt's 0.640 is the *stock* wire and was the incumbent only for "levers
 vs no levers"; as a default it would have passed a candidate serving 0.60
 over an `h^1.0` incumbent at 0.5310.)
 
+**Before any leg, the evidence has to be evidence** (tessera#224). The gate
+validated each per-unit ratio as positive finite and then merely
+`float()`-converted the other four numbers, so an ordered comparison stood in
+for a domain check and mathematically invalid evidence promoted: a served KL
+of `-inf`, a `glm_ratio` of `-inf`, a `served_bar` of `+inf`, an infinite GLM
+cross-check against an infinite bar. Each number is now checked against the
+domain its own definition gives it and refused by field name — a ratio of two
+errors is finite and strictly positive (zero is a division artifact and the
+geomean reads it in logs), a KL divergence is finite and non-negative, and the
+two are spelled apart rather than sharing one word that fits neither. The
+`glm_bar` override **tightens the pinned `GLM_GATE` and never relaxes it**:
+comparing only against the caller's own bar let `glm_ratio=1.5` promote under
+`glm_bar=2.0`, the coordinator's cross-check answering to the arm it checks.
+The domains live on `PlanePromotion` as well as in the assertion, because the
+class is public and `promotion_block`'s "only a promotion this gate accepted
+reaches here" has to be true by construction; the `geomean` and `wins` it
+publishes must be the pair the promotion's own unit ratios make.
+
 No default moves by this, and `tests/test_plane_promotion.py` is what makes
 that checkable rather than asserted: it runs the receipt's own six-unit
 record through the gate, watches `hessian` refuse at 2 of 6, and pins
