@@ -132,46 +132,108 @@ def artifact():
 # So ask it.  In an interpreter that HAS the dependency this costs nothing:
 # the loop does not run at all.  In one that does not, each failing import
 # fails on its own import line, before any work.
-def _third_party_import_failure(exc: BaseException) -> bool:
+def _own_import_roots() -> frozenset:
+    """The top-level names this tree provides on its own import roots.
+
+    Read off the filesystem (``repo/``, ``repo/src``, ``repo/tests``: the
+    roots pytest and this conftest put on ``sys.path``) rather than listed, so
+    a package added to the tree is "ours" the moment it exists.  The limit,
+    stated: a top-level package deleted outright is no longer on any root, so
+    a test importing it is classified as a dependency skip, not a failure.
+    A moved or deleted SUBmodule (``tessera.decode``) is still caught, and
+    that is the breakage this job exists to catch (tessera#154).
+    """
+    repo = Path(__file__).resolve().parents[1]
+    names = set()
+    for base in (repo, repo / "src", repo / "tests"):
+        if not base.is_dir():
+            continue
+        for child in base.iterdir():
+            if child.name.startswith((".", "_")):
+                continue
+            if child.is_dir() and (child / "__init__.py").is_file():
+                names.add(child.name)
+            elif child.suffix == ".py":
+                names.add(child.stem)
+    return frozenset(names)
+
+
+def _third_party_import_failure(exc: BaseException, own=None) -> bool:
     """Did this fail for a missing dependency, or for a real bug?
 
     Only the former is a reason to skip a file.  A module that raises
     ``ImportError`` because one of ITS OWN names moved must still fail the
-    run -- that is the breakage this whole job exists to catch.
+    run -- that is the breakage this whole job exists to catch.  "Its own"
+    is the set ``_own_import_roots`` reads off the tree, never a spelled-out
+    roster.
     """
     missing = getattr(exc, "name", None) or ""
     root = missing.split(".", 1)[0]
-    return bool(root) and root != "tessera" and root not in {"", "tests"}
+    if not root:
+        return False
+    return root not in (_own_import_roots() if own is None else own)
+
+
+# The probe executes every test module.  It does so in ONE child interpreter
+# (one, not one per module: the cost is a single startup), so the process that
+# goes on to collect and run the suite has executed none of them first -- no
+# module-level side effect, monkeypatch or ``sys.modules`` entry leaks from
+# the probe into the run.  The child is given the same import roots this
+# conftest gives the run, and the own-name set, and answers with the files
+# that failed on a missing dependency.
+_PROBE = r"""
+import importlib.util, json, sys
+from pathlib import Path
+here, own = Path(sys.argv[1]), set(json.loads(sys.argv[2]))
+sys.path[:0] = json.loads(sys.argv[3])
+skip = []
+for path in sorted(here.glob("test_*.py")):
+    spec = importlib.util.spec_from_file_location("_probe_" + path.stem, path)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except (ImportError, ModuleNotFoundError) as exc:
+        root = (getattr(exc, "name", None) or "").split(".", 1)[0]
+        if root and root not in own:
+            skip.append(path.name)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        # Not ``Exception``: a module that already says
+        # ``pytest.importorskip("torch")`` raises pytest's own ``Skipped``,
+        # which derives from ``BaseException``.  That file is handling
+        # itself correctly and must NOT be ignored -- pytest will report
+        # it as a skip, which is the truth.  Anything else here is the
+        # file's own problem and belongs in the run as the failure it is.
+        pass
+print(json.dumps(skip))
+"""
+
+
+def _probe_uncollectable(here: Path, own) -> list:
+    import json
+    import subprocess
+
+    tests = Path(__file__).resolve().parent
+    roots = [str(tests.parent / "src"), str(tests)]   # the two roots lines 10-11 give the run
+    # The child is marked so that a test module importing this conftest does
+    # not start a probe of its own from inside the probe.
+    result = subprocess.run(
+        [sys.executable, "-c", _PROBE, str(here), json.dumps(sorted(own)), json.dumps(roots)],
+        capture_output=True, text=True, check=True,
+        env={**os.environ, _PROBE_MARK: "1"})
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+
+_PROBE_MARK = "TESSERA_COLLECTION_PROBE"
 
 
 def _uncollectable() -> list:
-    import importlib
     import importlib.util
 
-    if importlib.util.find_spec("torch") is not None:
+    if importlib.util.find_spec("torch") is not None or os.environ.get(_PROBE_MARK):
         return []
-    here = Path(__file__).resolve().parent
-    skip = []
-    for path in sorted(here.glob("test_*.py")):
-        spec = importlib.util.spec_from_file_location(
-            f"_probe_{path.stem}", path)
-        module = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(module)
-        except (ImportError, ModuleNotFoundError) as exc:
-            if _third_party_import_failure(exc):
-                skip.append(path.name)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
-            # Not ``Exception``: a module that already says
-            # ``pytest.importorskip("torch")`` raises pytest's own ``Skipped``,
-            # which derives from ``BaseException``.  That file is handling
-            # itself correctly and must NOT be ignored -- pytest will report
-            # it as a skip, which is the truth.  Anything else here is the
-            # file's own problem and belongs in the run as the failure it is.
-            pass
-    return skip
+    return _probe_uncollectable(Path(__file__).resolve().parent, _own_import_roots())
 
 
 collect_ignore = _uncollectable()
