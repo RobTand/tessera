@@ -45,6 +45,7 @@ import torch
 import triton
 import triton.language as tl
 
+from .alphabet import require_hardware_byte_grid
 from .errors import GrammarError
 from .lane_planes import pack_window_planes
 from .manifest import BodyKind, RotationState, ScalePlaneKind
@@ -96,10 +97,7 @@ def window_code_table(window_codes: torch.Tensor, grid, device=None) -> torch.Te
     former-NaN slots and the negative zero land on the legal byte the
     reference decoder writes because it is the same map.
     """
-    if grid.native is None or grid.size != 256 or grid.arity != 1:
-        raise GrammarError(
-            f"the FP8 route decodes a scalar 256-code hardware grid, got {grid.name}"
-        )
+    require_hardware_byte_grid(grid, purpose="the FP8 route")
     codes = window_codes.reshape(-1).to(torch.long)
     native = torch.tensor(grid.native, dtype=torch.long, device=codes.device)
     if codes.numel() and int(codes.max()) >= native.numel():

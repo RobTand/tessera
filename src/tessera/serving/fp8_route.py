@@ -50,6 +50,7 @@ from typing import Optional, Sequence
 
 import torch
 
+from ..alphabet import require_hardware_byte_grid
 from . import fp8_gemv
 from .compile_identity import note_traced_dispatch
 from .ext import substitutes_when_unavailable
@@ -134,8 +135,11 @@ def prepare_tessera_fp8_module(parsed_roles, device=None) -> PreparedTesseraFp8M
     restated here, so a fourth family is one ROUTES entry.  (The arity-1 /
     256-code / hardware-native half of the grid check stays: it describes what
     a scalar hardware grid IS, off the grid object itself, not which grids
-    this route holds.)  Each role is packed for the in-forward decoder and
-    decoded once through it and once through
+    this route holds -- and it is read off the grid, via
+    ``alphabet.require_hardware_byte_grid``, rather than spelled here
+    (tessera#277).  It keeps this route's ``ValueError``, which is the class
+    every other refusal in this loop raises.)  Each role is packed for the
+    in-forward decoder and decoded once through it and once through
     ``tessera.decode.materialize_fp8``; the two must agree byte for byte
     or the module is refused.  The per-row scale is the reference decoder's
     (``scale_rows * global`` in fp32).
@@ -156,12 +160,13 @@ def prepare_tessera_fp8_module(parsed_roles, device=None) -> PreparedTesseraFp8M
     columns = None
     for name, parsed in parsed_roles:
         unit, grid = parsed.unit, parsed.grid
-        if grid.name not in route["grids"] or grid.arity != 1 or grid.native is None \
-                or grid.size != 256:
+        if grid.name not in route["grids"]:
             raise ValueError(
                 f"role {name!r}: the FP8 route decodes {route['grid_kind']} grid "
                 f"{route['grids']} (tessera.serving.scheme.ROUTES[{TESSERA_FP8!r}]), "
                 f"not {grid.name}")
+        require_hardware_byte_grid(
+            grid, purpose=f"role {name!r}: the FP8 route", error=ValueError)
         if parsed.body.name != route["body"]:
             raise ValueError(
                 f"role {name!r}: the FP8 route decodes the {route['body']} body "

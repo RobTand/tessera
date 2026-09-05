@@ -78,6 +78,7 @@ import sys
 
 import torch
 
+from .alphabet import require_hardware_byte_grid
 from .errors import GrammarError
 from .kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED, WINDOW_GEMV_SOURCE
 
@@ -521,14 +522,16 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
     wire through :func:`prepare_value_unit`, whose scalar grid has 65536
     codes and whose table is the values themselves), and no wire the
     predicate admits on the FP8 route can violate it -- it catches a
-    mis-routed parse, not a wire.
+    mis-routed parse, not a wire.  Excluded from the contract is not
+    homeless: the clause is
+    :func:`tessera.alphabet.require_hardware_byte_grid`, which is where all
+    three of its legs live (tessera#277).
     """
     unit, grid = parsed.unit, parsed.grid
     refusal = lane_refusal_for_parsed(parsed)
     if refusal is not None:
         raise GrammarError(refusal)
-    if grid.native is None or grid.size != 256:
-        raise GrammarError(f"the window GEMV needs a scalar 256-code hardware grid, got {grid.name}")
+    require_hardware_byte_grid(grid, purpose="the window GEMV")
     if unit.window_codes is None:
         raise GrammarError("a window body needs the unit's table")
     _check_window_bits(unit.window_bits)
