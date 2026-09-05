@@ -81,7 +81,22 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The controller-side hook that collects those reports
+until they do. Each process measures that identity **once, in
+`pytest_sessionfinish`**, and it is a plain hook implementation rather than a
+wrapper: pluggy runs every non-wrapper implementation inside all of a hook's
+wrappers, so it completes before xdist's `WorkerInteractor.pytest_sessionfinish`
+wrapper resumes and sends `workerfinished`. Publishing it from
+`pytest_terminal_summary` instead -- which pytest reaches from the terminal
+reporter's own, outer, session-finish wrapper -- was too late by exactly one
+wrapper resume, so the controller read the seed `pytest_sessionstart` had left
+in `workeroutput` and published a worker as agreeing while that worker's own
+share said `unknown` (#291). The measurement no longer depends on
+`--surface-json` either, and the share and the population now carry the same
+record rather than two hashes taken at two instants. An entry identity remains
+a seed and never establishes agreement: only an entry-BOUND record -- one
+carrying a `measurement_span`, which `suite_source.is_entry_bound` is the one
+home for -- counts, and a worker that supplies only the seed, or no identity at
+all, is named and refused. The controller-side hook that collects those reports
 (`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
 run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
 worker set, as a serial run always did, instead of pluggy refusing the file at
@@ -268,6 +283,23 @@ scheme, and `--passthrough-unrouted` reaching a module the plan names.
 Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
 fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
 (tessera#211).
+
+`--plan-json` names a mutable file and an export is long, so the exporter
+reads it exactly once, into one `PlanSnapshot`, and never consults the path
+again: planning, a partition's sealed `identity.options.plan`, the
+pre-publication validator and the manifest's `plan` block all read that one
+snapshot, and its sha256 over the exact bytes read is printed with the plan.
+A planner that regenerates or atomically replaces its output part-way through
+an export is therefore neither adopted nor able to fail the run half-written
+-- the plan that drove the encode is the plan that is published. Reading the
+path four times let a tensor written as an E4M3 q1024 wire be published as
+`PASSTHROUGH`, and the validator accepted that because it reread the
+replacement too (tessera#301). The snapshot is also shape-checked at argument
+time, before the first encode, to the same entry grammar the validator
+applies. An explicit `PASSTHROUGH`/`BF16` entry is now a NEGATIVE obligation
+that gate enforces in both callers: a quantized emitted role, or a `routed_moe`
+module, under such an entry is refused by tensor name. That closes the last
+direction in which a published plan and the roles beside it could disagree.
 
 ## 3. Bytes: priced == served
 
@@ -2020,7 +2052,27 @@ The native extensions are built by torch at first use from the packaged
 `native` extra, which `serve` and `kernels` both reference. The `nvcc` is
 not installable from PyPI and is therefore a documented requirement, stated
 in the README beside the install commands and here; `ext.py` records where
-each is looked for. When a build is unavailable the outcome is per extension
+each is looked for.
+
+**Which toolkit compiles is one answer, adopted, not two reports.**
+`cpp_extension.load` builds `<cpp_extension.CUDA_HOME>/bin/nvcc`, and torch
+freezes that module global at *import*, so a resolver that only returns a root
+describes a compiler nothing will run. `ext._resolve_cuda_home` therefore
+adopts what it selects into both mechanisms -- the environment and that frozen
+global -- and `ext._nvcc_for_build()` reads the global back, so the toolkit
+reported by `toolchain_report`, the one hashed into the build identity (§ the
+`nvcc` field, issue #242) and the one the compile runs are the same root by
+construction. An explicit `CUDA_HOME`/`CUDA_PATH` still wins over the search,
+and it wins by adoption too: before issue #298 an explicit root chosen *after*
+torch's import was reported as selected while the previously frozen toolkit
+did the compiling. It is adopted whether or not it holds an `nvcc` -- only
+the resolver's *return* is gated on completeness, so an incomplete explicit
+root reports "no toolkit" (fail-closed, `complete: false`) and any build that
+proceeds anyway fails under the root the operator named, rather than
+succeeding under the toolkit that choice displaced; displacing a usable
+toolkit that way is said on stderr, by name.
+
+When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a
 boolean:
 
