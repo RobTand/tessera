@@ -29,12 +29,44 @@ from pathlib import Path
 from .errors import ProvenanceError
 
 __all__ = [
+    "DIGEST_ALPHABET",
+    "DIGEST_LENGTH",
     "InputNode",
     "Denylist",
     "load_denylist",
     "check_closure",
     "assert_denylist_populated",
+    "require_digest",
 ]
+
+#: The identity is a SHA-256 content digest (:func:`content_digest`), so the
+#: shape it has to have is the hash's own and not a number anyone chose: two
+#: hex characters per digest byte (AGENTS.md rule 2).
+DIGEST_LENGTH = hashlib.sha256().digest_size * 2
+DIGEST_ALPHABET = "0123456789abcdef"
+
+
+def require_digest(digest, *, field: str = "digest") -> str:
+    """The one shape a content identity has, wherever a digest enters.
+
+    Every digest in this module is compared to every other by equality, so a
+    string that is not a possible :func:`content_digest` output can never
+    match anything -- and a check against an identity nothing can carry is not
+    a check.  It is refused where it enters instead: :class:`InputNode` did
+    this for its own digest and :func:`load_denylist` did not, so a configured
+    entry of sixty-four ``z``\\ s certified a denylist as *populated* while
+    matching no possible input (tessera#226).  One rule, one home (AGENTS.md
+    rule 4).
+    """
+    if (
+        not isinstance(digest, str)
+        or len(digest) != DIGEST_LENGTH
+        or any(character not in DIGEST_ALPHABET for character in digest)
+    ):
+        raise ProvenanceError(
+            f"{field} must be {DIGEST_LENGTH} lowercase hex characters: {digest!r}"
+        )
+    return digest
 
 
 @dataclass(frozen=True)
@@ -43,7 +75,9 @@ class InputNode:
 
     `parents` are the digests this artifact was derived from, which is what
     makes the check transitive: a clean-looking artifact with a prohibited
-    ancestor is still prohibited.
+    ancestor is still prohibited.  A parent is an identity by the same rule
+    the node's own digest is, and is validated by the same function: a parent
+    nothing can carry names no node, so the closure it claims cannot close.
     """
 
     digest: str
@@ -52,12 +86,9 @@ class InputNode:
     parents: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        if len(self.digest) != 64 or any(
-            character not in "0123456789abcdef" for character in self.digest
-        ):
-            raise ProvenanceError(
-                f"digest must be 64 lowercase hex characters: {self.digest!r}"
-            )
+        require_digest(self.digest)
+        for parent in self.parents:
+            require_digest(parent, field="parent digest")
 
 
 @dataclass
@@ -72,15 +103,28 @@ class Denylist:
 
 
 def load_denylist(path: str | Path) -> Denylist:
-    """Load an owner-supplied denylist of 64-hex content digests."""
+    """Load an owner-supplied denylist of SHA-256 content digests.
+
+    Case is normalised -- an owner may write a digest in either case -- and
+    then every entry is held to :func:`require_digest`, the same identity
+    :class:`InputNode` is held to.  Checking only the *length*, as this did
+    until tessera#226, let a 64-character non-hex entry through: it can match
+    no possible input, yet it satisfied :func:`assert_denylist_populated`,
+    which exists precisely to refuse a closure checked against an ineffective
+    list.
+
+    One malformed entry refuses the whole file rather than being dropped: the
+    owner's record is not this module's to edit, and a list that lost a row
+    silently is a list nobody checked against.
+    """
     path = Path(path)
     if not path.exists():
         raise ProvenanceError(f"denylist file not found: {path}")
     payload = json.loads(path.read_text())
-    digests = {entry.lower() for entry in payload.get("prohibited_digests", [])}
-    for entry in digests:
-        if len(entry) != 64:
-            raise ProvenanceError(f"malformed denylist digest: {entry!r}")
+    digests = set()
+    for entry in payload.get("prohibited_digests", []):
+        normalised = entry.lower() if isinstance(entry, str) else entry
+        digests.add(require_digest(normalised, field="denylist digest"))
     return Denylist(digests=digests, source=str(path))
 
 

@@ -107,6 +107,7 @@ __all__ = [
     "plan_wire_bits",
     "promotion_block",
     "rate_menu",
+    "require_kl",
     "selection_requirement",
     "uniform_control",
     "unit_wire_bits",
@@ -147,6 +148,146 @@ _GRID_BY_NAME = {
 GRID_NAMES = ("E2M1", "E2M1x2", "E4M3", "BF16")
 
 _BITS_CACHE: "dict[tuple, Fraction]" = {}
+
+
+# ------------------------------------------------------------- the domains
+#
+# Every number a verdict in this module reads has a domain its own definition
+# gives it, and a gate that converts a number and then compares it has already
+# lost the argument: NaN is False against every ordered comparison, an infinity
+# satisfies any ``<=`` bar it is handed, a zero denominator turns a ratio into
+# whatever the fallback branch says, and ``int()`` truncates a fractional count
+# into a denominator nobody has.  So conversion and domain are one step here,
+# and a value outside its domain is refused **by field name** before anything
+# is compared (AGENTS.md rule 5; tessera#224, tessera#225).
+#
+# The domains are read off the quantities, never off round numbers (rule 2): a
+# wire bit total is counted, a parameter count is counted, a byte-match
+# tolerance is a fraction of the candidate's own bits, an error ratio is a
+# quotient of two positive errors, and a KL divergence is non-negative.
+
+
+def _bit_total(value, *, field: str, where: str) -> Fraction:
+    """A wire bit total: a whole number of bits, and more than none of them.
+
+    Bits are *counted* -- :func:`unit_wire_bits` prices integral at every rung
+    of every grid on every shape ``tests/test_uniform_control.py`` sweeps, and
+    :func:`bits_from_manifest` reads whole bytes -- so a fractional total is an
+    accounting defect rather than a rounding, and an arm of zero or negative
+    bits is not an arm.  Zero is the one that mattered: it made
+    :attr:`ByteMatch.relative_slack` report a perfect match for a candidate
+    nobody weighed (tessera#225).
+    """
+    reason = (
+        f"{where}: {field} is a whole positive number of wire bits, got "
+        f"{value!r} -- the byte match is a ratio over the candidate's own "
+        "bits, so a zero, negative, fractional or non-numeric total is "
+        "refused here rather than compared"
+    )
+    try:
+        bits = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if bits.denominator != 1 or bits <= 0:
+        raise TesseraError(reason)
+    return bits
+
+
+def _exact_count(value, *, field: str, where: str) -> int:
+    """A count of things: an exact positive integer, never a truncation."""
+    reason = (
+        f"{where}: {field} is an exact positive count, got {value!r} -- "
+        "int() would truncate a fractional count silently and report a bpp "
+        "over a denominator nothing has"
+    )
+    try:
+        count = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if count.denominator != 1 or count <= 0:
+        raise TesseraError(reason)
+    return int(count)
+
+
+def _tolerance(value, *, field: str, where: str) -> Fraction:
+    """A byte-match tolerance: a fraction of the candidate's bits in [0, 1).
+
+    Zero is legal and means "exact".  One is not: at a relative slack of 1 the
+    control weighs twice the candidate's bytes or none of them, which is the
+    comparison this module exists to refuse, so a tolerance that would admit
+    it is refused where it enters instead of at every arm it later passes.
+    """
+    reason = (
+        f"{where}: {field} is a fraction of the candidate's bits in [0, 1), "
+        f"got {value!r} -- at 1 the control may weigh twice the candidate or "
+        "none of it, which is not a control"
+    )
+    try:
+        slack = Fraction(value)
+    except (TypeError, ValueError, OverflowError, ZeroDivisionError) as exc:
+        raise TesseraError(reason) from exc
+    if not 0 <= slack < 1:
+        raise TesseraError(reason)
+    return slack
+
+
+def _error_ratio(value, *, field: str, where: str, error=TesseraError) -> float:
+    """A quotient of two positive errors: finite and strictly positive."""
+    reason = (
+        f"{where}: {field} is a positive finite ratio of two errors, got "
+        f"{value!r} -- NaN loses every ordered comparison silently and an "
+        "infinity clears any bar written as one"
+    )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise error(reason) from exc
+    if not math.isfinite(number) or number <= 0:
+        raise error(reason)
+    return number
+
+
+def require_kl(value, *, field: str, where: str, error=TesseraError) -> float:
+    """A KL divergence: finite and non-negative, by its own definition.
+
+    Public, because ``experiments/uniform_control.py verify`` builds its
+    verdict from two KLs off the command line rather than through
+    :func:`control_block`, and one rule has one home (AGENTS.md rule 4).
+
+    Zero is admissible and means the two distributions agree; it is not a
+    number any served arm has produced, and it is not this gate's business to
+    say it cannot be.  Negative and non-finite are, because a divergence that
+    is neither orders below every bar it is compared against and reads as a
+    pass (tessera#224, tessera#225).
+    """
+    reason = (
+        f"{where}: {field} is a finite non-negative KL divergence, got "
+        f"{value!r} -- a negative or unmeasurable divergence sorts below "
+        "every bar it is compared to and reads as a pass"
+    )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise error(reason) from exc
+    if not math.isfinite(number) or number < 0:
+        raise error(reason)
+    return number
+
+
+def _unit_ratios(values, *, where: str) -> "tuple[float, ...]":
+    """The per-unit error ratios a screen is made of: at least one, each valid."""
+    ratios = tuple(values)
+    if not ratios:
+        raise TesseraError(
+            f"{where}: no per-unit ratios -- a geomean presented without its "
+            "units is exactly what this gate exists to refuse"
+        )
+    return tuple(_error_ratio(r, field="unit_ratios", where=where) for r in ratios)
+
+
+def _unit_geomean(ratios: "Sequence[float]") -> float:
+    """The geometric mean of a unit set, in logs so a long set does not drift."""
+    return math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
 
 
 def grid_for_name(name: str) -> PayloadGrid:
@@ -462,12 +603,31 @@ class ByteMatch:
     *varies* -- the Tessera ones.  A BF16 unit is identical in both arms, so
     including it would shrink the reported slack without changing anything, and
     the honest denominator for a rate-axis claim is the rate axis.
+
+    **The four numbers are validated here and not above here** (tessera#225).
+    This class is public and :func:`uniform_control` builds one directly, so a
+    domain enforced only in :func:`assert_byte_matched` would be a domain with
+    two doors.  Every field is converted exactly and refused by name: whole
+    positive bit totals, an exact positive parameter count, and a tolerance
+    that is a fraction of the candidate's own bits.  Before that,
+    ``assert_byte_matched(0, 800, 1)`` returned an *accepted* match whose
+    ``relative_slack`` was 0 -- a perfect control for an arm of no bytes.
     """
 
     candidate_bits: Fraction
     control_bits: Fraction
     varying_params: int
     max_relative_slack: Fraction = DEFAULT_MAX_RELATIVE_SLACK
+
+    def __post_init__(self) -> None:
+        where = "a byte match"
+        for field in ("candidate_bits", "control_bits"):
+            object.__setattr__(self, field, _bit_total(
+                getattr(self, field), field=field, where=where))
+        object.__setattr__(self, "varying_params", _exact_count(
+            self.varying_params, field="varying_params", where=where))
+        object.__setattr__(self, "max_relative_slack", _tolerance(
+            self.max_relative_slack, field="max_relative_slack", where=where))
 
     @property
     def slack_bits(self) -> Fraction:
@@ -476,8 +636,7 @@ class ByteMatch:
 
     @property
     def relative_slack(self) -> Fraction:
-        if not self.candidate_bits:
-            return Fraction(0)
+        """``|slack| / candidate``, always over a denominator that exists."""
         return abs(self.slack_bits) / self.candidate_bits
 
     @property
@@ -543,19 +702,19 @@ def assert_byte_matched(
     ``require_no_larger`` additionally refuses a control that outweighs the
     candidate, for a claim that must stay conservative against the allocation
     whichever arm wins.
+
+    The four inputs are converted and domain-checked by :class:`ByteMatch`
+    itself, so an invalid total refuses by field name here rather than
+    arriving as a ``relative_slack`` of zero (tessera#225).
     """
-    match = ByteMatch(
-        Fraction(candidate_bits),
-        Fraction(control_bits),
-        int(varying_params),
-        Fraction(max_relative_slack),
-    )
+    match = ByteMatch(candidate_bits, control_bits, varying_params,
+                      max_relative_slack)
     if not match.byte_matched:
         raise ControlNotByteMatchedError(
             f"{where}: {int(match.control_bits)} bits against the candidate's "
             f"{int(match.candidate_bits)} -- {float(match.relative_slack) * 100:.4f}% "
-            f"apart, over the {float(max_relative_slack) * 100:.4f}% a control may "
-            f"be.  The {match.fatter_arm} arm is the fatter one, so the "
+            f"apart, over the {float(match.max_relative_slack) * 100:.4f}% a control "
+            f"may be.  The {match.fatter_arm} arm is the fatter one, so the "
             "comparison would price those bytes as quality."
         )
     if require_no_larger and not match.control_is_no_larger:
@@ -790,6 +949,17 @@ def control_block(
     Without them it states, equally explicitly, that the control was built and
     **not served** -- which is a different claim from a passing gate and must
     not read like one.
+
+    **A measured verdict requires the byte match to have held** (tessera#225).
+    ``uniform_control(..., assert_match=False)`` builds an unmatched pair on
+    purpose -- that is how the E2M1x2 coset hole is *reported* rather than
+    papered over -- and such a pair stays representable here, as the unserved
+    block, which is an explicitly unqualified diagnostic.  What it may not
+    become is the measured verdict, whose own sentence is "against the
+    byte-matched uniform": on the issue's pair that read as a victory while
+    the arms were 3.16% apart in bytes, 31.6x the tolerance, so the winning
+    arm was simply the one holding the extra bytes.  Both KLs are validated
+    for the same reason the totals are: the verdict divides them.
     """
     block = {
         "schema": CONTROL_SCHEMA,
@@ -809,7 +979,20 @@ def control_block(
             "detail": "the control was built and priced; neither arm was served",
         }
     else:
-        candidate_kl, control_kl = float(candidate_kl), float(control_kl)
+        where = f"the {candidate_label} arm against its uniform control"
+        if not control.match.byte_matched:
+            raise ControlNotByteMatchedError(
+                f"{where}: byte_matched is False -- {int(control.match.control_bits)} "
+                f"bits against the candidate's {int(control.match.candidate_bits)}, "
+                f"{float(control.match.relative_slack) * 100:.4f}% apart against the "
+                f"{float(control.match.max_relative_slack) * 100:.4f}% a control may "
+                "be.  A measured verdict here would read 'against the byte-matched "
+                "uniform' for a pair that is not byte matched, pricing the "
+                "difference in bytes as quality; the unserved block is what an "
+                "unmatched plan may carry."
+            )
+        candidate_kl = require_kl(candidate_kl, field="candidate_kl", where=where)
+        control_kl = require_kl(control_kl, field="control_kl", where=where)
         ratio = candidate_kl / control_kl if control_kl else float("inf")
         block["verdict"] = {
             "metric": metric,
@@ -1111,8 +1294,33 @@ PROMOTION_SCHEMA = "tessera.plane_promotion.v1"
 #: The coordinator's cross-check on a LUT-plane promotion, restated here and
 #: not moved: the candidate's GLM six-expert geomean against the same wire
 #: without levers is no worse than 1.00x.  The 2026-09-02 receipt wrote it;
-#: issue #65 pins it.  A caller that holds a tighter bar passes it in.
+#: issue #65 pins it.  A caller that holds a tighter bar passes it in --
+#: ``glm_bar`` is a *tightening* override, enforced as one by
+#: :func:`_require_pinned_glm_bar` (tessera#224).
 GLM_GATE = 1.00
+
+
+def _require_pinned_glm_bar(glm_bar: float, *, where: str) -> None:
+    """A caller may hold a tighter GLM bar; it may not hold a looser one.
+
+    The one home for this rule (AGENTS.md rule 4), called by
+    :func:`assert_plane_promotion` before the cross-check it protects and by
+    :meth:`PlanePromotion.__post_init__` so the class cannot be built around
+    it.  Until tessera#224 the gate compared only against the caller's own
+    ``glm_bar``, so ``glm_ratio=1.5`` promoted under ``glm_bar=2.0``: a 50%
+    six-expert regression clearing a cross-check the arm being checked had
+    written.  Moving :data:`GLM_GATE` itself is a decision this gate does not
+    make; refusing a caller who tries to move it here is.
+    """
+    if glm_bar > GLM_GATE:
+        raise PromotionRefusedError(
+            f"{where}: glm_bar {glm_bar:.4g}x is looser than the pinned "
+            f"{GLM_GATE:.4g}x GLM gate, which no caller relaxes -- the "
+            "override exists to tighten the coordinator's cross-check, and at "
+            f"glm_bar={glm_bar:.4g} a {glm_bar:.4g}x six-expert regression "
+            "would promote (tessera#65, #224)"
+        )
+
 
 _PROMOTION_REASON = (
     "a per-plane default is set by a screen and a cross-check, and the screen "
@@ -1153,6 +1361,49 @@ class PlanePromotion:
     landing: str
     where: str
 
+    def __post_init__(self) -> None:
+        """The domains, on the object :func:`promotion_block` publishes.
+
+        ``promotion_block`` says "only a promotion this gate accepted reaches
+        here", and this is what makes that true rather than conventional: the
+        class is public, so a domain enforced only in
+        :func:`assert_plane_promotion` would be a domain with two doors
+        (tessera#224).  Each number is refused by field name, and the derived
+        pair -- ``geomean`` and ``wins`` -- must be the pair these very ratios
+        make, so a summary can never arrive beside a unit set it does not
+        summarise.
+        """
+        object.__setattr__(self, "unit_ratios",
+                           _unit_ratios(self.unit_ratios, where=self.where))
+        for field in ("glm_ratio", "glm_bar"):
+            object.__setattr__(self, field, _error_ratio(
+                getattr(self, field), field=field, where=self.where))
+        object.__setattr__(self, "served_bar", require_kl(
+            self.served_bar, field="served_bar", where=self.where))
+        if self.served_kl is not None:
+            object.__setattr__(self, "served_kl", require_kl(
+                self.served_kl, field="served_kl", where=self.where))
+        _require_pinned_glm_bar(self.glm_bar, where=self.where)
+        geomean = _unit_geomean(self.unit_ratios)
+        # The tolerance is float64's, not a judgement: an n-term reduction in
+        # the log domain rounds at most once per term, so n ulps of the value
+        # itself is the whole room a second correct computation of this number
+        # has.  Anything wider would be a different number wearing this one's
+        # name (AGENTS.md rule 2).
+        if not abs(float(self.geomean) - geomean) <= len(self.unit_ratios) * math.ulp(geomean):
+            raise TesseraError(
+                f"{self.where}: geomean {float(self.geomean):.6g} is not the "
+                f"geomean of these {len(self.unit_ratios)} unit ratios "
+                f"({geomean:.6g}) -- it is derived from them, never presented "
+                "beside them"
+            )
+        wins = sum(1 for r in self.unit_ratios if r < 1)
+        if int(self.wins) != wins:
+            raise TesseraError(
+                f"{self.where}: unit_wins {self.wins!r} is not the number of "
+                f"these unit ratios below 1 ({wins})"
+            )
+
     def to_json(self) -> dict:
         return {
             "schema": PROMOTION_SCHEMA,
@@ -1184,6 +1435,20 @@ def assert_plane_promotion(
     where: str = "the per-plane promotion",
 ) -> PlanePromotion:
     """Refuse a per-plane promotion its evidence does not carry.
+
+    **Before any leg, the evidence has to be evidence** (tessera#224).  Each
+    per-unit ratio, ``glm_ratio``, ``glm_bar``, ``served_kl`` and
+    ``served_bar`` is checked against the domain its own definition gives it
+    and refused by field name, because an ordered comparison is not a
+    validity check: ``not (nan <= bar)`` refuses, but ``not (-inf <= bar)``
+    passes, ``served_kl < inf`` passes for every KL there is, and a
+    ``glm_bar`` above :data:`GLM_GATE` passes a regression the pinned gate
+    forbids.  All six of the issue's cases promoted before this.  A ratio of
+    two errors is strictly positive -- zero is a division artifact, and the
+    geomean reads it in logs -- while a KL divergence may be zero, so those
+    two domains are spelled apart rather than sharing one word that fits
+    neither.  ``glm_bar`` may only ever tighten
+    (:func:`_require_pinned_glm_bar`).
 
     Five legs, in the order the receipt learned them.  The GLM cross-check
     is first and exactly as written: above ``glm_bar`` refuses, whatever the
@@ -1242,17 +1507,7 @@ def assert_plane_promotion(
     """
     if not isinstance(candidate, str) or not candidate:
         raise TesseraError(f"{where}: the promoted arm must be named, got {candidate!r}")
-    ratios = tuple(float(r) for r in unit_ratios)
-    if not ratios:
-        raise TesseraError(
-            f"{where}: no per-unit ratios -- a geomean presented without its "
-            "units is exactly what this gate exists to refuse"
-        )
-    if any(not math.isfinite(r) or r <= 0 for r in ratios):
-        raise TesseraError(
-            f"{where}: a per-unit ratio is a positive finite error ratio, "
-            f"got {[float(r) for r in unit_ratios]!r}"
-        )
+    ratios = _unit_ratios(unit_ratios, where=where)
     if landing not in LUT_LANDING_MODES:
         raise GrammarError(
             f"{where}: unknown landing {landing!r}; one of "
@@ -1266,10 +1521,21 @@ def assert_plane_promotion(
             f"reorders the arms (tessera#85).  Only {LUT_LANDING_WIRE!r} "
             "promotes"
         )
-    glm_ratio, served_bar, glm_bar = float(glm_ratio), float(served_bar), float(glm_bar)
+    # Domains before comparisons (tessera#224).  An ordered comparison is not
+    # a validity check: `not (nan <= bar)` refuses but `not (-inf <= bar)`
+    # passes, `served_kl < inf` passes for every KL, and a caller-supplied
+    # `glm_bar` above the pinned one turns the coordinator's cross-check into
+    # a number the arm being checked chooses.  A ratio of two errors is
+    # strictly positive -- zero is a division artifact and its log is not a
+    # number -- while a KL divergence may be zero, so the two domains are
+    # spelled apart rather than sharing a "positive" that fits neither.
+    glm_ratio = _error_ratio(glm_ratio, field="glm_ratio", where=where)
+    glm_bar = _error_ratio(glm_bar, field="glm_bar", where=where)
+    served_bar = require_kl(served_bar, field="served_bar", where=where)
     if served_kl is not None:
-        served_kl = float(served_kl)
-    geomean = math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
+        served_kl = require_kl(served_kl, field="served_kl", where=where)
+    _require_pinned_glm_bar(glm_bar, where=where)
+    geomean = _unit_geomean(ratios)
     wins = sum(1 for r in ratios if r < 1)
 
     if not glm_ratio <= glm_bar:

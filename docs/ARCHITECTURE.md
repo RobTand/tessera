@@ -1294,6 +1294,21 @@ served comparison is one encode under two servings rather than two encodes.
 shipped and, given both KLs, states whether the candidate beat its control.
 `tessera.control.control_block` carries that verdict beside the bpp.
 
+**The verdict is published only over evidence the gate validated**
+(tessera#225). `ByteMatch` is where the four numbers a match reads have their
+domains — whole positive bit totals for both arms, an exact positive
+parameter count, and a tolerance that is a fraction of the candidate's own
+bits in `[0, 1)` — and each is refused by field name before anything is
+divided; `assert_byte_matched(0, 800, 1)` used to return an accepted match
+reporting a perfect `relative_slack` of 0 for an arm of no bytes. And a
+*measured* verdict now requires `control.match.byte_matched` to have held,
+because its own sentence is "against the byte-matched uniform": an unmatched
+pair — which `uniform_control(..., assert_match=False)` builds deliberately,
+to report the E2M1x2 coset hole rather than paper over it — stays
+representable as the unserved block, an explicitly unqualified diagnostic,
+and cannot become a victory. Both KLs are validated as finite and
+non-negative for the same reason the totals are: the verdict divides them.
+
 ### 4.8 Dominated rungs are screened by bytes, proved by decode
 
 The rate axis is not monotone in bits on small units
@@ -1361,6 +1376,24 @@ the arm being replaced, so it moves whenever a promotion lands. (The
 receipt's 0.640 is the *stock* wire and was the incumbent only for "levers
 vs no levers"; as a default it would have passed a candidate serving 0.60
 over an `h^1.0` incumbent at 0.5310.)
+
+**Before any leg, the evidence has to be evidence** (tessera#224). The gate
+validated each per-unit ratio as positive finite and then merely
+`float()`-converted the other four numbers, so an ordered comparison stood in
+for a domain check and mathematically invalid evidence promoted: a served KL
+of `-inf`, a `glm_ratio` of `-inf`, a `served_bar` of `+inf`, an infinite GLM
+cross-check against an infinite bar. Each number is now checked against the
+domain its own definition gives it and refused by field name — a ratio of two
+errors is finite and strictly positive (zero is a division artifact and the
+geomean reads it in logs), a KL divergence is finite and non-negative, and the
+two are spelled apart rather than sharing one word that fits neither. The
+`glm_bar` override **tightens the pinned `GLM_GATE` and never relaxes it**:
+comparing only against the caller's own bar let `glm_ratio=1.5` promote under
+`glm_bar=2.0`, the coordinator's cross-check answering to the arm it checks.
+The domains live on `PlanePromotion` as well as in the assertion, because the
+class is public and `promotion_block`'s "only a promotion this gate accepted
+reaches here" has to be true by construction; the `geomean` and `wins` it
+publishes must be the pair the promotion's own unit ratios make.
 
 No default moves by this, and `tests/test_plane_promotion.py` is what makes
 that checkable rather than asserted: it runs the receipt's own six-unit

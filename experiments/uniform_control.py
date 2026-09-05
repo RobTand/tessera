@@ -46,10 +46,11 @@ from tessera.control import (  # noqa: E402
     assert_byte_matched,
     bits_from_manifest,
     control_block,
+    require_kl,
     uniform_control,
     units_from_plan,
 )
-from tessera.errors import ControlNotByteMatchedError  # noqa: E402
+from tessera.errors import ControlNotByteMatchedError, TesseraError  # noqa: E402
 
 
 def read_shapes(args) -> dict:
@@ -146,23 +147,43 @@ def cmd_verify(args) -> int:
     if args.candidate_kl is None or args.control_kl is None:
         print("VERDICT: not measured -- the bytes match; neither arm's KL was given")
         return 0
-    ratio = args.candidate_kl / args.control_kl
-    beat = args.candidate_kl < args.control_kl
-    print(f"VERDICT: {args.candidate_label} {args.candidate_kl:.6g} against the uniform "
-          f"control {args.control_kl:.6g} ({ratio:.4g}x) -- "
+    # ``type=float`` accepts "-1", "nan" and "inf" by name, and a negative
+    # "KL" sorts below every control's: this printed BEAT and wrote
+    # beat_control=true.  The domain is the one ``control_block`` holds its
+    # own two KLs to (tessera#225).
+    try:
+        candidate_kl = require_kl(args.candidate_kl, field="candidate_kl",
+                                  where="--candidate-kl")
+        control_kl = require_kl(args.control_kl, field="control_kl",
+                                where="--control-kl")
+    except TesseraError as exc:
+        print(f"REFUSED: {exc}")
+        return 2
+    ratio = candidate_kl / control_kl if control_kl else float("inf")
+    beat = candidate_kl < control_kl
+    print(f"VERDICT: {args.candidate_label} {candidate_kl:.6g} against the uniform "
+          f"control {control_kl:.6g} ({ratio:.4g}x) -- "
           f"{'BEAT' if beat else 'DID NOT BEAT'} its byte-matched control")
     if args.report is not None:
+        match_json = match.to_json()
+        if args.params is None:
+            # The denominator was a placeholder, and the terminal has already
+            # said the bpp figures are omitted.  A receipt may not carry what
+            # the operator was told was not measured: at params=1 the
+            # candidate's whole bit total was written as its bpp.
+            for key in ("varying_params", "candidate_bpp", "control_bpp"):
+                match_json[key] = None
         report = {
             "schema": "tessera.uniform_control.v1",
             "candidate_label": args.candidate_label,
             "candidate_checkpoint": str(args.candidate),
             "control_checkpoint": str(args.control),
-            "match": match.to_json(),
+            "match": match_json,
             "verdict": {
                 "metric": args.metric,
                 "measured": True,
-                "candidate": args.candidate_kl,
-                "control": args.control_kl,
+                "candidate": candidate_kl,
+                "control": control_kl,
                 "candidate_over_control": ratio,
                 "beat_control": beat,
             },
