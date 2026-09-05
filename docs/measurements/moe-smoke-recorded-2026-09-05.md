@@ -520,7 +520,8 @@ schema that could say "reference arm run, both healthy" would be v9, and no cons
 Rungs, routes, activation contracts, launches, KL entries, grades, qualification, TP/EP bounds and bytes
 do not move. `qualification` stays `device_qualified` on both cells (Rob's #133 decision); the debt that
 `moe-evidence-debt-2026-09-04.md` records is one leg shorter, not closed: the decode cell still grades
-`route_only` and the only KL is the batch cell's top-1024 lower bound.
+`route_only` and the only KL is the batch cell's top-1024 lower bound. `contract_version` goes 20 -> 21;
+the contract's raw SHA256 is now `34f1da7977f1aa155cd2ff18b584e5c35a6089b648bb4a51d449fc25082a2c3e`.
 
 ## 10. Paths
 

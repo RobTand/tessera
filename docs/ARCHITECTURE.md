@@ -7,7 +7,8 @@ the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
-packaging metadata at `cd3190a`; contract v19, lane-eligibility schema v8. Re-stamp this
+packaging metadata at `cd3190a`; contract v21 (routed-MoE smoke recorded,
+prismaquant#198), lane-eligibility schema v8. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -970,16 +971,16 @@ derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 `kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
 every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
-`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
-`routed_moe` cells record a repetitive one. `qualification` is not
+`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, and
+so -- since contract v21 -- do the `routed_moe` cells. `qualification` is not
 overloaded with the grade.
 
-A smoke also names the **control** it was compared against (schema v7,
+A smoke can also name the **control** it was compared against (schema v7,
 contract v18, #195), because `status` alone was deciding admission and could
-not carry the decision. Both `routed_moe` cells record `repetitive`; the BF16
-**source**, given the same prompt on the same pinned image, eager, returns the
-identical completion character for character
-(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition is
+not carry the decision. Under v18 both `routed_moe` cells recorded
+`repetitive`, and the BF16 **source**, given the same prompt on the same pinned
+image, eager, returned the identical completion character for character
+(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition was
 the model and the prompt. That fact lived in prose while PrismaQuant's pin
 refused the whole routed-MoE lane on `status` -- right under the rule it was
 given, wrong about the runtime. So `smoke.control` is `null` or the closed
@@ -990,10 +991,34 @@ that the reference was healthy), and `smoke.attribution` is **derived** from it
 and checked the way `grade` is derived from `kl`: no control `unattributed`,
 `identical_completion` `shared_with_reference`, `different_completion`
 `not_shared_with_reference`. A consumer refuses on `status == "repetitive"`
-**and** `attribution != "shared_with_reference"`, never on `status` alone. The
-two MoE cells carry the control; the eight dense cells are `unattributed`, six
-having run no smoke and the two BF16 cells no reference arm. No status word,
-grade, rung, route or byte moved.
+**and** `attribution != "shared_with_reference"`, never on `status` alone.
+
+The control turned out to be half the fix (prismaquant#198): a reference
+that degenerates too removes the evidence *against* the route without adding
+any *for* it, and a status-only consumer went on refusing -- rightly, since
+principle 5's "generates correctly" leg had no positive record for routed
+MoE. Contract **v21** supplies the record
+(`docs/measurements/moe-smoke-recorded-2026-09-05.md`): the same student and
+its source, one arm at a time on the same pinned image, eager, resident,
+seven prompts in two request forms, every completion kept on both arms. Raw
+continuation -- the v17 prompt and three passages ending mid-sentence -- ends
+in a cycle on the **source** on every (prompt, form) pair: the checkpoint is
+the instruct model and a raw continuation is not its trained interface.
+Through the checkpoint's own `chat_template.jinja` (byte-identical on both
+arms) three questions carrying the same content read `recorded` on **both**
+arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --
+under a rule the receipt states and `tests/test_moe_greedy_smoke_rule.py`
+pins (repetitive iff the completion *ends* in a cycle of at least two full
+periods; the v17 observation is its positive control). The two `routed_moe`
+cells now record `{status: recorded, receipt: that file, attribution:
+unattributed, control: null}`, the shape the two BF16 cells use. The v18
+control is retired from the cells, not from the record: the outcome vocabulary
+attributes a *symptom*, a recorded smoke has none, the arms' recorded
+completions are not identical (greedy coherence is claimed, closeness is not
+-- that is the batch cell's KL entry), and `null` is what is true; the v17
+prompt is re-measured identical on both arms in the same receipt. So today no
+cell carries a control and all ten are `unattributed`. No grade, rung, route
+or byte moved; the decode cell still grades `route_only`.
 
 Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read
