@@ -298,6 +298,47 @@ re-export from the same capture. What the seal certifies is exactly the H
 each unit's bytes were encoded against; a source whose capture changed is
 rebuilt, never reused.
 
+**The assembly is proved, not assumed** (tessera#300). The encoding guard
+above says two parts were cut the same way; it cannot say they were cut from
+the same checkpoint or to the same plan, and the merge used to take both from
+filenames: the set of source shard names against `--source`'s index, and the
+union of whatever `plan` dicts the parts carried. A part cut from another
+checkpoint with the same filenames merged, and a plan entry no part had
+implemented was published over a raw bf16 tensor. The legacy parts now carry
+the contract `tessera.serving_parts` already holds a serving part to:
+
+* **Source.** `export_checkpoint_streaming` stamps `tessera_config.json`
+  `source` with `serving_parts.source_part_identity` of what it read -- the
+  `source_identity` fields (`config_sha256`, `auxiliary_sha256`, the whole
+  `tensors` inventory as the shard headers reproduce it, and `files`) with
+  `files` hashed for the shards this run read, under
+  `schema: tessera.source-part.v1`. The stamp is taken before the first
+  encode and costs one pass over the part's own input; an index that names a
+  tensor no shard holds, a filter over absent shards, or a plan naming a
+  tensor no shard of the source holds is refused there. The in-memory
+  `export_checkpoint` reads no checkpoint and writes `source: null`.
+  `source` is a `tessera_config.json` receipt field and not on the artifact
+  wire: no blob, manifest or `runtime_contract.json` shape moves.
+* **The merge proves it.** `merge_tessera_parts.check_assembly` takes the
+  same identity of `--source` once (the whole-source pass
+  `merge_serving_parts` already pays) and holds every part's stamp to it,
+  shard by shard, by content; the union of the parts' shards must be the
+  source's shard list. A part with no stamp, or `source: null`, is refused by
+  name -- "unsealed", re-export with a current exporter -- rather than merged
+  on the strength of its filenames; there is no unverified path.
+* **One plan, fulfilled.** Every part stamps the whole plan it was cut to and
+  the parts must agree on it (two plans are two exports). For each part, the
+  tensors it owns -- the inventory restricted to its shards -- must appear in
+  its index and in its actual shard headers exactly as the plan says: blob
+  present and raw name absent for a planned tensor, raw for the rest, each in
+  the shard it came from; `rungs_q256` must be the slice's rungs. Every
+  planned blob is then parsed (`tessera.container.parse`, the reader's own
+  fail-closed acceptance) and its manifest must name that tensor
+  (`unit_id`), that rung (`root_q256`, per code: the plan's per-position rung
+  times the grid arity) and the source tensor's geometry. All of it before a
+  byte is copied or a config written; the merged config's `source` is the
+  whole-source identity the parts were proved against.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder

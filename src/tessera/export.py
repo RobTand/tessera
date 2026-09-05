@@ -1860,10 +1860,22 @@ CONFIG_ENCODING_FIELDS = (
     "tp_size",
 )
 
-#: Per-part by construction: a shard subset has its own byte counts, its own
-#: slice of the plan and its own rungs, so a merge sums or unions these rather
-#: than comparing them.
-CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256")
+#: Not compared across parts, and for two different reasons.  ``accounting``
+#: and ``rungs_q256`` are per-part by construction -- a shard subset has its
+#: own byte counts and its own rungs -- so a merge sums or unions them.
+#: ``plan`` and ``source`` are the assembly contract (tessera#300), and a merge
+#: PROVES them rather than comparing or unioning: every part stamps the whole
+#: checkpoint's plan (the one it was cut to; ``export_checkpoint_streaming``
+#: refuses a plan naming a tensor no shard of the source holds) and the
+#: identity of the source it read (``tessera.serving_parts.source_part_identity``:
+#: config, auxiliary files, the whole tensor inventory and the sha256 of each
+#: shard this part read; ``null`` from the in-memory ``export_checkpoint``,
+#: which reads no checkpoint).  The merge requires one plan across the parts,
+#: proves each part's shards against the source it publishes for, and proves
+#: each part's owned slice of the plan against that part's actual output --
+#: blob present, raw tensor absent, the blob's own manifest at the planned
+#: rung -- before it copies a byte.
+CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256", "source")
 
 #: The activation-aware block: ``null`` on a weights-only export and a dict
 #: otherwise, so it is neither an encoding field that always resolves nor a
@@ -1910,7 +1922,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   extra_config: "dict | None", scale_refit: int = 0,
                   trellis_weighting: str = "none",
                   table: "tuple[RecipeRange, ...] | None" = None,
-                  activation: "ActivationSource | None" = None) -> None:
+                  activation: "ActivationSource | None" = None,
+                  source: "dict | None" = None) -> None:
     if table is None:
         table = recipe_table(grid)
     used = _used_recipes(table, plan.values())
@@ -2021,9 +2034,26 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "activation_aware": None if activation is None else activation.config_block(),
         "plan": dict(plan),
         "rungs_q256": sorted({u.q256 for u in report.units}),
+        # Which checkpoint these bytes were cut from: the content identity the
+        # streaming exporter took of the shards it read (schema, config and
+        # auxiliary hashes, the whole tensor inventory, sha256 per shard read;
+        # ``tessera.serving_parts.source_part_identity``).  ``null`` means the
+        # in-memory exporter wrote tensors it was handed and read no
+        # checkpoint, which is what a shard-split merge refuses to bind to.
+        "source": source,
     }
     _check_config_fields(config)
     if extra_config:
+        # A driver's ``extra_config`` is its own vocabulary beside the
+        # exporter's fields, never over them: a driver that could restate
+        # ``source`` or ``plan`` would turn the receipt a merge proves into a
+        # declaration.
+        clash = sorted(set(extra_config) & set(config))
+        if clash:
+            raise GrammarError(
+                f"extra_config restates field(s) the exporter writes: {clash}. "
+                "Those are the exporter's receipt of what it did; a driver adds "
+                "keys of its own beside them.")
         config.update(extra_config)
     (out / "tessera_config.json").write_text(json.dumps(config, indent=2))
 
@@ -2072,9 +2102,20 @@ def export_checkpoint_streaming(
     nothing accumulates across shards except the report -- so N boxes each
     taking a disjoint subset produce exactly the files one box would have
     written, and the run becomes embarrassingly parallel across a fleet.  The
-    index and config a filtered run writes cover **only its own shards**; the
-    caller merges them.  This exists because a 320B-parameter export is nine
-    hours on one GB10 and the second one was idle at 4 W.
+    index and accounting a filtered run writes cover **only its own shards**;
+    ``experiments/merge_tessera_parts.py`` assembles the parts.  This exists
+    because a 320B-parameter export is nine hours on one GB10 and the second
+    one was idle at 4 W.
+
+    What lets that merge *prove* the assembly rather than trust filenames
+    (tessera#300): every part's config stamps the whole plan it was cut to
+    (``plan``; a name no shard of the source holds is refused here, filtered
+    or not, as a mistyped plan) and the content identity of the source it read
+    (``source``: ``tessera.serving_parts.source_part_identity`` -- config and
+    auxiliary hashes, the whole tensor inventory as the shard headers
+    reproduce it, and the sha256 of each shard this run read).  The stamp is
+    taken before the first encode, against the index-verified inventory, and
+    costs one pass over the part's own input.
 
     ``activation`` supplies per-unit input Hessians and turns on the measured
     activation-aware recipe (LDLQ plus the full-Hessian row-scale refit).  It
@@ -2089,36 +2130,31 @@ def export_checkpoint_streaming(
     from safetensors import safe_open
     from safetensors.torch import save_file
 
+    from .serving_parts import source_part_identity
+
     src = Path(source_dir)
     out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
 
-    index_path = src / "model.safetensors.index.json"
-    if index_path.exists():
-        weight_map = json.loads(index_path.read_text())["weight_map"]
-        shards: "dict[str, list[str]]" = {}
-        for tensor_name, shard in weight_map.items():
-            shards.setdefault(shard, []).append(tensor_name)
-    else:
-        shards = {}
-        for shard_path in sorted(src.glob("*.safetensors")):
-            with safe_open(str(shard_path), framework="pt") as handle:
-                shards[shard_path.name] = list(handle.keys())
+    # The source, as its headers reproduce it, and the sha256 of every shard
+    # this run is about to read: the receipt the merge proves each part by.
+    # Taken first, so a mistyped filter or an index that lies is refused
+    # before a shard is opened for encoding and before ``out`` exists.
+    source = source_part_identity(src, shard_filter)
+    shards: "dict[str, list[str]]" = {shard: [] for shard in source["files"]}
+    for tensor_name, shard in sorted(source["tensors"].items()):
+        if shard in shards:
+            shards[shard].append(tensor_name)
 
-    if shard_filter is not None:
-        unknown = sorted(set(shard_filter) - set(shards))
-        if unknown:
-            raise KeyError(f"shard_filter names absent shards: {unknown[:5]}")
-        shards = {k: v for k, v in shards.items() if k in shard_filter}
-        if not shards:
-            raise ValueError("shard_filter selected no shards")
-
-    known = {name for names in shards.values() for name in names}
-    missing = sorted(set(plan) - known)
-    if missing and shard_filter is None:
+    # A plan naming a tensor no shard of the source holds is a plan that would
+    # silently fail to apply -- the same refusal ``export_checkpoint`` makes.
+    # Names that live in shards OTHER than this run's are the point of a
+    # filtered run and are left to the parts that own them.
+    missing = sorted(set(plan) - set(source["tensors"]))
+    if missing:
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
+    out.mkdir(parents=True, exist_ok=True)
     resolve = _resolve_recipe(
         grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
         channel_sigma,
@@ -2181,7 +2217,7 @@ def export_checkpoint_streaming(
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, trellis_weighting, table,
-                  activation)
+                  activation, source)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
