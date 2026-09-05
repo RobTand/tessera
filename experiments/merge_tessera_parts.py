@@ -605,7 +605,7 @@ def main():
               f"{manifest['totals']['modules']} modules, {manifest['totals']['wire_bytes']} wire bytes")
         return
 
-    from tessera.serving_parts import output_part_stamp
+    from tessera.serving_parts import output_part_stamp, sha256_file
 
     loaded = [load(p) for p in args.parts]
     out = Path(args.out)
@@ -678,16 +678,25 @@ def main():
         if not (out / shard).exists():
             raise SystemExit(f"{shard} is named by the index but absent from {out}")
 
+    # Reuse must install this source's auxiliary population, including absence.
+    # The inventory is the one check_assembly verified, not a new source glob.
+    # Completion metadata belongs to this merge and is published last (#351).
+    seals = {"tessera_config.json", "model.safetensors.index.json"}
+    auxiliary = {name: digest for name, digest in identity["auxiliary_sha256"].items()
+                 if name not in seals}
+    for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
+        for stale in out.glob(pattern):
+            if stale.name not in auxiliary and stale.name not in seals:
+                stale.unlink()
+    for name, digest in sorted(auxiliary.items()):
+        shutil.copy2(source / name, out / name)
+        if sha256_file(out / name) != digest:
+            raise SystemExit(f"{name}: installed auxiliary differs from verified source")
+
     total = sum((out / s).stat().st_size for s in sorted(seen))
     (out / "model.safetensors.index.json").write_text(json.dumps(
         {"metadata": {"total_size": total}, "weight_map": weight_map}, indent=2))
     (out / "tessera_config.json").write_text(json.dumps(base, indent=2))
-    for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
-        for aux in Path(args.source).glob(pattern):
-            if aux.name == "model.safetensors.index.json":
-                continue
-            if not (out / aux.name).exists():
-                shutil.copy2(aux, out / aux.name)
 
     gib = lambda b: b / 2 ** 30
     print(f"merged {len(loaded)} parts -> {out}")

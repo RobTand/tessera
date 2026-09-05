@@ -612,3 +612,68 @@ def test_a_merge_that_dies_part_way_leaves_no_seal_over_the_shards_it_moved(tmp_
     assert len(transfers) == 2                          # it did replace bytes
     assert not (out / "tessera_config.json").exists()
     assert not (out / "model.safetensors.index.json").exists()
+
+
+@pytest.fixture
+def tiny_publication_source(tmp_path, monkeypatch):
+    """Real 32x32 encodes; fixture identity stamping is unrelated to I/O."""
+    from tessera import export as export_module, encoder_identity
+
+    for module, name in ((export_module, "encoder_fixture_id"),
+                         (export_module, "stamped_fixture_id"),
+                         (encoder_identity, "stamped_fixture_id")):
+        monkeypatch.setattr(module, name, lambda: b"0" * 32)
+
+    def make(label, value, theta, token, obsolete=False):
+        source, part = tmp_path / f"source-{label}", tmp_path / f"part-{label}"
+        _write_source(source, {name: torch.full((32, 32), value, dtype=torch.bfloat16)
+                               for name in PLANNED})
+        (source / "config.json").write_text(json.dumps({"rope_theta": theta}))
+        (source / "tokenizer.json").write_text(json.dumps({"vocab": {token: 0}}))
+        if obsolete:
+            (source / "chat_template.jinja").write_text("old template")
+        export_checkpoint_streaming(source, part, PLANNED, grid=K2, device="cpu",
+                                    copy_aux=False, scale_refit=0)
+        return source, part
+
+    return make
+
+
+def test_merge_reuse_installs_current_auxiliary_population(tmp_path, tiny_publication_source):
+    source_a, part_a = tiny_publication_source("a", 1.0, 10000, "old", obsolete=True)
+    source_b, part_b = tiny_publication_source("b", 9.0, 500000, "new")
+    out = tmp_path / "merged"
+    _merge([part_a], source_a, out)
+    assert (out / "chat_template.jinja").exists()
+    assert (out / "tokenizer.json").read_bytes() == (source_a / "tokenizer.json").read_bytes()
+
+    _merge([part_b], source_b, out)
+
+    config = _config(out)
+    for name in ("config.json", "tokenizer.json"):
+        assert sha256_file(out / name) == config["source"]["auxiliary_sha256"][name]
+        assert (out / name).read_bytes() == (source_b / name).read_bytes()
+    assert not (out / "chat_template.jinja").exists()
+    assert config["output"] == output_part_identity(out, config["output"]["files"])
+    assert [float(load_tessera_weight(out, name).float().mean()) for name in PLANNED] == [9.0, 9.0]
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_auxiliary_transfer_failure_cannot_publish_completion(
+        tmp_path, tiny_publication_source, monkeypatch, reuse):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = tmp_path / "merged"
+    if reuse:
+        _merge([part], source, out)
+    real = merge.shutil.copy2
+
+    def fail_tokenizer(src, dst):
+        if Path(src).name == "tokenizer.json":
+            raise OSError("injected auxiliary transfer failure")
+        return real(src, dst)
+
+    monkeypatch.setattr(merge.shutil, "copy2", fail_tokenizer)
+    with pytest.raises(OSError, match="injected auxiliary"):
+        _merge([part], source, out)
+    assert not (out / "tessera_config.json").exists()
+    assert not (out / "model.safetensors.index.json").exists()

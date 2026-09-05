@@ -9,7 +9,8 @@ the code that owns it.
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
 base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,
-RELEASE cut capability correction #350; CI at `df1bc20`,
+RELEASE cut capability correction #350; legacy auxiliary publication #351;
+CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
 prismaquant#198), lane-eligibility schema v9; whole-unit RELEASE rewrite
@@ -603,7 +604,12 @@ prices. Two things close it, and the second is why the first is not enough:
   (the shards are being replaced in place), so `tessera_config.json` and the
   index are removed *before* the first transfer and an unfinished merge leaves
   an **unsealed** directory, which the reader and this merge's own `load`
-  refuse by name.
+  refuse by name. Reusing a merge destination installs the current verified
+  source's auxiliary files and removes obsolete JSON, text, Jinja and model
+  auxiliaries. Each installed auxiliary is hashed against the source receipt;
+  the index and completion config are published only after all auxiliary
+  transfers succeed, so a failed tokenizer/config copy cannot seal partial
+  replacement (#351).
 
 **What an operator does differently:** re-exporting into a checkpoint directory
 that already exists now refuses. Export to a fresh directory and swap, or
