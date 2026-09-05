@@ -57,7 +57,7 @@ from .manifest import (
 )
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
 from .scale_channel import default_channel_sigma
-from .trellis import ConvCode, _ODS_GENERATORS
+from .trellis import ConvCode, _ODS_GENERATORS, replayable_codes
 from .wire import (
     pack_body,
     pack_fp16,
@@ -776,8 +776,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
                 "against an assumed grid."
             )
         return _read_window_unit(art, grid, device)
-    for memory in sorted(_ODS_GENERATORS):
-        candidate = ConvCode(memory=memory)
+    for candidate in replayable_codes():
         for known in SERIALISABLE_GRIDS.values():
             if encoder_profile_id(
                 candidate, rates, known, span, plane.kind, body, window_bits,

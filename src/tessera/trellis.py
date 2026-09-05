@@ -63,13 +63,40 @@ __all__ = ["ConvCode", "TCQ", "SUBSET_COUNT", "body_bits"]
 # space it cannot split -- and re-exported here, where it reads naturally.
 
 #: Published maximum-free-distance rate-1/2 generators, by memory order.
+#: In ``step``'s register the current input sits at bit ``memory``, so a mask's
+#: top bit is the g0 tap and its low bit is the oldest cell -- the standard
+#: octal spelling of the Lin & Costello table reads off verbatim.
 _ODS_GENERATORS = {
-    3: (0o5, 0o7),
+    3: (0o15, 0o17),
     4: (0o23, 0o35),
     5: (0o53, 0o75),
     6: (0o133, 0o171),
     8: (0o561, 0o753),
 }
+
+#: Former defaults, kept replayable by memory order.  ``(0o5, 0o7)`` shipped as
+#: the memory-3 default but is the published *memory-2* pair: neither mask taps
+#: register bit 3, so the current input never reached the emitted subset and
+#: the machine was a one-step-delayed memory-2 code (dfree 5, not the published
+#: 6).  The generators are digested into the encoder profile id, so an artifact
+#: written under a superseded pair names it exactly; dropping the pair from the
+#: reader's search would orphan those artifacts, and reinterpreting it would be
+#: the silent misdecode the digest exists to prevent.  A superseded pair is
+#: never a default again -- it decodes, it does not encode.
+_SUPERSEDED_GENERATORS: "dict[int, tuple[tuple[int, int], ...]]" = {
+    3: ((0o5, 0o7),),
+}
+
+
+def replayable_codes():
+    """Every ``ConvCode`` a reader may recover by profile-id search: the
+    published default at each memory order, then any superseded former default.
+    The digest binds the exact pair, so a superseded pair matches only the
+    artifacts written under it."""
+    for memory in sorted(_ODS_GENERATORS):
+        yield ConvCode(memory=memory)
+        for generators in _SUPERSEDED_GENERATORS.get(memory, ()):
+            yield ConvCode(memory=memory, generators=generators)
 
 
 @dataclass(frozen=True)
