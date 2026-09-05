@@ -80,7 +80,11 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The `tessera.suite_source.v1` receipt string is unchanged: the
+until they do. The controller-side hook that collects those reports
+(`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
+run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
+worker set, as a serial run always did, instead of pluggy refusing the file at
+collection (#290). The `tessera.suite_source.v1` receipt string is unchanged: the
 span and worker fields are additive, and `verified` became harder to earn, never
 easier.
 The merge receipt keeps raw commit agreement and effective-source agreement
@@ -438,6 +442,51 @@ own refusals of the same fields (`lane_planes`, `kernel_window`,
 `kernel_window_gemv`). Untransformed wires -- every shipping export default
 -- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
 the refusal through each consumer on real wire bytes.
+
+### 3.5 Channel diagonals are FP16 words from the moment they exist
+
+The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
+one FP16 word per channel) has one stored representation, and it is
+established before anything uses the factors: the tensors the encoder
+balances with (`apply_diagonals`), the metric transport rescales with
+(`transport_metric`, tessera#231), `sse` is reported against, the unit
+carries, the writer packs and the reader multiplies back
+(`undo_diagonals`) are the same FP16 words. `require_invertible_diagonals`
+is the one home of the rule and every consumer above calls it -- the
+writer's call at `unit_artifact.build_unit_artifact` is a call, not a
+second spelling -- refusing by field name a pair that is not `float16`, or
+whose words are zero, negative or non-finite. Two defects closed there:
+
+- **Fitted factors** used to be cast straight to FP16, so a finite source at
+  1e-8 fitted `sv=0` and one at 1e5 fitted `sv=inf`, and the forward divide
+  clamped what the inverse multiplied back (tessera#229). `fit_diagonals`
+  now gives an exactly-zero row or column the identity factor (its factor
+  is pure gauge), spends the rank-1 gauge `(sv*c, su/c)` landing both
+  factors inside FP16's normal range only when the direct cast would not
+  invert -- so every already-representable fit is byte for byte what it
+  was -- and refuses, naming the field, a spread no single scalar can land.
+- **Supplied factors** used to be validated as `factor.float()`, so a
+  positive finite FP32/FP64 pair passed encode and write on its own values
+  while `wire.pack_fp16` cast it on the way to the bytes: `sv=1e5` wrote an
+  artifact whose stored word was infinity and `sv=1e-8` one whose word was
+  zero (both refused by the same rule at read -- the writer emitted what its
+  reader will not load), and `sv=1.0004` wrote `1.0` and served weights
+  2.8e-05 off the ones priced (tessera#286). The pair is now **required to be
+  FP16 words**, not landed at the boundary: the validated object is then the
+  canonical form itself, so no consumer can drift by reading the caller's
+  tensor instead of a return value -- which is exactly the shape of the
+  defect -- and a caller holding wider factors casts them once, gets the
+  words it asked for, and is refused by name if those words do not invert.
+  The one place a wider value is ever rounded for the wire is
+  `fit_diagonals`, which does it with the gauge rather than a plain cast.
+  No shipping caller supplies anything but a `fit_diagonals` result or a
+  slice of a parsed unit, both already FP16, so no artifact byte moved.
+
+`tests/test_diagonals.py` holds the fitted extremes, the invalid-FP16
+refusals, the wider-dtype refusals through every consumer for both fields
+(overflow, underflow and a mere rounding, FP32 and FP64), and the rule that
+whatever the encoder accepts reconstructs identically before and after the
+wire.
 
 ## 4. Allocation and the uniform gate
 
@@ -1516,6 +1565,22 @@ to report the E2M1x2 coset hole rather than paper over it — stays
 representable as the unserved block, an explicitly unqualified diagnostic,
 and cannot become a victory. Both KLs are validated as finite and
 non-negative for the same reason the totals are: the verdict divides them.
+
+**The division has one home, and a value JSON can carry** (tessera#288).
+`tessera.control.kl_verdict` divides the two KLs for `control_block` and for
+`verify` alike — the CLI no longer spells its own — and the verdict reports
+`candidate_over_control` beside `candidate_over_control_status`. The status is
+`finite` and the value is a number whenever the quotient exists in `float`;
+otherwise the value is `null` and the status names which case produced it:
+`undefined` for 0/0, `unbounded` for a positive candidate over a zero control,
+and `overflow` for a quotient that is real and finite but larger than `float`
+holds. Zero is a KL `require_kl` accepts on purpose — it means the two
+distributions agree — so the gate owes it an answer rather than a refusal, and
+0/0 is undefined rather than positively infinite. Both sites used to write
+`float("inf")` for any zero control, which made the CLI emit the token
+`Infinity` — not JSON — and exit 0; every receipt this gate writes now passes
+`json.dumps(..., allow_nan=False)`. `beat_control` is untouched by all of
+this: it is a strict comparison of the two KLs and never divided.
 
 ### 4.8 Dominated rungs are screened by bytes, proved by decode
 

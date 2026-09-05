@@ -199,6 +199,127 @@ def test_the_writer_refuses_non_invertible_diagonals():
         build_unit_artifact(bad, "u", {3: forest}, 768, code, fixture_id=None)
 
 
+#: The three ways a word wider than FP16 changes meaning on the way to the
+#: DIAG_SU/SV bytes: it overflows to infinity, underflows to zero, or merely
+#: rounds -- the last one is the quiet case, where the artifact reads back
+#: fine and serves something other than what was priced (tessera#286).
+_WIDER_THAN_FP16 = (torch.float32, torch.float64)
+_FP16_WITNESSES = (("overflows", 1e5), ("underflows", 1e-8), ("rounds", 1.0004))
+
+
+@pytest.fixture(scope="module")
+def _fitted_unit():
+    """One healthy fitted-diagonals unit, for the writer refusals to replace
+    the pair on."""
+    from tessera.alphabet import E2M1_GRID, build_forest
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    weight = _weights(rows=16, cols=32, seed=7)
+    unit = encode_unit(weight, forest, (3,) * 32, code,
+                       with_diagonals=True, scale_refit=1)
+    return weight, forest, code, unit
+
+
+@pytest.mark.parametrize("field", ["DIAG_SV", "DIAG_SU"])
+@pytest.mark.parametrize("dtype", _WIDER_THAN_FP16, ids=str)
+@pytest.mark.parametrize("case,value", _FP16_WITNESSES, ids=[c for c, _ in _FP16_WITNESSES])
+def test_supplied_factors_wider_than_fp16_are_refused_by_field_name(
+    _fitted_unit, field, dtype, case, value
+):
+    """tessera#286: the guard validated ``factor.float()``, so a positive
+    finite FP32/FP64 pair passed encode and write while ``pack_fp16`` cast it
+    on the way to the bytes -- sv=1e5 stored infinity and sv=1e-8 stored
+    zero (an artifact the writer's own reader refuses), and sv=1.0004 stored
+    1.0 (readable, and serving weights other than the ones priced).  The
+    pair is FP16 words from the moment it exists: every consumer -- both
+    transform directions, the metric transport, the encoder and the writer
+    -- refuses a wider dtype by field name, before any value is used."""
+    import dataclasses
+
+    from tessera.diagonals import Diagonals, transport_metric
+    from tessera.encode import encode_unit
+    from tessera.unit_artifact import build_unit_artifact
+
+    weight, forest, code, unit = _fitted_unit
+    rows, cols = weight.shape
+    sv = torch.ones(rows, dtype=torch.float16)
+    su = torch.ones(cols, dtype=torch.float16)
+    if field == "DIAG_SV":
+        sv = torch.full((rows,), value, dtype=dtype)
+    else:
+        su = torch.full((cols,), value, dtype=dtype)
+    supplied = Diagonals(sv=sv, su=su)
+    with pytest.raises(GrammarError, match=field):
+        apply_diagonals(weight, supplied)
+    with pytest.raises(GrammarError, match=field):
+        undo_diagonals(weight, supplied)
+    with pytest.raises(GrammarError, match=field):
+        transport_metric(torch.ones(cols), RotationState.NONE, 1, supplied)
+    with pytest.raises(GrammarError, match=field):
+        encode_unit(weight, forest, (3,) * cols, code,
+                    diagonals=supplied, scale_refit=1)
+    # Where the bytes are decided: a unit carrying the pair, however it got
+    # there, must not serialise -- before this the writer returned 938 bytes.
+    bad = dataclasses.replace(unit, diagonals=supplied)
+    with pytest.raises(GrammarError, match=field):
+        build_unit_artifact(bad, "u", {3: forest}, 768, code, fixture_id=None)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, *_WIDER_THAN_FP16], ids=str)
+def test_an_accepted_supplied_pair_reconstructs_the_same_before_and_after_the_wire(dtype):
+    """The rule, not the roster: whatever the encoder accepts as a supplied
+    pair, the wire must hand back unchanged -- the reconstruction of the
+    parsed unit equals the reconstruction of the encoded one, exactly, and
+    the parsed factors are the encoded ones word for word.  1.0004 and 0.7503
+    are where FP16 and a wider dtype disagree by one rounding: before the
+    fix an FP32 pair was accepted and the artifact served 2.8e-05 off what
+    was priced.  A refusal is the other legal answer, and only for a dtype
+    wider than the wire's: FP16 words are the canonical form and are never
+    refused for their dtype."""
+    from tessera.alphabet import E2M1_GRID, build_forest
+    from tessera.decode import reconstruct_unit
+    from tessera.diagonals import Diagonals
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    weight = _weights(rows=16, cols=32, seed=7)
+    supplied = Diagonals(sv=torch.full((16,), 1.0004, dtype=dtype),
+                         su=torch.full((32,), 0.7503, dtype=dtype))
+    try:
+        unit = encode_unit(weight, forest, (3,) * 32, code,
+                           diagonals=supplied, scale_refit=1)
+    except GrammarError as refused:
+        assert dtype is not torch.float16, refused
+        assert "DIAG_SV" in str(refused)
+        return
+    before = reconstruct_unit(unit, forest, code)
+    _, _, blob = build_unit_artifact(unit, "u", {3: forest}, 768, code, fixture_id=None)
+    parsed = parse_unit_artifact(blob).unit
+    assert torch.equal(parsed.diagonals.sv, unit.diagonals.sv)
+    assert torch.equal(parsed.diagonals.su, unit.diagonals.su)
+    after = reconstruct_unit(parsed, forest, code)
+    assert torch.equal(before, after)
+
+
+def test_the_fit_returns_the_canonical_words_the_guard_accepts_unchanged():
+    """The fitted path and the supplied path meet at one rule: ``fit_diagonals``
+    lands its factors as FP16 words, and ``require_invertible_diagonals``
+    hands those back as they are -- the object IS the canonical form, so no
+    consumer can drift by reading the caller's copy instead of a return
+    value.  (Positive control for the refusals above.)"""
+    from tessera.diagonals import require_invertible_diagonals
+
+    fitted = fit_diagonals(_weights(rows=16, cols=32))
+    assert fitted.sv.dtype is torch.float16 and fitted.su.dtype is torch.float16
+    assert require_invertible_diagonals(fitted) is fitted
+
+
 def test_transport_metric_carries_the_quadratic_into_the_encoded_basis():
     """tessera#231: the encoder quantises ``Wwork = Dv^-1 W R Du^-1``, so the
     activations its rows meet are ``xwork = Du R^T x`` and the metric in the

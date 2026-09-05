@@ -495,12 +495,19 @@ def published_source_identity(root=None):
         _WORKER_SOURCES)
 
 
+@pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node, error):
     """Controller-side: keep the source identity that worker reported.
 
     ``workeroutput`` is xdist's own channel back from the process that ran the
     tests, which is the only process whose source identity is a fact about the
     execution rather than about a filesystem.
+
+    The hook is xdist's, not pytest's: ``optionalhook`` is what lets this
+    conftest load where xdist is absent -- the ``pure`` CI job -- instead of
+    pluggy refusing the whole file at collection (tessera#290).  Without
+    workers there is nothing for it to record, and ``agreed_source`` sees an
+    empty worker set, exactly as a serial run always did.
     """
 
     output = getattr(node, "workeroutput", None) or {}
