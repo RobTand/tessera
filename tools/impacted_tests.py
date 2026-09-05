@@ -418,11 +418,11 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     could not reach this code before: it went through ``changed_files``, so
     every case had to be a synthetic repository.
     """
-    forced = [
-        f for f in changed
-        if Path(f).suffix not in INERT
-        and any(f.startswith(o) for o in OPAQUE)
-    ]
+    # An explicitly OPAQUE path outranks the generic inert-suffix rule: the
+    # wire spec IS a Markdown file, so filtering ``.md`` first meant the one
+    # path ``docs/schema/`` was listed for could never reach the rule that
+    # lists it, and a wire change certified a narrowed selection (#216).
+    forced = [f for f in changed if any(f.startswith(o) for o in OPAQUE)]
     # The root conftest is imported by pytest for the whole tree.
     forced += [f for f in changed if f == "conftest.py"]
     # An unowned metadata-shaped file remains a real change. We cannot infer

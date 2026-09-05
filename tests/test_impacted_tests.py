@@ -657,6 +657,34 @@ def test_a_package_init_change_selects_every_test_that_imports_the_package():
     )
 
 
+def test_an_opaque_path_outranks_the_generic_inert_suffix_rule():
+    """#216: the wire is named in OPAQUE and is written in Markdown.
+
+    ``docs/schema/`` is in ``OPAQUE`` because a wire change is exactly what
+    nothing here can reason about -- and the classification excluded every
+    ``.md`` path before that rule was ever consulted, so the one file the rule
+    exists for was the one file it could not reach.
+    """
+
+    opaque_docs = sorted(
+        str(path.relative_to(ROOT))
+        for prefix in impacted.OPAQUE
+        for path in ROOT.glob(prefix + "*")
+        if path.is_file() and path.suffix in impacted.INERT
+    )
+    assert opaque_docs, "no opaque path has an inert suffix; fixture is vacuous"
+
+    for changed in opaque_docs:
+        result = impacted.select(ROOT, [changed])
+        assert result["verdict"] == "full", (changed, result)
+        assert changed in result["forces_full"], (changed, result)
+
+    # And an ordinary Markdown edit outside those prefixes stays inert.
+    ordinary = impacted.select(ROOT, ["docs/measurements/a-note-2026-09-05.md"])
+    assert ordinary["verdict"] == "none", ordinary
+    assert ordinary["forces_full"] == [], ordinary
+
+
 def _leaves_outside_the_shared_conftest(root: Path) -> list[str]:
     """Source files ``tests/conftest.py`` does not reach, derived from the graph.
 

@@ -92,6 +92,9 @@ tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
+A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
+suite whatever its extension: the wire spec is a Markdown file, and filtering
+inert suffixes first meant the rule that names it could never see it.
 An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
 `__init__` above it, because importing a submodule executes them; a file loaded
 by explicit path gets an edge to that file only, because loading by path does
