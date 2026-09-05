@@ -74,11 +74,12 @@ offered more than one descendant and its pick reaches bytes;
 ``e2m1-768/release`` carries a release, which ``encode_linear`` has no keyword
 for, so ``encode._canonical_release_order`` moves this digest too; and
 ``e2m1-768/shard`` cuts the ``e2m1-768/tcq-lut`` bytes the way a rank does at
-load, so ``slicing``'s state replay and the shard layout do as well.  Each costs
-nothing anyone can measure -- the first two encode on a plan the E2M1 case
-already built, the third builds the small forests one rung lower -- and each
-re-bases nothing, because it carries a ``compatibility_baseline`` (the third
-remaining blind spot below, and the rule the same paragraph states).
+load, so ``slicing``'s state replay and the shard layout do as well.  Together
+they cost +1.36 s cold and +0.80 s warm on the whole set (measured below: four
+of the five ride a plan an earlier case already builds, and the fifth builds
+its forests one rung lower, where they are small) -- and each re-bases nothing,
+because it carries a ``compatibility_baseline`` (the third remaining blind spot
+below, and the rule the same paragraph states).
 
 The remaining four:
 
