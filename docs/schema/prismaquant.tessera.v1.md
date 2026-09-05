@@ -622,6 +622,17 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 | SCALE_REFINE | 16-weight half | 4 |
 | RELEASE | released position | 4 |
 
+**The RELEASE width constrains which grids admit a release.** A released
+position stores a *whole payload code*, and this width does not vary with the
+grid — so release is defined exactly on grids of at most `2^4 = 16` codes,
+which today is E2M1 alone among the serialisable grids. The encoder and
+**both readers** refuse a wider grid by the same predicate,
+`grammar.release_defined_on` (`grammar.require_release_defined` owns the
+message). Read the reader half as a tightening, not a schema change: no bytes move, no minor moves, and no
+artifact can depend on the older lenient reading, because no exporter path
+places a release at all (§1d, `export.encode_linear_planes`). Widening the
+plane per grid would be a wire change, and this row is where it would start.
+
 ## 3b. Plane metadata that is derivable is also constrained
 
 Two descriptor fields are functions of others and must agree with what they are
