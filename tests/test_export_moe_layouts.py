@@ -45,6 +45,8 @@ from pathlib import Path
 import pytest
 import torch
 
+import box_artifacts
+
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
@@ -655,8 +657,8 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
 # transformers-5 stores a layer's packed experts as an ``nn.Parameter`` on the
 # experts module, not as a child Linear's ``weight``, so the tensor on disk is
 # ``...mlp.experts.gate_up_proj`` -- 96 body tensors of exactly that spelling
-# on ``/mnt/shared/models/Qwen3.8-Flash-Next``, the one packed source on this
-# box.  ``quantizable`` tested ``name.endswith(".weight")`` before it looked at
+# on ``Qwen3.8-Flash-Next`` under the shared models root
+# (``TESSERA_SHARED_MODELS_DIR``), the one packed source on this box.  ``quantizable`` tested ``name.endswith(".weight")`` before it looked at
 # anything else, so those tensors were classified as NOTHING: not dense, not
 # packed, not routed.  Being absent from ``expert_shapes`` is what makes it
 # expensive -- ``ignore`` is built from that dict, so the FusedMoE module was
@@ -758,12 +760,14 @@ def test_a_packed_stack_plan_requires_a_supported_source_layout(
 
 #: The one packed-expert source on this box.  Skipped rather than synthesised
 #: where it is absent: the point of this test is that the spelling on REAL
-#: disk is the one the classifier missed, and a fixture cannot say that.
-QWEN_PACKED = Path("/mnt/shared/models/Qwen3.8-Flash-Next")
+#: disk is the one the classifier missed, and a fixture cannot say that.  The
+#: root is ``box_artifacts``' to name, so the skip reason names the variable
+#: that moves it and ``--strict-cuda`` can refuse a box that lacks it.
+QWEN_PACKED = box_artifacts.path("shared_models", "Qwen3.8-Flash-Next")
 
 
-@pytest.mark.skipif(not (QWEN_PACKED / "model.safetensors.index.json").exists(),
-                    reason=f"{QWEN_PACKED} is not on this box")
+@box_artifacts.require("shared_models", "Qwen3.8-Flash-Next",
+                       "model.safetensors.index.json")
 def test_the_real_packed_source_is_classified_as_experts():
     """96 body packed stacks, none of them planned as a dense Linear.
 

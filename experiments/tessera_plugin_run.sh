@@ -18,7 +18,7 @@ IMG=${IMG:-$(runtime_image_pin)}
 # Refuse a floating image (issue #100); the echo is this wrapper's receipt,
 # since it writes no build sidecar of its own.
 runtime_image_require "$IMG" || exit 2
-# What the container needs to attest its own image (#132): the reference the
+# What the container needs to check its own image against (#132): the reference the
 # daemon resolved -- never the tag or digest this caller happened to spell --
 # and the record it resolved it from.  Injected AFTER "${extra[@]}" below so a
 # caller's own -e cannot forge it, which is what makes the census's cross-check

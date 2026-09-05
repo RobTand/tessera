@@ -195,7 +195,7 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
-    from .contract import cell_runtime_scope
+    from .contract import cell_runtime_scope, refuse_unevaluated_predicates
 
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
     unsupported_reason = (
@@ -206,6 +206,11 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     for cell in cells:
         if cell.get("platform") != platform or cell.get("structure") != structure:
             continue
+        # A cell this block would consider, checked before it is keyed: the key
+        # below is (family, residency, regime, rung) and a predicate is what
+        # that key cannot carry, so a narrowed cell entering it would report
+        # agreement for launches it never covered.
+        refuse_unevaluated_predicates(cell, f"lane_eligibility cell {cell.get('id')}")
         if runtime_image is None or execution_mode is None or "runtime" not in cell:
             continue
         image, execution_modes = cell_runtime_scope(cell)

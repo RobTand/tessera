@@ -22,8 +22,10 @@
 #
 # RUNTIME_IMAGE_CONTAINER_ENV holds the KEY=VALUE lines a wrapper must export
 # into the container it starts, so a process INSIDE (the route census) can
-# check which image it is running in against docker's own answer instead of
-# believing its own command line (issue #132).  The names and the shape are
+# check which image it is running in against the reference this launcher
+# resolved from docker's RepoDigests and DECLARED, instead of believing its own
+# command line (issue #132).  A declaration, not an attestation: a host process
+# can export the same pair by hand.  The names and the shape are
 # the module's, never spelled again here; it is empty for an image the daemon
 # holds no manifest digest for, and the process inside then refuses.
 #

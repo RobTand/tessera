@@ -77,6 +77,12 @@ ROOTS: dict[str, Root] = {
             "BF16 source checkpoints the encoder reads",
         ),
         Root(
+            "shared_models",
+            "TESSERA_SHARED_MODELS_DIR",
+            "/mnt/shared/models",
+            "source checkpoints both boxes mount, including the packed-expert sources",
+        ),
+        Root(
             "prismaquant",
             "TESSERA_PRISMAQUANT_DIR",
             "/home/rob/prismaquant",

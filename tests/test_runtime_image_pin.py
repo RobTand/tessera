@@ -4,7 +4,7 @@ NOTE ON WHAT IS *NOT* HERE: the digest itself.  The pin lives in exactly one
 place -- ``runtime_contract.json``'s ``versions.default_serve_image`` -- and a
 test that repeated the 64-hex string would be the second copy the whole design
 exists to avoid: it would pass while the pin was wrong, and it would have to be
-edited every time the runtime is re-attested.  These tests pin the RULE (the
+edited every time the runtime is re-pinned.  These tests pin the RULE (the
 shape of the value, the membership check, the refusal) and read the value.
 
 No test here shells out to ``docker``.  The daemon's answer is injected, which
@@ -13,6 +13,7 @@ be tested at all: there is no second box inside a test run.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 from pathlib import Path
@@ -28,13 +29,13 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tessera.serving.contract import contract_path
 from tessera.serving.runtime_image import (  # noqa: E402
-    ATTESTATION_SCHEMA,
-    ATTESTATION_SOURCE,
-    CENSUS_ATTESTATION_ENV,
+    CENSUS_DECLARATION_ENV,
     CENSUS_IMAGE_ENV,
     PIN_CONTRACT_FIELD,
     RuntimeImageError,
-    attested_reference,
+    DECLARATION_SCHEMA,
+    DECLARATION_SOURCE,
+    declared_reference,
     container_env,
     parse_reference,
     pinned_reference,
@@ -262,7 +263,80 @@ def test_an_image_with_no_manifest_digest_names_no_reference():
     assert record["resolved_reference"] is None
 
 
-# ------------------------------------------- attesting from inside the run ---
+def _census_runtime_image_help() -> str:
+    """The ``--runtime-image`` help the census prints, from its own source."""
+    tree = ast.parse((ROOT / "tools" / "tessera_route_census.py").read_text())
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument" and node.args
+                and getattr(node.args[0], "value", None) == "--runtime-image"):
+            for keyword in node.keywords:
+                if keyword.arg == "help":
+                    return keyword.value.value
+    raise AssertionError("the census declares no --runtime-image argument")
+
+
+def test_the_mechanism_is_named_a_declaration_everywhere_a_reader_or_gate_reads_it():
+    """The pre-fix failure this test was written for::
+
+        AssertionError: the runtime-image mechanism calls itself an attestation:
+          runtime_image.py: 'ATTESTATION_SCHEMA'
+          runtime_image.py: 'ATTESTATION_SOURCE'
+          runtime_image.py: 'CENSUS_ATTESTATION_ENV'
+          runtime_image.py: 'attested_reference'
+          ...
+          census --runtime-image help
+
+    An agreeing pair of environment variables is what a container LAUNCHER
+    wrote; nothing inside the container produced it, and a host process can
+    export the same pair by hand.  Calling that an attestation makes the
+    receipt claim more than the mechanism delivers, and this tree's rule is
+    that a claim about another runtime is read from a machine-readable table
+    or refused -- so a misnamed one is worse than an absent one.
+
+    The rule is over the machine-readable surface and the sentences a user is
+    shown: identifiers, published field names and values, refusal reasons, and
+    the census's own ``--runtime-image`` help.  Comments explaining WHY this
+    is not an attestation are prose and are exactly where that explanation
+    belongs -- as is the module docstring, which names the historical contract
+    field ``versions.attested_on.image``.
+    """
+    source = (ROOT / "src" / "tessera" / "serving" / "runtime_image.py").read_text()
+    tree = ast.parse(source)
+    holders = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+    docstrings = set()
+    for node in ast.walk(tree):
+        first = node.body[0] if isinstance(node, holders) and node.body else None
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            docstrings.add(id(first.value))
+    offenders = []
+    for node in ast.walk(tree):
+        if id(node) in docstrings:
+            continue
+        named = None
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            named = node.name
+        elif isinstance(node, ast.Name):
+            named = node.id
+        elif isinstance(node, ast.Attribute):
+            named = node.attr
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            named = node.value
+        if named and "attest" in named.lower():
+            offenders.append(f"runtime_image.py: {named!r}")
+    if "attest" in _census_runtime_image_help().lower():
+        offenders.append("census --runtime-image help")
+    census = (ROOT / "tools" / "tessera_route_census.py").read_text()
+    for token in ("attested_reference", "runtime_image_attestation"):
+        if token in census:
+            offenders.append(f"tessera_route_census.py: {token!r}")
+    assert not offenders, (
+        "the runtime-image mechanism calls itself an attestation:\n  "
+        + "\n  ".join(sorted(set(offenders))))
+
+
+# ---------------------------- checking the claim against the declaration ---
 #
 # A process inside a container cannot ask the daemon what image it is running:
 # there is no socket, and ``/proc/self/mountinfo`` names overlay layer paths
@@ -271,36 +345,37 @@ def test_an_image_with_no_manifest_digest_names_no_reference():
 # launcher transcribe ``docker image inspect``'s answer verbatim into the
 # environment, and have the process inside check its own claim against that
 # table.  That is not unforgeable -- a hand ``docker run -e`` can still lie --
-# and it is exactly why the receipt names the mechanism instead of asserting
-# the image (issue #132).
+# which is why it is named a launcher DECLARATION rather than an attestation,
+# and why the receipt records the mechanism instead of asserting the image
+# (issue #132).
 
 IMAGE = "example/runtime@sha256:" + "e" * 64
 
 
-def _attested(reference=IMAGE, **overrides):
+def _declared(reference=IMAGE, **overrides):
     record = resolve(reference, inspector=_inspector(repo_digests=[reference]))
     record.update(overrides)
     return container_env(record)
 
 
 def test_the_launcher_exports_the_resolved_reference_and_the_whole_record():
-    env = _attested()
+    env = _declared()
     assert env[CENSUS_IMAGE_ENV] == IMAGE
-    assert json.loads(env[CENSUS_ATTESTATION_ENV])["repo_digests"] == [IMAGE]
-    assert set(env) == {CENSUS_IMAGE_ENV, CENSUS_ATTESTATION_ENV}
+    assert json.loads(env[CENSUS_DECLARATION_ENV])["repo_digests"] == [IMAGE]
+    assert set(env) == {CENSUS_IMAGE_ENV, CENSUS_DECLARATION_ENV}
 
 
-def test_an_unattestable_image_exports_nothing_rather_than_an_empty_claim():
+def test_an_image_with_no_digest_exports_nothing_rather_than_an_empty_claim():
     """No ``RepoDigests`` means no identity; an empty variable would read as one."""
     record = resolve("local/built:dev", inspector=_inspector(repo_digests=[]))
     assert container_env(record) == {}
 
 
 def test_the_requested_image_is_checked_against_the_daemons_table():
-    block = attested_reference(IMAGE, env=_attested())
-    assert block["schema"] == ATTESTATION_SCHEMA
+    block = declared_reference(IMAGE, env=_declared())
+    assert block["schema"] == DECLARATION_SCHEMA
     # The mechanism, as a value a gate switches on -- not prose.
-    assert block["source"] == ATTESTATION_SOURCE
+    assert block["source"] == DECLARATION_SOURCE
     assert block["image"] == IMAGE
     # The daemon's own answer travels verbatim, so a reader can redo the join.
     assert block["record"]["resolved_reference"] == IMAGE
@@ -310,46 +385,46 @@ def test_the_requested_image_is_checked_against_the_daemons_table():
 @pytest.mark.parametrize("env", [
     {},
     {CENSUS_IMAGE_ENV: IMAGE},
-    {CENSUS_ATTESTATION_ENV: "{}"},
-    {CENSUS_IMAGE_ENV: "", CENSUS_ATTESTATION_ENV: ""},
+    {CENSUS_DECLARATION_ENV: "{}"},
+    {CENSUS_IMAGE_ENV: "", CENSUS_DECLARATION_ENV: ""},
 ])
-def test_an_absent_attestation_refuses_rather_than_trusting_the_caller(env):
+def test_an_absent_declaration_refuses_rather_than_trusting_the_caller(env):
     with pytest.raises(RuntimeImageError) as exc:
-        attested_reference(IMAGE, env=env)
-    assert exc.value.payload["reason"] == "image_attestation_missing"
+        declared_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_declaration_missing"
 
 
 def test_an_image_the_launcher_did_not_start_is_refused():
     """The #132 defect, as a gate: the operator names other bytes."""
     other = "example/runtime@sha256:" + "d" * 64
     with pytest.raises(RuntimeImageError) as exc:
-        attested_reference(other, env=_attested())
+        declared_reference(other, env=_declared())
     payload = exc.value.payload
-    assert payload["reason"] == "image_attestation_mismatch"
-    assert payload["requested"] == other and payload["attested"] == IMAGE
+    assert payload["reason"] == "image_declaration_mismatch"
+    assert payload["requested"] == other and payload["declared"] == IMAGE
 
 
-@pytest.mark.parametrize("attestation", ["not json", "[]", '{"schema": "other/1"}'])
-def test_an_unreadable_attestation_is_refused_not_ignored(attestation):
-    env = {CENSUS_IMAGE_ENV: IMAGE, CENSUS_ATTESTATION_ENV: attestation}
+@pytest.mark.parametrize("declaration", ["not json", "[]", '{"schema": "other/1"}'])
+def test_an_unreadable_declaration_is_refused_not_ignored(declaration):
+    env = {CENSUS_IMAGE_ENV: IMAGE, CENSUS_DECLARATION_ENV: declaration}
     with pytest.raises(RuntimeImageError) as exc:
-        attested_reference(IMAGE, env=env)
-    assert exc.value.payload["reason"] == "image_attestation_unreadable"
+        declared_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_declaration_unreadable"
 
 
 def test_the_two_variables_must_agree_with_each_other():
     """Half a forged pair is still a forged pair."""
-    env = dict(_attested(), **{CENSUS_IMAGE_ENV: "example/runtime@sha256:" + "d" * 64})
+    env = dict(_declared(), **{CENSUS_IMAGE_ENV: "example/runtime@sha256:" + "d" * 64})
     with pytest.raises(RuntimeImageError) as exc:
-        attested_reference(env[CENSUS_IMAGE_ENV], env=env)
-    assert exc.value.payload["reason"] == "image_attestation_inconsistent"
+        declared_reference(env[CENSUS_IMAGE_ENV], env=env)
+    assert exc.value.payload["reason"] == "image_declaration_inconsistent"
 
 
-def test_a_record_that_records_its_own_refusal_attests_nothing():
-    env = _attested(refused=True, reason="image_digest_mismatch")
+def test_a_record_that_records_its_own_refusal_declares_nothing():
+    env = _declared(refused=True, reason="image_digest_mismatch")
     with pytest.raises(RuntimeImageError) as exc:
-        attested_reference(IMAGE, env=env)
-    assert exc.value.payload["reason"] == "image_attestation_refused"
+        declared_reference(IMAGE, env=env)
+    assert exc.value.payload["reason"] == "image_declaration_refused"
 
 
 # ------------------------------------------------------------- the wiring ---
@@ -367,13 +442,40 @@ def test_the_cli_prints_the_pin_the_wrappers_default_to():
     assert proc.stdout.strip() == pinned_reference()
 
 
+def experiment_shell_scripts() -> list:
+    """Every shell script under ``experiments/``, at any depth.
+
+    One enumerator, because two legs of this file read the same population
+    for two rules and read it differently: the container gate walked the top
+    level while the pin-override gate walked the tree, so a script in a
+    campaign subdirectory was held to one rule and not the other.  A
+    campaign directory is where a wrapper is most likely to be copied and
+    edited, which is exactly where the gate must still reach.
+    """
+    return sorted((ROOT / "experiments").rglob("*.sh"))
+
+
+def test_the_wrapper_scan_reaches_a_campaign_subdirectory():
+    """The pre-fix failure this test was written for::
+
+        AssertionError: experiments/*.sh only; a campaign subdirectory's
+        wrapper is held to neither rule
+        assert []
+
+    ``experiments/allocated_serve_2026-09-02/`` holds seven scripts that the
+    top-level glob never saw."""
+    nested = [p for p in experiment_shell_scripts() if p.parent != ROOT / "experiments"]
+    assert nested, (
+        "experiments/*.sh only; a campaign subdirectory's wrapper is held to "
+        "neither rule")
+
+
 def test_every_wrapper_that_starts_a_container_gates_and_names_no_digest():
     """The wrappers' own text: a `docker run` behind no gate is the defect."""
-    exp = ROOT / "experiments"
     starters = sorted(
-        p for p in exp.glob("*.sh")
+        p for p in experiment_shell_scripts()
         if re.search(r"^\s*(exec\s+)?docker run", p.read_text(), re.M))
-    assert starters, "no container-starting wrapper found; the glob moved"
+    assert starters, "no container-starting wrapper found; the scan moved"
     for path in starters:
         text = path.read_text()
         assert "runtime_image_require" in text, (
@@ -391,7 +493,7 @@ def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
     )
     offenders = [
         str(path.relative_to(ROOT))
-        for path in sorted((ROOT / "experiments").rglob("*.sh"))
+        for path in experiment_shell_scripts()
         if assignment.search(path.read_text())
     ]
     assert offenders == [], (

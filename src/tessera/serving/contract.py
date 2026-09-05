@@ -128,6 +128,7 @@ __all__ = [
     "contract_path",
     "cell_executes",
     "cell_predicates",
+    "refuse_unevaluated_predicates",
     "cell_residency_modes",
     "cell_runtime_scope",
     "cell_runtime_id_suffix",
@@ -1161,6 +1162,43 @@ def cell_predicates(cell: Mapping[str, Any],
         seen.add((fact, op))
         out.append((str(fact), str(op), value))
     return tuple(out)
+
+
+def refuse_unevaluated_predicates(cell: Mapping[str, Any],
+                                  where: str = "lane_eligibility cell") -> None:
+    """Refuse a cell that states a narrowing no consumer in this build reads.
+
+    :func:`cell_predicates` is the grammar; nothing in this build EVALUATES
+    it.  Every consumer of a cell selects by the keys a cell carries flat --
+    ``scheme.attested_cells`` by family and structure (and through it
+    ``refuse_unserveable_wire`` and the export gate), ``census.
+    cell_launch_agreement`` by platform, structure, runtime scope, residency
+    and rung -- and a predicate is precisely the part of a cell that none of
+    those keys carries.  A cell narrowed to some units would therefore be
+    read as covering all of them: the unconditional reading of a conditional
+    cell, which is the exact failure the closed grammar was written to
+    prevent ("a consumer that cannot resolve a predicate must refuse the
+    cell, not skip the rule").
+
+    So the refusal lives here, in the module that owns the grammar, and the
+    day a consumer learns to evaluate a predicate it drops one call rather
+    than leaving three readers that quietly did not.  It is not a ban on
+    publishing a narrowed cell: it is the statement that publishing one is a
+    consumer change, not a document change.
+    """
+    # A cell that does not carry the field states nothing: the validator
+    # requires ``predicates`` on every published cell, so an absent one is a
+    # hand-built or pre-#134 cell rather than a narrowing being smuggled past.
+    # A present-but-malformed value still meets the grammar's own refusal.
+    stated = cell_predicates(cell, where) if cell.get("predicates") else ()
+    if stated:
+        raise ValueError(
+            f"{where} {cell.get('id')!r} states predicates {[list(row) for row in stated]}, "
+            "and no consumer in this build evaluates them: cells are selected by family, "
+            "structure, platform, runtime scope, residency and rung, none of which carries "
+            "a predicate, so this cell would be read as covering every unit of its scope "
+            "rather than the ones it narrows itself to. Teach the consumer to resolve the "
+            "predicate through contract.cell_predicates before publishing one.")
 
 
 def _require_receipt_path(value: Any, where: str) -> str:

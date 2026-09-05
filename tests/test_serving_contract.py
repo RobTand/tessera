@@ -1019,6 +1019,34 @@ def test_one_bound_per_fact_and_op(contract):
         validate_serving_contract(_with_predicates(contract, rows))
 
 
+def test_a_cell_that_narrows_itself_is_refused_until_a_consumer_reads_it(contract):
+    """The pre-fix failure this test was written for::
+
+        Failed: DID NOT RAISE ValueError
+
+    The grammar is published and validated; nothing EVALUATES it.
+    ``scheme.attested_cells`` selects by family and structure, the census
+    matcher by platform, structure, runtime scope, residency and rung, and a
+    predicate is exactly the part of a cell no such key carries -- so the
+    first cell to state a narrowing would have been read as unconditional by
+    the export gate and by the census, which is the failure the closed
+    grammar was written to prevent.  A narrowed cell is a legal DOCUMENT and
+    a refused one for a consumer that cannot resolve it.
+    """
+    from tessera.serving.scheme import attested_cells
+
+    doc = _with_predicates(contract, [{"fact": "k", "op": "multiple_of", "value": 16}])
+    validate_serving_contract(doc)
+    narrowed = doc["lane_eligibility"]["cells"][0]
+    with pytest.raises(ValueError, match="no consumer in this build evaluates them"):
+        attested_cells(narrowed["family"], narrowed["structure"], doc)
+    # Every other pair still reads: the refusal is the cell's, not the table's.
+    other = next(cell for cell in doc["lane_eligibility"]["cells"]
+                 if (cell["family"], cell["structure"])
+                 != (narrowed["family"], narrowed["structure"]))
+    assert attested_cells(other["family"], other["structure"], doc)
+
+
 def test_the_grammar_is_the_one_the_receipt_and_the_consumer_name(contract):
     """The closed sets are exported so a consumer can equate its own."""
     from tessera.serving.contract import CELL_PREDICATE_FACTS, CELL_PREDICATE_OPS

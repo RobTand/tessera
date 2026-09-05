@@ -84,7 +84,7 @@ def _tensors():
 #: fields and compares them when every part has one.  The fixtures build the
 #: config the way that driver does, so the anti-vacuity test below checks the
 #: guard against the config shape it actually guards.
-DRIVER_EXTRA = {"source_model": "/mnt/shared/models/GLM-5.3-Flash-BF16",
+DRIVER_EXTRA = {"source_model": "/models/GLM-5.3-Flash-BF16",
                 "prismaquant_plan": "everything-eligible",
                 "inherits": {"vision": "bf16 passthrough"}}
 
@@ -228,7 +228,7 @@ def test_parts_that_disagree_on_a_driver_field_are_refused(tmp_path):
     """A driver field every part carries is compared like any other."""
     a = _export(tmp_path / "a")
     b = _export(tmp_path / "b")
-    b["source_model"] = "/mnt/shared/models/somewhere-else"
+    b["source_model"] = "/models/somewhere-else"
     with pytest.raises(SystemExit, match="source_model"):
         merge.check_configs([("partA", a), ("partB", b)])
 

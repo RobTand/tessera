@@ -246,6 +246,20 @@ def test_the_sdist_policy_names_paths_that_exist():
                 "directive includes or excludes nothing")
 
 
+#: Every ref a README link resolves through, whatever it is spelled as.  The
+#: ``v`` is NOT in the pattern: a gate that only sees ``blob/v<something>/``
+#: cannot see the one link this rule exists to catch -- a ``master`` or a bare
+#: sha, which resolves from PyPI today and to a different file tomorrow.  The
+#: ref is captured and compared, so an unpinned link is a finding rather than
+#: a line the scan skips.
+_README_LINK = re.compile(r"github\.com/RobTand/tessera/(?:blob|tree)/([^/]+)/")
+
+
+def readme_link_refs(text: str) -> list:
+    """The git refs the README's own links are pinned to, in order."""
+    return _README_LINK.findall(text)
+
+
 def test_the_readme_pins_its_links_to_the_version_it_ships_with():
     """README.md says its links are pinned to the release tag so they resolve
     from PyPI, where relative paths do not.  That makes every one of them a
@@ -253,15 +267,32 @@ def test_the_readme_pins_its_links_to_the_version_it_ships_with():
     describing one release and linking to another."""
     declared = _declared_version()
     stale = sorted({
-        f"v{tag}"
-        for tag in re.findall(r"github\.com/RobTand/tessera/(?:blob|tree)/v([^/]+)/",
-                              (ROOT / "README.md").read_text(encoding="utf-8"))
-        if tag != declared
+        ref for ref in readme_link_refs((ROOT / "README.md").read_text(encoding="utf-8"))
+        if ref != f"v{declared}"
     })
     assert not stale, (
-        f"README.md pins links to {stale} but the distribution is v{declared}; "
-        "the pinned links and the version are bumped together or the page "
+        f"README.md links resolve through {stale} but the distribution is "
+        f"v{declared}; every link is pinned to the release tag, or the page "
         "documents one release and links to another")
+
+
+def test_a_readme_link_on_a_moving_ref_is_a_finding_not_a_line_the_scan_skips():
+    """The pre-fix failure this test was written for::
+
+        AssertionError: ['9.9.9']
+        assert 'master' in ['9.9.9']
+
+    A link to ``blob/master/`` or to a bare sha is exactly the link that stops
+    documenting this release the day master moves, and the version-shaped
+    pattern was blind to both."""
+    unpinned = (
+        "see https://github.com/RobTand/tessera/blob/master/AGENTS.md and "
+        "https://github.com/RobTand/tessera/tree/1fa2dbf0/experiments/ and "
+        "https://github.com/RobTand/tessera/blob/v9.9.9/README.md\n")
+    refs = readme_link_refs(unpinned)
+    assert "master" in refs, refs
+    assert "1fa2dbf0" in refs, refs
+    assert "v9.9.9" in refs, refs
 
 
 def test_the_jit_toolchain_is_named_by_one_extra_and_referenced_by_the_rest():
