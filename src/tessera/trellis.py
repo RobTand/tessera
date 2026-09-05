@@ -82,7 +82,11 @@ _ODS_GENERATORS = {
 #: written under a superseded pair names it exactly; dropping the pair from the
 #: reader's search would orphan those artifacts, and reinterpreting it would be
 #: the silent misdecode the digest exists to prevent.  A superseded pair is
-#: never a default again -- it decodes, it does not encode.
+#: never a default again: ``ConvCode(memory=3)`` names the published pair,
+#: and the superseded one is reachable only by the reader's digest search
+#: (``replayable_codes``) or by an explicit ``generators=`` -- which encodes,
+#: since the pair is wire, not an implementation detail; nothing stops a
+#: caller who names it, and the digest names what they wrote.
 _SUPERSEDED_GENERATORS: "dict[int, tuple[tuple[int, int], ...]]" = {
     3: ((0o5, 0o7),),
 }
