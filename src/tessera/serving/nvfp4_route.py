@@ -170,10 +170,14 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # traced forward, where it cannot run.  Read from the table the
             # runtime contract PUBLISHES (``ext.NATIVE_EXTENSIONS``'s
             # ``when_unavailable``) rather than compared here, so the document
-            # and the executed behaviour are one artifact.
+            # and the executed behaviour are one artifact.  On the native path
+            # this also holds the decoder to ``materialize_stock`` byte for
+            # byte and refuses the module by ``prefix`` on any difference --
+            # the same gate the FP8 and BF16 routes stand behind (#130).
             prepared = prepare_tessera_module(
                 roles, device=device,
-                allow_torch_fallback=substitutes_when_unavailable(self._mode))
+                allow_torch_fallback=substitutes_when_unavailable(self._mode),
+                prefix=prefix)
             layer.tessera_prepared = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_roles = prepared.role_names
