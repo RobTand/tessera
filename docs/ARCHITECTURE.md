@@ -6,8 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
-`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df`, release
-documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
+`b83fd17`, CI at `2147909`, packaging metadata at `54cd1df` plus the
+version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v16, lane-eligibility schema v5. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -1257,19 +1257,41 @@ dependencies into an empty directory and imported with the source tree off
 the path, and prints the wheel's own file list; CI runs it on every push and
 the publish job runs it on the bytes it is about to upload.
 
-Two extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
-host, and `kernels` installs Triton. A PyPI vLLM is a **working install, not
-an attested one**: every cell in the contract is pinned to an image digest
-(§3), and a serve on any other runtime gains no claim from it.
+The **sdist is the source that rebuilds that wheel, and nothing else**. It
+is deliberately not a runnable test suite: a testable sdist is a claim this
+tree cannot back, because the suite reads `tools/`, `docs/` and
+`experiments/` and pins per-box absolute paths (#153), so it runs from a git
+checkout and only from one. `MANIFEST.in` states that decision and `prune
+tests` carries it out -- without it setuptools' directory sweep shipped 149
+test modules and left out the `conftest.py` that collects them (#151).
+Neither half of that is left to a sweep again: `tools/check_wheel.py`,
+given the sdist beside the wheel, derives the expected contents *from the
+wheel's own namelist* -- every source the wheel ships, under `src/`, plus
+the build inputs -- and refuses anything else, in either direction, and
+`tests/test_packaging.py` refuses a `MANIFEST.in` directive naming a path
+that has moved (which would silently stop excluding anything). Measured on
+this tree: the sdist rebuilds a wheel with an identical 76-entry namelist.
+
+Three extras: `serve` installs a stock `vllm>=0.28` so the entry point has a
+host, `kernels` installs Triton, and `native` installs the `ninja` both of
+them need to build the packaged `.cu` sources -- named once there and
+referenced by the other two (`tessera-quant[native]`), so a consumer cannot
+install a runtime that reaches the JIT build without its builder. A PyPI
+vLLM is a **working install, not an attested one**: every cell in the
+contract is pinned to an image digest (§3), and a serve on any other runtime
+gains no claim from it.
 
 ### 5.3 The JIT build and what degrades without a compiler
 
 The native extensions are built by torch at first use from the packaged
 `.cu` sources and need an `nvcc` and a `ninja` on the box
-(`src/tessera/serving/ext.py`, "TOOLCHAIN"). Neither is a declared
-dependency; the same file records where each is looked for. When a build is
-unavailable the outcome is per extension and per residency, and it is a
-value the route record stamps, never a boolean:
+(`src/tessera/serving/ext.py`, "TOOLCHAIN"). The `ninja` is declared -- the
+`native` extra, which `serve` and `kernels` both reference. The `nvcc` is
+not installable from PyPI and is therefore a documented requirement, stated
+in the README beside the install commands and here; `ext.py` records where
+each is looked for. When a build is unavailable the outcome is per extension
+and per residency, and it is a value the route record stamps, never a
+boolean:
 
 - `substituted` -- a *named* substitute decoder ran and the serve is a
   different numeric object than the native one. The resident NVFP4 route
@@ -1292,8 +1314,9 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 interpreter with pytest and nothing else: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
 could not), an import of the byte layer that asserts torch never entered the
-process, the empty-denylist refusal (build item 11), and the wheel check
-above. It proves the parser's dependency boundary and the wheel's contents.
+process, the empty-denylist refusal (build item 11), and the wheel and sdist check
+above. It proves the parser's dependency boundary and what both
+distributions contain.
 It does not run a CUDA kernel, a decoder against a served artifact, or the
 merged suite: those are the two-population suite of §1.1, dispatched through
 PrismaBuild and read in `docs/status/suite-populations.md`, and a serving
@@ -1301,7 +1324,7 @@ claim also needs a served receipt (§3).
 
 **`publish`** runs only on a `v*` tag and only after `pure` is green. It
 refuses a tag that does not name the version in `pyproject.toml`, builds the
-sdist and wheel, runs `tools/check_wheel.py` on the wheel, and uploads with
+sdist and wheel, runs `tools/check_wheel.py` on both, and uploads with
 `pypa/gh-action-pypi-publish` under an OIDC token (`id-token: write`); there
 is no API token in the repository.
 
@@ -1324,6 +1347,27 @@ account can move, so what a job runs is decided after review, by someone
 else; a SHA is the code that was reviewed. `tests/test_ci_workflow.py` holds
 that rule over every workflow rather than over a list of actions.
 
-The version string appears in `pyproject.toml` and in the contract's
-`versions.tessera`; the publish job checks the tag against the first only.
-Reconciling the copies is an open issue.
+### 5.5 The version has one declaration
+
+`pyproject.toml`'s `[project] version` is the only place the version is
+written. `tessera.__version__` reads it rather than restating it: out of a
+checkout from that file, out of an installed wheel from
+`importlib.metadata` -- the checkout first, because installed metadata on
+`sys.path` can describe a different tree than the one being imported
+(`src/tessera/__init__.py`). `tessera.serving.__version__` re-exports the
+same object, so the string vLLM's compile-cache key folds in
+(`serving/compile_identity.py`) and the census publishes cannot disagree
+with the distribution, and a version neither reader can produce is refused
+rather than guessed.
+
+Three copies remain that no code here can derive: the `Documentation` URL's
+tag, the release tag README.md pins its own links to (it says so, because
+relative links do not resolve from a PyPI page), and the contract's
+`versions.tessera` / `versions.plugin_entry_point`, which are bytes a
+producer's receipts bind to. None is left to review.
+`tests/test_packaging.py` fails when either disagrees with the declaration;
+`tools/check_wheel.py` reads the declaration too -- it restates neither the
+version nor the entry point -- and refuses a built wheel whose `Version`
+metadata, whose entry-point value, or whose installed `__version__` is not
+the declared one; and the publish job's tag check reads the same table
+(§5.4).

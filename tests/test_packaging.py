@@ -11,6 +11,7 @@ is published.  Torch-free by construction so the bytes-only job runs them.
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
 
 import pytest
@@ -107,3 +108,129 @@ def test_the_kernel_sources_resolve_as_package_resources():
         ("tessera.serving", "csrc/tessera_nvfp4.cu"),
     ):
         assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
+
+
+def _declared_version() -> str:
+    """``pyproject.toml``'s ``[project] version`` -- the one declaration."""
+    return _pyproject()["project"]["version"]
+
+
+def _declared_entry_points() -> dict[str, str]:
+    return _pyproject()["project"]["entry-points"]["vllm.general_plugins"]
+
+
+def test_every_version_copy_derives_from_the_one_declaration():
+    """The version is declared in pyproject and read from there or from the
+    installed distribution's metadata -- never restated.  A literal in a
+    package is a copy a release bumps or forgets, and this string is not only
+    metadata: it is an input to the vLLM compile-cache key
+    (``serving/compile_identity.py``), so a stale one is a stale cache."""
+    import tessera
+    from tessera import serving
+
+    declared = _declared_version()
+    assert tessera.__version__ == declared, (
+        f"tessera.__version__ {tessera.__version__!r} != pyproject "
+        f"{declared!r}: the package restates the version instead of reading it")
+    assert serving.__version__ == declared, (
+        f"tessera.serving.__version__ {serving.__version__!r} != pyproject "
+        f"{declared!r}")
+
+
+def test_the_documentation_url_names_the_version_it_documents():
+    """``Documentation`` points at a tag, so it is a fifth copy of the version.
+    Nothing can derive it from a static table; this is what refuses the drift."""
+    url = _pyproject()["project"]["urls"]["Documentation"]
+    assert f"/blob/v{_declared_version()}/" in url, (
+        f"Documentation URL {url!r} does not name v{_declared_version()}")
+
+
+def test_the_contract_states_no_version_the_distribution_does_not_have():
+    """``runtime_contract.json`` is read by producers as an attestation about
+    this package.  Whatever it stores about the package's own identity must be
+    what the package has; a contract that may derive these instead of storing
+    them is covered too, because what is not stored cannot drift."""
+    from tessera.serving import contract
+
+    versions = contract.load_serving_contract()["versions"]
+    if "tessera" in versions:
+        assert versions["tessera"] == _declared_version(), (
+            f"runtime_contract versions.tessera {versions['tessera']!r} != "
+            f"pyproject {_declared_version()!r}")
+    if "plugin_entry_point" in versions:
+        expected = "\n".join(
+            f"{name} = {value}" for name, value in _declared_entry_points().items())
+        assert versions["plugin_entry_point"] == expected, (
+            f"runtime_contract versions.plugin_entry_point "
+            f"{versions['plugin_entry_point']!r} != the declared entry point "
+            f"{expected!r}")
+
+
+def test_the_sdist_policy_names_paths_that_exist():
+    """``MANIFEST.in`` is the whole sdist policy, and setuptools sweeps
+    directories when the policy is silent: a directive naming a path that has
+    since moved stops excluding anything, the sweep comes back, and nothing
+    says so.  ``tools/check_wheel.py`` holds the built artifact; this holds
+    the policy to the tree it is written against."""
+    manifest = ROOT / "MANIFEST.in"
+    directives = [
+        line.split()
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert directives, (
+        "MANIFEST.in states no policy, so setuptools' directory sweep decides "
+        "what the sdist ships")
+    for command, *arguments in directives:
+        for argument in arguments:
+            if any(character in argument for character in "*?["):
+                continue  # a pattern, not a path; the built-artifact check covers it
+            assert (ROOT / argument).exists(), (
+                f"MANIFEST.in '{command} {argument}': no such path, so the "
+                "directive includes or excludes nothing")
+
+
+def test_the_readme_pins_its_links_to_the_version_it_ships_with():
+    """README.md says its links are pinned to the release tag so they resolve
+    from PyPI, where relative paths do not.  That makes every one of them a
+    copy of the version: a bump that leaves them behind ships a page
+    describing one release and linking to another."""
+    declared = _declared_version()
+    stale = sorted({
+        f"v{tag}"
+        for tag in re.findall(r"github\.com/RobTand/tessera/(?:blob|tree)/v([^/]+)/",
+                              (ROOT / "README.md").read_text(encoding="utf-8"))
+        if tag != declared
+    })
+    assert not stale, (
+        f"README.md pins links to {stale} but the distribution is v{declared}; "
+        "the pinned links and the version are bumped together or the page "
+        "documents one release and links to another")
+
+
+def test_the_jit_toolchain_is_named_by_one_extra_and_referenced_by_the_rest():
+    """Both native routes build a packaged ``.cu`` with torch's JIT at first
+    use, which needs a ``ninja``.  An extra that installs a runtime able to
+    reach that build and does not carry the builder installs a consumer
+    straight onto the fallback decode -- silently, because the fallback is a
+    named substitute rather than an error.  The builder is named in one extra
+    and referenced by the others, so there is no second copy to bump."""
+    project = _pyproject()["project"]
+    extras = project["optional-dependencies"]
+    assert "native" in extras, (
+        "no extra declares the JIT build toolchain; ninja is a build "
+        "requirement of both native routes and was declared nowhere")
+    reference = f"{project['name']}[native]"
+    for extra, requirements in extras.items():
+        if extra == "native":
+            continue
+        assert reference in requirements, (
+            f"extra {extra!r} installs a runtime that reaches the JIT build "
+            f"and does not carry {reference}; if it genuinely cannot reach "
+            "one, say so here")
+    restated = sorted(
+        extra for extra, requirements in extras.items()
+        if extra != "native" and any("ninja" in item for item in requirements))
+    assert not restated, (
+        f"extras {restated} name ninja directly instead of referencing "
+        f"{reference}; that is the copy this test exists to prevent")

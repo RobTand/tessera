@@ -259,10 +259,22 @@ routed-MoE cell.
 
 ```
 pip install tessera-quant            # the library and the vLLM plugin entry point
-pip install "tessera-quant[serve]"   # plus a stock vLLM
+pip install "tessera-quant[serve]"   # plus a stock vLLM and the JIT builder
 ```
 
 The distribution is `tessera-quant`; the import name is `tessera`.
+
+**The native routes need a CUDA toolkit that pip cannot install.** Both build
+a packaged `.cu` with torch's JIT at first use, which wants a `ninja` and an
+`nvcc`. The `ninja` arrives with the `serve` and `kernels` extras; the `nvcc`
+does not, because it is not on PyPI. Without a usable toolchain nothing
+fails loudly, and what happens instead is per route and per residency: the
+packaged contract's `native_extensions[].when_unavailable` is the table --
+the NVFP4 decoder substitutes `torch_materialize_stock` resident and refuses
+streamed, the window GEMV substitutes `torch_window` in both. A substituted
+route is a different numeric object than the attested one, and the decoder
+that actually ran is stamped on every route record, so a receipt cannot claim
+a native serve for a fallback one.
 
 The `serve` extra installs a stock vLLM so the plugin's entry point registers.
 **The attested serves are image-pinned**: the eight dense cells on
