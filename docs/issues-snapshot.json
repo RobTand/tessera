@@ -2033,6 +2033,18 @@
     "state": "CLOSED",
     "title": "LUT-plane block-scale refit: try a Gauss-Seidel sweep, the one untried optimiser on the 4-bit weight leg"
    },
+   "353": {
+    "state": "OPEN",
+    "title": "[P2] Keep the symlink depth budget when resolving absolute in-root targets"
+   },
+   "354": {
+    "state": "OPEN",
+    "title": "[P2] Bound directory-only glob filtering before it follows an out-of-tree symlink"
+   },
+   "355": {
+    "state": "OPEN",
+    "title": "[P2] Preserve refused data-read dependencies when the changed file has an inert suffix"
+   },
    "36": {
     "state": "CLOSED",
     "title": "E4M3 channel_sigma sits on a one-sided reach cliff, and the dyadic ladder cannot see the axis that matters"

@@ -489,6 +489,7 @@ def _selection_reason(
     tests: list[str],
     text_matched: set[str],
     data_matched: set[str] = frozenset(),
+    unplaced_reads: bool = False,
 ) -> str:
     if missing:
         return (
@@ -515,7 +516,10 @@ def _selection_reason(
                      "through the import graph")
     if non_python - text_matched - data_matched:
         parts.append("non-Python changed paths have no text-matched tests")
-    if inert_paths - data_matched:
+    if unplaced_reads:
+        parts.append("reads of paths this resolver named but refused to place "
+                     "conservatively select their readers' consumers")
+    if inert_paths - data_matched and not unplaced_reads:
         parts.append("inert changed paths require no tests")
     return "; ".join(parts) or "no changed path requires a test"
 
@@ -577,7 +581,9 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # like any changed module and its consumers are selected (#338).  The
     # alternative was the receipt this tool cannot afford: verdict ``none``,
     # no tests, no diagnostic, for a change that moved the reader's output.
-    unplaced = importers.get(DATA_WILDCARD, set()) if non_inert else set()
+    # Text/documentation suffixes can carry bytes a refused reader consumes
+    # too; only an empty diff proves there is no changed input (#355).
+    unplaced = importers.get(DATA_WILDCARD, set()) if changed else set()
     seeds.update(unplaced)
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
@@ -664,14 +670,11 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             tests=tests,
             text_matched=text_matched,
             data_matched=data_matched,
+            unplaced_reads=bool(unplaced),
         ),
     }
     if unresolved:
         result["reason"] += "; unresolved file loaders conservatively select their consumers"
-    if unplaced:
-        result["reason"] += (
-            "; reads of paths this resolver named but refused to place "
-            "conservatively select their readers' consumers")
     unreadable_reached = sorted(str(by_name[name].relative_to(root))
                                 for name in uncertain - unresolved)
     if unreadable_reached:

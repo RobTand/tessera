@@ -680,9 +680,10 @@ def test_an_opaque_path_outranks_the_generic_inert_suffix_rule():
         assert result["verdict"] == "full", (changed, result)
         assert changed in result["forces_full"], (changed, result)
 
-    # And an ordinary Markdown edit outside those prefixes stays inert.
+    # Ordinary Markdown cannot force the population by suffix. Refused
+    # data readers can still select their consumers conservatively (#355).
     ordinary = impacted.select(ROOT, ["docs/measurements/a-note-2026-09-05.md"])
-    assert ordinary["verdict"] == "none", ordinary
+    assert ordinary["verdict"] == ("narrowed" if ordinary["tests"] else "none"), ordinary
     assert ordinary["forces_full"] == [], ordinary
 
 
@@ -1514,3 +1515,40 @@ def test_an_unnameable_read_still_states_no_dependency(tmp_path: Path) -> None:
     _, importers = impacted.build_graph(root)
     assert "pkg.reader" not in importers.get("*", set())
     assert "pkg.reader" not in importers.get("*data", set())
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".rst", ".json"])
+@pytest.mark.parametrize("alias", [True, False], ids=["refused-alias", "exact-edge"])
+def test_text_data_changes_reach_readers_regardless_of_suffix(tmp_path, monkeypatch, suffix, alias):
+    root, reader, original_data = _alias_reader_tree(tmp_path)
+    data = original_data.with_suffix(suffix)
+    original_data.rename(data)
+    source = reader.read_text().replace("runtime-settings.json", data.name)
+    if not alias:
+        source = source.replace(str(tmp_path / "alias"), str(root))
+    reader.write_text(source)
+    # Execute only this disposable local fixture to establish observable impact.
+    namespace = {}
+    exec(source, namespace)
+    before = namespace["load"]()
+    data.write_text("changed bytes\n")
+    assert namespace["load"]() != before
+
+    alias_path = tmp_path / "alias"
+    def guarded(original):
+        def call(path, *args, **kwargs):
+            if isinstance(path, (str, bytes, os.PathLike)):
+                assert not Path(os.fsdecode(path)).is_relative_to(alias_path), (
+                    "selector approached the refused alias")
+            return original(path, *args, **kwargs)
+        return call
+
+    for name in ("stat", "lstat", "readlink", "scandir", "listdir"):
+        monkeypatch.setattr(os, name, guarded(getattr(os, name)))
+    result = impacted.select(root, [str(data.relative_to(root))])
+    assert result["verdict"] == "narrowed", result
+    assert result["tests"] == ["tests/test_consumer.py"], result
+    assert "require no tests" not in result["reason"]
+    assert result["unplaced_data_reads"] == (["src/pkg/reader.py"] if alias else [])
+    assert result["unresolved_file_loaders"] == []
+    assert result["forces_full"] == []

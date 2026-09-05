@@ -6,7 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
-selector traversal budget #353 and directory-glob boundary #354 verified at base `8dc165b`;
+selector traversal budget #353, directory-glob boundary #354, and refused
+data-read suffix coverage #355 verified against base `8dc165b`;
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
@@ -202,7 +203,8 @@ is independent of this repository, and the two must not be spelled the same
 way.** An outside spelling can be a local alias directory pointing straight
 back into the checkout -- environment state nothing here records -- so the
 refusal keeps a dependency it cannot attribute to a file: the reading module
-is seeded for every non-inert change and its consumers are selected. Reading
+is seeded for every change, including `.md`, `.txt`, and `.rst`, and its
+consumers are selected (#355). Reading
 the refusal as independence produced `verdict='none'`, no tests and no
 diagnostic for a change that moved the reader's own bytes, which is the one
 outcome this contract forbids (#338). Every gap in what the graph can prove resolves
@@ -265,8 +267,9 @@ filesystem call; after that each component is examined only once the prefix
 it extends is known to be inside root; `..` is applied to a prefix already
 free of symlinks, so it means what the filesystem means by it rather than
 what the string does; a symlink is *read* -- it is in the tree -- but a
-target that leaves the tree ends the walk; and more than 40 link traversals
-ends it too, sharing one budget across absolute and relative targets (#353), where `Path.resolve` raised through the caller instead. A
+target that leaves the tree ends the walk; and exceeding 40 link traversals
+ends it too, sharing one budget across absolute and relative targets (#353).
+`Path.resolve` raised through the caller instead. A
 directory-only glob (a trailing separator) is refused before enumeration,
 because pathlib would otherwise follow symlinks while filtering directory
 entries before this walk sees a match (#354). Refused named patterns keep
@@ -288,7 +291,7 @@ as "any module in the tree" is what held the verdict at `full` for every change
 (#148). A read the resolver *named* and then refused to place is a third state,
 not a case of either: it is no module edge -- the reader executes nothing, so
 it imports nothing and never forces the full run -- but it is not independence
-either, so the reader is seeded for every non-inert change and the receipt
+either, so the reader is seeded for every changed-file suffix and the receipt
 lists it under `unplaced_data_reads` (#338). What separates the two is whether
 a file was named: a filename assembled from runtime state names nothing the
 diff can hold, while an out-of-tree spelling names exactly one file and only
