@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T02:58:14Z",
+ "generated": "2026-09-05T03:22:29Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1138,7 +1138,7 @@
     "title": "core: encoder calls E4M3+RELEASE undefined while both readers accept it"
    },
    "181": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: host paths ship inside the packaged contract"
    },
    "182": {
@@ -1146,7 +1146,7 @@
     "title": "tools: the serve-lock race test flakes under a loaded suite arm"
    },
    "183": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: RELEASE plane - unreachable arity refusal, thrice-hardcoded width, missing re-slice coverage"
    },
    "184": {
@@ -1182,7 +1182,7 @@
     "title": "Refuse release at read on a grid the RELEASE plane cannot name"
    },
    "191": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fix three RELEASE-plane defects: refusal order, hardcoded width, re-slice coverage"
    },
    "192": {
@@ -1192,6 +1192,18 @@
    "193": {
     "state": "CLOSED",
     "title": "Key the serve-lock race test on its subprocesses, not on the clock"
+   },
+   "194": {
+    "state": "CLOSED",
+    "title": "Point the packaged contract's evidence at paths a reader can open"
+   },
+   "195": {
+    "state": "OPEN",
+    "title": "serving: the smoke evidence records a symptom the reference model shares, and a gate refuses on it"
+   },
+   "196": {
+    "state": "OPEN",
+    "title": "Let a smoke record name the control it was compared against (schema v7)"
    },
    "2": {
     "state": "CLOSED",
