@@ -69,22 +69,28 @@ def payload_meta(role, regime, *, scored, artifact=ARTIFACT, contract=CONTRACT,
 
 def write_payload(path: Path, meta: dict, probs: np.ndarray) -> Path:
     ids = np.tile(np.arange(K, dtype=np.int32), (probs.shape[0], 1))
-    np.savez(path, ids=ids, lps=np.log(probs).astype(np.float32),
-             meta=np.array(json.dumps(meta)))
+    with np.errstate(divide="ignore"):
+        lps = np.log(probs).astype(np.float32)      # an all-zero row is -inf
+    np.savez(path, ids=ids, lps=lps, meta=np.array(json.dumps(meta)))
     return path
 
 
-def rows_of(n: int, *, disagree: set[int] | None = None) -> np.ndarray:
-    """One distribution per row; the rows in ``disagree`` get a reversed one."""
+def rows_of(n: int, *, disagree: set[int] | None = None,
+            blank: set[int] | None = None) -> np.ndarray:
+    """One distribution per row; ``disagree`` rows are reversed, ``blank`` rows
+    hold no finite logprob at all."""
     base = np.array([0.4, 0.3, 0.2, 0.1])
     out = np.tile(base, (n, 1))
     for row in (disagree or ()):
         out[row] = base[::-1]
+    for row in (blank or ()):
+        out[row] = 0.0
     return out
 
 
 def build(tmp_path, *, prepends_bos, teacher_meta=None, student_meta=None,
-          decode_meta=None, teacher_rows=None, student_rows=None):
+          decode_meta=None, teacher_rows=None, student_rows=None,
+          teacher_blank=None):
     """A valid triple over a BOS or a no-BOS corpus, with optional overrides."""
     rows_per_chunk = SEQLEN if prepends_bos else SEQLEN - 1
     scored = N_CHUNKS * rows_per_chunk
@@ -94,7 +100,7 @@ def build(tmp_path, *, prepends_bos, teacher_meta=None, student_meta=None,
         tmp_path / "teacher.npz",
         teacher_meta or payload_meta("teacher", "prefill", scored=scored,
                                      artifact="/models/bf16"),
-        rows_of(n_t))
+        rows_of(n_t, blank=teacher_blank))
     student = write_payload(
         tmp_path / "student.npz",
         student_meta or payload_meta("student", "prefill", scored=scored),
@@ -244,3 +250,16 @@ def test_a_contract_whose_scored_count_is_neither_refuses(tmp_path):
     proc, _ = run(tmp_path, *build(tmp_path, prepends_bos=True, **metas))
     assert proc.returncode != 0, proc.stdout
     assert "is not derivable from this contract" in proc.stderr
+
+
+def test_a_row_with_no_comparable_distribution_refuses(tmp_path):
+    """A row whose teacher map is empty was silently skipped, and the mean was
+    published over the rest -- a number for positions it did not measure.
+    ``kl_tool dump`` drops unscored positions before it writes, so such a row
+    is a malformed payload rather than a normal one."""
+    proc, _ = run(tmp_path, *build(tmp_path, prepends_bos=True,
+                                   teacher_blank={0}),
+                  "--seqlen", str(SEQLEN))
+    assert proc.returncode != 0, proc.stdout
+    assert "carried a comparable teacher and student distribution" in proc.stderr
+    assert "prefill_on_decode_positions" in proc.stderr

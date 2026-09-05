@@ -200,7 +200,17 @@ def prefill_rows(decode_meta, *, layout):
     return np.array(rows, dtype=np.int64)
 
 
-def kl_over(t_ids, t_lps, s_ids, s_lps, rows, floor):
+def kl_over(t_ids, t_lps, s_ids, s_lps, rows, floor, *, label="the subset"):
+    """The lumped KL over ``rows``, refusing to average over fewer than all.
+
+    A row whose teacher or student map is empty is skipped, and the count of
+    what was actually compared was published beside -- but not against -- the
+    count that was asked for.  ``kl_tool dump`` drops unscored positions before
+    it writes, so an empty row is a malformed payload and not a normal one; an
+    average over an unstated subset of the subset is the confound this whole
+    script exists to remove.  Zero comparable rows used to raise
+    ``ValueError: zero-size array`` out of ``per.max()`` rather than say so.
+    """
     per = []
     agree = 0
     for i in rows:
@@ -218,9 +228,14 @@ def kl_over(t_ids, t_lps, s_ids, s_lps, rows, floor):
         if max(tmap, key=tmap.get) == max(smap, key=smap.get):
             agree += 1
     per = np.array(per, dtype=np.float64)
+    if per.size != len(rows):
+        raise SystemExit(
+            f"{label}: {per.size} of {len(rows)} rows carried a comparable "
+            "teacher and student distribution.  Averaging over the rest would "
+            "publish a number for positions it did not measure")
     return {"positions": int(per.size), "kl_lower_mean": float(per.mean()),
             "kl_lower_max": float(per.max()),
-            "top1_agree_pct": 100.0 * agree / max(per.size, 1)}
+            "top1_agree_pct": 100.0 * agree / per.size}
 
 
 def main(argv=None):
@@ -296,11 +311,12 @@ def main(argv=None):
         "prefill_rows": [int(r) for r in rows],
         "positions_requested": int(rows.size),
         "all_prefill_positions": int(t_ids.shape[0]),
-        "prefill_on_decode_positions": kl_over(t_ids, t_lps, s_ids, s_lps,
-                                               rows, args.floor),
-        "prefill_on_all_positions": kl_over(t_ids, t_lps, s_ids, s_lps,
-                                            np.arange(t_ids.shape[0]),
-                                            args.floor),
+        "prefill_on_decode_positions": kl_over(
+            t_ids, t_lps, s_ids, s_lps, rows, args.floor,
+            label="prefill_on_decode_positions"),
+        "prefill_on_all_positions": kl_over(
+            t_ids, t_lps, s_ids, s_lps, np.arange(t_ids.shape[0]), args.floor,
+            label="prefill_on_all_positions"),
     }
     print(json.dumps(result, indent=1))
     if args.json:
