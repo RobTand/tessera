@@ -420,6 +420,23 @@ def test_the_lfm_disagreement_demotes_the_w13_group_under_the_override():
         sum(entry["demoted_params"].values())
 
 
+def test_demotion_accounting_counts_only_members_the_allocation_priced():
+    """``totals.demoted_to_bf16_params`` is, by its own docstring, "params the
+    allocation gave a Tessera rung and the plan gives BF16".  A member the
+    allocation itself chose BF16 was never demoted -- the plan agrees with the
+    allocation about it -- and counting it over-reports the one number whose
+    job is to say how far the served allocation drifted from the chosen one.
+    """
+    config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w2": tessera("TESSERA_E4M3_K1_R1024"),
+              "model.layers.0.feed_forward.w3": "BF16"}
+    _plan, provenance = build(config, lfm_shapes(), allow_disagreement=True,
+                              with_control=False)
+    entry = provenance["fused_disagreements"][0]
+    assert entry["demoted_params"] == {"model.layers.0.feed_forward.w1": 128 * 128}
+    assert provenance["totals"]["demoted_to_bf16_params"] == 128 * 128
+
+
 def test_an_agreeing_lfm_pair_plans_member_by_member():
     """Differing rungs on one family are still not a disagreement (#37)."""
     config = {"model.layers.0.feed_forward.w1": tessera("TESSERA_E4M3_K1_R1024"),

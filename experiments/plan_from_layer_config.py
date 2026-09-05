@@ -415,13 +415,17 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
         members = groups[entry["module"]]
         entry["demoted_params"] = {}
         for member in members:
-            chosen.pop(member, None)
+            # Only a member the allocation PRICED as Tessera is demoted; a
+            # sibling the allocation itself chose BF16 (which is what made the
+            # group disagree) is planned exactly as chosen and counts nothing.
+            was_chosen = chosen.pop(member, None) is not None
             tensor = member + ".weight"
             if tensor in shapes:
                 plan[tensor] = "BF16"
-                rows, columns = shapes[tensor]
-                entry["demoted_params"][member] = rows * columns
-                demoted_params += rows * columns
+                if was_chosen:
+                    rows, columns = shapes[tensor]
+                    entry["demoted_params"][member] = rows * columns
+                    demoted_params += rows * columns
 
     total_params, total_charged = 0, Fraction(0)
     for qname, (grid, rung, family) in sorted(chosen.items()):
