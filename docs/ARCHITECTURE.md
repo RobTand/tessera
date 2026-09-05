@@ -186,6 +186,7 @@ import root `tests/conftest.py` inserts is the one pytest actually executes for
 therefore resolves the union of canonical and alias candidates, deduplicated by
 file, rather than letting the canonical name hide the candidate that runs
 (#292).
+
 A node's identity is its **file**, never its name, because a dotted name is a
 spelling and a spelling can name two files: `_module_name` strips a leading
 `src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
@@ -706,9 +707,9 @@ Aligning the predicate moved the rotated population from `slice_unit`'s raise
 to the serving seam's, and the seam could only talk about granularity: a
 rotated unit at TP=2 was refused with "16 rows, granularity 1 … serve with a
 `tensor_parallel_size` that divides it", where 2 divides 16, the granularity
-is 1, and no degree above 1 will ever serve that unit. `slicing.
-unsliceable_reason` now exposes the sentence beside the boolean — same
-argument shapes, same `_slicing_facts` reading, so "`can_shard` said no" and
+is 1, and no degree above 1 will ever serve that unit.
+`slicing.unsliceable_reason` now exposes the sentence beside the boolean —
+same argument shapes, same `_slicing_facts` reading, so "`can_shard` said no" and
 "here is why" are one reading of one unit — and `sharding._cannot_cut` is the
 single home of both refusal texts: the cutter's sentence with **no divisor
 offered** where the unit refuses every cut, the granularity message with one

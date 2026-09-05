@@ -7,11 +7,16 @@ BF16 that object costs 65.7 GiB at R=11 before the refusal it was always going
 to get (tessera#285, `docs/measurements/build-forest-memory-2026-09-05.md`).
 So `build_forest` refuses first, by name.
 
-The roster is not restated here.  The membership test is
+The membership and width tests are the code's own: the membership test is
 `SERIALISABLE_GRIDS` and the width test is the forest planes' own element
-width; this file's job is to prove that the two, taken together, pick out
+width, and this file's job is to prove that the two, taken together, pick out
 exactly the grids the *recipe table* already gives a window body at every
-rung -- the other home of the same fact, in `export`.
+rung -- the other home of the same fact, in `export`.  The two grid names
+that do appear below (`BF16` refused, `E4M3` window-only but not refused) are
+**pinned** rather than re-derived, because which grid is deliberately outside
+the intersection IS the decision -- AGENTS.md rule 3's own exception, "pin a
+roster only when the roster *is* the decision" -- and a change to either is
+one somebody must make on purpose.
 """
 
 from __future__ import annotations

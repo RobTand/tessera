@@ -212,7 +212,8 @@ def require_invertible_diagonals(diagonals: Diagonals) -> Diagonals:
                 "the word the wire carries, and a wider value overflows, "
                 "underflows or rounds on the way to the bytes (tessera#286). "
                 "Cast the pair to float16 first -- the words are then "
-                "checked as stored -- or let fit_diagonals land its own"
+                "checked as stored -- or let fit_diagonals land its own "
+                "factors on the plane for you."
             )
         f = factor.float()
         bad = ~torch.isfinite(f) | (f <= 0)
