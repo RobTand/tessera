@@ -787,6 +787,16 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     # committed legacy fixture is a whole number of groups.  Before the body
     # branch, because a WINDOW body carries the same block plane.  Through the
     # same ``grammar.require_scale_groups`` the encoder and the writer call.
+    #
+    # #56's weaker rule owes the reader the same, and for the same reason --
+    # its three homes were the writer, the materialiser and the kernel lane,
+    # and none of them is asked before ``reconstruct_unit`` returns weights
+    # whose halves straddle two output rows.  Both calls, in the writer's own
+    # order, so an artifact is refused with the words the writer would have
+    # refused it with.  A CHANNEL plane carries one word per output row and no
+    # per-half plane, so the rule is vacuous there exactly as at write.
+    if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
+        require_column_groups(cols, geometry.half_weights)
     if manifest.scale_plane.kind is ScalePlaneKind.S6B:
         require_scale_groups(cols, geometry.group_weights)
 

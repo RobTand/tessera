@@ -380,10 +380,15 @@ def require_column_groups(cols: int, half: int) -> None:
 
     This lives here, not beside the kernel that first needed it, because it is
     a fact about the **wire** and every stage that touches the wire owes it:
-    the writer (``unit_artifact.build_unit_artifact``), the materialiser
+    the writer (``unit_artifact.build_unit_artifact``), the reader
+    (``unit_artifact.parse_unit_artifact``), the materialiser
     (``decode.materialize_nvfp4``) and the kernel lane all refuse the same
     widths with the same words, because there is one rule and one place it is
-    written (RobTand/tessera#56).
+    written (RobTand/tessera#56).  The reader was added last
+    (RobTand/tessera#260, auditing the sibling S6b rule): bytes already on disk
+    are byte-self-consistent, so the writer's gate cannot be the only one, and
+    without it a nonconforming producer's artifact reconstructed to weights
+    whose halves straddle two output rows.
 
     A ``CHANNEL`` plane is exempt by construction, not by tolerance: its scale
     is one word per output row and there is no column group to be whole, so

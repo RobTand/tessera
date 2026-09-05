@@ -790,9 +790,10 @@ read different bytes:
   minor moves, and no artifact can depend on the older lenient reading,
   because every S6b artifact this tree has written went through
   `encode._pack_scales`, which has always refused the width. On a **LUT**
-  plane the binding rule is the weaker one — a whole number of `half_weights`,
-  refused at write by `grammar.require_column_groups` (tessera#56) — because a
-  LUT group *is* the half and shares no exponent with anything. A **CHANNEL**
+  plane the binding rule is the weaker one — a whole number of `half_weights`
+  (`grammar.require_column_groups`, tessera#56) — because a LUT group *is* the
+  half and shares no exponent with anything; the writer, the reader, the
+  materialiser and the kernel lane all refuse that width too. A **CHANNEL**
   plane has one word per output row and no column structure, and owes neither.
 
 ## 3c. Truncation, integrity, and canonical bytes
