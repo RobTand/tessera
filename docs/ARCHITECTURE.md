@@ -182,6 +182,32 @@ and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
 read one rule.
 
+One A-side value binds the same roster. A W4A4 module's
+`trellis_input_global_scale` is the **minimum** of its members' donated
+`input_global_scale`s (`tessera.fused.shared_input_global_scale`, the join's
+one home): the route hands the value unmodified to vLLM's native quantiser,
+which stores each group-16 block scale as `e4m3(block_amax/6 x scale)` clamped
+at 448, so the value is capacity/amax -- inverse in the activation range --
+and the min member scale is the largest calibrated amax, the range the fused
+GEMM's one input tensor actually spans. A max-join picks the smallest
+calibrated range and silently clips every wider member's peak activations;
+the exporter took the max until RobTand/prismaquant#196 flagged the
+divergence against PrismaQuant's `unify_fused_sibling_input_global_scales`
+(min-scale = max-amax, the same rule at calibration time). The stock twin
+carries the joined value on every member for the same reason: vLLM reduces
+whatever the members carry into one scale per fused module -- warning, not
+refusing, when they differ -- and the twin exists to execute the A side this
+export serves. The join accepts only members that agree to within one bf16
+ULP (`fused.FUSED_INPUT_SCALE_ULP` = `torch.finfo(torch.bfloat16).eps` =
+2^-7): the route casts every A tensor to bf16 before the quantiser sees it,
+so a calibrated amax is an observation of a bf16 tensor and scales from ONE
+calibration land within one step of that lattice. A wider spread is two
+calibrations -- mixed draws, mixed policies, or a group never calibrated
+jointly -- and is refused where the bytes are decided rather than joined
+into a distribution nobody measured; the fix is a joint recalibration (one
+amax over the members' shared input, which is what both repos' calibrators
+already emit), not a wider bound.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder

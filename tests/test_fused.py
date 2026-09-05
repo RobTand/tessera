@@ -10,6 +10,7 @@ from tessera.fused import (
     FusedMember,
     pack_fused,
     parse_fused,
+    shared_input_global_scale,
     shared_lut_global,
 )
 
@@ -169,3 +170,46 @@ def test_the_reader_refuses_a_member_its_writer_could_not_have_written():
     bad_utf8[_HEADER.size + _MEMBER.size] = 0xFF
     with pytest.raises(GrammarError, match="UTF-8"):
         parse_fused(bytes(bad_utf8))
+
+
+def test_the_fused_a_side_scale_is_the_min_member_scale():
+    """``input_global_scale`` is capacity/amax -- inverse in the activation
+    range -- and the fused GEMM's one input tensor spans every member's range,
+    so the join is the MIN member scale (the largest calibrated amax).  A max
+    would pick the smallest range and clip the rest."""
+    assert shared_input_global_scale([4.0], ["q"]) == 4.0
+    ulp = 2.0 ** -7
+    assert shared_input_global_scale(
+        [4.0, 4.0 * (1.0 + ulp), 4.0], ["q", "k", "v"]) == 4.0
+
+
+def test_a_member_scale_the_route_would_refuse_is_refused_here_by_name():
+    """The same predicate the NVFP4 route's load gate applies (finite and
+    positive -- ``not (nan > 0)`` catches the unloaded sentinel), applied
+    where the bytes are decided, naming the member."""
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(GrammarError, match="k_proj"):
+            shared_input_global_scale([4.0, bad], ["q_proj", "k_proj"])
+    with pytest.raises(GrammarError, match="at least one"):
+        shared_input_global_scale([], [])
+    with pytest.raises(GrammarError, match="one name per scale"):
+        shared_input_global_scale([4.0, 4.0], ["q_proj"])
+
+
+def test_a_spread_beyond_one_bf16_ulp_is_two_calibrations_and_refused():
+    """The bound is derived, not chosen: the route casts the A tensor to bf16
+    before the quantiser sees it, so scales from ONE calibration agree to
+    within one step of that lattice (2^-7, the dtype's eps).  Exactly one ULP
+    passes; anything wider is two calibrations and refuses by name."""
+    from tessera.fused import FUSED_INPUT_SCALE_ULP
+    assert FUSED_INPUT_SCALE_ULP == 2.0 ** -7 == torch.finfo(torch.bfloat16).eps
+    ulp = 2.0 ** -7
+    assert shared_input_global_scale(
+        [4.0, 4.0 * (1.0 + ulp)], ["q", "k"]) == 4.0
+    with pytest.raises(GrammarError, match="bf16") as caught:
+        shared_input_global_scale(
+            [4.0, 4.0 * (1.0 + 2.0 ** -6)], ["q_proj", "k_proj"])
+    message = str(caught.value)
+    assert "q_proj=4" in message and "k_proj=4.0625" in message
+    with pytest.raises(GrammarError, match="two calibrations"):
+        shared_input_global_scale([6.0 / 8.0, 6.0 / 4.0], ["gate", "up"])
