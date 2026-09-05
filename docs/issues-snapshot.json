@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T20:18:07Z",
+ "generated": "2026-09-05T20:47:19Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -550,6 +550,22 @@
    "221": {
     "state": "OPEN",
     "title": "Two homes for 'does this route execute the static NVFP4 activation contract': the campaign and export lane still compare the name, after #205 made it the spec's answer"
+   },
+   "222": {
+    "state": "OPEN",
+    "title": "Routed export silently re-encodes from source when an allocation carries no projection at all"
+   },
+   "223": {
+    "state": "OPEN",
+    "title": "Write the export leg's inputs after the resume identity, not before (#211)"
+   },
+   "224": {
+    "state": "OPEN",
+    "title": "Resolve a format name once, in the registry; make the production-cache fill gate total (#218)"
+   },
+   "225": {
+    "state": "OPEN",
+    "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
    },
    "23": {
     "state": "CLOSED",
@@ -1902,7 +1918,7 @@
     "title": "Never resolve/stat path literals outside root in source_dependencies (#325)"
    },
    "327": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] contract v21: routed-MoE smoke.status 'recorded' rests on an undeclared, underived aggregation, and the control that made the residual 'repetitive' readable was deleted in the same commit"
    },
    "328": {
@@ -1916,6 +1932,22 @@
    "33": {
     "state": "CLOSED",
     "title": "CanonicalEncodingError on a non-dyadic global_scale names the varint domain, not the scale"
+   },
+   "330": {
+    "state": "OPEN",
+    "title": "runtime_contract.json does not publish the KV-head replication rule the loader now enforces"
+   },
+   "331": {
+    "state": "OPEN",
+    "title": "[P1] merge_suite binds an attempt by string-matching conftest's publication line, and the only test writes both sides"
+   },
+   "332": {
+    "state": "CLOSED",
+    "title": "lane-eligibility v9: derive the routed-MoE smoke status word from a record (#327)"
+   },
+   "333": {
+    "state": "OPEN",
+    "title": "merge_suite: bind an attempt to the population's bytes, from one home (#331)"
    },
    "34": {
     "state": "CLOSED",

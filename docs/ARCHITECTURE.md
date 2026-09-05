@@ -138,9 +138,9 @@ that action and its `request_sha256` is the digest of the request bytes read;
 and the record's top-level status is `executed` or `failed` -- the two the
 worker writes together with the attempt's own `detail` (a
 `lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
--- with that attempt's captured stdout containing the conftest's `tessera
-surface: population written to <path>` line and a pytest summary line whose
-counts are the population's, both drawn from `terminalreporter.stats`. The
+-- with that attempt's captured stdout containing the run's own publication
+line for this path and a pytest summary line whose counts are the population's,
+both drawn from `terminalreporter.stats`. The
 clock is not evidence: #218's 600 s allowance between the file's mtime and the
 claim asserted how quickly a retry may follow, which nothing here measures, and
 it admitted a retry five minutes behind; it is gone with the inference. A
@@ -148,11 +148,27 @@ population without the stamp (pre-stamp, or `unknown` source) names no producer,
 so its counts are read and no status is adopted; two bound records of the one
 producer are no single status and adopt none. Across the 281 historical
 populations under `/mnt/shared/tessera-suite-receipts` exactly the three
-stamped ones bind. The remaining limit is stated rather than hidden: the
-attempt is bound by path and counts, not by a digest of the population's bytes,
-because the conftest does not yet print one; printing the file's SHA-256 beside
-the publication line would let a resume bind on bytes, and that is a change to
-`tests/conftest.py`, not to this reader.
+stamped ones bind.
+
+That publication line has **one home**, `tessera._dev.surface_publication`:
+`tests/conftest.py` writes it from there and `tools/merge_suite.py` reads it
+with the same module. Until tessera#331 each spelled the sentence itself, so
+the producer and the consumer were in a contract neither knew about --
+measured on `f86b811`, one word changed in `tests/conftest.py` left
+`_binding_refusal` refusing every action, every arm of every resumed receipt
+`not observed`, and `tests/test_merge_suite.py` green at 85 passed, because the
+only tests of the join wrote both sides. What #294 left open is closed with it:
+the line now carries the **SHA-256 of the bytes the run published**, and an
+attempt binds to the file at the path only when that file still hashes to what
+the attempt announced. A second attempt that overwrote the population with one
+of *identical counts* -- a different device, different skip reasons, the same
+buckets -- is refused on bytes, which the counts leg cannot see. A line with no
+digest is still bound on path and counts alone: that is every run captured
+before #331, including the three historical populations above, and a reader
+that demanded the stronger evidence from stdout that never carried it would
+lose them. `tests/test_merge_suite.py` drives one real
+`pytest --surface-json` run's stdout through the reader, so the join is
+exercised by output no test wrote.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract, and deciding it never stats outside the
 repository root either -- an absolute or `..`-escaping literal path is
