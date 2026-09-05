@@ -881,6 +881,47 @@ GQA/MQA replication read off the layer, and a coordinate-less layer through
 the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
 stand-ins.
 
+**The artifact says so itself, and the loader reads it** (#328). TP-agnosticism
+is a property of the *wire a unit was written at*, not a standing promise about
+every Tessera artifact: the shard record and the `INITIAL_STATE` plane arrived
+at container schema minor 4, and below that minor the wire cannot carry a
+window of a unit at all. So the exporter stamps what its bytes admit rather
+than what degree they were built for — `schema_minor`, and `tp_agnostic`
+**derived** from it by `slicing.tp_agnostic_at_minor`
+(`SLICEABLE_SCHEMA_MINOR`), which is the one home of that rule and lives with
+the cutter, not in the exporter's comment. Both keys go into
+`tessera_config.json` (`export._write_config`) and into the loader-visible
+`quantization_config` (`export_tessera_serving.py`,
+`serving_parts.merge_serving_parts`), because those are two different configs
+and only the second is what vLLM hands the plugin.
+
+`TesseraConfig._require_a_cutter` now asks two questions, not one:
+`sharding.require_a_cutter` (does this **build** carry `layout.slice_unit`?) and
+`sharding.require_a_cuttable_artifact` (do these **bytes** admit a cut?). The
+resolution rule, in `sharding.artifact_tp_agnostic`, is **fail closed**: a
+declared `tp_agnostic` is taken verbatim; a config that records only
+`schema_minor` is answered from it through the same one home; a config that
+records neither gets `None` and is **refused above one rank, by name**, with a
+re-export as the remedy. `tp_size` is deliberately not read — the constant
+`1` every artifact written before 2026-09-05 carries was stamped under a
+comment asserting the artifact was TP-*specific*, was inverted the next day by
+schema minor 4, and was read by no loader, so treating it as an answer would
+turn a stale stamp into a permission. At `tensor_parallel_size=1` nothing is
+cut and nothing is refused, which is every serve this plugin has run.
+
+What that costs: an artifact already on disk declares neither key, so it is
+refused above one rank until it is re-exported. Its **bytes do not change** —
+only what its config says about them — and no multi-rank serve has ever been
+run (`runtime_contract.json` publishes `max_world_size: 1` for every family),
+so nothing that has served stops serving. On the merge side the two keys are
+`SHARED_WHEN_WRITTEN` in `merge_tessera_parts.py`, not required fields: legacy
+parts still merge with each other (their `tp_size` is compared as a driver
+field, no exporter writing it any more), fresh parts are compared on the new
+names, and a legacy part mixed with a fresh one is refused as two exporters.
+**No artifact on disk becomes unmergeable.** What `runtime_contract.json`
+should publish about tensor parallelism beyond `max_world_size` and
+`loader_axes` is #330's question and is not settled here.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats

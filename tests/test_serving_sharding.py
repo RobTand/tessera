@@ -812,6 +812,47 @@ def test_a_prepared_role_carries_an_initial_state_and_refuses_to_decode_it():
         ops.PreparedTesseraModule._require_no_initial_state(_FakeModule([role]))
 
 
+def test_what_an_artifact_says_about_slicing_is_read_off_it_not_assumed():
+    """``artifact_tp_agnostic`` -- the config half of the TP gate (tessera#328).
+
+    Three answers, and ``None`` is one of them: a config that does not say is
+    not a config that says yes.  The derived spelling and the fact it derives
+    from resolve through the SAME rule (``layout.tp_agnostic_at_minor``), which
+    is why the minor below is written as an offset from the cutter's own
+    constant rather than as a literal 3 -- pinning the number here would make
+    this file a second home for the rule.
+    """
+    from tessera.layout import SLICEABLE_SCHEMA_MINOR
+    from tessera.serving.sharding import artifact_tp_agnostic
+
+    assert artifact_tp_agnostic({"tp_agnostic": True}) is True
+    assert artifact_tp_agnostic({"tp_agnostic": False}) is False
+    assert artifact_tp_agnostic({"schema_minor": SLICEABLE_SCHEMA_MINOR}) is True
+    assert artifact_tp_agnostic({"schema_minor": SLICEABLE_SCHEMA_MINOR - 1}) is False
+    # The declaration wins over the fact: it is the artifact's own word.
+    assert artifact_tp_agnostic(
+        {"tp_agnostic": False, "schema_minor": SLICEABLE_SCHEMA_MINOR}) is False
+    # No answer, and the stale stamp is not one either.
+    assert artifact_tp_agnostic({}) is None
+    assert artifact_tp_agnostic({"tp_size": 1}) is None
+    assert artifact_tp_agnostic(None) is None
+
+
+def test_the_artifact_gate_passes_at_one_rank_whatever_the_checkpoint_says():
+    """``world <= 1`` cuts nothing, so there is nothing to refuse.
+
+    The gate must not turn every legacy checkpoint into a load failure on the
+    only world size this plugin has ever served.
+    """
+    from tessera.serving.sharding import require_a_cuttable_artifact
+
+    for config in ({}, {"tp_agnostic": False}, {"tp_size": 1}, None):
+        require_a_cuttable_artifact("m", 1, config)          # no raise
+        require_a_cuttable_artifact("m", 0, config)          # nor a bare test build
+    with pytest.raises(ValueError, match="tensor_parallel_size=2"):
+        require_a_cuttable_artifact("m", 2, {"tp_agnostic": False})
+
+
 class _FakeModule:
     """Just enough of PreparedTesseraModule for the refusal, whose only input is the roles."""
 

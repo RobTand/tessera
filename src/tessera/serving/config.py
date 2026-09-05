@@ -19,10 +19,15 @@ them degrade to BF16:
   ``UnquantizedFusedMoEMethod`` when a config returns ``None``, so ``None``
   here would serve uninitialised or BF16 expert memory rather than say no.
   A stack declared ``structure: routed_moe`` is served by ``moe_route``.
-* tensor parallelism in a build with no unit slicer.  Not because the artifact
+* tensor parallelism in a build with no unit slicer, or against an artifact
+  whose own config does not say its bytes can be cut.  Not because the artifact
   is per-rank -- it is deliberately TP-agnostic, one whole unit per role, and
   the loader cuts it at load (``sharding``) -- but because the cut needs
-  ``tessera.layout.slice_unit``.  Where the slicer IS present, as it is here,
+  ``tessera.layout.slice_unit`` in the build AND a wire that can express a
+  shard.  The second is read off the checkpoint (``tp_agnostic``, derived by
+  the exporter from the schema minor it wrote at) rather than assumed of every
+  artifact, and a checkpoint that declares nothing is refused above one rank
+  (tessera#328).  Where the slicer IS present, as it is here,
   ``tp_size > 1`` is no longer refused wholesale: the route refuses the one
   AXIS its decoders cannot start from, at ``create_weights``, off the
   ``sharding.ROUTE_TP_AXES`` table.  A refusal, never "every rank holds the
@@ -79,7 +84,7 @@ from .compile_identity import declare_compile_identity
 from .lane import TESSERA_MODE_ENV, build_tessera_method, serve_mode
 from .scheme import (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, is_tessera_scheme,
                      validate_tessera_scheme)
-from .sharding import require_a_cutter
+from .sharding import require_a_cutter, require_a_cuttable_artifact
 
 __all__ = ["TesseraConfig", "QUANT_METHOD"]
 
@@ -302,16 +307,26 @@ class TesseraConfig(QuantizationConfig):
 
     # -- dispatch ----------------------------------------------------------
     def _require_a_cutter(self, prefix: str) -> None:
-        """Refuse a TP group this BUILD cannot cut a unit for -- and only that.
+        """Refuse a TP group this BUILD, or these BYTES, cannot cut a unit for.
 
-        The ARTIFACT is TP-agnostic and stays so: a unit is encoded once, whole,
-        and a rank takes its slice at load (``sharding``).  The cutter --
-        ``tessera.layout.slice_unit``, which records the trellis state a sliced
-        row starts from -- has landed, so this gate is no longer "one rank
-        only"; it is the whole-file question, asked once at method construction
-        rather than at the first forward of every module, and it is kept rather
-        than deleted because a build WITHOUT the slicer must still refuse rather
-        than serve rank 0's whole unit to every rank.
+        Two whole-file questions, asked once at method construction rather than
+        at the first forward of every module, and neither is the per-axis one:
+
+        * **This build.**  ``sharding.require_a_cutter``.  The cutter --
+          ``tessera.layout.slice_unit``, which records the trellis state a
+          sliced row starts from -- has landed, so this is no longer "one rank
+          only"; it is kept because a build WITHOUT the slicer must still
+          refuse rather than serve rank 0's whole unit to every rank.
+        * **These bytes.**  ``sharding.require_a_cuttable_artifact``, reading
+          the checkpoint's own declaration out of the config vLLM handed this
+          class (``self._full_config``, which until tessera#328 was retained
+          and never read).  The ARTIFACT is TP-agnostic and stays so -- a unit
+          is encoded once, whole, and a rank takes its slice at load
+          (``sharding``) -- but *that is a property of the wire it was written
+          at*, not a standing promise, so it is read off the artifact instead
+          of assumed of every artifact.  A checkpoint that declares neither
+          ``tp_agnostic`` nor ``schema_minor`` is refused above one rank: it
+          predates the declaration and does not get to claim it.
 
         The narrower question -- which AXIS this route's decoders can start from
         -- is not answerable here: the axis is derived from the sizes vLLM asks
@@ -324,7 +339,8 @@ class TesseraConfig(QuantizationConfig):
         says ``max_world_size: 1`` for every family and will until a multi-rank
         serve has been run and measured.  That is the same status a rung with no
         ``lane_eligibility`` cell has -- unattested, which is honest, and not a
-        refusal.
+        refusal.  What the contract publishes about tensor parallelism is
+        tessera#330's question and not this gate's.
         """
         try:
             from vllm.distributed import get_tensor_model_parallel_world_size
@@ -333,6 +349,7 @@ class TesseraConfig(QuantizationConfig):
         except Exception:  # noqa: BLE001 -- no parallel state: a bare test build
             return
         require_a_cutter(prefix, world)
+        require_a_cuttable_artifact(prefix, world, self._full_config)
 
     def _declare_once(self) -> None:
         if self._declared:

@@ -89,6 +89,8 @@ _SLICING_NAMES = frozenset({
     "slice_unit",
     "shard_granularity",
     "can_shard",
+    "SLICEABLE_SCHEMA_MINOR",
+    "tp_agnostic_at_minor",
     "_initial_state",
     "_slice_release",
     "_slice_step_plane",

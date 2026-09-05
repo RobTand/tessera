@@ -252,6 +252,15 @@ planes amortising.
 > span-2 route still refuses a row cut (`sharding.ROUTE_TP_AXES`).
 > **What has not moved:** no multi-rank serve has been run, so
 > `runtime_contract.json` still publishes `max_world_size: 1` per family.
+>
+> **Also superseded 2026-09-05 (#328): the field named below no longer exists.**
+> The paragraph says the config "declares `tp_size` so a loader cannot quietly
+> use one at the wrong degree". It declared the constant `1` and no loader ever
+> read it. The config now declares `schema_minor` and `tp_agnostic` derived from
+> it (`slicing.tp_agnostic_at_minor`), and
+> `TesseraConfig._require_a_cutter` reads that back through
+> `sharding.require_a_cuttable_artifact` — the load-time gate the sentence
+> promised. `docs/ARCHITECTURE.md` §3.8 is its home.
 
 Reading vLLM's `exl3.py` beside our encoder settles an open question the wrong
 way for us. EXL3 shards by `Tensor.narrow` on `trellis` dim 0/1 and on

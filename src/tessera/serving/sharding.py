@@ -137,7 +137,7 @@ expert reaches this module through the same two functions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 from .scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
 
@@ -152,6 +152,8 @@ __all__ = [
     "axis_status",
     "have_unit_slicer",
     "require_a_cutter",
+    "artifact_tp_agnostic",
+    "require_a_cuttable_artifact",
     "require_axis_supported",
     "RoleShard",
     "ShardPlan",
@@ -270,6 +272,93 @@ def require_a_cutter(prefix: str, world: int) -> None:
         "tessera.layout.slice_unit, which is not in this build. The checkpoint is not the problem "
         "and does not need re-exporting -- one artifact serves any world size, because the cut "
         "happens at load. Serve with -tp 1, or install a Tessera carrying the unit slicer.")
+
+
+def artifact_tp_agnostic(config: "Optional[dict]") -> Optional[bool]:
+    """Does this artifact's own config say its bytes can be cut at load?
+
+    ``True``/``False`` is the artifact's statement; ``None`` means it makes
+    none, which is not the same answer and is never read as ``True``.
+
+    TWO SPELLINGS, ONE RULE.  ``tp_agnostic`` is the declaration the exporter
+    stamps (``export._write_config``) and is taken verbatim when present --
+    the artifact's own word about its own bytes.  ``schema_minor`` is the fact
+    it was derived from, and a config that records the minor without the
+    declaration is answered from it through ``layout.tp_agnostic_at_minor``,
+    the one home of the rule -- so an artifact written by a producer that
+    stamps only the wire minor still resolves correctly instead of being
+    refused for a spelling.  A config carrying neither gets ``None``: it
+    predates the declaration, and an artifact that does not declare a property
+    does not get to claim it (tessera#328).
+
+    ``tp_size`` is deliberately NOT read.  Parts on disk carry ``tp_size: 1``
+    from an exporter whose comment asserted the artifact was TP-*specific*;
+    that constant said nothing about whether the bytes could be cut, and
+    reading it as though it did would turn a stale stamp into a permission.
+    """
+    if not isinstance(config, Mapping):
+        return None
+    declared = config.get("tp_agnostic")
+    if isinstance(declared, bool):
+        return declared
+    minor = config.get("schema_minor")
+    if isinstance(minor, int) and not isinstance(minor, bool):
+        try:
+            from tessera.layout import tp_agnostic_at_minor
+        except Exception:  # noqa: BLE001 -- an older Tessera, or a partial install
+            return None
+        return bool(tp_agnostic_at_minor(minor))
+    return None
+
+
+def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]") -> None:
+    """Refuse a TP group against BYTES that cannot be cut.  ``world<=1`` passes.
+
+    The twin of :func:`require_a_cutter`, and the other half of the same
+    question: that one asks whether this BUILD carries ``layout.slice_unit``,
+    this one asks whether the ARTIFACT admits a cut at all.  Both are
+    whole-file questions asked once at method construction; the per-axis one
+    (``require_axis_supported``) waits for ``create_weights``, where the axis
+    exists.
+
+    FAIL CLOSED, AND SAY SO BY NAME.  A checkpoint written before the
+    declaration existed carries neither ``tp_agnostic`` nor ``schema_minor``
+    (it carries ``tp_size: 1``, which is not an answer -- see
+    :func:`artifact_tp_agnostic`), so it is refused above one rank rather than
+    served on the strength of a field nothing ever read.  That is the "a
+    loader cannot quietly use it at the wrong degree" the old exporter comment
+    promised and never delivered (tessera#328); the remedy is a re-export with
+    a current exporter, which stamps the declaration, and the bytes themselves
+    do not change.
+
+    A world size above one remains ATTEMPTED and not ATTESTED whatever this
+    gate says: ``runtime_contract.json`` publishes ``max_world_size: 1`` for
+    every family until a multi-rank serve has been run.
+    """
+    if int(world) <= 1:
+        return
+    agnostic = artifact_tp_agnostic(config)
+    if agnostic is True:
+        return
+    if agnostic is False:
+        raise ValueError(
+            f"tessera target {prefix!r}: this artifact declares tp_agnostic=false, so its own "
+            f"bytes say no rank can cut a shard out of them, and this is "
+            f"tensor_parallel_size={int(world)}. A cut needs the shard record and the "
+            "INITIAL_STATE plane the container gained when slicing became expressible "
+            "(tessera.layout.SLICEABLE_SCHEMA_MINOR); wire written below that minor cannot "
+            "carry a window of a unit at all. Serve with tensor_parallel_size=1, or re-export "
+            "the checkpoint with a current exporter -- the TP degree is not an encoding choice "
+            "and never was.")
+    raise ValueError(
+        f"tessera target {prefix!r}: this checkpoint's quantization_config declares neither "
+        f"'tp_agnostic' nor 'schema_minor', so it does not say whether its bytes can be cut, "
+        f"and this is tensor_parallel_size={int(world)}. It was written before the exporter "
+        "stamped that declaration (such a config carries 'tp_size: 1', which is a constant no "
+        "loader ever read and not a statement about slicing), and an artifact that does not "
+        "declare a property does not get to claim it. Serve with tensor_parallel_size=1, or "
+        "re-export with a current exporter; the wire does not change, only what the config "
+        "says about it.")
 
 
 def require_axis_supported(family: str, plan: "ShardPlan") -> None:
