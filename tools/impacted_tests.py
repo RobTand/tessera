@@ -689,6 +689,11 @@ def main() -> int:
             print("forces full run:")
             for f in forced:
                 print(f"  {f}")
+        # Labelled, because the two lists print with the same indent: an
+        # unlabelled tail read as more of the forcing list, which says the
+        # opposite of what a selection says.
+        if tests:
+            print(f"selected tests ({len(tests)}):")
         for t in tests:
             print(f"  {t}")
     return 0
