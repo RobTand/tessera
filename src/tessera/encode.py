@@ -49,7 +49,7 @@ from .diagonals import (
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
-from .grammar import RELEASE_BITS, release_quota
+from .grammar import release_quota, require_release_defined
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -2287,21 +2287,15 @@ def encode_unit(
             f"{rows} rows is not a whole number of arity-{arity} tuples; a "
             "k-tuple code spans k consecutive rows and cannot straddle the edge"
         )
-    # A release stores a whole payload code, and the RELEASE plane is
-    # ``RELEASE_BITS`` wide whatever the grid, so release is defined only where
-    # the grid's codes fit that width.  Refusing here, by name and before any
-    # work, is the point: without it the pass runs to completion, picks release
-    # codes by argmin over the grid's values, and the refusal arrives from
-    # ``wire.pack_uniform`` at write as "value out of range for a 4-bit field",
-    # naming neither release nor the grid.  Widening the plane per grid is a
-    # wire change, not an encoder one.
-    if released_positions and grid.size > (1 << RELEASE_BITS):
-        raise GrammarError(
-            f"release is not defined over grid {grid.name}: the RELEASE plane "
-            f"stores {RELEASE_BITS} bits per released position and the grid has "
-            f"{grid.size} codes, so an override cannot name most of them. "
-            "Release is a 16-code grid's dial."
-        )
+    # A release stores a whole payload code and the RELEASE plane is one fixed
+    # width whatever the grid, so release is defined only where the grid's
+    # codes fit it.  The rule and its words live in ``grammar`` because the two
+    # readers owe the same refusal on the same bytes (tessera#180); asking here,
+    # before any work, is what keeps the message about release instead of the
+    # "value out of range for a 4-bit field" ``wire.pack_uniform`` would raise
+    # one call after the encoder that chose the codes.
+    if released_positions:
+        require_release_defined(grid)
 
     rotated, rotation_block = apply_rotation(weights, rotation)
     # A caller may supply a fit made on a WIDER matrix than this call sees.

@@ -30,6 +30,7 @@ from .alphabet import (
 )
 from .grammar import (
     require_column_groups,
+    require_release_defined,
     completion_capacity,
     completion_limit_from_elements,
     completion_widths as completion_widths_for,
@@ -797,6 +798,13 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
             "carrying it was not written by this implementation."
         )
     if n_released:
+        # The writer's rule, read back.  ``encode.encode_unit`` refuses to
+        # release on a grid whose codes the RELEASE plane cannot name, and one
+        # rule means the reader refuses the same byte string rather than
+        # decoding it: the plane is a legal 4-bit field on any grid, so nothing
+        # else here would notice, and the unit would decode to values no
+        # encoder chose (tessera#180, finding S5).
+        require_release_defined(grid)
         # §9's placement is *derived*, not stored: decode without release,
         # rank by descending decoded magnitude per superblock, and the RELEASE
         # plane's codes land on those positions in that order.
@@ -1069,7 +1077,9 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     if n_released and grid.arity > 1:
         raise GrammarError("release is not defined at arity > 1")
     if n_released:
-        # The grid's own value table, for the reason the TCQ reader gives.
+        # The writer's rule, read back; and below, the grid's own value table.
+        # Both for the reason the TCQ reader gives.
+        require_release_defined(grid)
         from .decode import decode_codes_mixed, unit_scale_field
         from .encode import grid_value_table
 
