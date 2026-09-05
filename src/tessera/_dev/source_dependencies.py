@@ -22,6 +22,7 @@ here and this does not change it.
 from __future__ import annotations
 
 import ast
+import os.path
 from collections import defaultdict
 from pathlib import Path
 
@@ -235,6 +236,25 @@ def _executes_python_source(tree):
     return False
 
 
+def _lexically_under_root(path, root):
+    """Whether *path* denotes a location under *root* -- string work only.
+
+    ``os.path.normpath`` collapses ``.``/``..`` segments the same way
+    ``resolve()`` would, without a filesystem call, so this decides the
+    question ``resolve()`` decides -- modulo a symlink -- for free.  An
+    absolute literal outside the repository, or a relative literal that
+    escapes via ``..``, reads false here and is never resolved or stat'ed
+    to confirm it: the same rule that keeps a glob from crawling outside
+    this root at :314-316 keeps a bare literal from being resolved outside
+    it. A path that reads true here may still be resolved, but that
+    resolve() only ever walks locations already established as in-root.
+    """
+    absolute = path if path.is_absolute() else root / path
+    normalized = Path(os.path.normpath(str(absolute)))
+    root_normalized = Path(os.path.normpath(str(root)))
+    return normalized == root_normalized or root_normalized in normalized.parents
+
+
 def _values(node, scope, root, visiting=frozenset()):
     """All statically established values; None means some alternative is unknown."""
     if isinstance(node, tuple):
@@ -305,6 +325,11 @@ def _values(node, scope, root, visiting=frozenset()):
             if paths is None or not all(isinstance(path, Path) for path in paths):
                 return None
             if node.func.attr == "resolve" and not node.args and not node.keywords:
+                # A literal ``.resolve()`` on a path outside root is the
+                # same escape a crawling glob would be: unknown, and never
+                # stat'ed to find out (rule 4; was :308).
+                if not all(_lexically_under_root(path, root) for path in paths):
+                    return None
                 return {(path if path.is_absolute() else root / path).resolve() for path in paths}
             if len(node.args) == 1 and not node.keywords:
                 args = _values(node.args[0], scope, root, visiting)
@@ -315,6 +340,11 @@ def _values(node, scope, root, visiting=frozenset()):
                 # Only one-directory globs are finite within the checked tree.
                 # Recursive/escaping patterns remain an unknown dependency;
                 # they must not trigger a filesystem crawl outside this root.
+                # Nor may the base itself be resolved from outside root --
+                # an absolute literal base is the identical escape (rule 4;
+                # was :318), refused lexically before any stat.
+                if not all(_lexically_under_root(path, root) for path in paths):
+                    return None
                 bases = {path.resolve() for path in paths}
                 if (node.func.attr == "glob"
                         and all(base.is_relative_to(root) for base in bases)
@@ -423,6 +453,21 @@ def file_imports(tree, path, root):
         for value in values:
             try:
                 target = Path(value)
+            except (OSError, ValueError):
+                unknown = unknown or wildcard(reading)
+                continue
+            if not _lexically_under_root(target, root):
+                # An absolute (or ``..``-escaping) literal outside root is
+                # the same escape the glob and resolve() guards above
+                # refuse: unknown rather than resolved, so a stalled mount
+                # under the literal's real location never blocks the
+                # selector (rule 4; was :426). This is the one case where
+                # "outside the tree" now reads unknown instead of the
+                # silent drop below, because we no longer pay a resolve()
+                # to tell "genuinely outside" from "a symlink away".
+                unknown = unknown or wildcard(reading)
+                continue
+            try:
                 target = (target if target.is_absolute() else root / target).resolve()
             except (OSError, ValueError):
                 unknown = unknown or wildcard(reading)

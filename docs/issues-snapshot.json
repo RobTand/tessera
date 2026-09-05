@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T18:37:12Z",
+ "generated": "2026-09-05T19:39:57Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -444,7 +444,7 @@
     "title": "Routed-MoE admission: PrismaQuant refuses on smoke.status alone while contract v20 attributes the repetition to the BF16 source (needs-decision)"
    },
    "199": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "test_resume_after_coordinator_death_recovers_owned_helper_receipt: an 8s wall-clock deadline mostly spent on interpreter start, so it flakes with box load"
    },
    "2": {
@@ -464,7 +464,7 @@
     "title": "[P2] _resolve swallows _refuse_dead_vendored_override: a dead vendored override yields DefaultProfile silently instead of refusing by name"
    },
    "202": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] 22 call sites still swallow the dead-vendored-override refusal one level up (#201 follow-up)"
    },
    "203": {
@@ -476,11 +476,11 @@
     "title": "[P0] Bind Tessera export inputs to the actual Hessian and static scales that priced the allocation"
    },
    "205": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Use the served Tessera activation contract in assignment-KL hooks and cache scoring"
    },
    "206": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tests: bound the cluster-campaign waits by producer liveness, not the clock"
    },
    "207": {
@@ -492,7 +492,7 @@
     "title": "#87 first paired quantized campaign: Qwen3-0.6B BF16 control vs native NVFP4 on Sparky, one exclusive action, accept = 0 newly-broken pairs on screen and held-out"
    },
    "209": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Stop swallowing the dead-vendored-override refusal at the remaining 22 call sites (#202)"
    },
    "21": {
@@ -502,6 +502,26 @@
    "210": {
     "state": "OPEN",
     "title": "[P3] Two homes for text-only staging: stage_text_only and stage_text_only_under_work_root duplicate the default strip-key list"
+   },
+   "211": {
+    "state": "OPEN",
+    "title": "Tessera campaign rewrites the export inputs before the resume identity can refuse them"
+   },
+   "212": {
+    "state": "OPEN",
+    "title": "Bind Tessera export inputs to the payload and values that priced the allocation (#204)"
+   },
+   "213": {
+    "state": "CLOSED",
+    "title": "Price the served activation contract from the spec, not the format name (#205)"
+   },
+   "214": {
+    "state": "OPEN",
+    "title": "fill-route-census accepts a flat legacy census that verify then refuses under the pinned scoped table"
+   },
+   "215": {
+    "state": "OPEN",
+    "title": "One home for text-only staging (fixes #210)"
    },
    "22": {
     "state": "CLOSED",
@@ -1702,15 +1722,15 @@
     "title": "[P1] Finalize each worker source identity before xdist sends workerfinished"
    },
    "292": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Preserve helper aliases when a canonical module has the same import name"
    },
    "293": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Treat unreadable importers as unknown dependencies instead of empty modules"
    },
    "294": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Require a real producer and established attempt binding before adopting resumed exit status"
    },
    "295": {
@@ -1718,11 +1738,11 @@
     "title": "[P1] Refuse explicit convolutional codes the artifact reader cannot recover at write time"
    },
    "296": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Refuse completion-carrying TCQ units before packing the span-2 kernel lane"
    },
    "297": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Window GEMV plan sharing accepts incompatible rate layouts and can overrun packed words"
    },
    "298": {
@@ -1730,7 +1750,7 @@
     "title": "Explicit toolkit selection after torch import does not update the compiler the native loaders use"
    },
    "299": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Refuse missing schedule evidence before exempting a screen arm from matched-pair proofs"
    },
    "3": {
@@ -1742,7 +1762,7 @@
     "title": "Measurement runs do not record which compiled build served, and the determinism knob is untested"
    },
    "300": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind legacy shard assembly to the source checkpoint and fulfilled plan"
    },
    "301": {
@@ -1750,11 +1770,11 @@
     "title": "[P1] Keep one plan snapshot from export planning through publication"
    },
    "302": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Invalidate or freeze the Hessian source behind its cached capture seal"
    },
    "303": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Dense TP loading mistakes an undersized wire for a replicated layer when global shape is ignored"
    },
    "304": {
@@ -1762,7 +1782,7 @@
     "title": "[P2] can_shard reports rotated artifacts as cuttable although slice_unit always refuses them"
    },
    "305": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Standalone stock export still leaves fused activation scales for vLLM's clipping-side max reduction"
    },
    "306": {
@@ -1814,7 +1834,7 @@
     "title": "Adopt an explicit CUDA toolkit into the global the build reads (#298)"
    },
    "317": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Two files with one canonical module name: the shadowed file gets no graph node and no edges"
    },
    "318": {
@@ -1822,7 +1842,7 @@
     "title": "ts-wire: refuse unreadable convolutional codes at write (#295); one sliceability predicate (#304)"
    },
    "319": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "experiments: refuse unclassified screen arms (#299) and join the standalone stock A-side scale (#305)"
    },
    "32": {
@@ -1830,12 +1850,28 @@
     "title": "plan_shard refuses replicated-KV QKV under GQA when tp_size > num_kv_heads"
    },
    "320": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: plan a TP shard from the layer's contract, not the tile's shape (#303)"
    },
    "321": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Selector: three under-selections in tools/impacted_tests.py (#292, #293, #317)"
+   },
+   "322": {
+    "state": "CLOSED",
+    "title": "merge_suite: bind a resumed exit status to a named producer and attempt (#294)"
+   },
+   "323": {
+    "state": "CLOSED",
+    "title": "kernel lanes: refuse the COMPLETION plane the span-2 packer does not read (#296); share window GEMV item tables only between one-layout replicas (#297)"
+   },
+   "324": {
+    "state": "CLOSED",
+    "title": "Export seal: prove the capture seal at consumption (#302) and legacy parts against source and plan (#300)"
+   },
+   "325": {
+    "state": "OPEN",
+    "title": "impacted_tests selector resolves literal absolute paths onto NFS and blocks in D state when the mount stalls"
    },
    "33": {
     "state": "CLOSED",

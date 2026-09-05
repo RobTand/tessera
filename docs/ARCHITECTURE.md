@@ -153,7 +153,11 @@ because the conftest does not yet print one; printing the file's SHA-256 beside
 the publication line would let a resume bind on bytes, and that is a change to
 `tests/conftest.py`, not to this reader.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
-that is its whole contract. Every gap in what the graph can prove resolves
+that is its whole contract, and deciding it never stats outside the
+repository root either -- an absolute or `..`-escaping literal path is
+refused by lexical normalization alone, before any `resolve()` or `stat()`,
+so a stalled mount under an out-of-tree literal cannot block the selector
+(#325). Every gap in what the graph can prove resolves
 towards running more tests -- an ambiguous spelling edges to every file it can
 name, a module whose dependencies cannot be established selects its consumers,
 and an unresolvable scope forces the whole suite. A narrowed list is a claim
@@ -199,8 +203,17 @@ Explicit Python file loaders also contribute dependency edges: the non-executing
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path -- and a resolved target outside the tree is neither an
-edge nor an unknown. An unresolved recognized loader conservatively seeds its
+repository-relative path. Whether a literal is even eligible for that resolve
+is decided lexically first: `os.path.normpath` on the literal (joined to root
+when it is relative) must place it under root before `resolve()`/`stat()` ever
+runs, so an absolute literal outside the tree, or one that escapes via `..`,
+is refused there and reads as the same unknown a crawling glob already
+refuses at its boundary -- never stat'ed to find out (#325). Only a target
+the lexical check already places under root is resolved; if that resolve
+then reveals a symlink carrying it back outside the tree, the target is
+still neither an edge nor an unknown, because that case cannot be told apart
+from a legitimate in-tree read without paying the same stat the lexical
+check exists to avoid. An unresolved recognized loader conservatively seeds its
 importing module and downstream tests for every non-inert change; an unresolved
 loader reaching a conftest forces the full population. An unresolved *read* is
 an unknown module only for a module that can parse or execute Python source
