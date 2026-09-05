@@ -652,10 +652,43 @@ case arises it must not be the unverified one.
 **What the encoder writes.** `unit_artifact.build_unit_artifact` declares one
 terminal per unit, of the T-nvfp4 class, so every artifact this tree writes has
 exactly one legal length and the rules below are exercised only by artifacts
-laid out directly (`layout.build_terminal`). A truncatable *encode* needs a
-second change as well: `parse_unit_artifact` reads the scale and body planes at
-counts derived from the geometry rather than at the terminal's declared counts.
-Whether truncatable encodes are a planned capability is tessera#144.
+laid out directly (`layout.build_terminal`).
+
+**Why a second terminal cannot be added to an encode without a wire change.**
+This paragraph is the one home of that rule; the docstrings in `container`,
+`errors`, `layout` and `planes` point here. Measured 2026-09-04
+(`docs/reports/tessera-terminal-ladder-2026-09-04.md`, pinned by
+`tests/test_audit_container_accounting.py::test_no_shorter_terminal_survives_the_wire_on_an_encode`),
+in the order the obstacles are met:
+
+0. The exporter's default path has no rung to shorten. `export.encode_linear_planes`
+   defaults to `completion=0` and `released_positions=0`, and a window body --
+   every E2M1x2 sub-cap, E4M3 and BF16 rung of the recipe table -- refuses any
+   other completion. On all four serialisable grids the written terminal's
+   COMPLETION and RELEASE counts are 0; the planes left are the alphabet, the
+   body and the scale index, none of which decodes without the others.
+1. Where a completion axis exists at all (E2M1, TCQ body, below the cap, with
+   `completion` asked for explicitly), D5 puts `SCALE_REFINE` -- the LUT
+   plane's index nibble -- *after* COMPLETION, so a terminal that shortens
+   COMPLETION by any amount drops the scales, and rule 1 below refuses it:
+   `not a prefix: SCALE_REFINE carries 512 elements after an earlier plane was
+   left incomplete`.
+2. The COMPLETION granule is a superblock of columns at full depth, not a
+   depth level of every column. A shallower reading is the top bits of each
+   per-position word (`decode.reconstruct_unit` shifts them), never a byte
+   prefix of the plane; on one superblock the depth-1 count is refused as `not
+   a per-superblock quota boundary of [0, 8192]`.
+3. Only a terminal that keeps COMPLETION whole and drops `SCALE_REFINE` -- the
+   T-po2 / T-C3 classes on an S6B plane -- passes the manifest (+57-58 manifest
+   bytes per record), and `parse_unit_artifact` then reads `SCALE_REFINE` at the
+   geometry's count and fails in `unpack_uniform`: `need 2048 bits for 512
+   elements of 4 bits, the plane holds 0`. That is the reader obstacle the
+   audit named; it is the third, and no default plane reaches it.
+
+Making an encode truncatable therefore moves the wire twice (the D5 order, and
+a COMPLETION plane cut by depth rather than by superblock) before the reader
+is touched. Whether that is a planned capability or a retired one is
+tessera#144 and is Rob's to price.
 
 1. **Every terminal is a prefix.** In canonical plane order a terminal declares
    full planes, then at most one partially-present plane, then nothing. A

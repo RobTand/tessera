@@ -503,7 +503,8 @@ def build_terminal(
     one terminal per unit, so every artifact this tree writes has exactly one
     legal length and the per-terminal digest is, for now, a second digest over
     the whole region.  It is kept because the ladder is the wire's (doc S6,
-    §3c) and a writer that emits one is what tessera#144 is about.
+    §3c); whether a writer will ever emit one is tessera#144, and the schema's
+    §3c records why the current wire refuses one on an encode.
     """
     if len(spec.completion_bits) != len(rates):
         raise GrammarError(

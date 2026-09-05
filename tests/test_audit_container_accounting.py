@@ -368,3 +368,115 @@ def test_steps_of_searches_the_registry_arities_not_a_hardcoded_pair(monkeypatch
         f"extending SERIALISABLE_GRIDS to {expected2} left the refusal at "
         f"{exc2.value}: the search is a hardcoded pair, not the registry"
     )
+
+
+def test_no_shorter_terminal_survives_the_wire_on_an_encode():
+    """A pin on current behaviour, not a fail-before test (tessera#144, part 2).
+
+    The pin above says the encoder declares one terminal.  This one says why a
+    second, shorter one cannot be *added* to an encode without a wire change,
+    in the order the obstacles are met -- so the day the wire moves, the line
+    that fires here names which obstacle moved.  Measured on the one place the
+    recipe table still writes a completion axis at all (E2M1, TCQ body, below
+    the cap, with ``completion`` asked for explicitly: the exporter's default
+    is ``completion=0`` and a window body refuses any other value):
+
+    1. Canonical plane order (schema D5) puts the scale index plane
+       ``SCALE_REFINE`` -- the LUT plane's nibble, which nothing decodes without
+       -- *after* COMPLETION.  A terminal that shortens COMPLETION by any amount
+       therefore has to drop the scales, and the manifest refuses it as not a
+       prefix.  ``t-c1`` on two superblocks below shows the cut is at a legal
+       granule boundary and still refused.
+    2. The COMPLETION granule is a superblock of columns at full depth, not a
+       depth level of every column: a shallower reading is the top bits of
+       each per-position word (``decode.reconstruct_unit`` shifts them), never
+       a byte prefix of the plane.  ``t-c1`` on one superblock shows the
+       depth-1 count is not a quota boundary.
+    3. Only a terminal that keeps COMPLETION whole and drops SCALE_REFINE
+       passes the manifest -- the schema's T-po2/T-C3 classes on an S6B plane --
+       and the reader then reads SCALE_REFINE at the geometry's count and fails
+       in ``unpack_uniform``.  That is the obstacle the issue named; it is the
+       third, and the exporter's default planes (LUT, CHANNEL) never reach it.
+
+    ``experiments/tessera_embedded_ladder.py`` measured what the axis is worth
+    (weight-space, E2M1x2 under the TCQ body the recipe table has since left):
+    a truncated reading costs 1.03-1.28x over an encode at that depth.  What
+    the ladder would add is bytes-on-disk for that reading; the reading itself
+    is already available from a full artifact via ``completion=``.
+    """
+    import dataclasses
+
+    from tessera.alphabet import SERIALISABLE_GRIDS
+    from tessera.export import encode_linear_planes, tcq_cap_q256
+    from tessera.grammar import completion_capacity
+    from tessera.layout import TerminalSpec, build_terminal
+    from tessera.manifest import ManifestError, ScalePlaneKind
+    from tessera.planes import PlaneKind
+    from tessera.unit_artifact import read_unit_artifact
+
+    torch.manual_seed(0)
+
+    # The exporter's default path writes an empty completion axis and an
+    # empty release plane on every serialisable grid, so no rate rung exists
+    # to declare a shorter terminal for.
+    for grid in SERIALISABLE_GRIDS.values():
+        exported, _, _ = encode_linear_planes(
+            torch.randn(16, 256) * 0.02, grid=grid, q256=tcq_cap_q256(grid) // 2,
+            name="u",
+        )
+        manifest = parse(exported.blob).manifest
+        wire = manifest.plane_order
+        counts = manifest.terminals[0].plane_elements
+        assert counts[wire.index(PlaneKind.COMPLETION)] == 0, grid.name
+        assert counts[wire.index(PlaneKind.RELEASE)] == 0, grid.name
+
+    e2m1 = next(g for g in SERIALISABLE_GRIDS.values() if g.name == "E2M1")
+    cap = e2m1.rate_cap
+
+    def encoded(columns, **kwargs):
+        exported, _, _ = encode_linear_planes(
+            torch.randn(16, columns) * 0.02, grid=e2m1, q256=256, name="u",
+            completion=None, **kwargs,
+        )
+        art = parse(exported.blob)
+        return art, art.manifest, art.manifest.terminals[0]
+
+    def shorter(art, manifest, spec):
+        wire = manifest.plane_order
+        alphabet = manifest.terminals[0].plane_elements[wire.index(PlaneKind.ALPHABET)]
+        descendant = manifest.terminals[0].plane_elements[wire.index(PlaneKind.DESCENDANT)]
+        short = build_terminal(
+            manifest.geometry, manifest.rates, spec, manifest.planes, alphabet,
+            descendant, plane_region=art.plane_region, cap=cap,
+            arity=e2m1.arity, span=manifest.span,
+        )
+        ladder = dataclasses.replace(manifest, terminals=(manifest.terminals[0], short))
+        blob = serialize(ladder, art.plane_region)
+        return blob[: len(blob) - (len(art.plane_region) - short.exact_bytes)]
+
+    def depth(c, rates, **flags):
+        return TerminalSpec(
+            f"t-c{c}", tuple(min(c, completion_capacity(r, cap)) for r in rates), **flags
+        )
+
+    # 1. The default LUT plane: every shorter completion drops the scale index.
+    art, manifest, full = encoded(512)
+    wire = manifest.plane_order
+    assert full.plane_elements[wire.index(PlaneKind.COMPLETION)] == 16384
+    assert list(manifest.plane(PlaneKind.COMPLETION).counts) == [8192, 8192]
+    lut = dict(with_scale_base=False, with_scale_refine=True)
+    for c in (0, 1):
+        with pytest.raises(ManifestError, match="not a prefix: SCALE_REFINE carries"):
+            shorter(art, manifest, depth(c, manifest.rates, **lut))
+
+    # 2. One superblock: the depth-1 count is not a granule boundary at all.
+    art, manifest, _ = encoded(256)
+    with pytest.raises(ManifestError, match="not a per-superblock quota boundary"):
+        shorter(art, manifest, depth(1, manifest.rates, **lut))
+
+    # 3. The S6B plane's T-C3 class passes the manifest and fails in the reader.
+    art, manifest, _ = encoded(512, scale_plane=ScalePlaneKind.S6B)
+    t_c3 = depth(cap, manifest.rates, with_scale_base=True, with_scale_refine=False)
+    cut = shorter(art, manifest, t_c3)
+    with pytest.raises(GrammarError, match="need 2048 bits for 512 elements of 4 bits"):
+        read_unit_artifact(cut)

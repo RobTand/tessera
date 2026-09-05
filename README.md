@@ -148,7 +148,8 @@ The exhaustive tests are the point. Four results worth naming:
   and nothing checked. Scope: this is the layout and container layer. The
   encoder declares one terminal per unit, so no artifact Tessera ships is
   truncatable today; the ladder is exercised by artifacts the tests lay out
-  directly (tessera#144).
+  directly, and the wire itself refuses a shorter terminal added to an encode
+  (schema §3c; tessera#144).
 
 - **All 65,536 §6b words classified**, legal-set digest frozen at
   `da398624…a1b3`. The codec reaches **all seven** positive E4M3FN subnormals
