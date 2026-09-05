@@ -47,10 +47,14 @@ import torch
 from .alphabet import (
     GAUSSIAN_SOURCE, SERIALISABLE_GRIDS, PayloadGrid, build_forest, grid_digest,
 )
+from .container import SCHEMA_MINOR
 from .decode import reconstruct_unit
 from .encode import EncodedUnit, encode_unit
 from .errors import GrammarError
 from .grammar import Q256_UNIT, bresenham_rate_schedule
+# The TP-agnosticism rule lives with the cutter (``tessera.slicing``, re-exported
+# lazily here); the exporter reads it rather than restating it.
+from .layout import tp_agnostic_at_minor
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import ConvCode
 from .encoder_identity import encoder_fixture_id, stamped_fixture_id
@@ -1860,7 +1864,7 @@ CONFIG_ENCODING_FIELDS = (
     "scale.sigma",
     "wire.recipes",
     "rotation", "with_diagonals", "route_status", "requires_serve_flags",
-    "tp_size",
+    "schema_minor", "tp_agnostic",
 )
 
 #: Not compared across parts, and for two different reasons.  ``accounting``
@@ -2013,12 +2017,20 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "with_diagonals": bool(with_diagonals),
         "route_status": "unbacked",
         "requires_serve_flags": [],
-        # A unit is one trellis blob, not a sliceable tensor: the path runs down
-        # rows within a column, so a row-parallel split cuts the trellis along
-        # its own state. EXL3 narrows tensor dims and is TP-agnostic; Tessera
-        # must be *re-encoded* per rank, which makes an artifact TP-specific.
-        # Declared so a loader cannot quietly use it at the wrong degree.
-        "tp_size": 1,
+        # The container schema minor these bytes are written at, and what it
+        # admits.  ``tp_agnostic`` is DERIVED from the minor beside it by
+        # ``layout.tp_agnostic_at_minor`` -- the one home of that rule, which
+        # lives with the cutter -- and never typed: what the exporter knows is
+        # whether the bytes it just wrote are sliceable at load, which is a
+        # property of the wire (minor 4 appended the shard record and the
+        # INITIAL_STATE plane) and not of any TP degree an operator passes.
+        # The exporter never learns that degree.  ``serving.sharding.
+        # require_a_cuttable_artifact`` reads this declaration back at load and
+        # refuses a world size above one against bytes that cannot be cut,
+        # which is the gate the ``tp_size: 1`` this replaces only described
+        # (tessera#328).
+        "schema_minor": SCHEMA_MINOR,
+        "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR),
         "accounting": {
             "quantized_params": report.quantized_params,
             "quantized_bytes": report.quantized_bytes,

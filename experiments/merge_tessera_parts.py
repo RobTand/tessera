@@ -116,7 +116,18 @@ def driver_fields(configs):
 #: this config can tell them apart.  The guard compares the stamped strings and
 #: never computes an identity of its own -- only a process that is about to
 #: encode pays for that.
-SHARED_WHEN_WRITTEN = ("wire.recipes", "encoder_fixture_id")
+#:
+#: ``schema_minor`` and ``tp_agnostic`` (tessera#328) are here for exactly the
+#: same reason and NOT in :func:`shared_fields`: a part written before
+#: 2026-09-05 carries ``tp_size: 1`` instead, and requiring the new names of
+#: every part would make every part already on disk unmergeable -- the failure
+#: mode #137 fixed for the driver fields.  Under this rule a set of legacy
+#: parts merges unchanged (their ``tp_size`` is compared as a driver field --
+#: no exporter writes it any more -- and they agree on it), a set of fresh
+#: parts is compared on the new names, and a legacy part mixed with a fresh one
+#: is refused as two exporters, which it is.
+SHARED_WHEN_WRITTEN = ("wire.recipes", "encoder_fixture_id",
+                       "schema_minor", "tp_agnostic")
 
 #: The flat projections of the recipe table.  They describe the rungs a
 #: part *used*, so two parts of one checkpoint may legitimately differ on
@@ -240,6 +251,12 @@ def check_configs(parts):
                     "the recipe is compared through its flat projection only",
                 "encoder_fixture_id":
                     "whether one encoder cut both parts is unrecorded",
+                "schema_minor":
+                    "which container schema minor these bytes were written at "
+                    "is unrecorded",
+                "tp_agnostic":
+                    "whether a rank can cut a shard out of these bytes is "
+                    "unrecorded, so a loader refuses them above one rank",
             }[field]
             print(f"note: no part carries {field!r} (written by later "
                   f"exporters); {unchecked}")

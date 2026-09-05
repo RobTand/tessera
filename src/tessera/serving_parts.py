@@ -284,6 +284,15 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     source_config = json.loads((source / "config.json").read_text())
     source_config.pop("quantization_config", None)
     base_format = loaded[0][4]["quantization_config"]["format"]
+    # What the merged artifact says about slicing is what every part said, and
+    # a part that says nothing is not overridden into saying something: the
+    # keys travel only when the first part carries them, every part must agree,
+    # and a merge of parts written before the declaration existed produces an
+    # artifact that declares nothing -- which the loader gate then refuses
+    # above one rank rather than reading as permission (tessera#328).
+    base_slicing = {k: loaded[0][4]["quantization_config"][k]
+                    for k in ("schema_minor", "tp_agnostic")
+                    if k in loaded[0][4]["quantization_config"]}
     modules, groups, weight_map, copies = {}, {}, {}, []
     ignore, covered = set(), set()
     passthrough_bytes = 0
@@ -298,6 +307,12 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
             raise ValueError(f"partition {rank}: model config disagrees with source identity")
         if qconfig["quant_method"] != "tessera" or qconfig["format"] != base_format:
             raise ValueError("partition quantization config disagrees")
+        if {k: qconfig[k] for k in ("schema_minor", "tp_agnostic")
+                if k in qconfig} != base_slicing:
+            raise ValueError(
+                f"partition {rank}: the parts disagree about what their bytes admit at load "
+                "(schema_minor / tp_agnostic) -- they were written by different exporters, "
+                "and a merged artifact may not declare more than every part of it does")
         declarations = {target for group in qconfig["config_groups"].values() for target in group["targets"]}
         if declarations != set(manifest["modules"]):
             raise ValueError(f"partition {rank}: config targets disagree with manifest modules")
@@ -338,6 +353,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
                            source_tensors=expected_source)
     config = copy.deepcopy(source_config)
     config["quantization_config"] = {"quant_method": "tessera", "format": base_format,
+                                      **base_slicing,
                                       "config_groups": groups, "ignore": sorted(ignore)}
     manifest = copy.deepcopy(loaded[0][3])
     manifest.pop("export_partition")

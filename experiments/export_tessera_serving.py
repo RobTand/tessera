@@ -150,6 +150,8 @@ from export_stock_compressed import (  # noqa: E402
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
 from tessera.bf16_route import BF16_FAMILY  # noqa: E402
+from tessera.container import SCHEMA_MINOR  # noqa: E402
+from tessera.layout import tp_agnostic_at_minor  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, wire_recipe)
@@ -2093,6 +2095,19 @@ def main():
         # something; the label stays generic and the record below says what the
         # predicate resolves to and why (#92).
         "quant_method": "tessera", "format": MIXED_PRECISION,
+        # What these bytes admit at load, not what degree they were built for
+        # -- this exporter never learns one.  ``schema_minor`` is the wire
+        # these units are written at and ``tp_agnostic`` is derived from it by
+        # ``tessera.layout.tp_agnostic_at_minor``, the one home of the rule;
+        # ``tessera.serving.config.TesseraConfig._require_a_cutter`` reads them
+        # back and refuses a world size above one against an artifact that
+        # declares neither (tessera#328).  What the packaged
+        # ``runtime_contract.json`` publishes about tensor parallelism is a
+        # separate question with a separate answer (tessera#330: nothing about
+        # the replication rule, deliberately); this is the artifact's own
+        # statement about its own bytes.
+        "schema_minor": SCHEMA_MINOR,
+        "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR),
         "config_groups": config_groups, "ignore": ignore,
     }
     tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)

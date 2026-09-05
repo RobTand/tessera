@@ -48,7 +48,45 @@ __all__ = [
     "slice_unit",
     "shard_granularity",
     "can_shard",
+    "unsliceable_reason",
+    "SLICEABLE_SCHEMA_MINOR",
+    "tp_agnostic_at_minor",
 ]
+
+
+#: The container schema minor at which a cut of a whole unit became
+#: *expressible on the wire*, and so the minor from which an artifact is
+#: TP-agnostic.  Minor 4 (2026-09-02, tessera#7) appended the shard record
+#: (``manifest.ShardOrigin``: the offsets and extent of the original a rank
+#: cut from) and the ``INITIAL_STATE`` plane -- one element per column
+#: carrying the trellis state that column starts from, which is the one fact
+#: a stream entered below row 0 cannot recover.  Below it the wire has no way
+#: to say "this is a window of another unit", so a rank's shard could not be
+#: written back out at all and one artifact per TP degree was the only
+#: arrangement (``docs/tessera-serving-and-moe-contract.md`` §7.1, superseded).
+SLICEABLE_SCHEMA_MINOR = 4
+
+
+def tp_agnostic_at_minor(schema_minor: int) -> bool:
+    """Can bytes written at this container schema minor be cut at load?
+
+    THE ONE HOME of the TP-agnosticism rule, and the reason it is a function
+    of the schema minor and of nothing else: what decides whether a rank can
+    take its own slice is whether the wire can *express* a shard, and that is
+    a property of the bytes, never of anything an operator passes.  The
+    exporter therefore never learns the TP degree -- it stamps what these
+    bytes admit (``export._write_config``'s ``tp_agnostic``) -- and the
+    loader gate reads that declaration back
+    (``tessera.serving.sharding.require_a_cuttable_artifact``).
+
+    It is stated here, beside the cutter, rather than in either caller's
+    comment, because a rule restated at a writer and at a reader is two rules
+    that will drift -- which is exactly what happened to the sentence this
+    one replaces (tessera#328: the exporter's comment asserted the artifact
+    was TP-*specific* for four days after ``slice_unit`` inverted it, and the
+    load-time gate it promised did not exist).
+    """
+    return int(schema_minor) >= SLICEABLE_SCHEMA_MINOR
 
 
 @dataclass
@@ -318,6 +356,26 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
         raise GrammarError(f"tp must be positive, got {tp}")
     if axis not in ("row", "column"):
         raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
+    unit, rows, cols, block, rotation, superblock, arity = _slicing_facts(
+        unit, superblock, arity
+    )
+    if _unsliceable_reason(rotation, block, cols) is not None:
+        return False
+    row_gran, col_gran = shard_granularity(unit, superblock, arity)
+    extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
+    return extent % tp == 0 and (extent // tp) % granularity == 0
+
+
+def _slicing_facts(unit, superblock: int, arity: int):
+    """The five facts every view of a unit yields, plus the unwrapped unit.
+
+    ``(unit, rows, columns, block, rotation, superblock, arity)``.  An
+    ``EncodedUnit``, a ``ParsedUnit`` and a bare ``Manifest`` all answer these,
+    by different routes, and reading them in ONE place is what keeps
+    :func:`can_shard` and :func:`unsliceable_reason` answering about the same
+    unit: the two used to be one function, and a second copy of this stanza
+    beside the other is how a predicate and a reason drift apart.
+    """
     from .manifest import Manifest, ScalePlaneKind as _Kind
 
     if isinstance(unit, Manifest):
@@ -337,11 +395,28 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
         rows = steps * arity
         block = _scale_columns_per_row(unit)
         rotation = getattr(unit, "rotation", RotationState.NONE)
-    if _unsliceable_reason(rotation, block, cols) is not None:
-        return False
-    row_gran, col_gran = shard_granularity(unit, superblock, arity)
-    extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
-    return extent % tp == 0 and (extent // tp) % granularity == 0
+    return unit, rows, cols, block, rotation, superblock, arity
+
+
+def unsliceable_reason(unit, superblock: int = 256, arity: int = 1) -> "str | None":
+    """WHY no cut of ``unit`` is expressible, or ``None`` when some cut is.
+
+    :func:`can_shard`'s companion, and the answer it discards.  ``can_shard``
+    returns ``False`` for two quite different populations: a unit no cut of
+    which is expressible at all (rotation, a straddling scale block --
+    :func:`_unsliceable_reason`), and a unit whose wire is fine but whose
+    *granularity* does not divide the requested split.  Only the second has a
+    ``tensor_parallel_size`` remedy, and a caller that could not tell them
+    apart offered a divisor for a unit no divisor can cut (tessera#329).
+
+    Takes the same three shapes of argument ``can_shard`` does and reads them
+    through the same :func:`_slicing_facts`, so "``can_shard`` said no and this
+    says why" is one reading of one unit, not two.
+    """
+    _unit, _rows, cols, block, rotation, _sb, _ar = _slicing_facts(
+        unit, superblock, arity
+    )
+    return _unsliceable_reason(rotation, block, cols)
 
 
 def _unwrap(unit, superblock: int, arity: int):
