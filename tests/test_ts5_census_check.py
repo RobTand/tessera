@@ -36,6 +36,19 @@ def _checker():
     return module
 
 
+def test_census_cli_resolves_its_own_tools_beside_another_repository(tmp_path):
+    """A regular tools package elsewhere must not hide this checkout's gate."""
+    other = tmp_path / "tools"
+    other.mkdir()
+    (other / "__init__.py").write_text("")
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "experiments" / "ts5_census_check.py"), "--help"],
+        cwd=tmp_path, env={**os.environ, "PYTHONPATH": str(tmp_path)},
+        capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert "--census" in result.stdout
+
+
 def _fixture():
     plan = {name: {"grid": "E4M3", "q256": 1024} for name in TARGETS}
     plan["model.layers.0.conv.in_proj.weight"] = "PASSTHROUGH"
