@@ -720,3 +720,65 @@ def test_the_out_instrument_accumulates_into_the_callers_buffer():
     ref = ((w * scale[:, None]).double() @ x.double().t()).t()
     assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all())
     assert torch.equal(scratch[3], torch.zeros(unit.rows, device="cuda"))   # the pad row stays zero
+
+
+# ---------------------- device ownership (issue #241) ------------------------
+#
+# The native entry points take the unit's device from the tensors, guard it,
+# and use ITS current stream; the shared-memory opt-in is recorded per device.
+# Both defects need a second CUDA device to manifest, so these tests skip on a
+# one-GPU box (the GB10 boxes that ran this branch) -- they are the regression
+# a two-GPU box runs, not a proof this branch produced on one.
+
+two_gpus = pytest.mark.skipif(torch.cuda.device_count() < 2,
+                              reason="needs two CUDA devices")
+
+
+@cuda
+@two_gpus
+def test_the_gemv_runs_a_unit_on_a_non_current_device():
+    """A cuda:1 unit called while cuda:0 is current must launch on cuda:1 --
+    pre-#241 the kernel went to the current device's stream with cuda:1
+    pointers.  Mixed-device inputs are refused by name."""
+    kg = _kg()
+    rows, cols = 1000, 320
+    rates = (4,) * cols
+    with torch.cuda.device(0):
+        body, codes = _synthetic(rows, cols, rates, seed=51, device="cuda:1")
+        scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+        unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.5))
+        assert unit.rep.words.device == torch.device("cuda", 1)
+        tile, scale = kg.decode_fp8(unit)                       # window_decode, guarded
+        assert torch.equal(tile, _reference_bytes(body, rates, codes))
+        w = tile.view(torch.float8_e4m3fn).float()
+        x = torch.randn(1, cols, device="cuda:1").bfloat16()
+        y = kg.window_gemv(unit, x)
+        assert y.device == torch.device("cuda", 1)
+        ref = (w * scale[:, None]).double() @ x.double().t()
+        assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x).to(y.device)).all())
+        with pytest.raises(RuntimeError, match="share one CUDA device"):
+            kg.window_gemv(unit, x.to("cuda:0"))
+
+
+@cuda
+@two_gpus
+def test_the_shared_memory_opt_in_is_granted_per_device():
+    """M=2 over a bf16 table asks for 53,376 bytes of dynamic shared memory,
+    above the 48 KiB default.  After device 0 has been granted it, the same
+    launch on device 1 needs ITS OWN ``cudaFuncSetAttribute`` -- pre-#241 a
+    per-instantiation static skipped it and the second device's launch
+    failed."""
+    kg = _kg()
+    rows, cols = 1000, 640
+    rates = (4,) * cols
+    for dev in (0, 1):
+        device = f"cuda:{dev}"
+        body, codes = _synthetic(rows, cols, rates, seed=52 + dev, device=device)
+        scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+        unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.5), M=2)
+        tile, scale = kg.decode_fp8(unit)
+        w = tile.view(torch.float8_e4m3fn).float()
+        x = torch.randn(2, cols, device=device).bfloat16()
+        y = kg.window_gemv(unit, x)
+        ref = (w * scale[:, None]).double() @ x.double().t()
+        assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x).to(y.device)).all()), device
