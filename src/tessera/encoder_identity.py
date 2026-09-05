@@ -54,33 +54,32 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Six narrower blind spots, named because a reader would otherwise assume them
-covered.  The first two are *surfaces no fixture reaches* (tessera#143), and
+Five narrower blind spots, named because a reader would otherwise assume them
+covered.  The first is a *surface no fixture reaches* (tessera#143), and
 they are stated first because they are the ones a reader is likeliest to assume
 away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
 structure, and "shipping" is doing load-bearing work in that sentence.
 
-* **The RELEASE plane.**  ``encode_linear`` has no ``released_positions``
-  keyword, so no fixture can carry a release at all; the placement rule lives
-  in ``encode._canonical_release_order`` and moves nothing here.
 * **Shards.**  ``slicing.slice_unit`` is a second byte-producing path -- the
   INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
   descriptor -- and nothing an encode alone produces, so no fixture reaches it.
 
-``experiments/audit_byte_baseline.py`` covers both: its ``layout`` matrix
+``experiments/audit_byte_baseline.py`` covers it: its ``layout`` matrix
 and its release rows write every plane a reader reads, and
 ``tests/test_audit_byte_baseline.py`` derives that claim from
 ``planes.SHARD_PLANE_ORDER`` rather than restating it.  It is the *offline*
 instrument, run either side of a change on purpose; closing a surface here
 instead makes it always-on, and is what the S6b case below does.
 
-Three are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
+Four are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
 recipe selects, through the same caller-facing ``scale_plane=`` override an S6b
 artifact is written by, so ``encode._pack_scales`` and ``encode._refit_scales``
 now move this digest; ``e2m1-768/diagonals`` does the same for segment 2a, so
 ``diagonals.fit_diagonals`` does too; and ``e2m1-256/completion`` spends the
 second rate axis at a rung with headroom, so ``encode._completion_choice`` is
-offered more than one descendant and its pick reaches bytes.  Each costs
+offered more than one descendant and its pick reaches bytes; and
+``e2m1-768/release`` carries a release, which ``encode_linear`` has no keyword
+for, so ``encode._canonical_release_order`` moves this digest too.  Each costs
 nothing anyone can measure -- the first two encode on a plan the E2M1 case
 already built, the third builds the small forests one rung lower -- and each
 re-bases nothing, because it carries a ``compatibility_baseline`` (the third
@@ -264,6 +263,20 @@ _DIAGONALS_BASELINE = (
     "585a857c3c97b618c8d8921325d65c333a5274fc3f016cef119f884f878c5189"
 )
 
+#: How many of the fixture's 2048 positions carry a 4-bit release override.
+#: A declared input, like the seed and the rungs: one release per eight
+#: positions, enough that ``_canonical_release_order``'s descending-magnitude
+#: order runs over a non-trivial prefix.  The fixture is 128 columns wide and a
+#: superblock is 256, so it holds exactly one -- the quota's *spread* across
+#: superblocks is the byte matrix's 512/640/320-column release rows to cover,
+#: and this covers the placement and the plane.
+FIXTURE_RELEASES = 256
+
+#: The RELEASE plane, the same way (tessera#143).
+_RELEASE_BASELINE = (
+    "c4e32d4ead731314b1d22081a6a2aeef0a6e1da9671874e5c9c2a6c6812c7075"
+)
+
 #: The completion axis, the same way (tessera#143).
 _COMPLETION_BASELINE = (
     "6eefb0383789d3532c957e9b6a828a8b3a7947686e5d2f6979e383d5520c76ca"
@@ -420,6 +433,12 @@ class Fixture:
     #: wire never writes.  Spelled unwritable, so the shared class default
     #: cannot be mutated by a caller that thinks it holds its own dict.
     encode: "MappingProxyType" = MappingProxyType({})
+    #: Positions to release, or ``None`` for no release at all.  ``encode_linear``
+    #: has no ``released_positions`` keyword -- the exporter cannot write a
+    #: released unit -- so this one case assembles the exporter's own
+    #: ``encode_unit`` call instead, and a test pins that assembly against
+    #: ``encode_linear`` at zero releases so it cannot drift from it.
+    released_positions: "int | None" = None
 
     @property
     def grid(self):
@@ -444,7 +463,7 @@ class Fixture:
         on the E2M1 wire covers SCALE_BASE and covers ``(E2M1, TCQ, LUT16)``
         not at all.
         """
-        return not self.encode
+        return not self.encode and self.released_positions is None
 
     @property
     def structure(self) -> tuple:
@@ -532,6 +551,17 @@ def fixtures() -> "tuple[Fixture, ...]":
             encode=MappingProxyType({"completion": 2}),
             compatibility_baseline=_COMPLETION_BASELINE,
         ),
+        # The RELEASE plane (tessera#143).  ``export.encode_linear`` has no
+        # ``released_positions`` keyword at all, so no case above can carry a
+        # release and the placement rule in ``encode._canonical_release_order``
+        # moved nothing here.  It rides the E2M1 rung the cases above already
+        # plan for -- ``tcq_cap_q256(E2M1)`` is that same 768 -- so it costs one
+        # encode and no forest.
+        Fixture(
+            "e2m1-768/release", "E2M1", 768,
+            released_positions=FIXTURE_RELEASES,
+            compatibility_baseline=_RELEASE_BASELINE,
+        ),
     )
 
 
@@ -584,6 +614,8 @@ def _fixture_blob(case: Fixture) -> bytes:
     from .export import ActivationSource, encode_linear, wire_recipe
     from .manifest import ScalePlaneKind
 
+    if case.released_positions is not None:
+        return _release_blob(case)
     weight = _unraised_boundary_fixture()[0] if case.unraised_boundary \
         else _fixture_weight()
     kwargs: dict = {}
@@ -616,6 +648,51 @@ def _fixture_blob(case: Fixture) -> bytes:
         **case.encode,
     )
     return exported.blob
+
+
+def _release_blob(case: Fixture) -> bytes:
+    """A released unit's bytes: the one encode ``encode_linear`` cannot express.
+
+    ``encode_linear_planes`` exposes no ``released_positions``, so this
+    assembles the call it would make -- the same recipe, the same plan, the
+    same exporter defaults, read off ``export`` rather than restated -- and
+    adds the release.  ``test_the_release_fixture_is_the_exporters_own_call``
+    pins the assembly by encoding it at zero releases and comparing to
+    ``encode_linear`` byte for byte, so a new exporter default cannot leave
+    this call behind silently.
+    """
+    from .encode import encode_unit
+    from .export import (
+        DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF, DEFAULT_SCALE_REFIT,
+        _plan_for, wire_recipe,
+    )
+    from .manifest import ScalePlaneKind
+    from .unit_artifact import build_unit_artifact
+
+    recipe = wire_recipe(case.grid, case.q256)
+    sigma = (
+        recipe.channel_sigma
+        if recipe.scale_plane is ScalePlaneKind.CHANNEL else None
+    )
+    rates, forests = _plan_for(
+        case.grid, case.q256, FIXTURE_COLS, recipe.body, sigma
+    )
+    unit = encode_unit(
+        _fixture_weight(), forests, rates, DEFAULT_CODE,
+        completion=0, released_positions=case.released_positions,
+        group=DEFAULT_GROUP, half=DEFAULT_HALF,
+        scale_refit=DEFAULT_SCALE_REFIT, span=recipe.span,
+        scale_plane=recipe.scale_plane,
+        # The exporter's weighting, for the reason ``_fixture_blob`` states.
+        trellis_weighting="scale",
+        body=recipe.body, window_bits=recipe.window_bits,
+        window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+        channel_sigma=recipe.channel_sigma,
+    )
+    _manifest, _region, blob = build_unit_artifact(
+        unit, case.label, forests, case.q256 * case.grid.arity, DEFAULT_CODE,
+    )
+    return blob
 
 
 def _encode_fixture(case: Fixture) -> bytes:

@@ -351,6 +351,62 @@ def test_the_identity_sees_the_completion_axis(identity, monkeypatch):
     assert moved != identity
 
 
+def test_the_identity_sees_the_release_placement(identity, monkeypatch):
+    """tessera#143: the plane the exporter has no keyword for.
+
+    ``encode._canonical_release_order`` runs only when ``released_positions``
+    is set, and before ``e2m1-768/release`` existed no fixture could set it --
+    ``encode_linear`` takes no such argument. Reversing the order is a real
+    placement change: the reader regenerates this order from the placed count,
+    so a different order is a different set of protected positions.
+    """
+    import tessera.encode as enc
+
+    plain = enc._canonical_release_order
+    calls = []
+
+    def reversed_order(decoded, cols, superblock, total):
+        calls.append(1)
+        return plain(decoded, cols, superblock, total).flip(0)
+
+    monkeypatch.setattr(enc, "_canonical_release_order", reversed_order)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, (
+        "no fixture released a position, so the placement rule was never asked "
+        "for an order"
+    )
+    assert moved != identity
+
+
+def test_the_release_fixture_is_the_exporters_own_call():
+    """The one hand-assembled encode, pinned against the exporter's.
+
+    ``encode_linear`` cannot express a release, so the release fixture builds
+    the ``encode_unit`` call itself -- which is a re-implementation, and a
+    re-implementation drifts. At zero releases the two paths must agree byte
+    for byte, so a keyword the exporter starts passing and this call does not
+    fails here instead of silently pricing a different encoder.
+    """
+    case = next(c for c in ei.fixtures() if c.released_positions is not None)
+    with ei._fixture_build():
+        hand_assembled = ei._fixture_blob(
+            dataclasses.replace(case, released_positions=0)
+        )
+        exporter = ei._fixture_blob(
+            dataclasses.replace(case, released_positions=None)
+        )
+    assert hand_assembled == exporter
+
+
+def test_the_release_fixture_actually_places_releases():
+    """Non-vacuity: zero releases would make the perturbation above a no-op."""
+    from tessera.planes import PlaneKind
+
+    case = next(c for c in ei.fixtures() if c.released_positions is not None)
+    assert PlaneKind.RELEASE in _written_planes(case)
+
+
 def test_an_override_fixture_is_not_counted_as_wire_coverage():
     """A case that overrides the encode writes different planes than the wire.
 
@@ -362,7 +418,14 @@ def test_an_override_fixture_is_not_counted_as_wire_coverage():
     s6b = next(c for c in ei.fixtures() if c.label == "e2m1-768/s6b")
     assert s6b.structure in ei.shipping_structures()
     assert not s6b.covers_wire
-    assert all(c.covers_wire for c in ei.fixtures() if not c.encode)
+    # And it is a different encode, measured: the wire case at the same
+    # structure writes a different set of planes, which is the whole reason
+    # one cannot stand in for the other.
+    wire_case = next(
+        c for c in ei.fixtures()
+        if c.covers_wire and c.structure == s6b.structure
+    )
+    assert _written_planes(s6b) != _written_planes(wire_case)
 
 
 def test_the_structure_set_is_read_off_the_owning_modules():
