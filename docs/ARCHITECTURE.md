@@ -431,6 +431,19 @@ unexpected shell failure. Successful removal is remembered so normal exit
 preserves the collected log. The wrapper releases its serve lock only after
 removal succeeds; failed cleanup retains ownership and refuses certification.
 
+`experiments/serve_metrics.sh` owns the speculative-decoding refusal for every
+wrapper that dumps logprobs (`serve_and_dump_kl.sh`, `decode_regime_kl.sh`,
+`tessera_plugin_served.sh`): spec-decode makes `/v1/completions` return the
+draft model's numbers, so a serve publishing `vllm:spec_decode` may not be
+measured. The check fetches the **complete** `/metrics` response to a file and
+greps the file — never `curl | grep -q`, which cannot detect the condition it
+owns, because `grep -q` exits at the first match, curl then fails its write,
+and under `set -o pipefail` the `if` reads false and the wrapper dumps anyway
+(tessera#247, the same early-consumer-exit already fixed in the startup-log
+gate). A transport failure, a non-200 and an empty body each refuse: a serve
+that cannot be asked is not a serve without spec-decode. The response the gate
+read is kept beside the serve log as the evidence for that verdict.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and

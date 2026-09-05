@@ -142,8 +142,13 @@ for i in $(seq 1 240); do
   fi
   sleep 10
 done
-if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
-  echo "REFUSED: spec-decode active"; reap; exit 2
+# The shared gate (tessera#247): the complete metrics response into a file,
+# then grepped there.  The piped form this replaces could not detect the
+# condition it owns -- `grep -q` exits at the first match, curl fails its
+# write, and under pipefail the `if` reads false.
+source "$(dirname "$0")/serve_metrics.sh"
+if ! serve_require_no_spec_decode "$PORT" "$RUNS/metrics-$ARM.txt"; then
+  reap; exit 2
 fi
 
 snap() {  # stage-name

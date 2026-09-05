@@ -100,8 +100,13 @@ for i in $(seq 1 240); do
   fi
   sleep 10
 done
-if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
-  echo "REFUSED: spec-decode active"; docker rm -f "$NAME" >/dev/null; exit 2
+# The shared gate (tessera#247): the complete metrics response into a file,
+# then grepped there.  A fetch failure or an HTTP error refuses too -- it used
+# to take the same branch as "no marker present".
+source "$(dirname "$0")/serve_metrics.sh"
+if ! serve_require_no_spec_decode "$PORT" "$RUNS/metrics_$ARM.txt"; then
+  docker logs "$NAME" > "$LOG" 2>&1 || true
+  docker rm -f "$NAME" >/dev/null; exit 2
 fi
 # greedy smoke first: the answer to the other arms' prompt
 curl -s "http://127.0.0.1:${PORT}/v1/completions" -H 'content-type: application/json' \
