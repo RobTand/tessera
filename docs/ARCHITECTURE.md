@@ -306,6 +306,24 @@ see an **encoder** change: same arguments, different bytes out. That gap
 merged two differently-encoded halves once already (issue #78), and closing it
 is issue #101.
 
+Because the profile id is a *digest* of those arguments, two of them — the
+convolutional code and the payload grid — have no field of their own, and the
+reader recovers them only by recomputing the digest over a closed search
+(`trellis.replayable_codes` × `alphabet.SERIALISABLE_GRIDS`). So the roster the
+reader searches is what the writer may publish, and since tessera#295 that is
+one predicate with one home: `build_unit_artifact` refuses a TCQ body whose
+`ConvCode` is outside `trellis.require_replayable_code` — by memory order and
+octal generators, at the serialization boundary — instead of writing bytes that
+fail closed in whatever process later loads them. `ConvCode(memory=3,
+generators=(0o17, 0o15))`, the published memory-3 pair with its taps
+transposed, is a legal rate-1/2 code the encoder and `reconstruct_unit` both
+serve, and it was writable and unreadable at the same version. Every pair the
+reader searches — each memory order's published default and the superseded
+memory-3 `(0o5, 0o7)` — still writes and reads back, research encode/decode of
+any legal pair is untouched (only *publishing* is gated), a WINDOW body binds
+no code and is not checked, and no wire field was added: the eleven legacy
+artifacts under `tests/data/legacy/` re-serialise to identical bytes.
+
 The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 **derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
 at fixed arguments and the result is hashed, so the value moves exactly when
