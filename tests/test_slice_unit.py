@@ -845,6 +845,87 @@ def test_release_is_refused_at_read_on_a_grid_wider_than_the_plane(body, plane, 
         parse_unit_artifact(blob)
 
 
+@pytest.mark.parametrize(
+    "body,plane",
+    [(BodyKind.WINDOW, ScalePlaneKind.CHANNEL), (BodyKind.TCQ, ScalePlaneKind.LUT)],
+    ids=["window", "tcq"],
+)
+def test_the_release_element_width_is_one_number(monkeypatch, body, plane):
+    """Move ``grammar.RELEASE_BITS`` and the bytes move with the descriptor.
+
+    The RELEASE plane's element width is derived once --
+    ``planes.NORMATIVE_ELEMENT_BITS[RELEASE]`` is ``RELEASE_BITS`` -- and was
+    then spelled ``4`` at the three sites that actually touch the bits: the
+    writer's ``pack_uniform`` and both readers' ``unpack_uniform``
+    (tessera#183, M10).  Three literals agreeing with a constant are not the
+    same object as the constant, and the failure mode is the one the audit
+    names: the descriptor says one width, the payload is packed at another,
+    and the two halves of the wire disagree.
+
+    Widening the constant is exactly the move that catches it, so the test
+    makes it: the three homes of the number are patched together and the
+    artifact has to round-trip.  Nothing here is a wire change -- the patch is
+    undone with the test, and at the shipping ``RELEASE_BITS`` the bytes are
+    what they always were, which
+    ``test_encoded_unit_bytes_match_encoder_identity_baseline`` pins.
+
+    E2M1 rather than a wider grid, and codes the grid can name, because
+    widening the plane widens ``grammar.release_defined_on`` with it: the
+    admissible grids are derived from ``RELEASE_BITS`` (tessera#180), so a
+    grid that is undefined at 4 bits is undefined at 5 too, and both readers
+    would refuse the artifact before they ever unpacked the plane.  The
+    premise is asserted from that predicate rather than restated.
+
+    Both readers are covered because there are two: ``parse_unit_artifact``
+    reads a TCQ unit's RELEASE plane and ``_read_window_unit`` reads a window
+    unit's.  The unit is encoded with ``released_positions=0`` and released by
+    hand so the codes are this test's and not an argmin's; they are distinct
+    and non-zero, so a reader left at the old width reads different numbers
+    out of the same bits rather than the same ones by luck.
+    """
+    from tessera import grammar, planes as planes_module, unit_artifact
+
+    widened = RELEASE_BITS + 1
+    monkeypatch.setattr(grammar, "RELEASE_BITS", widened)
+    monkeypatch.setitem(
+        planes_module.NORMATIVE_ELEMENT_BITS, PlaneKind.RELEASE, widened
+    )
+    monkeypatch.setattr(unit_artifact, "RELEASE_BITS", widened, raising=False)
+
+    grid = GRIDS["E2M1"]
+    assert release_defined_on(grid), "the widened plane still has to name this grid"
+    rows, cols, superblock, released, q256 = 8, 256, 256, 8, 512
+    rates, forests = _plan_for(grid, q256, cols, body, None)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    extra = {}
+    if body is BodyKind.WINDOW:
+        recipe = wire_recipe(grid, q256)
+        extra = dict(
+            window_bits=max(rates), window_seed=recipe.window_seed,
+            window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma,
+        )
+    unit = encode_unit(
+        weight, forests, rates, CODE, completion=0, released_positions=0,
+        span=1, scale_plane=plane, body=body, scale_refit=2, **extra,
+    )
+
+    forest = grid if body is BodyKind.WINDOW else forests
+    code = None if body is BodyKind.WINDOW else CODE
+    pre = decode_codes_mixed(unit, forest, code, apply_release=False)
+    decoded = grid_value_table(grid)[pre.int()] * unit_scale_field(unit, rows, cols)
+    unit.release_index = _canonical_release_order(decoded, cols, superblock, released)
+    unit.release_code = torch.arange(1, released + 1)
+    assert int(unit.release_code.max()) < grid.size, "codes the grid can name"
+
+    _m, _r, blob = build_unit_artifact(
+        unit, "widened-release", forest, q256 * grid.arity, code
+    )
+    parsed = parse_unit_artifact(blob)
+    assert torch.equal(parsed.unit.release_code.cpu(), unit.release_code.cpu())
+    assert torch.equal(parsed.unit.release_index.cpu(), unit.release_index.cpu())
+
+
 def test_release_is_refused_on_a_grid_wider_than_the_release_plane():
     """The encoder says which dial does not exist, and says it before it works.
 

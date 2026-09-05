@@ -29,6 +29,7 @@ from .alphabet import (
     grid_digest,
 )
 from .grammar import (
+    RELEASE_BITS,
     require_column_groups,
     require_release_defined,
     completion_capacity,
@@ -499,7 +500,11 @@ def build_unit_artifact(
         PlaneKind.SCALE_BASE: pack_uniform(unit.scale_base, 8),
         PlaneKind.COMPLETION: pack_body(unit.completion_bits, widths),
         PlaneKind.SCALE_REFINE: pack_uniform(unit.scale_refine, 4),
-        PlaneKind.RELEASE: pack_uniform(unit.release_code, 4),
+        # ``RELEASE_BITS``, not a literal: the descriptor's element width
+        # is derived from that constant (``planes.NORMATIVE_ELEMENT_BITS``),
+        # so a literal here is a second copy of the number that would let
+        # the descriptor move while the bytes stayed put (tessera#183).
+        PlaneKind.RELEASE: pack_uniform(unit.release_code, RELEASE_BITS),
     }
     if has_diagonals:
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
@@ -823,7 +828,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         decoded = grid_value_table(grid, device)[pre.int()] * scale
         unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
-            chunks[PlaneKind.RELEASE], n_released, 4, device
+            chunks[PlaneKind.RELEASE], n_released, RELEASE_BITS, device
         )
     return ParsedUnit(unit=unit, forests=forests, code=code, grid=grid, manifest=manifest)
 
@@ -1088,6 +1093,6 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         decoded = grid_value_table(grid, device)[pre.int()] * scale
         unit.release_index = _release_placement(manifest, decoded, cols, n_released)
         unit.release_code = unpack_uniform(
-            chunks[PlaneKind.RELEASE], n_released, 4, device
+            chunks[PlaneKind.RELEASE], n_released, RELEASE_BITS, device
         )
     return ParsedUnit(unit=unit, forests=grid, code=None, grid=grid, manifest=manifest)
