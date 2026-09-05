@@ -210,6 +210,21 @@ def _wait_for(path: Path, process: subprocess.Popen[str], **kwargs) -> None:
     _wait_until(path.exists, process, f"the marker {path.name}", **kwargs)
 
 
+def _outer_bound_s(
+    busy_deadline_s: int = 0, *, round_trips: int = _HANG_GUARD_ROUND_TRIPS
+) -> str:
+    """A wall bound for a contender that is meant to reach its OWN verdict.
+
+    ``timeout`` here is a hang guard around a subprocess whose result the test
+    reads.  Sized as a literal it competes with the helper's own busy deadline,
+    and on a loaded box it wins -- turning "the helper refused" (3) into "the
+    harness killed it" (124), which is #182 again in another spelling.  So it
+    is the helper's deadline, which is whole seconds compared against
+    ``date +%s`` and so fires between ``busy`` and ``busy + 1``, plus headroom
+    measured in acquire round trips on this box.
+    """
+    return f"{busy_deadline_s + 1 + round_trips * _acquire_round_trip_s():.2f}"
+
 
 def test_serve_lock_acquisition_publishes_one_atomic_owner(tmp_path: Path) -> None:
     """There is no mkdir-to-owner gap for a withdrawal to strand."""
@@ -241,7 +256,8 @@ def test_serve_lock_acquisition_publishes_one_atomic_owner(tmp_path: Path) -> No
             f'source "{HELPER}"; serve_lock_acquire'
         )
         contender = subprocess.run(
-            ["timeout", "3", "bash", "-euo", "pipefail", "-c", contender_script],
+            ["timeout", _outer_bound_s(1), "bash", "-euo", "pipefail", "-c",
+             contender_script],
             env=_environment(tmp_path),
             text=True,
             capture_output=True,
@@ -263,7 +279,7 @@ def test_serve_lock_reclaims_a_dead_atomic_owner(tmp_path: Path) -> None:
         'serve_lock_acquire; printf acquired; serve_lock_release'
     )
     result = subprocess.run(
-        ["timeout", "3", "bash", "-euo", "pipefail", "-c", script],
+        ["timeout", _outer_bound_s(), "bash", "-euo", "pipefail", "-c", script],
         env=_environment(tmp_path),
         text=True,
         capture_output=True,
@@ -308,7 +324,7 @@ def _live_legacy_owner_contender(tmp_path: Path, *, probe_denied: bool = False):
         + 'serve_lock_acquire; serve_lock_release'
     )
     result = subprocess.run(
-        ["timeout", "4", "bash", "-euo", "pipefail", "-c", script],
+        ["timeout", _outer_bound_s(1), "bash", "-euo", "pipefail", "-c", script],
         env=_environment(tmp_path), text=True, capture_output=True,
     )
     return result, owner
