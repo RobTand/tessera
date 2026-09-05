@@ -610,6 +610,26 @@ def _gencode_flag(capability: tuple[int, int]) -> str:
     return f"-gencode=arch=compute_{major}{minor},code=sm_{major}{minor}"
 
 
+def _nvcc_for_build() -> "str | None":
+    """The CUDA compiler command torch's JIT loader will actually invoke.
+
+    Resolved by the loader's own rule (``torch/utils/cpp_extension``,
+    ``_write_ninja_file``): ``PYTORCH_NVCC`` when set, else
+    ``CUDA_HOME/bin/nvcc`` from the ``cpp_extension.CUDA_HOME`` module global
+    that ``load()`` reads.  NEVER ``$NVCC`` or a bare ``nvcc`` from PATH --
+    the loader consults neither, so hashing them named a compiler the build
+    did not run and missed the one it did (issue #242).
+    """
+    if "PYTORCH_NVCC" in os.environ:
+        return os.environ.get("PYTORCH_NVCC")
+    try:
+        from torch.utils import cpp_extension
+    except Exception:  # noqa: BLE001 -- no torch, no build, nothing to name
+        return None
+    home = getattr(cpp_extension, "CUDA_HOME", None)
+    return os.path.join(home, "bin", "nvcc") if home else None
+
+
 def _compiler_identity(command: str | None) -> dict[str, object]:
     """Best-effort identity for a compiler command, without using a shell."""
     if not command:
@@ -646,7 +666,9 @@ def _build_identity(torch, *, source: str, capability: tuple[int, int],
         "torch_cuda": getattr(getattr(torch, "version", None), "cuda", None),
         "python_soabi": sysconfig.get_config_var("SOABI"),
         "cxx": _compiler_identity(os.environ.get("CXX") or "c++"),
-        "nvcc": _compiler_identity(os.environ.get("NVCC") or "nvcc"),
+        # The compiler the BUILD selects, by the build's own rule -- not
+        # $NVCC/PATH, which torch's loader never reads (issue #242).
+        "nvcc": _compiler_identity(_nvcc_for_build()),
         "symbols": list(_SYMBOLS),
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

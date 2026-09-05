@@ -522,6 +522,63 @@ def test_the_value_family_refuses_a_shard_start_state():
                               initial_state=torch.zeros(cols, dtype=torch.int64))
 
 
+# ---------------------- the toolchain repair (issue #243) --------------------
+#
+# ``_ext`` builds through ``cpp_extension.load``, which takes its nvcc from
+# the module global ``cpp_extension.CUDA_HOME`` -- NOT from PATH.  So finding
+# an nvcc on PATH must not skip the repair of that global: torch resolves
+# ``CUDA_HOME`` to ``/usr/local/cuda`` whenever the path merely exists, and an
+# alternatives symlink to a compiler-less toolkit fails the build while a
+# complete toolkit answers ``which nvcc``.  CPU-only and fully mocked: the
+# selection is what is pinned, no compilation runs.
+
+
+def test_the_toolchain_repair_runs_even_when_an_nvcc_is_already_on_path(tmp_path, monkeypatch):
+    import shutil as shutil_mod
+
+    from torch.utils import cpp_extension
+
+    kg = _kg_no_build()
+    complete = tmp_path / "cuda-complete"
+    (complete / "bin").mkdir(parents=True)
+    nvcc = complete / "bin" / "nvcc"
+    nvcc.write_text("#!/bin/sh\necho fake nvcc\n")
+    nvcc.chmod(0o755)
+    incomplete = tmp_path / "cuda-incomplete"        # exists, holds no compiler
+    (incomplete / "include").mkdir(parents=True)
+
+    real_which = shutil_mod.which
+
+    def which(cmd, *args, **kwargs):
+        if cmd == "nvcc":
+            return str(nvcc)                          # PATH already finds one
+        if cmd == "ninja":
+            return "/usr/bin/ninja"                   # no PATH repair needed
+        return real_which(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("shutil.which", which)
+    # register PATH/CUDA_HOME/CUDA_PATH for teardown restore, then clear them
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        monkeypatch.setenv(var, "registered-for-restore")
+        monkeypatch.delenv(var)
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
+
+    kg._ensure_toolchain_on_path()
+    assert cpp_extension.CUDA_HOME == str(complete), (
+        "an nvcc on PATH must not skip repairing torch's cached CUDA_HOME -- "
+        "cpp_extension.load builds <CUDA_HOME>/bin/nvcc, not PATH's compiler")
+    assert os.environ.get("CUDA_HOME") == str(complete)
+
+    # an explicit operator choice is preserved, never second-guessed: with
+    # CUDA_HOME set the resolver returns it or refuses, and repairs nothing
+    monkeypatch.setenv("CUDA_HOME", str(incomplete))
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
+    kg._ensure_toolchain_on_path()
+    assert cpp_extension.CUDA_HOME == str(incomplete)
+    assert os.environ["CUDA_HOME"] == str(incomplete)
+
+
 # ---------------------- the compiled arm (RobTand/tessera#52) -------------------
 #
 # Every route in ``tessera.serving`` is served eager AND compiled, and this
@@ -720,3 +777,98 @@ def test_the_out_instrument_accumulates_into_the_callers_buffer():
     ref = ((w * scale[:, None]).double() @ x.double().t()).t()
     assert bool(((y.double() - ref).abs() <= _bound(w, scale, x)).all())
     assert torch.equal(scratch[3], torch.zeros(unit.rows, device="cuda"))   # the pad row stays zero
+
+
+@cuda
+def test_an_eight_row_plan_refuses_rate_one_at_small_m():
+    """Plan(rpl=8) at M=1/2 reaches ``run_item_if_lane<RPL=8, R=1>``, which is
+    compiled out: pre-#240 the launch silently accumulated nothing from every
+    rate-1 column (a uniform rate-1 unit returned all zeros).  The resolved
+    rpl must refuse the pair by name instead -- on the explicit ``with_plan``
+    route and on ``default_plan(M=4)``'s rpl=8 alike -- while the same unit
+    still serves M<=2 on its 16-row plan."""
+    kg = _kg()
+    rows, cols = 512, 48
+    rates = tuple((1, 4)[c % 2] for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=91)
+    scale_rows = torch.ones(rows, dtype=torch.float16)
+    unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows))
+    eight = unit.with_plan(kg.Plan(rpl=8, warps=8, blocks=13, cols_per_item=32,
+                                   balanced=False))
+    for M in (1, 2):
+        x = torch.randn(M, cols, device="cuda").bfloat16()
+        with pytest.raises(GrammarError, match="rate-1 column"):
+            kg.window_gemv(eight, x)
+    prepared_for_m4 = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows), M=4)
+    assert prepared_for_m4.plan.rpl == 8
+    with pytest.raises(GrammarError, match="rate-1 column"):
+        kg.window_gemv(prepared_for_m4, torch.randn(1, cols, device="cuda").bfloat16())
+    # the 16-row default plan still serves the unit at M<=2, exactly
+    tile, scale = kg.decode_fp8(unit)
+    w = tile.view(torch.float8_e4m3fn).float()
+    x = torch.randn(1, cols, device="cuda").bfloat16()
+    y = kg.window_gemv(unit, x)
+    ref = (w * scale[:, None]).double() @ x.double().t()
+    assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
+
+
+# ---------------------- device ownership (issue #241) ------------------------
+#
+# The native entry points take the unit's device from the tensors, guard it,
+# and use ITS current stream; the shared-memory opt-in is recorded per device.
+# Both defects need a second CUDA device to manifest, so these tests skip on a
+# one-GPU box (the GB10 boxes that ran this branch) -- they are the regression
+# a two-GPU box runs, not a proof this branch produced on one.
+
+two_gpus = pytest.mark.skipif(torch.cuda.device_count() < 2,
+                              reason="needs two CUDA devices")
+
+
+@cuda
+@two_gpus
+def test_the_gemv_runs_a_unit_on_a_non_current_device():
+    """A cuda:1 unit called while cuda:0 is current must launch on cuda:1 --
+    pre-#241 the kernel went to the current device's stream with cuda:1
+    pointers.  Mixed-device inputs are refused by name."""
+    kg = _kg()
+    rows, cols = 1000, 320
+    rates = (4,) * cols
+    with torch.cuda.device(0):
+        body, codes = _synthetic(rows, cols, rates, seed=51, device="cuda:1")
+        scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+        unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.5))
+        assert unit.rep.words.device == torch.device("cuda", 1)
+        tile, scale = kg.decode_fp8(unit)                       # window_decode, guarded
+        assert torch.equal(tile, _reference_bytes(body, rates, codes))
+        w = tile.view(torch.float8_e4m3fn).float()
+        x = torch.randn(1, cols, device="cuda:1").bfloat16()
+        y = kg.window_gemv(unit, x)
+        assert y.device == torch.device("cuda", 1)
+        ref = (w * scale[:, None]).double() @ x.double().t()
+        assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x).to(y.device)).all())
+        with pytest.raises(RuntimeError, match="share one CUDA device"):
+            kg.window_gemv(unit, x.to("cuda:0"))
+
+
+@cuda
+@two_gpus
+def test_the_shared_memory_opt_in_is_granted_per_device():
+    """M=2 over a bf16 table asks for 53,376 bytes of dynamic shared memory,
+    above the 48 KiB default.  After device 0 has been granted it, the same
+    launch on device 1 needs ITS OWN ``cudaFuncSetAttribute`` -- pre-#241 a
+    per-instantiation static skipped it and the second device's launch
+    failed."""
+    kg = _kg()
+    rows, cols = 1000, 640
+    rates = (4,) * cols
+    for dev in (0, 1):
+        device = f"cuda:{dev}"
+        body, codes = _synthetic(rows, cols, rates, seed=52 + dev, device=device)
+        scale_rows = torch.rand(rows, dtype=torch.float16) + 0.5
+        unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows, 0.5), M=2)
+        tile, scale = kg.decode_fp8(unit)
+        w = tile.view(torch.float8_e4m3fn).float()
+        x = torch.randn(2, cols, device=device).bfloat16()
+        y = kg.window_gemv(unit, x)
+        ref = (w * scale[:, None]).double() @ x.double().t()
+        assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x).to(y.device)).all()), device

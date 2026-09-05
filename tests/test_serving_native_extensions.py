@@ -479,3 +479,78 @@ def test_native_source_path_resolves_every_published_source_and_nothing_else():
         assert os.path.isfile(path)
     with pytest.raises(KeyError, match="no native extension"):
         ext.native_source_path("tessera_absent")
+
+
+# ---------------------- the identity names the build's compiler (issue #242) --
+#
+# torch's JIT loader picks its CUDA compiler by ONE rule
+# (torch/utils/cpp_extension._write_ninja_file): ``PYTORCH_NVCC`` when set,
+# else ``cpp_extension.CUDA_HOME/bin/nvcc``.  ``$NVCC``/PATH is not consulted.
+# The build identity must hash the compiler that rule selects, or two builds
+# with different toolkits share a module name -- and an ``NVCC``-only change
+# renames a build whose compiler did not move.  No compilation is needed to
+# pin the selection: fake toolkits with executable ``bin/nvcc`` scripts are
+# enough for ``_compiler_identity`` to resolve and version.
+
+
+def _fake_toolkit(tmp_path, name: str, version: str):
+    import os
+
+    root = tmp_path / name
+    (root / "bin").mkdir(parents=True)
+    nvcc = root / "bin" / "nvcc"
+    nvcc.write_text(f"#!/bin/sh\necho 'fake nvcc {version}'\n")
+    nvcc.chmod(0o755)
+    return root
+
+
+def test_the_identity_hashes_the_compiler_the_build_will_invoke(tmp_path, monkeypatch):
+    import os
+
+    import torch
+    from torch.utils import cpp_extension
+
+    a = _fake_toolkit(tmp_path, "cuda-a", "A")
+    b = _fake_toolkit(tmp_path, "cuda-b", "B")
+    source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
+    cc = (12, 1)
+
+    monkeypatch.delenv("PYTORCH_NVCC", raising=False)
+    monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))      # NOT torch's selector
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))  # torch's selector
+
+    ident_a, payload_a = ext._build_identity(torch, source=source, capability=cc)
+    assert payload_a["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc")), (
+        "the identity must hash the compiler torch's loader selects "
+        "(cpp_extension.CUDA_HOME/bin/nvcc), not $NVCC or PATH")
+
+    # a CUDA_HOME change IS a compiler change and must move the identity ...
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(b))
+    ident_b, payload_b = ext._build_identity(torch, source=source, capability=cc)
+    assert payload_b["nvcc"]["path"] == os.path.realpath(str(b / "bin" / "nvcc"))
+    assert ident_a != ident_b
+
+    # ... and PYTORCH_NVCC is the loader's first choice, over CUDA_HOME
+    monkeypatch.setenv("PYTORCH_NVCC", str(a / "bin" / "nvcc"))
+    _, payload_p = ext._build_identity(torch, source=source, capability=cc)
+    assert payload_p["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc"))
+
+
+def test_an_nvcc_only_environment_change_does_not_rename_the_build(tmp_path, monkeypatch):
+    """``$NVCC`` moves nothing torch's loader reads, so it must move nothing
+    in the identity either -- pre-#242 it renamed the build namespace while
+    the compiler stayed put."""
+    import torch
+    from torch.utils import cpp_extension
+
+    a = _fake_toolkit(tmp_path, "cuda-a", "A")
+    b = _fake_toolkit(tmp_path, "cuda-b", "B")
+    source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
+    monkeypatch.delenv("PYTORCH_NVCC", raising=False)
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))
+
+    monkeypatch.setenv("NVCC", str(a / "bin" / "nvcc"))
+    one, _ = ext._build_identity(torch, source=source, capability=(12, 1))
+    monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))
+    two, _ = ext._build_identity(torch, source=source, capability=(12, 1))
+    assert one == two

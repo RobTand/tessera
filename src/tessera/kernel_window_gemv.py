@@ -138,7 +138,19 @@ def cuda_home_with_nvcc() -> "str | None":
 def _ensure_toolchain_on_path() -> None:
     """``cpp_extension.load`` shells out to ninja and nvcc; a venv keeps ninja
     in its bin and the CUDA toolkit may be under a versioned root -- put both
-    on PATH."""
+    on PATH.
+
+    The toolkit root is resolved UNCONDITIONALLY, because the resolver is not
+    only a PATH lookup: it ADOPTS what it finds -- ``os.environ["CUDA_HOME"]``
+    and ``cpp_extension.CUDA_HOME``, the module global ``load()`` actually
+    builds its nvcc path from.  An nvcc already on PATH says nothing about
+    that global: torch resolves ``CUDA_HOME`` to ``/usr/local/cuda`` whenever
+    the path merely exists, so an alternatives symlink to a toolkit WITHOUT a
+    compiler fails the build while a complete one answers ``which nvcc``
+    (issue #243).  PATH presence decides only whether PATH itself needs the
+    root's ``bin`` prepended.  An explicit ``CUDA_HOME``/``CUDA_PATH`` in the
+    environment still wins: the resolver returns it untouched or refuses.
+    """
     import shutil
     extra = []
     if shutil.which("ninja") is None:
@@ -147,10 +159,9 @@ def _ensure_toolchain_on_path() -> None:
             extra.append(ninja.BIN_DIR)
         except Exception:
             extra.append(os.path.join(sys.prefix, "bin"))
-    if shutil.which("nvcc") is None:
-        root = cuda_home_with_nvcc()
-        if root:
-            extra.append(os.path.join(root, "bin"))
+    root = cuda_home_with_nvcc()   # always: repairs torch's cached CUDA_HOME
+    if root and shutil.which("nvcc") is None:
+        extra.append(os.path.join(root, "bin"))
     if extra:
         os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "")])
 
@@ -572,18 +583,27 @@ def _gemv_concrete(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, 
     """
     M, K = x.shape
     mt = _m_tile(M)
-    if mt >= 4 and rate_one:
-        raise GrammarError(
-            f"M={M} runs 8 rows per lane, and a rate-1 column has no 8-row lane "
-            "(a byte of history is too short for L=14); the materialised path serves this batch"
-        )
-    if mt != M:
-        x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
-    x = x.contiguous()
     if mt <= 2:
         items, max_cols = items_1, max_cols_1
     else:
         items, max_cols, rpl = items_4, max_cols_4, 8
+    if rate_one and rpl != 16:
+        # One gate for BOTH ways an 8-row launch reaches a rate-1 column:
+        # M > 2 forces rpl=8, and at M <= 2 the plan's own rpl survives --
+        # where ``run_item_if_lane<RPL=8, R=1>`` is compiled out and would
+        # accumulate NOTHING, silently (issue #240).  The gate reads the
+        # resolved rpl, so a supplied Plan(rpl=8) -- or default_plan(M=4)'s --
+        # is refused by name at M=1/2 instead of dropping the columns.
+        why = (f"M={M} runs 8 rows per lane" if mt >= 4
+               else f"the plan's rpl={rpl} runs {rpl} rows per lane at M={M}")
+        raise GrammarError(
+            f"{why}, and a rate-1 column has no {rpl}-row lane (a byte of "
+            "history is too short for L=14); serve rate-1 columns on a 16-row "
+            "plan (rpl=16) or through the materialised path"
+        )
+    if mt != M:
+        x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
+    x = x.contiguous()
     if out is None:
         out = torch.zeros(mt, rows, dtype=torch.float32, device=x.device)
     _ext().window_gemv(

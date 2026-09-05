@@ -30,9 +30,14 @@
 // so the staging is paid ~once per SM, not once per tile.
 #include <torch/extension.h>
 #include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
+#include <array>
+#include <atomic>
 #include <cstdint>
+#include <mutex>
 
 // ---------------------------------------------------------------------------
 // THE ROSTER, DECLARED ONCE.
@@ -254,8 +259,10 @@ __device__ __forceinline__ void run_item(
 // Rate R at RPL rows per lane, where that chunk exists.  The one declared pair
 // that does not -- RPL = 8 at R = 1, an 8-bit chunk -- is DISCARDED rather than
 // instantiated, so the switch below expands the roster unconditionally while
-// the M > 2 launch shape simply has no rate-1 lane (the host restricts it:
-// ``WindowGemvUnit.serveable_keys``).  A declared rate with no 16-row lane is a
+// an 8-row launch simply has no rate-1 lane.  The host refuses that pair by
+// the RESOLVED rpl before launching (``_gemv_concrete`` in
+// ``kernel_window_gemv.py``; issue #240 -- ``serveable_keys`` alone left the
+// M<=2 path open to a Plan(rpl=8)).  A declared rate with no 16-row lane is a
 // compile error here, not a kernel that quietly accumulates nothing.
 template <int L, int RPL, int R, int MT, typename TBL, bool ABL_GATHER, bool ABL_LOAD, bool ABL_FMA>
 __device__ __forceinline__ void run_item_if_lane(
@@ -437,13 +444,32 @@ void decode_typed(const uint32_t* w, long tile_words, int n_tiles, torch::Tensor
     }
 }
 
+// The dynamic-shared-memory opt-in is a property of a (function, DEVICE)
+// pair: ``cudaFuncSetAttribute`` applies to the calling thread's current
+// device only.  So the record of what was granted is per device too -- a
+// single per-instantiation static would skip the second device's opt-in and
+// its >48 KiB launches would fail (issue #241) -- and it is updated only
+// after the setter itself succeeds, under a lock so a smaller concurrent
+// request can never shrink the attribute back under a larger granted one.
+constexpr int MAX_OPT_IN_DEVICES = 64;
+
 template <int L, int RPL, int MT, typename TBL, bool AG, bool AL, bool AF>
 void launch_typed(const Params& p, int blocks, int threads, size_t smem, cudaStream_t stream) {
     auto k = window_gemv_kernel<L, RPL, MT, TBL, AG, AL, AF>;
-    static size_t granted = 0;                 // per instantiation: set the opt-in once
-    if (smem > granted) {
-        cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem);
-        granted = smem;
+    int device = 0;
+    C10_CUDA_CHECK(cudaGetDevice(&device));
+    TORCH_CHECK(device >= 0 && device < MAX_OPT_IN_DEVICES,
+                "device index ", device, " exceeds the shared-memory opt-in table (",
+                MAX_OPT_IN_DEVICES, " devices)");
+    static std::array<std::atomic<size_t>, MAX_OPT_IN_DEVICES> granted{};   // per instantiation, per device
+    static std::mutex grow_lock;
+    if (smem > granted[device].load(std::memory_order_acquire)) {
+        std::lock_guard<std::mutex> hold(grow_lock);
+        if (smem > granted[device].load(std::memory_order_relaxed)) {
+            C10_CUDA_CHECK(cudaFuncSetAttribute(
+                k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
+            granted[device].store(smem, std::memory_order_release);
+        }
     }
     k<<<blocks, threads, smem, stream>>>(p);
 }
@@ -493,6 +519,19 @@ void window_gemv(
     TORCH_CHECK(out.is_cuda() && out.dtype() == torch::kFloat32 && out.is_contiguous() && out.dim() == 2);
     TORCH_CHECK(scale.is_cuda() && scale.dtype() == torch::kFloat32 && scale.is_contiguous());
     TORCH_CHECK(table.is_cuda() && table.is_contiguous() && table.numel() == (1L << window_bits));
+    // The unit's device owns the launch: every tensor on it, the guard on it,
+    // its stream for the kernel -- never the caller's current device, which a
+    // multi-device process may have left elsewhere (issue #241).
+    const auto device = words.device();
+    TORCH_CHECK(items.device() == device && x.device() == device && out.device() == device
+                    && scale.device() == device && table.device() == device
+                    && (perm.numel() == 0 || perm.device() == device),
+                "window_gemv tensors must share one CUDA device; words is on ", device,
+                " but items/x/out/scale/table/perm are on ",
+                items.device(), "/", x.device(), "/", out.device(), "/",
+                scale.device(), "/", table.device(), "/",
+                (perm.numel() ? perm.device().str() : std::string("<empty>")));
+    const c10::cuda::CUDAGuard guard(device);
     TORCH_CHECK(window_bits == TESSERA_GEMV_WINDOW_BITS,
                 "this build instantiates L=", TESSERA_GEMV_WINDOW_BITS, " only");
     const int M = (int)x.size(0), K = (int)x.size(1), rows = (int)out.size(1);
@@ -542,6 +581,14 @@ void window_decode(
     TORCH_CHECK(window_bits == TESSERA_GEMV_WINDOW_BITS,
                 "this build instantiates L=", TESSERA_GEMV_WINDOW_BITS, " only");
     TORCH_CHECK(runs.dtype() == torch::kInt32 && runs.dim() == 2 && runs.size(1) == 4);
+    // Same ownership rule as window_gemv above (issue #241).
+    const auto device = words.device();
+    TORCH_CHECK(out.device() == device && of_state.device() == device
+                    && perm.device() == device,
+                "window_decode tensors must share one CUDA device; words is on ", device,
+                " but out/of_state/perm are on ", out.device(), "/",
+                of_state.device(), "/", perm.device());
+    const c10::cuda::CUDAGuard guard(device);
     auto runs_cpu = runs.to(torch::kCPU).contiguous();
     const int rows = (int)out.size(0), cols = (int)out.size(1);
     auto stream = at::cuda::getCurrentCUDAStream();

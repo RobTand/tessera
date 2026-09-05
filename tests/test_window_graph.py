@@ -156,6 +156,102 @@ def test_an_unparseable_lever_is_refused(monkeypatch):
         viterbi_window(targets, vectors, 12, 4, impl="fused")
 
 
+def test_a_cache_hit_on_a_second_stream_orders_behind_the_first_calls_traceback():
+    """A persistent plan's traceback is launched AFTER the call's last host
+    sync, so it is still reading ``plan.back`` when the call returns.  A
+    cache hit from the same thread under a different CUDA stream must not
+    overwrite that scratch mid-read (issue #244).
+
+    The interleaving is FORCED, not raced: the first racing call's traceback
+    is preceded on its stream by a spin kernel holding a device flag, and the
+    flag is released only after the second call has been issued -- pre-fix,
+    after its replay has fully overwritten ``plan.back`` (its own epilogue
+    sync proves that before the release line is reached).  Stream-level
+    coordination only; no device-wide synchronize hides the race until both
+    calls' results are already determined.
+    """
+    import threading
+
+    import triton
+    import triton.language as tl
+
+    import tessera.window_viterbi as wv
+
+    first, vectors, _ = _case(12, 4, 1, 64, 16, False, seed=81)
+    second, _, _ = _case(12, 4, 1, 64, 16, False, seed=82)
+    want_first = viterbi_window(first, vectors, 12, 4, impl="reference")
+    want_second = viterbi_window(second, vectors, 12, 4, impl="reference")
+    assert not torch.equal(want_first[0], want_second[0])
+
+    window_plan_cache_clear()
+    for _ in range(3):                      # cache (2nd call) and capture the plan
+        got = viterbi_window(first, vectors, 12, 4, impl="fused")
+        assert torch.equal(got[0], want_first[0])
+    assert len(_window_maps()[0]) == 1, "the racing calls must hit one plan"
+
+    @triton.jit
+    def _spin(flag):
+        while tl.atomic_add(flag, 0) == 0:
+            pass
+
+    flag = torch.ones(1, dtype=torch.int32, device="cuda")
+    _spin[(1,)](flag, num_warps=1)          # compile + warm; flag=1 exits at once
+    torch.cuda.synchronize()
+    flag.zero_()
+    torch.cuda.synchronize()
+
+    real = wv._kernels()
+    step_k, tb_k, init_k, copy_k = real
+
+    class _HeldTraceback:
+        """The first traceback launch waits on the flag; later ones run bare."""
+
+        def __init__(self):
+            self.calls = 0
+
+        def __getitem__(self, grid):
+            launcher = tb_k[grid]
+
+            def run(*args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    _spin[(1,)](flag, num_warps=1)   # on the caller's stream
+                return launcher(*args, **kwargs)
+
+            return run
+
+    released = threading.Event()
+    s1, s2, s3 = torch.cuda.Stream(), torch.cuda.Stream(), torch.cuda.Stream()
+
+    def watchdog():
+        # Pre-fix the second call returns in milliseconds and ``released``
+        # fires; post-fix it blocks behind the plan's fence, and the timeout
+        # releases the spin so the ordered work can drain.
+        released.wait(timeout=4.0)
+        with torch.cuda.stream(s3):
+            flag.fill_(1)
+
+    keeper = threading.Thread(target=watchdog)
+    wv._CACHE["k"] = (step_k, _HeldTraceback(), init_k, copy_k)
+    keeper.start()
+    try:
+        with torch.cuda.stream(s1):
+            got_first = viterbi_window(first, vectors, 12, 4, impl="fused")
+        with torch.cuda.stream(s2):
+            got_second = viterbi_window(second, vectors, 12, 4, impl="fused")
+    finally:
+        released.set()
+        keeper.join()
+        torch.cuda.synchronize()
+        wv._CACHE["k"] = real
+        window_plan_cache_clear()
+
+    assert torch.equal(got_second[0], want_second[0]) and got_second[1] == want_second[1]
+    assert torch.equal(got_first[0], want_first[0]) and got_first[1] == want_first[1], (
+        "the second stream's replay overwrote plan.back under the first "
+        "stream's traceback")
+
+
 def test_plans_do_not_cross_threads():
     """A plan owns the tensors its Viterbi writes and PrismaBuild's workers
     encode units concurrently in one process, so two threads must not share
