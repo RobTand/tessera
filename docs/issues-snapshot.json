@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T21:18:02Z",
+ "generated": "2026-09-05T21:43:13Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -524,11 +524,11 @@
     "title": "One home for text-only staging (fixes #210)"
    },
    "216": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Export-seal capture context is a hard-coded roster: CAPTURE_CONTEXT_FIELDS is not derived from or pinned to tessera.export.CAPTURE_CONTEXT"
    },
    "217": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The dead-override census cannot see an 'except RuntimeError' swallow, which is the shape DeadVendoredOverrideError's own docstring invites"
    },
    "218": {
@@ -536,7 +536,7 @@
     "title": "[P1] Production cache fill crashes with KeyError on INT4_W4A16_g128: the new static-activation gate upper-cases a mixed-case registry name and looks it up"
    },
    "219": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Resume-after-coordinator-death test can leak a forever-spinning orphan: the release write is not in a finally, unlike its sibling test"
    },
    "22": {
@@ -564,12 +564,24 @@
     "title": "Resolve a format name once, in the registry; make the production-cache fill gate total (#218)"
    },
    "225": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
    },
    "226": {
     "state": "OPEN",
     "title": "Tessera campaign and export lane: ask the contract, not the format name (#221)"
+   },
+   "227": {
+    "state": "OPEN",
+    "title": "[P1] Bind Tessera cached scores and validation to the resolved activation-scale policy"
+   },
+   "228": {
+    "state": "OPEN",
+    "title": "Tessera export: name which path produced the routed-expert bytes (#222)"
+   },
+   "229": {
+    "state": "OPEN",
+    "title": "[P1] Skip expert-wire bundling when the allocation keeps all experts in BF16"
    },
    "23": {
     "state": "CLOSED",
@@ -1926,11 +1938,11 @@
     "title": "[P1] contract v21: routed-MoE smoke.status 'recorded' rests on an undeclared, underived aggregation, and the control that made the residual 'repetitive' readable was deleted in the same commit"
    },
    "328": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Exports still stamp tessera_config.json with tp_size: 1 under a superseded 'must be re-encoded per rank' claim, and no loader reads it"
    },
    "329": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] The TP seam refuses a rotated unit with a granularity message naming a tensor_parallel_size that cannot exist"
    },
    "33": {
@@ -1957,9 +1969,41 @@
     "state": "CLOSED",
     "title": "Gate the contract's silence about KV-head replication (#330)"
    },
+   "335": {
+    "state": "CLOSED",
+    "title": "Derive what an artifact says about slicing and gate on it (#328); report why a unit cannot be cut (#329)"
+   },
+   "336": {
+    "state": "OPEN",
+    "title": "[P0] Parsing a released shard drops its counts and rewriting moves the overrides"
+   },
+   "337": {
+    "state": "OPEN",
+    "title": "[P0] Prevent failed legacy-export retries from publishing mixed checkpoint bytes"
+   },
+   "338": {
+    "state": "OPEN",
+    "title": "[P1] Preserve data dependency uncertainty when the lexical path guard refuses resolution"
+   },
+   "339": {
+    "state": "OPEN",
+    "title": "[P2] Prevent path resolution from traversing outside the checkout after the lexical guard passes"
+   },
    "34": {
     "state": "CLOSED",
     "title": "Audit leftovers the Tier C pass documented rather than fixed"
+   },
+   "340": {
+    "state": "OPEN",
+    "title": "[P1] Bind resumed metadata to the same bytes checked by the publication digest"
+   },
+   "341": {
+    "state": "OPEN",
+    "title": "[P2] Bind the v22 smoke comparator to the checkout selected by its wrapper"
+   },
+   "342": {
+    "state": "OPEN",
+    "title": "Bind the v22 smoke comparator to the checkout selected by its wrapper (#341)"
    },
    "35": {
     "state": "CLOSED",

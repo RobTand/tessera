@@ -159,7 +159,7 @@ measured on `f86b811`, one word changed in `tests/conftest.py` left
 `not observed`, and `tests/test_merge_suite.py` green at 85 passed, because the
 only tests of the join wrote both sides. What #294 left open is closed with it:
 the line now carries the **SHA-256 of the bytes the run published**, and an
-attempt binds to the file at the path only when that file still hashes to what
+attempt binds only when the population this receipt holds still hashes to what
 the attempt announced. A second attempt that overwrote the population with one
 of *identical counts* -- a different device, different skip reasons, the same
 buckets -- is refused on bytes, which the counts leg cannot see. A line with no
@@ -169,6 +169,27 @@ that demanded the stronger evidence from stdout that never carried it would
 lose them. `tests/test_merge_suite.py` drives one real
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
+
+**One publication, read once** (tessera#340). A pathname is not a publication:
+it is a name a pool retry can point at different bytes at two instants, and a
+resume read it twice -- `_attach_surface` parsed the population the verdict
+then consumed, and the digest leg re-opened the same name to authenticate an
+attempt. Nothing established that the two reads saw one file, and a requeue is
+exactly what makes them differ. Attempt A publishes a verified population and
+crashes after its terminal summary; a resume loads A; retry B replaces the file
+with a population of equal counts whose source came out `unknown` (a dirty
+checkout) and exits 0. The resume hashed B's bytes, accepted B's announced
+digest, kept **A's** verified source and producer stamp on the record, adopted
+B's exit 0, and returned `green on 1 population(s)` -- a source-verification
+bypass assembled out of two honest reads. So the surface file is read exactly
+once, by `_read_publication`, into a `_Publication` carrying its path, its
+bytes, their digest and their parse; `_attach_surface` returns that one
+snapshot and `_resume` hands it to the binding. `_binding_refusal` no longer
+opens a path at all, and there is no constructor that takes a payload someone
+else parsed, so the invariant is structural rather than remembered. The record
+publishes `surface_sha256` -- which publication it is about -- and the file is
+free to change afterwards: what the receipt states is a true statement about
+the publication it read, and a later reader can check which one that was.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract, and deciding it never stats outside the
 repository root either -- an absolute or `..`-escaping literal path is
