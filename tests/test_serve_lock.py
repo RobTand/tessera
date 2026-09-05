@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
+import tempfile
 import time
 
 import pytest
@@ -35,11 +36,42 @@ def _environment(tmp_path: Path) -> dict[str, str]:
 
 
 def _race_environment(tmp_path: Path, contender: str) -> dict[str, str]:
-    """Pause two dead-owner reapers at the vulnerable compare/unlink edge."""
+    """Pause two dead-owner reapers at the vulnerable compare/unlink edge.
+
+    Every pause here waits for a marker another contender publishes, never for
+    a number of seconds.  A ``sleep``-counted window is a bet on how fast the
+    box is, and on a saturated one the bet loses in the direction that makes
+    this test USELESS rather than red: if A stops waiting before B has reached
+    the guard, B inspects A's live token instead of the dead one, and the test
+    passes without the race it exists to exercise (#182).
+    """
     env = _environment(tmp_path)
     bindir = tmp_path / "bin"
     sync = tmp_path / "sync"
     sync.mkdir(exist_ok=True)
+    # B announces that it is BLOCKED at the transition guard, which it learns
+    # by trying the lock non-blockingly first.  "Blocked" is the load-bearing
+    # word: it is proof that B cannot be about to capture anything, which is
+    # what lets A stop waiting for it.  A marker written merely on the way IN
+    # to the guard proves nothing -- A would release B while B still had the
+    # guard free ahead of it, and the two would then run in an order that never
+    # reaches the race.  A non-blocking acquisition that SUCCEEDS is kept: an
+    # flock lock lives on the open file description, so the fd the parent still
+    # holds keeps it after this shim exits, exactly as a direct ``flock -x fd``
+    # would.
+    flock = bindir / "flock"
+    flock.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -eu\n"
+        "if [ \"$SERVE_LOCK_RACE_ID\" = B ] && [ \"${1:-}\" = -x ]; then\n"
+        "  if /usr/bin/flock -nx \"${@:2}\"; then\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  : > \"$SERVE_LOCK_RACE_SYNC/b_blocked_at_guard\"\n"
+        "fi\n"
+        "exec /usr/bin/flock \"$@\"\n"
+    )
+    flock.chmod(0o755)
     readlink = bindir / "readlink"
     readlink.write_text(
         "#!/usr/bin/env bash\n"
@@ -48,13 +80,19 @@ def _race_environment(tmp_path: Path, contender: str) -> dict[str, str]:
         "count=0; [ ! -f \"$counter\" ] || read -r count < \"$counter\"\n"
         "count=$((count + 1)); printf '%s\\n' \"$count\" > \"$counter\"\n"
         "value=$(/usr/bin/readlink \"$@\")\n"
+        # B's second readlink is the observation the whole test turns on.  With
+        # the guard broken it is the compare-recheck of the DEAD token inside
+        # one acquire pass -- B has captured the old token and is one unlink
+        # away from A's replacement -- so it holds here until A has published,
+        # to make that unlink actually happen.  With the guard intact B cannot
+        # reach the recheck at all: this is instead its second polling pass,
+        # against A's live token, and A published long ago, so the wait returns
+        # at once.  Either way it is B's own progress, never a clock.
         "if [ \"$SERVE_LOCK_RACE_ID\" = B ] && [ \"$count\" = 2 ]; then\n"
-        "  : > \"$SERVE_LOCK_RACE_SYNC/b_captured_old_token\"\n"
-        "  for _ in $(seq 1 500); do\n"
-        "    [ ! -e \"$SERVE_LOCK_RACE_SYNC/a_acquired\" ] || break\n"
+        "  : > \"$SERVE_LOCK_RACE_SYNC/b_second_readlink\"\n"
+        "  while [ ! -e \"$SERVE_LOCK_RACE_SYNC/a_acquired\" ]; do\n"
         "    sleep 0.01\n"
         "  done\n"
-        "  [ -e \"$SERVE_LOCK_RACE_SYNC/a_acquired\" ] || exit 70\n"
         "fi\n"
         "printf '%s\\n' \"$value\"\n"
     )
@@ -67,8 +105,13 @@ def _race_environment(tmp_path: Path, contender: str) -> dict[str, str]:
         "if [ \"$SERVE_LOCK_RACE_ID\" = A ] && "
         "[ \"$target\" = \"$SERVE_LOCK_RACE_PATH\" ]; then\n"
         "  : > \"$SERVE_LOCK_RACE_SYNC/a_at_unlink\"\n"
-        "  for _ in $(seq 1 100); do\n"
-        "    [ ! -e \"$SERVE_LOCK_RACE_SYNC/b_captured_old_token\" ] || break\n"
+        # Hold the dead token in place until B has either captured it (which a
+        # broken guard permits, and which is the race) or proved it is blocked
+        # out of the guard (which a working one guarantees).  Exactly one of
+        # the two happens, on every box, at every speed -- so this wait needs
+        # no count and cannot expire early into a vacuous pass.
+        "  while [ ! -e \"$SERVE_LOCK_RACE_SYNC/b_blocked_at_guard\" ] && "
+        "[ ! -e \"$SERVE_LOCK_RACE_SYNC/b_second_readlink\" ]; do\n"
         "    sleep 0.01\n"
         "  done\n"
         "fi\n"
@@ -83,15 +126,89 @@ def _race_environment(tmp_path: Path, contender: str) -> dict[str, str]:
     return env
 
 
-def _wait_for(path: Path, process: subprocess.Popen[str]) -> None:
-    deadline = time.monotonic() + 3
+_ROUND_TRIP_S: float | None = None
+
+
+def _acquire_round_trip_s() -> float:
+    """Seconds one whole ``serve_lock_acquire``/``release`` costs HERE and NOW.
+
+    Every wait in this file is waiting for some part of that round trip, so a
+    fixed wall-clock deadline is really a claim about how fast the box is.
+    Under ``pytest -n 24`` on an 80-core box the claim is false and the test
+    goes red for the load rather than for the lock (#182).  Measuring the round
+    trip at the moment of the wait makes the bound a multiple of observed work
+    instead: whatever slows the awaited subprocess slows this measurement by
+    the same factor, so the bound tracks the box.  It is measured once per
+    session, lazily, which is inside the loaded window whenever the load is
+    what is being survived.
+    """
+    global _ROUND_TRIP_S
+    if _ROUND_TRIP_S is None:
+        with tempfile.TemporaryDirectory() as raw:
+            box = Path(raw)
+            env = _environment(box)
+            # Against a DEAD owner, so the reference walks the same path the
+            # waits wait on: readlink, the liveness probe, the container probe,
+            # unlink, republication.  An acquire of an absent lock is one
+            # ``ln`` and measures nothing this file cares about.
+            script = (
+                f'lock="{box / "unit.lock"}"; '
+                f'ln -sfT "999999999:1:{"a" * 32}" "$lock"; '
+                f'SERVE_LOCK="$lock"; source "{HELPER}"; '
+                'SERVE_LOCK_OWNER=round-trip; serve_lock_acquire; serve_lock_release'
+            )
+            samples = []
+            for _ in range(3):
+                started = time.monotonic()
+                subprocess.run(
+                    ["bash", "-euo", "pipefail", "-c", script],
+                    env=env, text=True, capture_output=True, check=True,
+                )
+                samples.append(time.monotonic() - started)
+        _ROUND_TRIP_S = sorted(samples)[1]
+    return _ROUND_TRIP_S
+
+
+#: How many acquire round trips a wait may take before it is called a hang.
+#: Set from two measurements rather than from taste.  Above: the worst wait in
+#: this file costs 3.1 round trips idle and 5.5 starved, so 200 is ~36x the
+#: work.  Below: 200 x the idle round trip is ~3.4 s, so replacing the old
+#: three-second literal cannot make any wait TIGHTER than it was on an idle
+#: box -- it can only make it looser, and only in proportion to how much slower
+#: the box has made the work.
+_HANG_GUARD_ROUND_TRIPS = 200
+
+
+def _wait_until(
+    reached, process: subprocess.Popen[str], what: str,
+    *, round_trips: int = _HANG_GUARD_ROUND_TRIPS,
+) -> None:
+    """Wait for a subprocess to reach an observable point of its own.
+
+    The bound is a hang guard, not a deadline: every point this file waits for
+    is reached within a handful of acquire round trips of the wait starting,
+    and the guard is two hundred of them -- headroom in units of the work, not
+    in seconds, so a box that runs the work ten times slower gets ten times the
+    wall clock instead of the same three seconds.
+    """
+    unit = _acquire_round_trip_s()
+    deadline = time.monotonic() + round_trips * unit
     while time.monotonic() < deadline:
-        if path.exists():
+        if reached():
             return
         if process.poll() is not None:
             pytest.fail(f"lock holder exited {process.returncode}: {process.stderr.read()}")
         time.sleep(0.01)
-    pytest.fail("lock holder did not publish its ready marker")
+    pytest.fail(
+        f"{what} did not happen within {round_trips} acquire round trips "
+        f"({unit:.3f}s each as measured on this box)"
+    )
+
+
+def _wait_for(path: Path, process: subprocess.Popen[str], **kwargs) -> None:
+    """Wait for a marker a subprocess publishes."""
+    _wait_until(path.exists, process, f"the marker {path.name}", **kwargs)
+
 
 
 def test_serve_lock_acquisition_publishes_one_atomic_owner(tmp_path: Path) -> None:
@@ -220,7 +337,12 @@ def test_two_dead_owner_reapers_cannot_unlink_the_new_holder(tmp_path: Path) -> 
     def start(contender: str) -> subprocess.Popen[str]:
         ready = sync / f"{contender.lower()}_acquired"
         script = (
-            f'SERVE_LOCK="{lock}"; SERVE_LOCK_TIMEOUT=10; SERVE_LOCK_POLL_S=0.01; '
+            # No SERVE_LOCK_TIMEOUT: A acquires on its first pass and B is
+            # meant to block for as long as the test looks at it.  A busy
+            # deadline here is the helper's own ``date +%s`` wall clock, and a
+            # loaded box would make B exit 3 -- ending the contention this test
+            # needs to keep alive.  The finally block reaps both groups.
+            f'SERVE_LOCK="{lock}"; SERVE_LOCK_POLL_S=0.01; '
             f'source "{HELPER}"; SERVE_LOCK_OWNER=test-{contender}; '
             f'serve_lock_acquire; printf ready > "{ready}"; sleep 300'
         )
@@ -238,14 +360,42 @@ def test_two_dead_owner_reapers_cannot_unlink_the_new_holder(tmp_path: Path) -> 
     try:
         _wait_for(sync / "a_at_unlink", first)
         second = start("B")
+        # B has reached the point where it either races A or is held out of the
+        # race, so A's transition is made against a contender that is really
+        # contending.
+        _wait_until(
+            lambda: ((sync / "b_blocked_at_guard").exists()
+                     or (sync / "b_second_readlink").exists()),
+            second, "B reaching the transition guard",
+        )
         _wait_for(sync / "a_acquired", first)
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline and not (sync / "b_acquired").exists():
-            if second.poll() is not None:
-                pytest.fail(
-                    f"second contender exited {second.returncode}: {second.stderr.read()}"
-                )
-            time.sleep(0.01)
+        # B has taken a second readlink.  A broken guard would have spent it on
+        # the compare-recheck of the dead token, leaving B one unlink away from
+        # A's new owner; the serialized helper spends it on a second polling
+        # pass against A's live token, which is a decline.  Waiting for B's own
+        # progress replaces a fixed negative window that a loaded box could
+        # expire before B had entered the guard at all.
+        _wait_for(sync / "b_second_readlink", second)
+
+        def b_finished_that_pass() -> bool:
+            """B has left the pass a broken guard would have let it win.
+
+            Its readlink counter is B's own step count.  Reaching three means
+            the pass that took the second readlink ended and another began --
+            and it ended in a decline, because the only other way out of that
+            pass is unlink-and-acquire, which publishes ``b_acquired`` and
+            takes no third readlink.  So either side of the disjunction is B
+            telling us it is done deciding; nothing here is a guess about how
+            long deciding takes.
+            """
+            if (sync / "b_acquired").exists():
+                return True
+            try:
+                return int((sync / "readlink_B").read_text().strip() or 0) >= 3
+            except (OSError, ValueError):
+                return False  # bash is mid-write; look again next poll
+
+        _wait_until(b_finished_that_pass, second, "B's pass against A's published owner")
         assert not (sync / "b_acquired").exists(), (
             "both contenders entered the protected region: the second reaper "
             "unlinked the first contender's newly published owner"
