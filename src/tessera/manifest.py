@@ -268,11 +268,10 @@ def _require_wire_ratio(field: str, value: Fraction) -> None:
         "residue in the per-row or per-entry scale instead of the global.  Or "
         "a power of two whose exponent the codec's varint cannot hold -- the "
         "shipped planes snap the global to a power of two, and that helps only "
-        "while the exponent is inside the varint: the LUT global sits six "
-        "binades under the largest target normalised by the grid's peak, so a "
-        "grid whose peak dwarfs the weights (BF16's 2**128) lands here on any "
-        "weight, and E2M1/E4M3 only on a unit whose largest |w| is below "
-        "peak * 2**-57, a dead tensor.  Encode it on a grid the weights reach."
+        "while the exponent is inside the varint.  The plane places its global "
+        "relative to the weights, so a global this far out means the weights "
+        "sit far below what the plane normalises by; each plane's own encoder "
+        "states its range (encode._pack_scales_lut, scale_channel.channel_global)."
     )
 
 
