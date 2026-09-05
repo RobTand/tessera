@@ -84,6 +84,87 @@ def test_for_unit_at_a_stated_block_is_bit_identical_to_the_old_expression():
     assert torch.equal(got["ldl"], want)
 
 
+def test_for_unit_transports_the_hessian_into_the_rotated_basis():
+    """tessera#231: the exporter rotates the weight before LDLQ, so the
+    captured source-coordinate H is the wrong matrix for every derived
+    quantity.  ``for_unit`` told the rotation must hand back ``R^T H R`` as
+    the refit metric and factor the LDL from the *transported* regularised
+    Hessian, so factor and schedule agree in the basis the encode runs in."""
+    from tessera.diagonals import hadamard_block
+    from tessera.manifest import RotationState
+
+    H = _correlated(COLS, 0.7)
+    src = _source({"m.up_proj": H}, ldlq_sigma=1.0, ldlq_block=32,
+                  refit_objective="hessian")
+    kw = src.for_unit("m.up_proj.weight", COLS, "cpu",
+                      scale_plane=ScalePlaneKind.LUT,
+                      rotation=RotationState.R_IN_ONLY)
+    R = hadamard_block(COLS)
+    want_H = R.T @ H.float() @ R
+    assert torch.allclose(kw["refit_metric"], want_H, atol=1e-4)
+    assert not torch.allclose(kw["refit_metric"], H.float(), atol=1e-3)
+    want_ldl = block_ldl(regularize_hessian(want_H, sigma_reg=1.0), 32)
+    assert torch.allclose(kw["ldl"], want_ldl, atol=1e-4)
+
+
+def test_for_unit_scales_the_metric_by_the_fitted_input_factors():
+    """With segment-2a diagonals the encoder divides every column by ``su``
+    before quantising, so the metric in that basis is ``Du H Du`` -- the fit
+    the encoder will make, recomputed at the boundary from the same weight by
+    the same deterministic function."""
+    from tessera.diagonals import fit_diagonals
+    from tessera.manifest import RotationState
+
+    g = torch.Generator().manual_seed(3)
+    weight = torch.randn(64, COLS, generator=g) * 0.02
+    weight[:, 7] *= 9.0
+    H = _correlated(COLS, 0.7)
+    src = _source({"m.up_proj": H}, ldlq_sigma=1.0, ldlq_block=32,
+                  refit_objective="hessian")
+    kw = src.for_unit("m.up_proj.weight", COLS, "cpu",
+                      scale_plane=ScalePlaneKind.LUT,
+                      rotation=RotationState.NONE,
+                      with_diagonals=True, weight=weight)
+    su = fit_diagonals(weight).su.float()
+    want_H = H.float() * su[None, :] * su[:, None]
+    assert torch.allclose(kw["refit_metric"], want_H, atol=1e-4)
+    want_ldl = block_ldl(regularize_hessian(want_H, sigma_reg=1.0), 32)
+    assert torch.allclose(kw["ldl"], want_ldl, atol=1e-4)
+
+
+def test_for_unit_refuses_diagonals_without_the_weight_to_fit_them():
+    """The transport needs the fit and the fit needs the weight; pricing the
+    source basis instead would be exactly the silent mismatch tessera#231
+    found, so the boundary refuses rather than guesses."""
+    H = _correlated(COLS, 0.7)
+    src = _source({"m.up_proj": H}, ldlq_sigma=1.0, ldlq_block=32)
+    with pytest.raises(GrammarError, match="weight"):
+        src.for_unit("m.up_proj.weight", COLS, "cpu",
+                     scale_plane=ScalePlaneKind.LUT, with_diagonals=True)
+
+
+def test_the_transported_refit_prices_lower_true_loss_than_the_source_basis():
+    """The numerically-distinguishable witness from tessera#231: the same
+    channel refit under the transported metric must beat the refit under the
+    untransported one on the true encoded-basis quadratic."""
+    from tessera.diagonals import hadamard_block
+    from tessera.scale_channel import refit_channel_scale
+
+    R = hadamard_block(32)
+    Hsource = torch.diag(torch.arange(1, 33).float())
+    Hwork = R.T @ Hsource @ R
+    work = torch.ones(1, 32)
+    units = torch.zeros(1, 32)
+    units[0, 0] = 1
+    losses = {}
+    for name, metric in (("source", Hsource), ("work", Hwork)):
+        _, scale = refit_channel_scale(
+            work, units, torch.ones(1, dtype=torch.float16), 1., metric)
+        error = work - scale[:, None] * units
+        losses[name] = float(((error @ Hwork) * error).sum())
+    assert losses["work"] < losses["source"]
+
+
 def test_the_default_is_still_the_measured_constant():
     """A budget is opt-in.  Nothing about this change moves the default any
     export inherits when the caller says nothing."""

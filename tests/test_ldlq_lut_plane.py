@@ -169,6 +169,67 @@ def _cost(work, units, effective, half, M):
     return float(((e @ M) * e).sum())
 
 
+def test_the_shared_table_fit_reads_the_output_row_weights():
+    """tessera#231: under segment-2a diagonals the source output loss weights
+    row ``r``'s working-coordinate quadratic by ``sv_r^2``.  Every per-row
+    decision cancels the factor, but the sixteen-entry table is SHARED across
+    rows, so the fit and the candidate comparison must read the weights --
+    otherwise the plane is chosen for the balanced coordinates, not the
+    objective."""
+    rows = 12
+    work, units, half, table, index, eff, glob = _lut_fixture(
+        seed=21, rows=rows, cols=256)
+    H = _hessian(cols=256, seed=21, device="cpu", coupling=4.0)
+    rw = torch.ones(rows)
+    rw[:2] = 1e4                    # two rows dominate the true objective
+    plain = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                              metric=H)
+    weighted = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                                 metric=H, row_weight=rw)
+
+    def weighted_cost(effective):
+        e = work - effective.reshape(rows, -1).repeat_interleave(
+            half, dim=1) * units
+        return float((((e @ H) * e) * rw[:, None]).sum())
+
+    assert not torch.equal(weighted[2], plain[2])
+    assert weighted_cost(weighted[2]) < weighted_cost(plain[2])
+
+
+def test_encode_unit_weights_the_shared_fit_by_the_diagonal_rows(monkeypatch):
+    """The plumbing half of the claim above: with fitted diagonals and a
+    metric, ``encode_unit`` hands ``sv^2`` to the LUT refit; without
+    diagonals it hands nothing and the refit is byte for byte what it was."""
+    import tessera.encode as encode_mod
+    from tessera.alphabet import build_forest
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+
+    seen = []
+    real = encode_mod._refit_scales_lut
+
+    def spy(*args, **kw):
+        seen.append(kw.get("row_weight"))
+        return real(*args, **kw)
+
+    monkeypatch.setattr(encode_mod, "_refit_scales_lut", spy)
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    g = torch.Generator().manual_seed(9)
+    w = torch.randn(16, 64, generator=g) * 0.02
+    w[3, :] *= 7.0                      # a loud row, so sv is not uniform
+    x = torch.randn(256, 64, generator=g)
+    H = (x.T @ x) / 256
+    unit = encode_unit(w, forest, (3,) * 64, code, scale_plane=ScalePlaneKind.LUT,
+                       with_diagonals=True, refit_metric=H, scale_refit=1)
+    assert seen and seen[-1] is not None
+    assert torch.allclose(seen[-1], unit.diagonals.sv.float().pow(2))
+    seen.clear()
+    encode_unit(w, forest, (3,) * 64, code, scale_plane=ScalePlaneKind.LUT,
+                refit_metric=H, scale_refit=1)
+    assert seen and seen[-1] is None
+
+
 def test_an_identity_metric_is_the_plain_refit():
     """The derivation's own claim: at ``H = I`` the cross-block terms vanish
     because blocks have disjoint support, and ``s* = <w,u>/<u,u>`` again."""
@@ -623,6 +684,65 @@ def test_the_coupled_landing_is_monotone_and_below_the_separable_one():
             coupled_landing=True)[2], half, H)
         assert cou <= sep + 1e-9 * sep
         assert sep <= before + 1e-9 * before
+
+
+def test_a_sweep_the_full_cost_rejects_is_rolled_back():
+    """tessera#232.  The sweep's local FP32 gains can disagree with the
+    recomputed full quadratic on ill-conditioned inputs; the stop rule read
+    the disagreement, broke -- and returned the mutated plane at the higher
+    cost anyway.  A landing whose own check says "worse" keeps the incumbent.
+
+    The issue's witness: two near-cancelling loud blocks under an H whose
+    off-diagonal term is 1 - 2^-15.  In float64 the move genuinely helps;
+    in the FP32 cost the function itself recomputes, it reads higher -- which
+    is exactly the disagreement the rollback must catch, whatever the exact
+    arithmetic would have said."""
+    from tessera.encode import _coupled_landing
+
+    W = torch.zeros(1, 32)
+    W[0, 0], W[0, 16] = 32768.8515625, -32767.51953125
+    U = torch.zeros(1, 32)
+    U[0, 0] = U[0, 16] = 1
+    Ub = U.reshape(1, 2, 16)
+    H = torch.eye(32)
+    H[0, 16] = H[16, 0] = 1 - 2 ** -15
+    A = torch.ones(1, 2)
+    table = torch.tensor([.5, .5625, .625, .6875, .75, .8125, .875, .9375,
+                          1., 1.125, 1.25, 1.375, 1.5, 1.625, 1.75, 1.875])
+    I = torch.tensor([[7, 3]])
+    C = table[I]
+    E = W - C.repeat_interleave(16, dim=1) * U
+    before = float(((E @ H) * E).sum())
+    new_C, new_I, after, record = _coupled_landing(
+        W, U, Ub, H, A, C, I, table, 16, before)
+    assert after <= before, (before, after)
+    assert torch.equal(new_C, C) and torch.equal(new_I, I)
+    assert record["cost"] == after and record["moves"] == 0
+
+
+def test_the_caller_keeps_the_incumbent_when_the_coupled_cost_does_not_win(monkeypatch):
+    """tessera#232's second half: the call site took the sweep's result on
+    the reasoning that it is monotone by construction -- the construction the
+    witness above broke.  The guard is the same accept test every other
+    candidate passes: the sweep is returned only when its recomputed full
+    cost wins."""
+    import tessera.encode as encode_mod
+
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=18, cols=128)
+    H = _hessian(cols=128, seed=18, device="cpu", coupling=4.0)
+    sep = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                            metric=H, gauss_seidel=True)
+
+    def worse(W, U, Ub, H_, A, C, I, table_, half_, start, row_weight=None):
+        return C + 1.0, I, start + 1.0, {"cost": start + 1.0, "sweeps": 1,
+                                         "moves": 1}
+
+    monkeypatch.setattr(encode_mod, "_coupled_landing", worse)
+    cou = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                            metric=H, gauss_seidel=True, coupled_landing=True)
+    assert torch.equal(cou[0], sep[0])
+    assert torch.equal(cou[1], sep[1])
+    assert torch.equal(cou[2], sep[2])
 
 
 def test_the_coupled_landing_off_is_the_refit_that_was_there():

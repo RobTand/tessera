@@ -46,6 +46,7 @@ from .diagonals import (
     apply_diagonals,
     apply_rotation,
     fit_diagonals,
+    undo_diagonals,
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
@@ -1687,8 +1688,19 @@ def _refit_scales_lut_metric(
     gauss_seidel: bool = False,
     exact_fit: bool = False,
     coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
 ):
     """The LUT plane's refit under an input metric -- JSO's knob, solved with H.
+
+    ``row_weight`` is the source-basis row weighting ``sv^2`` when segment-2a
+    diagonals are present (tessera#231): the objective the export prices is
+    ``sum_r sv_r^2 E_r H' E_r^T``, and while every per-row quantity below --
+    targets, steps, line searches, landing argmins -- cancels a positive
+    per-row factor exactly, the sixteen-entry table is SHARED across rows, so
+    its fit weights and every cross-row cost comparison must carry it or the
+    plane is chosen for the balanced coordinates instead of the objective.
+    ``None`` -- every encode without diagonals -- is byte for byte the refit
+    that was always here.
 
     ``_refit_scales_lut`` minimises the plain squared error, for which a
     16-block's scale is ``<w, u> / <u, u>`` over its own sixteen columns and
@@ -1803,6 +1815,14 @@ def _refit_scales_lut_metric(
     from .scale_channel import check_refit_metric
 
     check_refit_metric(metric, cols)
+    rw = None
+    if row_weight is not None:
+        if row_weight.numel() != rows:
+            raise GrammarError(
+                f"a row weight holds one factor per output row: "
+                f"{row_weight.numel()} for {rows} rows"
+            )
+        rw = row_weight.to(W.dtype).to(W.device).reshape(rows, 1)
     if metric.ndim == 1:
         h = metric.to(W.dtype).to(W.device).reshape(1, nb, half)
         A = (Ub * Ub * h).sum(dim=2)
@@ -1810,7 +1830,8 @@ def _refit_scales_lut_metric(
         target = torch.where(A > 0, B / A.clamp_min(1e-30), S)
 
         def cost(C: torch.Tensor) -> float:
-            return float((A * C * C - 2.0 * B * C).sum())
+            q = A * C * C - 2.0 * B * C
+            return float(q.sum() if rw is None else (q * rw).sum())
     else:
         H = metric.to(W.dtype).to(W.device)
         Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
@@ -1853,12 +1874,17 @@ def _refit_scales_lut_metric(
 
         def cost(C: torch.Tensor) -> float:
             Ec = W - C.repeat_interleave(half, dim=1) * U
-            return float(((Ec @ H) * Ec).sum())
+            q = (Ec @ H) * Ec
+            return float(q.sum() if rw is None else (q * rw).sum())
 
     stepped = target if _REFIT_DIAG is None else target.clone()
     valid = (A > 0) & (target > 0)
     target = torch.where(valid, target, S)
     weights = torch.where(valid, A, torch.zeros_like(A))
+    if rw is not None:
+        # The shared-table fit's weights carry the row factors; the per-row
+        # revert/target logic above already cancelled them exactly.
+        weights = weights * rw
 
     flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
 
@@ -1905,8 +1931,13 @@ def _refit_scales_lut_metric(
     coupled = None
     if coupled_landing and metric.ndim == 2:
         # The fourth candidate: the chosen plane with its assignment made
-        # cross-block aware.  Monotone from ``best`` by construction, so it
-        # is taken without another comparison; the sink records both so the
+        # cross-block aware.  It used to be taken without a comparison, on
+        # the reasoning that every move lowers the quadratic "by
+        # construction" -- true in exact arithmetic, and exactly the reading
+        # tessera#232's witness broke in FP32.  The sweep now rolls back a
+        # sweep its own recompute rejects, and this call site holds it to
+        # the SAME accept test every other candidate passes: returned only
+        # when its recomputed full cost wins.  The sink records both so the
         # separable landing stays measurable next to it.  It re-assigns INTO
         # the table, so a ``lut_landing`` ceiling mode -- which removed the
         # table -- has nothing for it to assign into.
@@ -1916,11 +1947,16 @@ def _refit_scales_lut_metric(
                 f"lut_landing({_LUT_LANDING!r}) removed it, so the two cannot be "
                 "read in one refit"
             )
-        best_eff, best_index, best, coupled = _coupled_landing(
+        c_eff, c_index, c_cost, coupled = _coupled_landing(
             W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
-            _lut_values(best_bytes, global_scale), half, best)
-        best_index = best_index.reshape(-1)
-        won = won + "+coupled"
+            _lut_values(best_bytes, global_scale), half, best, row_weight=rw)
+        if c_cost < best:
+            best_eff, best_index, best = c_eff, c_index.reshape(-1), c_cost
+            won = won + "+coupled"
+        else:
+            # The incumbent stands; the record describes the plane returned,
+            # which is what the sink's one consumer scores.
+            coupled = {"cost": best, "sweeps": coupled["sweeps"], "moves": 0}
     if _REFIT_DIAG is not None:
         # Debug-only, floats only, appended after every decision this call
         # made.  The refit's landed error is three things added together and
@@ -1967,7 +2003,8 @@ def _refit_scales_lut_metric(
     return best_bytes, best_index.reshape(-1).to(torch.uint8), best_eff.reshape(-1)
 
 
-def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
+def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
+                     row_weight=None):
     """Re-assign every block to the table entry minimising the FULL quadratic
     given every other block where it now stands -- the landing (c) above with
     the cross-block terms kept.
@@ -1991,19 +2028,51 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
     the cost -- a dtype constant, not a tuning).  The gradient field and the
     cost are recomputed exactly at the top of every sweep, so the stop rule
     reads a true cost and rounding in the incremental pushes cannot
-    accumulate across sweeps.  Returns ``(C, I, cost, record)``.
+    accumulate across sweeps.
+
+    **A sweep the recomputed cost rejects is rolled back** (tessera#232).
+    The per-move gains are exact in exact arithmetic, but in FP32 a sweep's
+    local gains can disagree with the recomputed full quadratic on
+    ill-conditioned inputs -- near-cancelling loud blocks under an H with an
+    off-diagonal term one ulp from 1 raised the recomputed cost by 24 ulps
+    while every local gain read positive.  The stop rule already reads the
+    disagreement; what it must not do is keep the plane it just measured as
+    worse, so the walk restores the last accepted sweep's ``C``/``I`` before
+    breaking, ``moves`` counts accepted moves only, and the returned cost is
+    the returned plane's own recomputed number -- at or below ``start_cost``
+    by construction again, this time including the rounding.  Whether the
+    exact quadratic would have improved is beside the point: the function's
+    acceptance IS the FP32 recompute, and a candidate its own check calls
+    worse is not returned.  Returns ``(C, I, cost, record)``.
     """
     rows, nb = C.shape
     C, I = C.clone(), I.clone()
     eps = torch.finfo(torch.float32).eps
     prev = start_cost
     sweeps = moves = 0
+    # ``row_weight`` (tessera#231) weights the COST sums only: every per-row
+    # quantity -- conditional optima, argmins, gains -- cancels a positive
+    # per-row factor exactly, so the moves are the moves; what the factor
+    # changes is what one sweep's total is worth against the stop rule, which
+    # must be measured on the same functional the refit compares candidates on.
+    rw = None if row_weight is None else row_weight.reshape(rows, 1)
+    kept_C = kept_I = None
+    last_moved = 0
     while True:
         E = W - C.repeat_interleave(half, dim=1) * U
         G = E @ H
-        now = float((G * E).sum())
-        if sweeps and (now >= prev or prev - now <= eps * prev):
-            break
+        now = float(((G * E) if rw is None else (G * E * rw)).sum())
+        if sweeps:
+            if now >= prev:
+                # The last sweep's local gains disagreed with the recomputed
+                # full cost: roll it back and keep the incumbent
+                # (tessera#232).  ``moves`` stays the accepted count.
+                C, I = kept_C, kept_I
+                moves -= last_moved
+                break
+            if prev - now <= eps * prev:
+                break
+        kept_C, kept_I = C.clone(), I.clone()
         prev = now
         moved = 0
         for b in range(nb):
@@ -2027,13 +2096,15 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost):
                 moved += int(take.sum())
         sweeps += 1
         moves += moved
+        last_moved = moved
         if moved == 0:
             break
     # ``prev`` is the exact cost of the plane as it stood at the top of the
     # last completed sweep; the final plane is at or below it, so read it once
     # more so the record is the plane's own number.
     E = W - C.repeat_interleave(half, dim=1) * U
-    final = float(((E @ H) * E).sum())
+    q = (E @ H) * E
+    final = float(q.sum() if rw is None else (q * rw).sum())
     return C, I, final, {"cost": final, "sweeps": sweeps, "moves": moves}
 
 
@@ -2049,6 +2120,7 @@ def _refit_scales_lut(
     gauss_seidel: bool = False,
     exact_fit: bool = False,
     coupled_landing: bool = False,
+    row_weight: "torch.Tensor | None" = None,
 ):
     """One least-squares step on the LUT plane, monotone by construction.
 
@@ -2069,7 +2141,19 @@ def _refit_scales_lut(
         return _refit_scales_lut_metric(
             work, units, half, table_bytes, index, effective, global_scale, metric,
             gauss_seidel=gauss_seidel, exact_fit=exact_fit,
-            coupled_landing=coupled_landing,
+            coupled_landing=coupled_landing, row_weight=row_weight,
+        )
+    if row_weight is not None:
+        # The plain refit deliberately minimises the balanced-coordinate
+        # error -- the weights-only encode, byte for byte what it always was.
+        # A source-basis row factor belongs to the metric-aware objective
+        # (tessera#231); accepted here it would quietly change encodes that
+        # asked for no metric, so it is refused instead.
+        raise GrammarError(
+            "row_weight carries the metric-aware refit's source-basis sv^2 "
+            "factors, and without refit_metric the refit minimises the "
+            "balanced-coordinate error by design: the argument would change "
+            "an encode that asked for no metric"
         )
     W = work.float().reshape(-1, half)
     U = units.float().reshape(-1, half)
@@ -2188,6 +2272,20 @@ def encode_unit(
     body's reach, and is CHANNEL-only for the same reason -- a block scale
     already tracks its own sixteen weights.  Both are encoder settings; neither
     is wire.
+
+    **The metric's basis is the working basis** -- the coordinates of the
+    matrix the body actually quantises, after ``rotation`` and after the
+    diagonals divide (tessera#231).  ``refit_metric``,
+    ``refit_metric_trailing`` and ``ldl`` are all read against ``work``, so a
+    caller that rotates or balances must transport a source-coordinate H
+    first: ``H' = Du R^T H R Du`` (``diagonals.transport_metric`` states the
+    rule; ``ActivationSource.for_unit`` is the boundary that applies it and
+    refactors the LDL from the transported, then regularised, H').  With no
+    transform the two bases coincide and nothing changes.  The row half of
+    the transport -- the source objective weights row ``r`` by ``sv_r^2`` --
+    is the encoder's own job because only it holds the fit: per-row refit
+    decisions cancel the factor exactly, and the one cross-row decision, the
+    LUT plane's shared table, is handed ``sv^2`` below.
 
     ``refit_metric_trailing`` swaps the objective of the trailing refit only
     (issue #75): inner passes minimise ``refit_metric``, the last refit
@@ -2810,6 +2908,14 @@ def encode_unit(
                 work, units, half, table_bytes, refine, effective, global_scale,
                 metric=metric_now, gauss_seidel=refit_gauss_seidel,
                 exact_fit=refit_lut_exact,
+                # The source-basis row factors (tessera#231): with segment-2a
+                # diagonals the metric-aware objective weights row r by
+                # sv_r^2.  Per-row decisions cancel the factor; the shared
+                # sixteen-entry table does not, so the refit is told.
+                row_weight=(
+                    None if fitted is None or metric_now is None
+                    else fitted.sv.to(device=device, dtype=torch.float32).pow(2)
+                ),
                 coupled_landing=(
                     refit_coupled_landing == "every"
                     or (refit_coupled_landing == "trailing" and last)
@@ -2859,10 +2965,22 @@ def encode_unit(
     # own ``plain`` column is measured on, so the diagnostic and the receipt
     # now speak about the same quantity.
     #
+    # "The weight's own units" includes the S5 transforms (tessera#230):
+    # ``work`` is the BALANCED matrix, and for a balanced error E the
+    # source-weight error is ``Dv E Du R^T``, so the diagonal factors must be
+    # multiplied back or the number depends on the balancing gauge (the
+    # issue's sv=2 witness read exactly 4x low).  The remaining rotation is
+    # blockwise-orthogonal and moves no Frobenius norm, so undoing the
+    # diagonals on the error IS the source-space number, without paying a
+    # rotation round trip whose only effect is its own rounding.
+    #
     # Diagnostic, not wire: no plane carries it, ``unit_artifact`` parses one
     # back as 0.0, and no artifact byte depends on it.
     units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
-    sse = float(((work - units * scale) ** 2).sum())
+    error = work - units * scale
+    if fitted is not None:
+        error = undo_diagonals(error, fitted)
+    sse = float((error ** 2).sum())
 
     if _LUT_LANDING_SINK is not None:
         # Debug-only, floats out, no byte in.  In a non-default landing mode

@@ -402,6 +402,25 @@ def build_unit_artifact(
     rows = steps * grid.arity
     rates = unit.rates
     span = unit.span
+    # The wire has no rotation-block field: the reader re-derives the block
+    # from the rotation state and the width by the encoder's own canonical
+    # rule (``diagonals.rotation_block_for``).  A unit rotated at any other
+    # block would read back under a substituted rotation and decode to
+    # plausible wrong weights, so it is refused here, where the bytes are
+    # decided (tessera#210).  Under NONE no consumer reads the block.
+    if unit.rotation is not RotationState.NONE:
+        from .diagonals import rotation_block_for
+
+        derivable = rotation_block_for(unit.rotation, cols)
+        if int(unit.rotation_block) != derivable:
+            raise GrammarError(
+                f"rotation_block {int(unit.rotation_block)} is not on the wire: "
+                f"a reader derives {derivable} for a {cols}-column "
+                f"{unit.rotation.name} unit (the largest power of two dividing "
+                "the width, capped at 128) and would undo a rotation the "
+                "encoder never applied. Rotate at the derived block, or write "
+                "without rotation"
+            )
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
     window_bits = int(getattr(unit, "window_bits", 0))
     plane_kind = ScalePlaneKind(unit.scale_plane)
@@ -572,6 +591,13 @@ def build_unit_artifact(
         PlaneKind.RELEASE: pack_uniform(unit.release_code, RELEASE_BITS),
     }
     if has_diagonals:
+        # Refuse where the bytes are decided (tessera#229): a zero, negative
+        # or non-finite factor decodes finite weights to zero or NaN, and the
+        # artifact would stay well-formed while doing it.  The rule and its
+        # message live with the transform (``diagonals``).
+        from .diagonals import require_invertible_diagonals
+
+        require_invertible_diagonals(unit.diagonals)
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
     row_scale = plane_kind is ScalePlaneKind.CHANNEL
@@ -729,7 +755,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     and is refused by name -- is ``_refuse_partial_planes``'s docstring.
     """
     from .container import plane_ranges
-    from .diagonals import Diagonals
+    from .diagonals import Diagonals, rotation_block_for
 
     art = parse(blob)
     manifest, terminal = art.manifest, art.terminal
@@ -858,7 +884,9 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         sse=0.0,
         completion_limit=completion_limit,
         rotation=manifest.branch.rotation,
-        rotation_block=128,
+        # Derived from the same canonical rule the encoder used; the writer
+        # refuses any unit this derivation would not reproduce (tessera#210).
+        rotation_block=rotation_block_for(manifest.branch.rotation, cols),
         diagonals=_read_diagonals(plane, chunks, rows, cols, device),
         group=geometry.group_weights,
         half=geometry.half_weights,
@@ -1154,15 +1182,22 @@ def _as_unit(manifest, fields: dict, chunks, device, code):
 
 def _read_diagonals(plane, chunks, rows, cols, device):
     """Segment 2a, present only when DIAG_SU is: under a CHANNEL plane DIAG_SV
-    is the row scale and there is no rank-1 pair to build."""
-    from .diagonals import Diagonals
+    is the row scale and there is no rank-1 pair to build.
+
+    The writer refuses a non-invertible pair before the bytes exist, and one
+    rule means the reader refuses the same words rather than decoding them: a
+    zero or non-finite factor multiplies every weight it touches to zero or
+    NaN with nothing else raising (tessera#229), and an artifact carrying one
+    was not written by this implementation.
+    """
+    from .diagonals import Diagonals, require_invertible_diagonals
 
     if plane.kind is ScalePlaneKind.CHANNEL or not chunks.get(PlaneKind.DIAG_SU):
         return None
-    return Diagonals(
+    return require_invertible_diagonals(Diagonals(
         sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
         su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
-    )
+    ))
 
 
 def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
@@ -1174,7 +1209,7 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     stray bytes there would be reading a different format.
     """
     from .container import plane_ranges
-    from .diagonals import Diagonals
+    from .diagonals import Diagonals, rotation_block_for
 
     manifest, terminal = art.manifest, art.terminal
     wire = manifest.plane_order
@@ -1244,7 +1279,8 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         sse=0.0,
         completion_limit=0,
         rotation=manifest.branch.rotation,
-        rotation_block=128,
+        # Derived, not assumed: one rule for both body parsers (tessera#210).
+        rotation_block=rotation_block_for(manifest.branch.rotation, cols),
         diagonals=_read_diagonals(plane, chunks, rows, cols, device),
         group=geometry.group_weights,
         half=geometry.half_weights,

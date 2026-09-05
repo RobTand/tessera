@@ -84,6 +84,180 @@ def test_rotation_suppresses_outliers():
     assert kurt(rotated) < kurt(weights)
 
 
+def test_fit_lands_extreme_magnitudes_inside_fp16_range():
+    """tessera#229: a finite weight must never fit factors that store as zero
+    or infinity.  ``undo_diagonals`` multiplies the stored FP16 words back, so
+    a factor outside FP16's range decodes every weight it touches to zero or
+    NaN.  The rank-1 gauge is free -- ``(sv * c, su / c)`` balances the same
+    matrix -- so the fit must spend it landing both factors in range."""
+    finfo = torch.finfo(torch.float16)
+    for magnitude in (1e-8, 1e5):
+        weights = torch.full((16, 32), magnitude)
+        fitted = fit_diagonals(weights)
+        for factor in (fitted.sv, fitted.su):
+            assert torch.isfinite(factor).all(), magnitude
+            assert (factor > 0).all(), magnitude
+            assert float(factor.abs().max()) <= finfo.max
+        restored = undo_diagonals(apply_diagonals(weights, fitted), fitted)
+        assert torch.allclose(restored, weights, rtol=1e-2)
+
+
+def test_extreme_magnitudes_encode_and_reconstruct_finite(tmp_path):
+    """The end-to-end witness from tessera#229: encode/write/read a constant
+    finite source at 1e-8 and 1e5 with fitted diagonals, and require the
+    reconstruction to be finite and near the source -- not silently zero or
+    NaN with a healthy-looking artifact."""
+    from tessera.alphabet import E2M1_GRID, build_forest
+    from tessera.encode import encode_unit
+    from tessera.decode import reconstruct_unit
+    from tessera.trellis import ConvCode
+
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    for magnitude in (1e-8, 1e5):
+        weight = torch.full((16, 32), magnitude)
+        unit = encode_unit(weight, forest, (3,) * 32, code,
+                           with_diagonals=True, scale_refit=1)
+        output = reconstruct_unit(unit, forest, code)
+        assert torch.isfinite(output).all(), magnitude
+        assert torch.allclose(output, weight, rtol=0.25), magnitude
+
+
+def test_fit_gives_zero_rows_and_columns_an_invertible_factor():
+    """A zero row's balanced values are zero under ANY factor, so the fit's
+    deliberate policy is the identity factor 1.0 -- invertible, exact, and it
+    does not drag the representable-range gauge toward zero."""
+    weights = _weights(rows=16, cols=32)
+    weights[3, :] = 0.0
+    weights[:, 5] = 0.0
+    fitted = fit_diagonals(weights)
+    assert float(fitted.sv[3]) == 1.0
+    assert float(fitted.su[5]) == 1.0
+    assert torch.isfinite(fitted.sv).all() and (fitted.sv > 0).all()
+    assert torch.isfinite(fitted.su).all() and (fitted.su > 0).all()
+    restored = undo_diagonals(apply_diagonals(weights, fitted), fitted)
+    assert torch.allclose(restored, weights, atol=1e-6, rtol=1e-2)
+    assert torch.equal(restored[3, :], torch.zeros(32))
+
+
+def test_a_fit_no_gauge_can_represent_is_refused_by_name():
+    """Rows at 1e-8 next to rows at 1e8 need an sv spread of 1e16; FP16 holds
+    a factor of ~1.07e9 between its smallest normal and its largest value, and
+    one global gauge cannot fix a spread.  Refuse at the fit, by field name,
+    rather than write factors that decode to zero or NaN."""
+    weights = torch.ones(16, 32)
+    weights[:8] *= 1e-8
+    weights[8:] *= 1e8
+    with pytest.raises(GrammarError, match="DIAG_SV"):
+        fit_diagonals(weights)
+
+
+def test_supplied_non_invertible_factors_are_refused():
+    """tessera#229: ``apply_diagonals`` used to clamp a zero factor to 1e-12
+    for the forward divide while ``undo_diagonals`` multiplied the stored zero
+    back -- the transform pair was silently not a pair.  Both directions now
+    refuse a zero, negative or non-finite factor by name."""
+    from tessera.diagonals import Diagonals
+
+    good = torch.ones(16, dtype=torch.float16)
+    weights = _weights(rows=16, cols=16)
+    for sv, su in (
+        (torch.zeros(16, dtype=torch.float16), good),
+        (good, torch.full((16,), float("inf"), dtype=torch.float16)),
+        (torch.full((16,), float("nan"), dtype=torch.float16), good),
+        (good, -torch.ones(16, dtype=torch.float16)),
+    ):
+        bad = Diagonals(sv=sv, su=su)
+        with pytest.raises(GrammarError, match="DIAG_S"):
+            apply_diagonals(weights, bad)
+        with pytest.raises(GrammarError, match="DIAG_S"):
+            undo_diagonals(weights, bad)
+
+
+def test_the_writer_refuses_non_invertible_diagonals():
+    """Refuse where the bytes are decided: a unit carrying factors the decoder
+    cannot invert must not serialise, whatever produced the unit."""
+    import dataclasses
+
+    from tessera.alphabet import E2M1_GRID, build_forest
+    from tessera.diagonals import Diagonals
+    from tessera.encode import encode_unit
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact
+
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    weight = _weights(rows=16, cols=32)
+    unit = encode_unit(weight, forest, (3,) * 32, code,
+                       with_diagonals=True, scale_refit=1)
+    bad = dataclasses.replace(
+        unit,
+        diagonals=Diagonals(sv=torch.zeros(16, dtype=torch.float16),
+                            su=torch.ones(32, dtype=torch.float16)),
+    )
+    with pytest.raises(GrammarError, match="DIAG_SV"):
+        build_unit_artifact(bad, "u", {3: forest}, 768, code, fixture_id=None)
+
+
+def test_transport_metric_carries_the_quadratic_into_the_encoded_basis():
+    """tessera#231: the encoder quantises ``Wwork = Dv^-1 W R Du^-1``, so the
+    activations its rows meet are ``xwork = Du R^T x`` and the metric in the
+    encoded basis is ``H' = Du R^T H R Du``.  The invariant that defines the
+    transport: for any working-coordinate error row ``e``, the source-output
+    quadratic of the row it came from is ``sv_r^2 * (e H' e^T)``."""
+    from tessera.diagonals import Diagonals, transport_metric
+
+    g = torch.Generator().manual_seed(5)
+    cols, rows = 64, 8
+    x = torch.randn(4 * cols, cols, generator=g)
+    H = (x.T @ x) / x.shape[0]
+    sv = (torch.rand(rows, generator=g) * 3 + 0.5).to(torch.float16)
+    su = (torch.rand(cols, generator=g) * 3 + 0.5).to(torch.float16)
+    fitted = Diagonals(sv=sv, su=su)
+    E_work = torch.randn(rows, cols, generator=g)
+    R = hadamard_block(64)
+
+    got = transport_metric(H, RotationState.R_IN_ONLY, 64, fitted)
+    # The source-coordinate error of a working-coordinate error E is
+    # Dv E Du R^T; its H-quadratic must equal the sv^2-weighted H'-quadratic.
+    E_src = (sv.float()[:, None] * E_work * su.float()[None, :]) @ R.T
+    want = ((E_src @ H) * E_src).sum()
+    have = ((E_work @ got) * E_work * sv.float().pow(2)[:, None]).sum()
+    assert torch.isclose(want, have, rtol=1e-4)
+    # Distinguishable from the source-basis metric wherever the transform is
+    # nontrivial -- the mispricing tessera#231 is about.
+    assert not torch.allclose(got, H)
+
+
+def test_transport_metric_keeps_a_diagonal_metric_diagonal_without_rotation():
+    """Under NONE rotation a diagonal metric transports as ``su^2 h`` and must
+    stay 1-D: the separable refit paths key on the metric's rank."""
+    from tessera.diagonals import Diagonals, transport_metric
+
+    h = torch.arange(1.0, 17.0)
+    su = torch.full((16,), 2.0, dtype=torch.float16)
+    fitted = Diagonals(sv=torch.ones(4, dtype=torch.float16), su=su)
+    got = transport_metric(h, RotationState.NONE, 1, fitted)
+    assert got.ndim == 1
+    assert torch.allclose(got, h * 4.0)
+    # And the identity transport is the metric itself.
+    same = transport_metric(h, RotationState.NONE, 1, None)
+    assert torch.allclose(same, h)
+
+
+def test_transport_metric_densifies_a_diagonal_metric_under_rotation():
+    """A diagonal source H is dense in the rotated basis; forwarding the
+    diagonal power as if nothing moved is the mispricing tessera#231 shows."""
+    from tessera.diagonals import transport_metric
+
+    h = torch.arange(1.0, 33.0)
+    got = transport_metric(h, RotationState.R_IN_ONLY, 32, None)
+    R = hadamard_block(32)
+    want = R.T @ torch.diag(h) @ R
+    assert got.ndim == 2
+    assert torch.allclose(got, want, atol=1e-5)
+
+
 def test_two_sided_rotation_is_refused_as_a_serving_branch():
     """S7: two-sided is a weight-space measurement state, not a branch.
 
