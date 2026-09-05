@@ -212,7 +212,11 @@ def _reference_fp4_quant(x, global_scale):
 
 
 class _Layer(torch.nn.Module):
-    pass
+    """A vLLM ``LinearBase`` stand-in on one rank: the layer's OWN TP
+    coordinates, which every ``LinearBase`` sets before ``create_weights``
+    and the shard plan reads (tessera#303)."""
+
+    tp_rank, tp_size = 0, 1
 
 
 def _encode_module(roles, cols=1024, q256=896, seed=0):

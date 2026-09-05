@@ -650,6 +650,65 @@ decoding and measuring on any grid stay open" is what keeps a free 1024-code
 tuple grid buildable, and narrowing that would close a research surface rather
 than close #285.
 
+### 3.8 A tensor-parallel rank serves the slice its layer's contract names
+
+The artifact is TP-agnostic: every rank loads the whole container, and
+`serving.sharding.plan_shard` decides which rows or columns of each role
+this rank serves before `shard_parsed_roles` cuts them (`layout.slice_unit`)
+and the route's kernel runs on the slice. Priced == written == served holds
+across ranks only if the plan is exact: a rank serving rows another rank also
+serves, or rows no rank serves, is a module priced once and served as
+something else, and nothing downstream can see it -- the decoder returns the
+arrangement it was handed and the sidecar agrees with the wire it was written
+beside.
+
+**The plan is read off the LAYER, never inferred from the tile.** vLLM's
+`create_weights` hands a dense method the layer object, this rank's tile
+(`input_size_per_partition`, `output_partition_sizes`) and the module's global
+shape (`input_size`, `output_size`); `LinearBase.__init__` sets the layer's own
+`tp_rank`/`tp_size` (`0, 1` under `disable_tp`, a sub-group's coordinates for
+`DCPGroupColumnParallelLinear`) and `QKVParallelLinear` states its
+`num_kv_head_replicas`. `plan_shard_for_layer` takes all of it. The global
+shape against the tile selects among exactly three vLLM relations -- equal
+(served WHOLE: `ReplicatedLinear`, or any Linear at one rank), the output
+times `tp_size` over the whole input (an OUTPUT cut: ColumnParallel and its
+merged/QKV forms), the input times `tp_size` under the whole output (an INPUT
+cut: RowParallel) -- and a layer whose shape is none of them is refused with
+both shapes. The wire is then held to that statement: served whole it must
+be the module, cut on the input its width must be `input_size`, cut on the
+output each role's rows must be the member's COMPLETE extent under the
+layer's declared replication, `out_partition_i * (tp_size // replicas_i)`,
+with the rank's shard at index `tp_rank // replicas_i`. Replication is never
+inferred from a role holding fewer shards than there are ranks; it is the
+layer's own `num_kv_head_replicas`, read verbatim, ones when the attribute is
+absent, and refused by name when it is declared on a layer that is not three
+members (`MinimaxM3QKVParallelLinearWithIndexer`'s four partitions are not
+planned), does not divide the world, or appears on a module served whole or
+cut on its input. TP coordinates are the layer's, not the process's:
+`vllm.distributed` is not consulted, and a layer without `tp_rank`/`tp_size`
+is refused rather than defaulted to one rank.
+
+Two defects closed there. **A whole wire the size of one rank's tile** (a
+`[64, 256]` wire loaded into a ColumnParallel layer of `256x256` at TP=4)
+agrees with the tile on every local number, and reading only the tile handed
+it back as a replicated whole module on every rank -- four ranks each
+computing the same 64 rows for a layer whose all-gather expected 256 distinct
+ones (tessera#303). It is now refused by role name, with the wire's rows and
+the extent the layer's contract requires, before any `wire_bytes` parameter
+is registered; a `ReplicatedLinear` of the same tile shape declares
+`output_size == 64` and is served whole as before. **KV replication by
+divisibility** accepted any role whose row count divided into fewer shards
+than ranks and called it replicated; a wire holding 256 rows of a role the
+layer says is 512 is now "rows [256, 512) exist on no rank", and the same
+shape with replication declared plans each rank's head from the declaration.
+`tests/test_serving_sharding.py` holds the planner's arithmetic for every
+relation, the boundary rule of #234 on both whole paths, and every refusal
+above; `tests/test_serving_tp_axes.py` drives the undersized wire, a
+correctly shaped TP=4 control, a `disable_tp` Linear inside a TP=4 process,
+GQA/MQA replication read off the layer, and a coordinate-less layer through
+the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
+stand-ins.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
