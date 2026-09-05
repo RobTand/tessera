@@ -486,6 +486,47 @@ def test_span2_lane_refuses_what_it_does_not_decode(span2_unit):
         pack_unit_for_kernel(span1, span2_unit["forest"], CODE)
 
 
+def test_a_wide_alphabet_code_survives_the_window_packer_and_its_gemv():
+    """A 16-bit ALPHABET code is not a byte.
+
+    ``PayloadGrid.code_bytes`` is what one stored code weighs, and it is
+    derived from the grid's own code space: two bytes for BF16, whose code
+    *is* the bf16 bit pattern.  Narrowed to a byte, 0x3f80 (1.0) becomes 0x80
+    -- a different, smaller number that selects a different row of the grid's
+    value table, with no launch error to say so.  The generic packer must
+    hand the kernel the codes the grid declares; the kernel's own load
+    converts to int32 either way.
+    """
+    from tessera.alphabet import BF16_GRID
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
+    from tessera.manifest import BodyKind, ScalePlaneKind
+
+    torch.manual_seed(13)
+    rows, cols = 64, 128
+    w = (torch.randn(rows, cols, device="cuda") * 0.5).float()
+    unit = encode_unit(
+        w, BF16_GRID, (7,) * cols, CODE, body=BodyKind.WINDOW, window_bits=9,
+        scale_plane=ScalePlaneKind.CHANNEL, scale_refit=1, completion=0,
+    )
+    assert BF16_GRID.code_bytes == 2
+    assert int(unit.window_codes.max()) > 0xFF, "a byte-wide table proves nothing"
+    # The code the narrowing loses outright, named in the finding.
+    unit.window_codes = unit.window_codes.clone()
+    unit.window_codes[0] = 0x3F80
+    packed = pack_unit_for_kernel(unit, BF16_GRID, CODE)
+    assert torch.equal(
+        packed["table"].long().cpu(), unit.window_codes.long().cpu()
+    ), "the packer narrowed the ALPHABET plane"
+    assert int(packed["table"][0]) == 0x3F80
+
+    reference = reconstruct_unit(unit, BF16_GRID, None).float()
+    for k in (0, 1, 17, cols - 1):
+        x = torch.zeros(cols, device="cuda")
+        x[k] = 1.0
+        got = gemv_from_packed(x, packed, lanes=2, split_k=4)
+        assert torch.equal(got, reference[:, k]), f"column {k}"
+
+
 # --- prefill: the same planes, decoded into a tile instead of a vector -------
 
 

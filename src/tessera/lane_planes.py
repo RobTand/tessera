@@ -366,6 +366,30 @@ def build_window_values(grid, device: str = "cuda") -> torch.Tensor:
     return grid_vector_table(grid, device).reshape(-1).contiguous()
 
 
+def _window_code_table(codes: torch.Tensor, grid, device) -> torch.Tensor:
+    """The unit's ``2^L`` ALPHABET plane, as wide as the grid declares.
+
+    ``PayloadGrid.code_bytes`` is the width of one stored code, derived from
+    the grid's own code space rather than declared anywhere: one byte for the
+    three narrow grids, two for BF16, whose code *is* the bf16 bit pattern.
+    Cast unconditionally to ``uint8`` that second kind loses its high byte --
+    0x3f80 (bf16 1.0) becomes 0x80, which is a legal index into a different
+    row of the value table, so nothing downstream can notice.  A grid wider
+    than two bytes is refused by ``code_bytes`` itself, by name, here at pack
+    time rather than by a wrap in someone's kernel.
+
+    The kernel converts what it loads to int32 in any case, so the wide table
+    is stored as int32: ``int16`` cannot hold BF16's top half (0xffff reads
+    back negative) and Triton has no settled uint16 pointer type.  That is
+    four bytes per state where the byte grids spend one, which is the price
+    of a code space that does not fit a byte.
+    """
+    table = codes.to(device)
+    if grid.code_bytes == 1:
+        return table.to(torch.uint8).contiguous()
+    return table.to(torch.int32).contiguous()
+
+
 def _pack_window_unit(unit, grid) -> dict:
     """``pack_unit_for_kernel``'s window branch.  See its docstring."""
     from .manifest import ScalePlaneKind
@@ -427,7 +451,7 @@ def _pack_window_unit(unit, grid) -> dict:
     return {
         "kind": "window",
         "plane": plane, "offsets": offsets, "rates": rates,
-        "table": unit.window_codes.to(device).to(torch.uint8).contiguous(),
+        "table": _window_code_table(unit.window_codes, grid, device),
         "values": build_window_values(grid, device),
         "scale_plane": scale_plane, "scale_table": scale_table,
         "global_scale": global_scale, "row_scale": row_scale,
