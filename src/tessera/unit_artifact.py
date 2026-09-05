@@ -63,6 +63,7 @@ from .wire import (
     pack_fp16,
     pack_levels,
     pack_uniform,
+    require_legal_scale_base,
     unpack_body,
     unpack_fp16,
     unpack_levels,
@@ -292,13 +293,39 @@ def _read_forest_planes(
     for rate in present:
         n_anchors = alphabet_size(rate, cap)
         depth = 1 << completion_capacity(rate, cap)
+        declared = alphabet[a_off : a_off + n_anchors]
         a_off += n_anchors
         block = descendant[d_off : d_off + n_anchors * depth]
         d_off += n_anchors * depth
         blocks = tuple(
             tuple(block[i * depth : (i + 1) * depth]) for i in range(n_anchors)
         )
-        out[rate] = AnchorForest(rate=rate, blocks=blocks, grid=grid)
+        forest = AnchorForest(rate=rate, blocks=blocks, grid=grid)
+        # The ALPHABET plane declares the anchors and the DESCENDANT plane's
+        # tree roots ARE the anchors (``blocks[i][0]``), so on a well-formed
+        # artifact the two agree byte for byte.  Read the plane, don't just
+        # step over it: before this check ``a_off`` advanced without reading
+        # a byte, and an artifact whose ALPHABET contradicted its own forest
+        # -- out-of-grid bytes included -- was accepted with all hashes
+        # agreeing (tessera#209).  Two authoritative descriptions of one
+        # forest that disagree are refused, not arbitrated.  A *short* slice
+        # -- a manifest declaring less ALPHABET than the schedule needs --
+        # falls through to the exact totals refusal below, which is that
+        # case's own named rule.
+        if len(declared) == n_anchors and bytes(forest.anchors) != declared:
+            wrong = [
+                index for index, (said, root) in
+                enumerate(zip(declared, forest.anchors)) if said != root
+            ]
+            raise GrammarError(
+                f"rate {rate}: the ALPHABET plane disagrees with the "
+                f"DESCENDANT plane's tree roots at {len(wrong)} of "
+                f"{n_anchors} anchor(s) (first at anchor {wrong[0]}: ALPHABET "
+                f"says {declared[wrong[0]]}, the descendant tree's root is "
+                f"{forest.anchors[wrong[0]]}). The two planes describe one "
+                "forest; refusing rather than choosing between them"
+            )
+        out[rate] = forest
     if a_off != len(alphabet) or d_off != len(descendant):
         raise GrammarError(
             f"forest planes hold {len(alphabet)}/{len(descendant)} bytes, the "
@@ -513,6 +540,11 @@ def build_unit_artifact(
     )
     has_diagonals = unit.diagonals is not None
     layout = PlaneLayout(layout)
+    # Refused at write, by field name: pack_uniform below checks width and
+    # nothing else, and a reserved word that reaches the wire decodes to
+    # nonfinite weights, not to an error (tessera#208).  A CHANNEL or LUT
+    # unit's empty plane passes trivially.
+    require_legal_scale_base(unit.scale_base, f"unit {unit_id!r}")
     payloads = {
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
@@ -930,6 +962,11 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
             chunks[PlaneKind.SCALE_BASE], n_base,
             NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
         )
+        # A reserved word already on disk is byte-self-consistent -- every
+        # hash agrees with it -- so the writer's gate cannot be the only one:
+        # an artifact from a nonconforming encoder must be refused here, at
+        # acceptance, not decoded to nonfinite weights (tessera#208).
+        require_legal_scale_base(scale_base, "artifact SCALE_BASE plane")
         scale_lut = None
     halves = geometry.positions // geometry.half_weights
     width = NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE]

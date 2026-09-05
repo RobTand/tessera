@@ -327,6 +327,61 @@ def test_reader_fails_closed_on_an_unknown_trellis():
         read_unit_artifact(serialize(forged, region))
 
 
+def _blob_with_alphabet_corrupted(corrupt):
+    """A byte-self-consistent artifact whose ALPHABET plane was rewritten by
+    ``corrupt(alphabet_bytes)`` at build time -- hashes, descriptors and the
+    terminal all agree with the corrupted bytes, so only *semantic* validation
+    can refuse it.  The mixed 2/3 schedule puts two rates on the plane."""
+    import tessera.unit_artifact as unit_artifact
+
+    _, unit = _unit(diagonals=False)
+    real = unit_artifact._forest_planes
+
+    def planes(rates, forests):
+        alphabet, descendant = real(rates, forests)
+        return corrupt(alphabet), descendant
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(unit_artifact, "_forest_planes", planes)
+        _, _, blob = build_unit_artifact(
+            unit, "alphabet-contradiction", FORESTS, 640, CODE, fixture_id=None
+        )
+    return blob
+
+
+@pytest.mark.parametrize("corrupt, shape", [
+    # Every byte outside the 16-code grid -- the audit's case (tessera#209).
+    (lambda a: bytes(0xFF for _ in a), "out-of-grid"),
+    # Every byte a legal grid code, but the first two anchors swapped: only a
+    # reader that checks ALPHABET against the DESCENDANT tree roots sees it.
+    (lambda a: bytes([a[1], a[0]]) + a[2:], "in-grid contradiction"),
+])
+def test_the_alphabet_plane_is_read_not_just_skipped(corrupt, shape):
+    """tessera#209: ``_read_forest_planes`` sliced only DESCENDANT and stepped
+    ``a_off`` past ALPHABET without reading a byte, so an artifact whose
+    ALPHABET plane contradicted its own descendant forest was accepted -- with
+    all hashes agreeing -- and decoded exactly as if the plane said what it
+    should.  The plane declares the anchors; the wire grammar is closed, so
+    two authoritative descriptions of one forest must not be allowed to
+    disagree."""
+    blob = _blob_with_alphabet_corrupted(corrupt)
+    with pytest.raises(GrammarError, match="ALPHABET"):
+        read_unit_artifact(blob)
+
+
+def test_a_short_alphabet_plane_still_refuses_by_the_totals_not_a_crash():
+    """A manifest may declare an ALPHABET extent smaller than the schedule
+    needs, so a *short* slice can reach the per-rate loop.  That case has its
+    own refusal -- the exact plane-totals check -- and the anchor-agreement
+    gate must fall through to it: a prefix-agreeing truncation must not turn
+    the mismatch reporter into an unnamed IndexError."""
+    import tessera.unit_artifact as unit_artifact
+
+    alphabet, descendant = unit_artifact._forest_planes((2, 3), FORESTS)
+    with pytest.raises(GrammarError, match="forest planes hold"):
+        unit_artifact._read_forest_planes((2, 3), alphabet[:-1], descendant)
+
+
 @pytest.mark.parametrize("q256,released", [(640, 0), (768, 2000), (256, 500)])
 def test_wire_round_trip_without_diagonals(q256, released):
     """The *recommended* recipe has segment 2a off, so it is the configuration
@@ -446,6 +501,73 @@ def test_a_fifteen_binade_span_is_legal_unless_the_top_word_is_nan():
     # Mantissa 7 at the top binade is 0x7F, which E4M3FN reads as NaN.
     with pytest.raises(GrammarError, match="span 15"):
         nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 7]))
+
+
+# ------------------------------------------------ the reserved E8M0 base word
+
+
+def test_a_reserved_scale_base_word_is_refused_at_write_by_name():
+    """tessera#208: SCALE_BASE is packed by ``pack_uniform``, which checks
+    width and nothing else, so the reserved E8M0 word 0xFF -- refused by the
+    scalar codec (``fp8.e8m0_decode``) -- sailed onto the wire, where
+    ``scales_from_planes`` reads it as 2**128 and the unit reconstructs
+    nonfinite.  The refusal belongs where the bytes are decided: at write,
+    by field name."""
+    from tessera.errors import ScaleCodecError
+
+    _, unit = _unit(diagonals=False)
+    unit.scale_base[0] = 255
+    with pytest.raises(ScaleCodecError, match="SCALE_BASE.*0xFF"):
+        build_unit_artifact(unit, "reserved-base", FORESTS, 640, CODE,
+                            fixture_id=None)
+
+
+def test_a_reserved_scale_base_word_on_disk_is_refused_at_read():
+    """The same word already on disk must not decode silently either: an
+    artifact written by a nonconforming encoder is byte-self-consistent --
+    every hash agrees with the reserved word -- so only the reader's own
+    scale-domain gate can catch it (tessera#208's audit built exactly this
+    artifact and readback held 32 nonfinite weights)."""
+    import tessera.unit_artifact as unit_artifact
+    from tessera.errors import ScaleCodecError
+
+    _, unit = _unit(diagonals=False)
+    unit.scale_base[0] = 255
+    with pytest.MonkeyPatch.context() as patch:
+        # Simulate the nonconforming writer: disarm the write-side gate, so
+        # the artifact carries the reserved word with consistent hashes.
+        patch.setattr(unit_artifact, "require_legal_scale_base",
+                      lambda *args, **kwargs: None, raising=False)
+        _, _, blob = build_unit_artifact(unit, "reserved-base", FORESTS, 640,
+                                         CODE, fixture_id=None)
+    with pytest.raises(ScaleCodecError, match="SCALE_BASE.*0xFF"):
+        read_unit_artifact(blob)
+
+
+def test_the_scale_base_domain_is_exactly_the_scalar_codecs():
+    """The tensor gate derives its legal set from the normative scalar codec
+    rather than restating it: every byte ``fp8.e8m0_decode`` decodes passes,
+    every byte it refuses is refused by the tensor path too, and the empty
+    plane a CHANNEL or LUT unit carries passes trivially."""
+    from tessera.errors import ScaleCodecError
+    from tessera.fp8 import e8m0_decode
+    from tessera.wire import require_legal_scale_base
+
+    legal, reserved = [], []
+    for byte in range(256):
+        try:
+            e8m0_decode(byte)
+            legal.append(byte)
+        except ScaleCodecError:
+            reserved.append(byte)
+    require_legal_scale_base(torch.tensor(legal, dtype=torch.uint8), "test")
+    require_legal_scale_base(torch.zeros(0, dtype=torch.uint8), "test")
+    assert reserved  # the codec does reserve a word; the gate must see it
+    for byte in reserved:
+        with pytest.raises(ScaleCodecError, match="SCALE_BASE"):
+            require_legal_scale_base(
+                torch.tensor([byte], dtype=torch.uint8), "test"
+            )
 
 
 def test_the_diagonal_planes_are_little_endian_by_the_format_not_by_the_host():

@@ -238,6 +238,31 @@ class PayloadGrid:
             )
         elif len(self.keys) != self.size:
             raise GrammarError(f"grid {self.name}: keys map is not {self.size} long")
+        else:
+            # A key is a rank vector of fixed dimension: one rank per tuple
+            # lane, except under the tree partition, whose single rank IS the
+            # tree order (``learn_tree_codebook``).  Fixed by grammar, not by
+            # convention, because ``grid_digest`` hashes the keys map *flat*
+            # and recovers the per-key boundaries from ``arity`` and
+            # ``partition``, which it also hashes.  A ragged keys map breaks
+            # that recovery: redistributing entries across key boundaries
+            # preserves the flattened sequence and therefore the digest, so a
+            # malformed grid could share a *registered* digest, pass the
+            # serialisation gate, and have its artifact resolved back to the
+            # registered grid -- decoding different weights, silently
+            # (tessera#221).
+            expected = 1 if self.partition == TREE_PARTITION else self.arity
+            for code, key in enumerate(self.keys):
+                if len(key) != expected:
+                    raise GrammarError(
+                        f"grid {self.name}: keys[{code}] holds {len(key)} "
+                        f"rank(s); a {self.partition!r}-partition grid of "
+                        f"arity {self.arity} keys every code with exactly "
+                        f"{expected}. Key boundaries are not on the wire: "
+                        "grid_digest recovers them from arity and partition, "
+                        "so a ragged keys map has no digest a reader could "
+                        "resolve unambiguously"
+                    )
 
 
 def tuple_grid(base: PayloadGrid, k: int, partition: str = "coset") -> PayloadGrid:
@@ -338,6 +363,16 @@ def grid_digest(grid: PayloadGrid) -> str:
     Values are digested at their exact float64 bit patterns, because a grid
     that round-trips through a lower precision is a *different* grid and must
     say so.
+
+    The keys map is digested **flat**, with no per-key delimiters: the
+    boundaries are recovered from ``arity`` and ``partition``, which are both
+    in the digest, and ``PayloadGrid.__post_init__`` fixes every key's length
+    to exactly what those two fields say (one rank per tuple lane; one rank
+    under the tree partition).  That grammar is what makes this flattening
+    injective -- without it, redistributing entries across key boundaries
+    preserved the digest while changing ``value_order`` (tessera#221) -- and
+    it is enforced at construction rather than re-stated here so the byte
+    stream, and with it every registered digest, stays exactly what it was.
     """
     import hashlib
     import struct
