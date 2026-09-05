@@ -1493,8 +1493,13 @@ MoE. Contract **v21** supplies the record
 its source, one arm at a time on the same pinned image, eager, resident,
 seven prompts in two request forms, every completion kept on both arms. Raw
 continuation -- the v17 prompt and three passages ending mid-sentence -- ends
-in a cycle on the **source** on every (prompt, form) pair: the checkpoint is
-the instruct model and a raw continuation is not its trained interface.
+in a cycle on the **source** on all eight (prompt, form) pairs and on the
+**student** on seven of the eight (the exception, campaign P2, does not cycle
+but wanders): the checkpoint is the instruct model and a raw continuation is
+not its trained interface. Both halves of that: a sentence stating the shared
+degeneration while leaving out the student's residual is the prose form of the
+defect #327 is about. Every count here is the cells' own `smoke.record` rows,
+and `tests/test_cell_evidence.py` asserts them off the record.
 Through the checkpoint's own `chat_template.jinja` (byte-identical on both
 arms) three questions carrying the same content read `recorded` on **both**
 arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --

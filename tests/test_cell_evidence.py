@@ -450,6 +450,14 @@ def test_the_routed_moe_cells_are_distinguishable_from_the_bf16_cells_that_never
         assert len(cycled) == 7
         assert {row["interface"] for row in cycled} == {"raw_completion"}
         assert all(row["reference_status"] == "repetitive" for row in cycled)
+        # The counts `docs/ARCHITECTURE.md` states for the raw-continuation
+        # interface, asserted off the record rather than restated in prose:
+        # eight pairs, the SOURCE cycling on all eight and the STUDENT on seven.
+        raw = [row for row in smoke["record"]["rows"]
+               if row["interface"] == "raw_completion"]
+        assert len(raw) == 8
+        assert sum(row["reference_status"] == "repetitive" for row in raw) == 8
+        assert sum(row["status"] == "repetitive" for row in raw) == 7
         answered = [row for row in smoke["record"]["rows"] if row["status"] == "recorded"]
         assert {row["interface"] for row in answered} == {"raw_completion", "chat_template"}
         assert len([row for row in answered if row["interface"] == "chat_template"]) == 6
@@ -758,8 +766,11 @@ def test_a_status_cannot_be_asserted_beside_its_record(contract):
 
 
 @pytest.mark.parametrize("record, match", [
-    (_record(instrument="/home/rob/tessera/experiments/moe_greedy_smoke.py"),
-     "instrument must be a repository path"),
+    # The instrument's own file, spelled absolutely: refused because it is
+    # absolute, not because it is wrong.  Derived from the repository root this
+    # file already resolves -- a path literal into somebody's home is a claim
+    # about which machine the suite runs on (`tests/test_box_artifacts.py`).
+    (_record(instrument=str(ROOT / INSTRUMENT)), "instrument must be a repository path"),
     (_record(instrument="experiments/../etc/passwd"), "instrument must be a repository path"),
     (_record(rule="  "), "rule must state the per-completion rule"),
     (_record(reference="the bf16 model"), "reference 'the bf16 model' is not one of"),
