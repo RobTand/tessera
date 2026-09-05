@@ -222,6 +222,29 @@ recalibration (one amax over the members' shared input, which is what both
 repos' calibrators already emit), not a wider bound. Changing the policy
 means changing the constant and this paragraph in one commit.
 
+**Every exporter that writes a fused A-side scale calls that one helper.**
+`experiments/export_stock_compressed.py`, the sanctioned standalone CLI for the
+stock compressed-tensors arms, copied each donor member's `input_global_scale`
+through unchanged and joined the *weight* globals only, so a donor whose
+siblings differ at all -- inside the accepted bound -- served an activation
+quantizer chosen by vLLM's `.max()` reduction instead of by the rule above
+(tessera#305: donor `[4.0, 4.015625, 4.0]` was written through verbatim, and
+the runtime's max picked 4.015625 where the helper answers 4.0). It now
+resolves one value per fused group through `shared_input_global_scale` and
+writes that value on every member, so `priced == written == served` holds for
+the A side of this arm as it already did for the serving exporter's twin. The
+join is resolved from the **planned** fused roster before the output directory
+is created, which is what makes it correct for siblings that straddle source
+shards: an earlier output shard can no longer publish an unjoined member
+before a later shard delivers the rest of the group (#212's completion
+schedule is unchanged), and a donor beyond the declared bound is refused
+beside the other pre-encode refusals rather than at the shard boundary that
+completes the group. An unfused NVFP4 Linear is its own vLLM Linear with its
+own input tensor and keeps its own donor value. The per-unit
+`input_global_scale` in `tessera_stock_manifest.json` records what was
+actually written, so the join is read off the receipt rather than inferred
+from the donor.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
