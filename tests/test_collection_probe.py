@@ -61,3 +61,18 @@ def test_a_probe_child_does_not_probe_again(monkeypatch):
     monkeypatch.setenv(conftest._PROBE_MARK, "1")
     monkeypatch.setattr(subprocess, "run", refuse)
     assert conftest._uncollectable() == []
+
+
+def test_the_conftest_collects_without_xdist_installed():
+    """The ``pure`` job has no xdist, so a hook only xdist declares must be
+    optional: a plain ``pytest_testnodedown`` made pluggy refuse the whole
+    conftest at collection (``PluginValidationError: unknown hook``), and the
+    job exited 3 having run nothing (tessera#290).  ``-p no:xdist`` is that
+    job's plugin set on a box where xdist is installed."""
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:xdist", "-p", "no:cacheprovider",
+         "--collect-only", "-q", str(Path(__file__).name)],
+        cwd=root / "tests", capture_output=True, text=True, timeout=600)
+    assert "PluginValidationError" not in proc.stderr + proc.stdout, proc.stderr[-2000:]
+    assert proc.returncode == 0, (proc.returncode, proc.stderr[-2000:])
