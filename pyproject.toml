@@ -58,11 +58,10 @@ where = ["src"]
 # and the CUDA sources the routes JIT-build (the span-2 NVFP4 decoder and the
 # window-body GEMV).  An editable install reads the tree and would not notice
 # these missing; a wheel would.
+# Both kernels live under the serving package's csrc/, the one directory the
+# contract's native-extension table publishes; the window GEMV loader in
+# ``tessera.kernel_window_gemv`` resolves its source through that table.
 "tessera.serving" = ["runtime_contract.json", "csrc/*.cu"]
-# The window GEMV's kernel source sits in the library's own csrc, not the
-# serving lane's, and it is JIT-built the same way.  Without this line a wheel
-# installs a module whose first call raises FileNotFoundError.
-"tessera" = ["csrc/*.cu"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

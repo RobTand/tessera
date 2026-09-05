@@ -98,16 +98,20 @@ def test_the_runtime_contract_is_read_from_inside_the_serving_package():
 
 
 def test_the_kernel_sources_resolve_as_package_resources():
-    """The routes JIT-build these through importlib.resources; both csrc
-    directories have to be reachable that way, not only as tree paths."""
+    """The routes JIT-build these through importlib.resources; the serving
+    package's csrc has to be reachable that way, not only as a tree path -- and
+    it is the only csrc: every published ``native_extensions[].source``
+    resolves there (#134)."""
     from importlib import resources
 
+    from tessera.serving import ext
     for package, name in (
-        ("tessera", "csrc/window_gemv.cu"),
         ("tessera.serving", "csrc/window_gemv.cu"),
         ("tessera.serving", "csrc/tessera_nvfp4.cu"),
     ):
         assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
+    for entry in ext.NATIVE_EXTENSIONS:
+        assert resources.files("tessera.serving").joinpath(entry["source"]).is_file(), entry
 
 
 def _declared_version() -> str:

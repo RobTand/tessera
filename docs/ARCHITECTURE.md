@@ -697,6 +697,16 @@ those older census files did not each record a digest. Existing cell IDs stay
 stable, with an optional hash of canonical runtime scope to distinguish
 disjoint variants; IDs must be unique, and explicit fields decide eligibility.
 
+A cell's `predicates` list narrows the cell to units for which every
+`{fact, op, value}` row holds, and the validator refuses anything outside the
+closed grammar (`contract.CELL_PREDICATE_FACTS`: `payload_family`, `k`,
+`n_sub`, `rate_q256`, `role_split`, `in_features`, `out_features`;
+`CELL_PREDICATE_OPS`: `equals`, `in`, `multiple_of`, `at_least`, `at_most`;
+values typed per op; one row per `(fact, op)`). Until #134 the field was
+required and never read, so `["anything"]` validated. Every published cell
+carries `[]`: each is unconditional over its scope. A consumer that cannot
+resolve a predicate refuses the cell, never skips the rule.
+
 The census requires `--runtime-image` as an exact digest reference, checked
 before loading vLLM, and since #132 that flag is a CROSS-CHECK rather than the
 source of the scope: the launcher resolves the image through docker's
@@ -1275,7 +1285,7 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 ### 5.2 What the wheel ships besides Python
 
-Four non-Python files are opened at run time, and each is declared in
+Three non-Python files are opened at run time, and each is declared in
 `[tool.setuptools.package-data]` because an editable install reads the tree
 and would never notice one missing:
 
@@ -1283,8 +1293,7 @@ and would never notice one missing:
 |---|---|---|
 | `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
 | `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
-| `tessera/csrc/window_gemv.cu` | `tessera.kernel_window_gemv`, which `serving/fp8_gemv.py` and `bf16_route.py` load through | the window-body GEMV; this copy is the one the serving lane actually builds |
-| `tessera/serving/csrc/window_gemv.cu` | published as the extension's `source` in `ext.py`'s native-extension table | byte-identical to the copy above (`cmp` clean at `b83fd17`) but not the file the JIT compiles; the mismatch between the published path and the built path is filed as #134, not a design |
+| `tessera/serving/csrc/window_gemv.cu` | `tessera.kernel_window_gemv._ext`, which `serving/fp8_gemv.py` and `bf16_route.py` load through; the loader resolves the path from `ext.NATIVE_EXTENSIONS[].source` via `ext.native_source_path`, so the published `source` and the compiled file are one inode | the window-body GEMV. Until #134 a second, byte-identical copy at `tessera/csrc/window_gemv.cu` was the one compiled while this one was the one published; `tests/test_serving_fp8_gemv.py::test_the_published_source_is_the_file_the_loader_compiles` now captures the JIT call and asserts `samefile` |
 
 `tests/test_packaging.py` refuses either half of that table on its own: a
 glob that matches no file, and a runtime data file no glob covers.

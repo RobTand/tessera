@@ -894,3 +894,86 @@ def test_a_route_status_nothing_defines_is_refused(contract):
     doc["lane_eligibility"]["cells"][0]["route_status"] = "fallback"
     with pytest.raises(ValueError, match="route_status"):
         validate_serving_contract(doc)
+
+
+# --- the cell predicate grammar (#134) ---------------------------------------
+#
+# ``predicates`` was a required cell key that no line of this package read: a
+# cell could publish ``["anything"]`` and validate.  The grammar is the closed
+# ``{fact, op, value}`` vocabulary the lane-eligibility receipt records and
+# PrismaQuant's reader resolves; the publisher refuses what the reader could
+# not read, so the first gate to consult the field never inherits a
+# never-validated one.
+
+def _with_predicates(contract, predicates):
+    return _mutated(contract, lambda c: c["lane_eligibility"]["cells"][0].__setitem__(
+        "predicates", predicates))
+
+
+def test_every_published_cell_states_no_predicate(contract):
+    """Every cell today is unconditional over its scope; a predicate appearing
+    here is a narrowing no receipt has measured."""
+    from tessera.serving.contract import cell_predicates
+    for cell in _cells(contract).values():
+        assert cell["predicates"] == []
+        assert cell_predicates(cell, cell["id"]) == ()
+
+
+def test_a_predicate_that_is_not_the_grammar_is_refused(contract):
+    with pytest.raises(ValueError, match=r"predicates\[0\] must be a JSON object"):
+        validate_serving_contract(_with_predicates(contract, ["anything"]))
+    with pytest.raises(ValueError, match=r"predicates\[0\] is missing \['op', 'value'\]"):
+        validate_serving_contract(_with_predicates(contract, [{"fact": "k"}]))
+    with pytest.raises(ValueError, match="must be a JSON array"):
+        validate_serving_contract(_with_predicates(contract, "k multiple_of 16"))
+
+
+def test_a_well_formed_predicate_row_is_read_back(contract):
+    from tessera.serving.contract import cell_predicates
+    rows = [
+        {"fact": "k", "op": "multiple_of", "value": 16},
+        {"fact": "payload_family", "op": "in", "value": ["E4M3", "E2M1x2"]},
+        {"fact": "in_features", "op": "at_least", "value": 1024},
+        {"fact": "role_split", "op": "equals", "value": "column"},
+    ]
+    doc = _with_predicates(contract, rows)
+    validate_serving_contract(doc)
+    assert cell_predicates(doc["lane_eligibility"]["cells"][0]) == (
+        ("k", "multiple_of", 16),
+        ("payload_family", "in", ["E4M3", "E2M1x2"]),
+        ("in_features", "at_least", 1024),
+        ("role_split", "equals", "column"),
+    )
+
+
+@pytest.mark.parametrize("row, match", [
+    ({"fact": "layer_index", "op": "equals", "value": 3}, "not a structural fact"),
+    ({"fact": "k", "op": "greater_than", "value": 3}, r"op 'greater_than' is not one of"),
+    ({"fact": "k", "op": "multiple_of", "value": 0}, "positive integer"),
+    ({"fact": "k", "op": "multiple_of", "value": "16"}, "positive integer"),
+    ({"fact": "k", "op": "at_least", "value": 3.5}, "takes an integer"),
+    ({"fact": "k", "op": "at_most", "value": True}, "takes an integer"),
+    ({"fact": "payload_family", "op": "in", "value": []}, "non-empty list"),
+    ({"fact": "payload_family", "op": "in", "value": "E4M3"}, "non-empty list"),
+    ({"fact": "payload_family", "op": "in", "value": [["E4M3"]]}, "non-empty list"),
+    ({"fact": "role_split", "op": "equals", "value": ["column"]}, "takes a scalar"),
+    ({"fact": "k", "op": "equals", "value": 16, "note": "x"}, r"unknown field\(s\) \['note'\]"),
+], ids=lambda x: x if isinstance(x, str) else x.get("op") + ":" + repr(x.get("value")))
+def test_a_predicate_outside_the_closed_grammar_is_refused(contract, row, match):
+    with pytest.raises(ValueError, match=match):
+        validate_serving_contract(_with_predicates(contract, [row]))
+
+
+def test_one_bound_per_fact_and_op(contract):
+    rows = [{"fact": "k", "op": "at_least", "value": 16},
+            {"fact": "k", "op": "at_least", "value": 32}]
+    with pytest.raises(ValueError, match="repeats"):
+        validate_serving_contract(_with_predicates(contract, rows))
+
+
+def test_the_grammar_is_the_one_the_receipt_and_the_consumer_name(contract):
+    """The closed sets are exported so a consumer can equate its own."""
+    from tessera.serving.contract import CELL_PREDICATE_FACTS, CELL_PREDICATE_OPS
+    assert CELL_PREDICATE_FACTS == ("payload_family", "k", "n_sub", "rate_q256",
+                                    "role_split", "in_features", "out_features")
+    assert CELL_PREDICATE_OPS == ("equals", "in", "multiple_of", "at_least", "at_most")

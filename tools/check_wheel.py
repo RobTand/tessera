@@ -40,7 +40,6 @@ ROOT = Path(__file__).resolve().parent.parent
 #: Files the wheel must contain, by path inside the wheel.  A route that
 #: JIT-builds a kernel opens the .cu; the producer preflight opens the contract.
 REQUIRED = (
-    "tessera/csrc/window_gemv.cu",
     "tessera/serving/csrc/window_gemv.cu",
     "tessera/serving/csrc/tessera_nvfp4.cu",
     "tessera/serving/runtime_contract.json",
@@ -64,12 +63,15 @@ assert md.version(declared["name"]) == declared["version"], (
     f'pyproject declares {declared["version"]}')
 from tessera.serving import contract
 assert contract.load_serving_contract()["schema"] == contract.CONTRACT_SCHEMA
+from tessera.serving import ext
 for package, name in (
-    ("tessera", "csrc/window_gemv.cu"),
     ("tessera.serving", "csrc/window_gemv.cu"),
     ("tessera.serving", "csrc/tessera_nvfp4.cu"),
 ):
     assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
+for entry in ext.NATIVE_EXTENSIONS:
+    assert resources.files("tessera.serving").joinpath(entry["source"]).is_file(), entry["source"]
+    assert ext.native_source_path(entry["module_name_prefix"]).endswith(entry["source"].split("/")[-1])
 assert "torch" not in sys.modules, "importing the plugin's registration surface pulled torch in"
 import tessera
 # The installed wheel has no pyproject, so this is the metadata reader in

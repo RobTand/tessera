@@ -312,9 +312,11 @@ depends on dict order.
    import graph. The first route that imports it needs a `NATIVE_EXTENSIONS`
    entry with a `when_unavailable` block per residency -- and
    `contract._validate_native_extensions` requires `source` to start with
-   `csrc/` **relative to the serving package**, while the `.cu` lives at
-   `src/tessera/csrc/window_gemv.cu`. Move the source or widen the rule; do
-   not paper the entry over it.
+   `csrc/` **relative to the serving package**; the `.cu` lived at
+   `src/tessera/csrc/window_gemv.cu` when this was written and was moved to
+   `src/tessera/serving/csrc/window_gemv.cu` under #134 (one copy, resolved
+   by the loader through `ext.native_source_path`). Do not paper an entry
+   over a path the rule refuses.
 4. **A fourth `DECODERS` constant** (`telemetry.py:61-64` has three, and
    `torch_window` is deliberately shared by the FP8 and BF16 routes because it
    *is* the same object). A route that uses the kernel at M <= 8 and the torch

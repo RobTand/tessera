@@ -7,7 +7,7 @@ which window width it was built for -- and they are consumed in four places:
 ``serving.ext.WINDOW_GEMV_LANE`` publishes them as the lane predicate a
 PRODUCER refuses a plan against (#104), and ``runtime_contract.json`` ships
 that block to a consumer.  Each of those was a literal, tied to the others by
-tests and to ``csrc/window_gemv.cu`` -- the file that decides what actually
+tests and to ``serving/csrc/window_gemv.cu`` -- the file that decides what actually
 exists -- by nothing.
 
 **Why the kernel is the source and not Python.**  The alternative was to make
@@ -66,7 +66,7 @@ __all__ = [
 #: constant: ``kernel_window_gemv._ext`` hands this exact path to
 #: ``cpp_extension.load``, so the file parsed is the file compiled.
 WINDOW_GEMV_SOURCE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "csrc", "window_gemv.cu")
+    os.path.dirname(os.path.abspath(__file__)), "serving", "csrc", "window_gemv.cu")
 
 _RATES_DECL = re.compile(r"^[ \t]*#define[ \t]+TESSERA_GEMV_RATES\(X\)(.*)$", re.M)
 _RATE_ITEM = re.compile(r"X\(\s*(\d+)\s*\)")
