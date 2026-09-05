@@ -17,8 +17,10 @@ tokens ``t[0..L-1]`` and every period ``p`` with ``2p <= L``, take the
 longest suffix in which ``t[i] == t[i+p]`` throughout; it is a cycle only if
 it holds at least two full periods (``s >= 2p``) -- one repeat is a
 coincidence, two is the period observed.  The completion is ``repetitive``
-when it ends in a cycle, whatever the cycle's share of the completion, and
-``recorded`` otherwise.  The positive control is the v17 observation itself:
+when it ends in a cycle, whatever the cycle's share of the completion,
+``not_recorded`` when it is EMPTY -- nothing is not a completion for a verdict
+to be true of, and a positive record made of two non-answers is the hole #327
+names -- and ``recorded`` otherwise.  The positive control is the v17 observation itself:
 ``' France is'`` x 8 is ``p=2, s=L=16``, and the rule must call it
 ``repetitive`` on both arms or the rule is wrong.  Tokens are the artifact's
 own tokenizer's canonical encoding of the returned text (both arms ship
@@ -71,8 +73,9 @@ from pathlib import Path
 
 RULE = ("repetitive iff the completion ends in a cycle: some period p with 2p <= L "
         "has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its "
-        "share of the completion; tokens are the artifact tokenizer's canonical "
-        "encoding of the returned text")
+        "share of the completion; not_recorded iff the completion is empty (L = 0), "
+        "which is no completion for a verdict to be true of; recorded otherwise; "
+        "tokens are the artifact tokenizer's canonical encoding of the returned text")
 
 
 def periodic_tail(tokens):
@@ -98,10 +101,25 @@ def periodic_tail(tokens):
 
 
 def classify(tokens):
-    """Apply the rule; return the verdict and the numbers it was read from."""
+    """Apply the rule; return the verdict and the numbers it was read from.
+
+    An EMPTY completion is ``not_recorded`` and never ``recorded`` (#327).
+    ``recorded`` is a verdict about a completion -- "this one does not end in a
+    cycle" -- and nothing is not a completion, so the cycle rule has no subject
+    to be true of.  It mattered because the aggregation that decides a cell's
+    ``evidence.smoke.status`` asks whether some prompt read ``recorded`` on
+    BOTH arms: while ``classify([])`` returned ``recorded``, two arms that each
+    returned ``""`` for one prompt manufactured a positive record out of two
+    non-answers.  ``not_recorded`` is this vocabulary's own word for "no
+    completion came back" (``tessera.serving.contract.EVIDENCE_SMOKE_STATUSES``)
+    and is what an empty token list means.
+    """
     n = len(tokens)
     period, suffix = periodic_tail(tokens)
-    verdict = "repetitive" if suffix else "recorded"
+    if not n:
+        verdict = "not_recorded"
+    else:
+        verdict = "repetitive" if suffix else "recorded"
     return {"status": verdict, "tokens": n, "period": period,
             "periodic_suffix": suffix,
             "coverage": (suffix / n) if n else 0.0,

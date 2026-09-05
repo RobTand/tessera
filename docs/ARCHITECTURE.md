@@ -1494,7 +1494,13 @@ arms) three questions carrying the same content read `recorded` on **both**
 arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --
 under a rule the receipt states and `tests/test_moe_greedy_smoke_rule.py`
 pins (repetitive iff the completion *ends* in a cycle of at least two full
-periods; the v17 observation is its positive control). The two `routed_moe`
+periods; `not_recorded` iff the completion is empty, because nothing is not a
+completion for a verdict to be true of, and two empty arms would otherwise
+manufacture a positive record out of two non-answers, #327; the v17
+observation is its positive control). Every completion the receipt scored is
+non-empty (L is 16, 64 or 292-512 on all fourteen rows), so no verdict in it
+moves; a pair joined after the rule changed says under which rule each arm ran
+(`rule_at_run`). The two `routed_moe`
 cells now record `{status: recorded, receipt: that file, attribution:
 unattributed, control: null}`, the shape the two BF16 cells use. The v18
 control is retired from the cells, not from the record: the outcome vocabulary
