@@ -117,3 +117,17 @@ def test_a_non_opt_in_root_resolves_its_documented_default(monkeypatch):
 def test_an_unknown_root_is_refused_by_name():
     with pytest.raises(KeyError, match="no such box-artifact root"):
         box_artifacts.root("the-root-that-never-was")
+
+
+def test_an_opt_in_root_does_not_resolve_its_default(monkeypatch):
+    """The kl instrument is an untracked file shared with PrismaQuant: its
+    default is documented so a reader can find it, and NOT resolved, so the
+    released suite never reads one machine's filesystem unasked (#153)."""
+    monkeypatch.delenv("KL_TOOL_DIR", raising=False)
+    assert box_artifacts.ROOTS["kl_instrument"].opt_in is True
+    assert box_artifacts.root("kl_instrument") is None
+    with pytest.raises(pytest.skip.Exception) as refused:
+        box_artifacts.require_module("kl_instrument", "kl_tool.py")
+    assert "KL_TOOL_DIR" in str(refused.value)
+    monkeypatch.setenv("KL_TOOL_DIR", "/elsewhere")
+    assert box_artifacts.root("kl_instrument") == Path("/elsewhere")

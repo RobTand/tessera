@@ -34,10 +34,27 @@ def _signal_group(pid, signum):
         pass
 
 
-def _kill_owned(process):
+def _wait_bounded(process, kill_after_s, why):
+    """Wait for the leader after SIGKILL, no longer than the caller's grace.
+
+    A leader that SIGKILL cannot reap (a D-state process on a wedged GPU is
+    the case this tree has met) would otherwise hold the deadline that exists
+    to bound the run.  The bound is the grace the caller already chose, not a
+    second constant; an unreaped group is reported, and the exit is the
+    killed status.  Returns the exit code, or ``None`` when not reaped.
+    """
+    try:
+        return process.wait(timeout=kill_after_s)
+    except subprocess.TimeoutExpired:
+        print(f"tessera suite deadline: process group {process.pid} not reaped "
+              f"within {kill_after_s}s of SIGKILL ({why})", file=sys.stderr, flush=True)
+        return None
+
+
+def _kill_owned(process, kill_after_s):
     if process is not None and process.returncode is None:
         _signal_group(process.pid, signal.SIGKILL)
-        process.wait()
+        _wait_bounded(process, kill_after_s, "interrupt")
 
 
 def run(command, timeout_s, kill_after_s):
@@ -57,18 +74,18 @@ def run(command, timeout_s, kill_after_s):
             # anchors ownership even if it exits before a resistant child.
             time.sleep(kill_after_s)
             _signal_group(process.pid, signal.SIGKILL)
-            code = process.wait()
-            status = 137 if code == -signal.SIGKILL else 124
+            code = _wait_bounded(process, kill_after_s, "deadline")
+            status = 137 if code is None or code == -signal.SIGKILL else 124
             print(f"tessera suite deadline expired: inner_status={status}", file=sys.stderr, flush=True)
             return status
         return 128 - code if code < 0 else code
     except _Interrupted as exc:
         for sig in _INTERRUPT_SIGNALS:
             signal.signal(sig, signal.SIG_IGN)
-        _kill_owned(process)
+        _kill_owned(process, kill_after_s)
         return 128 + exc.args[0]
     except BaseException:
-        _kill_owned(process)
+        _kill_owned(process, kill_after_s)
         raise
     finally:
         for sig, handler in previous.items():
