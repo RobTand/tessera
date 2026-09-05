@@ -89,6 +89,7 @@ __all__ = [
     "tuple_grid",
     "lloyd_max_grid",
     "require_hardware_byte_grid",
+    "require_forest_grid",
     "grid_digest",
     "SERIALISABLE_GRIDS",
 ]
@@ -601,7 +602,8 @@ def GAUSSIAN_SOURCE(count: int = 1 << 14, sigma: float = 1.0) -> tuple[float, ..
 #:     bpp ceiling and FP8's 8.0**, so an allocator wanting 5 or 6 bits had to
 #:     buy 8.  Round-trips at every rung (``test_e4m3_ladder_serialises``).
 #:   * ``BF16`` -- arity 1, 65536 codes, payload 16: **the 16-bit route**,
-#:     window body only.  Its values come from the bit pattern
+#:     window body only -- ``require_forest_grid`` is where that is refused.
+#:     Its values come from the bit pattern
 #:     (``_bf16_value``) exactly as E4M3's come from the byte, so a reader
 #:     rebuilds them from the name; the code plane is two bytes an element
 #:     (``PayloadGrid.code_bytes``), which is the only thing about it the
@@ -625,6 +627,81 @@ SERIALISABLE_GRIDS: "dict[str, PayloadGrid]" = {
     grid_digest(grid): grid
     for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2), E4M3_GRID, BF16_GRID)
 }
+
+
+def _forest_plane_failure(grid: PayloadGrid) -> "str | None":
+    """Why a forest over ``grid`` could not be written, or ``None``.
+
+    THE ONLY SPELLING of "the forest planes hold one element per code, and
+    that element is a byte".  Both the refusal at the plane
+    (:meth:`AnchorForest._refuse_unserialisable`) and the refusal at the build
+    (:func:`require_forest_grid`) read it, so the two cannot disagree about
+    which grids a forest is for.
+
+    256 is not a literal here: ``PayloadGrid.code_bytes`` is the grid's own
+    statement of how wide one stored code is on a code-carrying plane, and the
+    ALPHABET/DESCENDANT planes are the ones that carry a forest.  A grid so
+    wide that ``code_bytes`` cannot answer at all refuses itself, one step
+    further out, which is the same refusal.
+    """
+    if grid.code_bytes == 1:
+        return None
+    return (
+        f"has {grid.size} codes: the ALPHABET/DESCENDANT planes are one byte "
+        "per code and cannot carry it. A wider code space is a schema change "
+        "(wider plane element), not a cast."
+    )
+
+
+def require_forest_grid(grid: PayloadGrid, *, purpose: str = "build_forest"):
+    """``grid`` back, or a refusal: a registered grid with no forest body.
+
+    ONE HOME for "which grids have a TCQ forest body" (AGENTS.md rule 4), and
+    it is derived rather than listed.  Two legs, each already the home of its
+    own fact:
+
+    * **the registry.** :data:`SERIALISABLE_GRIDS` is the closed set of wire
+      commitments, and it is what ``export.wire_recipe`` dispatches on.  A
+      grid outside it is a *measurement* grid -- no recipe ever decided a body
+      for it -- and ``_refuse_unserialisable``'s promise that "encoding,
+      decoding and measuring on any grid stay open" is what keeps it
+      buildable, however wide.
+    * **the planes.** :func:`_forest_plane_failure`.  A registered grid whose
+      forest planes cannot carry its codes is, by construction, one the recipe
+      table gives a window body at every rung: there is no TCQ wire for it to
+      be written to.
+
+    Today that intersection is exactly ``BF16``, and
+    ``tests/test_forest_grid_roster.py`` derives the same set from
+    ``export.recipe_table`` so the two spellings cannot drift apart.  E4M3 is
+    *not* in it: its shipping recipe is the window body too, but its 256 codes
+    fit the planes, so its TCQ body stays reachable by override and its forest
+    is still built.
+
+    Refused here rather than at the plane because the object is what costs:
+    the scalar builder's ``_mass_balanced_blocks`` materialises
+    ``anchors x grid.size`` candidate pairs, which on BF16 is **65.7 GiB at
+    R=11, measured** (``docs/measurements/build-forest-memory-2026-09-05.md``,
+    tessera#285) -- spent building a forest ``alphabet_plane`` was always
+    going to refuse.
+    """
+    if grid_digest(grid) not in SERIALISABLE_GRIDS:
+        return grid
+    failure = _forest_plane_failure(grid)
+    if failure is None:
+        return grid
+    raise GrammarError(
+        f"{purpose}: grid {grid.name} has no TCQ forest body. It {failure} "
+        f"It is a registered wire grid, so its body is decided by the recipe "
+        f"table, and every rung of {grid.name} resolves to a window recipe "
+        "(export.wire_recipe): the window body reads the grid once to build "
+        "its 2^window_bits table and never scores it, which is the only "
+        f"reason a {grid.size}-code alphabet is admitted at all. Building the "
+        f"forest anyway costs anchors x {grid.size} candidate pairs -- 65.7 "
+        "GiB at R=11 on BF16, measured (docs/measurements/"
+        "build-forest-memory-2026-09-05.md) -- for an object alphabet_plane() "
+        "would then refuse. Encode with body=BodyKind.WINDOW."
+    )
 
 
 @dataclass(frozen=True)
@@ -731,13 +808,9 @@ class AnchorForest:
                 "derivable one needs adding to the registry, which is a "
                 "permanent wire commitment."
             )
-        if self.grid.size > 256:
-            raise GrammarError(
-                f"grid {self.grid.name} has {self.grid.size} codes: the "
-                "ALPHABET/DESCENDANT planes are one byte per code and cannot "
-                "carry it. A wider code space is a schema change (wider plane "
-                "element), not a cast."
-            )
+        failure = _forest_plane_failure(self.grid)
+        if failure is not None:
+            raise GrammarError(f"grid {self.grid.name} {failure}")
 
     def alphabet_plane(self) -> bytes:
         """The ALPHABET plane: one byte per anchor, in anchor order."""
@@ -779,7 +852,13 @@ def build_forest(
     representatives are chosen per node and the tree shape is fixed, nesting
     holds by construction: truncating completion bits lands on an ancestor,
     which is a legal partial map.
+
+    A registered grid with no TCQ forest body is refused **first**, before any
+    of that: the rate is not the reason, the grid is, and the scalar builder's
+    cost is quadratic in the code count (:func:`require_forest_grid`,
+    tessera#285).
     """
+    require_forest_grid(grid)
     order = value_order(grid)
     depth = completion_capacity(rate, grid.rate_cap)
     width = 1 << depth
