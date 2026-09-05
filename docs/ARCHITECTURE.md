@@ -11,7 +11,8 @@ data-read suffix coverage #355 verified against base `8dc165b`;
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
-prismaquant#198), lane-eligibility schema v9. Re-stamp this
+prismaquant#198), lane-eligibility schema v9; whole-unit RELEASE rewrite
+placement guard #349 (2026-09-05). Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -856,7 +857,7 @@ each re-deriving a story at its own raise site.
 
 A shard's **RELEASE count vector** is the one thing about it no reader
 derives, and since tessera#336 it survives the round trip. A whole unit's
-per-superblock counts are `grammar.release_quota` of its total -- that total
+per-superblock counts are `grammar.release_quota` of its plane extent -- that total
 at a uniform release density -- which the reader regenerates and the wire
 therefore does not carry. A shard's are the *restriction* of its parent's,
 which no quota reproduces, so they travel as the RELEASE descriptor's
@@ -882,6 +883,17 @@ has to be re-exported from its parent. Nothing valid moves: a shard of a
 parent that released nothing keeps the whole-unit spelling -- an empty plane
 at `WHOLE_PLANE` granularity -- and a shard `slicing.slice_unit` cut already
 declared its counts, so its bytes are what they were.
+
+A shorter **whole-unit** RELEASE terminal keeps the original plane's ranked
+prefix, which need not have the quota of the smaller selected total (#349).
+The first decode continues to rank against that original extent. Rewriting
+the returned unit would describe only the selected total, so the writer now
+compares the held position counts with `grammar.release_quota` and refuses by
+name when they differ. Keep the original terminal bytes or re-encode releases
+at the intended total in that case. A prefix whose bins still match remains
+writable: within each superblock, ranking is a stable total order and its
+top-n prefix is independent of the other blocks. Canonical whole-unit and valid
+shard writes keep their existing bytes; zero-release terminals remain writable.
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and

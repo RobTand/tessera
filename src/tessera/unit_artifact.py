@@ -586,8 +586,9 @@ def build_unit_artifact(
             f"{'a' if start is not None else 'no'} start state; a shard cut "
             "below row 0 carries both or neither"
         )
-    # Only a shard puts its release counts on the wire, and only after they
-    # have been checked against the placement this unit actually holds.
+    # Only a shard puts its release counts on the wire. A whole unit must
+    # hold the quota its total-only descriptor will reproduce; check both
+    # representations against the placement this unit actually holds.
     release_counts = _release_counts_on_the_wire(unit, cols, superblock, unit_id)
     has_diagonals = unit.diagonals is not None
     layout = PlaneLayout(layout)
@@ -1156,10 +1157,17 @@ def _shard_state(manifest, chunks, device):
 def _release_counts_on_the_wire(unit, cols: int, superblock: int, unit_id: str):
     """The RELEASE descriptor's per-superblock counts, or ``None``.
 
-    ``None`` is the whole-unit spelling: a whole unit's counts are
+    ``None`` is the whole-unit spelling: a writable whole unit's counts are
     ``grammar.release_quota`` of the total, which the reader regenerates, and
     writing them anyway would change the RELEASE descriptor's granularity and
     with it the bytes of every unit that carries releases.
+
+    A shorter whole-unit terminal retains a prefix of the original plane's
+    ranked positions, whose counts need not equal the quota at the selected
+    total (tessera#349). Such a unit still decodes correctly, but writing its
+    total alone would move the overrides. Refuse that rewrite here; matching
+    bins remain representable because each block keeps its top-n prefix in
+    the same stable magnitude order, independently of the other blocks.
 
     A **shard**'s counts are the restriction of its parent's, which no quota
     reproduces, so they go on the wire -- and they are derived from and checked
@@ -1173,17 +1181,31 @@ def _release_counts_on_the_wire(unit, cols: int, superblock: int, unit_id: str):
     19 of 4096 weights by up to 0.10546875 with both artifacts parsing clean
     (tessera#336).
     """
-    from .grammar import superblock_count
+    from .grammar import release_quota, superblock_count
 
-    if not getattr(unit, "parent_rows", 0):
-        return None
-    declared = tuple(getattr(unit, "release_counts", ()) or ())
     index = unit.release_index
+    is_shard = bool(getattr(unit, "parent_rows", 0))
+    if not is_shard and not index.numel():
+        return None
     blocks = superblock_count(cols, superblock)
     held = tuple(
         int((((index % cols) // superblock) == block).sum())
         for block in range(blocks)
     )
+    if not is_shard:
+        quota = release_quota(int(index.numel()), cols, superblock)
+        if held != quota:
+            raise GrammarError(
+                f"whole unit {unit_id!r} holds RELEASE counts {list(held)}, "
+                f"but its total-only descriptor would reproduce quota "
+                f"{list(quota)} at {int(index.numel())} released positions. "
+                "A shorter terminal retains the original plane's ranked "
+                "prefix; rewriting this total would move its overrides. "
+                "Refusing to write; retain the original terminal bytes or "
+                "re-encode releases at the intended total (tessera#349)"
+            )
+        return None
+    declared = tuple(getattr(unit, "release_counts", ()) or ())
     if not declared:
         if index.numel():
             raise GrammarError(
