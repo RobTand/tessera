@@ -36,7 +36,12 @@ def _scoped_contract():
 
 def test_every_published_cell_names_its_measured_runtime_and_toolchain():
     contract = runtime_contract.load_serving_contract()
-    assert contract["lane_eligibility"]["schema"] == "tessera.lane-eligibility.v6"
+    # The constant, not a literal: this test is about what a cell must carry,
+    # and the schema string it carries it under is the packaged code's to say
+    # (AGENTS.md rule 3).  Written as "...v6" here, it failed on the v7 bump
+    # while every claim it actually makes still held.
+    assert (contract["lane_eligibility"]["schema"]
+            == runtime_contract.LANE_ELIGIBILITY_SCHEMA)
     for cell in contract["lane_eligibility"]["cells"]:
         image, modes = runtime_contract.cell_runtime_scope(cell)
         vllm, torch = runtime_contract.cell_runtime_versions(cell)
