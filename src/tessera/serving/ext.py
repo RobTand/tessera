@@ -165,10 +165,12 @@ NVFP4_LANE = {"decoder": "native_span2"}
 #: ``kernel_window_gemv`` repacks each column's code stream at that column's
 #: OWN rate, and the kernel has a lane only where 16 rows of R-bit codes are
 #: one 64-, 32- or 16-bit chunk (``chunk_width_supported`` in the ``.cu``) --
-#: R = 3 would need 6-byte lanes.  So a unit is readable by this lane iff
-#: EVERY column rate is in ``kernel_roster.SUPPORTED_RATES`` and its window is
-#: in ``WINDOW_BITS_SUPPORTED``; ``repack_window_body`` and
-#: ``bf16_route.gemv_eligible_for_unit`` are the two enforcement points.
+#: R = 3 would need 6-byte lanes.  So a unit is readable by this lane only
+#: when EVERY column rate is in ``kernel_roster.SUPPORTED_RATES`` and its
+#: window is in ``WINDOW_BITS_SUPPORTED``; the enforcement point is
+#: ``kernel_window_gemv.lane_refusal_for_parsed``, which decides THIS block
+#: through ``scheme.decide_lane_requirements`` (``repack_window_body`` keeps
+#: the rate check as the packing backstop).
 #:
 #: Published because the constraint is a PRODUCER's problem.  A rung is a root
 #: rate, and ``grammar.bresenham_rate_schedule`` mixes the two rates

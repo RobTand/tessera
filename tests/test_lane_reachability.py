@@ -893,6 +893,120 @@ def test_a_lane_predicate_with_a_non_boolean_carry_is_refused(monkeypatch):
         validate_serving_contract(payload)
 
 
+def _violated_parse(name):
+    """The readable fixture's REAL parse, one published class violated.
+
+    The map is keyed by the requirement's published name, and the drift test
+    below derives its roster from the contract, so a requirement added to
+    the block without a violation here fails the test rather than passing
+    vacuously.
+    """
+    import torch
+    from types import SimpleNamespace
+
+    from tessera.manifest import BodyKind, RotationState, ScalePlaneKind
+    from tessera.unit_artifact import parse_unit_artifact
+
+    parsed = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    unit = parsed.unit
+    if name == "column_rates":
+        unit.rates = (3,) * len(tuple(unit.rates))
+    elif name == "window_bits":
+        unit.window_bits = 12
+    elif name == "body":
+        unit.body = BodyKind.TCQ
+    elif name == "plane":
+        unit.scale_plane = ScalePlaneKind.LUT
+    elif name == "release_overrides":
+        unit.release_index = torch.arange(2)
+    elif name == "diagonals":
+        unit.diagonals = object()
+    elif name == "start_state":
+        unit.initial_state = torch.zeros(256, dtype=torch.int64)
+    elif name == "rotation":
+        unit.rotation = RotationState.R_IN_ONLY
+    elif name == "grid_arities":
+        parsed.grid = SimpleNamespace(arity=2, native=None, size=256, name="probe")
+    else:
+        raise AssertionError(
+            f"published requirement {name!r} has no violating parse here; "
+            "teach _violated_parse to build one")
+    return parsed
+
+
+def test_the_loader_and_the_predicate_refuse_together_class_by_class():
+    """THE DRIFT PIN (#264): for EVERY class the contract publishes, the
+    loader (``prepare_from_parsed``) and the byte-side predicate
+    (``lane_wire_report``) refuse the same parse, naming the same class --
+    and the readable parse passes the predicate.  The roster is derived from
+    the published block, so a grown requirement lands here by itself.
+
+    The loader delegates to ``scheme.decide_lane_requirements`` over the
+    same block, so this pins the delegation rather than restating nine
+    conditions a third time."""
+    from tessera.errors import GrammarError
+    from tessera.kernel_window_gemv import lane_refusal_for_parsed, prepare_from_parsed
+    from tessera.serving.scheme import lane_wire_report, wire_facts_of_parsed
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert lane_refusal_for_parsed(readable) is None
+
+    for name in sorted(lane_requirements(LANE)):
+        parsed = _violated_parse(name)
+        report = lane_wire_report(LANE, wire_facts_of_parsed(parsed))
+        assert not report["readable"], name
+        assert any(name in refusal for refusal in report["refusals"]), (name, report)
+        with pytest.raises(GrammarError) as exc:
+            prepare_from_parsed(parsed)
+        assert name in str(exc.value), (name, str(exc.value))
+
+
+def test_the_bf16_gate_is_the_same_decision():
+    """``bf16_route.gemv_refusal_for_unit`` was the third partial spelling
+    (rates, window, start state; 'everything else is refused upstream').  It
+    now delegates: a rotated parse -- a class the old spelling could not see
+    -- is refused with the class named."""
+    from tessera.serving.bf16_route import gemv_eligible_for_unit, gemv_refusal_for_unit
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert gemv_refusal_for_unit(readable) is None and gemv_eligible_for_unit(readable)
+    rotated = _violated_parse("rotation")
+    refusal = gemv_refusal_for_unit(rotated)
+    assert refusal is not None and "rotation R_IN_ONLY" in refusal
+    shard, _blob = _shard_reparse()
+    refusal = gemv_refusal_for_unit(shard)
+    assert refusal is not None and "start_state" in refusal
+
+
+def test_on_the_device_the_loader_loads_what_the_predicate_calls_readable():
+    """The agreement, on real bytes on a real device: the fixture the
+    predicate calls READABLE prepares and decodes; the shard the predicate
+    refuses raises the same class the report names."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA device: the positive arm builds the extension")
+
+    from tessera.errors import GrammarError
+    from tessera.kernel_window_gemv import decode_fp8, prepare_from_parsed
+    from tessera.serving.scheme import lane_wire_report, wire_facts_of_parsed
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert lane_wire_report(LANE, wire_facts_of_parsed(readable))["readable"]
+    unit = prepare_from_parsed(readable)
+    got, _scale = decode_fp8(unit)
+    assert got.shape == (unit.rows, unit.cols)
+
+    shard, _blob = _shard_reparse()
+    report = lane_wire_report(LANE, wire_facts_of_parsed(shard))
+    assert not report["readable"]
+    with pytest.raises(GrammarError, match="start_state"):
+        prepare_from_parsed(shard)
+
+
 def test_the_plan_gate_refuses_a_requirement_it_has_not_learned(monkeypatch):
     """#206's rule, applied to the PLAN side too: the old gate silently skipped
     requirements it did not know, so a contract that grew one would have been

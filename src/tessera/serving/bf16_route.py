@@ -349,17 +349,11 @@ def m_tile(M: int) -> int:
 
 
 def gemv_eligible_for_unit(unit) -> bool:
-    """Whether the window GEMV reads this unit's body.
+    """Whether the window GEMV reads this unit.
 
-    Read off ``tessera.kernel_window_gemv``'s own support constants -- never
-    restated here, so a wider kernel widens this route with no edit.  The lane
-    repacks each column's stream at that column's own rate, so eligibility is
-    per column: a unit is eligible when EVERY column's rate is in
-    ``SUPPORTED_RATES`` and its window is in ``WINDOW_BITS_SUPPORTED``.  A
-    shard start state is the torch path: the kernel supplies ``state_{-1} = 0``
-    itself and has no input for anything else.  Anything else about the unit
-    (body, plane, grid) is already refused by name in
-    ``prepare_tessera_bf16_module`` before this is asked.
+    ``gemv_refusal_for_unit`` below, as a verdict; hand it the PARSED object
+    (a ``ParsedUnit``), not the bare unit, because the published predicate
+    reads the grid too and absent evidence is a refusal, not a pass.
     """
     return gemv_refusal_for_unit(unit) is None
 
@@ -374,24 +368,16 @@ def gemv_refusal_for_unit(unit) -> "str | None":
     that names the offending rates is a value ``telemetry.note_lane_refusal``
     parks on the layer and a receipt aggregates.
 
-    Read off ``tessera.kernel_window_gemv``'s own support constants -- never
-    restated here, so a wider kernel widens this route with no edit.
+    Decided by ``kernel_window_gemv.lane_refusal_for_parsed`` -- the lane's
+    own spelling of the ONE decision core every gate runs over the published
+    predicate (#264).  This used to be a third, partial restatement (rates,
+    window, start state; "anything else is refused upstream"), which is
+    exactly the shape that let the published four drift from the loader's
+    nine.
     """
-    from tessera import kernel_window_gemv as kg
+    from tessera.kernel_window_gemv import lane_refusal_for_parsed
 
-    if getattr(unit, "initial_state", None) is not None:
-        return ("the unit carries a shard start state; the kernel supplies "
-                "state_{-1} = 0 itself and has no input for anything else")
-    if int(unit.window_bits) not in tuple(kg.WINDOW_BITS_SUPPORTED):
-        return (f"window bits L={int(unit.window_bits)} is outside the lane's value table "
-                f"{tuple(kg.WINDOW_BITS_SUPPORTED)}")
-    supported = tuple(kg.SUPPORTED_RATES)
-    offending = sorted({int(r) for r in unit.rates} - set(supported))
-    if offending:
-        return (f"column rates {offending} have no lane here (supported {supported}); the rung "
-                "is a root rate and bresenham mixes the two rates bracketing it, so the whole "
-                "unit refuses")
-    return None
+    return lane_refusal_for_parsed(unit)
 
 
 class _Bf16GemvRole:
@@ -774,7 +760,9 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                 # cannot give it (issue #104).
                 note_lane_refusal(layer, GEMV_MODULE_NAME, None)
                 try:
-                    refusals = {name: gemv_refusal_for_unit(parsed.unit)
+                    # The PARSED object, not the bare unit: the published
+                    # predicate reads the grid too (#264).
+                    refusals = {name: gemv_refusal_for_unit(parsed)
                                 for name, parsed in roles}
                     named = sorted(f"{n} ({r})" for n, r in refusals.items() if r)
                     if named:

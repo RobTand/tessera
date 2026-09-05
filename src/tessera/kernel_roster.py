@@ -1,13 +1,15 @@
 """The window GEMV's supported set, read from the kernel that instantiates it.
 
-The lane's eligibility is two numbers -- which column rates it can read and
-which window width it was built for -- and they are consumed in four places:
+The lane's eligibility opens with two numbers -- which column rates it can
+read and which window width it was built for -- consumed in four places:
 ``kernel_window_gemv.repack_window_body`` refuses a unit at load,
-``serving.bf16_route.gemv_eligible_for_unit`` refuses one at prepare,
-``serving.ext.WINDOW_GEMV_LANE`` publishes them as the lane predicate a
-PRODUCER refuses a plan against (#104), and ``runtime_contract.json`` ships
-that block to a consumer.  Each of those was a literal, tied to the others by
-tests and to ``serving/csrc/window_gemv.cu`` -- the file that decides what actually
+``serving.bf16_route.gemv_refusal_for_unit`` refuses one at prepare (both
+through the one decision core, ``serving.scheme.decide_lane_requirements``,
+since #264), ``serving.ext.WINDOW_GEMV_LANE`` publishes them as part of the
+lane predicate a PRODUCER refuses a plan against (#104), and
+``runtime_contract.json`` ships that block to a consumer.  Each of those was
+a literal, tied to the others by tests and to
+``serving/csrc/window_gemv.cu`` -- the file that decides what actually
 exists -- by nothing.
 
 **Why the kernel is the source and not Python.**  The alternative was to make
