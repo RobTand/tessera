@@ -76,6 +76,17 @@ dirty state, ambiguous/missing requests or failed verification yield `unknown`.
 The merge receipt keeps raw commit agreement and effective-source agreement
 separate; legacy populations cannot establish the latter. Population pass
 counts alone still do not establish a same-source merge check.
+The merge **verdict** now reads those fields rather than reporting them beside
+an unrelated conclusion: a green exit requires, per arm, a recognised surface
+schema, the `population` role, readable counts with something passed, and --
+for an arm submitted under `--strict-cuda` -- a device, an armed gate, a
+`tessera.test_surface.v3` population, a positive `cuda_surface.executed` and no
+`box_artifact_skips`; and, across arms, `commits_measured.effective_source.agree
+== true`. Different verified source is refused, unknown provenance is
+incomplete, and a pre-v3 population cannot answer the execution question, so it
+is not green. Each arm's own result stays readable in the receipt's
+`arm_results`, which is deliberately not the merge verdict and never sets the
+exit status.
 `tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.

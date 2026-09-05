@@ -565,7 +565,157 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
     return record
 
 
-def _verdict(arms: list[dict]) -> str:
+#: The surface schemas this tool knows how to read.  An unrecognised string is
+#: not a population it can reason about, and a population it cannot reason
+#: about is not evidence for green.
+_SURFACE_SCHEMAS = ("tessera.test_surface.v1", "tessera.test_surface.v2",
+                    "tessera.test_surface.v3")
+#: The first schema that publishes what the run EXECUTED on the device rather
+#: than only which device it saw.  Older files cannot answer tessera#152's
+#: question, and "cannot answer" is not "yes".
+_EXECUTION_SCHEMA = "tessera.test_surface.v3"
+
+
+def _evidence_problem(record: dict) -> str | None:
+    """Why this arm's population cannot be read as evidence, or ``None``.
+
+    A verdict is only as good as the fields it checked, and the ones it did
+    not check were the ones a defect would land in: a surface with no
+    ``counts`` skipped the executed-test leg entirely (``continue``), and a
+    surface that never said which schema it was written in, or whether it was
+    one xdist worker's share, was read as a population anyway.  Each of those
+    is a green verdict resting on a file that never claimed to be the thing it
+    was read as (#217).
+    """
+
+    arm = record["arm"]
+    surface = record.get("surface") or {}
+    schema = surface.get("schema")
+    if schema not in _SURFACE_SCHEMAS:
+        return (f"the {arm} arm's population states no schema this tool "
+                f"recognises ({schema!r}), so what its fields mean is unknown")
+    role = surface.get("role")
+    if role != "population":
+        return (f"the {arm} arm's population does not state the role "
+                f"'population' ({role!r}); a worker's share and a file written "
+                "before the role field existed are both slices as far as this "
+                "tool can tell")
+    counts = surface.get("counts")
+    if not isinstance(counts, dict) or not all(
+            isinstance(counts.get(key), int)
+            for key in ("passed", "failed", "skipped")):
+        return (f"the {arm} arm's population publishes no readable counts "
+                f"({counts!r}), so nothing establishes that it ran")
+    if not counts.get("passed"):
+        skipped = counts.get("skipped") or 0
+        return (f"the {arm} arm published a population in which nothing ran "
+                f"(0 passed, {skipped} skipped)")
+    return None
+
+
+def _coverage_problem(record: dict) -> str | None:
+    """Why an arm submitted to cover the CUDA-gated surface did not, or ``None``.
+
+    Four legs, and the last two are the ones ``--strict-cuda`` already refuses
+    on inside the run itself (tessera#146, tessera#152).  A receipt that quotes
+    a population must refuse on the same evidence, or the gate holds only for
+    whoever was watching the terminal.
+    """
+
+    if not record.get("requires_cuda"):
+        return None
+    arm = record["arm"]
+    surface = record.get("surface") or {}
+    if not surface.get("cuda"):
+        device = surface.get("device") or "device not stated"
+        return (f"the {arm} arm was submitted to cover the CUDA-gated surface "
+                f"and published a population that saw no device ({device})")
+    if not surface.get("strict_cuda"):
+        return (f"the {arm} arm's population says the --strict-cuda gate was "
+                "not armed, so a device-less placement would have skipped the "
+                "surface and passed")
+    if surface.get("schema") != _EXECUTION_SCHEMA:
+        return (f"the {arm} arm published a {surface.get('schema')} "
+                "population, which cannot say whether any test executed on "
+                f"the device; {_EXECUTION_SCHEMA} is the schema that does")
+    coverage = surface.get("cuda_surface") or {}
+    executed = coverage.get("executed")
+    if not isinstance(executed, int) or executed <= 0:
+        return (f"the {arm} arm's population says {executed!r} test(s) "
+                "allocated on the device, so the surface it was submitted to "
+                "cover was collected and skipped rather than run")
+    gated = coverage.get("box_artifact_skips") or {}
+    if gated:
+        named = "; ".join(f"{count} for {reason}"
+                          for reason, count in sorted(gated.items()))
+        return (f"the {arm} arm skipped tests for evidence this box does not "
+                f"hold ({named}), so it did not cover the surface it claims")
+    return None
+
+
+def _source_problem(commits: dict) -> str | None:
+    """Why these arms did not establish that they measured one tree, or ``None``.
+
+    The receipt already computed this and the verdict did not read it, so a
+    merge check could exit 0 over two populations of two different source
+    trees -- which is not a merge check, it is two measurements.  Snapshot
+    commit IDs may legitimately differ (PB stamps an action-specific closure
+    member), so the field that decides is the independently verified effective
+    source, never the raw commit.
+    """
+
+    source = commits.get("effective_source") or {}
+    if source.get("agree") is True:
+        return None
+    unverified = source.get("unverified_arms") or []
+    if source.get("agree") is False:
+        pairs = ", ".join(f"{arm} {digest[:12]}"
+                          for arm, digest in sorted(
+                              (source.get("by_arm") or {}).items()) if digest)
+        return ("refused: the arms measured different verified source trees "
+                f"({pairs}); two source trees are two measurements, not a "
+                "merge receipt")
+    return ("incomplete: no verified effective source was established for: "
+            + (", ".join(unverified) or "these arms")
+            + " -- a population of unknown provenance cannot be shown to be "
+              "the same source as its counterpart")
+
+
+def _arm_results(arms: list[dict]) -> dict:
+    """Each arm's own result, which is not the merge's.
+
+    Per-population success stays available and stays *separate*: a reader (or
+    a script) that wants to know whether the x86 arm passed can have that
+    answer without it ever being spelled the way the merge verdict is spelled,
+    because those are different claims and the exit status belongs to the
+    second one.
+    """
+
+    results = {}
+    for record in arms:
+        counts = (record.get("surface") or {}).get("counts") or {}
+        if record.get("status"):
+            results[record["arm"]] = record["status"]
+        elif record.get("surface") is None:
+            results[record["arm"]] = "no population published"
+        elif counts.get("failed") or counts.get("error"):
+            results[record["arm"]] = (
+                f"red: {counts.get('failed', 0)} failed, "
+                f"{counts.get('error', 0)} error")
+        elif record.get("returncode") not in (0, None):
+            results[record["arm"]] = f"red: exit {record['returncode']}"
+        elif _evidence_problem(record) or _coverage_problem(record):
+            results[record["arm"]] = "incomplete: " + (
+                _evidence_problem(record) or _coverage_problem(record))
+        elif not record.get("exit_status_observed", True):
+            results[record["arm"]] = (
+                "published no failure; exit status not observed")
+        else:
+            results[record["arm"]] = "green"
+    return results
+
+
+def _verdict(arms: list[dict], commits: dict | None = None) -> str:
     """Green is never stated without naming the populations it is green on.
 
     "green on both populations" was the first spelling here and it lies the
@@ -592,45 +742,37 @@ def _verdict(arms: list[dict]) -> str:
             return f"red on one of: {names}"
         if record.get("returncode") not in (0, None):
             return f"red on one of: {names}"
-    # A population in which nothing ran is not a green population.  Every
-    # check above is satisfied by an arm that collected the suite and skipped
-    # all of it -- no failures, exit 0, a surface on disk -- which is the shape
-    # this tool would take if the fix for tessera#114 were "make the x86 arm
-    # skip whatever it cannot import".  That is the green lie the refusal above
-    # exists to prevent, arriving through the other door.  A verdict is allowed
-    # to say green only about tests that were actually executed.
+    # A population in which nothing ran is not a green population, and neither
+    # is a file that never said what it was.  Every check above is satisfied by
+    # an arm that collected the suite and skipped all of it -- no failures,
+    # exit 0, a surface on disk -- which is the shape this tool would take if
+    # the fix for tessera#114 were "make the x86 arm skip whatever it cannot
+    # import".  That is the green lie the refusal above exists to prevent,
+    # arriving through the other door.  A verdict is allowed to say green only
+    # about tests it can see were actually executed.
     for record in arms:
-        counts = (record.get("surface") or {}).get("counts")
-        if counts is None:
-            continue
-        if counts.get("passed"):
-            continue
-        skipped = counts.get("skipped") or 0
-        return ("incomplete: the " + record["arm"] + " arm published a "
-                "population in which nothing ran (0 passed, "
-                + str(skipped) + " skipped)")
+        problem = _evidence_problem(record)
+        if problem:
+            return "incomplete: " + problem
     # Second leg, and the reason it exists: everything above is satisfied by a
     # run that skipped the entire surface it was submitted to cover.  The GPU
     # arm's whole claim rests on ``--strict-cuda`` having refused a device-less
     # session -- one unexercised code path between a green tick and an
     # unmeasured population, which is tessera#112 verbatim.  The surface
-    # already publishes both facts, derived in-process from torch rather than
-    # asserted about another runtime, so the verdict reads them too.  Two
-    # independent legs, not one.
+    # already publishes those facts, derived in-process from torch rather than
+    # asserted about another runtime, so the verdict reads them too.
     for record in arms:
-        if not record.get("requires_cuda"):
-            continue
-        surface = record.get("surface") or {}
-        if not surface.get("cuda"):
-            device = surface.get("device") or "device not stated"
-            return ("incomplete: the " + record["arm"] + " arm was submitted "
-                    "to cover the CUDA-gated surface and published a "
-                    "population that saw no device (" + device + ")")
-        if not surface.get("strict_cuda"):
-            return ("incomplete: the " + record["arm"] + " arm's population "
-                    "says the --strict-cuda gate was not armed, so a "
-                    "device-less placement would have skipped the surface "
-                    "and passed")
+        problem = _coverage_problem(record)
+        if problem:
+            return "incomplete: " + problem
+    # Third: the arms have to have measured one tree.  Two clean populations
+    # of two different source trees are two measurements; calling that a merge
+    # success is the same category error as quoting a pass count without its
+    # device.
+    problem = _source_problem(commits if commits is not None
+                              else _commits_measured(arms))
+    if problem:
+        return problem
     unobserved = [record["arm"] for record in arms
                   if not record.get("exit_status_observed", True)]
     if unobserved:
@@ -989,14 +1131,19 @@ def main() -> int:
                        for name in wanted}
             arms = [futures[name].result() for name in wanted]
 
+    commits = _commits_measured(arms)
     receipt = {
         "schema": "tessera.merge_suite.v1",
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "submitted_from": os.uname().nodename,
         "assembled_by": "resume" if args.resume else "submit",
         "population": _population_of(args.checkout),
-        "commits_measured": _commits_measured(arms),
-        "verdict": _verdict(arms),
+        "commits_measured": commits,
+        "verdict": _verdict(arms, commits),
+        # Each arm's own result, kept separate from the merge verdict on
+        # purpose: an arm can be green while the run is not a merge success,
+        # and only the verdict decides the exit status.
+        "arm_results": _arm_results(arms),
         "arms": arms,
         "reading_note": (
             "Each arm's counts belong to that arm's device population and to "
