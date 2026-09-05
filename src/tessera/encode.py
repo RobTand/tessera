@@ -46,6 +46,7 @@ from .diagonals import (
     apply_diagonals,
     apply_rotation,
     fit_diagonals,
+    undo_diagonals,
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
@@ -2927,10 +2928,22 @@ def encode_unit(
     # own ``plain`` column is measured on, so the diagnostic and the receipt
     # now speak about the same quantity.
     #
+    # "The weight's own units" includes the S5 transforms (tessera#230):
+    # ``work`` is the BALANCED matrix, and for a balanced error E the
+    # source-weight error is ``Dv E Du R^T``, so the diagonal factors must be
+    # multiplied back or the number depends on the balancing gauge (the
+    # issue's sv=2 witness read exactly 4x low).  The remaining rotation is
+    # blockwise-orthogonal and moves no Frobenius norm, so undoing the
+    # diagonals on the error IS the source-space number, without paying a
+    # rotation round trip whose only effect is its own rounding.
+    #
     # Diagnostic, not wire: no plane carries it, ``unit_artifact`` parses one
     # back as 0.0, and no artifact byte depends on it.
     units = vectors[codes].permute(0, 2, 1).reshape(rows, cols)
-    sse = float(((work - units * scale) ** 2).sum())
+    error = work - units * scale
+    if fitted is not None:
+        error = undo_diagonals(error, fitted)
+    sse = float((error ** 2).sum())
 
     if _LUT_LANDING_SINK is not None:
         # Debug-only, floats out, no byte in.  In a non-default landing mode

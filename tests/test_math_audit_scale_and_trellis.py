@@ -301,6 +301,42 @@ def test_sse_is_the_units_own_weight_space_error(weighting, refit):
     assert unit.sse == pytest.approx(expected, rel=1e-5)
 
 
+@pytest.mark.parametrize("rotation_on", [False, True])
+@pytest.mark.parametrize("supplied", [False, True])
+def test_sse_is_in_the_source_weights_units_under_diagonals(rotation_on, supplied):
+    """tessera#230.  With segment-2a diagonals the encoder codes ``work =
+    Dv^-1 W R Du^-1``, and ``sse`` measured ``||work - reconstruction||^2``
+    in those *balanced* coordinates: for a balanced error E the source-weight
+    error is ``||Dv E Du||^2`` (the remaining rotation is orthogonal), so the
+    reported number depended on the balancing gauge -- the issue's witness at
+    sv=2, su=1 read exactly 4x low.  The reference is ``reconstruct_unit``,
+    the full stored inverse path, never a helper that repeats the
+    implementation's omissions."""
+    from tessera.alphabet import build_forest
+    from tessera.decode import reconstruct_unit
+    from tessera.diagonals import Diagonals
+    from tessera.encode import encode_unit
+    from tessera.manifest import RotationState
+
+    weight = torch.randn(16, 32, generator=torch.Generator().manual_seed(1)) * .02
+    weight[5, :] *= 6.0             # a fitted sv is then genuinely nonuniform
+    forest = build_forest(3, grid=E2M1_GRID)
+    code = ConvCode(memory=6)
+    kwargs: dict = dict(
+        rotation=RotationState.R_IN_ONLY if rotation_on else RotationState.NONE,
+        scale_refit=1,
+    )
+    if supplied:
+        kwargs["diagonals"] = Diagonals(
+            torch.full((16,), 2., dtype=torch.float16),
+            torch.ones(32, dtype=torch.float16))
+    else:
+        kwargs["with_diagonals"] = True
+    unit = encode_unit(weight, forest, (3,) * 32, code, **kwargs)
+    source_sse = float(((weight - reconstruct_unit(unit, forest, code)) ** 2).sum())
+    assert unit.sse == pytest.approx(source_sse, rel=1e-4)
+
+
 def test_sse_does_not_depend_on_the_trellis_weighting_convention():
     """Two encodes that land on the same codes report the same ``sse``: the
     number is a property of the encoding, not of the objective that found it.
