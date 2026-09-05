@@ -6,7 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
-base `1e58fdc`, encoder-evidence scope correction #198; CI at `df1bc20`,
+base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v19, lane-eligibility schema v8. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).

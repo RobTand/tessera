@@ -31,7 +31,7 @@ def artifact():
 def test_historical_e4m3_cells_scope_their_encoder_evidence():
     doc = load_serving_contract()
     root = Path(__file__).resolve().parents[1]
-    measurement = json.loads((root / "docs/measurements/encoder-evidence-scope-2026-09-05.json").read_text())
+    measurement = json.loads((root / "docs/measurements/encoder-evidence-scope-minor7-2026-09-05.json").read_text())
     for cell in doc["lane_eligibility"]["cells"]:
         scope = cell["evidence"]["artifact"]
         if affected(cell):

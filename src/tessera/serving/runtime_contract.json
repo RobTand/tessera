@@ -327,7 +327,7 @@
       "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
       "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
       "reencode": {
-       "encoder_commit": "1e58fdc72e8f6408ac79d76bb4a817f2cc9f58f4",
+       "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
        "unit": "model.layers.0.mlp.down_proj",
        "payload": "different",
        "metric": "weight_sse",
@@ -379,7 +379,7 @@
       "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
       "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
       "reencode": {
-       "encoder_commit": "1e58fdc72e8f6408ac79d76bb4a817f2cc9f58f4",
+       "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
        "unit": "model.layers.0.mlp.down_proj",
        "payload": "different",
        "metric": "weight_sse",
@@ -446,7 +446,7 @@
       "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
       "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
       "reencode": {
-       "encoder_commit": "1e58fdc72e8f6408ac79d76bb4a817f2cc9f58f4",
+       "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
        "unit": "model.layers.0.mlp.down_proj",
        "payload": "different",
        "metric": "weight_sse",
@@ -510,7 +510,7 @@
       "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
       "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
       "reencode": {
-       "encoder_commit": "1e58fdc72e8f6408ac79d76bb4a817f2cc9f58f4",
+       "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
        "unit": "model.layers.0.mlp.down_proj",
        "payload": "different",
        "metric": "weight_sse",
@@ -1084,7 +1084,7 @@
   {
    "contract_version": 19,
    "date": "2026-09-05",
-   "change": "Lane-eligibility schema v8 (#198), pre-release evidence correction: evidence.artifact is required and is null when no encoder-reproduction comparison is recorded. Otherwise it names the historical artifact and full encoder commit, plus the exact re-encode commit, single unit, payload relation, weight_sse relation and receipt. The four dense E4M3 cells name the checkpoint built at 8070ec6; a same-source down_proj comparison at 1e58fdc finds a different payload and slightly lower weight SSE. This is a single-unit screen, not served KL, whole-model quality evidence or a claim about a future encoder. It never changes grade or the historical KL entries. The closed validator rejects malformed or inconsistent scope. Rungs, routes, launches, serving defaults, wire bytes and encoder behavior do not change. This schema has no released consumers; no migration shim is provided."
+   "change": "Lane-eligibility schema v8 (#198), pre-release evidence correction: evidence.artifact is required and is null when no encoder-reproduction comparison is recorded. Otherwise it names the historical artifact and full encoder commit, plus the exact re-encode commit, single unit, payload relation, weight_sse relation and receipt. The four dense E4M3 cells name the checkpoint built at 8070ec6; a same-source down_proj comparison at 3317036 (also measured before wire minor 7 at 1e58fdc) finds a different payload and slightly lower weight SSE. This is a single-unit screen, not served KL, whole-model quality evidence or a claim about a future encoder. It never changes grade or the historical KL entries. The closed validator rejects malformed or inconsistent scope. Rungs, routes, launches, serving defaults, wire bytes and encoder behavior do not change. This schema has no released consumers; no migration shim is provided."
   },
   {
    "contract_version": 18,

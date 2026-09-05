@@ -111,3 +111,29 @@ Before the implementation, all 14 new cases in
 scope, and `evidence carries unknown field(s) ['artifact']` for a valid
 scope. Log: `/home/rob/tessera-runs/issue-198/pre-fix.log`. Population:
 CPU, torch 2.10.0+cpu, 0 skips, 0 uncollected modules; no CUDA coverage.
+
+## Follow-up after #199 merged: wire minor 7
+
+Repeated the identical experiment after rebasing on
+`331703661baaa67ed73900c3d9e99f300fdc8415` (PR #199 / issue #144).
+Command as above with that `--encoder-commit` and
+`--output /results/comparison-minor7.json`. Logs:
+`/home/rob/tessera-runs/issue-198/comparison-minor7.log` and
+`comparison-minor7.json`; committed
+[minor-7 receipt](encoder-evidence-scope-minor7-2026-09-05.json).
+
+The current **plane-region SHA-256 and SSE are identical** to the earlier
+comparison: `402bb8eb6376b33329882b4a8b3d3d16cd9ef7807d05d8441fbc600bb937421a`
+and **11.069408978146207**, respectively. The historical arm remains
+**11.069609364171521** and the payload mismatch remains 63,952 bytes.
+The current unit envelope is now minor **7**, **1,592,035 bytes**, with
+encoder fixture ID
+`220ee0aaed5fd628f6fe92c02b08cbdf90b6e26b76313fa505a9b32fecbf973c`.
+The cells name this newer comparison commit. The original JSON remains as
+the measured control before the wire revision; neither result is inferred
+from #199's PR description.
+
+The strict on-disk byte-identity xfail introduced by #199 remains an
+intentional notice if a later encoder or replacement artifact restores
+byte equality. #198 resolves the missing evidence scope and the unknown
+weight-error direction; it does not promise historical byte reproduction.

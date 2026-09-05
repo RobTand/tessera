@@ -193,7 +193,10 @@ def test_the_two_layouts_write_one_payload_for_a_shipped_units_weight():
         "invocation that wrote the checkpoint is not recorded, so that is not "
         "proven.  Turns green when the checkpoint is re-exported by the "
         "encoder that ships, or an encode reproduces the disk; strict, so "
-        "either event is noticed."
+        "either event is noticed.  #198 records this historical artifact and "
+        "the slightly lower same-source weight SSE of the current rendering "
+        "in evidence.artifact and docs/measurements/encoder-evidence-scope-2026-09-05.md; "
+        "the remaining xfail tracks byte equality, not an unscoped quality claim."
     ),
 )
 def test_a_shipped_unit_re_encoded_by_this_tree_is_the_on_disk_payload():
