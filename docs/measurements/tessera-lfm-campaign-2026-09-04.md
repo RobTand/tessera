@@ -363,7 +363,12 @@ container and GPU processes are absent at verified cleanup.
 
 The generic greedy smoke prompt produced repetitive `France is` text. That
 observation is retained, not used as a quality verdict or attributed to
-quantization without a matched BF16 prompt. The measured comparison above is
+quantization without a matched BF16 prompt. **The matched prompt was run later
+the same day** (`moe-evidence-debt-2026-09-04.md` §7): the BF16 source on this
+same image returns the identical completion, character for character, so the
+repetition belongs to the model and the prompt rather than to the quantization.
+That control does not change this section's numbers or its refusal to call the
+smoke a verdict. The measured comparison above is
 prefill quality only; the decode census proves dispatch, not decode KL.
 There is no general numeric student-KL cutoff in the current cell-promotion
 contract, so successful comparison execution is not called a quality pass.

@@ -766,8 +766,25 @@ nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
 `tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
 `routed_moe` cells record a repetitive one. `qualification` is not
-overloaded with the grade; whether a `route_only` `routed_moe` cell should
-stay `device_qualified` is #133's open decision. Receipt existence is
+overloaded with the grade.
+
+Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
+`device_qualified`, with the evidence debt recorded rather than closed. Read
+the two cells as qualified on **one artifact, one residency mode, one
+execution mode, one regime** -- an LFM2.5-8B-A1B E4M3/q1024 checkpoint served
+resident and eager on the pinned EUGR image -- whose only quality number is
+the batch cell's top-1024 lower bound of 0.0832 (upper bound 1.179); the
+decode cell grades `route_only` and rests on the census. That is not thinner
+than the dense cells on the `grade` axis, where each MoE cell sits exactly
+where its regime's dense cells sit; it is thinner on three axes the table
+shows less plainly: the MoE cells attest `eager` only where the dense cells
+attest `eager` and `compiled`, they require `TESSERA_SERVE_MODE=resident`
+because streamed routed MoE has no route, and the population is one model
+with no field to say so. The measurements that would thicken it, ranked with
+their costs and with the field each one changes, are in
+`docs/measurements/moe-evidence-debt-2026-09-04.md`; the cheapest that moves a
+`grade` is a decode-regime top-1024 bound on the artifact that already
+exists. Receipt existence is
 `tests/test_cell_evidence.py`'s (the wheel ships no docs); the LAWS tables
 are that file and `tests/test_serving_contract.py`.
 
