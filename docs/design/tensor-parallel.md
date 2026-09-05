@@ -93,8 +93,16 @@ the checks `slice_unit` applies, not asserted beside them.
   halfway carries a **label phase** no state can express. At a super-symbol
   boundary there is no residual phase, and the convolutional register is the
   whole of the carried state. The window body is always span 1.
-* Raised only if a row is not a whole number of scale blocks, which no shipping
-  shape does.
+* Never raised. A row that is *not* a whole number of scale blocks used to
+  raise it, so that a run of rows closed the straddling block; but the block
+  planes are indexed `(row * cols + col) // block`, and when a block spans two
+  rows no rectangle of the unit is a run of the plane — not even the whole of
+  it. `slice_unit` refuses every cut of such a unit and `can_shard` refuses the
+  unit, from one predicate (`_block_straddles_rows`), rather than reporting a
+  granularity that would not have sliced (tessera#235). No writer produces one:
+  `encode._pack_scales` refuses an S6b width that is not a whole number of
+  32-weight groups (tessera#57) and `build_unit_artifact` refuses any block
+  plane's width that is not a whole number of `half`-groups (tessera#56).
 
 **Columns.** The scale plane's block, raised to the superblock by releases or a
 mixed rate schedule.

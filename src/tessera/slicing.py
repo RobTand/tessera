@@ -95,6 +95,30 @@ def _scale_columns_per_row(unit) -> "int | None":
     return unit.group if kind is ScalePlaneKind.S6B else unit.half
 
 
+def _block_straddles_rows(block: "int | None", columns: int) -> bool:
+    """Does a block of this scale plane span two output rows?
+
+    The block planes are indexed ``(row * cols + col) // block``, so when the
+    block does not divide the column count a block begins in one output row
+    and ends in the next.  **No rectangle of such a unit is a run of the
+    plane** -- not even the whole of it -- so ``_slice_block_plane`` refuses
+    every cut, the identity slice included, and ``can_shard`` has to say so
+    rather than report a granularity.  This is the one home of that question:
+    the cutter raises from it and the predicate returns from it, because the
+    two answering separately is what let a loader be told "yes" and then
+    handed a ``GrammarError`` (tessera#235).
+
+    No Tessera writer produces such a unit.  ``encode._pack_scales`` refuses a
+    width that is not a whole number of S6b groups -- a group's two halves
+    share one base exponent within one octave, so a group spanning two rows
+    would couple unrelated magnitudes (tessera#57) -- and
+    ``unit_artifact.build_unit_artifact`` refuses a width that is not a whole
+    number of ``half``-groups (tessera#56).  A reader still parses one, so the
+    cutter is still asked about it.
+    """
+    return block is not None and bool(columns % block)
+
+
 def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     """``(row_granularity, col_granularity)``: where a cut may legally fall.
 
@@ -109,7 +133,11 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     ``arity * span`` under TCQ and ``arity`` under the window body, whose span
     is always 1.  The block scale planes run along the row, so a row boundary
     is a block boundary whenever the unit's column count is a whole number of
-    blocks; when it is not, the row granularity rises to make it one.
+    blocks -- and when it is not, there is no granularity to report: a
+    straddling block makes every cut inexpressible, the identity included, so
+    ``_block_straddles_rows`` refuses the unit outright at ``can_shard``
+    instead of this raising a row granularity that would not have sliced
+    (tessera#235).
 
     **Columns.**  A block scale plane is indexed by ``(row * cols + col) //
     block``, so a column cut must fall on a block: 32 weights under S6b (which
@@ -132,10 +160,6 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
     row = arity * (span if body is BodyKind.TCQ else 1)
     block = _scale_columns_per_row(unit)
-    if block is not None and cols % block:
-        # A row is not a whole number of blocks, so a block straddles rows and
-        # only a run of rows that closes one is cuttable.
-        row = _lcm(row, block // gcd(block, cols))
     col = 1 if block is None else block
     mixed = len(set(unit.rates)) > 1
     if mixed or unit.released_positions:
@@ -156,8 +180,6 @@ def _manifest_granularity(manifest):
     )
     arity = geometry.rows * geometry.columns // (geometry.columns * _steps_of(manifest))
     row = arity * (manifest.span if manifest.body is BodyKind.TCQ else 1)
-    if block is not None and geometry.columns % block:
-        row = _lcm(row, block // gcd(block, geometry.columns))
     col = 1 if block is None else block
     released = max(
         terminal.plane_elements[manifest.plane_order.index(PlaneKind.RELEASE)]
@@ -224,19 +246,38 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
     for a row-parallel one (o_proj, down_proj: the *input* features, this
     unit's columns).  Expert parallelism moves whole units and asks nothing of
     this function.
+
+    The answer is exactly "``slice_unit`` will accept that cut", never a
+    second reading of the same wire: the granularity below is the one
+    ``slice_unit`` measures its offsets against, and the straddling-block
+    refusal is the one ``_slice_block_plane`` raises.  A predicate that
+    answered ``True`` where the cutter raises is worse than no predicate --
+    the loader asks first precisely so it can name a ``tensor_parallel_size``
+    in the refusal (tessera#235).
     """
     if tp < 1:
         raise GrammarError(f"tp must be positive, got {tp}")
     if axis not in ("row", "column"):
         raise GrammarError(f"axis is 'row' or 'column', got {axis!r}")
-    from .manifest import Manifest
+    from .manifest import Manifest, ScalePlaneKind as _Kind
 
     if isinstance(unit, Manifest):
         rows, cols = unit.geometry.rows, unit.geometry.columns
+        kind = unit.scale_plane.kind
+        block = (
+            None
+            if kind is _Kind.CHANNEL
+            else unit.geometry.group_weights
+            if kind is _Kind.S6B
+            else unit.geometry.half_weights
+        )
     else:
         unit, superblock, arity = _unwrap(unit, superblock, arity)
         steps, cols = unit.body_bits.shape
         rows = steps * arity
+        block = _scale_columns_per_row(unit)
+    if _block_straddles_rows(block, cols):
+        return False
     row_gran, col_gran = shard_granularity(unit, superblock, arity)
     extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
     return extent % tp == 0 and (extent // tp) % granularity == 0
@@ -581,7 +622,18 @@ def _slice_block_plane(plane, rows, columns, block, r0, r1, c0, c1, name):
     """
     if plane is None or plane.numel() == 0:
         return plane
-    if columns % block or c0 % block or (c1 - c0) % block:
+    if _block_straddles_rows(block, columns):
+        # Not this cut: ANY cut, the identity included.  The reshape below
+        # needs one row of the weight to be a whole number of plane entries,
+        # and a straddling block means no rectangle of the unit is a run of
+        # the plane.  ``can_shard`` refuses the same unit from the same
+        # predicate, so a loader is never told yes and then handed this.
+        raise GrammarError(
+            f"{name}: a {block}-weight block does not divide this unit's {columns} columns, so a "
+            f"block spans two output rows and no cut of it -- the identity slice included -- is a "
+            f"run of the plane. No writer produces such a unit (tessera#56, tessera#57)"
+        )
+    if c0 % block or (c1 - c0) % block:
         raise GrammarError(
             f"{name}: a {block}-weight block does not divide a cut at columns "
             f"[{c0}, {c1}) of {columns}"
