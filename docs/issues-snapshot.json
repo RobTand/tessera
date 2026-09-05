@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T17:29:00Z",
+ "generated": "2026-09-05T17:42:00Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -484,12 +484,16 @@
     "title": "tests: bound the cluster-campaign waits by producer liveness, not the clock"
    },
    "207": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "pq-decisions: #175 receipt (no token needed), #87 reopened + driver replays the candidate decision"
    },
    "208": {
     "state": "OPEN",
     "title": "#87 first paired quantized campaign: Qwen3-0.6B BF16 control vs native NVFP4 on Sparky, one exclusive action, accept = 0 newly-broken pairs on screen and held-out"
+   },
+   "209": {
+    "state": "OPEN",
+    "title": "[P2] Stop swallowing the dead-vendored-override refusal at the remaining 22 call sites (#202)"
    },
    "21": {
     "state": "CLOSED",
@@ -780,7 +784,7 @@
     "title": "FP8-source wrapped-MoE checkpoints build end to end (imatrix scale contract + live-namespace bridging in the codebook exporter)"
    },
    "87": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "shipgate: KL/PPL + greedy-smoke certify boundary-broken artifacts \u2014 three DSV4-Flash quants within ~3% PPL span a 6\u00d7 behavioral gap; proposal: add a sampled behavioral component"
    },
    "88": {
@@ -1770,7 +1774,7 @@
     "title": "Make the promotion legs a property of the promotion, not of its factory"
    },
    "309": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] pure CI job red on master: six test bodies in torch-free modules reach torch"
    },
    "31": {
@@ -1778,7 +1782,7 @@
     "title": "serving/config.py's MoE refusal recommends a flag the pinned build refuses"
    },
    "310": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Skip, not fail, the six torch-reaching bodies the torch-free collector admits"
    },
    "311": {
@@ -1788,6 +1792,14 @@
    "312": {
     "state": "OPEN",
     "title": "ts-285: BF16 R=11 is the 73 GB build_forest cell; refuse a forest no wire can carry"
+   },
+   "313": {
+    "state": "CLOSED",
+    "title": "contract v21: record a routed-MoE greedy smoke the BF16 source does not degenerate on (prismaquant#198)"
+   },
+   "314": {
+    "state": "OPEN",
+    "title": "Finalize each worker's source identity before xdist sends workerfinished (#291)"
    },
    "32": {
     "state": "CLOSED",

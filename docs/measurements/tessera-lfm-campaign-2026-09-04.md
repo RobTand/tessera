@@ -567,3 +567,17 @@ gate cannot read. That IS a change a validating reader acts on, so
 above, for the opposite reason. No status word, grade, rung, route, bound or
 byte moved. The raw SHA256 is now
 `370641141ec99ec9035c27c825e1533999906e0290bf0be87257e48a9743e7d5`.
+
+**Note, 2026-09-05, after that note (prismaquant#198).** The v18 control was
+half the fix: a reference that degenerates too removes the evidence against
+the route without adding any for it, and a status-only consumer went on
+refusing. Contract **v21** supplies the positive record,
+`moe-smoke-recorded-2026-09-05.md`: the same student and its BF16 source,
+one arm at a time on the same pinned image, eager, resident, answer without a
+cycle through the checkpoint's own chat template (raw continuation, this
+receipt's prompt included, cycles on the source too). Both `routed_moe`
+cells' `evidence.smoke` now read `recorded` with that receipt, `control`
+null and `attribution` `unattributed`, the shape the BF16 cells use;
+`contract_version` goes **20 -> 21**, schema stays v8. No grade, rung, route,
+bound or byte moved. The raw SHA256 is now
+`34f1da7977f1aa155cd2ff18b584e5c35a6089b648bb4a51d449fc25082a2c3e`.

@@ -507,7 +507,7 @@ def _fake_toolkit(tmp_path, name: str, version: str):
 def test_the_identity_hashes_the_compiler_the_build_will_invoke(tmp_path, monkeypatch):
     import os
 
-    import torch
+    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
     from torch.utils import cpp_extension
 
     a = _fake_toolkit(tmp_path, "cuda-a", "A")
@@ -540,7 +540,7 @@ def test_an_nvcc_only_environment_change_does_not_rename_the_build(tmp_path, mon
     """``$NVCC`` moves nothing torch's loader reads, so it must move nothing
     in the identity either -- pre-#242 it renamed the build namespace while
     the compiler stayed put."""
-    import torch
+    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
     from torch.utils import cpp_extension
 
     a = _fake_toolkit(tmp_path, "cuda-a", "A")
