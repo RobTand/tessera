@@ -30,6 +30,15 @@ become a Python dependency only when something parses or executes them, and
 distinction the other way is what made this tool return ``full`` for every
 change this repository can make (#148): one module hashes every tracked file,
 the root conftest imports it, and the whole tree was uncertain forever.
+But "not a module edge" is not "no edge". A read whose target the resolver
+*named* and then refused to place -- an absolute spelling outside the tree,
+which a local alias directory can carry straight back into it -- keeps a data
+dependency it cannot attribute to a file, so its reader is seeded for every
+non-inert change instead. Dropping that was under-selection with no
+diagnostic at all: the changed JSON moved the reader's bytes and the verdict
+was a confident ``none`` (#338). It is deliberately weaker than the module
+wildcard -- it selects the reader's consumers and never forces the full run --
+because a reader that executes nothing imports nothing.
 
 Other kinds of coupling do not have ordinary import edges:
 
@@ -85,7 +94,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source  # noqa: E402
-from tessera._dev.source_dependencies import WILDCARD, file_imports  # noqa: E402
+from tessera._dev.source_dependencies import (  # noqa: E402
+    DATA_WILDCARD, WILDCARD, file_imports)
 
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
@@ -217,7 +227,7 @@ def _imports(
             # "from x import y" may name a submodule rather than an attribute;
             # both readings are recorded because only the graph can tell.
             found.update(f"{prefix}.{alias.name}" for alias in node.names)
-    paths, unknown = file_imports(tree, path, root)
+    paths, unknown, unplaced = file_imports(tree, path, root)
     loaded, data = set(), set()
     for target in paths:
         held = nodes.get(target) if nodes is not None else None
@@ -229,6 +239,12 @@ def _imports(
             data.add(str(target.relative_to(root)))
     if unknown:
         found.add(WILDCARD)
+    if unplaced:
+        # A data node, not a module one: this reader executes nothing, so it
+        # imports nothing, but it does read a file the resolver named and
+        # refused to place.  ``DATA_WILDCARD`` is the node that file is held
+        # under when no single path can be (#338).
+        data.add(DATA_WILDCARD)
     return found, loaded, data
 
 
@@ -260,10 +276,13 @@ def import_graph(
     or its repository-relative path, both for a file read by an explicit path
     that is not Python -- so a JSON spec or a shell harness a module reads is
     a node like any other -- and for a Python file whose dotted name another
-    file already answers to (#317).  ``unreadable``
+    file already answers to (#317); or ``WILDCARD``/``DATA_WILDCARD``, the two
+    nodes a dependency is held under when no file can be.  ``unreadable``
     maps the repository-relative path of every file that would not parse or
     read to the failure, and each of those files is a ``WILDCARD`` importer:
-    the graph does not know what it depends on (#293).
+    the graph does not know what it depends on (#293).  A ``DATA_WILDCARD``
+    importer is the weaker claim -- it reads a file the resolver named and
+    refused to place, and imports nothing (#338).
     """
     files = [
         p for p in root.rglob("*.py")
@@ -546,11 +565,20 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # all.  They seed identically -- their consumers are selected, and a
     # conftest among them forces the population -- and are reported apart,
     # because "repair this file" is the only action one of them admits.
-    uncertain = (importers.get(WILDCARD, set())
-                 if any(Path(f).suffix not in INERT for f in changed) else set())
+    non_inert = any(Path(f).suffix not in INERT for f in changed)
+    uncertain = importers.get(WILDCARD, set()) if non_inert else set()
     seeds.update(uncertain)
     unresolved = {name for name in uncertain
                   if str(by_name[name].relative_to(root)) not in unreadable}
+    # A third kind: a module that reads a file it named and the resolver
+    # refused to place.  It is NOT in ``uncertain`` -- it imports nothing, so
+    # it must not force the population the way an unknown loader does -- but
+    # its own bytes-in depend on a file the diff may hold, so it is a seed
+    # like any changed module and its consumers are selected (#338).  The
+    # alternative was the receipt this tool cannot afford: verdict ``none``,
+    # no tests, no diagnostic, for a change that moved the reader's output.
+    unplaced = importers.get(DATA_WILDCARD, set()) if non_inert else set()
+    seeds.update(unplaced)
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
     # become the conftest's by way of the conftest having exec'd it.
@@ -624,6 +652,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         "forces_full": forced,
         "unresolved_file_loaders": sorted(
             str(by_name[name].relative_to(root)) for name in unresolved),
+        "unplaced_data_reads": sorted(
+            str(by_name[name].relative_to(root)) for name in unplaced),
         # A property of the tree, not of this change: report it whether or not
         # this change reaches it, because it is a defect to repair either way.
         "unreadable_sources": {path: unreadable[path] for path in sorted(unreadable)},
@@ -638,6 +668,10 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     }
     if unresolved:
         result["reason"] += "; unresolved file loaders conservatively select their consumers"
+    if unplaced:
+        result["reason"] += (
+            "; reads of paths this resolver named but refused to place "
+            "conservatively select their readers' consumers")
     unreadable_reached = sorted(str(by_name[name].relative_to(root))
                                 for name in uncertain - unresolved)
     if unreadable_reached:
@@ -687,6 +721,13 @@ def main() -> int:
             print("would not parse or read (dependencies unknown; repair these):")
             for path, failure in result["unreadable_sources"].items():
                 print(f"  {path}: {failure}")
+        # Printed, because the failure #338 records was a selector that said
+        # ``none`` and gave the operator nothing to read.
+        if result["unplaced_data_reads"]:
+            print("reads a path outside this tree's spelling "
+                  "(dependency kept, target unnamed):")
+            for path in result["unplaced_data_reads"]:
+                print(f"  {path}")
         if forced:
             print("forces full run:")
             for f in forced:
