@@ -643,10 +643,15 @@ declares the `routed_moe` scheme through
 `scheme.validate_tessera_moe_scheme` -- the reader is the gate, so the writer
 is held to it before the config is written rather than at load. Everything the
 route would refuse at load has a plan-time twin (`plan_expert_stack`): a family
-with no expert route, an expert index set that is not `0..E-1`, a missing
-projection, geometry that differs across experts, and rows or columns the route
-cannot cut. A dense Linear failing the last of those is passed through; a stack
-cannot be, because vLLM builds one method for the whole of it. The construction
+with no expert route, an expert population that is not exactly the source
+config's declared `0..E-1` -- an interior gap, a missing tail expert, or a
+truncated contiguous prefix alike, because `E` comes from config.json
+(`_stack_config_geometry`, the same contract the packed path has always proved
+against; tessera#213), a missing projection, geometry that differs across
+experts or from the config's `hidden_size`/`moe_intermediate_size`, and rows
+or columns the route cannot cut. A dense Linear failing the last of those is
+passed through when it was implicitly planned; a stack cannot be, because vLLM
+builds one method for the whole of it. The construction
 gate covers the stack too, through the census's `offered_non_linear` row --
 a `RoutedExperts` stack is not a `LinearBase`, so it is recorded there and a
 classifier reading only `offered` called it `absent`. An unplanned stack is

@@ -151,7 +151,8 @@ def test_projection_uses_producer_role_order_and_group_geometry():
     exporter = _exporter()
     shapes = {f"{STACK}.{expert}.{role}.weight": [32, 32]
               for expert in range(2) for role in ("w1", "w2", "w3")}
-    projected = exporter.project_expert_plan(shapes, {},
+    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
+    projected = exporter.project_expert_plan(shapes, config,
                                              {STACK: {"grid": "E4M3", "q256": 1024}})
     units = projected["stacks"][STACK]["units"]
     assert [u["tensor"].split(".")[-2] for u in units] == ["w1", "w3", "w2"] * 2
@@ -163,8 +164,10 @@ def test_projection_uses_producer_role_order_and_group_geometry():
 def test_projection_refuses_partial_source_stack():
     exporter = _exporter()
     with pytest.raises(SystemExit, match="missing"):
-        exporter.project_expert_plan({TENSOR: [32, 32]}, {},
-                                    {STACK: {"grid": "E4M3", "q256": 1024}})
+        exporter.project_expert_plan(
+            {TENSOR: [32, 32]},
+            {"num_experts": 1, "hidden_size": 32, "moe_intermediate_size": 32},
+            {STACK: {"grid": "E4M3", "q256": 1024}})
 
 
 def test_cached_packaging_never_calls_encoder(encoded, monkeypatch):
@@ -190,12 +193,12 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     src.mkdir()
     tensors = {f"{STACK}.0.{role}.weight": encoded[0].clone() for role in ("w1", "w2", "w3")}
     save_file(tensors, str(src / "model.safetensors"))
-    (src / "config.json").write_text(json.dumps({"architectures": ["Lfm2MoeForCausalLM"],
-                                                "hidden_size": 32, "moe_intermediate_size": 32,
-                                                "num_experts": 1}))
+    config = {"architectures": ["Lfm2MoeForCausalLM"],
+              "hidden_size": 32, "moe_intermediate_size": 32, "num_experts": 1}
+    (src / "config.json").write_text(json.dumps(config))
     choices = {STACK: {"grid": "E4M3", "q256": 1024}}
     projection = exporter.project_expert_plan({k: list(v.shape) for k, v in tensors.items()},
-                                               {}, choices)
+                                               config, choices)
     cache = tmp_path / "cache"
     cache.mkdir()
     records = {}

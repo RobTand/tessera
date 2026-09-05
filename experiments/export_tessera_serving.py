@@ -807,7 +807,7 @@ def packed_expert_stacks(expert_shapes):
 
 
 def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
-                      source_layout: str = MOE_SOURCE_UNPACKED):
+                      source_layout: str = MOE_SOURCE_UNPACKED, config: dict):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -821,13 +821,18 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     * a family with no expert route -- ``scheme.MOE_BUILDERS`` is the one home
       for that rule, and its absences are measured (the NVFP4 oracle's
       ``swiglu_limit`` clamp, a 16-bit stack being the passthrough already);
-    * an expert index set that is not ``0..E-1`` -- the parameter is
-      ``[E, ...]`` and the loader indexes it by ``expert_id``, so a gap is a
-      row of zeros served as an expert;
+    * an expert population that is not exactly the source config's declared
+      ``0..E-1`` -- the parameter is ``[E, ...]`` and the loader indexes it by
+      ``expert_id``, so a gap is a row of zeros served as an expert, and a
+      truncated contiguous prefix (a missing TAIL expert) is the same defect
+      that ``range(len(indices))`` could never see (#213).  The declared count
+      comes from ``config.json``, the same geometry contract the packed path
+      has always proved against;
     * a missing projection -- ``w13`` is the gate/up PAIR, and a stack missing
       one has no second half for the tile;
-    * geometry that differs across experts -- one stack is one tile, so one
-      shape;
+    * geometry that differs across experts, or that disagrees with the
+      config's ``hidden_size``/``moe_intermediate_size`` -- one stack is one
+      tile, and its dimensions are the model's;
     * rows or columns the route's mainloop cannot take.  A dense Linear that
       fails this is passed through, which is safe because it is one module; a
       routed stack cannot be half passed through, because vLLM builds ONE
@@ -839,14 +844,22 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     except ValueError as exc:
         raise SystemExit(
             f"the plan gives the expert stack {stack} grid {grid.name} ({family}): {exc}") from exc
+    declared, config_hidden, config_inter = _stack_config_geometry(config, stack)
     indices = sorted(experts)
-    if indices != list(range(len(indices))):
-        missing = sorted(set(range(max(indices) + 1)) - set(indices))
+    if indices != list(range(declared)):
+        missing = sorted(set(range(declared)) - set(indices))
+        extra = sorted(set(indices) - set(range(declared)))
+        problems = []
+        if missing:
+            problems.append(f"is missing expert(s) {missing[:8]}")
+        if extra:
+            problems.append(f"carries undeclared expert(s) {extra[:8]}")
         raise SystemExit(
-            f"the expert stack {stack} is missing expert(s) {missing[:8]} of "
-            f"{max(indices) + 1}. The wire parameter is [E, ...] and the loader writes row "
-            "expert_id, so a gap is not a smaller stack -- it is a row of zeros decoded as an "
-            "expert. Refusing rather than renumbering.")
+            f"the expert stack {stack} {' and '.join(problems)} of the {declared} the source "
+            "config declares (n_routed_experts/num_experts/num_local_experts). The wire "
+            "parameter is [E, ...] and the loader writes row expert_id, so a gap or a "
+            "truncated population is not a smaller stack -- it is a row of zeros decoded as "
+            "an expert. Refusing rather than renumbering.")
     geometry: dict[str, tuple] = {}
     for index in indices:
         found = experts[index]
@@ -865,6 +878,12 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                     "shape; a stack whose experts disagree cannot be [E, rows, cols].")
     hidden = geometry["gate_proj"][1]
     inter = geometry["gate_proj"][0]
+    if (hidden, inter) != (config_hidden, config_inter):
+        raise SystemExit(
+            f"the expert stack {stack} holds gate_proj [{inter}, {hidden}] but the source "
+            f"config declares hidden_size={config_hidden} and intermediate size "
+            f"{config_inter}. One stack is one tile and its geometry is the model's; "
+            "refusing rather than serving rows the runtime never computes.")
     for projection, shape in geometry.items():
         want = (hidden, inter) if projection == "down_proj" else (inter, hidden)
         if shape != want:
@@ -904,8 +923,15 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
             "source_layout": source_layout, "groups": groups, "units": units}
 
 
-def _packed_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
-    """The three dimensions a packed source must prove against config.json."""
+def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
+    """The three dimensions a source expert stack must prove against config.json.
+
+    One contract for both source layouts (#213): the packed path has always
+    read it, and the unpacked path reads the same three numbers, because a
+    per-expert 2-D source can silently be a truncated population -- a missing
+    tail expert leaves a perfectly contiguous ``0..E-2`` -- and only the
+    model's own config says what ``E`` is.
+    """
     text = config.get("text_config", config)
     hidden = text.get("hidden_size")
     inter = text.get("moe_intermediate_size", text.get("intermediate_size"))
@@ -915,7 +941,7 @@ def _packed_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
     if not all(isinstance(value, int) and value > 0
                for value in (experts, hidden, inter)):
         raise SystemExit(
-            f"cannot validate packed expert stack {stack}: config.json must declare positive "
+            f"cannot validate expert stack {stack}: config.json must declare positive "
             "integer expert count (n_routed_experts/num_experts/num_local_experts), "
             f"hidden_size, and moe_intermediate_size/intermediate_size; got experts={experts!r} "
             f"hidden_size={hidden!r} intermediate_size={inter!r}")
@@ -944,7 +970,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
             "supported conventions describe one fused gate/up tensor and one down tensor; "
             "a different roster needs its own explicit source layout.")
 
-    experts, hidden, inter = _packed_config_geometry(config, stack)
+    experts, hidden, inter = _stack_config_geometry(config, stack)
     expected = {
         MOE_SOURCE_OUT_FIRST_CHUNKED: {
             "gate_up_proj": (experts, 2 * inter, hidden),
@@ -972,7 +998,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
             "down_proj": (f"{stack}.{expert}.down_proj.weight", (hidden, inter)),
         }
     record = plan_expert_stack(
-        stack, synthetic, grid, q256, source_layout=source_layout)
+        stack, synthetic, grid, q256, source_layout=source_layout, config=config)
     for unit in record["units"]:
         projection = unit["projection"]
         physical_projection = ("gate_up_proj" if projection in
@@ -1061,7 +1087,8 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
             layout = choice.get("source_layout", MOE_SOURCE_UNPACKED)
             if layout != MOE_SOURCE_UNPACKED:
                 raise SystemExit(f"{stack}: unpacked source requires source_layout={MOE_SOURCE_UNPACKED}")
-            planned = plan_expert_stack(stack, unpacked_stacks[stack], grid, choice["q256"])
+            planned = plan_expert_stack(stack, unpacked_stacks[stack], grid,
+                                        choice["q256"], config=source_config)
         result[stack] = dict(planned, grid=grid.name)
     return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
 
@@ -1361,7 +1388,8 @@ def main():
                 source_layout=source_layout, config=src_config)
         else:
             record = plan_expert_stack(
-                stack, stacks[stack], grid, q256, source_layout=source_layout)
+                stack, stacks[stack], grid, q256, source_layout=source_layout,
+                config=src_config)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "

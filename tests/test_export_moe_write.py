@@ -127,9 +127,9 @@ def _write(tmp_path: Path, tensors, config=None) -> Path:
     return src
 
 
-def _export(tmp_path, monkeypatch, tensors, plan, *extra):
+def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
     """Run the exporter over ``tensors`` with ``plan``; return the out dir."""
-    src = _write(tmp_path, tensors)
+    src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",
             # The synthetic architecture is censused, and its attention
@@ -264,6 +264,63 @@ def test_a_gap_in_the_expert_indices_is_refused(tmp_path, monkeypatch):
     assert "missing expert" in str(caught.value), str(caught.value)
 
 
+def test_a_missing_tail_expert_is_refused_against_the_declared_population(tmp_path, monkeypatch):
+    """#213: ``range(len(indices))`` cannot see a deleted LAST expert -- the
+    stack shrinks to a contiguous prefix and the gate accepted a population
+    the source config cannot construct, after which a real export carries the
+    unchanged four-expert config beside a three-expert scheme and only the
+    consumer can refuse, after the encode the producer claims to gate.  The
+    config's declared count is the contract."""
+    tensors = _checkpoint()
+    for projection in export.EXPERT_PROJECTIONS:
+        del tensors[f"{STACK}.{EXPERTS - 1}.{projection}.weight"]
+
+    with pytest.raises(SystemExit) as caught:
+        _export(tmp_path, monkeypatch, tensors,
+                {STACK: {"grid": "E4M3", "q256": 1024}}, "--device", "cpu")
+
+    message = str(caught.value)
+    assert "missing expert" in message and str(EXPERTS) in message, message
+
+
+def _unpacked_shapes(experts=EXPERTS, hidden=HIDDEN, inter=MOE_INTER):
+    return {f"{STACK}.{expert}.{projection}.weight":
+            ([hidden, inter] if projection == "down_proj" else [inter, hidden])
+            for expert in range(experts) for projection in export.EXPERT_PROJECTIONS}
+
+
+def test_a_truncated_contiguous_population_is_refused_by_the_producer_plan():
+    """The #213 repro: three complete experts under a config declaring four.
+    ``project_expert_plan`` used to return successfully with ``experts=3``."""
+    with pytest.raises(SystemExit) as caught:
+        export.project_expert_plan(_unpacked_shapes(experts=EXPERTS - 1), _config(),
+                                   {STACK: {"grid": "E4M3", "q256": 1024}})
+
+    message = str(caught.value)
+    assert "missing expert" in message and f"[{EXPERTS - 1}]" in message, message
+
+
+def test_a_declared_smaller_population_still_plans():
+    """Preserved: a source whose config genuinely declares fewer experts."""
+    config = _config()
+    config["text_config"]["n_routed_experts"] = EXPERTS - 1
+    projected = export.project_expert_plan(_unpacked_shapes(experts=EXPERTS - 1), config,
+                                           {STACK: {"grid": "E4M3", "q256": 1024}})
+    assert projected["stacks"][STACK]["experts"] == EXPERTS - 1
+
+
+def test_unpacked_stack_geometry_disagreeing_with_the_config_is_refused():
+    """The packed path has always proved dimensions against config.json; the
+    unpacked path is held to the same contract (#213)."""
+    config = _config()
+    config["text_config"]["hidden_size"] = 2 * HIDDEN
+    with pytest.raises(SystemExit) as caught:
+        export.project_expert_plan(_unpacked_shapes(), config,
+                                   {STACK: {"grid": "E4M3", "q256": 1024}})
+
+    assert "hidden_size" in str(caught.value), str(caught.value)
+
+
 def test_a_missing_projection_is_refused(tmp_path, monkeypatch):
     tensors = _checkpoint(skip=((2, "up_proj"),))
 
@@ -285,11 +342,17 @@ def test_experts_that_disagree_about_geometry_are_refused(tmp_path, monkeypatch)
 
 
 def test_a_stack_the_encoder_cannot_cut_is_refused_not_half_passed_through(tmp_path, monkeypatch):
-    """A dense Linear that fails this is passed through; a stack cannot be."""
+    """A dense Linear that fails this is passed through; a stack cannot be.
+
+    The config declares the same 40 so the population/geometry contract
+    (#213) agrees and the refusal under test is the encoder's own cut."""
     tensors = _checkpoint(inter=40)                     # 40 % 32 != 0
+    config = _config()
+    config["text_config"]["moe_intermediate_size"] = 40
 
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}})
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                config=config)
 
     message = str(caught.value)
     assert "ONE method per stack" in message, message
