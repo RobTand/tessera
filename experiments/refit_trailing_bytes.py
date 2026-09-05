@@ -62,7 +62,10 @@ SUFFIXES = (".weight", ".weight_scale", ".weight_packed",
 # to notice.  A served KL over that pair cannot isolate the trailing
 # weight-scale objective, because it is not the only thing that changed.
 #
-# So every suffix the loader reads carries a policy, and the policy is checked:
+# So every suffix the loader reads carries a policy, and the policy is checked.
+# ``MUST_MOVE`` is the leg ``the_plane_moved`` already held and ``MAY_MOVE`` is
+# the one thing that needs no check; what was missing is ``IDENTICAL``, and
+# stating all three is what makes the set total rather than a pair of habits:
 IDENTICAL = "identical"    # the trellis output: identical on every unit or it
                            # is not this pair, whatever the flags said
 MUST_MOVE = "must move"    # the intervention itself: a flag that reached
