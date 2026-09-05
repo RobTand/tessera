@@ -47,10 +47,14 @@ how the first real run went -- ``--resume <receipt dir>`` rebuilds the receipt
 from the populations the runs published, and takes the exit status from the
 pool's own outcome record for the action that wrote that population -- shown
 as ``0 (pool)``, so a status nobody here watched is not mistaken for one this
-process saw.  Where no single finished action wrote the path -- still in
-flight, requeued after a non-zero exit, or two of them did -- the row stays
-``not observed`` and nothing is borrowed: published failures prove red, their
-absence does not prove green.
+process saw.  "Wrote" is the action's **effective** pytest ``--surface-json``
+argument, bound to the population it names by source and by attempt: a command
+that merely mentions the path, one that overrides the option later, one whose
+sealed snapshot ran a different commit, and one whose population predates the
+attempt being read are none of them this file's producer.  Where no single
+finished action wrote the path -- still in flight, requeued after a non-zero
+exit, or two of them did -- the row stays ``not observed`` and nothing is
+borrowed: published failures prove red, their absence does not prove green.
 
 Everything about scheduling is PrismaBuild's: this composes ``pbrun``
 invocations and reads what they return.  It never runs a suite itself, never
@@ -392,7 +396,92 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
     )
 
 
-def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
+#: How far a population may predate the attempt whose status is being read
+#: before the two are refused as different attempts.  The file's mtime is the
+#: NFS server's clock and the claim time is the worker's, so this is a skew
+#: allowance, not a duration: a suite that ran under an earlier attempt is
+#: hours old, not minutes.
+ATTEMPT_CLOCK_SLACK_S = 600.0
+
+
+def _runs_pytest(parts: list[str]) -> bool:
+    """Whether this command is a pytest invocation at all.
+
+    ``python -m pytest`` or a ``pytest`` executable.  A program string passed
+    to ``-c`` is deliberately not read: the file path inside it is not an
+    argument of this command, and guessing at a shell or Python fragment is
+    how a reader starts inventing producers.
+    """
+
+    for index, part in enumerate(parts):
+        if part == "-m" and index + 1 < len(parts) and parts[index + 1] == "pytest":
+            return True
+        if Path(part).name in ("pytest", "py.test"):
+            return True
+    return False
+
+
+def _effective_surface_json(command: list) -> str | None:
+    """The population path this command actually writes, or ``None``.
+
+    ``--surface-json`` is an ordinary ``store`` option, so pytest keeps the
+    LAST one; a command naming this path and then overriding it writes
+    somewhere else entirely.  And a command that merely mentions the path --
+    ``cat``, an inspection, a copy -- writes nothing at all.  Membership of
+    the path string in argv answered neither question, which is how a
+    successful reader could supply a suite's exit status (#218).
+    """
+
+    parts = [str(part) for part in command]
+    if not _runs_pytest(parts):
+        return None
+    destination = None
+    for index, part in enumerate(parts):
+        if part == "--surface-json":
+            destination = parts[index + 1] if index + 1 < len(parts) else None
+        elif part.startswith("--surface-json="):
+            destination = part.split("=", 1)[1]
+    return destination
+
+
+def _binding_refusal(payload: dict, outcome: dict, surface_json: Path,
+                     population: dict | None) -> str | None:
+    """Why this finished action's status is not this population's, or ``None``.
+
+    Two ways a real pool produces the wrong answer, both of them a status that
+    belongs to a different run of the same command:
+
+    * another **source**: the sealed request names the snapshot it ran, the
+      population names the tree it measured, and a disagreement means the
+      status came from somewhere this file did not;
+    * another **attempt**: the pool requeues on any non-zero exit, and an
+      attempt that died before its terminal summary leaves the previous
+      attempt's population on the path under its own exit status.  A
+      population written before this attempt was claimed is not this
+      attempt's output.
+    """
+
+    snapshot = ((payload.get("params") or {}).get("checkout_snapshot") or {})
+    measured = (population or {}).get("commit")
+    stamped = snapshot.get("commit") if isinstance(snapshot, dict) else None
+    if stamped and measured and stamped != measured:
+        return (f"the action ran snapshot commit {stamped[:12]} while the "
+                f"population says it measured {measured[:12]}")
+    claimed = outcome.get("claimed_unix")
+    if isinstance(claimed, (int, float)):
+        try:
+            written = surface_json.stat().st_mtime
+        except OSError:
+            return "the population could not be read to date it"
+        if written < claimed - ATTEMPT_CLOCK_SLACK_S:
+            return ("the population predates the attempt that claimed this "
+                    f"action ({outcome.get('attempts')} attempt(s)), so it is "
+                    "an earlier attempt's output under a later attempt's exit")
+    return None
+
+
+def _pool_actions_that_wrote(surface_json: Path,
+                             population: dict | None = None) -> tuple[list, list]:
     """The finished pool actions whose command wrote this population.
 
     A resumed receipt used to have no exit status at all: the submitting
@@ -405,20 +494,23 @@ def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
     that ran the thing, not from this program's opinion about what a clean
     summary implies.
 
-    The join is the ``--surface-json`` path.  It appears verbatim in the
-    action's command in the CAS request, so "the action that wrote this
-    population" is answerable exactly rather than by matching prose.  The
-    stdout in the outcome record would also contain it, but stdout can be
-    truncated and a command cannot.
+    The join is the action's **effective** ``--surface-json`` argument, parsed
+    out of the pytest command in its CAS request -- not the presence of the
+    path somewhere in argv, which made every reader of the file a candidate
+    writer.  The stdout in the outcome record would also contain it, but
+    stdout can be truncated and a command cannot.
 
-    Returns every match, because the caller must be able to tell one from
-    several: a receipt directory that two actions wrote to (a retry, or the
-    polluted ``20260904T025044``) has no single exit status, and picking one
-    would be exactly the overclaim the rest of this file refuses.
+    A match is then checked against the population it claims to have written:
+    same source, same attempt.  Returns the bound producers and the reasons
+    the other matches were refused, because the caller must be able to tell
+    one from several: a receipt directory that two actions wrote to (a retry,
+    or the polluted ``20260904T025044``) has no single exit status, and
+    picking one would be exactly the overclaim the rest of this file refuses.
     """
 
-    wanted = str(surface_json)
-    found = []
+    wanted = str(Path(surface_json))
+    found: list[dict] = []
+    refused: list[str] = []
     for state in ("done", "failed"):
         folder = POOL_QUEUE / state
         if not folder.is_dir():
@@ -431,11 +523,17 @@ def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
             except (OSError, ValueError):
                 continue
             command = (request_payload.get("params") or {}).get("command") or []
-            if wanted not in [str(part) for part in command]:
+            destination = _effective_surface_json(command)
+            if destination is None or str(Path(destination)) != wanted:
                 continue
             try:
                 outcome = json.loads(outcome_path.read_text())
             except (OSError, ValueError):
+                continue
+            refusal = _binding_refusal(request_payload, outcome, surface_json,
+                                       population)
+            if refusal:
+                refused.append(f"{key[:12]}: {refusal}")
                 continue
             detail = outcome.get("detail") or {}
             found.append({
@@ -451,7 +549,7 @@ def _pool_actions_that_wrote(surface_json: Path) -> list[dict]:
                 # chose the mode is gone.
                 "command": [str(part) for part in command],
             })
-    return found
+    return found, refused
 
 
 def _cpus_of_command(command: list) -> int | None:
@@ -493,7 +591,13 @@ def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
       says how many wrote it.
     """
 
-    matches = _pool_actions_that_wrote(surface_json)
+    matches, refused = _pool_actions_that_wrote(surface_json,
+                                                record.get("surface"))
+    if refused:
+        record["pool_actions_refused"] = refused
+        record["exit_status_note"] += (
+            " A finished pool action named this population's path and was not "
+            "bound to it: " + "; ".join(refused) + ".")
     if len(matches) == 1 and isinstance(matches[0].get("returncode"), int):
         pool = matches[0]
         record["returncode"] = pool["returncode"]
@@ -534,7 +638,9 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
 
     The exit status this process never watched is read from the one runtime
     that did: PrismaBuild's worker records it in the action's outcome record,
-    and the action is found by the ``--surface-json`` path in its own command.
+    and the action is found by the effective ``--surface-json`` output of the
+    pytest command in its own sealed request, bound to this population's
+    source and attempt.
     It is never reconstructed from ``counts.failed`` -- a run can exit non-zero
     after a clean summary (a crash in teardown, an internal error, a timeout
     kill), so failures in the surface prove red while their absence does not

@@ -1234,7 +1234,8 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     assert appended.count("no population published") == 2, appended
 
 
-def _fake_pool(root, surface_json, actions):
+def _fake_pool(root, surface_json, actions, command=None, params=None,
+               outcome=None):
     """A pb-queue and a CAS request tree holding exactly these actions.
 
     The layout is the fleet's, not an invention: an outcome record per action
@@ -1251,13 +1252,15 @@ def _fake_pool(root, surface_json, actions):
     for key, state, returncode, host in actions:
         (requests / key[:2]).mkdir(parents=True, exist_ok=True)
         (requests / key[:2] / f"{key}.json").write_text(json.dumps({
-            "params": {"command": ["python", "-m", "pytest", "tests",
-                                   "--surface-json", str(surface_json),
-                                   "--strict-cuda"]}}))
+            "params": {"command": command or [
+                "python", "-m", "pytest", "tests",
+                "--surface-json", str(surface_json), "--strict-cuda"],
+                **(params or {})}}))
         (queue / state / f"{key}.json").write_text(json.dumps({
             "attempts": 1, "claimed_host": host, "status": state,
             "detail": {"returncode": returncode, "status": "executed",
-                       "elapsed_s": 511.4}}))
+                       "elapsed_s": 511.4},
+            **(outcome or {})}))
     return queue, requests
 
 
@@ -1673,3 +1676,86 @@ def test_each_arms_own_result_is_readable_without_being_the_merge_verdict():
                                      "skipped": 0})
     assert merge_suite._arm_results([red])["x86"].startswith("red"), \
         merge_suite._arm_results([red])
+
+
+def _resumed_with(tmp_path, **pool):
+    """A resumed GPU record whose pool holds exactly the actions given."""
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir(exist_ok=True)
+    surface = receipt_dir / "surface.gpu.json"
+    _gpu_population(surface)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky")], **pool)
+    return merge_suite, merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
+                                            receipt_dir)
+
+
+def test_an_action_that_only_read_the_population_is_not_its_producer(tmp_path):
+    """#218: any command containing the path was treated as the writer.
+
+    A successful ``cat`` of a published summary says nothing about whether the
+    suite that wrote it crashed, timed out or failed after publication -- and
+    it was enough to turn a resumed arm green, because the join was mere argv
+    membership of the path string.
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, command=["cat", str(tmp_path / "receipt/surface.gpu.json")])
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert "pool_action" not in record, record
+    assert not merge_suite._verdict([record]).startswith("green on")
+
+
+def test_a_command_whose_effective_output_is_elsewhere_cannot_claim_this_path(
+        tmp_path):
+    """pytest takes the last ``--surface-json``; so does the reader of it."""
+
+    ours = str(tmp_path / "receipt/surface.gpu.json")
+    theirs = str(tmp_path / "somewhere-else.json")
+
+    _, overridden = _resumed_with(tmp_path, command=[
+        "python", "-m", "pytest", "tests",
+        "--surface-json", ours, "--surface-json", theirs])
+    assert overridden["exit_status_observed"] is False, overridden
+
+    _, effective = _resumed_with(tmp_path, command=[
+        "python", "-m", "pytest", "tests",
+        "--surface-json", theirs, "--surface-json", ours])
+    assert effective["exit_status_observed"] is True, effective
+    assert effective["returncode"] == 0, effective
+
+
+def test_a_status_recorded_for_another_source_tree_is_not_borrowed(tmp_path):
+    """The population names the tree it measured; so does the sealed action."""
+
+    merge_suite, record = _resumed_with(tmp_path, params={
+        "checkout_snapshot": {
+            "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
+            "commit": "b" * 40, "subdirectory": "."}})
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert any("commit" in reason
+               for reason in record.get("pool_actions_refused", [])), record
+
+
+def test_a_population_older_than_the_attempt_that_claimed_it_is_not_bound(
+        tmp_path):
+    """The pool requeues on any non-zero exit, and a retry may never publish.
+
+    An attempt that died before its terminal summary leaves the previous
+    attempt's population at the path and its own status in the outcome record.
+    Reading the two together attributes one attempt's bytes to another
+    attempt's exit.
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, outcome={"attempts": 2, "claimed_unix": time.time() + 86400})
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert not merge_suite._verdict([record]).startswith("green on")
