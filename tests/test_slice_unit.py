@@ -1038,6 +1038,36 @@ def test_the_release_element_width_is_one_number(monkeypatch, body, plane):
     assert torch.equal(parsed.unit.release_index.cpu(), unit.release_index.cpu())
 
 
+def test_the_block_scale_plane_widths_are_one_number(monkeypatch):
+    """The same statement as above, for the two block scale planes.
+
+    Found while fixing the RELEASE plane's copy of it (tessera#183, M10) and
+    fixed here rather than filed: ``pack_uniform(unit.scale_base, 8)`` and
+    ``pack_uniform(unit.scale_refine, 4)`` restate
+    ``planes.NORMATIVE_ELEMENT_BITS`` at the writer, and each reader restates
+    it once more.  Unlike RELEASE these two have no constant in ``grammar`` to
+    point at, so the descriptor table -- which is what a reader consults and
+    what ``layout.build_planes`` charges the bytes against -- is their one
+    home.
+
+    Both widths move together because one unit carries both planes, and an
+    S6b unit is the only kind that does: a LUT plane carries no SCALE_BASE and
+    a CHANNEL plane carries neither.
+    """
+    from tessera import planes as planes_module
+
+    for kind in (PlaneKind.SCALE_BASE, PlaneKind.SCALE_REFINE):
+        monkeypatch.setitem(
+            planes_module.NORMATIVE_ELEMENT_BITS, kind,
+            planes_module.NORMATIVE_ELEMENT_BITS[kind] + 1,
+        )
+    unit, _forests, _grid, blob = _s6b_unit(device="cpu")
+    parsed = _cpu_parse(blob)
+    assert unit.scale_base.numel() and unit.scale_refine.numel()
+    assert torch.equal(parsed.unit.scale_base.cpu(), unit.scale_base.cpu())
+    assert torch.equal(parsed.unit.scale_refine.cpu(), unit.scale_refine.cpu())
+
+
 def test_release_is_refused_on_a_grid_wider_than_the_release_plane():
     """The encoder says which dial does not exist, and says it before it works.
 

@@ -55,7 +55,7 @@ from .manifest import (
     ScalePlane,
     ScalePlaneKind,
 )
-from .planes import PlaneKind
+from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
 from .scale_channel import default_channel_sigma
 from .trellis import ConvCode, _ODS_GENERATORS
 from .wire import pack_body, pack_fp16, pack_uniform, unpack_body, unpack_fp16, unpack_uniform
@@ -497,9 +497,15 @@ def build_unit_artifact(
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
         PlaneKind.BODY: pack_body(unit.body_bits, rates, span),
-        PlaneKind.SCALE_BASE: pack_uniform(unit.scale_base, 8),
+        # The descriptor table, not a literal, for the reason the RELEASE
+        # line below gives: these two planes have no constant in ``grammar``
+        # to point at, so the table ``layout.build_planes`` charges the bytes
+        # against is their one home (tessera#183, M10's neighbours).
+        PlaneKind.SCALE_BASE: pack_uniform(
+            unit.scale_base, NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE]),
         PlaneKind.COMPLETION: pack_body(unit.completion_bits, widths),
-        PlaneKind.SCALE_REFINE: pack_uniform(unit.scale_refine, 4),
+        PlaneKind.SCALE_REFINE: pack_uniform(
+            unit.scale_refine, NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE]),
         # ``RELEASE_BITS``, not a literal: the descriptor's element width
         # is derived from that constant (``planes.NORMATIVE_ELEMENT_BITS``),
         # so a literal here is a second copy of the number that would let
@@ -879,14 +885,16 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
     else:
         scale_base = unpack_uniform(
             chunks[PlaneKind.SCALE_BASE],
-            geometry.positions // geometry.group_weights, 8, device,
+            geometry.positions // geometry.group_weights,
+            NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
         )
         scale_lut = None
     return dict(
         scale_base=scale_base,
         scale_refine=unpack_uniform(
             chunks[PlaneKind.SCALE_REFINE],
-            geometry.positions // geometry.half_weights, 4, device,
+            geometry.positions // geometry.half_weights,
+            NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE], device,
         ),
         scale_plane=plane.kind, scale_lut=scale_lut,
         scale_global=float(plane.global_scale), scale_rows=None,
