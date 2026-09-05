@@ -58,7 +58,12 @@ from .manifest import (
 )
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
 from .scale_channel import default_channel_sigma
-from .trellis import ConvCode, _ODS_GENERATORS, replayable_codes
+from .trellis import (
+    ConvCode,
+    _ODS_GENERATORS,
+    replayable_codes,
+    require_replayable_code,
+)
 from .wire import (
     pack_body,
     pack_fp16,
@@ -370,6 +375,13 @@ def build_unit_artifact(
 ):
     """Serialise one encoded Linear.  Returns ``(manifest, region, blob)``.
 
+    ``code`` must be one a reader can name: under a TCQ body it is checked
+    against ``trellis.require_replayable_code``, the same roster
+    ``parse_unit_artifact``'s digest search walks, because the wire carries no
+    generator field and a pair outside it would publish bytes no reader
+    recovers (tessera#295).  A WINDOW body binds no code and the argument is
+    inert there.
+
     ``fixture_id`` is the encoder identity to stamp (``encoder_identity``).
     The default asks that module, which answers with the digest of what this
     encoder does on a fixed fixture set -- and answers ``None`` while it is
@@ -424,6 +436,19 @@ def build_unit_artifact(
             )
     body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
     window_bits = int(getattr(unit, "window_bits", 0))
+    # The convolutional code is wire and has no field of its own: the profile
+    # id digests it, and the reader recovers it by searching
+    # ``trellis.replayable_codes`` and matching that digest.  So a pair outside
+    # that roster writes an artifact this same version cannot load -- the
+    # encoder and ``reconstruct_unit`` serve it, and only the *serialised* form
+    # is unreadable, which is precisely a defect the writer must catch
+    # (tessera#295).  Refused by generators, here, through the predicate the
+    # reader's own search is: one rule, one home.  A WINDOW body binds no code
+    # (``encoder_profile_id`` writes ``body:window,L=...`` and no ``conv:``
+    # part), so the argument is inert there and is not read; the E4M3/BF16
+    # window units the serving lane ships never reach this.
+    if body is BodyKind.TCQ:
+        require_replayable_code(code)
     plane_kind = ScalePlaneKind(unit.scale_plane)
     # The reach spellings ride the unit the way span, body and window_bits
     # already do: ``encode_unit`` records what it was told, the reader's

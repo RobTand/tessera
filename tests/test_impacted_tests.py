@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -694,7 +695,7 @@ def _leaves_outside_the_shared_conftest(root: Path) -> list[str]:
     The rule is that a source file OUTSIDE that closure still narrows.
     """
 
-    by_name, importers, probes = impacted.import_graph(root)
+    by_name, importers, probes, _ = impacted.import_graph(root)
     leaves = []
     for name, path in sorted(by_name.items()):
         if not str(path.relative_to(root)).startswith("src/"):
@@ -1064,13 +1065,14 @@ def test_a_box_artifacts_edit_selects_the_tests_that_read_its_roots():
         assert shipped in result["tests"], "the audit's named example"
 
 
-def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
+def test_an_unparseable_file_beside_the_change_is_uncertain_not_a_crash(tmp_path):
     """A file the branch is mid-edit on must not take the selector down.
 
     ``_imports`` answers with three sets and answered a syntax error with one,
     so every caller unpacked it into a ``ValueError`` -- and a selector that
     raises selects nothing at all, which is the failure mode this tool exists
-    to refuse.
+    to refuse.  Nothing imports this one, so its uncertainty reaches no test
+    and the narrowed list is unchanged; the receipt still names it (#293).
     """
 
     repo, base = _dynamic_repo(tmp_path, '''
@@ -1085,6 +1087,197 @@ def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
     assert importers.get("support.broken", set()) == set()
     result = _selector(repo, f"{base}...HEAD")
     assert result["tests"] == ["tests/test_dynamic.py"], result
+    assert result["verdict"] == "narrowed", result
+    assert "SyntaxError" in result["unreadable_sources"]["support/broken.py"]
+
+
+def test_an_unparseable_importer_of_the_change_is_selected_not_erased(tmp_path):
+    """#293: a file that does not parse states no dependency, not none.
+
+    ``_imports`` answered a ``SyntaxError``/``OSError`` with three empty sets,
+    which reads as proof that the module imports nothing.  A test that imports
+    the changed leaf and does not parse therefore lost its edge, and the
+    selected branch check ran nothing while collecting that test would fail.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/test_consumer.py": '''
+            from pkg.leaf import VALUE
+            def test_consumer(): assert VALUE
+            def (
+        ''',
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert "tests/test_consumer.py" in result["tests"], result
+    assert "tests/test_unrelated.py" not in result["tests"], (
+        "one unreadable file must not widen the selection to the population")
+    assert "SyntaxError" in result["unreadable_sources"]["tests/test_consumer.py"]
+    assert "tests/test_consumer.py" in result["reason"], result["reason"]
+    assert result["unresolved_file_loaders"] == [], (
+        "an unreadable file is not an unresolved file loader")
+
+
+def test_an_unreadable_source_names_the_file_and_the_read_failure(tmp_path):
+    """The other half of the same `except`: the file could not be read at all.
+
+    A broken link, a permission, a file the branch deleted under the analysis.
+    The operator has to be told which file and what went wrong to repair it.
+    """
+
+    repo, _ = _repo(tmp_path)
+    (repo / "src/pkg").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    (repo / "src/pkg/__init__.py").write_text("", encoding="utf-8")
+    (repo / "src/pkg/leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "tests/test_consumer.py").symlink_to(repo / "tests/gone.py")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert "tests/test_consumer.py" in result["tests"], result
+    reason = result["unreadable_sources"]["tests/test_consumer.py"]
+    assert reason.startswith("FileNotFoundError"), reason
+
+
+def test_an_unreadable_conftest_forces_the_population_it_gates(tmp_path):
+    """#293: a conftest that cannot be parsed makes its whole scope unknown.
+
+    Every test at or below it is collected through it, so nothing below it can
+    be reasoned about -- the same escalation an unresolved loader in a conftest
+    already gets.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/conftest.py": "import pytest\ndef (\n",
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "full", result
+    assert "tests/conftest.py" in result["forces_full"], result
+    assert "SyntaxError" in result["unreadable_sources"]["tests/conftest.py"]
+
+
+def test_supported_syntax_still_narrows_and_reports_nothing_unreadable(tmp_path):
+    """The control: the uncertainty is the failure, not the file's presence."""
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/conftest.py": "import pytest\n",
+        "tests/test_consumer.py": (
+            "from pkg.leaf import VALUE\ndef test_consumer(): assert VALUE\n"),
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "narrowed", result
+    assert result["tests"] == ["tests/test_consumer.py"], result
+    assert result["unreadable_sources"] == {}, result
+
+
+def test_this_repository_has_no_unreadable_source():
+    """A tree with an unreadable file cannot narrow, so say when one appears."""
+
+    result = impacted.select(ROOT, ["src/tessera/kernel.py"])
+    assert result["unreadable_sources"] == {}, result["unreadable_sources"]
+
+
+def _shadowed_repo(tmp_path: Path) -> Path:
+    """Two files with one canonical name, and the shadowed one is what runs.
+
+    ``_module_name`` strips a leading ``src/``, so ``helper.py`` and
+    ``src/helper.py`` are both ``helper``.  ``tests/conftest.py`` inserts
+    ``src/`` and then its own directory, exactly as this repository's does at
+    lines 11-12, so ``from helper import VALUE`` resolves to ``src/helper.py``
+    -- the file the graph dropped.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "helper.py": "VALUE = 'root'\n",
+        "src/helper.py": "from pkg.leaf import VALUE\n",
+        "tests/conftest.py": '''
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        ''',
+        "tests/test_consumer.py": _IMPORT_ROOT_PROBE,
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+    return repo
+
+
+def test_a_file_shadowed_on_its_canonical_name_still_has_a_node(tmp_path):
+    """#317: every file gets a node, so every file's own imports are edges."""
+
+    repo = _shadowed_repo(tmp_path)
+
+    by_name, _, _, _ = impacted.import_graph(repo)
+    analysed = {str(p.relative_to(repo)) for p in by_name.values()}
+    assert {"helper.py", "src/helper.py"} <= analysed, sorted(analysed)
+
+
+def test_a_shadowed_files_own_imports_are_not_lost(tmp_path):
+    """#317: the under-selection the missing node caused.
+
+    ``src/helper.py`` was never parsed, so the ``pkg.leaf -> helper`` edge did
+    not exist and a change to the leaf selected nothing at all -- while pytest
+    imports that very file for ``from helper import VALUE``.
+    """
+
+    repo = _shadowed_repo(tmp_path)
+    executed = _helper_pytest_executes(repo, tmp_path / "probe.out")
+    assert executed == "src/helper.py", (
+        f"the fixture is not the shadowing case if pytest runs {executed}")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_consumer.py" in result["tests"], result
+    assert "tests/test_unrelated.py" not in result["tests"], result
+
+
+@pytest.mark.parametrize("changed", ["helper.py", "src/helper.py"])
+def test_either_file_spelling_one_name_selects_the_bare_consumer(tmp_path, changed):
+    """Which of the two `sys.path` gives the importer is unmodelled, so union."""
+
+    repo = _shadowed_repo(tmp_path)
+
+    result = impacted.select(repo, [changed])
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_consumer.py" in result["tests"], result
 
 
 def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
@@ -1116,3 +1309,80 @@ def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
     assert result["reason"] == (
         "non-Python changed paths reached their readers through the import graph"
     )
+
+
+_IMPORT_ROOT_PROBE = '''
+import os
+
+import helper
+from helper import VALUE
+
+
+def test_which_helper_pytest_executed():
+    with open(os.environ["TESSERA_PROBE_OUT"], "w", encoding="utf-8") as out:
+        out.write(helper.__file__)
+    assert VALUE
+'''
+
+
+def _helper_pytest_executes(repo: Path, out: Path) -> str:
+    """Import-root probe: run pytest for real and record which file it imported.
+
+    The graph cannot model import-root precedence, so the test may not assume
+    an answer either.  This asks pytest.
+    """
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    env["TESSERA_PROBE_OUT"] = str(out)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_consumer.py",
+         "-q", "--no-header", "-p", "no:cacheprovider"],
+        cwd=str(repo), capture_output=True, text=True, env=env, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    executed = Path(out.read_text(encoding="utf-8")).resolve()
+    return str(executed.relative_to(repo.resolve()))
+
+
+def test_a_canonical_short_name_does_not_outrank_its_alias_candidates(tmp_path):
+    """#292: a root ``helper.py`` must not hide ``tests/helper.py``.
+
+    ``_targets`` returned the canonical module alone whenever the spelling was
+    a canonical name, so the alias candidate on the import root that
+    ``tests/conftest.py`` inserts -- the one pytest actually executes for
+    ``from helper import VALUE`` -- got no edge, and editing it selected
+    nothing.  Nothing here models import-root precedence, so the honest answer
+    is the union: both candidates get the edge.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "helper.py": "VALUE = 'root'\n",
+        "tests/helper.py": "VALUE = 'tests'\n",
+        "tests/conftest.py": '''
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        ''',
+        "tests/test_consumer.py": _IMPORT_ROOT_PROBE,
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    candidates = ["helper.py", "tests/helper.py"]
+    executed = _helper_pytest_executes(repo, tmp_path / "probe.out")
+    assert executed in candidates, executed
+
+    _, importers = impacted.build_graph(repo)
+    executed_name = impacted._module_name(repo / executed, repo)
+    assert "tests.test_consumer" in importers.get(executed_name, set()), (
+        f"pytest imports {executed} for `from helper import VALUE`, and the "
+        "graph holds no edge from it")
+    for candidate in candidates:
+        name = impacted._module_name(repo / candidate, repo)
+        assert "tests.test_consumer" in importers.get(name, set()), candidate
+        result = impacted.select(repo, [candidate])
+        assert result["verdict"] == "narrowed", (candidate, result)
+        assert "tests/test_consumer.py" in result["tests"], (candidate, result)

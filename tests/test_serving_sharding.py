@@ -37,8 +37,9 @@ import pytest
 from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, RoleShard,
                                       ShardPlan, _shard_unit_for_rank,
                                       _unit_extent, check_shard_granularity,
-                                      plan_shard, shard_granularity,
-                                      shard_parsed_roles, tp_rank_and_size)
+                                      layer_replicas, layer_tp_coordinates,
+                                      plan_shard, plan_shard_for_layer,
+                                      shard_granularity, shard_parsed_roles)
 
 torch = pytest.importorskip("torch")
 needs_cuda = pytest.mark.skipif(not torch.cuda.is_available(),
@@ -105,10 +106,17 @@ def _without_tessera_layout(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_layout)
 
 
-def _plan(rows, columns, *, out, in_, rank, tp):
-    """A dense one-role plan, the shape most of these tests are about."""
+def _plan(rows, columns, *, out, in_, rank, tp, input_size=None, output_size=None):
+    """A dense one-role plan, the shape most of these tests are about.
+
+    ``input_size``/``output_size`` are the LAYER's global shape -- what a vLLM
+    Linear passes beside the tile -- and default to the wire's, which is the
+    well-formed case: a module whose checkpoint is the module.
+    """
     return plan_shard("m", roles=[("weight", rows)], columns=columns,
-                      out_partitions=[out], in_size=in_, tp_rank=rank, tp_size=tp)
+                      out_partitions=[out], in_size=in_, tp_rank=rank, tp_size=tp,
+                      input_size=columns if input_size is None else input_size,
+                      output_size=rows if output_size is None else output_size)
 
 
 def _seam_plan(rows, columns, axis, *, rank, tp, shards):
@@ -124,7 +132,7 @@ def _seam_plan(rows, columns, axis, *, rank, tp, shards):
 
 def test_one_rank_is_the_whole_module():
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
-                      in_size=2048, tp_rank=0, tp_size=1)
+                      in_size=2048, tp_rank=0, tp_size=1, input_size=2048, output_size=1024)
     assert plan.is_whole and plan.axis is None
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
 
@@ -132,7 +140,7 @@ def test_one_rank_is_the_whole_module():
 def test_an_output_split_is_the_row_axis():
     """ColumnParallel / MergedColumnParallel / QKVParallel: rows over ranks."""
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[256],
-                      in_size=2048, tp_rank=1, tp_size=4)
+                      in_size=2048, tp_rank=1, tp_size=4, input_size=2048, output_size=1024)
     assert plan.axis == AXIS_ROWS
     assert (plan.shard_rows, plan.shard_columns) == (256, 2048)
     assert (plan.role("weight").lo, plan.role("weight").hi) == (256, 512)
@@ -142,18 +150,199 @@ def test_an_output_split_is_the_row_axis():
 def test_an_input_split_is_the_column_axis():
     """RowParallel: the input width over ranks, every row present."""
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
-                      in_size=512, tp_rank=3, tp_size=4)
+                      in_size=512, tp_rank=3, tp_size=4, input_size=2048, output_size=1024)
     assert plan.axis == AXIS_COLUMNS
     assert (plan.shard_rows, plan.shard_columns) == (1024, 512)
     assert (plan.role("weight").lo, plan.role("weight").hi) == (1536, 2048)
 
 
 def test_a_replicated_linear_inside_a_tp_group_is_a_whole_unit():
-    """Whole shapes at tp_size > 1 are a replicated layer, not a defect."""
+    """Whole shapes at tp_size > 1 are a replicated layer, not a defect --
+    when the LAYER says the whole shape is its global shape."""
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[1024],
-                      in_size=2048, tp_rank=2, tp_size=4)
+                      in_size=2048, tp_rank=2, tp_size=4, input_size=2048, output_size=1024)
     assert plan.axis is None
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
+
+
+# --- the layer's GLOBAL shape and its replication contract (tessera#303) --------
+
+def test_an_undersized_whole_wire_is_a_tile_not_a_replicated_module():
+    """FAILS BEFORE -- tessera#303 at the plan level.
+
+    A ColumnParallel layer at TP=4 over ``[256, 64]`` asks each rank for a
+    ``[64, 64]`` tile; the wire is a whole ``[64, 64]``.  Tile and wire agree
+    on every local number, so a plan reading only the tile handed back a
+    replicated whole module on all four ranks -- rows ``[0, 64)`` everywhere,
+    rows ``[64, 256)`` nowhere.  The layer's own ``output_size = 256`` is the
+    fact that distinguishes the two, and it is refused on EVERY rank, by name.
+    """
+    for rank in range(4):
+        with pytest.raises(ValueError) as e:
+            _plan(64, 64, out=64, in_=64, rank=rank, tp=4, input_size=64, output_size=256)
+        msg = str(e.value)
+        assert "'weight'" in msg and "64 rows on the wire" in msg
+        assert "256" in msg and "4 shards of 64" in msg
+        assert f"rank {rank} of 4" in msg
+        assert "a rank's tile" in msg, "the refusal says what the wire actually is"
+    # The control: the wire IS the module, and rank r owns [64r, 64r + 64).
+    for rank in range(4):
+        plan = _plan(256, 64, out=64, in_=64, rank=rank, tp=4, input_size=64, output_size=256)
+        assert plan.axis == AXIS_ROWS
+        assert (plan.role("weight").lo, plan.role("weight").hi, plan.role("weight").shards) == \
+            (64 * rank, 64 * rank + 64, 4)
+
+
+def test_an_undersized_whole_wire_on_the_input_axis_is_refused_too():
+    """FAILS BEFORE.  RowParallel at TP=4 over ``[64, 256]``: a ``[64, 64]``
+    wire is one rank's quarter of the input, not a replicated module."""
+    for rank in range(4):
+        with pytest.raises(ValueError) as e:
+            _plan(64, 64, out=64, in_=64, rank=rank, tp=4, input_size=256, output_size=64)
+        msg = str(e.value)
+        assert "64 columns" in msg and "256" in msg and f"rank {rank} of 4" in msg
+    plan = _plan(64, 256, out=64, in_=64, rank=3, tp=4, input_size=256, output_size=64)
+    assert plan.axis == AXIS_COLUMNS
+    assert (plan.role("weight").lo, plan.role("weight").hi) == (192, 256)
+
+
+def test_a_replicated_layer_whose_wire_is_not_its_shape_is_refused():
+    """A ReplicatedLinear inside a group asks for its whole shape; a wire of
+    another shape is a checkpoint/serve disagreement at every rank."""
+    with pytest.raises(ValueError) as e:
+        _plan(64, 64, out=256, in_=64, rank=1, tp=4, input_size=64, output_size=256)
+    msg = str(e.value)
+    assert "served whole" in msg and "64x64" in msg and "256x64" in msg
+
+
+def test_a_global_shape_that_is_no_vllm_linear_relation_is_refused_with_both_shapes():
+    """FAILS BEFORE.  ``(input_size, output_size)`` against the tile is one of
+    three relations -- whole, output cut, input cut -- or nothing this plan
+    serves.  Before, the global shape was never looked at."""
+    with pytest.raises(ValueError) as e:
+        _plan(64, 64, out=64, in_=64, rank=1, tp=4, input_size=128, output_size=128)
+    msg = str(e.value)
+    assert "128x128" in msg and "64x64" in msg and "rank 1 of 4" in msg
+    assert "ReplicatedLinear" in msg and "ColumnParallel" in msg and "RowParallel" in msg
+
+
+def test_the_same_numbers_are_a_whole_kv_head_with_replication_declared_and_a_tile_without():
+    """FAILS BEFORE, and it is the clause of tessera#303 that rules out a
+    comparison against the padded aggregate alone.
+
+    MQA at TP=8: k is 64 rows on the wire, 64 asked for, and vLLM's
+    ``QKVParallelLinear`` declares ``num_kv_head_replicas = 8``.  The same
+    three numbers on a Linear declaring no replication are a ``[512, 1024]``
+    module with a ``[64, 1024]`` wire.  Only the declared replication tells
+    the two apart; the plan may not infer it from the numbers.
+    """
+    roles = [("q_proj", 8 * 64), ("k_proj", 64), ("v_proj", 64)]
+    plan = plan_shard("qkv", roles=roles, columns=1024, out_partitions=[64, 64, 64],
+                      in_size=1024, tp_rank=3, tp_size=8, input_size=1024, output_size=1536,
+                      replicas=(1, 8, 8))
+    assert plan.role("k_proj").is_whole and plan.role("k_proj").shards == 1
+    with pytest.raises(ValueError) as e:
+        plan_shard("linear", roles=[("weight", 64)], columns=1024, out_partitions=[64],
+                   in_size=1024, tp_rank=3, tp_size=8, input_size=1024, output_size=512)
+    msg = str(e.value)
+    assert "'weight'" in msg and "64 rows on the wire" in msg and "8 shards of 64" in msg
+
+
+def test_replication_that_does_not_divide_the_world_is_refused_by_name():
+    """A layer declaring 4 replicas of k over 6 ranks has no whole number of
+    ranks per shard; vLLM's own ``divide`` would have raised in ``__init__``,
+    so seeing it is a malformed layer, refused with the relation that failed."""
+    roles = [("q_proj", 12 * 64), ("k_proj", 4 * 64), ("v_proj", 4 * 64)]
+    with pytest.raises(ValueError) as e:
+        plan_shard("qkv", roles=roles, columns=1024, out_partitions=[128, 64, 64],
+                   in_size=1024, tp_rank=0, tp_size=6, input_size=1024, output_size=1536,
+                   replicas=(1, 4, 4))
+    msg = str(e.value)
+    assert "'k_proj'" in msg and "4 replicas" in msg and "6 ranks" in msg
+
+
+def test_replicas_are_one_per_role_or_refused():
+    roles = [("q_proj", 512), ("k_proj", 64), ("v_proj", 64)]
+    for bad in ((1, 8), (1, 8, 8, 1), (1, 0, 8), (1, 8, 16)):
+        with pytest.raises(ValueError, match="replica"):
+            plan_shard("qkv", roles=roles, columns=1024, out_partitions=[64, 64, 64],
+                       in_size=1024, tp_rank=0, tp_size=8, input_size=1024, output_size=1536,
+                       replicas=bad)
+
+
+def test_replication_declared_on_a_whole_or_input_cut_module_is_refused():
+    """Replication is a statement about a cut OUTPUT.  On a module the layer
+    serves whole, or cuts on the input, it contradicts the shape."""
+    with pytest.raises(ValueError, match="replica"):
+        plan_shard("m", roles=[("a", 8), ("b", 8), ("c", 8)], columns=64,
+                   out_partitions=[8, 8, 8], in_size=64, tp_rank=0, tp_size=4,
+                   input_size=64, output_size=24, replicas=(1, 2, 2))
+    with pytest.raises(ValueError, match="replica"):
+        plan_shard("m", roles=[("a", 8), ("b", 8), ("c", 8)], columns=64,
+                   out_partitions=[8, 8, 8], in_size=16, tp_rank=0, tp_size=4,
+                   input_size=64, output_size=24, replicas=(1, 2, 2))
+
+
+class _LinearStandIn:
+    """What ``plan_shard_for_layer`` reads off a vLLM ``LinearBase``."""
+
+    def __init__(self, tp_rank, tp_size, num_kv_head_replicas=None):
+        self.tp_rank, self.tp_size = tp_rank, tp_size
+        if num_kv_head_replicas is not None:
+            self.num_kv_head_replicas = num_kv_head_replicas
+
+
+def test_tp_coordinates_are_the_layers_own_and_a_layer_without_them_is_refused():
+    """FAILS BEFORE.  The coordinates were read from ``vllm.distributed`` --
+    the process's group -- which is wrong for ``disable_tp`` (a one-rank layer
+    inside a group) and for any layer vLLM builds with an effective group
+    (``DCPGroupColumnParallelLinear`` passes its own ``tp_rank``/``tp_size``).
+    ``LinearBase`` sets both before ``create_weights``; a layer without them
+    is not a vLLM Linear and gets a refusal naming what it is, not a default."""
+    assert layer_tp_coordinates("m", _LinearStandIn(2, 4)) == (2, 4)
+    assert layer_tp_coordinates("m", _LinearStandIn(0, 1)) == (0, 1)
+    with pytest.raises(ValueError) as e:
+        layer_tp_coordinates("model.layers.0.q", object())
+    msg = str(e.value)
+    assert "tp_rank" in msg and "tp_size" in msg and "LinearBase" in msg and "object" in msg
+    with pytest.raises(ValueError, match="TP coordinates"):
+        layer_tp_coordinates("m", _LinearStandIn(4, 4))
+
+
+def test_layer_replicas_is_vllms_statement_read_verbatim_or_ones():
+    """``num_kv_head_replicas`` is ``QKVParallelLinear``'s: ``(1, R, R)`` over
+    q/k/v, and no other member count is a statement this reads."""
+    members = ("q_proj", "k_proj", "v_proj")
+    assert layer_replicas("m", _LinearStandIn(0, 8, 8), members) == (1, 8, 8)
+    assert layer_replicas("m", _LinearStandIn(0, 16, 1), members) == (1, 1, 1)
+    assert layer_replicas("m", _LinearStandIn(0, 4), members) == (1, 1, 1)
+    assert layer_replicas("m", _LinearStandIn(0, 4), ("weight",)) == (1,)
+    with pytest.raises(ValueError) as e:
+        layer_replicas("m", _LinearStandIn(0, 4, 2), ("weight",))
+    msg = str(e.value)
+    assert "num_kv_head_replicas" in msg and "QKVParallelLinear" in msg and "1 role" in msg
+    with pytest.raises(ValueError, match="num_kv_head_replicas"):
+        layer_replicas("m", _LinearStandIn(0, 4, 2), ("q", "k", "v", "index_k"))
+    with pytest.raises(ValueError, match="num_kv_head_replicas"):
+        layer_replicas("m", _LinearStandIn(0, 4, 0), members)
+
+
+def test_plan_shard_for_layer_reads_the_layer_and_plans_gqa_from_its_declaration():
+    """The routes' entry point: GQA 16q/8kv over 16 ranks, replicas 2, on the
+    layer; and the same call with an undersized single-role wire refuses."""
+    roles = [("q_proj", 16 * 64), ("k_proj", 8 * 64), ("v_proj", 8 * 64)]
+    plan = plan_shard_for_layer("qkv", _LinearStandIn(5, 16, 2), roles=roles, columns=2048,
+                                input_size_per_partition=2048,
+                                output_partition_sizes=[64, 64, 64],
+                                input_size=2048, output_size=3072)
+    assert (plan.tp_rank, plan.tp_size, plan.axis) == (5, 16, AXIS_ROWS)
+    assert (plan.role("q_proj").lo, plan.role("q_proj").shards) == (320, 16)
+    assert (plan.role("k_proj").lo, plan.role("k_proj").hi, plan.role("k_proj").shards) == \
+        (128, 192, 8)
+    with pytest.raises(ValueError, match="a rank's tile"):
+        plan_shard_for_layer("linear", _LinearStandIn(1, 4), roles=[("weight", 64)],
+                             columns=64, input_size_per_partition=64,
+                             output_partition_sizes=[64], input_size=64, output_size=256)
 
 
 def test_equal_totals_with_disagreeing_role_boundaries_are_refused_by_name():
@@ -175,7 +364,8 @@ def test_equal_totals_with_disagreeing_role_boundaries_are_refused_by_name():
     for rank, tp, in_size in ((0, 1, 64), (2, 4, 64), (1, 2, 32)):
         with pytest.raises(ValueError) as e:
             plan_shard("qkv", roles=roles, columns=64, out_partitions=[8, 4, 4],
-                       in_size=in_size, tp_rank=rank, tp_size=tp)
+                       in_size=in_size, tp_rank=rank, tp_size=tp,
+                       input_size=64, output_size=16)
         msg = str(e.value)
         assert "'q_proj'" in msg, "the refusal names the member that failed"
         assert "4 rows" in msg and "asks for 8" in msg
@@ -193,7 +383,7 @@ def test_a_fused_container_and_a_layer_that_stack_differently_are_refused():
     roles = [("q_proj", 512), ("k_proj", 256), ("v_proj", 256)]
     with pytest.raises(ValueError) as e:
         plan_shard("qkv", roles=roles, columns=2048, out_partitions=[1024],
-                   in_size=2048, tp_rank=0, tp_size=1)
+                   in_size=2048, tp_rank=0, tp_size=1, input_size=2048, output_size=1024)
     msg = str(e.value)
     assert "3 roles" in msg and "1 output partition" in msg
     assert "how this module is fused" in msg
@@ -207,7 +397,9 @@ def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
     total_num_kv_heads``), and its own loader then reads
     ``start_idx = (tp_rank // num_kv_head_replicas) * shard_size``.  So the
     per-rank sizes sum to MORE than the container's rows and no even split of
-    it exists -- which is ordinary, not a checkpoint disagreement.
+    it exists -- which is ordinary, not a checkpoint disagreement.  The
+    declaration arrives as ``replicas``, read off the layer (tessera#303); the
+    layer's ``output_size`` is the PADDED aggregate ``3 * 64 * 16``.
 
     16 query heads, 8 KV heads, head_size 64, over 16 ranks: q is cut 16 ways,
     k and v 8 ways with two ranks per shard.
@@ -216,7 +408,8 @@ def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
     for rank in (0, 1, 2, 15):
         plan = plan_shard("model.layers.0.self_attn.qkv_proj", roles=roles, columns=2048,
                           out_partitions=[64, 64, 64], in_size=2048,
-                          tp_rank=rank, tp_size=16)
+                          tp_rank=rank, tp_size=16, input_size=2048, output_size=3072,
+                          replicas=(1, 2, 2))
         assert plan.axis == AXIS_ROWS
         # The tile this rank computes: three heads, not rows/16.
         assert (plan.shard_rows, plan.shard_columns) == (192, 2048)
@@ -227,7 +420,8 @@ def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
             assert member.shards == 8, "8 KV heads is 8 shards, whatever the world size"
     # Ranks 0 and 1 hold IDENTICAL k rows, and different q rows.
     a, b = (plan_shard("qkv", roles=roles, columns=2048, out_partitions=[64, 64, 64],
-                       in_size=2048, tp_rank=r, tp_size=16) for r in (0, 1))
+                       in_size=2048, tp_rank=r, tp_size=16, input_size=2048,
+                       output_size=3072, replicas=(1, 2, 2)) for r in (0, 1))
     assert (a.role("k_proj").lo, a.role("k_proj").hi) == (b.role("k_proj").lo, b.role("k_proj").hi)
     assert a.role("q_proj").lo != b.role("q_proj").lo
 
@@ -236,60 +430,54 @@ def test_a_single_kv_head_is_replicated_whole_to_every_rank():
     """MQA: one KV head, so every rank holds the k role entire and uncut."""
     roles = [("q_proj", 8 * 64), ("k_proj", 64), ("v_proj", 64)]
     plan = plan_shard("qkv", roles=roles, columns=1024, out_partitions=[64, 64, 64],
-                      in_size=1024, tp_rank=3, tp_size=8)
+                      in_size=1024, tp_rank=3, tp_size=8, input_size=1024, output_size=1536,
+                      replicas=(1, 8, 8))
     assert plan.axis == AXIS_ROWS
     assert plan.role("k_proj").is_whole and plan.role("k_proj").shards == 1
     assert not plan.role("q_proj").is_whole
 
 
-def test_a_replication_factor_that_is_not_whole_is_refused_by_that_name():
-    """6 ranks over 4 KV heads: no whole number of ranks per shard.
-
-    The refusal has to name the replication, because that is the relation that
-    failed -- an operator told "neither the whole module nor a 1/6 split" would
-    go looking for a checkpoint/serve shape disagreement that is not there.
-    """
-    roles = [("q_proj", 12 * 64), ("k_proj", 4 * 64), ("v_proj", 4 * 64)]
+def test_a_kv_role_the_wire_holds_short_of_its_declared_replication_is_refused_by_name():
+    """GQA declared, wire undersized: replicas 2 over 16 ranks make k's complete
+    extent ``64 * 8 = 512``; a wire with 256 k rows is half a module, and the
+    declared replication does not excuse it."""
+    roles = [("q_proj", 16 * 64), ("k_proj", 4 * 64), ("v_proj", 8 * 64)]
     with pytest.raises(ValueError) as e:
-        plan_shard("qkv", roles=roles, columns=1024, out_partitions=[128, 64, 64],
-                   in_size=1024, tp_rank=0, tp_size=6)
+        plan_shard("qkv", roles=roles, columns=2048, out_partitions=[64, 64, 64],
+                   in_size=2048, tp_rank=0, tp_size=16, input_size=2048, output_size=3072,
+                   replicas=(1, 2, 2))
     msg = str(e.value)
-    assert "'k_proj'" in msg and "4 shards for 6 ranks" in msg
-    assert "4 does not divide 6" in msg and "REPLICATED" in msg
-    assert "neither the whole module" not in msg, "that message is for a shape disagreement"
+    assert "'k_proj'" in msg and "256 rows on the wire" in msg and "8 shards of 64" in msg
+    assert "a rank's tile" not in msg, "half a module is not one rank's tile; say what it is"
 
 
-def test_a_role_cut_finer_than_the_world_is_refused_because_rows_would_go_unserved():
-    """The other side of replication: MORE shards than ranks, which is not legal.
-
-    A replicated role has FEWER distinct shards than ranks and every row is
-    still held by somebody.  The opposite -- a rank asking for less than
-    ``1/tp_size`` of a role -- means no rank holds the rest, and an all-gather
-    would return a tile with rows nobody computed.  vLLM never asks for it
-    (``divide`` would have raised in the layer's own ``__init__``), so seeing it
-    is a checkpoint/serve disagreement, and it must NOT be waved through as the
-    replicated case: ``tp_size % shards`` is 4 % 8 == 4 here, so the replication
-    branch would refuse it too, with a message about a factor that is not the
-    complaint.
+def test_a_role_the_wire_holds_beyond_the_layers_extent_is_refused_because_rows_would_go_unserved():
+    """The other direction: the wire has MORE rows of a role than the layer's
+    contract covers.  A rank asking for ``out`` with no replication declared
+    covers ``out * tp_size`` rows; a wire above that has rows no rank holds,
+    and an all-gather would return a tile with rows nobody computed.
 
     16 q heads and 8 KV heads over 4 ranks, with output partitions computed for
     a world of 8 -- the shape of handing a tp=8 layer's sizes to a tp=4 group.
+    Before tessera#303 this was refused on divisibility ("8 shards for only 4
+    ranks"); it is now refused on the layer's own contract, which is the fact.
     """
     roles = [("q_proj", 16 * 64), ("k_proj", 8 * 64), ("v_proj", 8 * 64)]
     with pytest.raises(ValueError) as e:
         plan_shard("model.layers.0.self_attn.qkv_proj", roles=roles, columns=2048,
-                   out_partitions=[256, 64, 64], in_size=2048, tp_rank=0, tp_size=4)
+                   out_partitions=[256, 64, 64], in_size=2048, tp_rank=0, tp_size=4,
+                   input_size=2048, output_size=1536)
     msg = str(e.value)
     assert "'k_proj'" in msg, "the refusal names the member that failed, not the container"
-    assert "8 shards for only 4 ranks" in msg and "less than 1/4 of the role" in msg
+    assert "512 rows on the wire" in msg and "4 shards of 64" in msg
     assert "served by nobody" in msg, "the refusal says what would go wrong, not just that it did"
-    assert "REPLICATED" not in msg, "replication is fewer shards than ranks, not more"
 
 
 def test_a_shape_that_is_neither_whole_nor_a_clean_split_is_refused_with_both_shapes():
     with pytest.raises(ValueError) as e:
         plan_shard("model.layers.0.mlp.down_proj", roles=[("weight", 1024)], columns=2048,
-                   out_partitions=[300], in_size=2048, tp_rank=0, tp_size=4)
+                   out_partitions=[300], in_size=2048, tp_rank=0, tp_size=4,
+                   input_size=2048, output_size=1200)
     msg = str(e.value)
     assert "model.layers.0.mlp.down_proj" in msg
     assert "1024x2048" in msg and "300x2048" in msg
@@ -299,14 +487,14 @@ def test_a_wrong_shape_on_one_rank_still_says_a_wire_is_bound_to_its_shape():
     """The TP=1 message is the one this replaced; it must not have got vaguer."""
     with pytest.raises(ValueError, match="a wire is bound to its shape"):
         plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[999],
-                   in_size=2048, tp_rank=0, tp_size=1)
+                   in_size=2048, tp_rank=0, tp_size=1, input_size=2048, output_size=999)
 
 
 def test_nonsensical_coordinates_are_refused():
     for rank, size in ((4, 4), (-1, 2), (0, 0)):
         with pytest.raises(ValueError, match="TP coordinates"):
             plan_shard("m", roles=[("weight", 8)], columns=8, out_partitions=[4],
-                       tp_rank=rank, tp_size=size, in_size=8)
+                       tp_rank=rank, tp_size=size, in_size=8, input_size=8, output_size=16)
 
 
 def test_the_seam_returns_the_same_object_on_one_rank():
@@ -360,9 +548,12 @@ def test_the_seam_cuts_a_replicated_role_to_the_same_rows_on_two_ranks(units):
     head = rows // 2                       # two KV "heads" of 32 rows, four ranks
     got = []
     for rank in range(4):
+        # Two ranks per head is the LAYER's statement (``num_kv_head_replicas``),
+        # and its aggregate is padded to ``head * tp``.
         plan = plan_shard("model.layers.0.self_attn.qkv_proj",
                           roles=[("k_proj", rows)], columns=columns,
-                          out_partitions=[head], in_size=columns, tp_rank=rank, tp_size=4)
+                          out_partitions=[head], in_size=columns, tp_rank=rank, tp_size=4,
+                          input_size=columns, output_size=head * 4, replicas=(2,))
         role = plan.role("k_proj")
         assert role.shards == 2, "two shards for four ranks: this is the replicated case"
         assert (role.lo, role.hi) == (head * (rank // 2), head * (rank // 2) + head)
@@ -389,7 +580,8 @@ def test_the_seam_hands_back_a_role_this_rank_holds_entire(units):
     rows, columns = _unit_extent(parsed)
     plan = plan_shard("qkv", roles=[("q_proj", rows), ("k_proj", rows)], columns=columns,
                       out_partitions=[rows // 4, rows], in_size=columns,
-                      tp_rank=2, tp_size=4)
+                      tp_rank=2, tp_size=4, input_size=columns,
+                      output_size=(rows // 4 + rows) * 4, replicas=(1, 4))
     assert plan.role("k_proj").is_whole and plan.role("q_proj").shards == 4
     out = dict(shard_parsed_roles([("q_proj", parsed), ("k_proj", parsed)], plan))
     assert out["k_proj"] is parsed
@@ -450,7 +642,7 @@ def test_sharding_roles_is_identity_on_one_rank():
     roles = [("q_proj", object()), ("k_proj", object()), ("v_proj", object())]
     plan = plan_shard("qkv", roles=[("q_proj", 512), ("k_proj", 256), ("v_proj", 256)],
                       columns=2048, out_partitions=[512, 256, 256], in_size=2048,
-                      tp_rank=0, tp_size=1)
+                      tp_rank=0, tp_size=1, input_size=2048, output_size=1024)
     assert shard_parsed_roles(roles, plan) is roles
 
 
@@ -471,10 +663,12 @@ def test_sharding_roles_cuts_and_re_derives_the_parse(units, axis):
     rows, columns = _unit_extent(parsed)
     if axis == AXIS_ROWS:
         plan = plan_shard("mlp.gate_up", roles=[("weight", rows)], columns=columns,
-                          out_partitions=[rows // 2], in_size=columns, tp_rank=1, tp_size=2)
+                          out_partitions=[rows // 2], in_size=columns, tp_rank=1, tp_size=2,
+                          input_size=columns, output_size=rows)
     else:
         plan = plan_shard("mlp.down_proj", roles=[("weight", rows)], columns=columns,
-                          out_partitions=[rows], in_size=columns // 2, tp_rank=1, tp_size=2)
+                          out_partitions=[rows], in_size=columns // 2, tp_rank=1, tp_size=2,
+                          input_size=columns, output_size=rows)
     assert plan.axis == axis
     out = shard_parsed_roles([("weight", parsed)], plan)
     assert len(out) == 1 and out[0][0] == "weight"
@@ -573,7 +767,7 @@ def test_granularity_is_none_and_the_check_a_no_op_without_the_cutter(monkeypatc
     sentinel = object()
     assert shard_granularity(sentinel) is None
     plan = plan_shard("m", roles=[("weight", 1024)], columns=2048, out_partitions=[256],
-                      in_size=2048, tp_rank=0, tp_size=4)
+                      in_size=2048, tp_rank=0, tp_size=4, input_size=2048, output_size=1024)
     check_shard_granularity(plan, plan.role("weight"), sentinel)     # no raise
 
 
@@ -593,10 +787,6 @@ def test_granularity_refusal_names_the_granularity(monkeypatch, units):
     with pytest.raises(ValueError) as e:
         sharding.check_shard_granularity(plan, plan.role("weight"), parsed)
     assert "40" in str(e.value) and "128" in str(e.value)
-
-
-def test_tp_coordinates_off_vllm_are_one_rank_not_a_guess():
-    assert tp_rank_and_size() == (0, 1)
 
 
 def test_a_prepared_role_carries_an_initial_state_and_refuses_to_decode_it():
@@ -688,15 +878,26 @@ def test_an_even_split_is_equal_parts_and_an_uneven_one_is_refused():
     The even split is no longer a separate function: a role's range comes off
     the sizes vLLM asked for, and equal parts are what those sizes describe
     when nothing is replicated.  An extent that does not divide is refused by
-    the planner, naming the role -- ``_bounds`` could only say the arithmetic
-    failed, not which member it failed for.
+    the planner -- ``_bounds`` could only say the arithmetic failed.  Since
+    tessera#303 the refusal is phrased against the LAYER: a layer declaring
+    1023 output rows whose two ranks each ask for 511 states no vLLM Linear
+    relation (vLLM's own ``divide`` would have refused it first), and a layer
+    declaring 1022 over a 1023-row wire leaves one row served by nobody -- and
+    that one names the role.
     """
     for rank, want in ((0, (0, 256)), (3, (768, 1024))):
         plan = _plan(1024, 2048, out=256, in_=2048, rank=rank, tp=4)
         role = plan.role("weight")
         assert (role.lo, role.hi) == want and role.shards == 4
-    with pytest.raises(ValueError, match="does not divide 1023"):
+    with pytest.raises(ValueError) as excinfo:
         _plan(1023, 2048, out=511, in_=2048, rank=0, tp=2)
+    msg = str(excinfo.value)
+    assert "1023x2048" in msg and "511x2048" in msg and "none of the three" in msg
+    with pytest.raises(ValueError) as excinfo:
+        _plan(1023, 2048, out=511, in_=2048, rank=0, tp=2, output_size=1022)
+    msg = str(excinfo.value)
+    assert "'weight'" in msg and "1023 rows on the wire" in msg and "2 shards of 511" in msg
+    assert "rows [1022, 1023) would be served by nobody" in msg
 
 
 def test_the_pad_really_is_state_minus_one():

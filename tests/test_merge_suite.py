@@ -6,6 +6,7 @@ are the properties of those command lines and of the verdict it derives, not a
 placement, which belongs to the pool.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -678,9 +679,10 @@ def test_a_resume_reads_the_pool_it_is_pointed_at_not_the_live_one(tmp_path):
     receipt_dir = tmp_path / "receipt"
     receipt_dir.mkdir()
     surface = receipt_dir / "surface.gpu.json"
-    _gpu_population(surface)
-    _fake_pool(tmp_path / "pool", surface,
-               [("cafe" + "0" * 60, "done", 0, "sparky")])
+    key = "cafe" + "0" * 60
+    _, requests = _fake_pool(tmp_path / "pool", surface,
+                             [(key, "done", 0, "sparky")])
+    _gpu_population(surface, producer=_request_of(requests, key))
 
     out = tmp_path / "receipt.json"
     started = time.monotonic()
@@ -1234,38 +1236,117 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     assert appended.count("no population published") == 2, appended
 
 
+def _attempt_stdout(surface_json, counts=None, published=True):
+    """What the attempt's pytest printed, as PrismaBuild's worker captured it.
+
+    ``detail.stdout`` on a real outcome record is the attempt's whole stdout
+    (the worker ``communicate()``s, nothing is truncated), and two lines of it
+    are the attempt's own account of what it published: the conftest's
+    ``tessera surface: population written to <path>`` and pytest's summary
+    line with the counts the population also carries. A test that wants an
+    attempt which died before publishing says ``published=False`` and gets
+    neither line, which is what such an attempt leaves behind.
+    """
+
+    counts = {"passed": 1827, "skipped": 10, **(counts or {})}
+    summary = ", ".join(f"{n} {word}" for word, n in counts.items() if n)
+    lines = ["....s...."]
+    if published:
+        lines += [f"tessera surface: population written to {surface_json}",
+                  f"{summary}, 14 warnings in 511.40s (0:08:31)"]
+    else:
+        lines.append("Fatal Python error: Aborted")
+    return "\n".join(lines) + "\n"
+
+
+def _with(base, overrides):
+    """``base`` updated by ``overrides``; a ``None`` value DROPS the field.
+
+    The fleet's records lose fields rather than null them -- a requeue strips
+    ``claimed_unix`` and an old request has no ``checkout_snapshot`` -- so a
+    test that wants that shape must be able to state absence, not just a
+    different value.
+    """
+
+    merged = dict(base)
+    for field, value in (overrides or {}).items():
+        if value is None:
+            merged.pop(field, None)
+        else:
+            merged[field] = value
+    return merged
+
+
 def _fake_pool(root, surface_json, actions, command=None, params=None,
-               outcome=None):
+               outcome=None, detail=None):
     """A pb-queue and a CAS request tree holding exactly these actions.
 
     The layout is the fleet's, not an invention: an outcome record per action
-    in ``pb-queue/<state>/<key>.json`` carrying ``detail.returncode``, and the
-    command that action ran in ``cas/requests/<key[:2]>/<key>.json``. Built
-    here rather than read from ``/mnt/shared`` so the test states its own
-    population -- a test whose verdict depends on what the live fleet happens
-    to hold is the box-dependence this file already fixed twice.
+    in ``pb-queue/<state>/<key>.json`` carrying its top-level ``status`` and
+    the final attempt's ``detail`` (return code and captured stdout), and the
+    command that action ran in ``cas/requests/<key[:2]>/<key>.json`` under a
+    ``checkout_snapshot`` naming the tree. The default command is the one this
+    tool seals for a GPU submission -- the deadline wrapper around ``python -m
+    pytest`` -- composed by the tool rather than copied, so the fixture is the
+    tool's own shape. Built here rather than read from ``/mnt/shared`` so the
+    test states its own population -- a test whose verdict depends on what the
+    live fleet happens to hold is the box-dependence this file already fixed
+    twice.
     """
 
     queue, requests = root / "pb-queue", root / "cas" / "requests"
     for state in ("done", "failed"):
         (queue / state).mkdir(parents=True, exist_ok=True)
+    if command is None:
+        merge_suite = _module()
+        command = merge_suite._timed_command(
+            merge_suite._command(merge_suite.ARMS["gpu"], surface_json, []),
+            7200.0)
+    snapshot = {"schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
+                "commit": "a" * 40, "subdirectory": "."}
     for key, state, returncode, host in actions:
         (requests / key[:2]).mkdir(parents=True, exist_ok=True)
         (requests / key[:2] / f"{key}.json").write_text(json.dumps({
-            "params": {"command": command or [
-                "python", "-m", "pytest", "tests",
-                "--surface-json", str(surface_json), "--strict-cuda"],
-                **(params or {})}}))
-        (queue / state / f"{key}.json").write_text(json.dumps({
-            "attempts": 1, "claimed_host": host, "status": state,
-            "detail": {"returncode": returncode, "status": "executed",
-                       "elapsed_s": 511.4},
-            **(outcome or {})}))
+            "params": _with({"command": command,
+                             "checkout_snapshot": snapshot}, params)}))
+        (queue / state / f"{key}.json").write_text(json.dumps(_with({
+            "attempts": 1, "claimed_host": host,
+            "claimed_unix": 1_756_990_000.0,
+            "status": "executed" if state == "done" else "failed",
+            "detail": _with({"returncode": returncode, "status": "executed",
+                             "elapsed_s": 511.4,
+                             "stdout": _attempt_stdout(surface_json)},
+                            detail)}, outcome)))
     return queue, requests
 
 
-def _gpu_population(path, commit="a" * 40):
-    path.write_text(json.dumps(_population("gpu", commit=commit)["surface"]))
+def _gpu_population(path, commit="a" * 40, producer=None, **overrides):
+    """A GPU population at ``path``; ``producer`` is the CAS request it names.
+
+    A population the suite publishes from a PrismaBuild snapshot carries the
+    sealed action it ran under in ``source_identity.excluded_metadata``:
+    ``suite_source._verified_stamp`` writes the action key and the digest of
+    the request's bytes there once it has verified the closure member against
+    that request. ``producer=None`` is the shape with no such stamp -- a
+    population from before it existed, or one whose source came out
+    ``unknown`` -- which names no action at all.
+    """
+
+    surface = _population("gpu", commit=commit)["surface"]
+    if producer is not None:
+        producer = Path(producer)
+        surface["source_identity"]["excluded_metadata"] = [{
+            "path": f".pbrun-closure.{producer.stem[:16]}.json",
+            "bytes": 153, "sha256": "d" * 64,
+            "action_key": producer.stem,
+            "request_sha256": hashlib.sha256(
+                producer.read_bytes()).hexdigest()}]
+    surface.update(overrides)
+    path.write_text(json.dumps(surface))
+
+
+def _request_of(requests, key):
+    return requests / key[:2] / f"{key}.json"
 
 
 def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
@@ -1298,9 +1379,11 @@ def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
     receipt_dir = tmp_path / "receipt"
     receipt_dir.mkdir()
     surface = receipt_dir / "surface.gpu.json"
-    _gpu_population(surface)
+    key = "beef" + "0" * 60
     merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
-        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky")])
+        tmp_path, surface, [(key, "done", 0, "sparky")])
+    _gpu_population(surface,
+                    producer=_request_of(merge_suite.POOL_CAS_REQUESTS, key))
 
     record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
     assert record["returncode"] == 0, record
@@ -1339,16 +1422,25 @@ def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
 
         >       assert len(record["pool_actions_matching"]) == 2, record
         E       KeyError: 'pool_actions_matching'
+
+    Since #294 the population names its producer, so the only two records
+    that can both bind to it are two records of THAT action -- one in ``done``
+    and one in ``failed`` is the pool disagreeing with itself about a single
+    action, and still not one status. A second action on the same path is not
+    ambiguity; it is refused by name, which the last assertion pins.
     """
 
     merge_suite = _module()
     receipt_dir = tmp_path / "receipt"
     receipt_dir.mkdir()
     surface = receipt_dir / "surface.gpu.json"
-    _gpu_population(surface)
+    key, other = "beef" + "0" * 60, "cafe" + "0" * 60
     merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
-        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky"),
-                            ("cafe" + "0" * 60, "failed", 1, "sparky")])
+        tmp_path, surface, [(key, "done", 0, "sparky"),
+                            (key, "failed", 1, "sparky"),
+                            (other, "failed", 1, "sparky")])
+    _gpu_population(surface,
+                    producer=_request_of(merge_suite.POOL_CAS_REQUESTS, key))
 
     record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
     assert record["returncode"] is None, record
@@ -1356,6 +1448,8 @@ def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
     assert len(record["pool_actions_matching"]) == 2, record
     assert "no single exit status" in record["exit_status_note"], record
     assert not merge_suite._verdict([record]).startswith("green on")
+    assert [r for r in record["pool_actions_refused"]
+            if r.startswith(other[:12])], record
 
 
 def test_a_resume_keeps_the_receipt_the_original_run_wrote(tmp_path):
@@ -1678,18 +1772,39 @@ def test_each_arms_own_result_is_readable_without_being_the_merge_verdict():
         merge_suite._arm_results([red])
 
 
-def _resumed_with(tmp_path, **pool):
-    """A resumed GPU record whose pool holds exactly the actions given."""
+def _resumed_with(tmp_path, producer=True, population=None, **pool):
+    """A resumed GPU record whose pool holds exactly one finished action.
+
+    The population names that action as its producer unless the test says
+    ``producer=False``; ``population`` overrides fields of the population and
+    the rest is the pool fixture's.
+    """
 
     merge_suite = _module()
     receipt_dir = tmp_path / "receipt"
     receipt_dir.mkdir(exist_ok=True)
     surface = receipt_dir / "surface.gpu.json"
-    _gpu_population(surface)
+    key = "beef" + "0" * 60
     merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
-        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky")], **pool)
+        tmp_path, surface, [(key, "done", 0, "sparky")], **pool)
+    _gpu_population(
+        surface, **(population or {}),
+        producer=(_request_of(merge_suite.POOL_CAS_REQUESTS, key)
+                  if producer else None))
     return merge_suite, merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
                                             receipt_dir)
+
+
+def _unobserved(merge_suite, record, *named):
+    """The row adopted nothing, and every reason in ``named`` was given."""
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert "pool_action" not in record, record
+    assert not merge_suite._verdict([record]).startswith("green on"), record
+    reasons = record.get("pool_actions_refused", [])
+    for phrase in named:
+        assert any(phrase in reason for reason in reasons), (phrase, record)
 
 
 def test_an_action_that_only_read_the_population_is_not_its_producer(tmp_path):
@@ -1703,11 +1818,7 @@ def test_an_action_that_only_read_the_population_is_not_its_producer(tmp_path):
 
     merge_suite, record = _resumed_with(
         tmp_path, command=["cat", str(tmp_path / "receipt/surface.gpu.json")])
-
-    assert record["exit_status_observed"] is False, record
-    assert record["returncode"] is None, record
-    assert "pool_action" not in record, record
-    assert not merge_suite._verdict([record]).startswith("green on")
+    _unobserved(merge_suite, record, "`cat`")
 
 
 def test_a_command_whose_effective_output_is_elsewhere_cannot_claim_this_path(
@@ -1736,26 +1847,258 @@ def test_a_status_recorded_for_another_source_tree_is_not_borrowed(tmp_path):
         "checkout_snapshot": {
             "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
             "commit": "b" * 40, "subdirectory": "."}})
-
-    assert record["exit_status_observed"] is False, record
-    assert record["returncode"] is None, record
-    assert any("commit" in reason
-               for reason in record.get("pool_actions_refused", [])), record
+    _unobserved(merge_suite, record, "commit")
 
 
-def test_a_population_older_than_the_attempt_that_claimed_it_is_not_bound(
+def test_a_retry_that_never_published_cannot_claim_the_earlier_population(
         tmp_path):
     """The pool requeues on any non-zero exit, and a retry may never publish.
 
     An attempt that died before its terminal summary leaves the previous
     attempt's population at the path and its own status in the outcome record.
     Reading the two together attributes one attempt's bytes to another
-    attempt's exit.
+    attempt's exit. #218 refused this by clock: a population more than
+    ``ATTEMPT_CLOCK_SLACK_S`` older than the claim was another attempt's. That
+    is a bound on how fast a retry may follow, asserted and not measured, and
+    a retry five minutes behind -- the shape codex replayed for #294 -- was
+    inside it and bound. What distinguishes the attempts is not the clock but
+    the record: the worker captured the attempt's whole stdout, and an attempt
+    that published says so on it. This one did not.
+
+    Before the fix (the retry was inside the 600 s allowance)::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    surface = tmp_path / "receipt" / "surface.gpu.json"
+    merge_suite, record = _resumed_with(
+        tmp_path, outcome={"attempts": 2, "claimed_unix": time.time() + 300},
+        detail={"stdout": _attempt_stdout(surface, published=False)})
+    _unobserved(merge_suite, record, "never said it published")
+
+
+def test_the_clock_is_not_the_evidence_of_which_attempt_published(tmp_path):
+    """A day between publication and claim binds if the attempt says it wrote.
+
+    The converse of the retry test: #218's clock rule would have refused this
+    record, and the rule it stood in for -- the attempt's own account of what
+    it published -- accepts it. The 600 s constant and its "asserted, not
+    measured" comment are gone with the inference.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is True, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': False, ...}
+        E       assert False is True
     """
 
     merge_suite, record = _resumed_with(
-        tmp_path, outcome={"attempts": 2, "claimed_unix": time.time() + 86400})
+        tmp_path, outcome={"claimed_unix": time.time() + 86400})
+    assert record["exit_status_observed"] is True, record
+    assert record["returncode"] == 0, record
+    assert not hasattr(merge_suite, "ATTEMPT_CLOCK_SLACK_S")
 
-    assert record["exit_status_observed"] is False, record
-    assert record["returncode"] is None, record
-    assert not merge_suite._verdict([record]).startswith("green on")
+
+def test_a_wrapper_the_tool_does_not_know_is_refused_by_name(tmp_path):
+    """#294: a token spelled ``pytest`` anywhere in argv made a producer.
+
+    ``echo pytest --surface-json <path>`` exits 0 having written nothing, and
+    the #218 join accepted it because ``_runs_pytest`` looked for the word.
+    The reader now parses the command shapes this tool seals -- ``pytest``,
+    ``python -m pytest`` and the ``tools/suite_deadline.py ... --`` wrapper
+    around them -- and refuses any other program by name.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    ours = str(tmp_path / "receipt" / "surface.gpu.json")
+    merge_suite, record = _resumed_with(
+        tmp_path, command=["echo", "pytest", "--surface-json", ours])
+    _unobserved(merge_suite, record, "`echo`")
+
+    # And a wrapper that is not the one this tool seals is refused as such,
+    # even though the real invocation is inside it.
+    merge_suite, record = _resumed_with(tmp_path, command=[
+        "timeout", "7200", "python", "-m", "pytest", "tests",
+        "--surface-json", ours])
+    _unobserved(merge_suite, record, "`timeout`")
+
+
+def test_missing_binding_evidence_is_unobserved_not_established(tmp_path):
+    """#294: absent identity was read as agreement.
+
+    ``_binding_refusal`` compared snapshot commit to population commit only if
+    both were present and checked the clock only if ``claimed_unix`` was a
+    number, so a request with no ``checkout_snapshot`` and an outcome with no
+    claim time passed every check by having nothing to check. A binding is
+    established by evidence, and a record without the evidence has not
+    established it.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, params={"checkout_snapshot": None},
+        outcome={"claimed_unix": None})
+    _unobserved(merge_suite, record, "no checkout_snapshot")
+
+
+def test_a_population_that_names_no_producer_adopts_no_status(tmp_path):
+    """A population's stamp is the identifier that binds it to an action.
+
+    ``suite_source._verified_stamp`` writes the sealed action's key and the
+    digest of its request into the population once the closure member is
+    verified against that request; a population without it -- one from before
+    the stamp, or one whose source came out ``unknown`` -- names no action, so
+    no action's status is its status. The receipt is still read and the
+    counts still shown; only the exit status is withheld, by name.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    merge_suite, record = _resumed_with(tmp_path, producer=False)
+    _unobserved(merge_suite, record, "names no sealed action")
+    assert record["surface"]["counts"]["passed"] == 1827, record
+
+    # Naming a different action is the same refusal with both keys in it.
+    merge_suite, record = _resumed_with(
+        tmp_path, population={"source_identity": {
+            **_population("gpu")["surface"]["source_identity"],
+            "excluded_metadata": [{"action_key": "dead" + "0" * 60,
+                                   "request_sha256": "e" * 64}]}})
+    _unobserved(merge_suite, record, "dead00000000", "beef00000000")
+
+
+def test_a_request_the_population_did_not_see_is_not_its_producer(tmp_path):
+    """The stamp digests the request's bytes; a changed request is another.
+
+    The action key is a digest of the request body, but the reader has only
+    the pool's word for which body sits under which key. The population
+    carries its own digest of the bytes it verified against, and a request
+    file whose bytes differ is not the request that produced it.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    key = "beef" + "0" * 60
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [(key, "done", 0, "sparky")])
+    request = _request_of(merge_suite.POOL_CAS_REQUESTS, key)
+    _gpu_population(surface, producer=request)
+    # The request is rewritten -- same command, a byte of whitespace more.
+    request.write_text(request.read_text() + " ")
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    _unobserved(merge_suite, record, "request_sha256")
+
+
+def test_a_lease_lost_record_carries_an_earlier_attempts_detail(tmp_path):
+    """Only ``executed`` and ``failed`` records describe their final attempt.
+
+    The pool's lease reaper moves an action to ``failed`` as
+    ``lease_lost_max_attempts`` without touching ``detail``, so the detail on
+    such a record is whatever the last attempt to FINISH wrote -- observed on
+    ``dbd91b92`` in the live queue, where the detail was an earlier attempt's.
+    Its return code is real and it is not the final attempt's, so it is
+    refused by the status that says so.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, outcome={"status": "lease_lost_max_attempts", "attempts": 3})
+    _unobserved(merge_suite, record, "lease_lost_max_attempts")
+
+
+def test_an_attempt_whose_summary_disagrees_with_the_population_is_not_bound(
+        tmp_path):
+    """The attempt's counts and the file's counts come from one table.
+
+    ``tests/conftest.py`` writes ``counts`` from ``terminalreporter.stats``,
+    the same table pytest's summary line is built from, so an attempt that
+    published this population printed these numbers. One that printed others
+    published a different population -- an earlier attempt's file is at the
+    path, or a later one overwrote it -- and its status is not this file's.
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is False, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': True, ...}
+        E       assert True is False
+    """
+
+    surface = tmp_path / "receipt" / "surface.gpu.json"
+    merge_suite, record = _resumed_with(
+        tmp_path, detail={"stdout": _attempt_stdout(
+            surface, counts={"passed": 1826, "failed": 1})})
+    _unobserved(merge_suite, record, "1826 passed")
+
+
+def test_a_later_attempt_that_could_not_publish_cannot_inherit(tmp_path):
+    """The acceptance shape for #294: a producer binds, its successor does not.
+
+    The same population, the same path, two records of two actions on the
+    same tree. The first is the producer: its request is the one the
+    population stamps, its stdout says it wrote this path with these counts,
+    and its status is the row's. The second ran five minutes later, exited 0,
+    and its stdout has no publication line -- it could not publish (the suite
+    aborted, the path was unwritable, whatever) -- and it is refused by name
+    rather than inheriting the file the first one left. Under #218 it was
+    inside the clock allowance, so it counted as a second writer and the
+    genuine producer's status was lost to "no single exit status".
+
+    Before the fix::
+
+        >       assert record["exit_status_observed"] is True, record
+        E       AssertionError: {'arm': 'gpu', ..., 'exit_status_observed': False, ...}
+        E       assert False is True
+    """
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    producer, later = "beef" + "0" * 60, "cafe" + "0" * 60
+    _fake_pool(tmp_path, surface, [(producer, "done", 0, "sparky")])
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [(later, "done", 0, "sparklina")],
+        outcome={"attempts": 1, "claimed_unix": time.time() + 300},
+        detail={"stdout": _attempt_stdout(surface, published=False)})
+    _gpu_population(surface,
+                    producer=_request_of(merge_suite.POOL_CAS_REQUESTS,
+                                         producer))
+
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["exit_status_observed"] is True, record
+    assert record["returncode"] == 0, record
+    assert record["pool_action"]["action_key"] == producer, record
+    assert record["pool_action"]["host"] == "sparky", record
+    assert merge_suite._verdict([record]).startswith("green on")
+    refused = record["pool_actions_refused"]
+    assert len(refused) == 1 and refused[0].startswith(later[:12]), refused

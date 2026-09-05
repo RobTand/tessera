@@ -101,12 +101,13 @@ def _block_straddles_rows(block: "int | None", columns: int) -> bool:
     The block planes are indexed ``(row * cols + col) // block``, so when the
     block does not divide the column count a block begins in one output row
     and ends in the next.  **No rectangle of such a unit is a run of the
-    plane** -- not even the whole of it -- so ``_slice_block_plane`` refuses
-    every cut, the identity slice included, and ``can_shard`` has to say so
-    rather than report a granularity.  This is the one home of that question:
-    the cutter raises from it and the predicate returns from it, because the
-    two answering separately is what let a loader be told "yes" and then
-    handed a ``GrammarError`` (tessera#235).
+    plane** -- not even the whole of it -- so every cut is refused, the
+    identity slice included, and ``can_shard`` has to say so rather than
+    report a granularity.  This is the one home of that *geometric* question;
+    ``_unsliceable_reason`` is where it meets the other structure that refuses
+    every cut (rotation) and where the cutter and the predicate both read it,
+    because the two answering separately is what let a loader be told "yes"
+    and then handed a ``GrammarError`` (tessera#235, tessera#304).
 
     No Tessera *encoder* produces such a unit, and since tessera#260 no Tessera
     *writer* accepts one either: ``encode._pack_scales`` and
@@ -120,6 +121,56 @@ def _block_straddles_rows(block: "int | None", columns: int) -> bool:
     the question is still asked here and still has to be answered.
     """
     return block is not None and bool(columns % block)
+
+
+def _unsliceable_reason(rotation, block, columns) -> "str | None":
+    """Why no cut of this unit is expressible -- the ONE home of that question.
+
+    Two structures refuse **every** cut, the identity slice included, and
+    neither is a property of the cut being asked for, so neither belongs in a
+    granularity:
+
+    * **Rotation.**  An ``R_in``-only unit's codes are the rotated tensor's,
+      and the rotation is a block structure across the input axis: a column cut
+      lands inside a rotation block, and the pieces then decode to plausible
+      wrong weights rather than to a window of the parent's decode.  A row cut
+      is refused with it because a shard is a whole artifact -- a rank writes
+      it back out and the wire carries no way to say "half a rotation" -- and
+      because rotated slicing, if it is ever implemented, has to be implemented
+      in the cutter and the predicate together with its reconstruction
+      semantics proved.
+    * **A straddling scale block.**  ``_block_straddles_rows``: the block
+      planes are indexed ``(row * cols + col) // block``, so when the block does
+      not divide the width no rectangle of the weight is a run of the plane.
+
+    ``can_shard`` returns ``False`` exactly when this returns a sentence and
+    ``slice_unit`` raises exactly that sentence, so the capability API cannot
+    promise a cut the cutter refuses.  That is the whole content of tessera#235
+    -- and tessera#304, which found rotation still answered in only one of the
+    two places: ``can_shard`` reported a rotated unit cuttable on both axes
+    while ``slice_unit`` had always refused it.  The arguments are the three
+    facts every view carries -- an ``EncodedUnit``, a ``ParsedUnit`` and a
+    ``Manifest`` all yield a rotation state, a block width and a column count
+    -- so one predicate serves all three.
+    """
+    from .diagonals import rotation_block_for
+
+    state = RotationState(rotation)
+    if state is not RotationState.NONE:
+        return (
+            f"refusing to slice a rotated unit: {state.name} rotation is a "
+            f"{rotation_block_for(state, columns)}-column block structure a "
+            "column cut would break, and the pieces would decode to plausible "
+            "wrong weights"
+        )
+    if _block_straddles_rows(block, columns):
+        return (
+            f"a {block}-weight block does not divide this unit's {columns} "
+            "columns, so a block spans two output rows and no cut of it -- the "
+            "identity slice included -- is a run of the plane. No encoder "
+            "writes such a unit (tessera#57)"
+        )
+    return None
 
 
 def shard_granularity(unit, superblock: int = 256, arity: int = 1):
@@ -138,9 +189,12 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     is a block boundary whenever the unit's column count is a whole number of
     blocks -- and when it is not, there is no granularity to report: a
     straddling block makes every cut inexpressible, the identity included, so
-    ``_block_straddles_rows`` refuses the unit outright at ``can_shard``
+    ``_unsliceable_reason`` refuses the unit outright at ``can_shard``
     instead of this raising a row granularity that would not have sliced
-    (tessera#235).
+    (tessera#235).  A rotated unit is refused there for the same reason and in
+    the same place (tessera#304): both are properties of the unit, not of the
+    cut, so neither is expressible as a granularity and this function reports
+    the arithmetic one for a unit the predicate has already admitted.
 
     **Columns.**  A block scale plane is indexed by ``(row * cols + col) //
     block``, so a column cut must fall on a block: 32 weights under S6b (which
@@ -252,11 +306,13 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
 
     The answer is exactly "``slice_unit`` will accept that cut", never a
     second reading of the same wire: the granularity below is the one
-    ``slice_unit`` measures its offsets against, and the straddling-block
-    refusal is the one ``_slice_block_plane`` raises.  A predicate that
-    answered ``True`` where the cutter raises is worse than no predicate --
-    the loader asks first precisely so it can name a ``tensor_parallel_size``
-    in the refusal (tessera#235).
+    ``slice_unit`` measures its offsets against, and the refusals that do not
+    depend on the cut -- rotation and a straddling scale block -- come from
+    ``_unsliceable_reason``, the sentence ``slice_unit`` raises.  A predicate
+    that answered ``True`` where the cutter raises is worse than no predicate
+    -- the loader asks first precisely so it can name a
+    ``tensor_parallel_size`` in the refusal (tessera#235); rotation was the
+    population still answered in only one of the two places (tessera#304).
     """
     if tp < 1:
         raise GrammarError(f"tp must be positive, got {tp}")
@@ -274,12 +330,14 @@ def can_shard(unit, tp: int, axis: str, superblock: int = 256, arity: int = 1) -
             if kind is _Kind.S6B
             else unit.geometry.half_weights
         )
+        rotation = unit.branch.rotation
     else:
         unit, superblock, arity = _unwrap(unit, superblock, arity)
         steps, cols = unit.body_bits.shape
         rows = steps * arity
         block = _scale_columns_per_row(unit)
-    if _block_straddles_rows(block, cols):
+        rotation = getattr(unit, "rotation", RotationState.NONE)
+    if _unsliceable_reason(rotation, block, cols) is not None:
         return False
     row_gran, col_gran = shard_granularity(unit, superblock, arity)
     extent, granularity = (rows, row_gran) if axis == "row" else (cols, col_gran)
@@ -418,7 +476,8 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
     supplies its own ``code``, ``superblock``, ``arity`` and parent digest.
     ``rows``/``cols`` default to the full extent.  Rotation is refused: an
     ``R_in``-only unit's rotation blocks are a column structure a column cut
-    would break silently.
+    would break silently -- through ``_unsliceable_reason``, so ``can_shard``
+    answers ``False`` for exactly the units this raises on (tessera#304).
     """
     from .trellis import ConvCode
     from .unit_artifact import ParsedUnit
@@ -452,12 +511,17 @@ def slice_unit(unit, rows=None, cols=None, *, arity: int = 1, code=None,
             f"slice rows [{r0}, {r1}) x cols [{c0}, {c1}) is not inside a "
             f"{n_rows}x{columns} unit"
         )
-    if unit.rotation is not RotationState.NONE:
-        raise GrammarError(
-            "refusing to slice a rotated unit: R_in-only rotation is a "
-            f"{unit.rotation_block}-column block structure a column cut would "
-            "break, and the pieces would decode to plausible wrong weights"
-        )
+    # Rotation and a straddling scale block refuse every cut of this unit, the
+    # identity slice included, and ``can_shard`` reads the same predicate -- so
+    # a loader that asks first is never told yes and then handed this
+    # (tessera#235, tessera#304).
+    reason = _unsliceable_reason(
+        getattr(unit, "rotation", RotationState.NONE),
+        _scale_columns_per_row(unit),
+        columns,
+    )
+    if reason is not None:
+        raise GrammarError(reason)
     row_gran, col_gran = shard_granularity(unit, superblock, arity)
     for offset, name, granularity in ((r0, "row", row_gran), (c0, "column", col_gran)):
         if offset % granularity:
@@ -625,17 +689,16 @@ def _slice_block_plane(plane, rows, columns, block, r0, r1, c0, c1, name):
     """
     if plane is None or plane.numel() == 0:
         return plane
-    if _block_straddles_rows(block, columns):
-        # Not this cut: ANY cut, the identity included.  The reshape below
-        # needs one row of the weight to be a whole number of plane entries,
-        # and a straddling block means no rectangle of the unit is a run of
-        # the plane.  ``can_shard`` refuses the same unit from the same
-        # predicate, so a loader is never told yes and then handed this.
-        raise GrammarError(
-            f"{name}: a {block}-weight block does not divide this unit's {columns} columns, so a "
-            f"block spans two output rows and no cut of it -- the identity slice included -- is a "
-            f"run of the plane. No encoder writes such a unit (tessera#57)"
-        )
+    # Not this cut: ANY cut, the identity included.  The reshape below needs
+    # one row of the weight to be a whole number of plane entries, and a
+    # straddling block means no rectangle of the unit is a run of the plane.
+    # ``slice_unit`` and ``can_shard`` refuse the unit from the same predicate
+    # before reaching here, so this is the backstop for a direct caller -- and
+    # it says it in the predicate's own words, prefixed with the plane whose
+    # reshape would have failed, so there is one sentence and one home.
+    straddling = _unsliceable_reason(RotationState.NONE, block, columns)
+    if straddling is not None:
+        raise GrammarError(f"{name}: {straddling}")
     if c0 % block or (c1 - c0) % block:
         raise GrammarError(
             f"{name}: a {block}-weight block does not divide a cut at columns "

@@ -29,15 +29,18 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "experiments"))
 
 from refit_trailing_screen import (  # noqa: E402
-    assert_screen_receipt, control_arm, is_trailing_pair, wire_arms)
+    assert_screen_receipt, classify_trailing_pair, control_arm, wire_arms)
 
 GATE = REPO / "experiments" / "refit_trailing_pair_gate.py"
 QWEN = REPO / "experiments" / "results" / "refit_trailing_pair_qwen.json"
 GLM = REPO / "experiments" / "results" / "refit_trailing_pair_glm.json"
+QWEN_CL = REPO / "experiments" / "results" / "refit_trailing_pair_qwen_cl.json"
 
 CONTROL = "A drift control FIRST [refit h^1.0 x4]"
 B_JAC = "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)"
 C_GS = "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)"
+B_GS_CL = ("B-GS+CL T R_h T R_h T R_h T R_H(GS,CL)   "
+           "(trailing full-H, sweep, coupled landing)")
 
 
 def _load(path: Path) -> dict:
@@ -203,9 +206,102 @@ def test_every_committed_screen_receipt_carries_its_proofs(receipt):
     unit = next(iter(document["units"]))
     record = document["units"][unit]
     control = control_arm(record, where="tessera#250", unit=unit)
-    pairs = [arm for arm in wire_arms(record)
-             if arm != control and is_trailing_pair(record[arm], record[control])]
+    classified = {arm: classify_trailing_pair(record[arm], record[control])
+                  for arm in wire_arms(record) if arm != control}
+    unknown = {arm: why for arm, (_pair, why) in classified.items() if why}
+    assert unknown == {}, unknown
+    pairs = [arm for arm, (pair, _why) in classified.items() if pair]
     assert [arm.split()[0] for arm in pairs] == ["B-Jac", "B-GS"], pairs
+
+
+# --- the classification evidence itself (tessera#299) ------------------------
+#
+# Which arms owe the matched-pair proof is DERIVED from the recorded schedule
+# and the refit's own coupled-landing diagnostics, so those recordings are
+# evidence exactly as the proofs are.  Reading them with ``.get()`` and
+# answering "not a trailing pair" made a receipt able to exempt an arm from
+# every pair check by deleting, emptying or corrupting one field -- over an
+# explicitly recorded ``codes_identical: false``, the very failure the #250
+# validator exists to catch.  Unknown is not exempt.
+
+
+def test_a_missing_candidate_schedule_cannot_clear_a_recorded_pair_failure(
+        screens, tmp_path):
+    """The #299 repro: a receipt that records ``codes_identical: false`` and
+    then loses the field that classifies the comparison must not come back
+    clean.  A proof that is present and FAILED does not disappear because a
+    field needed to decide whether it was owed is missing."""
+    qwen, _, write = screens
+    unit = next(iter(qwen["units"]))
+    qwen["units"][unit][B_JAC]["matched_pair"]["codes_identical"] = False
+    del qwen["units"][unit][B_JAC]["schedule"]
+    proc, record = run_gate(tmp_path, *write(q=qwen))
+    block = arm_line(proc.stdout, B_JAC)
+    assert "PROMOTED" not in block, block
+    assert "schedule" in block
+    assert "codes_identical" in block
+    assert "refused" in record["arms"][B_JAC]
+
+
+@pytest.mark.parametrize("schedule", [
+    pytest.param([], id="empty"),
+    pytest.param("1,1,1,2", id="not-a-list"),
+    pytest.param([[1, False], ["trailing", False]], id="unreadable-objective"),
+    pytest.param([[], []], id="stepless"),
+])
+def test_an_unreadable_candidate_schedule_does_not_exempt_the_arm(
+        screens, tmp_path, schedule):
+    """Empty, wrong-typed and unparseable schedules are all *unknown*, and an
+    arm that cannot be told from the control's trailing pair is refused, not
+    silently excused from the proof."""
+    qwen, _, write = screens
+    unit = next(iter(qwen["units"]))
+    qwen["units"][unit][B_JAC]["schedule"] = schedule
+    proc, record = run_gate(tmp_path, *write(q=qwen))
+    block = arm_line(proc.stdout, B_JAC)
+    assert "PROMOTED" not in block, block
+    assert "schedule" in block
+    assert "refused" in record["arms"][B_JAC]
+
+
+def test_a_missing_control_schedule_refuses_the_whole_document(screens, tmp_path):
+    """The control's schedule is the baseline every other arm is classified
+    against, so losing it exempts *every* arm in the unit at once.  It refuses
+    the document, exactly as a failed drift control does, rather than being
+    reported one arm at a time."""
+    qwen, _, write = screens
+    unit = next(iter(qwen["units"]))
+    qwen["units"][unit][B_JAC]["matched_pair"]["codes_identical"] = False
+    del qwen["units"][unit][CONTROL]["schedule"]
+    proc, _ = run_gate(tmp_path, *write(q=qwen))
+    assert proc.returncode != 0, proc.stdout
+    assert "schedule" in proc.stderr
+    assert unit in proc.stderr
+    assert "PROMOTED" not in proc.stdout
+
+
+def test_a_coupled_arm_that_records_no_diagnostics_is_not_exempt():
+    """The other half of the classification: an arm is exempt from the pair
+    proof because its refit diagnostics say a coupled landing re-assigned
+    blocks (#50).  Absent diagnostics are not that statement, so a
+    trailing-shaped arm that carries none is refused rather than read as
+    coupled."""
+    document = _load(QWEN_CL)
+    unit = next(iter(document["units"]))
+    del document["units"][unit][B_GS_CL]["refit"]
+    failures = assert_screen_receipt(
+        document, name=QWEN_CL.name, where="tessera#299")
+    assert B_GS_CL in failures, failures
+    assert any("coupled" in reason for reason in failures[B_GS_CL]), \
+        failures[B_GS_CL]
+
+
+def test_the_coupled_arm_keeps_its_exemption_when_it_proves_it():
+    """The control for the case above: the committed coupled-landing receipt
+    records the diagnostics, so ``B-GS+CL`` stays exempt and the document is
+    clean."""
+    assert assert_screen_receipt(
+        _load(QWEN_CL), name=QWEN_CL.name, where="tessera#299") == {}
 
 
 def test_a_non_wire_landing_in_the_document_refuses(screens, tmp_path):

@@ -117,7 +117,48 @@ incomplete, and a pre-v3 population cannot answer the execution question, so it
 is not green. Each arm's own result stays readable in the receipt's
 `arm_results`, which is deliberately not the merge verdict and never sets the
 exit status.
-`tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
+
+A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
+it published and, since tessera#218, borrows that arm's exit status from
+PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
+process saw. Since tessera#294 the borrowing is admitted only on evidence the
+population and the record each carry, and absent evidence is absent, not
+agreement. The producer is found by parsing the sealed request's command in the
+shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
+`tools/suite_deadline.py ... --` -- and taking its *effective* (last)
+`--surface-json`; any other program that names the path is refused by name
+(`echo pytest --surface-json <path>` exits 0 having written nothing), and a
+program string passed to `-c` is not read. A candidate is then bound or
+refused, by reason, on three legs: the request's `checkout_snapshot.commit`
+and the population's `commit` are both present and equal; the population's
+verified source stamp (`source_identity.excluded_metadata[].action_key`, written
+by `tessera._dev.suite_source` only for a verified snapshot checkout) names
+that action and its `request_sha256` is the digest of the request bytes read;
+and the record's top-level status is `executed` or `failed` -- the two the
+worker writes together with the attempt's own `detail` (a
+`lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
+-- with that attempt's captured stdout containing the conftest's `tessera
+surface: population written to <path>` line and a pytest summary line whose
+counts are the population's, both drawn from `terminalreporter.stats`. The
+clock is not evidence: #218's 600 s allowance between the file's mtime and the
+claim asserted how quickly a retry may follow, which nothing here measures, and
+it admitted a retry five minutes behind; it is gone with the inference. A
+population without the stamp (pre-stamp, or `unknown` source) names no producer,
+so its counts are read and no status is adopted; two bound records of the one
+producer are no single status and adopt none. Across the 281 historical
+populations under `/mnt/shared/tessera-suite-receipts` exactly the three
+stamped ones bind. The remaining limit is stated rather than hidden: the
+attempt is bound by path and counts, not by a digest of the population's bytes,
+because the conftest does not yet print one; printing the file's SHA-256 beside
+the publication line would let a resume bind on bytes, and that is a change to
+`tests/conftest.py`, not to this reader.
+`tools/impacted_tests.py` fails open to the full run and never under-selects:
+that is its whole contract. Every gap in what the graph can prove resolves
+towards running more tests -- an ambiguous spelling edges to every file it can
+name, a module whose dependencies cannot be established selects its consumers,
+and an unresolvable scope forces the whole suite. A narrowed list is a claim
+that the graph read everything relevant, so where it did not, the answer is
+`full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
@@ -134,7 +175,25 @@ import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
 file is also a node under every name an import root on `sys.path` gives it:
 `tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
 `box_artifacts`, which is how every test in the tree spells it. An ambiguous
-alias edges to every candidate.
+alias edges to every candidate, and owning the canonical name is not
+precedence: a root `helper.py` and a `tests/helper.py` are both `helper`, the
+import root `tests/conftest.py` inserts is the one pytest actually executes for
+`from helper import VALUE`, and the graph models no precedence between them. It
+therefore resolves the union of canonical and alias candidates, deduplicated by
+file, rather than letting the canonical name hide the candidate that runs
+(#292).
+A node's identity is its **file**, never its name, because a dotted name is a
+spelling and a spelling can name two files: `_module_name` strips a leading
+`src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
+importable here because `tests/conftest.py` puts `src/` and `tests/` on
+`sys.path`. Every file therefore gets a node -- under its dotted name, or under
+its repository-relative path when another file already answers to that name,
+the same path-keyed node the graph gives a non-Python data file -- and the
+shared spelling edges to both. Dropping the second file gave it no node, so it
+was never parsed and its own imports were not edges at all: a leaf change whose
+only route to a test ran through the shadowed file selected nothing and said
+`none` (#317). A path load resolves through the file, not through the name it
+spells, for the same reason.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
@@ -149,11 +208,18 @@ an unknown module only for a module that can parse or execute Python source
 resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
 Python dependency once something runs them, and treating every unnameable read
 as "any module in the tree" is what held the verdict at `full` for every change
-(#148). A conftest that execs the `test_*.py` files below it is probing its
+(#148). A file that will not parse or read states no dependency, which is not
+the same as having none: it is the same unknown from the other end, so it too
+may import anything, its consumers are selected, and an unreadable conftest
+forces the population it gates. Reading a failed parse as an empty dependency
+set is what let a leaf change select nothing while collecting its unparseable
+importer would have failed (#293). A conftest that execs the `test_*.py` files
+below it is probing its
 collection targets, and that edge is excluded from the walk that forces full --
 as a dependency it closes a cycle that makes one uncertain test file uncertain
 for the whole population. The selector reports those unresolved importers in its
-receipt.
+receipt, and reports every unreadable source beside the parse or read failure
+that named it, because that one is repairable.
 One-directory conftest globs resolve to ordinary edges; recursive, escaping or
 otherwise unresolved path expressions retain the conservative fallback.
 Parameter, return and annotated-assignment expressions retain potential loader
@@ -237,6 +303,29 @@ rather than joined into a distribution nobody measured; the fix is a joint
 recalibration (one amax over the members' shared input, which is what both
 repos' calibrators already emit), not a wider bound. Changing the policy
 means changing the constant and this paragraph in one commit.
+
+**Every exporter that writes a fused A-side scale calls that one helper.**
+`experiments/export_stock_compressed.py`, the sanctioned standalone CLI for the
+stock compressed-tensors arms, copied each donor member's `input_global_scale`
+through unchanged and joined the *weight* globals only, so a donor whose
+siblings differ at all -- inside the accepted bound -- served an activation
+quantizer chosen by vLLM's `.max()` reduction instead of by the rule above
+(tessera#305: donor `[4.0, 4.015625, 4.0]` was written through verbatim, and
+the runtime's max picked 4.015625 where the helper answers 4.0). It now
+resolves one value per fused group through `shared_input_global_scale` and
+writes that value on every member, so `priced == written == served` holds for
+the A side of this arm as it already did for the serving exporter's twin. The
+join is resolved from the **planned** fused roster before the output directory
+is created, which is what makes it correct for siblings that straddle source
+shards: an earlier output shard can no longer publish an unjoined member
+before a later shard delivers the rest of the group (#212's completion
+schedule is unchanged), and a donor beyond the declared bound is refused
+beside the other pre-encode refusals rather than at the shard boundary that
+completes the group. An unfused NVFP4 Linear is its own vLLM Linear with its
+own input tensor and keeps its own donor value. The per-unit
+`input_global_scale` in `tessera_stock_manifest.json` records what was
+actually written, so the join is read off the receipt rather than inferred
+from the donor.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
@@ -410,6 +499,24 @@ see an **encoder** change: same arguments, different bytes out. That gap
 merged two differently-encoded halves once already (issue #78), and closing it
 is issue #101.
 
+Because the profile id is a *digest* of those arguments, two of them — the
+convolutional code and the payload grid — have no field of their own, and the
+reader recovers them only by recomputing the digest over a closed search
+(`trellis.replayable_codes` × `alphabet.SERIALISABLE_GRIDS`). So the roster the
+reader searches is what the writer may publish, and since tessera#295 that is
+one predicate with one home: `build_unit_artifact` refuses a TCQ body whose
+`ConvCode` is outside `trellis.require_replayable_code` — by memory order and
+octal generators, at the serialization boundary — instead of writing bytes that
+fail closed in whatever process later loads them. `ConvCode(memory=3,
+generators=(0o17, 0o15))`, the published memory-3 pair with its taps
+transposed, is a legal rate-1/2 code the encoder and `reconstruct_unit` both
+serve, and it was writable and unreadable at the same version. Every pair the
+reader searches — each memory order's published default and the superseded
+memory-3 `(0o5, 0o7)` — still writes and reads back, research encode/decode of
+any legal pair is untouched (only *publishing* is gated), a WINDOW body binds
+no code and is not checked, and no wire field was added: the eleven legacy
+artifacts under `tests/data/legacy/` re-serialise to identical bytes.
+
 The third identity is `tessera.encoder_identity.encoder_fixture_id`, and it is
 **derived from behaviour, not declared**: a fixed, tiny fixture set is encoded
 at fixed arguments and the result is hashed, so the value moves exactly when
@@ -562,6 +669,25 @@ route applies an input rotation the sidecar must name it (`shared` in
 `FUSED_MODULE_FIELDS` -- a fused module's members share one `x`), the
 contract bumps, and `require_untransformed` learns that consumer; not before.
 
+The **slicing capability API** owes the same answer, and since tessera#304 it
+gives it. `layout.can_shard` is defined as "`slice_unit` will accept that
+cut", so the refusals that are properties of the *unit* rather than of the cut
+-- an `R_in`-only rotation, whose column blocks a cut would break into pieces
+that decode to plausible wrong weights, and a scale block that straddles two
+output rows -- live in one predicate, `slicing._unsliceable_reason`, which
+`can_shard` returns `False` from and `slice_unit` raises verbatim. Neither is
+expressible as a granularity: they refuse *every* cut, the identity slice
+included, so `shard_granularity` reports the arithmetic granularity of a unit
+the predicate has already admitted. tessera#235 aligned the two on block
+geometry and left rotation answered only in the cutter, so `can_shard` reported
+a rotated artifact cuttable on both axes while `slice_unit` had always refused
+it -- a capability answer a producer or operator could not act on. The
+predicate takes the three facts every view carries (rotation state, block
+width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
+one answer. Unrotated capability and shard reconstruction are unchanged. If
+rotated slicing is ever implemented, both paths move together and its complete
+reconstruction semantics are proved with them.
+
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 
 The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
@@ -660,6 +786,65 @@ whatever their width: `_refuse_unserialisable`'s promise that "encoding,
 decoding and measuring on any grid stay open" is what keeps a free 1024-code
 tuple grid buildable, and narrowing that would close a research surface rather
 than close #285.
+
+### 3.8 A tensor-parallel rank serves the slice its layer's contract names
+
+The artifact is TP-agnostic: every rank loads the whole container, and
+`serving.sharding.plan_shard` decides which rows or columns of each role
+this rank serves before `shard_parsed_roles` cuts them (`layout.slice_unit`)
+and the route's kernel runs on the slice. Priced == written == served holds
+across ranks only if the plan is exact: a rank serving rows another rank also
+serves, or rows no rank serves, is a module priced once and served as
+something else, and nothing downstream can see it -- the decoder returns the
+arrangement it was handed and the sidecar agrees with the wire it was written
+beside.
+
+**The plan is read off the LAYER, never inferred from the tile.** vLLM's
+`create_weights` hands a dense method the layer object, this rank's tile
+(`input_size_per_partition`, `output_partition_sizes`) and the module's global
+shape (`input_size`, `output_size`); `LinearBase.__init__` sets the layer's own
+`tp_rank`/`tp_size` (`0, 1` under `disable_tp`, a sub-group's coordinates for
+`DCPGroupColumnParallelLinear`) and `QKVParallelLinear` states its
+`num_kv_head_replicas`. `plan_shard_for_layer` takes all of it. The global
+shape against the tile selects among exactly three vLLM relations -- equal
+(served WHOLE: `ReplicatedLinear`, or any Linear at one rank), the output
+times `tp_size` over the whole input (an OUTPUT cut: ColumnParallel and its
+merged/QKV forms), the input times `tp_size` under the whole output (an INPUT
+cut: RowParallel) -- and a layer whose shape is none of them is refused with
+both shapes. The wire is then held to that statement: served whole it must
+be the module, cut on the input its width must be `input_size`, cut on the
+output each role's rows must be the member's COMPLETE extent under the
+layer's declared replication, `out_partition_i * (tp_size // replicas_i)`,
+with the rank's shard at index `tp_rank // replicas_i`. Replication is never
+inferred from a role holding fewer shards than there are ranks; it is the
+layer's own `num_kv_head_replicas`, read verbatim, ones when the attribute is
+absent, and refused by name when it is declared on a layer that is not three
+members (`MinimaxM3QKVParallelLinearWithIndexer`'s four partitions are not
+planned), does not divide the world, or appears on a module served whole or
+cut on its input. TP coordinates are the layer's, not the process's:
+`vllm.distributed` is not consulted, and a layer without `tp_rank`/`tp_size`
+is refused rather than defaulted to one rank.
+
+Two defects closed there. **A whole wire the size of one rank's tile** (a
+`[64, 256]` wire loaded into a ColumnParallel layer of `256x256` at TP=4)
+agrees with the tile on every local number, and reading only the tile handed
+it back as a replicated whole module on every rank -- four ranks each
+computing the same 64 rows for a layer whose all-gather expected 256 distinct
+ones (tessera#303). It is now refused by role name, with the wire's rows and
+the extent the layer's contract requires, before any `wire_bytes` parameter
+is registered; a `ReplicatedLinear` of the same tile shape declares
+`output_size == 64` and is served whole as before. **KV replication by
+divisibility** accepted any role whose row count divided into fewer shards
+than ranks and called it replicated; a wire holding 256 rows of a role the
+layer says is 512 is now "rows [256, 512) exist on no rank", and the same
+shape with replication declared plans each rank's head from the declaration.
+`tests/test_serving_sharding.py` holds the planner's arithmetic for every
+relation, the boundary rule of #234 on both whole paths, and every refusal
+above; `tests/test_serving_tp_axes.py` drives the undersized wire, a
+correctly shaped TP=4 control, a `disable_tp` Linear inside a TP=4 process,
+GQA/MQA replication read off the layer, and a coordinate-less layer through
+the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
+stand-ins.
 
 ## 4. Allocation and the uniform gate
 
@@ -1918,6 +2103,25 @@ roster is wrong and would let a receipt exempt an arm by deleting its proof.
 `plane_moved=false` is recorded and deliberately not required: an arm whose
 lever reached nothing is an ineffective arm, which is a result and not a
 broken comparison.
+
+**The evidence that derives it is established before the obligations are.**
+`schedule` and the refit's coupled-landing diagnostics decide what an arm is,
+so they are evidence exactly as the proofs are, and a receipt that does not
+record them has not shown an arm to be exempt -- it has failed to say what the
+arm is. Reading them with a `.get()` and answering "not a trailing pair" made
+*deleting one field* a way past every matched-pair check, over an explicitly
+recorded `codes_identical: false` -- the very failure the validator exists to
+catch (tessera#299). Unknown is now refused by name and never exempts:
+`classify_trailing_pair` returns the reason a receipt could not be classified
+beside its answer, an arm whose `schedule` is absent, empty or unparseable and
+an arm whose `refit` records no per-call diagnostics are both refused as
+unclassified, and any matched-pair leg such an arm *did* record is still read,
+so a recorded failure cannot be cleared by removing the field that classifies
+the comparison. The control's schedule is the one exception in scope: it is
+the baseline every other arm in the unit is classified against, so losing it
+exempts all of them at once and refuses the whole document, exactly as a
+failed drift control does. A complete receipt is unaffected -- the committed
+coupled-landing screens still exempt `B-GS+CL` on the diagnostics they record.
 
 #### The fifth leg: a screen taken off the wire does not promote
 

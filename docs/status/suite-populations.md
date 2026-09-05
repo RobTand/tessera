@@ -30,11 +30,13 @@ Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
-number is the one PrismaBuild's own worker recorded for the action that wrote
-that population. `not observed` is the remaining case -- a resumed row with no
-single finished pool action behind it -- and there the failure count is still a
-fact while a zero in it does not make the row green, because a suite can exit
-non-zero after a clean summary.
+number is the one PrismaBuild's own worker recorded for the action the
+population names as its producer, for the attempt whose own output says it
+published that population. `not observed` is the remaining case -- a resumed
+row with no single finished pool record bound to it, including a population
+that names no producer (pre-stamp, or `unknown` source) -- and there the
+failure count is still a fact while a zero in it does not make the row green,
+because a suite can exit non-zero after a clean summary.
 
 `mode` is how that arm ran, and it changes what the row means as much as the
 device does. The GPU arm is always `serial` -- its workers would share one
