@@ -695,7 +695,7 @@ def _leaves_outside_the_shared_conftest(root: Path) -> list[str]:
     The rule is that a source file OUTSIDE that closure still narrows.
     """
 
-    by_name, importers, probes = impacted.import_graph(root)
+    by_name, importers, probes, _ = impacted.import_graph(root)
     leaves = []
     for name, path in sorted(by_name.items()):
         if not str(path.relative_to(root)).startswith("src/"):
@@ -1065,13 +1065,14 @@ def test_a_box_artifacts_edit_selects_the_tests_that_read_its_roots():
         assert shipped in result["tests"], "the audit's named example"
 
 
-def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
+def test_an_unparseable_file_beside_the_change_is_uncertain_not_a_crash(tmp_path):
     """A file the branch is mid-edit on must not take the selector down.
 
     ``_imports`` answers with three sets and answered a syntax error with one,
     so every caller unpacked it into a ``ValueError`` -- and a selector that
     raises selects nothing at all, which is the failure mode this tool exists
-    to refuse.
+    to refuse.  Nothing imports this one, so its uncertainty reaches no test
+    and the narrowed list is unchanged; the receipt still names it (#293).
     """
 
     repo, base = _dynamic_repo(tmp_path, '''
@@ -1086,6 +1087,123 @@ def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
     assert importers.get("support.broken", set()) == set()
     result = _selector(repo, f"{base}...HEAD")
     assert result["tests"] == ["tests/test_dynamic.py"], result
+    assert result["verdict"] == "narrowed", result
+    assert "SyntaxError" in result["unreadable_sources"]["support/broken.py"]
+
+
+def test_an_unparseable_importer_of_the_change_is_selected_not_erased(tmp_path):
+    """#293: a file that does not parse states no dependency, not none.
+
+    ``_imports`` answered a ``SyntaxError``/``OSError`` with three empty sets,
+    which reads as proof that the module imports nothing.  A test that imports
+    the changed leaf and does not parse therefore lost its edge, and the
+    selected branch check ran nothing while collecting that test would fail.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/test_consumer.py": '''
+            from pkg.leaf import VALUE
+            def test_consumer(): assert VALUE
+            def (
+        ''',
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert "tests/test_consumer.py" in result["tests"], result
+    assert "tests/test_unrelated.py" not in result["tests"], (
+        "one unreadable file must not widen the selection to the population")
+    assert "SyntaxError" in result["unreadable_sources"]["tests/test_consumer.py"]
+    assert "tests/test_consumer.py" in result["reason"], result["reason"]
+    assert result["unresolved_file_loaders"] == [], (
+        "an unreadable file is not an unresolved file loader")
+
+
+def test_an_unreadable_source_names_the_file_and_the_read_failure(tmp_path):
+    """The other half of the same `except`: the file could not be read at all.
+
+    A broken link, a permission, a file the branch deleted under the analysis.
+    The operator has to be told which file and what went wrong to repair it.
+    """
+
+    repo, _ = _repo(tmp_path)
+    (repo / "src/pkg").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    (repo / "src/pkg/__init__.py").write_text("", encoding="utf-8")
+    (repo / "src/pkg/leaf.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "tests/test_consumer.py").symlink_to(repo / "tests/gone.py")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert "tests/test_consumer.py" in result["tests"], result
+    reason = result["unreadable_sources"]["tests/test_consumer.py"]
+    assert reason.startswith("FileNotFoundError"), reason
+
+
+def test_an_unreadable_conftest_forces_the_population_it_gates(tmp_path):
+    """#293: a conftest that cannot be parsed makes its whole scope unknown.
+
+    Every test at or below it is collected through it, so nothing below it can
+    be reasoned about -- the same escalation an unresolved loader in a conftest
+    already gets.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/conftest.py": "import pytest\ndef (\n",
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "full", result
+    assert "tests/conftest.py" in result["forces_full"], result
+    assert "SyntaxError" in result["unreadable_sources"]["tests/conftest.py"]
+
+
+def test_supported_syntax_still_narrows_and_reports_nothing_unreadable(tmp_path):
+    """The control: the uncertainty is the failure, not the file's presence."""
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/leaf.py": "VALUE = 1\n",
+        "tests/conftest.py": "import pytest\n",
+        "tests/test_consumer.py": (
+            "from pkg.leaf import VALUE\ndef test_consumer(): assert VALUE\n"),
+        "tests/test_unrelated.py": "def test_unrelated(): pass\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    result = impacted.select(repo, ["src/pkg/leaf.py"])
+
+    assert result["verdict"] == "narrowed", result
+    assert result["tests"] == ["tests/test_consumer.py"], result
+    assert result["unreadable_sources"] == {}, result
+
+
+def test_this_repository_has_no_unreadable_source():
+    """A tree with an unreadable file cannot narrow, so say when one appears."""
+
+    result = impacted.select(ROOT, ["src/tessera/kernel.py"])
+    assert result["unreadable_sources"] == {}, result["unreadable_sources"]
 
 
 def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):

@@ -7,12 +7,24 @@ is a judgement call made by whoever is in a hurry.  This computes it instead:
 parse every module's imports, invert the edges, and take everything
 reverse-reachable from the changed set.
 
-**It fails open, and that is the point.** Besides ordinary imports, explicit
+**It fails open to the full run, and never under-selects: that is the whole
+contract.** Every gap in what this can prove resolves towards running more
+tests -- an ambiguous spelling edges to every file it can name, a module whose
+dependencies cannot be established selects its consumers, and an unresolvable
+scope forces the whole suite. A narrowed list is a claim that the graph read
+everything relevant; where it did not, the honest answer is ``full``.
+
+Besides ordinary imports, explicit
 file loaders and source reads contribute edges from resolved paths, not module
 labels. A path it cannot resolve conservatively selects the reading module's
 reverse-reachable tests for any non-inert change, and an unresolved *loader*
 reaching a conftest forces full -- a conftest that can run code it cannot name
-makes every test below it unpredictable. An unresolved *read* does not: bytes
+makes every test below it unpredictable. A file that will not parse or read is
+the same uncertainty from the other end: it states no dependency, which is not
+the same as having none, so it too may import anything, its consumers are
+selected, and an unreadable conftest forces the population it gates. The
+receipt names it and the failure, because that one is repairable (#293). An
+unresolved *read* does not: bytes
 become a Python dependency only when something parses or executes them, and
 ``tessera._dev.source_dependencies`` says which readers can. Reading that
 distinction the other way is what made this tool return ``full`` for every
@@ -140,7 +152,12 @@ def _package_name(path: Path, root: Path) -> str | None:
     return alias or None
 
 
-def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[str]]:
+def _imports(
+    path: Path,
+    own: str,
+    root: Path,
+    unreadable: dict[str, str] | None = None,
+) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
     Statement imports, modules named by an explicit file path, and repository
@@ -152,11 +169,21 @@ def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (SyntaxError, OSError):
+    except (SyntaxError, OSError) as exc:
         # Three sets, like every other return here: answering with one made
         # the caller's unpack raise, and a selector that raises selects
-        # nothing.  A file that does not parse states no dependencies.
-        return set(), set(), set()
+        # nothing.  But three EMPTY sets state that this module imports
+        # nothing, which is the opposite of what a failed parse establishes.
+        # A file nobody could read states no dependency, and "no dependency
+        # stated" is uncertainty, not independence (#293): a test importing
+        # the changed leaf that does not parse lost its edge and its
+        # selection, while collecting it would have failed.  So it is the
+        # WILDCARD case the unresolved-loader path already models -- this
+        # module may import anything -- and the file and its failure are
+        # recorded so the operator can repair it.
+        if unreadable is not None:
+            unreadable[str(path.relative_to(root))] = f"{type(exc).__name__}: {exc}"
+        return {WILDCARD}, set(), set()
     # An ``__init__.py`` IS its package: ``from .child import VALUE`` there
     # names ``pkg.child``, not a top-level ``child``.  Climbing from the
     # parent instead lost every relative re-export a package initializer
@@ -217,12 +244,16 @@ def _is_collection_probe(importer: Path, target: Path | None) -> bool:
 
 def import_graph(
     root: Path,
-) -> tuple[dict[str, Path], dict[str, set[str]], set[tuple[str, str]]]:
-    """The graph, plus the reverse edges that are collection probes.
+) -> tuple[dict[str, Path], dict[str, set[str]],
+           set[tuple[str, str]], dict[str, str]]:
+    """The graph, the collection-probe reverse edges, and what would not read.
 
     ``importers`` is keyed by module name and, for a file read by an explicit
     path that is not Python, by its repository-relative path -- so a JSON spec
-    or a shell harness a module reads is a node like any other.
+    or a shell harness a module reads is a node like any other.  ``unreadable``
+    maps the repository-relative path of every file that would not parse or
+    read to the failure, and each of those files is a ``WILDCARD`` importer:
+    the graph does not know what it depends on (#293).
     """
     files = [
         p for p in root.rglob("*.py")
@@ -272,8 +303,9 @@ def import_graph(
 
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
+    unreadable: dict[str, str] = {}
     for name, path in by_name.items():
-        statements, loaded, data = _imports(path, name, root)
+        statements, loaded, data = _imports(path, name, root, unreadable)
         for target in statements:
             if target == WILDCARD:
                 importers[WILDCARD].add(name)
@@ -304,12 +336,12 @@ def import_graph(
                 probes.add((target, name))
         for target in data:
             importers[target].add(name)
-    return by_name, importers, probes
+    return by_name, importers, probes, unreadable
 
 
 def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
     """Module name -> file, and module name -> the modules that import it."""
-    by_name, importers, _ = import_graph(root)
+    by_name, importers, _, _ = import_graph(root)
     return by_name, importers
 
 
@@ -450,7 +482,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # that it is harmless scaffolding from its spelling, so fail open.
     forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
-    by_name, importers, probes = import_graph(root)
+    by_name, importers, probes, unreadable = import_graph(root)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
 
     # Seed from the path, not from a lookup in the checked-out tree.  The
@@ -471,13 +503,20 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             # path, whatever its suffix.
             seeds.add(f)
             data_changed.add(f)
-    unresolved = (importers.get(WILDCARD, set())
-                  if any(Path(f).suffix not in INERT for f in changed) else set())
-    seeds.update(unresolved)
+    # Two kinds of module state an unknown dependency: one that loads a file
+    # by a path this cannot resolve, and one that would not parse or read at
+    # all.  They seed identically -- their consumers are selected, and a
+    # conftest among them forces the population -- and are reported apart,
+    # because "repair this file" is the only action one of them admits.
+    uncertain = (importers.get(WILDCARD, set())
+                 if any(Path(f).suffix not in INERT for f in changed) else set())
+    seeds.update(uncertain)
+    unresolved = {name for name in uncertain
+                  if str(by_name[name].relative_to(root)) not in unreadable}
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
     # become the conftest's by way of the conftest having exec'd it.
-    uncertain_consumers = _reverse_reachable(unresolved, importers, skip=probes)
+    uncertain_consumers = _reverse_reachable(uncertain, importers, skip=probes)
     forced += [str(by_name[name].relative_to(root)) for name in sorted(uncertain_consumers)
                if by_name[name].name == "conftest.py"]
     missing = [f for f in changed
@@ -547,6 +586,9 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         "forces_full": forced,
         "unresolved_file_loaders": sorted(
             str(by_name[name].relative_to(root)) for name in unresolved),
+        # A property of the tree, not of this change: report it whether or not
+        # this change reaches it, because it is a defect to repair either way.
+        "unreadable_sources": {path: unreadable[path] for path in sorted(unreadable)},
         "reason": _selection_reason(
             changed,
             missing=missing,
@@ -558,6 +600,14 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     }
     if unresolved:
         result["reason"] += "; unresolved file loaders conservatively select their consumers"
+    unreadable_reached = sorted(str(by_name[name].relative_to(root))
+                                for name in uncertain - unresolved)
+    if unreadable_reached:
+        result["reason"] += (
+            "; sources that would not parse or read state no dependency and "
+            "conservatively select their consumers -- repair "
+            + ", ".join(f"{path} ({unreadable[path].split(':', 1)[0]})"
+                        for path in unreadable_reached))
     if scopes:
         result["reason"] += (
             "; a changed path reaches a conftest, which pytest imports for "
@@ -595,6 +645,10 @@ def main() -> int:
     else:
         print(f"verdict: {verdict}  ({len(changed)} changed, {len(tests)} tests)")
         print(f"comparison: {comparison}")
+        if result["unreadable_sources"]:
+            print("would not parse or read (dependencies unknown; repair these):")
+            for path, failure in result["unreadable_sources"].items():
+                print(f"  {path}: {failure}")
         if forced:
             print("forces full run:")
             for f in forced:
