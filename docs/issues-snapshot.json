@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T20:47:19Z",
+ "generated": "2026-09-05T21:56:47Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -504,7 +504,7 @@
     "title": "[P3] Two homes for text-only staging: stage_text_only and stage_text_only_under_work_root duplicate the default strip-key list"
    },
    "211": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign rewrites the export inputs before the resume identity can refuse them"
    },
    "212": {
@@ -524,19 +524,19 @@
     "title": "One home for text-only staging (fixes #210)"
    },
    "216": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Export-seal capture context is a hard-coded roster: CAPTURE_CONTEXT_FIELDS is not derived from or pinned to tessera.export.CAPTURE_CONTEXT"
    },
    "217": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The dead-override census cannot see an 'except RuntimeError' swallow, which is the shape DeadVendoredOverrideError's own docstring invites"
    },
    "218": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Production cache fill crashes with KeyError on INT4_W4A16_g128: the new static-activation gate upper-cases a mixed-case registry name and looks it up"
    },
    "219": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Resume-after-coordinator-death test can leak a forever-spinning orphan: the release write is not in a finally, unlike its sibling test"
    },
    "22": {
@@ -544,28 +544,44 @@
     "title": "Bit-exact zero-price: unmeasured-output_mse packed rows, and A16 rungs that are DP-legal but unexportable"
    },
    "220": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera packed-expert bridge: price it, carry it, export it (#183, items 1-3)"
    },
    "221": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two homes for 'does this route execute the static NVFP4 activation contract': the campaign and export lane still compare the name, after #205 made it the spec's answer"
    },
    "222": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Routed export silently re-encodes from source when an allocation carries no projection at all"
    },
    "223": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Write the export leg's inputs after the resume identity, not before (#211)"
    },
    "224": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Resolve a format name once, in the registry; make the production-cache fill gate total (#218)"
    },
    "225": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
+   },
+   "226": {
+    "state": "CLOSED",
+    "title": "Tessera campaign and export lane: ask the contract, not the format name (#221)"
+   },
+   "227": {
+    "state": "OPEN",
+    "title": "[P1] Bind Tessera cached scores and validation to the resolved activation-scale policy"
+   },
+   "228": {
+    "state": "CLOSED",
+    "title": "Tessera export: name which path produced the routed-expert bytes (#222) and stop bundling when no expert is selected (#229)"
+   },
+   "229": {
+    "state": "CLOSED",
+    "title": "[P1] Skip expert-wire bundling when the allocation keeps all experts in BF16"
    },
    "23": {
     "state": "CLOSED",
@@ -1922,11 +1938,11 @@
     "title": "[P1] contract v21: routed-MoE smoke.status 'recorded' rests on an undeclared, underived aggregation, and the control that made the residual 'repetitive' readable was deleted in the same commit"
    },
    "328": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Exports still stamp tessera_config.json with tp_size: 1 under a superseded 'must be re-encoded per rank' claim, and no loader reads it"
    },
    "329": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] The TP seam refuses a rotated unit with a granularity message naming a tensor_parallel_size that cannot exist"
    },
    "33": {
@@ -1934,11 +1950,11 @@
     "title": "CanonicalEncodingError on a non-dyadic global_scale names the varint domain, not the scale"
    },
    "330": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "runtime_contract.json does not publish the KV-head replication rule the loader now enforces"
    },
    "331": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] merge_suite binds an attempt by string-matching conftest's publication line, and the only test writes both sides"
    },
    "332": {
@@ -1946,12 +1962,60 @@
     "title": "lane-eligibility v9: derive the routed-MoE smoke status word from a record (#327)"
    },
    "333": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "merge_suite: bind an attempt to the population's bytes, from one home (#331)"
+   },
+   "334": {
+    "state": "CLOSED",
+    "title": "Gate the contract's silence about KV-head replication (#330)"
+   },
+   "335": {
+    "state": "CLOSED",
+    "title": "Derive what an artifact says about slicing and gate on it (#328); report why a unit cannot be cut (#329)"
+   },
+   "336": {
+    "state": "OPEN",
+    "title": "[P0] Parsing a released shard drops its counts and rewriting moves the overrides"
+   },
+   "337": {
+    "state": "OPEN",
+    "title": "[P0] Prevent failed legacy-export retries from publishing mixed checkpoint bytes"
+   },
+   "338": {
+    "state": "OPEN",
+    "title": "[P1] Preserve data dependency uncertainty when the lexical path guard refuses resolution"
+   },
+   "339": {
+    "state": "OPEN",
+    "title": "[P2] Prevent path resolution from traversing outside the checkout after the lexical guard passes"
    },
    "34": {
     "state": "CLOSED",
     "title": "Audit leftovers the Tier C pass documented rather than fixed"
+   },
+   "340": {
+    "state": "CLOSED",
+    "title": "[P1] Bind resumed metadata to the same bytes checked by the publication digest"
+   },
+   "341": {
+    "state": "CLOSED",
+    "title": "[P2] Bind the v22 smoke comparator to the checkout selected by its wrapper"
+   },
+   "342": {
+    "state": "CLOSED",
+    "title": "Bind the v22 smoke comparator to the checkout selected by its wrapper (#341)"
+   },
+   "343": {
+    "state": "CLOSED",
+    "title": "merge_suite: read a publication once, and bind the bytes that were read (#340)"
+   },
+   "344": {
+    "state": "OPEN",
+    "title": "export: a completed output is immutable, and its bytes are sealed (#337)"
+   },
+   "345": {
+    "state": "OPEN",
+    "title": "Restore the selector's never-under-select invariant, and bound its path resolution to the tree (#338, #339)"
    },
    "35": {
     "state": "CLOSED",

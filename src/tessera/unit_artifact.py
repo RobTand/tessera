@@ -586,15 +586,9 @@ def build_unit_artifact(
             f"{'a' if start is not None else 'no'} start state; a shard cut "
             "below row 0 carries both or neither"
         )
-    # Only a shard puts its release counts on the wire.  A whole unit's are
-    # ``grammar.release_quota`` of the total, which the reader regenerates --
-    # and writing them anyway would change the RELEASE descriptor's
-    # granularity and with it the bytes of every unit that carries releases.
-    release_counts = (
-        (getattr(unit, "release_counts", ()) or None)
-        if getattr(unit, "parent_rows", 0)
-        else None
-    )
+    # Only a shard puts its release counts on the wire, and only after they
+    # have been checked against the placement this unit actually holds.
+    release_counts = _release_counts_on_the_wire(unit, cols, superblock, unit_id)
     has_diagonals = unit.diagonals is not None
     layout = PlaneLayout(layout)
     # Refused at write, by field name: pack_uniform below checks width and
@@ -967,7 +961,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         window_sigma=wsigma,
         channel_sigma=csigma,
         **scales,
-    ), chunks, device, code)
+    ), chunks, device, code, n_released)
     if n_released and grid.arity > 1:
         raise GrammarError(
             "release is not defined at arity > 1: an override replaces one "
@@ -1159,6 +1153,124 @@ def _shard_state(manifest, chunks, device):
     )
 
 
+def _release_counts_on_the_wire(unit, cols: int, superblock: int, unit_id: str):
+    """The RELEASE descriptor's per-superblock counts, or ``None``.
+
+    ``None`` is the whole-unit spelling: a whole unit's counts are
+    ``grammar.release_quota`` of the total, which the reader regenerates, and
+    writing them anyway would change the RELEASE descriptor's granularity and
+    with it the bytes of every unit that carries releases.
+
+    A **shard**'s counts are the restriction of its parent's, which no quota
+    reproduces, so they go on the wire -- and they are derived from and checked
+    against the ``release_index`` this unit actually holds before they do.  The
+    descriptor and the placement it describes are one object (rule 1): a
+    declaration that disagrees with the placement prices bytes the reader will
+    not serve.  A shard that carries releases and declares nothing is refused
+    here, where the bytes are decided, rather than written at WHOLE_PLANE
+    granularity and respread by the reader onto positions the cut never
+    released -- which is what a parsed shard used to be rewritten as, changing
+    19 of 4096 weights by up to 0.10546875 with both artifacts parsing clean
+    (tessera#336).
+    """
+    from .grammar import superblock_count
+
+    if not getattr(unit, "parent_rows", 0):
+        return None
+    declared = tuple(getattr(unit, "release_counts", ()) or ())
+    index = unit.release_index
+    blocks = superblock_count(cols, superblock)
+    held = tuple(
+        int((((index % cols) // superblock) == block).sum())
+        for block in range(blocks)
+    )
+    if not declared:
+        if index.numel():
+            raise GrammarError(
+                f"shard {unit_id!r} holds {int(index.numel())} released "
+                "positions and declares no per-superblock RELEASE counts. Its "
+                "counts are the restriction of its parent's -- "
+                f"{list(held)} for this placement -- and no quota reproduces "
+                "them, so writing the total alone would have the reader "
+                "respread it onto positions this cut never released. Refusing "
+                "to write a release placement the RELEASE descriptor cannot "
+                "carry; cut the shard with slicing.slice_unit, which sets the "
+                "counts"
+            )
+        return None
+    if declared != held:
+        raise GrammarError(
+            f"shard {unit_id!r} declares RELEASE counts {list(declared)} and "
+            f"holds a placement binned {list(held)} over {blocks} superblocks: "
+            "the descriptor and the release_index it describes are one object"
+        )
+    return declared
+
+
+def _shard_release_counts(manifest, n_released: int):
+    """The per-superblock RELEASE counts a shard's terminal actually selects.
+
+    ``None`` when there is no such vector to read: every whole unit, and a
+    shard whose RELEASE plane is empty and therefore written at the whole-unit
+    granularity.  That is the case the reader respreads.
+
+    A terminal is a **prefix** of the declared extent, and a shard's RELEASE
+    plane is written superblock by superblock (``decode.release_order``), so
+    the terminal's count is a prefix sum of the descriptor's and what it
+    selects is the descriptor's vector cut at that boundary -- the leading
+    superblocks whole, every later one at zero.  Copying the full-extent
+    descriptor instead would tell the reader, and the next writer, that the
+    shard holds releases its terminal never carried.
+
+    One home for that prefix rule: ``_release_placement`` places the codes by
+    it and ``_as_unit`` restores it onto the unit, and the two answering
+    separately is how a parsed shard came back with an empty count vector
+    (tessera#336).
+    """
+    from .planes import CountGranularity
+
+    if manifest.shard is None:
+        return None
+    descriptor = manifest.plane(PlaneKind.RELEASE)
+    if (
+        descriptor is None
+        or descriptor.count_granularity is not CountGranularity.PER_SUPERBLOCK
+    ):
+        if n_released:
+            # The writer refuses to produce this (``_release_counts_on_the_wire``)
+            # and one rule means the reader refuses the same byte string rather
+            # than decoding it: respreading a shard's total names a different
+            # set of positions, and nothing else here would notice -- the plane
+            # is a legal 4-bit field either way and the artifact stays
+            # byte-self-consistent while decoding to weights no cut produced.
+            raise GrammarError(
+                "a shard's RELEASE plane carries per-superblock counts; this "
+                f"one declares {n_released} released positions at "
+                f"{'no' if descriptor is None else descriptor.count_granularity.name}"
+                " granularity. A shard's counts are the restriction of its "
+                "parent's and no quota reproduces them, so respreading this "
+                "total would place every code on a position the cut never "
+                "released. Refusing to decode; re-export the shard from its "
+                "parent (tessera#336)"
+            )
+        return None
+    counts = list(descriptor.counts)
+    running = 0
+    for position, count in enumerate(counts):
+        if running == n_released:
+            # Every superblock from here on is past the terminal's cut.
+            counts[position:] = [0] * (len(counts) - position)
+            break
+        running += count
+    if running != n_released:
+        raise GrammarError(
+            f"the terminal's {n_released} released positions is not a "
+            "superblock prefix of the RELEASE plane's counts "
+            f"{list(descriptor.counts)}"
+        )
+    return tuple(counts)
+
+
 def _release_placement(manifest, decoded, cols: int, n_released: int):
     """Which positions the RELEASE plane overrides, in plane order.
 
@@ -1171,32 +1283,17 @@ def _release_placement(manifest, decoded, cols: int, n_released: int):
     """
     from .decode import release_order
     from .encode import _canonical_release_order
-    from .planes import CountGranularity
 
     superblock = manifest.geometry.superblock_columns
     descriptor = manifest.plane(PlaneKind.RELEASE)
+    counts = _shard_release_counts(manifest, n_released)
+    if counts is not None:
+        # The terminal's own prefix of the descriptor's vector, so the order
+        # this returns is exactly ``n_released`` long by construction rather
+        # than by a trailing slice.
+        return release_order(decoded, cols, superblock, counts)
     if descriptor is None:
         return _canonical_release_order(decoded, cols, superblock, n_released)
-    if (
-        manifest.shard is not None
-        and descriptor.count_granularity is CountGranularity.PER_SUPERBLOCK
-    ):
-        # A rung of a shard's plane is its first whole superblocks: the plane
-        # is written superblock by superblock (``decode.release_order``) and
-        # the manifest admits only a granule boundary, so the terminal's
-        # count is a prefix sum of the descriptor's.  Checked here too --
-        # this is the reader that would place the codes wrongly otherwise.
-        prefix, running = {0}, 0
-        for count in descriptor.counts:
-            running += count
-            prefix.add(running)
-        if n_released not in prefix:
-            raise GrammarError(
-                f"the terminal's {n_released} released positions is not a "
-                "superblock prefix of the RELEASE plane's counts "
-                f"{list(descriptor.counts)}"
-            )
-        return release_order(decoded, cols, superblock, descriptor.counts)[:n_released]
     # A whole unit's placement is the canonical order at the *plane's* total
     # -- the total the writer placed and ranked -- and a shorter terminal
     # reads its first ``n_released`` codes against the first ``n_released``
@@ -1214,13 +1311,20 @@ def _release_placement(manifest, decoded, cols: int, n_released: int):
     )[:n_released]
 
 
-def _as_unit(manifest, fields: dict, chunks, device, code):
+def _as_unit(manifest, fields: dict, chunks, device, code, n_released: int):
     """``EncodedUnit``, or the ``SlicedUnit`` a shard's manifest describes.
 
     A shard is a unit plus a start state, so this is where the reader learns
     that its body does not begin at the pinned zero -- and where a state whose
     width contradicts the body is refused, after the profile id has resolved
     the convolutional code the manifest could not check against.
+
+    It is also where the shard's RELEASE count vector comes back onto the unit.
+    That vector is the one thing about a shard's releases that no reader
+    derives -- ``grammar.release_quota`` reproduces a whole unit's counts and
+    nothing reproduces a restriction of them -- so leaving it at its empty
+    default meant a parsed shard, written out again, declared a whole unit's
+    total and had the reader respread it onto different positions (tessera#336).
     """
     from .layout import SlicedUnit
 
@@ -1236,6 +1340,7 @@ def _as_unit(manifest, fields: dict, chunks, device, code):
                 f"shard declares {shard.state_bits}. Refusing to replay a body "
                 "from a state of the wrong width"
             )
+    counts = _shard_release_counts(manifest, n_released)
     return SlicedUnit(
         **fields,
         row_offset=shard.row_offset,
@@ -1244,6 +1349,7 @@ def _as_unit(manifest, fields: dict, chunks, device, code):
         parent_rows=shard.parent_rows,
         parent_columns=shard.parent_columns,
         parent_digest=shard.parent_digest,
+        release_counts=() if counts is None else counts,
         state_bits=shard.state_bits,
     )
 
@@ -1360,7 +1466,7 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
         window_sigma=wsigma,
         channel_sigma=csigma,
         **scales,
-    ), chunks, device, None)
+    ), chunks, device, None, n_released)
     if n_released and grid.arity > 1:
         raise GrammarError("release is not defined at arity > 1")
     if n_released:

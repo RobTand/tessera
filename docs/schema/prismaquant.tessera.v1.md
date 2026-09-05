@@ -311,7 +311,16 @@ the top `k` of that subset in the same order.
 is set, reads the record, selects the shard plane order, and refuses: a state
 plane without a record, a record whose `row_offset`/`state_bits` disagree on
 presence, a state width that contradicts the body, a state element count that
-is not the column count, or a shard whose extent runs past the parent it names.
+is not the column count, a shard whose extent runs past the parent it names,
+or a shard whose terminal declares released positions while its RELEASE
+descriptor is not `PER_SUPERBLOCK` — there is no total a reader may respread
+for a shard, and such an artifact decodes, byte-self-consistently, to weights
+no cut produced (tessera#336). The counts it does read come back on the parsed
+unit at the *terminal's* boundary, not the descriptor's full extent: a
+terminal is a prefix of the declared extent, so every superblock past its cut
+reads as zero. A writer derives that vector from the placement it is about to
+write and refuses a shard whose declaration disagrees with it, so the
+descriptor and the `release_index` it describes are one object at both ends.
 A header below minor 4 carrying a shard record cannot occur, because the
 manifest declares minor 4 whenever the record is present.
 

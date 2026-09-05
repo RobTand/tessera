@@ -75,6 +75,7 @@ from tessera.manifest import BodyKind, ScalePlaneKind, ShardOrigin
 from tessera.planes import (
     CANONICAL_PLANE_ORDER,
     SHARD_PLANE_ORDER,
+    CountGranularity,
     PlaneKind,
     PlaneLayout,
     plane_order,
@@ -652,6 +653,453 @@ def test_a_reslice_of_a_released_shard_serialises_its_record(cpu_released_unit):
     assert torch.equal(
         reconstruct_unit(back.unit, back.forests, back.code), full[low:]
     )
+
+
+# ------------------------- a parsed shard rewrites to itself (tessera#336)
+#
+# The test above cuts twice **in memory** and serialises once, so the shard
+# object it writes is always one ``slice_unit`` built, counts and all.  What no
+# test held was the other direction: bytes -> ``SlicedUnit`` -> bytes.  A rank
+# that reads a shard and writes it back out -- a re-shard, a merge, a cache
+# round trip -- went through ``unit_artifact._as_unit``, which restored the
+# origin and the start state and left ``release_counts`` empty, and
+# ``build_unit_artifact`` then wrote the shard's total as a whole unit's, at
+# WHOLE_PLANE granularity, for the reader to respread onto a different set of
+# positions.  Both artifacts parsed; the weights differed.
+
+
+def _shard_blob(shard, forests, root_q256, label="released-shard"):
+    """One shard artifact, written the way a rank writes one.
+
+    ``fixture_id=None`` throughout, so the first write and the rewrite are
+    compared on the bytes the cut decides and not on an encoder identity
+    neither of them moves.
+    """
+    return build_unit_artifact(
+        shard, label, forests, root_q256, CODE, fixture_id=None,
+    )
+
+
+def _rewrite(parsed, root_q256, label="released-shard"):
+    """The parsed unit written straight back out, with nothing else changed."""
+    return _shard_blob(parsed.unit, parsed.forests, root_q256, label)
+
+
+def _release_counts_of(manifest):
+    return tuple(manifest.plane(PlaneKind.RELEASE).counts)
+
+
+@pytest.fixture(scope="module")
+def s6b_released_parent():
+    """tessera#336's own construction: the committed S6b artifact, given 96
+    ordinary releases and written back out as a whole unit.
+
+    No encoder runs.  The releases are placed by the canonical rule at the
+    parent's own decode, which is what an encode would have placed them at, so
+    the parent is an artifact the reader accepts on its own terms -- and the
+    cuts below then carry a *restriction* of a quota, which is the vector no
+    reader regenerates.
+    """
+    legacy = pathlib.Path(__file__).parent / "data" / "legacy"
+    parsed = _cpu_parse((legacy / "e2m1-256-cfull-s6b-512c.tessera").read_bytes())
+    geometry = parsed.manifest.geometry
+    cols, superblock = geometry.columns, geometry.superblock_columns
+    unit = parsed.unit
+    decoded = reconstruct_unit(unit, parsed.forests, parsed.code)
+    unit.release_index = _canonical_release_order(decoded, cols, superblock, 96)
+    unit.release_code = torch.arange(96) % 16
+    _m, _r, blob = build_unit_artifact(
+        unit, "released-parent", parsed.forests, parsed.manifest.branch.root_q256,
+        parsed.code, fixture_id=None,
+    )
+    return _cpu_parse(blob)
+
+
+@pytest.mark.parametrize("rows", [(0, 8), (8, 16), (4, 12)])
+def test_the_s6b_reproduction_rewrites_a_released_shard_to_the_same_bytes(
+    s6b_released_parent, rows
+):
+    """tessera#336, fail-before: parse a released shard and write it again.
+
+    Measured on the unfixed reader at the middle cut: the shard's descriptor
+    said ``(19, 17)``, ``parsed.unit.release_counts`` came back ``()``, the
+    rewrite declared ``(36,)`` at WHOLE_PLANE granularity, the reader
+    substituted the quota ``(18, 18)``, and 19 of 4096 weights moved by up to
+    0.10546875 -- with both artifacts parsing clean, which is the whole reason
+    this is a P0 and not a crash.  The other two cuts moved 32 and 27 weights.
+
+    A rewrite must be the identity here: nothing about the shard changed
+    between the two writes, so anything but the same bytes is the writer
+    deciding something the cut already decided.
+    """
+    parsed = s6b_released_parent
+    low, high = rows
+    shard = slice_unit(parsed, rows=rows)
+    manifest, _r, blob = _shard_blob(
+        shard, parsed.forests, parsed.manifest.branch.root_q256
+    )
+    # The premises, derived: two superblocks, and counts a quota does not give.
+    assert len(shard.release_counts) == 2
+    assert tuple(shard.release_counts) != release_quota(
+        int(shard.release_index.numel()),
+        parsed.manifest.geometry.columns,
+        parsed.manifest.geometry.superblock_columns,
+    )
+    assert _release_counts_of(manifest) == tuple(shard.release_counts)
+
+    first = _cpu_parse(blob)
+    # The vector no reader regenerates, back on the unit the reader returns.
+    assert tuple(first.unit.release_counts) == tuple(shard.release_counts)
+    rewritten_manifest, _r, rewritten = _rewrite(
+        first, parsed.manifest.branch.root_q256
+    )
+    assert _release_counts_of(rewritten_manifest) == tuple(shard.release_counts)
+    assert rewritten == blob
+    second = _cpu_parse(rewritten)
+    assert torch.equal(second.unit.release_index, first.unit.release_index)
+    assert torch.equal(second.unit.release_code, first.unit.release_code)
+    parent = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    window = parent[low:high]
+    assert torch.equal(
+        reconstruct_unit(first.unit, first.forests, first.code), window)
+    assert torch.equal(
+        reconstruct_unit(second.unit, second.forests, second.code), window)
+
+
+@pytest.fixture(scope="module")
+def window_released_unit():
+    """A WINDOW-body parent that carries releases, on the one grid a release
+    is defined over.
+
+    ``grammar.release_defined_on`` admits exactly the grids whose code space
+    fits ``RELEASE_BITS``, which today is E2M1 alone, and no shipping recipe
+    pairs E2M1 with a window body -- so this is built off the recipe table
+    rather than through ``wire_recipe``.  The format writes it (the window
+    reader has its own release branch, ``unit_artifact._read_window_unit``) and
+    a reader still has to slice it, which is the same reason this file carries
+    an S6b case no recipe selects.  A window body has no trellis, so the encode
+    is a fraction of a second.
+
+    Row-opposed ramps across the two superblocks, so a row cut keeps most of
+    one superblock's releases and none of the other's: that is the zero count
+    the acceptance list asks for, and no quota produces it.
+    """
+    grid = GRIDS["E2M1"]
+    rows, cols, superblock = 16, 512, 256
+    q256 = tcq_cap_q256(grid)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    ramp = torch.linspace(0.25, 4.0, rows).unsqueeze(1)
+    weight[:, :superblock] *= ramp
+    weight[:, superblock:] *= ramp.flip(0)
+    rates, forests = _plan_for(grid, q256, cols, BodyKind.WINDOW, None)
+    unit = encode_unit(
+        weight, forests, rates, CODE, completion=0, released_positions=96,
+        span=1, scale_plane=ScalePlaneKind.LUT, body=BodyKind.WINDOW,
+        window_bits=12, window_seed=1234, scale_refit=2,
+    )
+    _m, _r, blob = build_unit_artifact(
+        unit, "e2m1-window-lut-release", forests, q256 * grid.arity, CODE,
+        fixture_id=None,
+    )
+    return _cpu_parse(blob)
+
+
+#: ``(body, rows)``.  The two parents have different heights, so the cuts are
+#: stated per body rather than scaled: each is a row window that empties one
+#: superblock's releases and keeps the other's, one of them at row zero.
+_REWRITE_CUTS = [
+    ("tcq", (0, 16)), ("tcq", (16, 32)), ("tcq", (12, 20)),
+    ("window", (0, 8)), ("window", (12, 16)), ("window", (4, 8)),
+]
+
+
+@pytest.mark.parametrize("body,rows", _REWRITE_CUTS)
+def test_a_parsed_released_shard_rewrites_to_itself(
+    cpu_released_unit, window_released_unit, body, rows
+):
+    """tessera#336 over both bodies, at row-zero and nonzero-row cuts, with a
+    superblock that releases nothing.
+
+    The cuts are chosen for what they make the count vector do, and the test
+    asserts that rather than trusting it: ``(0, n)`` at the row-zero cut, which
+    carries no INITIAL_STATE plane, and ``(n, 0)`` at the nonzero-row cuts,
+    which do.  A zero count is the case a respread cannot even approximate --
+    the quota puts half the releases in a superblock the cut released nothing
+    in -- and it is also the case that must NOT be confused with "this shard
+    has no counts": that spelling belongs to a shard of a parent that released
+    nothing, and it keeps its whole-unit descriptor here.
+    """
+    if body == "tcq":
+        _u, forests, _grid, blob = cpu_released_unit
+        parsed = _cpu_parse(blob)
+    else:
+        parsed = window_released_unit
+        forests = parsed.forests
+    low, high = rows
+    root_q256 = parsed.manifest.branch.root_q256
+    geometry = parsed.manifest.geometry
+    cols, superblock = geometry.columns, geometry.superblock_columns
+    assert superblock_count(cols, superblock) == 2
+
+    shard = slice_unit(parsed, rows=(low, high))
+    counts = tuple(shard.release_counts)
+    assert len(counts) == 2 and sum(counts) == int(shard.release_index.numel())
+    assert 0 in counts and sum(counts), (
+        f"cut [{low}, {high}) of the {body} parent was meant to empty one "
+        f"superblock and fill the other; it binned {counts}"
+    )
+    assert (shard.initial_state is not None) == (low > 0)
+
+    manifest, _r, first_blob = _shard_blob(shard, forests, root_q256)
+    assert _release_counts_of(manifest) == counts
+    first = _cpu_parse(first_blob)
+    assert tuple(first.unit.release_counts) == counts
+
+    rewritten_manifest, _r, rewritten = _rewrite(first, root_q256)
+    assert _release_counts_of(rewritten_manifest) == counts
+    assert rewritten == first_blob
+    second = _cpu_parse(rewritten)
+    assert torch.equal(second.unit.release_index, first.unit.release_index)
+    assert torch.equal(second.unit.release_code, first.unit.release_code)
+    window = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)[low:high]
+    assert torch.equal(
+        reconstruct_unit(first.unit, first.forests, first.code), window)
+    assert torch.equal(
+        reconstruct_unit(second.unit, second.forests, second.code), window)
+
+
+def test_a_shard_of_an_unreleased_parent_keeps_the_whole_unit_spelling(cpu_units):
+    """Byte compatibility, both directions of the round trip.
+
+    A parent that released nothing gives a shard with no count vector at all,
+    and that shard's RELEASE descriptor is the whole-unit one -- an empty plane
+    at WHOLE_PLANE granularity, exactly as it was before tessera#336.  A
+    reader must give that shard back an empty ``release_counts`` and not a
+    vector of zeros, or the rewrite would move bytes on every unreleased shard
+    in existence.
+    """
+    _unit, forests, _grid, blob = cpu_units["s6b-tcq"]
+    parsed = _cpu_parse(blob)
+    assert parsed.unit.released_positions == 0
+    shard = slice_unit(parsed, rows=(16, 48))
+    assert tuple(shard.release_counts) == ()
+    manifest, _r, first_blob = _shard_blob(shard, forests,
+                                           parsed.manifest.branch.root_q256)
+    descriptor = manifest.plane(PlaneKind.RELEASE)
+    assert descriptor.count_granularity is CountGranularity.WHOLE_PLANE
+    assert descriptor.element_count == 0
+    first = _cpu_parse(first_blob)
+    assert tuple(first.unit.release_counts) == ()
+    _m, _r, rewritten = _rewrite(first, parsed.manifest.branch.root_q256)
+    assert rewritten == first_blob
+
+
+def _laddered(art, manifest, spec, cap, arity):
+    """``art`` re-serialised with one shorter rung appended, and that rung."""
+    from dataclasses import replace as _replace
+
+    from tessera.container import serialize
+    from tessera.layout import build_terminal
+
+    wire = manifest.plane_order
+    full = manifest.terminals[0]
+    rung = build_terminal(
+        manifest.geometry, manifest.rates, spec, manifest.planes,
+        full.plane_elements[wire.index(PlaneKind.ALPHABET)],
+        full.plane_elements[wire.index(PlaneKind.DESCENDANT)],
+        plane_region=art.plane_region, cap=cap, arity=arity, span=manifest.span,
+    )
+    blob = serialize(_replace(manifest, terminals=(full, rung)), art.plane_region)
+    return blob[: len(blob) - (len(art.plane_region) - rung.exact_bytes)], rung
+
+
+def _release_spec(manifest, released, unit, grid):
+    """The full terminal's shape with only the RELEASE count moved.
+
+    The completion widths are derived from the unit's own limit, never zeroed:
+    §9 ranks the **pre-release decode at the written depth**, so a rung that
+    also shortened COMPLETION would place its releases somewhere else and the
+    prefix this test asserts would not be one.
+    """
+    from tessera.grammar import completion_widths
+    from tessera.layout import TerminalSpec
+
+    wire = manifest.plane_order
+    full = manifest.terminals[0]
+
+    def count(kind):
+        return full.plane_elements[wire.index(kind)]
+
+    return TerminalSpec(
+        "t-release-rung",
+        completion_widths(manifest.rates, grid.rate_cap, unit.completion_limit),
+        released_positions=released,
+        with_scale_base=count(PlaneKind.SCALE_BASE) > 0,
+        with_scale_refine=count(PlaneKind.SCALE_REFINE) > 0,
+        with_diagonals=count(PlaneKind.DIAG_SU) > 0,
+        with_row_scale=manifest.scale_plane.kind is ScalePlaneKind.CHANNEL,
+        state_bits=0 if manifest.shard is None else manifest.shard.state_bits,
+    )
+
+
+def test_a_shorter_release_terminal_rewrites_to_its_own_prefix(
+    s6b_released_parent
+):
+    """A rung that keeps the shard's first superblock and drops the second.
+
+    The prefix rule is the descriptor's, not the total's: a shard's RELEASE
+    plane is written superblock by superblock, so the only counts a terminal
+    may declare are prefix sums of the descriptor's vector.  What the reader
+    must then hand back is that vector **cut at the same boundary** -- ``(n,
+    0)``, not the full-extent ``(n, m)`` -- because the next writer prices the
+    plane from it, and a shard that claimed releases its terminal never carried
+    would declare an extent its own region cannot fill.
+    """
+    from tessera.container import parse as parse_container
+
+    parsed = s6b_released_parent
+    grid = GRIDS["E2M1"]
+    geometry = parsed.manifest.geometry
+    cols, superblock = geometry.columns, geometry.superblock_columns
+    root_q256 = parsed.manifest.branch.root_q256
+    # A cut with both superblocks non-empty, so "the first superblock's share"
+    # is a real prefix and not the whole plane under another name.
+    shard = slice_unit(parsed, rows=(4, 12))
+    counts = tuple(shard.release_counts)
+    assert len(counts) == 2 and all(counts), (
+        f"this rung needs both superblocks populated; the cut binned {counts}")
+    # A terminal also ends on a byte (schema D4), and a RELEASE element is
+    # ``RELEASE_BITS`` wide, so the boundary this rung cuts at has to be both a
+    # superblock prefix and a whole number of bytes.
+    assert not (counts[0] * RELEASE_BITS) % 8, counts
+    manifest, _r, first_blob = _shard_blob(shard, parsed.forests, root_q256)
+    whole = _cpu_parse(first_blob)
+    art = parse_container(first_blob)
+
+    head = counts[0]
+    spec = _release_spec(manifest, head, whole.unit, grid)
+    cut, rung = _laddered(art, manifest, spec, grid.rate_cap, grid.arity)
+    assert rung.plane_elements[
+        manifest.plane_order.index(PlaneKind.RELEASE)] == head
+
+    rung_parsed = _cpu_parse(cut)
+    # The descriptor's vector at the terminal's boundary, not the descriptor's
+    # vector: the second superblock is past the cut and holds nothing.
+    assert tuple(rung_parsed.unit.release_counts) == (head, 0)
+    assert torch.equal(
+        rung_parsed.unit.release_index, whole.unit.release_index[:head])
+    assert torch.equal(
+        rung_parsed.unit.release_code, whole.unit.release_code[:head])
+    assert bool(((rung_parsed.unit.release_index % cols) < superblock).all())
+
+    rewritten_manifest, _r, rewritten = _rewrite(rung_parsed, root_q256)
+    assert _release_counts_of(rewritten_manifest) == (head, 0)
+    again = _cpu_parse(rewritten)
+    assert tuple(again.unit.release_counts) == (head, 0)
+    assert torch.equal(again.unit.release_index, rung_parsed.unit.release_index)
+    assert torch.equal(again.unit.release_code, rung_parsed.unit.release_code)
+    assert torch.equal(
+        reconstruct_unit(again.unit, again.forests, again.code),
+        reconstruct_unit(rung_parsed.unit, rung_parsed.forests, rung_parsed.code),
+    )
+    # ...and the rung is not the whole plane by another name.
+    assert not torch.equal(
+        reconstruct_unit(rung_parsed.unit, rung_parsed.forests, rung_parsed.code),
+        reconstruct_unit(whole.unit, whole.forests, whole.code),
+    )
+
+    # A count that is not a superblock prefix names positions in a superblock
+    # whose codes the plane never carried.  The manifest refuses to describe
+    # such a terminal at all -- the descriptor's counts are its granules --
+    # so the bytes cannot be built...
+    mid = head - 2  # still a whole number of bytes; still not a prefix sum
+    assert mid not in (0, counts[0], sum(counts)) and not (mid * RELEASE_BITS) % 8
+    with pytest.raises(ManifestError, match="granule boundary"):
+        _laddered(art, manifest, _release_spec(manifest, mid, whole.unit, grid),
+                  grid.rate_cap, grid.arity)
+    # ...and the reader that would place the codes keeps its own backstop, so
+    # a manifest reaching it by another route is refused rather than respread.
+    from tessera.unit_artifact import _shard_release_counts
+
+    with pytest.raises(GrammarError, match="superblock prefix"):
+        _shard_release_counts(manifest, mid)
+
+
+def test_the_writer_refuses_a_released_shard_whose_counts_it_cannot_carry(
+    cpu_released_unit
+):
+    """tessera#336's other half, where the bytes are decided.
+
+    Restoring the vector at the reader closes the path that produced a wrong
+    artifact; it does not make the wrong artifact unwritable.  A shard that
+    carries releases and declares no per-superblock counts has a placement the
+    RELEASE descriptor cannot express, and the writer must say so rather than
+    write the total and let the reader respread it -- which is precisely what
+    it did, silently, for every parsed shard.
+    """
+    _unit, forests, _grid, blob = cpu_released_unit
+    parsed = _cpu_parse(blob)
+    root_q256 = parsed.manifest.branch.root_q256
+    shard = slice_unit(parsed, rows=(16, 32))
+    assert int(shard.release_index.numel())
+
+    stripped = replace(shard, release_counts=())
+    with pytest.raises(GrammarError, match="no per-superblock RELEASE counts"):
+        _shard_blob(stripped, forests, root_q256)
+
+    # A vector that disagrees with the placement is the same defect stated the
+    # other way round, and is refused with the placement it actually holds.
+    counts = tuple(shard.release_counts)
+    swapped = replace(shard, release_counts=counts[::-1])
+    assert swapped.release_counts != counts, "the swap has to change the vector"
+    with pytest.raises(GrammarError, match="one object"):
+        _shard_blob(swapped, forests, root_q256)
+
+    # The unaltered shard still writes, so the refusal is about the
+    # disagreement and not about shards carrying releases at all.
+    _shard_blob(shard, forests, root_q256)
+
+
+def test_the_reader_refuses_a_released_shard_written_without_its_counts(
+    cpu_released_unit
+):
+    """The same rule, read back -- the bytes the unfixed writer produced.
+
+    An artifact of this shape is byte-self-consistent: every digest agrees with
+    it, the RELEASE plane is a legal 4-bit field, and nothing in the reader
+    would notice that the codes had landed on a quota's positions instead of
+    the cut's.  That is the silent misdecode the refusal exists to prevent, and
+    it is the same doctrine ``grammar.require_release_defined`` already applies
+    at both ends.
+    """
+    from dataclasses import replace as _replace
+
+    from tessera.container import parse as parse_container, serialize
+
+    _unit, forests, _grid, blob = cpu_released_unit
+    parsed = _cpu_parse(blob)
+    shard = slice_unit(parsed, rows=(16, 32))
+    manifest, _r, first_blob = _shard_blob(
+        shard, forests, parsed.manifest.branch.root_q256)
+    art = parse_container(first_blob)
+    descriptor = manifest.plane(PlaneKind.RELEASE)
+    assert descriptor.count_granularity is CountGranularity.PER_SUPERBLOCK
+
+    # Exactly what the pre-fix rewrite wrote: the shard's total, spelled as a
+    # whole unit's, over the shard's own plane region.
+    respread = _replace(
+        descriptor,
+        count_granularity=CountGranularity.WHOLE_PLANE,
+        counts=(descriptor.element_count,),
+        restart_offsets=(0,),
+    )
+    planes = tuple(
+        respread if p.kind is PlaneKind.RELEASE else p for p in manifest.planes
+    )
+    forged = serialize(_replace(manifest, planes=planes), art.plane_region)
+    with pytest.raises(GrammarError, match="per-superblock counts"):
+        _cpu_parse(forged)
 
 
 def test_the_reslice_the_issue_refused_builds(cpu_units):
