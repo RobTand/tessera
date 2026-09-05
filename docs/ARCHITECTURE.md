@@ -771,13 +771,19 @@ before loading vLLM, and since #132 that flag is a CROSS-CHECK rather than the
 source of the scope: the launcher resolves the image through docker's
 `RepoDigests` and exports the resolved reference and its record into the
 container, the census compares its argument against that record, and a run
-where the two disagree -- or where nothing attested the image at all -- refuses
-before the first model load. There is no opt-out, because a receipt stamped
-`operator_asserted` is the same defect wearing a field name. Nothing inside a
-container can ask the daemon what it is running, so this is attestation by the
-launcher's transcript, not proof; the receipt therefore records the mechanism
-in `runtime_image_attestation` (`source`, the two variables, and the record
-verbatim) and its absence marks a receipt written before this gate. Its
+where the two disagree -- or where the launcher declared no image at all --
+refuses before the first model load. There is no opt-out, because a receipt
+stamped `operator_asserted` is the same defect wearing a field name. Nothing
+inside a container can ask the daemon what it is running, so this is the
+LAUNCHER'S DECLARATION and is named one throughout: a host process can export
+the same pair by hand, so calling it an attestation would claim more than the
+mechanism delivers, and a misnamed claim about another runtime is worse than
+an absent one (principle 6). The receipt therefore records the mechanism in
+`runtime_image_declaration` (`source`, the two variables, and the record
+verbatim) and its absence marks a receipt written before this gate. Making it
+unforgeable needs something the launcher cannot write from outside -- a digest
+file mounted read-only, checked against the pin -- and until that exists the
+honest name is the whole of the guarantee. Its
 existing `--compiled` flag determines both the recorded execution mode and
 `LLM(enforce_eager=...)`. The plugin wrapper injects its resolved image after
 caller-supplied Docker environment arguments; census callers pass that

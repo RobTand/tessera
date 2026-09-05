@@ -76,8 +76,10 @@ Run it inside the serving image with the plugin installed, through
 ``TESSERA_SERVE_MODE`` selects the residency exactly as it does for ``vllm
 serve``.  Through that wrapper and no other: ``--runtime-image`` is checked
 against the reference the launcher resolved from docker's own ``RepoDigests``
-and exported into the container, and a run nothing attested refuses before the
-first model load (issue #132).
+and declared into the container, and a run the launcher declared no image for
+refuses before the first model load (issue #132).  A declaration, not an
+attestation: a host process can export the same pair by hand, which is why the
+receipt records the mechanism beside the name.
 """
 from __future__ import annotations
 
@@ -355,9 +357,12 @@ def parse_args(argv=None, env=None):
     ap.add_argument("--runtime-image", required=True,
                     help="exact repository@sha256:digest; cross-checked against the "
                          "reference the container launcher resolved from docker's "
-                         "RepoDigests and exported into this container, so it binds cell "
-                         "agreement to the runtime actually measured rather than to a "
-                         "string that was typed")
+                         "RepoDigests and DECLARED into this container, so it binds cell "
+                         "agreement to the image the launcher named rather than to a "
+                         "string that was typed. A launcher declaration, never a check "
+                         "the container itself makes: a host process can export the same "
+                         "pair by hand, and the receipt records which mechanism named the "
+                         "image")
     ap.add_argument("--expect-modules", type=int, default=None,
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -392,7 +397,7 @@ def parse_args(argv=None, env=None):
                          "receipt would carry None")
     args = ap.parse_args(argv)
     from tessera.serving.contract import require_runtime_image
-    from tessera.serving.runtime_image import RuntimeImageError, attested_reference
+    from tessera.serving.runtime_image import RuntimeImageError, declared_reference
 
     try:
         args.runtime_image = require_runtime_image(args.runtime_image, "--runtime-image")
@@ -406,9 +411,10 @@ def parse_args(argv=None, env=None):
     # `docker image inspect`'s RepoDigests into the environment and this is
     # where the claim meets that table.  Before the first model load, and with
     # no way to opt out: a stamped `operator_asserted` receipt would be the
-    # same defect wearing a field name.
+    # same defect wearing a field name -- and for the same reason this one is
+    # published as the launcher's DECLARATION, which is all the mechanism is.
     try:
-        args.runtime_image_attestation = attested_reference(args.runtime_image, env=env)
+        args.runtime_image_declaration = declared_reference(args.runtime_image, env=env)
     except RuntimeImageError as exc:
         ap.error(f"--runtime-image {args.runtime_image}: {exc}")
     args.execution_mode = "compiled" if args.compiled else "eager"
@@ -721,7 +727,7 @@ def main() -> int:
         # join rather than trust the name.  Its ABSENCE is the discriminator
         # for a receipt written before #132, when the value was whatever the
         # operator typed.
-        "runtime_image_attestation": args.runtime_image_attestation,
+        "runtime_image_declaration": args.runtime_image_declaration,
         "checkpoint_sidecars": sidecars,
         "tessera_config_groups": len(tessera_groups),
         "declared_names_mapped_to_module_space": name_map is not None,

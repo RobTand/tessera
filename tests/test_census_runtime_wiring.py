@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from tessera.serving.runtime_image import (  # noqa: E402
-    ATTESTATION_SOURCE, CENSUS_ATTESTATION_ENV, CENSUS_IMAGE_ENV, container_env, resolve)
+    CENSUS_DECLARATION_ENV, CENSUS_IMAGE_ENV, DECLARATION_SOURCE, container_env, resolve)
 
 IMAGE = "example/runtime@sha256:" + "1" * 64
 OTHER_IMAGE = "example/runtime@sha256:" + "2" * 64
@@ -30,7 +30,7 @@ def _launcher_env(reference=IMAGE):
 
 def _census():
     spec = importlib.util.spec_from_file_location(
-        "attested_census", ROOT / "tools" / "tessera_route_census.py")
+        "census_under_test", ROOT / "tools" / "tessera_route_census.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -66,18 +66,18 @@ def test_plugin_wrapper_injects_selected_image_after_caller_environment(tmp_path
                RUNTIME_IMAGE_PY=sys.executable, IMG=IMAGE, TS=str(ROOT),
                EXT=str(tmp_path / "ext"), RUNS=str(tmp_path / "runs"),
                **{CENSUS_IMAGE_ENV: "forged-host-value",
-                  CENSUS_ATTESTATION_ENV: "forged-host-attestation"})
+                  CENSUS_DECLARATION_ENV: "forged-host-declaration"})
     proc = subprocess.run(
         ["bash", str(ROOT / "experiments" / "tessera_plugin_run.sh"),
          "-e", f"{CENSUS_IMAGE_ENV}=forged-caller-value",
-         "-e", f"{CENSUS_ATTESTATION_ENV}=forged-caller-attestation", "--", "true"],
+         "-e", f"{CENSUS_DECLARATION_ENV}=forged-caller-declaration", "--", "true"],
         env=env, text=True, capture_output=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     payload = json.loads(proc.stdout.splitlines()[-1])
     assert payload["container_env"][CENSUS_IMAGE_ENV] == IMAGE
     # The daemon's own record travels beside the name, so the process inside
     # can check its claim against a table instead of trusting one string.
-    record = json.loads(payload["container_env"][CENSUS_ATTESTATION_ENV])
+    record = json.loads(payload["container_env"][CENSUS_DECLARATION_ENV])
     assert record["resolved_reference"] == IMAGE and record["repo_digests"] == [IMAGE]
 
 
@@ -114,7 +114,7 @@ def test_the_wrapper_exports_the_resolved_digest_not_the_tag_it_was_asked_for(tm
 
 # --------------------------------------- the census checks its own claim ---
 
-def test_the_census_refuses_an_image_the_container_did_not_attest(capsys):
+def test_the_census_refuses_an_image_the_launcher_did_not_declare(capsys):
     """Issue #132: the operator's string was the whole of the scope."""
     with pytest.raises(SystemExit) as raised:
         _census().parse_args(["ckpt", "out.json", "--runtime-image", OTHER_IMAGE],
@@ -127,20 +127,20 @@ def test_the_census_refuses_an_image_the_container_did_not_attest(capsys):
     assert CENSUS_IMAGE_ENV in err
 
 
-def test_the_census_refuses_when_nothing_attested_the_image(capsys):
-    """A hand ``docker run`` outside the launcher writes no receipt at all."""
+def test_the_census_refuses_when_the_launcher_declared_no_image(capsys):
+    """A hand ``docker run`` outside the launcher writes no record at all."""
     with pytest.raises(SystemExit) as raised:
         _census().parse_args(["ckpt", "out.json", "--runtime-image", IMAGE], env={})
     assert raised.value.code == 2
     assert CENSUS_IMAGE_ENV in capsys.readouterr().err
 
 
-def test_the_census_carries_the_mechanism_that_attested_its_scope():
+def test_the_census_carries_the_mechanism_that_established_its_scope():
     args = _census().parse_args(
         ["ckpt", "out.json", "--runtime-image", IMAGE], env=_launcher_env())
     assert args.runtime_image == IMAGE
-    assert args.runtime_image_attestation["source"] == ATTESTATION_SOURCE
-    assert args.runtime_image_attestation["image"] == IMAGE
+    assert args.runtime_image_declaration["source"] == DECLARATION_SOURCE
+    assert args.runtime_image_declaration["image"] == IMAGE
 
 
 #: The census tool, named once.  A launcher calls it by PATH or as a MODULE,
