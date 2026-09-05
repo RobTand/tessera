@@ -1931,8 +1931,13 @@ def _refit_scales_lut_metric(
     coupled = None
     if coupled_landing and metric.ndim == 2:
         # The fourth candidate: the chosen plane with its assignment made
-        # cross-block aware.  Monotone from ``best`` by construction, so it
-        # is taken without another comparison; the sink records both so the
+        # cross-block aware.  It used to be taken without a comparison, on
+        # the reasoning that every move lowers the quadratic "by
+        # construction" -- true in exact arithmetic, and exactly the reading
+        # tessera#232's witness broke in FP32.  The sweep now rolls back a
+        # sweep its own recompute rejects, and this call site holds it to
+        # the SAME accept test every other candidate passes: returned only
+        # when its recomputed full cost wins.  The sink records both so the
         # separable landing stays measurable next to it.  It re-assigns INTO
         # the table, so a ``lut_landing`` ceiling mode -- which removed the
         # table -- has nothing for it to assign into.
@@ -1942,11 +1947,16 @@ def _refit_scales_lut_metric(
                 f"lut_landing({_LUT_LANDING!r}) removed it, so the two cannot be "
                 "read in one refit"
             )
-        best_eff, best_index, best, coupled = _coupled_landing(
+        c_eff, c_index, c_cost, coupled = _coupled_landing(
             W, U, Ub, H, A, best_eff, best_index.reshape(rows, nb),
             _lut_values(best_bytes, global_scale), half, best, row_weight=rw)
-        best_index = best_index.reshape(-1)
-        won = won + "+coupled"
+        if c_cost < best:
+            best_eff, best_index, best = c_eff, c_index.reshape(-1), c_cost
+            won = won + "+coupled"
+        else:
+            # The incumbent stands; the record describes the plane returned,
+            # which is what the sink's one consumer scores.
+            coupled = {"cost": best, "sweeps": coupled["sweeps"], "moves": 0}
     if _REFIT_DIAG is not None:
         # Debug-only, floats only, appended after every decision this call
         # made.  The refit's landed error is three things added together and
@@ -2018,7 +2028,22 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
     the cost -- a dtype constant, not a tuning).  The gradient field and the
     cost are recomputed exactly at the top of every sweep, so the stop rule
     reads a true cost and rounding in the incremental pushes cannot
-    accumulate across sweeps.  Returns ``(C, I, cost, record)``.
+    accumulate across sweeps.
+
+    **A sweep the recomputed cost rejects is rolled back** (tessera#232).
+    The per-move gains are exact in exact arithmetic, but in FP32 a sweep's
+    local gains can disagree with the recomputed full quadratic on
+    ill-conditioned inputs -- near-cancelling loud blocks under an H with an
+    off-diagonal term one ulp from 1 raised the recomputed cost by 24 ulps
+    while every local gain read positive.  The stop rule already reads the
+    disagreement; what it must not do is keep the plane it just measured as
+    worse, so the walk restores the last accepted sweep's ``C``/``I`` before
+    breaking, ``moves`` counts accepted moves only, and the returned cost is
+    the returned plane's own recomputed number -- at or below ``start_cost``
+    by construction again, this time including the rounding.  Whether the
+    exact quadratic would have improved is beside the point: the function's
+    acceptance IS the FP32 recompute, and a candidate its own check calls
+    worse is not returned.  Returns ``(C, I, cost, record)``.
     """
     rows, nb = C.shape
     C, I = C.clone(), I.clone()
@@ -2031,12 +2056,23 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
     # changes is what one sweep's total is worth against the stop rule, which
     # must be measured on the same functional the refit compares candidates on.
     rw = None if row_weight is None else row_weight.reshape(rows, 1)
+    kept_C = kept_I = None
+    last_moved = 0
     while True:
         E = W - C.repeat_interleave(half, dim=1) * U
         G = E @ H
         now = float(((G * E) if rw is None else (G * E * rw)).sum())
-        if sweeps and (now >= prev or prev - now <= eps * prev):
-            break
+        if sweeps:
+            if now >= prev:
+                # The last sweep's local gains disagreed with the recomputed
+                # full cost: roll it back and keep the incumbent
+                # (tessera#232).  ``moves`` stays the accepted count.
+                C, I = kept_C, kept_I
+                moves -= last_moved
+                break
+            if prev - now <= eps * prev:
+                break
+        kept_C, kept_I = C.clone(), I.clone()
         prev = now
         moved = 0
         for b in range(nb):
@@ -2060,6 +2096,7 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
                 moved += int(take.sum())
         sweeps += 1
         moves += moved
+        last_moved = moved
         if moved == 0:
             break
     # ``prev`` is the exact cost of the plane as it stood at the top of the

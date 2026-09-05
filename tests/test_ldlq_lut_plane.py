@@ -686,6 +686,65 @@ def test_the_coupled_landing_is_monotone_and_below_the_separable_one():
         assert sep <= before + 1e-9 * before
 
 
+def test_a_sweep_the_full_cost_rejects_is_rolled_back():
+    """tessera#232.  The sweep's local FP32 gains can disagree with the
+    recomputed full quadratic on ill-conditioned inputs; the stop rule read
+    the disagreement, broke -- and returned the mutated plane at the higher
+    cost anyway.  A landing whose own check says "worse" keeps the incumbent.
+
+    The issue's witness: two near-cancelling loud blocks under an H whose
+    off-diagonal term is 1 - 2^-15.  In float64 the move genuinely helps;
+    in the FP32 cost the function itself recomputes, it reads higher -- which
+    is exactly the disagreement the rollback must catch, whatever the exact
+    arithmetic would have said."""
+    from tessera.encode import _coupled_landing
+
+    W = torch.zeros(1, 32)
+    W[0, 0], W[0, 16] = 32768.8515625, -32767.51953125
+    U = torch.zeros(1, 32)
+    U[0, 0] = U[0, 16] = 1
+    Ub = U.reshape(1, 2, 16)
+    H = torch.eye(32)
+    H[0, 16] = H[16, 0] = 1 - 2 ** -15
+    A = torch.ones(1, 2)
+    table = torch.tensor([.5, .5625, .625, .6875, .75, .8125, .875, .9375,
+                          1., 1.125, 1.25, 1.375, 1.5, 1.625, 1.75, 1.875])
+    I = torch.tensor([[7, 3]])
+    C = table[I]
+    E = W - C.repeat_interleave(16, dim=1) * U
+    before = float(((E @ H) * E).sum())
+    new_C, new_I, after, record = _coupled_landing(
+        W, U, Ub, H, A, C, I, table, 16, before)
+    assert after <= before, (before, after)
+    assert torch.equal(new_C, C) and torch.equal(new_I, I)
+    assert record["cost"] == after and record["moves"] == 0
+
+
+def test_the_caller_keeps_the_incumbent_when_the_coupled_cost_does_not_win(monkeypatch):
+    """tessera#232's second half: the call site took the sweep's result on
+    the reasoning that it is monotone by construction -- the construction the
+    witness above broke.  The guard is the same accept test every other
+    candidate passes: the sweep is returned only when its recomputed full
+    cost wins."""
+    import tessera.encode as encode_mod
+
+    work, units, half, table, index, eff, glob = _lut_fixture(seed=18, cols=128)
+    H = _hessian(cols=128, seed=18, device="cpu", coupling=4.0)
+    sep = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                            metric=H, gauss_seidel=True)
+
+    def worse(W, U, Ub, H_, A, C, I, table_, half_, start, row_weight=None):
+        return C + 1.0, I, start + 1.0, {"cost": start + 1.0, "sweeps": 1,
+                                         "moves": 1}
+
+    monkeypatch.setattr(encode_mod, "_coupled_landing", worse)
+    cou = _refit_scales_lut(work, units, half, table, index, eff, glob,
+                            metric=H, gauss_seidel=True, coupled_landing=True)
+    assert torch.equal(cou[0], sep[0])
+    assert torch.equal(cou[1], sep[1])
+    assert torch.equal(cou[2], sep[2])
+
+
 def test_the_coupled_landing_off_is_the_refit_that_was_there():
     """The byte claim, at the function it is made about, for both sweep orders."""
     work, units, half, table, index, eff, glob = _lut_fixture(seed=15, cols=128)
