@@ -36,6 +36,14 @@ source "$TS/experiments/serve_metrics.sh"
 source "$TS/experiments/serve_lock.sh"
 mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
 [ -e "$OUT/pair.json" ] && { echo "REFUSED: $OUT/pair.json exists; a rerun gets its own directory"; exit 2; }
+# The run ENDS in a join that imports the contract's aggregation, and both
+# serves happen before it.  So the join is proven possible HERE -- before
+# docker, before the box's one serve lock, before either arm -- for the reason
+# runtime_image.sh states about the image pin: a wrapper that is going to
+# refuse must not first spend an hour of GPU and make everyone queue behind a
+# failure (#341).  The check IS the join's own import, made by the same $PY
+# running the same instrument, never a restatement of what it needs.
+"$PY" "$TS/experiments/moe_greedy_smoke.py" preflight 2>&1 | tee -a "$OUT/driver.log"
 
 mem_avail_gib() { awk '/^MemAvailable:/ {printf "%d", $2 / 1048576}' /proc/meminfo; }
 require_memory() {
