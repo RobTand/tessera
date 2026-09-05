@@ -20,6 +20,20 @@ one ``tessera.serving_parts.merge_serving_parts`` already has:
 * a part with no binding (an older exporter, or the in-memory
   ``export_checkpoint``) is refused by name rather than merged unchecked.
 
+tessera#337 is the layer under that.  Every check above is about what went
+IN, or is name-, header- and manifest-shaped; none of them binds the bytes on
+disk to the export that sealed them.  ``export_checkpoint_streaming`` used to
+reuse a completed output directory, writing each shard over its old file and
+replacing the index and config only after the last one, so a retry that failed
+part way left NEW shards beside the OLD index, config and source seal -- and
+that mixture merged clean and republished under the original checkpoint's
+identity, decoding to ``[9.0, 1.03125]`` where its own published config prices
+``[1.03125, 1.03125]``.  Two things close it, and both are below: a completed
+output is immutable, so this exporter cannot make such a directory; and every
+part stamps ``output`` (one sha256 per shard, taken as it wrote them), which
+the merge verifies before assembly, so a directory mixed any other way is
+refused by name.
+
 Everything here runs on CPU with real encodes: the merge parses the blobs it
 publishes, so a placeholder blob would be refused for the wrong reason.
 """
@@ -39,7 +53,8 @@ from tessera.alphabet import E2M1_GRID, tuple_grid
 from tessera.errors import GrammarError
 from tessera.export import (BLOB_SUFFIX, export_checkpoint,
                             export_checkpoint_streaming, load_tessera_weight)
-from tessera.serving_parts import (SOURCE_PART_SCHEMA, sha256_file,
+from tessera.serving_parts import (OUTPUT_PART_SCHEMA, SOURCE_PART_SCHEMA,
+                                   output_part_identity, sha256_file,
                                    source_part_identity)
 
 _spec = importlib.util.spec_from_file_location(
@@ -99,6 +114,23 @@ def _rewrite_config(part, edit):
     (Path(part) / "tessera_config.json").write_text(json.dumps(config, indent=2))
 
 
+def _reseal(part):
+    """Re-stamp the ``output`` block over the shards the part now holds.
+
+    Several cases below build a part whose OUTPUT does not implement the plan
+    -- a raw tensor where a blob was planned, a blob under another tensor's
+    name.  Those are obligations about honestly exported bytes, so the fixture
+    seals what it holds; otherwise the merge would refuse each of them first
+    as bytes replaced after the export (tessera#337), which is true of the
+    fixture and not the rule under test.  Order is the point: the merge proves
+    the bytes are the sealed bytes before it interprets them.
+    """
+    part = Path(part)
+    index = json.loads((part / "model.safetensors.index.json").read_text())
+    _rewrite_config(part, lambda c: c.__setitem__(
+        "output", output_part_identity(part, set(index["weight_map"].values()))))
+
+
 def _nothing_published(out):
     """A refusal happens before publication: no config, no index, no shard."""
     if not out.exists():
@@ -109,6 +141,30 @@ def _nothing_published(out):
 def _two_shard_source(root, second=None):
     tensors = {FIRST: _w(1), SECOND: _w(2) if second is None else second}
     return _write_source(root, tensors), tensors
+
+
+def _three_shard_source(root, seeds=(1, 2), norm=1.0):
+    """Two planned shards and one the plan never names, so an assertion over
+    the whole directory covers an encoded payload and a passthrough one."""
+    tensors = {FIRST: _w(seeds[0]), SECOND: _w(seeds[1]),
+               NORM: torch.full((32,), norm, dtype=torch.bfloat16)}
+    return _write_source(root, tensors), tensors
+
+
+SHARDS = ("part-1.safetensors", "part-2.safetensors", "part-3.safetensors")
+PLANNED = {FIRST: Q256, SECOND: Q256}
+
+
+def _export_all(source, out, plan=None):
+    """An unfiltered part: every shard of the source, the way a one-box run
+    and the failed-retry reproduction both go."""
+    return export_checkpoint_streaming(
+        source, out, PLANNED if plan is None else plan, grid=K2, device="cpu",
+        copy_aux=False)
+
+
+def _bytes_on_disk(path):
+    return {p.name: sha256_file(p) for p in sorted(Path(path).iterdir()) if p.is_file()}
 
 
 # --- codex's two static reproductions (tessera#300) -------------------------
@@ -164,6 +220,7 @@ def test_a_planned_tensor_passed_through_raw_refuses(tmp_path):
               metadata={"format": "pt"})
     (pb / "model.safetensors.index.json").write_text(json.dumps(
         {"metadata": {"total_size": 0}, "weight_map": {SECOND: "part-2.safetensors"}}))
+    _reseal(pb)
 
     with pytest.raises(SystemExit) as refused:
         _merge([pa, pb], source, out)
@@ -205,6 +262,7 @@ def test_a_blob_for_another_tensor_under_a_planned_name_refuses(tmp_path):
         blob = h.get_tensor(FIRST + BLOB_SUFFIX)
     save_file({SECOND + BLOB_SUFFIX: blob}, str(pb / "part-2.safetensors"),
               metadata={"format": "pt"})
+    _reseal(pb)
 
     with pytest.raises(SystemExit) as refused:
         _merge([pa, pb], source, out)
@@ -354,3 +412,162 @@ def test_the_seal_over_a_shard_is_the_file_digest(tmp_path):
     stamp = source_part_identity(source, {"part-2.safetensors"})
     assert stamp["files"]["part-2.safetensors"] == hashlib.sha256(
         (source / "part-2.safetensors").read_bytes()).hexdigest()
+
+
+# --- a completed output is immutable, and its bytes are sealed (tessera#337) ---
+
+def test_a_failed_retry_into_a_completed_export_refuses_before_replacing_a_byte(tmp_path):
+    """codex's reproduction, at its own boundary.
+
+    Source A is exported successfully.  Source B carries the same tensor
+    names, shapes and configuration at other values, and is re-exported into
+    the SAME directory with a failure injected at its second unit -- the
+    ordinary shape of a retry that dies part way.  The exporter used to
+    overwrite shard by shard and replace the index and config only at the end,
+    so this left B's first shard beside A's index, A's config and A's source
+    seal: a checkpoint that loaded, verified against A, merged clean and
+    decoded to ``[9.0, 1.03125]`` where the config it published prices
+    ``[1.03125, 1.03125]``.
+
+    A completed output is now immutable, so the refusal lands before the run
+    reads a shard, encodes a unit or replaces a byte: the injected failure is
+    never reached, and A's artifact is intact down to the digest of every file
+    -- the two encoded shards and the passthrough one alike.
+    """
+    from tessera import export as export_module
+
+    source_a, source_b = tmp_path / "source-a", tmp_path / "source-b"
+    _three_shard_source(source_a, seeds=(1, 2), norm=1.0)
+    _three_shard_source(source_b, seeds=(5, 6), norm=9.0)
+    part = tmp_path / "part"
+    _export_all(source_a, part)
+    before = _bytes_on_disk(part)
+    assert set(before) >= {*SHARDS, "tessera_config.json",
+                           "model.safetensors.index.json"}
+
+    encoded = []
+    real = export_module.encode_linear
+
+    def fail_on_the_second_unit(weight, **kwargs):
+        encoded.append(kwargs.get("name"))
+        if len(encoded) == 2:
+            raise RuntimeError("injected second-unit failure during retry")
+        return real(weight, **kwargs)
+
+    with patch.object(export_module, "encode_linear", fail_on_the_second_unit):
+        with pytest.raises(FileExistsError, match="tessera_config.json"):
+            _export_all(source_b, part)
+
+    assert encoded == []                      # refused before it encoded anything
+    assert _bytes_on_disk(part) == before     # and before it replaced anything
+    for name in PLANNED:                      # the artifact A sealed still decodes
+        assert load_tessera_weight(part, name).shape == (32, 256)
+
+
+def test_a_retry_into_an_output_no_run_ever_sealed_is_allowed_and_completes(tmp_path):
+    """Immutability is of a COMPLETED export, not of any directory.
+
+    A run that died before writing ``tessera_config.json`` never published an
+    artifact -- there is nothing to preserve and nothing a reader or the merge
+    would accept -- so a retry writes into it, replaces its leftovers and
+    seals what it actually wrote.  Refusing here instead would strand every
+    interrupted export behind a manual delete for no gain.
+    """
+    source = tmp_path / "source"
+    _three_shard_source(source)
+    part = tmp_path / "part"
+    part.mkdir()
+    leftovers = b"a shard from a run that died before it sealed anything"
+    (part / "part-1.safetensors").write_bytes(leftovers)
+
+    _export_all(source, part)
+
+    stamp = _config(part)["output"]
+    assert stamp["files"]["part-1.safetensors"] == sha256_file(part / "part-1.safetensors")
+    assert stamp["files"]["part-1.safetensors"] != hashlib.sha256(leftovers).hexdigest()
+
+
+def test_the_exporter_stamps_the_shards_it_wrote(tmp_path):
+    """The receipt the merge proves the bytes by: one sha256 per shard this
+    run wrote, encoded and passthrough alike, under its own schema."""
+    source = tmp_path / "source"
+    _three_shard_source(source)
+    part = tmp_path / "part"
+    _export_all(source, part)
+
+    stamp = _config(part)["output"]
+    assert stamp["schema"] == OUTPUT_PART_SCHEMA
+    assert set(stamp["files"]) == set(SHARDS)
+    assert stamp == output_part_identity(part, SHARDS)
+    # part-3 holds NORM, which the plan never names: a passthrough shard is
+    # bytes this export published and is sealed like any other.
+    assert stamp["files"]["part-3.safetensors"] == sha256_file(part / "part-3.safetensors")
+
+
+@pytest.mark.parametrize("swapped, payload", [("part-1.safetensors", "encoded"),
+                                              ("part-3.safetensors", "passthrough")])
+def test_a_mixed_output_directory_refuses_before_the_merge_publishes(tmp_path, swapped,
+                                                                     payload):
+    """The second layer, for a mixture this exporter can no longer make.
+
+    One shard of a completed part is replaced by the same-named shard of
+    another export of another source: the same tensor under the same name, at
+    the same rung, of the same geometry, and (for the passthrough case) the
+    same dtype and shape.  Every check the merge had -- output names, shard
+    headers, ``unit_id``, ``root_q256``, geometry, and the part's source seal,
+    which describes what went in and is untouched -- accepts it.  Only the
+    output seal can say these are not the bytes that export wrote.
+    """
+    source_a, source_b = tmp_path / "source-a", tmp_path / "source-b"
+    _three_shard_source(source_a, seeds=(1, 2), norm=1.0)
+    _three_shard_source(source_b, seeds=(5, 6), norm=9.0)
+    part_a, part_b = tmp_path / "part-a", tmp_path / "part-b"
+    _export_all(source_a, part_a)
+    _export_all(source_b, part_b)
+    (part_a / swapped).write_bytes((part_b / swapped).read_bytes())
+
+    out = tmp_path / "merged"
+    with pytest.raises(SystemExit) as refused:
+        _merge([part_a], source_a, out)
+    message = str(refused.value)
+    assert swapped in message and "337" in message, payload
+    assert _nothing_published(out)
+
+
+def test_a_part_with_no_output_seal_refuses_by_name(tmp_path):
+    """A part written before the stamp existed cannot say which bytes its
+    export wrote, and its ``source`` block cannot say it for it: that stamp is
+    of the input and verifies whatever survived in the output directory.  So
+    it is refused like an unsealed part, with the same answer -- re-export."""
+    source = tmp_path / "source"
+    _two_shard_source(source)
+    pa, pb, out = tmp_path / "part-a", tmp_path / "part-b", tmp_path / "merged"
+    plan = {FIRST: Q256, SECOND: Q256}
+    _export(source, pa, plan, "part-1.safetensors")
+    _export(source, pb, plan, "part-2.safetensors")
+    _rewrite_config(pb, lambda c: c.pop("output"))
+
+    with pytest.raises(SystemExit) as refused:
+        _merge([pa, pb], source, out)
+    message = str(refused.value)
+    assert "part-b" in message and "output" in message and "re-export" in message.lower()
+    assert _nothing_published(out)
+
+
+def test_the_merged_checkpoint_seals_its_own_bytes(tmp_path):
+    """The merged config's ``output`` is the union of the parts' seals -- the
+    ones just verified, over files copied unchanged -- and not the first
+    part's, which is the config the merge starts from."""
+    source = tmp_path / "source"
+    _two_shard_source(source)
+    pa, pb, out = tmp_path / "part-a", tmp_path / "part-b", tmp_path / "merged"
+    plan = {FIRST: Q256, SECOND: Q256}
+    _export(source, pa, plan, "part-1.safetensors")
+    _export(source, pb, plan, "part-2.safetensors")
+
+    _merge([pa, pb], source, out)
+
+    stamp = _config(out)["output"]
+    assert stamp == output_part_identity(out, ["part-1.safetensors", "part-2.safetensors"])
+    assert stamp != _config(pa)["output"]
+    assert stamp["files"]["part-1.safetensors"] == _config(pa)["output"]["files"]["part-1.safetensors"]
