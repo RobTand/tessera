@@ -1,9 +1,12 @@
 # Tessera: serving contract, MoE cell, and export gate
 
 **Status update, 2026-09-04:** the historical open census/KL item below is now
-superseded for the complete LFM2.5-8B-A1B artifact. Contract v16 attests only
-E4M3/q1024 routed MoE, resident/eager on sm_121 and the exact EUGR image, for
-decode and batch. Current scope and limitations are in
+superseded for the complete LFM2.5-8B-A1B artifact. The packaged contract
+(v16 when this was written; v17 since #131/#133, where each cell also names
+its toolchain and its `evidence` grade) attests only E4M3/q1024 routed MoE,
+resident/eager on sm_121 and the exact EUGR image, for decode and batch -- the
+batch cell on a prefill top-1024 KL lower bound, the decode cell on the route
+census alone. Current scope and limitations are in
 [`ARCHITECTURE.md` §4.4](ARCHITECTURE.md#44d-the-expert-stack-is-a-structure-not-a-module)
 and the [campaign receipt §§7–9](measurements/tessera-lfm-campaign-2026-09-04.md#7-full-model-route-census-completed-at-2105-utc).
 The historical body remains intact; it is not the current release checklist.

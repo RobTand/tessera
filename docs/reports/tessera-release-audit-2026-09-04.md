@@ -121,6 +121,13 @@ The `b83fd17` receipt, the `54cd1df` hosted run and the merge receipt on
 master's tip are appended below when they complete; until a row is here it
 has not been observed.
 
+**Note, 2026-09-04, after this audit.** #131 and #133 landed as contract v17 /
+lane-eligibility schema v6 (per-cell `runtime.vllm`/`runtime.torch`,
+`versions.default_serve_image` in place of `versions.attested_on`, and a
+required per-cell `evidence` grade). The raw SHA256 quoted at the top of this
+report is the audited v16 file; the v17 file's raw SHA256 is
+`ba3a3c69027a11f7bf9ef570867c58d608d0865c3e6a17dfeea53ba43ce055e6`.
+
 ## 5. Filed, not fixed
 
 Filed as issues so the tag can be cut against a list rather than a memory.

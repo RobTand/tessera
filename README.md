@@ -84,8 +84,9 @@ and serving wiring were added.
 Weight-space error and kernel microbenchmarks remain screens. Promotion uses
 served KL against a BF16 teacher at matched bytes, with the runtime, route,
 regime and build identity recorded. The serving contract
-(`src/tessera/serving/runtime_contract.json`, contract v16, lane-eligibility
-schema v5) publishes which combinations are attested; an unlisted combination
+(`src/tessera/serving/runtime_contract.json`, contract v17, lane-eligibility
+schema v6) publishes which combinations are attested, and on what grade of
+evidence each rests (`evidence` per cell); an unlisted combination
 gains no claim from a nearby result.
 
 Served artifacts and in-process route profiles exist; for example,

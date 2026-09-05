@@ -98,3 +98,21 @@ def test_a_covered_scope_still_refuses_a_wrong_observed_launch(field, value):
     next(iter(records["decode"].values()))[field] = value
     block, problems = _replay(records=records)
     assert block["agrees"] is False and problems
+
+
+def test_the_moe_cells_name_the_runtime_the_receipt_records():
+    """#131: a cell's ``runtime`` is its own receipt's, field for field --
+    image, execution mode, vLLM and torch -- never a global block's."""
+    raw = RECEIPT.read_bytes().removesuffix(b"\n")
+    assert hashlib.sha256(raw).hexdigest() == RAW_SHA256
+    receipt = json.loads(raw)
+    cells = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
+             if cell["structure"] == "routed_moe"]
+    assert len(cells) == 2
+    for cell in cells:
+        assert cell["runtime"] == {
+            "image": receipt["runtime"]["image"],
+            "execution_modes": [receipt["runtime"]["execution_mode"]],
+            "vllm": receipt["versions"]["vllm"],
+            "torch": receipt["versions"]["torch"],
+        }, cell["id"]

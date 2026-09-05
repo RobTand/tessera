@@ -38,6 +38,7 @@ only, no routed-MoE cell, `max_world_size 1`.
 | metric | KL-vs-BF16, top-1024 support, teacher–student intersection, **lower bound** — the same instrument as every row of `tessera-stock-lane-served-2026-09-02.md` |
 | image | `vllm/vllm-openai:latest` = vLLM 0.28.0 / torch 2.13.0+cu130 / python 3.12.3 |
 | device | `NVIDIA GB10`, compute capability `[12, 1]` (`sm_121`) |
+| KL serve execution mode | **eager** — both KL serves ran `--enforce-eager` (`/home/rob/tessera-runs/bf16route/serve_qwen_tessera_bf16-r7-{resident,streamed}.log` line 9, `'enforce_eager': True`). The four censuses of §1 cover eager and compiled; the KL of §3 covers eager only. Noted 2026-09-04 for the contract v17 `evidence` field. |
 | driver | `experiments/bf16_route_served.sh 1792` |
 
 The served bytes are the exported bytes **by construction** (one inode), not by

@@ -100,7 +100,18 @@ __all__ = [
     "CENSUS_PHASE_REGIMES",
     "CELL_PREDICATE_FACTS",
     "CELL_PREDICATE_OPS",
+    "EVIDENCE_GRADES",
+    "EVIDENCE_KL_KINDS",
+    "EVIDENCE_RECEIPT_ROOT",
+    "EVIDENCE_SMOKE_STATUSES",
     "EXECUTION_MODES",
+    "PLUGIN_ENTRY_POINT",
+    "RUNTIME_SCOPE_KEYS",
+    "RUNTIME_VERSION_KEYS",
+    "VERSIONS_KEYS",
+    "cell_evidence",
+    "cell_runtime_versions",
+    "derive_evidence_grade",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
     "classify_construction",
@@ -131,7 +142,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v5"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v6"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -178,6 +189,45 @@ _QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
 CELL_PREDICATE_FACTS = ("payload_family", "k", "n_sub", "rate_q256", "role_split",
                         "in_features", "out_features")
 CELL_PREDICATE_OPS = ("equals", "in", "multiple_of", "at_least", "at_most")
+
+#: A cell's ``runtime`` (schema v6, #131).  The SCOPE half -- the exact image
+#: and the execution modes a receipt covers -- arrived with v5 and is the
+#: census's join key.  The TOOLCHAIN half is the vLLM and torch build the
+#: cell's own receipt records, verbatim; until v6 the only versions in the
+#: document were a global ``versions.attested_on`` block, which named vLLM
+#: 0.28.0 for two cells measured on ``0.28.1rc1.dev397``.  One home for both
+#: key sets: :func:`cell_runtime_scope` reads the first and tolerates the
+#: second (an observation-side fixture carries only a scope);
+#: :func:`cell_runtime_versions` requires the whole closed object.
+RUNTIME_SCOPE_KEYS = frozenset({"image", "execution_modes"})
+RUNTIME_VERSION_KEYS = frozenset({"vllm", "torch"})
+
+#: ``versions`` (schema v6, #131) says one thing per field and nothing about
+#: a measured runtime: ``tessera`` is the distribution version,
+#: ``plugin_entry_point`` the entry point the wheel declares, and
+#: ``default_serve_image`` the ONE serve-image pin every harness reads
+#: (``runtime_image.PIN_CONTRACT_FIELD``) -- which must be an image some cell
+#: attests, because a default nobody measured is not a pin.
+VERSIONS_KEYS = frozenset({"tessera", "plugin_entry_point", "default_serve_image"})
+PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
+
+#: A cell's ``evidence`` (schema v6, #133): what GRADE of evidence the cell
+#: rests on, in a field a gate can read.  Every served KL this repository
+#: holds -- dense and MoE -- is a ``kl_tool`` top-K teacher/student-
+#: intersection LOWER BOUND; what separates the cells is which regime it was
+#: scored in, under which execution modes, and whether a greedy smoke is on
+#: record.  So a ``kl`` entry is ``{kind, top_k, regime, execution_modes,
+#: receipt}`` (no number: the receipt holds it with its bounds), ``smoke`` is
+#: ``{status, receipt}`` in the receipt's own words, and ``grade`` is DERIVED
+#: from the entries in the cell's own regime the way ``executes`` is derived
+#: from the route table -- stored so a reader needs no derivation, checked so
+#: it cannot drift.  ``receipt`` is a repository path under
+#: :data:`EVIDENCE_RECEIPT_ROOT`; the validator checks its grammar and a tree
+#: test checks the file (a wheel does not ship docs).
+EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab")
+EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
+EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
+EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
 
 
 def contract_path():
@@ -229,7 +279,7 @@ def cell_runtime_scope(cell: Mapping[str, Any],
     """The explicit runtime scope a cell attests; no global image fallback."""
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
-    _require_keys(runtime, at, required={"image", "execution_modes"})
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS), optional=RUNTIME_VERSION_KEYS)
     image = require_runtime_image(runtime["image"], f"{at}.image")
     modes = runtime["execution_modes"]
     if (not isinstance(modes, list) or not modes
@@ -241,8 +291,36 @@ def cell_runtime_scope(cell: Mapping[str, Any],
     return image, tuple(mode for mode in EXECUTION_MODES if mode in modes)
 
 
+def cell_runtime_versions(cell: Mapping[str, Any],
+                          where: str = "lane_eligibility cell") -> tuple[str, str]:
+    """The ``(vllm, torch)`` a cell's own receipt records, or raise (#131).
+
+    Requires the WHOLE closed ``runtime`` object -- scope and toolchain -- so
+    the validator, which calls this, refuses a cell that still relies on a
+    global version block; :func:`cell_runtime_scope` is the lenient reader
+    for the census join.
+    """
+    runtime = cell.get("runtime")
+    at = f"{where}.runtime"
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS))
+    out = []
+    for field in ("vllm", "torch"):
+        value = runtime[field]
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"{at}.{field} must be a non-empty string: the build the cell's receipt "
+                f"records, verbatim. Got {value!r}.")
+        out.append(value)
+    return out[0], out[1]
+
+
 def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
-    """An optional scope-derived suffix when multiple runtimes need distinct ids."""
+    """An optional scope-derived suffix when multiple runtimes need distinct ids.
+
+    Derived from the SCOPE alone: a toolchain is a property of the image, so
+    it must not fork the id (two ids for one scope would be the table-order
+    defect the suffix exists to close).
+    """
     image, modes = cell_runtime_scope(cell)
     encoded = json.dumps({"image": image, "execution_modes": list(modes)},
                          sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -563,6 +641,21 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         raise ValueError(
             f"runtime_contract.quant_method.canonical must be {REQUIRES_PLUGIN!r}: it is the "
             "checkpoint field that selects this plugin")
+    # ``versions`` (v6, #131): closed, every field checked, nothing about a
+    # measured runtime -- that lives on the cells.  A reader that still wrote
+    # ``attested_on`` learns here, at load, that it no longer means anything.
+    versions = contract["versions"]
+    _require_keys(versions, "runtime_contract.versions", required=set(VERSIONS_KEYS))
+    if not isinstance(versions["tessera"], str) or not versions["tessera"]:
+        raise ValueError(
+            "runtime_contract.versions.tessera must be a non-empty string, the distribution "
+            f"version; got {versions['tessera']!r}")
+    if versions["plugin_entry_point"] != PLUGIN_ENTRY_POINT:
+        raise ValueError(
+            f"runtime_contract.versions.plugin_entry_point must be {PLUGIN_ENTRY_POINT!r}, the "
+            f"entry point this package registers; got {versions['plugin_entry_point']!r}")
+    default_serve_image = require_runtime_image(
+        versions["default_serve_image"], "runtime_contract.versions.default_serve_image")
 
     _validate_native_extensions(contract["native_extensions"],
                                 "runtime_contract.native_extensions")
@@ -687,19 +780,30 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _cell_scope: dict = {}
     cell_ids: set[str] = set()
     cell_structures: list[str] = []
+    toolchains_by_image: dict[str, tuple[tuple[str, str], str]] = {}
     for i, cell in enumerate(block["cells"]):
         where = f"runtime_contract.lane_eligibility.cells[{i}]"
         _require_keys(cell, where,
                       required={"id", "platform", "family", "structure", "regime",
                                 "rungs_q256", "activation_contract", "executes",
                                 "route_status", "qualification", "requires_plugin",
-                                "requires_serve_flags", "predicates", "runtime"})
+                                "requires_serve_flags", "predicates", "runtime", "evidence"})
         if not isinstance(cell["id"], str) or not cell["id"]:
             raise ValueError(f"{where}.id must be a non-empty string")
         if cell["id"] in cell_ids:
             raise ValueError(f"{where} repeats cell id {cell['id']!r}; every cell has one identity")
         cell_ids.add(cell["id"])
         runtime_image, execution_modes = cell_runtime_scope(cell, where)
+        # ONE IMAGE, ONE TOOLCHAIN (v6, #131): a digest names bytes, so two
+        # cells naming one image and two vLLM builds would be two runtimes
+        # under one digest, which a digest cannot be.
+        toolchain = cell_runtime_versions(cell, where)
+        known = toolchains_by_image.setdefault(runtime_image, (toolchain, cell["id"]))
+        if known[0] != toolchain:
+            raise ValueError(
+                f"{where} ({cell['id']!r}) records (vllm, torch) {toolchain} on "
+                f"{runtime_image}, but {known[1]!r} records {known[0]} on the same digest; "
+                "one image cannot be two runtimes. One of the two receipts is misread.")
         if cell["platform"] not in block["platforms"]:
             raise ValueError(f"{where}.platform {cell['platform']!r} is not declared")
         if cell["regime"] not in block["regimes"]:
@@ -723,6 +827,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"{where}: every route is reached through a declared residency, so a cell names "
                 "the serve flag that selects one")
         cell_predicates(cell, where)
+        cell_evidence(cell, where, regimes=block["regimes"])
         expected = contracts_by_family[cell["family"]]
         if cell["activation_contract"] != expected:
             raise ValueError(
@@ -787,6 +892,16 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                         "A cell is resolved by these facts plus the rung, so two cells "
                         "claiming one of them would make the answer depend on table order.")
                 _cell_scope[key] = cell["id"]
+
+    # THE PIN IS AN ATTESTED IMAGE (v6, #131).  ``default_serve_image`` is the
+    # one digest every harness reads; a default no cell was measured on would
+    # be a pin to a runtime nothing here says anything about.
+    if default_serve_image not in toolchains_by_image:
+        raise ValueError(
+            f"runtime_contract.versions.default_serve_image is {default_serve_image!r}, but no "
+            f"lane_eligibility cell attests that image (cells attest "
+            f"{sorted(toolchains_by_image)}). The default serve image is the pin harnesses "
+            "read; it must be a runtime some receipt covers.")
 
     # The structure axis is a projection of the receipt-bearing cells, never
     # of the dispatch roster.  This is intentionally positive authority: when
@@ -1046,6 +1161,144 @@ def cell_predicates(cell: Mapping[str, Any],
         seen.add((fact, op))
         out.append((str(fact), str(op), value))
     return tuple(out)
+
+
+def _require_receipt_path(value: Any, where: str) -> str:
+    """A repository path under :data:`EVIDENCE_RECEIPT_ROOT`, or raise.
+
+    The grammar only: the wheel does not ship docs, so whether the file exists
+    is a tree test's business (``tests/test_cell_evidence.py``).
+    """
+    if (not isinstance(value, str) or not value.startswith(EVIDENCE_RECEIPT_ROOT)
+            or len(value) == len(EVIDENCE_RECEIPT_ROOT)
+            or any(part in ("", ".", "..") for part in value.split("/"))):
+        raise ValueError(
+            f"{where}.receipt must be a repository path under {EVIDENCE_RECEIPT_ROOT!r} "
+            f"(the receipt that holds the number and its caveats), got {value!r}")
+    return value
+
+
+def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
+    """The grade a cell's ``evidence.kl`` entries DERIVE, from kinds alone.
+
+    Every entry is in the cell's own regime (:func:`cell_evidence` refuses
+    any other), so the derivation is: no entry, ``route_only`` -- the census
+    attests dispatch and nothing attests quality in this regime; any top-K
+    intersection bound, ``kl_lower_bound``; any full-vocabulary KL,
+    ``kl_full_vocab``.  ``qualification`` is deliberately not overloaded
+    with this: one home per fact.
+    """
+    kinds = {entry["kind"] for entry in cell["evidence"]["kl"]}
+    if "full_vocab" in kinds:
+        return "kl_full_vocab"
+    if "topk_intersection_lower_bound" in kinds:
+        return "kl_lower_bound"
+    return "route_only"
+
+
+def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
+                  regimes: Any = None) -> dict[str, Any]:
+    """The parsed ``evidence`` a cell states, or raise (#133).
+
+    Closed at every level -- a prose ``detail`` beside the entries is exactly
+    the field a gate cannot read.  ``kl`` entries are ``{kind, top_k, regime,
+    execution_modes, receipt}``: ``kind`` from :data:`EVIDENCE_KL_KINDS`,
+    ``top_k`` a positive integer for a top-K bound and ``null`` for a
+    full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
+    written into a decode cell is the confusion this field exists to refuse),
+    ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
+    a repository path.  ``smoke`` is ``{status, receipt}`` with ``status``
+    from :data:`EVIDENCE_SMOKE_STATUSES` and a receipt exactly when a smoke
+    was recorded.  ``grade`` must equal :func:`derive_evidence_grade`.
+    """
+    payload = cell.get("evidence")
+    at = f"{where}.evidence"
+    _require_keys(payload, at, required={"grade", "kl", "smoke"})
+    grade = payload["grade"]
+    if grade not in EVIDENCE_GRADES:
+        raise ValueError(f"{at}.grade {grade!r} is not one of {list(EVIDENCE_GRADES)}")
+    entries = payload["kl"]
+    if not isinstance(entries, list) or any(not isinstance(e, Mapping) for e in entries):
+        raise ValueError(
+            f"{at}.kl must be a JSON array of {{kind, top_k, regime, execution_modes, receipt}} "
+            f"objects, got {entries!r}")
+    cell_modes = None
+    if "runtime" in cell:
+        _, cell_modes = cell_runtime_scope(cell, where)
+    cell_regime = cell.get("regime")
+    seen: set[tuple] = set()
+    parsed_kl = []
+    for i, entry in enumerate(entries):
+        spot = f"{at}.kl[{i}]"
+        _require_keys(entry, spot,
+                      required={"kind", "top_k", "regime", "execution_modes", "receipt"})
+        kind = entry["kind"]
+        if kind not in EVIDENCE_KL_KINDS:
+            raise ValueError(f"{spot}.kind {kind!r} is not one of {list(EVIDENCE_KL_KINDS)}")
+        top_k = entry["top_k"]
+        if kind == "topk_intersection_lower_bound":
+            if not _is_int(top_k) or top_k <= 0:
+                raise ValueError(
+                    f"{spot}.top_k must be a positive integer for a top-K intersection bound, "
+                    f"got {top_k!r}")
+        elif top_k is not None:
+            raise ValueError(
+                f"{spot}.top_k must be null for a full-vocabulary KL, got {top_k!r}")
+        regime = entry["regime"]
+        if regimes is not None and regime not in regimes:
+            raise ValueError(
+                f"{spot}.regime {regime!r} is not a declared regime {sorted(regimes)} "
+                "(the contract's own word, not the census phase name)")
+        if cell_regime is not None and regime != cell_regime:
+            raise ValueError(
+                f"{spot}.regime {regime!r} is not the cell's regime {cell_regime!r}: a bound "
+                "scored in another regime is another cell's evidence, and reading it here is "
+                "how a prefill number came to stand in for decode quality")
+        modes = entry["execution_modes"]
+        if (not isinstance(modes, list) or not modes
+                or any(not isinstance(m, str) or m not in EXECUTION_MODES for m in modes)
+                or len(set(modes)) != len(modes)):
+            raise ValueError(
+                f"{spot}.execution_modes must be a non-empty list of distinct modes from "
+                f"{list(EXECUTION_MODES)}, got {modes!r}")
+        if cell_modes is not None:
+            outside = sorted(set(modes) - set(cell_modes))
+            if outside:
+                raise ValueError(
+                    f"{spot} claims execution_modes {outside} the cell does not cover "
+                    f"({list(cell_modes)}); a KL under a mode the census never joined attests "
+                    "a runtime this cell does not scope")
+        receipt = _require_receipt_path(entry["receipt"], spot)
+        key = (kind, top_k, regime, tuple(sorted(modes)), receipt)
+        if key in seen:
+            raise ValueError(f"{spot} repeats an entry; the field is a set of receipts")
+        seen.add(key)
+        parsed_kl.append({"kind": kind, "top_k": top_k, "regime": regime,
+                          "execution_modes": list(modes), "receipt": receipt})
+    smoke = payload["smoke"]
+    _require_keys(smoke, f"{at}.smoke", required={"status", "receipt"})
+    status = smoke["status"]
+    if status not in EVIDENCE_SMOKE_STATUSES:
+        raise ValueError(
+            f"{at}.smoke.status {status!r} is not one of {list(EVIDENCE_SMOKE_STATUSES)}")
+    if status == "not_recorded":
+        if smoke["receipt"] is not None:
+            raise ValueError(
+                f"{at}.smoke: status not_recorded names a receipt {smoke['receipt']!r}; a "
+                "receipt is where a recorded smoke lives, so one here says the status is wrong")
+        smoke_receipt = None
+    else:
+        if smoke["receipt"] is None:
+            raise ValueError(
+                f"{at}.smoke: status {status!r} names no receipt; a smoke nobody recorded "
+                "is not_recorded")
+        smoke_receipt = _require_receipt_path(smoke["receipt"], f"{at}.smoke")
+    derived = derive_evidence_grade({"evidence": {"kl": parsed_kl}})
+    if grade != derived:
+        raise ValueError(
+            f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
+            "off the entries, never asserted beside them")
+    return {"grade": grade, "kl": parsed_kl, "smoke": {"status": status, "receipt": smoke_receipt}}
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],

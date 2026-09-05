@@ -54,7 +54,7 @@ expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
 
-WHAT IS ATTESTED. Contract v16 publishes exactly two ``routed_moe`` cells:
+WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
 E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
 image named by each cell. The complete LFM artifact's census and source-bound
 prefill KL comparison are recorded in
@@ -132,8 +132,8 @@ def census_expected(*, compiled: bool = False) -> dict:
     DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
     separates this expert structure from the dense FP8 launch set. Reading
     that table keeps the census and contract derivations together. It does
-    not itself publish a served cell. Contract v16's measured E4M3/q1024
-    resident/eager cells name their exact EUGR image and sm_121 scope;
+    not itself publish a served cell. The packaged contract's measured E4M3/q1024
+    resident/eager cells name their exact EUGR image, toolchain and sm_121 scope;
     returning the same expected launch for compiled execution does not attest it.
     """
     del compiled  # documented above: one launch has nothing to combine

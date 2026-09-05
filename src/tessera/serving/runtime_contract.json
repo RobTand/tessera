@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 16,
+ "contract_version": 17,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -11,12 +11,7 @@
  "versions": {
   "tessera": "0.1.0",
   "plugin_entry_point": "tessera = tessera.serving:register",
-  "attested_on": {
-   "vllm": "0.28.0",
-   "torch": "2.13.0",
-   "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-   "device": "NVIDIA GB10 (sm_121)"
-  }
+  "default_serve_image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
  },
   "native_extensions": [
    {
@@ -190,7 +185,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v5",
+  "schema": "tessera.lane-eligibility.v6",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -212,7 +207,9 @@
     "id": "tessera_e2m1_k2_dense_sm121_decode",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
@@ -234,13 +231,23 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_e2m1_k2_dense_sm121_batch",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E2M1_K2",
@@ -262,13 +269,31 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": ["eager", "compiled"],
+      "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md"
+     }
+    ],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -290,13 +315,23 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -318,13 +353,38 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "decode",
+      "execution_modes": ["eager"],
+      "receipt": "docs/measurements/tessera-decode-regime-kl-2026-09-03.md"
+     },
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "decode",
+      "execution_modes": ["compiled"],
+      "receipt": "docs/measurements/tessera-compiled-decode-kl-r6-2026-09-04.md"
+     }
+    ],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -346,13 +406,31 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": ["eager", "compiled"],
+      "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md"
+     }
+    ],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -378,13 +456,31 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": ["eager", "compiled"],
+      "receipt": "docs/measurements/tessera-window-gemv-served-2026-09-03.md"
+     }
+    ],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null
+     }
+    }
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_decode",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
@@ -406,13 +502,23 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "recorded",
+      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+     }
+    }
    },
    {
     "id": "tessera_bf16_k1_dense_sm121_batch",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager", "compiled"]
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
@@ -434,13 +540,31 @@
     "requires_serve_flags": [
      "TESSERA_SERVE_MODE=resident|streamed"
     ],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": ["eager"],
+      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+     }
+    ],
+     "smoke": {
+      "status": "recorded",
+      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
     "runtime": {
      "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
-     "execution_modes": ["eager"]
+     "execution_modes": ["eager"],
+     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -453,13 +577,23 @@
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "repetitive",
+      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+     }
+    }
    },
    {
     "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
     "runtime": {
      "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
-     "execution_modes": ["eager"]
+     "execution_modes": ["eager"],
+     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+     "torch": "2.13.0+cu130"
     },
     "platform": "sm_121",
     "family": "TESSERA_E4M3_K1",
@@ -472,7 +606,23 @@
     "qualification": "device_qualified",
     "requires_plugin": "tessera",
     "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-    "predicates": []
+    "predicates": [],
+    "evidence": {
+     "grade": "kl_lower_bound",
+     "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": ["eager"],
+      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+     }
+    ],
+     "smoke": {
+      "status": "repetitive",
+      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+     }
+    }
    }
   ]
  },
@@ -849,6 +999,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 17,
+   "date": "2026-09-04",
+   "change": "Lane-eligibility schema v6 (#131, #133): a cell names its own evidence instead of borrowing a global. (1) versions.attested_on is REMOVED. It did double duty -- the toolchain the contract was written against and the runtime the cells were measured on -- and was false for the two routed_moe cells, which were measured on eugr/spark-vllm@sha256:0afec8d4... under vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, not vllm/vllm-openai under 0.28.0. Each cell's runtime now carries the vllm and torch build its OWN receipt records (dense: 0.28.0 / 2.13.0+cu130 per tessera-window-gemv-served-2026-09-03.md and tessera-bf16-route-served-2026-09-02.md; routed_moe: the census receipt docs/measurements/census/lfm25-8b-a1b-served-r4.json versions block), beside the v5 image and execution_modes scope; the validator requires all four and refuses two toolchains under one digest. versions is now closed to {tessera, plugin_entry_point, default_serve_image} and every field is checked: tessera non-empty, plugin_entry_point the one this package registers, default_serve_image an exact digest that some cell attests. default_serve_image is the serve-image pin harnesses read (runtime_image.PIN_CONTRACT_FIELD, previously versions.attested_on.image); its value is the dense cells' image and did not move. The old device field is dropped: platform and compute_capability already carry it. (2) Every cell carries a required, closed evidence object {grade, kl[], smoke} so a gate can read what grade of evidence the cell rests on, never prose. PREMISE CORRECTION recorded here because it decides the values: every served KL this repository holds, dense and MoE alike, is a kl_tool top-1024 teacher/student-intersection LOWER BOUND, so no cell grades kl_full_vocab and 'the MoE cells carry screen-grade evidence while the dense cells do not' is not the distinction. The distinctions are which REGIME the bound was scored in, under which execution modes, whether a greedy smoke is on record, and the population (one Qwen3-0.6B artifact per dense family; one LFM2.5-8B-A1B artifact for routed_moe). A kl entry is {kind, top_k, regime, execution_modes, receipt}; regime must be the cell's own (a prefill bound written into a decode cell is refused), execution_modes a subset of the cell's, receipt a repository path under docs/measurements/ (existence is a tree test). smoke is {status in recorded|repetitive|not_recorded, receipt}. grade is DERIVED from the entries (route_only when no bound in the cell's regime; kl_lower_bound; kl_full_vocab) and checked, like executes. Resulting grades: batch cells all kl_lower_bound (E2M1 and E4M3-resident from tessera-serving-plugin-2026-09-02.md eager+compiled; E4M3-streamed from tessera-window-gemv-served-2026-09-03.md arm A eager+compiled; BF16 from its receipt, eager; routed_moe from tessera-lfm-campaign-2026-09-04.md section 8, eager). Decode cells: only tessera_e4m3_k1_dense_sm121_decode_streamed has a decode-regime bound (tessera-decode-regime-kl-2026-09-03.md eager arm A; tessera-compiled-decode-kl-r6-2026-09-04.md compiled A1/A2); every other decode cell, dense and MoE, is route_only -- the census attests dispatch and nothing attests decode-regime quality. Smoke: BF16 cells recorded (identical greedy continuation, ungraded), routed_moe cells repetitive, all others not_recorded. NOT additive: a v5 reader must not read a v6 document (new required cell keys, versions renamed). No rung, route, activation contract, launch, TP/EP bound or byte moved; the eight dense cells and two routed_moe cells keep their ids and scopes. qualification is unchanged and deliberately not overloaded with the grade; whether route_only routed_moe cells should remain device_qualified is #133's open decision."
+  },
   {
    "contract_version": 16,
    "date": "2026-09-04",
