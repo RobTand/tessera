@@ -144,7 +144,10 @@ def _cells(contract):
 
 def _with_evidence(contract, cell_id, evidence):
     doc = copy.deepcopy(contract)
-    _cells(doc)[cell_id]["evidence"] = evidence
+    # These mutations exercise KL/smoke grammar; artifact scope has its own
+    # regression matrix in test_evidence_artifact.py.
+    _cells(doc)[cell_id]["evidence"] = {
+        "artifact": _cells(doc)[cell_id]["evidence"]["artifact"], **evidence}
     return doc
 
 
@@ -154,7 +157,8 @@ def test_every_cell_states_its_evidence_receipt_for_receipt(contract):
     cells = _cells(contract)
     assert sorted(cells) == sorted(_EVIDENCE)
     for cell_id, expected in _EVIDENCE.items():
-        assert cells[cell_id]["evidence"] == expected, cell_id
+        assert {k: v for k, v in cells[cell_id]["evidence"].items()
+                if k != "artifact"} == expected, cell_id
 
 
 def test_the_stored_grade_is_the_derived_one(contract):

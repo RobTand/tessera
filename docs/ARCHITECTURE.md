@@ -5,9 +5,9 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** current as of the `v0.1.0` candidate (2026-09-05): code tip
-`5acc2a6`, CI at `df1bc20`, packaging metadata at `cd3190a`; contract v18,
-lane-eligibility schema v7. Re-stamp this
+**Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
+base `1e58fdc`, encoder-evidence scope correction #198; CI at `df1bc20`,
+packaging metadata at `cd3190a`; contract v19, lane-eligibility schema v8. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -256,6 +256,28 @@ witness neutral again, and the full identity rolls back only when the other
 fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
+
+### 3.1a A served receipt names the encoder that wrote its artifact
+
+Runtime evidence remains evidence about the bytes actually served. It does
+not establish that a later encoder writes those bytes, even with the same
+recipe and source. Schema v8 makes this distinction readable in
+`evidence.artifact`: null means no encoder-reproduction comparison is
+recorded; a record names the historical artifact and full encoder commit,
+then the comparison commit, single unit, payload relation, weight-SSE
+relation and measurement receipt. The validator checks the closed record
+and returns it through `cell_evidence`. The comparison is permanently scoped
+to that commit and unit, never implicitly to the latest tag.
+
+The four dense E4M3 cells name
+`gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook`, built at `8070ec6`.
+The measurement and reproduction command are in
+`docs/measurements/encoder-evidence-scope-2026-09-05.md`. Other cells carry
+null because this comparison did not measure their artifacts. Weight SSE
+is a screen: it never changes the evidence grade, supplies a served KL, or
+proves that historical KL is a bound on a fresh encode. The existing KL
+entries retain their historical artifact scope. This is a pre-release
+contract correction; no released-schema migration is provided.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
@@ -761,7 +783,7 @@ toolchains under one digest. `versions` is closed to `{tessera,
 plugin_entry_point, default_serve_image}` and every field is checked;
 `default_serve_image` is the pin of §4.4a and must be an image some cell
 attests. Every cell also carries a required, closed `evidence` object --
-`{grade, kl: [{kind, top_k, regime, execution_modes, receipt}], smoke:
+`{grade, artifact, kl: [{kind, top_k, regime, execution_modes, receipt}], smoke:
 {status, receipt, attribution, control}}` (`contract.EVIDENCE_KL_KINDS`,
 `EVIDENCE_SMOKE_STATUSES`, `EVIDENCE_GRADES`, `EVIDENCE_RECEIPT_ROOT`,
 and schema v7's `EVIDENCE_SMOKE_ATTRIBUTIONS`, `EVIDENCE_CONTROL_REFERENCES`,
@@ -1064,6 +1086,9 @@ the same reason and one more: `evidence.smoke` gains the required
 `smoke.status` a decision that `status` alone no longer carries -- which is
 the failure the version exists to announce. RobTand/prismaquant#192, which
 carries the pin, moves its predicate to `attribution`.
+Schema v8 (contract v19, #198) requires `evidence.artifact` (§3.1a).
+Pre-release readers must accept that scope explicitly; older closed readers
+refuse the new schema rather than silently discarding it.
 
 ### 4.5a A served KL names which FORWARD it scored
 
