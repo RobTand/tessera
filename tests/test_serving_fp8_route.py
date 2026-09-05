@@ -310,7 +310,7 @@ def test_scheme_and_blob_must_agree(monkeypatch):
     parse_tessera_blob_for_scheme(blob, scheme, "t")
     with pytest.raises(ValueError, match="sidecar scheme declares"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 896}, "t")
-    with pytest.raises(ValueError, match="sidecar scheme declares"):
+    with pytest.raises(ValueError, match="TESSERA_FP8 serves WINDOW bodies"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "body": "TCQ"}, "t")
 
 

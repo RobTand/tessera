@@ -126,6 +126,17 @@ person or agent — changing the code.
 
 ## Before finishing
 
+- Run independent selected tests concurrently. Use pytest-xdist with
+  `--dist worksteal` and record `--durations` so slow files or cases are
+  visible. Bound the combined worker count by the CPUs and memory available
+  to the run, and keep native math/build threads at one per worker. A shared
+  GPU does not by itself require serial pytest: independent processes isolate
+  their Python state and CUDA contexts. Serialize tests that actually share
+  mutable external state, or timing measurements that require an idle device.
+  Missing pytest-xdist is a test dependency to install in the scoped test
+  environment, not a reason to leave the machine idle. The controller's
+  `--strict-cuda --surface-json` aggregate retains the device-allocation and
+  missing-artifact checks under xdist.
 - Targeted tests for every touched module, plus the byte-baseline audit if
   anything about rendering, planes or layout moved.
 - **Never compute the master baseline suite to prove your branch is clean.**
@@ -195,10 +206,10 @@ person or agent — changing the code.
   adjacent rows, not one of them -- an arm a run did not submit is written as
   `not submitted in this run`, so a lone row cannot be read as a whole result
   -- and read each row's `mode` beside its `device`, because two rows of one
-  commit can differ by how they ran and not by the box they ran on. `--cpus N`
-  is clamped per arm: the GPU arm is always `serial` (its workers would share
-  one device and its CUDA venv has no xdist) while the x86 arm takes `-n N`,
-  which is what lets one submission carry both arms at all.
+  commit can differ by how they ran and not by the box they ran on. The legacy
+  `merge_suite.py` wrapper currently clamps its GPU arm to `serial` while its
+  x86 arm takes `-n N`. That wrapper's behavior is not a requirement for direct
+  local validation; use the parallel execution rule above for those runs.
   If the submitting session dies while the pool carries on -- which is how
   every GPU submission on this branch has gone -- `--resume <receipt dir>`
   rebuilds the receipt from the populations the runs published. Its exit

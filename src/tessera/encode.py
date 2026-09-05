@@ -1762,8 +1762,9 @@ def _refit_scales_lut_metric(
     the table the unit already had was re-assigned on the other 20; an exact
     coordinate step over the sixteen entries with every cross-block term
     kept, started from the coupled assignment, moved 0 entries on every pass
-    of five of the six units, and on L2.down_proj 2-11 entries a pass worth
-    0.9% of that unit's error against the 61% its re-assignment was worth.
+    of five of the six units, and on L2.down_proj 6-19 entries a pass worth
+    0.9% of that unit's error after re-assignment had taken its out-space
+    error from 0.02383 to 0.01002 (the cited receipt, section 2).
     (b) is separable and it is not where the loss is.  (c) is: a block landed
     nearest to ``s*_b`` is not at its conditional minimiser once its
     neighbours have landed somewhere else.
@@ -1776,8 +1777,8 @@ def _refit_scales_lut_metric(
     candidate that can only be at or below the third, and the guard is
     unchanged.  Under a 1-D metric the blocks are independent and nearest-in-
     linear IS the conditional minimiser, so there is nothing for the sweep to
-    do -- the oracle's replay of the diagonal control found fp32 ties worth
-    0.03% of the cost and no more -- and ``encode_unit`` refuses the flag
+    do -- the oracle's replay of the diagonal control found one fp32 tie in
+    3.67 million block-passes -- and ``encode_unit`` refuses the flag
     there rather than name an arm that did nothing.  Encoder-side and
     opt-in like ``gauss_seidel``: the wire, the decoder and the profile id do
     not move, and an exporter cannot set it.

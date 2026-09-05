@@ -71,3 +71,21 @@ dead before its summary. A device string is a measurement.
 | -- | `6072e572e749` (assumed) | no | x86 | -n 24 | no population published | -- | -- | -- | 0 | -- |
 | 2026-09-04T22:25:35Z | `86aa47409242`<br>source `40f8d9ba0962` | unknown | gpu | serial | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 2535 | 0 | 12 | 0 | 0 |
 | 2026-09-04T22:27:09Z | `08d1571d7598`<br>source `40f8d9ba0962` | unknown | x86 | -n 24 | torch 2.11.0+cpu reports no CUDA device | 2016 | 0 | 518 | 0 | 0 |
+
+
+## Direct selected validation, 2026-09-05
+
+Issue 198 and branch-cleanup checks, not a full release suite. Both arms are
+aarch64 on the local GB10 host; no x86 or PrismaBuild arm was submitted.
+Both publish `8c21637ae168` and verified source hash
+`d45278d3b27b17b1da812193ac9e91623c7a8ebfd3e9b9fe8fe4e5012d05667d`.
+[Full receipt, scope, commands and verbatim skip reasons](../measurements/branch-audit-validation-2026-09-05.md).
+
+| arm | mode | device | selected files | passed | failed | skipped | xfailed | uncollected | exit |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| CPU | -n 8, worksteal | torch 2.10.0+cpu, no CUDA | 126 | 1945 | 0 | 505 | 0 | 0 | 0 |
+| GPU | -n 12, worksteal, strict-CUDA | torch 2.13.0+cu130, GB10 | 129 | 2485 | 0 | 5 | 1 | 0 | 0 |
+
+GPU calls allocated in 472 tests; neither arm skipped for absent box artifacts.
+The intentionally interrupted serial attempts are preserved separately and
+are not success receipts.

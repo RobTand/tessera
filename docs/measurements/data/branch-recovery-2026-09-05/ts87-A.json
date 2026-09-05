@@ -1,0 +1,181 @@
+{
+ "schema": "prismaquant.kl_compare/2",
+ "metric_identity": {
+  "name": "KL-vs-BF16",
+  "support": "top-1024",
+  "partition": "teacher-student-intersection",
+  "bound": "lower bound (data-processing inequality)",
+  "positions": 4088,
+  "corpus_sha256": "076d33efc4476dcc417a2bb249c0bc950bb54bbb471d73f69c15cef0010b53d0",
+  "corpus_tokens": 4096,
+  "tokenizer_sha256": "76f13c8e6e553e35b09733ed5543274fdcd97285d3fcd7e1cccd4e0ad8089891",
+  "regime": "prefill",
+  "unchecked_alignment": false
+ },
+ "regime": "prefill",
+ "teacher_regime_record": null,
+ "student_regime_record": {
+  "name": "prefill",
+  "definition": "every scored position comes from ONE many-row forward over the whole chunk",
+  "request": "max_tokens=1, prompt_logprobs=K over the full chunk",
+  "rows_per_scored_forward": "the chunk length",
+  "comparability": "the regime every dump before 2026-09-03 was taken in; a payload carrying no regime field is one of these"
+ },
+ "teacher_payload": "/mnt/shared/tessera-kl/qwen_teacher_bf16_v028.json.npz",
+ "student_payload": "/mnt/shared/tessera-kl/qwen_ts87_A.json.npz",
+ "teacher_meta": {
+  "schema": "prismaquant.kl_position_dump/2",
+  "role": "teacher",
+  "teacher_label": "BF16",
+  "metric": {
+   "requested_top_k": 1024,
+   "returned_k_max": 1025,
+   "full_vocab": false,
+   "support_note": "the serve returns the requested top-K plus, for some runtimes, the actual prompt token",
+   "topk_coverage_min": 0.27870649942774994,
+   "topk_coverage_mean": 0.97668359862877
+  },
+  "corpus": {
+   "source_text": "/mnt/shared/tessera-kl/wikitext_test.txt",
+   "source_sha256": "076d33efc4476dcc417a2bb249c0bc950bb54bbb471d73f69c15cef0010b53d0",
+   "source_bytes": 400622,
+   "offset": 0,
+   "n_chunks": 8,
+   "seqlen": 512,
+   "tokens": 4096,
+   "scored_positions": 4088,
+   "contract_sha256": "cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d"
+  },
+  "model": {
+   "served_model_name": "kl-target",
+   "endpoint": "http://127.0.0.1:8000/v1/completions",
+   "runtime": "vllm",
+   "served_models_response": {
+    "object": "list",
+    "data": [
+     {
+      "id": "kl-target",
+      "object": "model",
+      "created": 1788327140,
+      "owned_by": "vllm",
+      "root": "/home/rob/models/Qwen3-0.6B",
+      "parent": null,
+      "max_model_len": 4096,
+      "permission": [
+       {
+        "id": "modelperm-93e6e67829b1c559",
+        "object": "model_permission",
+        "created": 1788327140,
+        "allow_create_engine": false,
+        "allow_sampling": true,
+        "allow_logprobs": true,
+        "allow_search_indices": false,
+        "allow_view": true,
+        "allow_fine_tuning": false,
+        "organization": "*",
+        "group": null,
+        "is_blocking": false
+       }
+      ]
+     }
+    ]
+   },
+   "artifact_path": "/home/rob/models/Qwen3-0.6B"
+  }
+ },
+ "student_meta": {
+  "schema": "prismaquant.kl_position_dump/2",
+  "role": "student",
+  "metric": {
+   "requested_top_k": 1024,
+   "returned_k_max": 1025,
+   "full_vocab": false,
+   "support_note": "the serve returns the requested top-K plus, for some runtimes, the actual prompt token",
+   "topk_coverage_min": 0.08172631381353963,
+   "topk_coverage_mean": 0.9776363665652245
+  },
+  "corpus": {
+   "source_text": "/mnt/shared/tessera-kl/wikitext_test.txt",
+   "source_sha256": "076d33efc4476dcc417a2bb249c0bc950bb54bbb471d73f69c15cef0010b53d0",
+   "source_bytes": 400622,
+   "offset": 0,
+   "n_chunks": 8,
+   "seqlen": 512,
+   "tokens": 4096,
+   "scored_positions": 4088,
+   "contract_sha256": "cfbddc2c49078256564dffd32dc5033515ce11f30057c33f0fe457ed5aded59d"
+  },
+  "model": {
+   "served_model_name": "kl-target",
+   "endpoint": "http://127.0.0.1:8000/v1/completions",
+   "runtime": "vllm",
+   "served_models_response": {
+    "object": "list",
+    "data": [
+     {
+      "id": "kl-target",
+      "object": "model",
+      "created": 1788517700,
+      "owned_by": "vllm",
+      "root": "/home/rob/tessera-runs/ts87/qwen3-0.6b-e4m3-q1024-master",
+      "parent": null,
+      "max_model_len": 4096,
+      "permission": [
+       {
+        "id": "modelperm-ac6143857f822757",
+        "object": "model_permission",
+        "created": 1788517700,
+        "allow_create_engine": false,
+        "allow_sampling": true,
+        "allow_logprobs": true,
+        "allow_search_indices": false,
+        "allow_view": true,
+        "allow_fine_tuning": false,
+        "organization": "*",
+        "group": null,
+        "is_blocking": false
+       }
+      ]
+     }
+    ]
+   },
+   "artifact_path": "/home/rob/tessera-runs/ts87/qwen3-0.6b-e4m3-q1024-master"
+  }
+ },
+ "alignment_checked": true,
+ "unchecked_alignment": false,
+ "alignment_problems": [],
+ "student_prob_floor_declared": 3.720075976020836e-44,
+ "positions": 4088,
+ "all": {
+  "kl_lower_mean": 0.15116254289226014,
+  "kl_upper_mean": 2.892147526736623,
+  "gap_upper_mean": 2.740984983844362,
+  "kl_lower_p99": 0.9247067689966492,
+  "kl_lower_max": 3.6124619496407315,
+  "teacher_tail_mass_mean": 0.028139067886879216,
+  "teacher_tail_mass_max": 0.8661237849701535,
+  "top1_agree_pct": 78.05772994129158
+ },
+ "confident": {
+  "n": 1709,
+  "fraction": 0.4180528375733855,
+  "kl_lower_mean": 0.1004857009452011,
+  "kl_upper_mean": 0.6453530642148066,
+  "teacher_tail_mass_mean": 0.00568447537213976
+ },
+ "produced_at_utc": "2026-09-04T10:32:56.107515+00:00",
+ "argv": [
+  "/home/rob/dq-runs/kl_tool.py",
+  "compare",
+  "/mnt/shared/tessera-kl/qwen_teacher_bf16_v028.json.npz",
+  "/mnt/shared/tessera-kl/qwen_ts87_A.json.npz",
+  "--out",
+  "/home/rob/tessera-runs/ts87/kl_A.json"
+ ],
+ "legacy_floor_substituted": {
+  "note": "the pre-2026-08-30 convention: sum over the TEACHER's support only, substituting the student's smallest returned logprob for missing tokens, with NO tail term. Not a bound in either direction. Reproduction only.",
+  "all_mean": 0.15380737713464376,
+  "confident_mean": 0.10112739525357618
+ }
+}

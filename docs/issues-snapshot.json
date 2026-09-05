@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T04:05:56Z",
+ "generated": "2026-09-05T04:46:51Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1210,7 +1210,7 @@
     "title": "Reach M=1 on a hybrid conv/SSM serve so the decode regime works there"
    },
    "198": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "encoder: the shipping encoder does not reproduce the checkpoint the contract's evidence was measured on"
    },
    "199": {
@@ -1226,8 +1226,12 @@
     "title": "PrismaQuant cannot ship a Tessera artifact: fingerprint, EXPORT_LANES, and a gate that fails open"
    },
    "200": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Scope historical encoder evidence and record its weight-error comparison"
+   },
+   "201": {
+    "state": "OPEN",
+    "title": "Dispose of leftover work and fix validation findings"
    },
    "21": {
     "state": "CLOSED",

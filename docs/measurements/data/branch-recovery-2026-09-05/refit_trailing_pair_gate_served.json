@@ -1,0 +1,113 @@
+{
+ "args": {
+  "qwen": "experiments/results/refit_trailing_pair_qwen.json",
+  "glm": "experiments/results/refit_trailing_pair_glm.json",
+  "field": "out",
+  "served_bar": 0.5200805955385711,
+  "served_bar_json": "/mnt/shared/tessera-runs/refit-trailing/kl_a4h1.json",
+  "served_arm": "B-Jac",
+  "served_kl_json": "/mnt/shared/tessera-runs/refit-trailing/kl_bjac.json",
+  "served_kl": 0.5137907094421992,
+  "out": "experiments/results/refit_trailing_pair_gate_served.json"
+ },
+ "control": "A drift control FIRST [refit h^1.0 x4]",
+ "arms": {
+  "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)": {
+   "unit_ratios": [
+    0.9850009836563416,
+    0.95144312480036,
+    0.9957228498067237,
+    0.9778328672778482,
+    0.6659607716214245,
+    0.9917608104833666
+   ],
+   "geomean": 0.9190652914716335,
+   "wins": 6,
+   "glm_ratio": 0.9999431860171497,
+   "served_kl": 0.5137907094421992,
+   "served_kl_receipt": "/mnt/shared/tessera-runs/refit-trailing/kl_bjac.json",
+   "verdict": {
+    "promoted": true,
+    "detail": "B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi) wins 6 of 6 units at geomean 0.9191x, GLM 0.9999x against the 1x gate, served 0.5138 against 0.5201 on the promoted arm, screened at landing 'table' (the wire)"
+   }
+  },
+  "B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)": {
+   "unit_ratios": [
+    0.9501751282366502,
+    0.9213929573011966,
+    0.994482446798019,
+    0.9512252848725525,
+    0.5877403066140168,
+    0.9875429730928258
+   ],
+   "geomean": 0.88507163403691,
+   "wins": 6,
+   "glm_ratio": 1.0104022098039154,
+   "served_kl": null,
+   "served_kl_receipt": null,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.01x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)": {
+   "unit_ratios": [
+    1.100570061581818,
+    0.9979194470322003,
+    1.0296718536956344,
+    1.031779983605185,
+    0.7711394800352552,
+    1.0262303364718408
+   ],
+   "geomean": 0.9868007810860517,
+   "wins": 2,
+   "glm_ratio": 1.0586700100028348,
+   "served_kl": null,
+   "served_kl_receipt": null,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.059x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  },
+  "C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)": {
+   "unit_ratios": [
+    0.9814812453208309,
+    0.9350280185552392,
+    1.0066830750677656,
+    0.9657429553704818,
+    0.8883648583661563,
+    1.0096153798468803
+   ],
+   "geomean": 0.9635362222130645,
+   "wins": 4,
+   "glm_ratio": 1.0391491726808195,
+   "served_kl": null,
+   "served_kl_receipt": null,
+   "refused": "PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it"
+  }
+ },
+ "log": [
+  "screen   : experiments/results/refit_trailing_pair_qwen.json",
+  "crosscheck: experiments/results/refit_trailing_pair_glm.json",
+  "field    : out   landing offered: 'table' (the wire)",
+  "GLM gate : 1x   served bar: 0.5201 (the incumbent h^1.0's served KL, read from /mnt/shared/tessera-runs/refit-trailing/kl_a4h1.json)",
+  "",
+  "served   : B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)",
+  "           KL 0.513791 from /mnt/shared/tessera-runs/refit-trailing/kl_bjac.json",
+  "",
+  "== B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi)",
+  "   Qwen six-unit out geomean 0.9191x, wins 6/6   per-unit 0.9850 0.9514 0.9957 0.9778 0.6660 0.9918",
+  "   GLM six-expert out geomean 0.9999x against the 1x gate: CLEARS",
+  "   assert_plane_promotion: PROMOTED -- B-Jac  T R_h T R_h T R_h T R_H          (trailing full-H, Jacobi) wins 6 of 6 units at geomean 0.9191x, GLM 0.9999x against the 1x gate, served 0.5138 against 0.5201 on the promoted arm, screened at landing 'table' (the wire)",
+  "",
+  "== B-GS   T R_h T R_h T R_h T R_H(GS)      (trailing full-H, sweep)",
+  "   Qwen six-unit out geomean 0.8851x, wins 6/6   per-unit 0.9502 0.9214 0.9945 0.9512 0.5877 0.9875",
+  "   GLM six-expert out geomean 1.0104x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.01x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== C-Jac  T R_H T R_H T R_H T R_H          (full-H every pass, Jacobi)",
+  "   Qwen six-unit out geomean 0.9868x, wins 2/6   per-unit 1.1006 0.9979 1.0297 1.0318 0.7711 1.0262",
+  "   GLM six-expert out geomean 1.0587x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.059x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  "",
+  "== C-GS   T R_H T R_H T R_H T R_H(GS)      (full-H every pass, sweep)",
+  "   Qwen six-unit out geomean 0.9635x, wins 4/6   per-unit 0.9815 0.9350 1.0067 0.9657 0.8884 1.0096",
+  "   GLM six-expert out geomean 1.0391x against the 1x gate: FAILS",
+  "   assert_plane_promotion: PromotionRefusedError: tessera#75 the trailing-refit objective: GLM six-expert 1.039x is above the 1x gate -- the cross-check the coordinator's gate requires, and no screen overrules it",
+  ""
+ ]
+}

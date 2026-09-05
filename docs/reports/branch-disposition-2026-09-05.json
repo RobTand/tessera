@@ -1,0 +1,980 @@
+{
+  "audit_base": "39fba4fbb1a87324c275f7471b72489fd4b30e52",
+  "original_refs": [
+    {
+      "ref": "refs/heads/claude/ship-integration-final",
+      "sha": "b90bd1f90e8a2d8af266abb196642dbbb9e9b6cb",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-50-lut-landing",
+      "sha": "78411521808ecc8bd011f097b801a3ba2d94c2bf",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-75-served",
+      "sha": "a5d90a0f1eeaf3ac5050bf0d33c319b600babca9",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "a5d90a0f1eeaf3ac5050bf0d33c319b600babca9 Say that the screen's six units are one unit, and price the other five",
+        "4b1bbe67ff08b5ad6eb80bfc9e335af81950d475 Serve #75's pair: the trailing objective wins the mean and pays in the tail",
+        "f5d06341736ed5628d21828aa679a68405b97eae Take a lock, since skip-if-exists is a resume and not an exclusion"
+      ],
+      "disposition": "recovered evidence; retire precursor",
+      "reason": "Original byte/gate JSONs match surviving receipts exactly. Preserve completed prefill KL and tail limitations in branch-recovery-2026-09-05.md. Reject PID-only mkdir lock; retire completed fixed-namespace run_all launcher.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-contract-paths",
+      "sha": "5bf53c2e36475284890aef186b5bd9fae228817b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-kl-decode",
+      "sha": "9b21c0a21f38aaa96bb6b79ecafdd439fd986ae4",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-ladder-wire",
+      "sha": "5f8ce851c53009030d6ad2404b77c525df79b173",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-lut-global-channel",
+      "sha": "79aaa847bd2fa8f658b74c8bd18bdc693e276459",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-moe-evidence",
+      "sha": "8ac74321b21f123c2cfafadd934d68f76bb38802",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/claude/ts-smoke-control",
+      "sha": "0a1045ad63886feff87f8d402e29e68b05920f41",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/issue-198-evidence-scope",
+      "sha": "71228ad0559d19454ca532ee90a80050e047e155",
+      "ancestor_of_master": true,
+      "unmatched_commits": [
+        "71228ad0559d19454ca532ee90a80050e047e155 Refresh evidence references and document the complete evidence object",
+        "a3224d46ca8d61bfe96262a6d9e6cb971429b7d8 Verify the evidence comparison after the minor-7 wire merge",
+        "100ec1d7642415c788ed07ce2202de2be0e08b3e Scope runtime evidence to its historical encoder artifact (#198)"
+      ],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/merge-suite-source-scope",
+      "sha": "75ecfdf62946e74062010df2f69e2fcc9f845e04",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts-114-receipt",
+      "sha": "41f8447de9b1ac584364ea6759c35a0bd2c92210",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "41f8447de9b1ac584364ea6759c35a0bd2c92210 Record the linked-worktree x86 failure"
+      ],
+      "disposition": "superseded",
+      "reason": "The linked-worktree failure row is historical, not a current master receipt. Issue 114 closed on the corrected 66f6480 pair and 005a53f ledger; retain original failing row in the bundle rather than overwrite current population provenance.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts-5-moe-partition",
+      "sha": "7be6162548cd32ecdd0881c8043ab4c0e4c05d29",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "59b8d448d55a79595d13906f72420bdf6e6ce321 Partition serving exports by whole layer and verify assembly"
+      ],
+      "disposition": "integrated",
+      "reason": "Whole-layer partition and checked assembly are in src/tessera/serving_parts.py and the current export/merge drivers; issue 5 closed by PR 127 at 196c142.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts-5-plan-coverage",
+      "sha": "e3e2420f8a8dc7f83ad8b7972ca4eb770f81a4b4",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "740f79e0c392f289cd6c31d685402798242cd09f Regress explicit-plan omissions at merge and sidecar boundaries"
+      ],
+      "disposition": "integrated",
+      "reason": "All tests introduced at 740f79e remain in test_serving_parts.py and test_ts5_sidecar_check.py; current versions add shard permission and duplicate-name coverage.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts-legacy-lock-owner",
+      "sha": "f6920ef936cd80f6df6b08b4f6929bf93def3cc5",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts-release-readme",
+      "sha": "c6af25d006e3aff7e1b67a9ae677f2e2cc529e46",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-bound-cleanup",
+      "sha": "ec39abe1cbe95863733a155da73c0a5b219e4e50",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-bound-model-seal",
+      "sha": "219654b593808a848168b3390365ee27506a0b01",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-census-check",
+      "sha": "38e7ce8fbb34b6336692e47b2c6e57cbb453822a",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-merged-shard-readable",
+      "sha": "b8d1e2d83de2b38ab77869414b97fea4e688af46",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-moe-role-invariant",
+      "sha": "2b9189e90f685860bf9cef1cf76672490ac3774a",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "2b9189e90f685860bf9cef1cf76672490ac3774a Correct expert row diagnostics and the historical GLM harness scope",
+        "69cb76671ecec7989244ccc3e4fa08fc8046326c Describe MoE containers at their per-projection granularity"
+      ],
+      "disposition": "integrated",
+      "reason": "Current scheme.py describes per-projection containers; moe_route.py diagnoses expert rows. Current GLM/LFM harness scope supersedes the old prose, and measured MoE cells supersede dense-only assumptions.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-serving-gates",
+      "sha": "f78cc1b8c3bec884ec97200e2f3566466abbbc35",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/codex/ts5-sidecar-duplicate-shards",
+      "sha": "f382daf66107b39d8fb568bef76102c0b8fcb36d",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "f382daf66107b39d8fb568bef76102c0b8fcb36d Keep unattested census prose independent of schema revision"
+      ],
+      "disposition": "integrated",
+      "reason": "census.py now says closed-world table, independent of schema revision; duplicate-shard gate and regression are on master.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/issue39-baseline-reach",
+      "sha": "d9b70647aff75e4c4d72317ee3e3041c872f1e46",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "d9b70647aff75e4c4d72317ee3e3041c872f1e46 wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "superseded",
+      "reason": "Issue 39 explicitly closed via _value_cases and scope-mutation regression at 74f573f / 780817a; this session-kill snapshot is an earlier implementation.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/master",
+      "sha": "331703661baaa67ed73900c3d9e99f300fdc8415",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "keep master",
+      "reason": "Canonical surviving branch; advance to the reviewed cleanup merge.",
+      "action": "keep"
+    },
+    {
+      "ref": "refs/heads/muse/ts-101-encver",
+      "sha": "3e363ae87a7e6ff3b191c8b409c0d8d474fd52e2",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "3e363ae87a7e6ff3b191c8b409c0d8d474fd52e2 tessera#101: version the encoder (ENCODER_VERSION=1, manifest minor 6, merge guard)"
+      ],
+      "disposition": "rejected alternative",
+      "reason": "Issue 101 explicitly rejected the hand-maintained ENCODER_VERSION design. Current encoder_identity.py derives a behavior-fixture identity (34ff395 and successors); do not reintroduce a second version counter.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-75-trailing",
+      "sha": "69036a685dddea7c58824d786d7707f4fac2a4c7",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "69036a685dddea7c58824d786d7707f4fac2a4c7 WIP #75: trailing-pass refit harness (worker wedged, work preserved)"
+      ],
+      "disposition": "superseded",
+      "reason": "Wedged-worker harness precursor superseded by merged equal-pass trailing objective (9add21d / f735d94), current refit_trailing_pair.py and recovered completed served receipts.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-78-79-guards",
+      "sha": "3cfb80da7bb484b2545a9bc02942bf7b876a1408",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-84-reach",
+      "sha": "7b1d6c8231925efde2e46b98b4947c00421544a8",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-86-ignore",
+      "sha": "7f5c62e6dc3e37efadfc91ab1a1e02b61a501b21",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "7f5c62e6dc3e37efadfc91ab1a1e02b61a501b21 Report: targeted evidence, and the full suite that was killed on instruction"
+      ],
+      "disposition": "integrated; retire stale receipt",
+      "reason": "Unified written-ignore and construction census supersede old report. Issue 86 explicitly retired b0da95e and the wrong vision qkv spelling; current qkv_proj mapping and completeness gates own this policy.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-87-landfloor",
+      "sha": "c979ed26a1f17903a2554aafb061182679c1944c",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "c979ed26a1f17903a2554aafb061182679c1944c Report: the 8-unit sweep was not run, and say so plainly",
+        "911051cc39875ea908f545538b3e6fec5e5c5bae Report: final targeted runs on both branches",
+        "7f4181167f819b2cd13e1f5073b005ee815de815 Say the BF16 exactness is about the source, not the wire",
+        "b33fab76c0917f5f998cdf788e7e3beb20e17bb0 Run the repo's byte proof, and bound the BF16 claim it disproves",
+        "c7a0207a8d829d39dcf0bef51d9668b84d30f047 Report: the importer files pass and both pre-fix failures are on record",
+        "e844be5c42e6b5538561dcac5a0822ab89f44d45 Report: targeted test evidence, not a full suite",
+        "370d0e3d09003e9ab45051f5006699abe9cbc3a6 Measure the delta, and find the refit puts the rows back",
+        "23d98845b88712ed518a8ab3ef16d0d8be5bda55 Report: list the 20 E4M3 artifacts verbatim, not a typed count",
+        "24d1e5811cdce184ffc85ed1d1ed88cc988ba842 Report: test results, off-task fixes and issues filed",
+        "ae216dacd7d99b609282d61339d04a1e782f9153 Report: the boundary finding and the recommendation",
+        "7a6872506e8f9e386b7179f54e924ed664821f52 Scope the promise to raised rows, and count the boundary it leaves open",
+        "93bd53701047d2c54d84b7fc78f8e16dc2555a8a Draft the #87 decision package (A/B pending)",
+        "43f90d7aa6633da62a4059c649b6be39971a7105 Say where the round-up is exercised, now that the start uses it too",
+        "f2008a1ef415f449b5faf5ddb8c6a2b57a9e932f Record the reach-landing census on both sides of the fix",
+        "c278e5862e2ca6328181fcee53484af45f2d026c Assert the reach start exactly, since the slack was the size of the defect",
+        "cae2256299824d80e0e2085c8c07a5cff7e8660a Land a raised row upward, since the reach it clears is a lower bound",
+        "400c7f4868b6a0e19633fcad05baac37d3bfc225 Count the rows the reach start lands short of its own bound"
+      ],
+      "disposition": "superseded; retain historical evidence",
+      "reason": "Raised-only upward landing integrated at 9d9767b with _bump_below_floor shared by land_at_least. Precursor census/test counts remain historical in bundle; later unraised-row decision and recovered served A/B bound current claims.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-89-dyadic",
+      "sha": "acaf2a2fb30dcba5332297628ebf1108022ac2cc",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/muse/ts-99-glmattn",
+      "sha": "5ccd4a189e4825407a840e88285e40ea1fb1405c",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/perf/ldlq-tcq-graph",
+      "sha": "30cf0d65728e1d7b68d90d34f50049272c116b71",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "30cf0d65728e1d7b68d90d34f50049272c116b71 wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "superseded",
+      "reason": "30cf0d6 has separate TcqGraph/TcqTables/_viterbi_core and obsolete experimental APIs. Master 2903784 replaced it with one _TCQPlan.run for reference/capture, bounded per-thread residency, shared capture lock, and test_tcq_graph.py identity coverage. Retire both old benchmark drivers.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/ts-12-mechanism",
+      "sha": "057011b271cacb814cdcddb7a47214c995966d6b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "057011b271cacb814cdcddb7a47214c995966d6b wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "integrated",
+      "reason": "All three experiment files at 057011b are byte-identical to master: dense4_plane_census.py, dense4_plane_mechanism.py, dense4_reach_sweep.py. Issue 12 closed with later served b8 parity at cc3eb27 / f0a2d0c.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/ts-5-preRebase-b0da95e",
+      "sha": "b0da95e8332a492eeb74d68cd6768be355651c6b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "b0da95e8332a492eeb74d68cd6768be355651c6b Name the vision tower too: passed through is not the same as ignored",
+        "12ee78df10fd4a4b48bee83d45d00fa08c216698 Do not spell a producer's note \"structure\" when a gate reads that word",
+        "7adbd90875e3155e91399f4c7a9d1be193ce7534 Ask a bare packed name its rank, and refuse the answer we have not been shown",
+        "35e7e671bc236cae4075099ff9a6e3e3d2ed40d5 See the packed expert stack that carries no \".weight\", and name its module"
+      ],
+      "disposition": "rejected precursor",
+      "reason": "Issue 86 explicitly superseded this old expert-ignore branch: wrong qkv spelling and incomplete allow-list. Current unified written passthrough and construction census retain the useful rank guard.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/wf/ts-112",
+      "sha": "99826676cdaaa0ac8f61a61dd558410596c55406",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "99826676cdaaa0ac8f61a61dd558410596c55406 The watched pair: 2060/0/13 on sparky beside 1548/3/509 on dl380g10",
+        "f0c74b91f552fb7d4bcd87c03cfde2a109af0a41 Record the 08:01 pair: two populations of one tree, both stamping no commit",
+        "19e381e7b685067b74eb99666bade30f7835062e Refuse a shared worktree: the tree travels and its git does not",
+        "a0a3ac1f7f80bfb6a1cbdd956da723119027aade A checkout that is not a repository crashed the recorder, silently",
+        "eb44b7cb813502987c1af8331948fcd1cac07997 An arm that published nothing has no run mode, and said `-n 8`",
+        "91b25b3d023304634a4bd2305a3051d36c8946e1 Record the 07:13 run: the GPU population at 7b5f219, and no x86 one",
+        "04c45c9f390f40f48be863f7373da183126ff287 Point the resume tests at a directory, not at this checkout"
+      ],
+      "disposition": "superseded",
+      "reason": "Current merge_suite.py and tessera._dev suite source/deadline machinery supersede the checkout-shape guard and receipt recorder. Old 2060/0/13 and 1548/3/509 rows are historical, not a current validation population; keep them in the bundle.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/wf/ts-113",
+      "sha": "c3e47b6f854cebe90a56c82c966771177641fee8",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "c3e47b6f854cebe90a56c82c966771177641fee8 Ask vLLM whether the two regimes share a build, and record the branch that reads it the other way",
+        "ace1d8863397a24a5b81c300e8fb0409fddda3ce Drop a timing story the logs contradict, and state the witness rule as necessary",
+        "25d692f810c96050343dee5525e85f9e85dc8118 Refuse the teacher gate for the reason it exists, not for a schema",
+        "559a990f547aef7fcc18490b4099dd862bf55a61 Serve the control, and find the noise floor above the signal",
+        "4d9cded86257d10622e8be776143be4e6140dc62 Take the compiled decode KL, and price the switch that made the teacher unusable",
+        "53b9985a3b83d6a9f38f64c9078efa6f916ef10e Say in ARCHITECTURE that only the mutual pair is quotable under compile",
+        "921db3a988f422b4a025f713069c5642edabd34d Derive the compiled dispatch from this box's own logs, and say the teacher is eager",
+        "a15744a6a6cb8f8893e260c2723c7c1962356bfd Give the compiled re-take a control, since two arms are two treatments",
+        "2028bd95a3695c812f8c65f06b2950b4ff19a420 Merge branch 'wf/ts-83' into wf/ts-113"
+      ],
+      "disposition": "rejected inference; superseded experiment",
+      "reason": "Its prefill-identity witness was used to argue compiled lane separation despite rebuild noise. Current original receipt retracts that inference; fresh matched r6 population and independent audit in tessera-compiled-decode-kl-r6-2026-09-04.md supersede it. Do not restore the old architecture claim.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/wf/ts-5-serve",
+      "sha": "6899340bcce25b8d67c06398fe8ae9d4f12b204b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "All branch-side commits are patch-equivalent to master under git log --cherry-pick --right-only. Delete redundant reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/wf/ts-83-scope",
+      "sha": "fd6eaf1e7a8b11bdf7f0d4425b5fffe55635f066",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "fd6eaf1e7a8b11bdf7f0d4425b5fffe55635f066 Name both legs of the latency #83 asks for, and price the one no issue carried"
+      ],
+      "disposition": "superseded",
+      "reason": "Historical trace timings with unattributed copy/gather kernels do not establish a controlled served latency comparison. Current window-GEMV and r6 receipts state campaign scope; retire the older cross-campaign latency interpretation.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/heads/wf/ts-87",
+      "sha": "264ac6abfafdb621ba1fe309ed5bc2db57c2d367",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "264ac6abfafdb621ba1fe309ed5bc2db57c2d367 Price the 1.4%: the arms are paired, and eight chunks do not resolve the sign",
+        "7a46084e450ea93d0766309a2ccf621e555b2e4c The suite is green on the merged tree, and the identity prints from a clean commit",
+        "ae4c54a435d5c2f9f01d3d94a3d7bab556c3cfa8 Merge master: twelve commits, none of them touching this branch's files",
+        "17a913ab092e975093901d265791eaf2464aef15 The served A/B says the round-up costs 1.4% KL, and the screen inverted again",
+        "5cf1754d88edb2704f4ae31ee99b81e2b3721ff1 A stamped encoder is minor 6 on every artifact, and twenty build sites asked for less",
+        "c2b8d836735eb0f34733b9a64d55eecfcbd5ee1a The gate #87 was held behind is on master, and the stamp is wider than the bytes",
+        "525949a5e0ba4a013f4178aec5429f1721bfa722 Merge master: the identity #87 waited for is on it now",
+        "e78049fc86772cfcf3369ab647aa55e6fbe92441 Cite where \"LDLQ off\" and \"the same bound\" are declared, not the case name",
+        "027800323ebd8aa8987b119f64774b8d31632267 Cite the AST hash, not a sha256 my own docstring edits invalidate",
+        "214982abc689c26b7af5bf6f2d22b359b9ebe5c0 Map the rebase, since every hash these receipts cite was rewritten",
+        "d452363b73e69bb9f3a830c9b8750bfcae5ba77e Split the two byte-identical E4M3 cases, since only one has a mechanism",
+        "094d044da9cbc512924cf96cb5d22794ba5e6182 Name the right fix for #101's fixture: size, not a bigger outlier",
+        "5f6dc42eed8d6f6c5ec43afd441b910edb1c004f Say the fixture does reach the round-up, since counting it says so",
+        "4a016715ca8d51facb0225b8b880e0f836f13b7c Count the round-ups, since \"byte-identical\" was hiding two different facts",
+        "0f4de51865d4958b45cef6feadfb6e4d76a9f048 Retract the LDLQ bound: the A/B that refutes it was already on the branch",
+        "aecfd2eca67a71a48ae5ef44dcdcab158ba791d7 Measure the A/B here too, and it lands on the held branch's shas",
+        "198f0a6ed6567aeb8885ddea3e74b7bd449bbe29 Put the A/B file in the repo, since the docstring already quotes it",
+        "15d02e24efa1d2c2d1293dc37bb54686604e3137 Bound the byte move to the LDLQ arm, since five of six E4M3 cases hold",
+        "b912763562482756f325d34ecb15e397f822fbe0 Say where the census ran, and that the 32 unraised rows are on both arms",
+        "94bc83aeccb445a17116c4dbdbc69adbc00fd2cb Measure both census arms and the pre-fix failures here, not on the old base",
+        "bb73c5a6c1fc6a8708d0534de3be65efa8d38fe0 Report the census maxima as maxima, since summing a worst case is nothing",
+        "b10669dbc5d837ba167493e99feb05f0526f6b5e Quote the census the repo ships, not two arms blended into one range",
+        "55171ecd8d21fb845653f7d414978655d7c58ab1 Carry the reach-landing census, and say whose measurement it is",
+        "9d3d965928696ecc0bdb6a69832422034c4bd623 Record the byte proof on both sides of the reach landing, at 766033c",
+        "1222df5757d2014e3d530729389ae7edba2dd9f7 Land a raised row upward, since the reach it clears is a lower bound"
+      ],
+      "disposition": "integrated mechanism; recovered evidence",
+      "reason": "Current raised-only landing owns the code. Preserve the completed historical served A/B, including its unresolved chunk-level sign, in branch-recovery-2026-09-05.md; retire predecessor implementations, hardcoded drivers, and interim test/count logs.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-arch-stamp",
+      "sha": "cde1bf63dd438eacf5321e400d74d0aefcc9a383",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-attest",
+      "sha": "25f1f7e21383e999aef86cf8995a85dd71ae2858",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-contract-paths",
+      "sha": "6db024aa2d41c600e20b2f7461af1a31b65e0e50",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-core-p3b",
+      "sha": "42b6dd3f307fb303d9eacb62a6b63b2dbb1d093a",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-export-3d",
+      "sha": "df051723866d62de0bf6ee01d138c87d6868bd19",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-kl-decode",
+      "sha": "9b21c0a21f38aaa96bb6b79ecafdd439fd986ae4",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-ladder",
+      "sha": "1f4034d4f1861ab1bb02eed74dc62f138f246fcf",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-ladder-wire",
+      "sha": "5f8ce851c53009030d6ad2404b77c525df79b173",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-lut-global",
+      "sha": "b37c8f4f0a1877e8ab1c3a1ff1d4a89b425aa28e",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-lut-global-channel",
+      "sha": "79aaa847bd2fa8f658b74c8bd18bdc693e276459",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-moe-evidence",
+      "sha": "8ac74321b21f123c2cfafadd934d68f76bb38802",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-packaging-2",
+      "sha": "cd3190a70c1707c970e156051743154483b06f35",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-plane-release",
+      "sha": "f6d2ae844bcae5965d6f2664020e62ef98247126",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-probe-flake",
+      "sha": "2ed1d92b59a595a552a3f1b00cf0fb67c16ff10e",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-proofs-2",
+      "sha": "08de128131aea2135717d2ec334feb5cb788d956",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-release-rule",
+      "sha": "21653cb82a4dfa5a24955bd35c0973f65c36720c",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-review-fixes",
+      "sha": "6721afdd3c202cd96d7d406bef6e0e86e445f23b",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/claude/ts-smoke-control",
+      "sha": "646663f93aa93be6b2bd7f5f39ea8d22dcc4c79c",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/issue-198-evidence-scope",
+      "sha": "71228ad0559d19454ca532ee90a80050e047e155",
+      "ancestor_of_master": true,
+      "unmatched_commits": [
+        "71228ad0559d19454ca532ee90a80050e047e155 Refresh evidence references and document the complete evidence object",
+        "a3224d46ca8d61bfe96262a6d9e6cb971429b7d8 Verify the evidence comparison after the minor-7 wire merge",
+        "100ec1d7642415c788ed07ce2202de2be0e08b3e Scope runtime evidence to its historical encoder artifact (#198)"
+      ],
+      "disposition": "integrated",
+      "reason": "Tip is an ancestor of merged master 39fba4fbb1a8. Delete redundant branch reference.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/ts-114-receipt",
+      "sha": "41f8447de9b1ac584364ea6759c35a0bd2c92210",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "41f8447de9b1ac584364ea6759c35a0bd2c92210 Record the linked-worktree x86 failure"
+      ],
+      "disposition": "superseded",
+      "reason": "The linked-worktree failure row is historical, not a current master receipt. Issue 114 closed on the corrected 66f6480 pair and 005a53f ledger; retain original failing row in the bundle rather than overwrite current population provenance.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/ts-5-moe-partition",
+      "sha": "7be6162548cd32ecdd0881c8043ab4c0e4c05d29",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "59b8d448d55a79595d13906f72420bdf6e6ce321 Partition serving exports by whole layer and verify assembly"
+      ],
+      "disposition": "integrated",
+      "reason": "Whole-layer partition and checked assembly are in src/tessera/serving_parts.py and the current export/merge drivers; issue 5 closed by PR 127 at 196c142.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/ts-5-plan-coverage",
+      "sha": "e3e2420f8a8dc7f83ad8b7972ca4eb770f81a4b4",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "740f79e0c392f289cd6c31d685402798242cd09f Regress explicit-plan omissions at merge and sidecar boundaries"
+      ],
+      "disposition": "integrated",
+      "reason": "All tests introduced at 740f79e remain in test_serving_parts.py and test_ts5_sidecar_check.py; current versions add shard permission and duplicate-name coverage.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/codex/ts5-sidecar-duplicate-shards",
+      "sha": "f382daf66107b39d8fb568bef76102c0b8fcb36d",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "f382daf66107b39d8fb568bef76102c0b8fcb36d Keep unattested census prose independent of schema revision"
+      ],
+      "disposition": "integrated",
+      "reason": "census.py now says closed-world table, independent of schema revision; duplicate-shard gate and regression are on master.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/issue39-baseline-reach",
+      "sha": "d9b70647aff75e4c4d72317ee3e3041c872f1e46",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "d9b70647aff75e4c4d72317ee3e3041c872f1e46 wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "superseded",
+      "reason": "Issue 39 explicitly closed via _value_cases and scope-mutation regression at 74f573f / 780817a; this session-kill snapshot is an earlier implementation.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/master",
+      "sha": "331703661baaa67ed73900c3d9e99f300fdc8415",
+      "ancestor_of_master": true,
+      "unmatched_commits": [],
+      "disposition": "keep master",
+      "reason": "Canonical surviving branch; advance to the reviewed cleanup merge.",
+      "action": "keep"
+    },
+    {
+      "ref": "refs/remotes/origin/muse/ts-101-encver",
+      "sha": "3e363ae87a7e6ff3b191c8b409c0d8d474fd52e2",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "3e363ae87a7e6ff3b191c8b409c0d8d474fd52e2 tessera#101: version the encoder (ENCODER_VERSION=1, manifest minor 6, merge guard)"
+      ],
+      "disposition": "rejected alternative",
+      "reason": "Issue 101 explicitly rejected the hand-maintained ENCODER_VERSION design. Current encoder_identity.py derives a behavior-fixture identity (34ff395 and successors); do not reintroduce a second version counter.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/muse/ts-75-trailing",
+      "sha": "69036a685dddea7c58824d786d7707f4fac2a4c7",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "69036a685dddea7c58824d786d7707f4fac2a4c7 WIP #75: trailing-pass refit harness (worker wedged, work preserved)"
+      ],
+      "disposition": "superseded",
+      "reason": "Wedged-worker harness precursor superseded by merged equal-pass trailing objective (9add21d / f735d94), current refit_trailing_pair.py and recovered completed served receipts.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/muse/ts-86-ignore",
+      "sha": "7f5c62e6dc3e37efadfc91ab1a1e02b61a501b21",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "7f5c62e6dc3e37efadfc91ab1a1e02b61a501b21 Report: targeted evidence, and the full suite that was killed on instruction"
+      ],
+      "disposition": "integrated; retire stale receipt",
+      "reason": "Unified written-ignore and construction census supersede old report. Issue 86 explicitly retired b0da95e and the wrong vision qkv spelling; current qkv_proj mapping and completeness gates own this policy.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/muse/ts-87-landfloor",
+      "sha": "c979ed26a1f17903a2554aafb061182679c1944c",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "c979ed26a1f17903a2554aafb061182679c1944c Report: the 8-unit sweep was not run, and say so plainly",
+        "911051cc39875ea908f545538b3e6fec5e5c5bae Report: final targeted runs on both branches",
+        "7f4181167f819b2cd13e1f5073b005ee815de815 Say the BF16 exactness is about the source, not the wire",
+        "b33fab76c0917f5f998cdf788e7e3beb20e17bb0 Run the repo's byte proof, and bound the BF16 claim it disproves",
+        "c7a0207a8d829d39dcf0bef51d9668b84d30f047 Report: the importer files pass and both pre-fix failures are on record",
+        "e844be5c42e6b5538561dcac5a0822ab89f44d45 Report: targeted test evidence, not a full suite",
+        "370d0e3d09003e9ab45051f5006699abe9cbc3a6 Measure the delta, and find the refit puts the rows back",
+        "23d98845b88712ed518a8ab3ef16d0d8be5bda55 Report: list the 20 E4M3 artifacts verbatim, not a typed count",
+        "24d1e5811cdce184ffc85ed1d1ed88cc988ba842 Report: test results, off-task fixes and issues filed",
+        "ae216dacd7d99b609282d61339d04a1e782f9153 Report: the boundary finding and the recommendation",
+        "7a6872506e8f9e386b7179f54e924ed664821f52 Scope the promise to raised rows, and count the boundary it leaves open",
+        "93bd53701047d2c54d84b7fc78f8e16dc2555a8a Draft the #87 decision package (A/B pending)",
+        "43f90d7aa6633da62a4059c649b6be39971a7105 Say where the round-up is exercised, now that the start uses it too",
+        "f2008a1ef415f449b5faf5ddb8c6a2b57a9e932f Record the reach-landing census on both sides of the fix",
+        "c278e5862e2ca6328181fcee53484af45f2d026c Assert the reach start exactly, since the slack was the size of the defect",
+        "cae2256299824d80e0e2085c8c07a5cff7e8660a Land a raised row upward, since the reach it clears is a lower bound",
+        "400c7f4868b6a0e19633fcad05baac37d3bfc225 Count the rows the reach start lands short of its own bound"
+      ],
+      "disposition": "superseded; retain historical evidence",
+      "reason": "Raised-only upward landing integrated at 9d9767b with _bump_below_floor shared by land_at_least. Precursor census/test counts remain historical in bundle; later unraised-row decision and recovered served A/B bound current claims.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/perf/ldlq-tcq-graph",
+      "sha": "30cf0d65728e1d7b68d90d34f50049272c116b71",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "30cf0d65728e1d7b68d90d34f50049272c116b71 wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "superseded",
+      "reason": "30cf0d6 has separate TcqGraph/TcqTables/_viterbi_core and obsolete experimental APIs. Master 2903784 replaced it with one _TCQPlan.run for reference/capture, bounded per-thread residency, shared capture lock, and test_tcq_graph.py identity coverage. Retire both old benchmark drivers.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/ts-12-mechanism",
+      "sha": "057011b271cacb814cdcddb7a47214c995966d6b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "057011b271cacb814cdcddb7a47214c995966d6b wip: snapshot of in-flight agent work, preserved at the 2026-09-03 session-limit kill"
+      ],
+      "disposition": "integrated",
+      "reason": "All three experiment files at 057011b are byte-identical to master: dense4_plane_census.py, dense4_plane_mechanism.py, dense4_reach_sweep.py. Issue 12 closed with later served b8 parity at cc3eb27 / f0a2d0c.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/ts-5-preRebase-b0da95e",
+      "sha": "b0da95e8332a492eeb74d68cd6768be355651c6b",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "b0da95e8332a492eeb74d68cd6768be355651c6b Name the vision tower too: passed through is not the same as ignored",
+        "12ee78df10fd4a4b48bee83d45d00fa08c216698 Do not spell a producer's note \"structure\" when a gate reads that word",
+        "7adbd90875e3155e91399f4c7a9d1be193ce7534 Ask a bare packed name its rank, and refuse the answer we have not been shown",
+        "35e7e671bc236cae4075099ff9a6e3e3d2ed40d5 See the packed expert stack that carries no \".weight\", and name its module"
+      ],
+      "disposition": "rejected precursor",
+      "reason": "Issue 86 explicitly superseded this old expert-ignore branch: wrong qkv spelling and incomplete allow-list. Current unified written passthrough and construction census retain the useful rank guard.",
+      "action": "delete branch after reviewed cleanup merge"
+    },
+    {
+      "ref": "refs/remotes/origin/wf/ts-87",
+      "sha": "e78049fc86772cfcf3369ab647aa55e6fbe92441",
+      "ancestor_of_master": false,
+      "unmatched_commits": [
+        "e78049fc86772cfcf3369ab647aa55e6fbe92441 Cite where \"LDLQ off\" and \"the same bound\" are declared, not the case name",
+        "027800323ebd8aa8987b119f64774b8d31632267 Cite the AST hash, not a sha256 my own docstring edits invalidate",
+        "214982abc689c26b7af5bf6f2d22b359b9ebe5c0 Map the rebase, since every hash these receipts cite was rewritten",
+        "d452363b73e69bb9f3a830c9b8750bfcae5ba77e Split the two byte-identical E4M3 cases, since only one has a mechanism",
+        "094d044da9cbc512924cf96cb5d22794ba5e6182 Name the right fix for #101's fixture: size, not a bigger outlier",
+        "5f6dc42eed8d6f6c5ec43afd441b910edb1c004f Say the fixture does reach the round-up, since counting it says so",
+        "4a016715ca8d51facb0225b8b880e0f836f13b7c Count the round-ups, since \"byte-identical\" was hiding two different facts",
+        "0f4de51865d4958b45cef6feadfb6e4d76a9f048 Retract the LDLQ bound: the A/B that refutes it was already on the branch",
+        "aecfd2eca67a71a48ae5ef44dcdcab158ba791d7 Measure the A/B here too, and it lands on the held branch's shas",
+        "198f0a6ed6567aeb8885ddea3e74b7bd449bbe29 Put the A/B file in the repo, since the docstring already quotes it",
+        "15d02e24efa1d2c2d1293dc37bb54686604e3137 Bound the byte move to the LDLQ arm, since five of six E4M3 cases hold",
+        "b912763562482756f325d34ecb15e397f822fbe0 Say where the census ran, and that the 32 unraised rows are on both arms",
+        "94bc83aeccb445a17116c4dbdbc69adbc00fd2cb Measure both census arms and the pre-fix failures here, not on the old base",
+        "bb73c5a6c1fc6a8708d0534de3be65efa8d38fe0 Report the census maxima as maxima, since summing a worst case is nothing",
+        "b10669dbc5d837ba167493e99feb05f0526f6b5e Quote the census the repo ships, not two arms blended into one range",
+        "55171ecd8d21fb845653f7d414978655d7c58ab1 Carry the reach-landing census, and say whose measurement it is",
+        "9d3d965928696ecc0bdb6a69832422034c4bd623 Record the byte proof on both sides of the reach landing, at 766033c",
+        "1222df5757d2014e3d530729389ae7edba2dd9f7 Land a raised row upward, since the reach it clears is a lower bound"
+      ],
+      "disposition": "integrated mechanism; recovered evidence",
+      "reason": "Current raised-only landing owns the code. Preserve the completed historical served A/B, including its unresolved chunk-level sign, in branch-recovery-2026-09-05.md; retire predecessor implementations, hardcoded drivers, and interim test/count logs.",
+      "action": "delete branch after reviewed cleanup merge"
+    }
+  ],
+  "dirty_worktrees": [
+    {
+      "worktree": "/home/rob/tmp/fleet/ts-ladder-wire",
+      "HEAD": "5f8ce851c53009030d6ad2404b77c525df79b173",
+      "branch": "refs/heads/claude/ts-ladder-wire",
+      "status_exit": 0,
+      "status": [
+        "?? tests/test_zz_probe_encoder_quality.py"
+      ],
+      "error": "",
+      "disposition": "superseded",
+      "reason": "Single-unit scratch SSE probe is replaced by committed experiments/encoder_evidence_drift.py and the measured minor-7 issue 198 receipt."
+    },
+    {
+      "worktree": "/home/rob/tmp/musefix/ts-78-79-guards",
+      "HEAD": "3cfb80da7bb484b2545a9bc02942bf7b876a1408",
+      "branch": "refs/heads/muse/ts-78-79-guards",
+      "status_exit": 0,
+      "status": [
+        "?? run-tests.sh"
+      ],
+      "error": "",
+      "disposition": "retired",
+      "reason": "Hardcoded run-tests.sh references old six-slot fleet locks, CPU lists and venv paths; it adds no product capability."
+    },
+    {
+      "worktree": "/home/rob/tmp/musefix/ts-84-reach",
+      "HEAD": "7b1d6c8231925efde2e46b98b4947c00421544a8",
+      "branch": "refs/heads/muse/ts-84-reach",
+      "status_exit": 0,
+      "status": [
+        " M src/tessera/encode.py",
+        " M tests/test_window_body.py",
+        "?? tests/test_window_reach_ceiling.py"
+      ],
+      "error": "",
+      "disposition": "rejected alternative",
+      "reason": "Sigma-ceiling refusal changes accepted encoder inputs. Issues 84/89 resolved this through requested/realized/delivered/saturation reporting; window_table_reach and the arity correction are on master. Do not replace reporting with the abandoned refusal policy."
+    },
+    {
+      "worktree": "/home/rob/tmp/musefix/ts-86-ignore",
+      "HEAD": "7f5c62e6dc3e37efadfc91ab1a1e02b61a501b21",
+      "branch": "refs/heads/muse/ts-86-ignore",
+      "status_exit": 0,
+      "status": [
+        "?? tools/impacted_tests.py"
+      ],
+      "error": "",
+      "disposition": "superseded",
+      "reason": "Untracked impacted_tests.py is an older five-function selector; current shared resolver handles dynamic imports, namespace/package dependencies and collection policy."
+    },
+    {
+      "worktree": "/home/rob/tmp/musefix/ts-89-dyadic",
+      "HEAD": "acaf2a2fb30dcba5332297628ebf1108022ac2cc",
+      "branch": "refs/heads/muse/ts-89-dyadic",
+      "status_exit": 0,
+      "status": [
+        " M experiments/results/ts89_refit2.json",
+        " M experiments/results/ts89_refit2.log",
+        "?? experiments/results/ts89_decompose.json",
+        "?? experiments/results/ts89_decompose.log"
+      ],
+      "error": "",
+      "disposition": "retired duplicate measurement",
+      "reason": "The tracked refit2 JSON differs only in secs (16 timing values); payload hashes and quality fields agree. The untracked one-unit decompose screen is superseded by committed residue/band/full-H analyses and does not qualify a new sigma default."
+    },
+    {
+      "worktree": "/home/rob/tmp/musefix/ts-99-glmattn",
+      "HEAD": "5ccd4a189e4825407a840e88285e40ea1fb1405c",
+      "branch": "refs/heads/muse/ts-99-glmattn",
+      "status_exit": 0,
+      "status": [
+        " D pbrun_result.txt"
+      ],
+      "error": "",
+      "disposition": "retired",
+      "reason": "Deletion of pbrun_result.txt removes a worker receipt, not a product fix. Construction-census admission and name-mapper attestation are integrated under issues 99/108."
+    },
+    {
+      "worktree": "/home/rob/tmp/ts111-master",
+      "HEAD": "766033c70855c9839cb83eeb12055949b60c41b1",
+      "status_exit": 0,
+      "status": [
+        " M tests/test_lane_reachability.py",
+        " M tests/test_serving_contract.py",
+        "?? tests/test_census_cell_agreement.py"
+      ],
+      "error": "",
+      "disposition": "integrated; retire obsolete assumptions",
+      "reason": "Lane/census regression functions are in current tests. Remaining dense-only roster and not-built-MoE expectations are obsolete now that the contract has measured MoE cells."
+    },
+    {
+      "worktree": "/home/rob/tmp/wf108-master",
+      "HEAD": "766033c70855c9839cb83eeb12055949b60c41b1",
+      "status_exit": 0,
+      "status": [
+        " M tests/test_serving_name_mapping.py",
+        "?? tests/mapper_probes.py"
+      ],
+      "error": "",
+      "disposition": "integrated",
+      "reason": "All 11 modified name-mapper functions are AST-identical to master; mapper_probes.py function is also identical. Issue 108 merged at 50792cc."
+    },
+    {
+      "worktree": "/home/rob/tmp/wf87-101",
+      "HEAD": "af6264b5b783cc1cc942abf7a36af045b9434202",
+      "status_exit": 0,
+      "status": [
+        "M  experiments/audit_byte_baseline.py",
+        "A  experiments/reach_land_ab.py",
+        "M  src/tessera/encode.py",
+        "M  src/tessera/scale_channel.py",
+        "M  tests/test_audit_byte_baseline.py",
+        "M  tests/test_bf16_route.py",
+        "M  tests/test_channel_plane.py",
+        "?? fixid_probe.py"
+      ],
+      "error": "",
+      "disposition": "superseded",
+      "reason": "Staged raised-floor implementation and tests are predecessors of 9d9767b and the shared _bump_below_floor helper. The unraised boundary was separately decided in issue 115. fixid_probe.py only prints identities already exposed by the API."
+    },
+    {
+      "worktree": "/mnt/shared/ts50-lut-landing",
+      "HEAD": "78411521808ecc8bd011f097b801a3ba2d94c2bf",
+      "branch": "refs/heads/claude/ts-50-lut-landing",
+      "status_exit": 0,
+      "status": [
+        "M  docs/measurements/tessera-lut-landing-oracle-2026-09-03.md",
+        "M  experiments/lut_landing_oracle_report.py",
+        "M  src/tessera/encode.py",
+        "M  tests/test_ldlq_lut_plane.py",
+        "?? .scratch/"
+      ],
+      "error": "",
+      "disposition": "salvaged prose; retire remaining scratch",
+      "reason": "Corrected current LUT docstring from its committed receipt. Extra ceiling-refusal test exercises a guard already present; scratch entry/identity checks and report printouts add no current gate. Do not transplant uncommitted historical pass-count or two-point power claims as new measurements."
+    }
+  ],
+  "recovery_bundle": {
+    "path": "/home/rob/tessera-runs/issue-198/branches-before-cleanup.bundle",
+    "sha256": "11ee51fd2dec83f656d8754ede76cd4795755e41c24824f5eec74b413401bbc8"
+  },
+  "scope": "Every originally observed local/remote ref and every nonignored dirty worktree item has a final disposition. Recovery copies are historical records, not active work."
+}

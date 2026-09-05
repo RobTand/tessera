@@ -137,3 +137,15 @@ The strict on-disk byte-identity xfail introduced by #199 remains an
 intentional notice if a later encoder or replacement artifact restores
 byte equality. #198 resolves the missing evidence scope and the unknown
 weight-error direction; it does not promise historical byte reproduction.
+
+
+## Final validation and follow-up (2026-09-05)
+
+PR #200 merged and issue #198 closed at `39fba4f`. The additional CUDA run
+exposed an existing cross-repository census import collision and two stale
+test expectations; PR #201 fixes them and records the leftover-work audit.
+The completed selected validation is **1,945 passed / 505 skipped on CPU**
+and **2,485 passed / 5 skipped / 1 xfailed under strict CUDA**, with zero
+failures, zero uncollected modules and no missing-artifact skips. Modes,
+devices, verbatim skip reasons, source identities and commands are in
+[the final validation receipt](branch-audit-validation-2026-09-05.md).
