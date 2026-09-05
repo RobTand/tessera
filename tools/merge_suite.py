@@ -48,13 +48,20 @@ from the populations the runs published, and takes the exit status from the
 pool's own outcome record for the action that wrote that population -- shown
 as ``0 (pool)``, so a status nobody here watched is not mistaken for one this
 process saw.  "Wrote" is the action's **effective** pytest ``--surface-json``
-argument, bound to the population it names by source and by attempt: a command
-that merely mentions the path, one that overrides the option later, one whose
-sealed snapshot ran a different commit, and one whose population predates the
-attempt being read are none of them this file's producer.  Where no single
-finished action wrote the path -- still in flight, requeued after a non-zero
-exit, or two of them did -- the row stays ``not observed`` and nothing is
-borrowed: published failures prove red, their absence does not prove green.
+argument, read out of a command shape this tool seals (``pytest``, ``python -m
+pytest``, or those under ``tools/suite_deadline.py ... --``; any other program
+is refused by name), and bound to the population by evidence the population
+and the record each carry: the sealed snapshot's commit is the population's,
+the population's verified source stamp names that action and digests its
+request, and the recorded attempt's own stdout says it published this path
+with these counts.  A command that merely mentions the path, one that
+overrides the option later, ``echo pytest``, a request with no snapshot, a
+population with no stamp, a lease-lost record, and a retry that never
+published are none of them this file's producer, and absent evidence is
+absent, not agreement.  Where no single record is bound -- still in flight,
+refused, or two records of the producer -- the row stays ``not observed`` and
+nothing is borrowed: published failures prove red, their absence does not
+prove green.
 
 Everything about scheduling is PrismaBuild's: this composes ``pbrun``
 invocations and reads what they return.  It never runs a suite itself, never
@@ -71,8 +78,10 @@ warns about it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -396,37 +405,57 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
     )
 
 
-#: How far a population may predate the attempt whose status is being read
-#: before the two are refused as different attempts.  The file's mtime is the
-#: NFS server's clock and the claim time is the worker's, so what this covers
-#: is clock skew between the two, not a run's duration.  The value is asserted,
-#: not measured: nobody has characterised the skew between the boxes, and ten
-#: minutes is chosen on the conservative side for this check -- a suite that
-#: ran under an earlier attempt is hours old, not minutes, so a too-generous
-#: allowance misreads no real population; a too-tight one would refuse a
-#: genuine attempt's output over a clock.  Measure the skew before tightening.
-ATTEMPT_CLOCK_SLACK_S = 600.0
+#: Interpreter basenames the sealed commands run pytest under.  The arms name
+#: their venv's ``python``; ``python3`` and ``python3.12`` are the same program
+#: under the names a venv gives it.  Anything else is not an interpreter this
+#: tool recognises, so a command starting with it is not a pytest invocation
+#: this tool parses.
+_PYTHON_NAME = re.compile(r"^python(3(\.\d+)?)?$")
+
+#: The deadline wrapper ``_timed_command`` composes: its own options up to
+#: ``--``, then the command it supervises.
+_DEADLINE_WRAPPER = "suite_deadline.py"
 
 
-def _runs_pytest(parts: list[str]) -> bool:
-    """Whether this command is a pytest invocation at all.
+def _pytest_argv(command: list) -> tuple[list[str] | None, str | None]:
+    """The pytest argv inside this sealed command, or why there is none.
 
-    ``python -m pytest`` or a ``pytest`` executable.  A program string passed
-    to ``-c`` is deliberately not read: the file path inside it is not an
-    argument of this command, and guessing at a shell or Python fragment is
-    how a reader starts inventing producers.
+    The only shapes read are the ones this tool seals, and their unwrapped
+    core: ``pytest ...``, ``<python> -m pytest ...``, and ``<python>
+    tools/suite_deadline.py <options> -- <either of those>``.  The wrapper is
+    parsed by name and recursively -- what follows its ``--`` is the command
+    it supervised, and that is what has to be the pytest invocation.  Every
+    other program is refused with its name: ``echo``, ``cat``, a ``timeout``
+    binary this tool does not trust (see ``_timed_command``), a wrapper sealed
+    without its ``--``.  A token spelled ``pytest`` somewhere in argv is not a
+    pytest invocation -- ``echo pytest --surface-json <path>`` exits 0 having
+    written nothing, and #218's word-search accepted it as the producer
+    (#294).  A program string passed to ``-c`` is deliberately not read:
+    guessing at a shell or Python fragment is how a reader starts inventing
+    producers.
     """
 
-    for index, part in enumerate(parts):
-        if part == "-m" and index + 1 < len(parts) and parts[index + 1] == "pytest":
-            return True
-        if Path(part).name in ("pytest", "py.test"):
-            return True
-    return False
+    parts = [str(part) for part in command]
+    if not parts:
+        return None, "the request holds no command"
+    program = Path(parts[0]).name
+    if program in ("pytest", "py.test"):
+        return parts, None
+    if not _PYTHON_NAME.match(program):
+        return None, f"`{program}` is not a pytest invocation this tool parses"
+    if len(parts) >= 3 and parts[1] == "-m" and parts[2] == "pytest":
+        return parts, None
+    if len(parts) >= 2 and Path(parts[1]).name == _DEADLINE_WRAPPER:
+        if "--" not in parts[2:]:
+            return None, (f"`{_DEADLINE_WRAPPER}` was sealed without the `--` "
+                          "that separates the command it supervises")
+        return _pytest_argv(parts[parts.index("--", 2) + 1:])
+    ran = " ".join([program, *parts[1:3]])
+    return None, f"`{ran}` is not a pytest invocation this tool parses"
 
 
-def _effective_surface_json(command: list) -> str | None:
-    """The population path this command actually writes, or ``None``.
+def _effective_surface_json(command: list) -> tuple[str | None, str | None]:
+    """The population path this command actually writes, or why none is read.
 
     ``--surface-json`` is an ordinary ``store`` option, so pytest keeps the
     LAST one; a command naming this path and then overriding it writes
@@ -434,53 +463,168 @@ def _effective_surface_json(command: list) -> str | None:
     ``cat``, an inspection, a copy -- writes nothing at all.  Membership of
     the path string in argv answered neither question, which is how a
     successful reader could supply a suite's exit status (#218).
+
+    Returns ``(path, None)`` for a pytest command that names one, ``(None,
+    None)`` for a pytest command that does not, and ``(None, reason)`` for a
+    command that is not a pytest invocation this tool parses.
     """
 
-    parts = [str(part) for part in command]
-    if not _runs_pytest(parts):
-        return None
+    argv, refusal = _pytest_argv(command)
+    if argv is None:
+        return None, refusal
     destination = None
-    for index, part in enumerate(parts):
+    for index, part in enumerate(argv):
         if part == "--surface-json":
-            destination = parts[index + 1] if index + 1 < len(parts) else None
+            destination = argv[index + 1] if index + 1 < len(argv) else None
         elif part.startswith("--surface-json="):
             destination = part.split("=", 1)[1]
-    return destination
+    return destination, None
 
 
-def _binding_refusal(payload: dict, outcome: dict, surface_json: Path,
+#: The population's ``counts`` buckets, and the words pytest's summary line
+#: spells the same ``terminalreporter.stats`` buckets with.  ``warnings`` and
+#: ``deselected`` are on the line and not in the population, so they are not
+#: compared.
+_COMPARED_COUNTS = ("passed", "failed", "error", "skipped", "xfailed", "xpassed")
+_SUMMARY_WORDS = {"passed": "passed", "failed": "failed", "error": "error",
+                  "errors": "error", "skipped": "skipped",
+                  "xfailed": "xfailed", "xpassed": "xpassed"}
+_SUMMARY_TERM = re.compile(r"^(\d+) ([a-z]+)$")
+_SUMMARY_TAIL = re.compile(r" in \d+\.\d+s( \(\d+:\d\d:\d\d\))?$")
+
+
+def _summary_counts(stdout: str) -> tuple[dict | None, str | None]:
+    """pytest's terminal summary counts out of an attempt's captured stdout.
+
+    The last line of the form ``N passed, M skipped, ... in 12.34s`` -- bare
+    under ``-q``, ``=``-padded otherwise, ``no tests ran`` when nothing did.
+    A bucket the line does not mention is zero, which is how pytest prints
+    it.  Returns the counts and the line they were read from, or ``(None,
+    None)`` where the stdout holds no such line: an attempt that died before
+    its summary printed none.
+    """
+
+    for raw in reversed(stdout.splitlines()):
+        line = raw.strip().strip("=").strip()
+        if not _SUMMARY_TAIL.search(line):
+            continue
+        head = _SUMMARY_TAIL.sub("", line)
+        counts = dict.fromkeys(_COMPARED_COUNTS, 0)
+        if head == "no tests ran":
+            return counts, line
+        for term in head.split(", "):
+            match = _SUMMARY_TERM.match(term)
+            if not match:
+                break
+            bucket = _SUMMARY_WORDS.get(match.group(2))
+            if bucket:
+                counts[bucket] = int(match.group(1))
+        else:
+            return counts, line
+    return None, None
+
+
+#: The outcome statuses PrismaBuild's worker writes together with the attempt
+#: they describe: ``finish()`` replaces ``detail`` and sets one of these.  The
+#: lease reaper's ``lease_lost_max_attempts`` moves the record without
+#: touching ``detail``, so that record's detail is whatever attempt last
+#: finished -- an earlier one's, as observed on ``dbd91b92``.
+_FINAL_ATTEMPT_STATUSES = ("executed", "failed")
+
+
+def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
+                     outcome: dict, surface_json: Path,
                      population: dict | None) -> str | None:
     """Why this finished action's status is not this population's, or ``None``.
 
-    Two ways a real pool produces the wrong answer, both of them a status that
-    belongs to a different run of the same command:
+    A status is adopted only from the action the population itself names, for
+    the attempt that itself says it published this file.  Each leg is a
+    required piece of evidence and a record without it is refused for the
+    absence: #218 compared identities only where both sides were present,
+    which let a request with no snapshot and an outcome with no claim time
+    pass every check by having nothing to check (#294).
 
-    * another **source**: the sealed request names the snapshot it ran, the
-      population names the tree it measured, and a disagreement means the
-      status came from somewhere this file did not;
-    * another **attempt**: the pool requeues on any non-zero exit, and an
-      attempt that died before its terminal summary leaves the previous
-      attempt's population on the path under its own exit status.  A
-      population written before this attempt was claimed is not this
-      attempt's output.
+    * the **tree**: the sealed request's ``checkout_snapshot.commit`` and the
+      population's ``commit`` are both present and equal;
+    * the **producer**: the population carries ``suite_source``'s verified
+      stamp -- ``source_identity.excluded_metadata[].action_key`` -- naming
+      this action, and the stamp's ``request_sha256`` is the digest of the
+      request bytes read here, so the population and the pool agree on which
+      request this is.  A population without the stamp (pre-stamp, or
+      ``unknown`` source) names no producer and adopts no status; its counts
+      are still read;
+    * the **attempt**: the outcome's top-level status is one the worker
+      writes with the final attempt's own ``detail``, and that attempt's
+      captured stdout says it published a population at this path and printed
+      the counts this population holds -- ``tests/conftest.py`` writes both
+      from ``terminalreporter.stats``.  The pool requeues on any non-zero
+      exit and a retry may die before publishing; what tells the attempts
+      apart is what each said it wrote.  #218 told them apart by a 600 s
+      clock allowance between the file's mtime and the claim, which bounded
+      how quickly a retry may follow -- a thing this tool does not know -- and
+      admitted a retry five minutes behind.
     """
 
-    snapshot = ((payload.get("params") or {}).get("checkout_snapshot") or {})
-    measured = (population or {}).get("commit")
+    snapshot = (payload.get("params") or {}).get("checkout_snapshot")
     stamped = snapshot.get("commit") if isinstance(snapshot, dict) else None
-    if stamped and measured and stamped != measured:
+    measured = (population or {}).get("commit")
+    if not stamped:
+        return ("the request has no checkout_snapshot.commit, so the tree it "
+                "ran is not established")
+    if not measured:
+        return ("the population names no commit, so the tree it measured is "
+                "not established")
+    if stamped != measured:
         return (f"the action ran snapshot commit {stamped[:12]} while the "
                 f"population says it measured {measured[:12]}")
-    claimed = outcome.get("claimed_unix")
-    if isinstance(claimed, (int, float)):
-        try:
-            written = surface_json.stat().st_mtime
-        except OSError:
-            return "the population could not be read to date it"
-        if written < claimed - ATTEMPT_CLOCK_SLACK_S:
-            return ("the population predates the attempt that claimed this "
-                    f"action ({outcome.get('attempts')} attempt(s)), so it is "
-                    "an earlier attempt's output under a later attempt's exit")
+
+    identity = (population or {}).get("source_identity") or {}
+    stamps = [entry for entry in (identity.get("excluded_metadata") or [])
+              if isinstance(entry, dict) and entry.get("action_key")]
+    if not stamps:
+        return ("the population names no sealed action as its producer (no "
+                "source_identity.excluded_metadata action_key), so no "
+                "action's status is its status")
+    named = [entry for entry in stamps if entry.get("action_key") == key]
+    if not named:
+        others = ", ".join(str(entry["action_key"])[:12] for entry in stamps)
+        return (f"the population names action {others} as its producer, "
+                f"not {key[:12]}")
+    digest = hashlib.sha256(request_bytes).hexdigest()
+    for entry in named:
+        expected = entry.get("request_sha256")
+        if expected != digest:
+            return ("the population's request_sha256 "
+                    f"{str(expected)[:12]} is not the digest of this request "
+                    f"({digest[:12]}), so the request it verified against is "
+                    "not the one read here")
+
+    status = outcome.get("status")
+    attempt = outcome.get("attempts")
+    if status not in _FINAL_ATTEMPT_STATUSES:
+        return (f"outcome status is {status!r}, whose detail is not the final "
+                "attempt's own -- only executed/failed records carry the "
+                "attempt they describe")
+    stdout = (outcome.get("detail") or {}).get("stdout")
+    published = f"tessera surface: population written to {Path(surface_json)}"
+    lines = stdout.splitlines() if isinstance(stdout, str) else []
+    if published not in (line.strip() for line in lines):
+        return (f"the attempt whose status is recorded (attempt {attempt}) "
+                "never said it published a population at this path")
+    counts, line = _summary_counts(stdout)
+    if counts is None:
+        return (f"the attempt whose status is recorded (attempt {attempt}) "
+                "printed no terminal summary, so what it published is not "
+                "established")
+    held = (population or {}).get("counts") or {}
+    differing = [bucket for bucket in _COMPARED_COUNTS
+                 if counts[bucket] != int(held.get(bucket) or 0)]
+    if differing:
+        return (f"the attempt's summary line `{line}` disagrees with the "
+                "population's counts ("
+                + ", ".join(f"{held.get(b) or 0} {b}" for b in differing)
+                + "), so the population at this path is not what that "
+                "attempt published")
     return None
 
 
@@ -499,17 +643,22 @@ def _pool_actions_that_wrote(surface_json: Path,
     summary implies.
 
     The join is the action's **effective** ``--surface-json`` argument, parsed
-    out of the pytest command in its CAS request -- not the presence of the
-    path somewhere in argv, which made every reader of the file a candidate
-    writer.  The stdout in the outcome record would also contain it, but
-    stdout can be truncated and a command cannot.
+    out of a pytest command this tool recognises in its CAS request
+    (``_pytest_argv``) -- not the presence of the path somewhere in argv,
+    which made every reader of the file a candidate writer, and not the
+    presence of the word ``pytest``, which made ``echo`` one.  A command of a
+    shape this tool does not parse that nevertheless names the path is listed
+    among the refusals with its program's name; one that does not name it is
+    simply not about this population.
 
-    A match is then checked against the population it claims to have written:
-    same source, same attempt.  Returns the bound producers and the reasons
-    the other matches were refused, because the caller must be able to tell
-    one from several: a receipt directory that two actions wrote to (a retry,
-    or the polluted ``20260904T025044``) has no single exit status, and
-    picking one would be exactly the overclaim the rest of this file refuses.
+    A match is then bound to the population it claims to have written, or
+    refused with the reason (``_binding_refusal``): the population must name
+    that action as its producer and the recorded attempt must say it
+    published this file.  Returns the bound producers and the refusals,
+    because the caller must be able to tell one from several: two records of
+    the producer (the pool disagreeing with itself about one action) have no
+    single exit status, and picking one would be exactly the overclaim the
+    rest of this file refuses.
     """
 
     wanted = str(Path(surface_json))
@@ -523,19 +672,32 @@ def _pool_actions_that_wrote(surface_json: Path,
             key = outcome_path.stem
             request = POOL_CAS_REQUESTS / key[:2] / f"{key}.json"
             try:
-                request_payload = json.loads(request.read_text())
+                request_bytes = request.read_bytes()
+                request_payload = json.loads(request_bytes)
             except (OSError, ValueError):
                 continue
-            command = (request_payload.get("params") or {}).get("command") or []
-            destination = _effective_surface_json(command)
+            if not isinstance(request_payload, dict):
+                continue
+            command = [str(part) for part in
+                       (request_payload.get("params") or {}).get("command") or []]
+            destination, unparsed = _effective_surface_json(command)
+            if unparsed is not None:
+                # Named only where it claimed this path: an unrelated build
+                # never mentions it, and listing every action in the pool
+                # would bury the one refusal a reader needs to see.
+                if any(wanted in part for part in command):
+                    refused.append(f"{key[:12]}: {unparsed}")
+                continue
             if destination is None or str(Path(destination)) != wanted:
                 continue
             try:
                 outcome = json.loads(outcome_path.read_text())
             except (OSError, ValueError):
                 continue
-            refusal = _binding_refusal(request_payload, outcome, surface_json,
-                                       population)
+            if not isinstance(outcome, dict):
+                continue
+            refusal = _binding_refusal(key, request_payload, request_bytes,
+                                       outcome, surface_json, population)
             if refusal:
                 refused.append(f"{key[:12]}: {refusal}")
                 continue
@@ -551,7 +713,7 @@ def _pool_actions_that_wrote(surface_json: Path,
                 # The command is what says whether that run fanned out, which
                 # a resumed receipt otherwise cannot know: the process that
                 # chose the mode is gone.
-                "command": [str(part) for part in command],
+                "command": command,
             })
     return found, refused
 
@@ -585,14 +747,16 @@ def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
     Three outcomes, and the two that are not "one action" both leave the row
     unobserved rather than borrowing a number:
 
-    * exactly one finished action wrote this path, and its record carries an
-      integer status -- that status is the exit status, and the row says where
-      it came from;
-    * no finished action wrote it -- the run may still be in flight, or its
-      record may have been reaped, and either way nobody here saw an exit;
-    * several did -- a retried action or a receipt directory two runs shared.
-      There is no single status to report, so none is reported and the row
-      says how many wrote it.
+    * exactly one finished record is bound to this population -- the action it
+      names as producer, for an attempt that says it published this file --
+      and carries an integer status: that status is the exit status, and the
+      row says where it came from;
+    * none is -- the run may still be in flight, its record may have been
+      reaped, the population may name no producer, or every record naming the
+      path was refused (listed on the record, by reason) -- and nobody here
+      saw an exit;
+    * several are -- two records of the producing action.  There is no single
+      status to report, so none is reported and the row says how many.
     """
 
     matches, refused = _pool_actions_that_wrote(surface_json,
@@ -985,11 +1149,13 @@ Pass counts alone do not establish a same-source merge check.
 
 `exit` is the status the submitting process observed. `0 (pool)` is a status
 this program did not watch and did not guess: the run was resumed, and the
-number is the one PrismaBuild's own worker recorded for the action that wrote
-that population. `not observed` is the remaining case -- a resumed row with no
-single finished pool action behind it -- and there the failure count is still a
-fact while a zero in it does not make the row green, because a suite can exit
-non-zero after a clean summary.
+number is the one PrismaBuild's own worker recorded for the action the
+population names as its producer, for the attempt whose own output says it
+published that population. `not observed` is the remaining case -- a resumed
+row with no single finished pool record bound to it, including a population
+that names no producer (pre-stamp, or `unknown` source) -- and there the
+failure count is still a fact while a zero in it does not make the row green,
+because a suite can exit non-zero after a clean summary.
 
 `mode` is how that arm ran, and it changes what the row means as much as the
 device does. The GPU arm is always `serial` -- its workers would share one

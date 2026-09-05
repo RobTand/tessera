@@ -117,6 +117,41 @@ incomplete, and a pre-v3 population cannot answer the execution question, so it
 is not green. Each arm's own result stays readable in the receipt's
 `arm_results`, which is deliberately not the merge verdict and never sets the
 exit status.
+
+A **resumed** receipt (`--resume <dir>`) rebuilds each arm from the population
+it published and, since tessera#218, borrows that arm's exit status from
+PrismaBuild's own outcome record -- shown as `0 (pool)`, never as a status this
+process saw. Since tessera#294 the borrowing is admitted only on evidence the
+population and the record each carry, and absent evidence is absent, not
+agreement. The producer is found by parsing the sealed request's command in the
+shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
+`tools/suite_deadline.py ... --` -- and taking its *effective* (last)
+`--surface-json`; any other program that names the path is refused by name
+(`echo pytest --surface-json <path>` exits 0 having written nothing), and a
+program string passed to `-c` is not read. A candidate is then bound or
+refused, by reason, on three legs: the request's `checkout_snapshot.commit`
+and the population's `commit` are both present and equal; the population's
+verified source stamp (`source_identity.excluded_metadata[].action_key`, written
+by `tessera._dev.suite_source` only for a verified snapshot checkout) names
+that action and its `request_sha256` is the digest of the request bytes read;
+and the record's top-level status is `executed` or `failed` -- the two the
+worker writes together with the attempt's own `detail` (a
+`lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
+-- with that attempt's captured stdout containing the conftest's `tessera
+surface: population written to <path>` line and a pytest summary line whose
+counts are the population's, both drawn from `terminalreporter.stats`. The
+clock is not evidence: #218's 600 s allowance between the file's mtime and the
+claim asserted how quickly a retry may follow, which nothing here measures, and
+it admitted a retry five minutes behind; it is gone with the inference. A
+population without the stamp (pre-stamp, or `unknown` source) names no producer,
+so its counts are read and no status is adopted; two bound records of the one
+producer are no single status and adopt none. Across the 281 historical
+populations under `/mnt/shared/tessera-suite-receipts` exactly the three
+stamped ones bind. The remaining limit is stated rather than hidden: the
+attempt is bound by path and counts, not by a digest of the population's bytes,
+because the conftest does not yet print one; printing the file's SHA-256 beside
+the publication line would let a resume bind on bytes, and that is a change to
+`tests/conftest.py`, not to this reader.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract. Every gap in what the graph can prove resolves
 towards running more tests -- an ambiguous spelling edges to every file it can
