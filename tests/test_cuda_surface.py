@@ -82,6 +82,52 @@ def _write_synthetic(tmp_path):
     return path
 
 
+# One thing is substituted inside the xdist WORKER, and nothing else: the
+# conftest's hooks, xdist's ``workeroutput``, the controller's
+# ``pytest_testnodedown`` and the aggregation are the repository's own, because
+# the ORDER between them is the thing under test and an in-process test of the
+# aggregation cannot see it (#291).
+WORKER_IDENTITY_PROBE = '''
+import os
+
+import conftest
+
+MODE = os.environ["TESSERA_WORKER_IDENTITY_PROBE"]
+
+
+def _refuses(*args, **kwargs):
+    """What a worker measures when its own checkout moved under it."""
+
+    entry = conftest.SOURCE_AT_ENTRY
+    return {**entry, "verification": "unknown", "sha256": None,
+            "measurement_span": {"entry_sha256": entry.get("sha256"),
+                                 "entry_snapshot_commit": entry.get("snapshot_commit"),
+                                 "entry_verification": entry.get("verification"),
+                                 "agrees": False},
+            "reason": "staged: this worker's final source measurement refused"}
+
+
+def test_the_worker_stages_its_final_identity():
+    assert conftest.SOURCE_AT_ENTRY["verification"] == "verified", \\
+        conftest.SOURCE_AT_ENTRY
+    if MODE == "refuses":
+        conftest.measured_source = _refuses
+    elif MODE == "entry-only":
+        # A worker that never finalises anything: whatever session start seeded
+        # into ``workeroutput`` is all the controller is ever told.  That is
+        # exactly the wire before #291, and the controller must refuse it.
+        conftest._final_source_identity = lambda config: None
+    else:
+        raise AssertionError("unknown probe mode " + MODE)
+'''
+
+
+def _write_worker_identity_probe(tmp_path):
+    path = tmp_path / "test_ts291_worker_identity.py"
+    path.write_text(WORKER_IDENTITY_PROBE)
+    return path
+
+
 # --- the gate --------------------------------------------------------------
 
 
@@ -532,6 +578,100 @@ def test_an_xdist_population_names_the_workers_that_agreed_on_its_source(tmp_pat
         share = json.loads(
             (tmp_path / f"surface.{worker}.json").read_text())["source_identity"]
         assert share["sha256"] == identity["sha256"], (worker, share)
+        # Bound, not sampled: the worker measured a span, not an instant.
+        assert share["measurement_span"]["agrees"] is True, (worker, share)
+
+
+def _worker_identity_run(tmp_path, mode):
+    """One real ``-n 1`` xdist run with a staged worker-side identity."""
+
+    import json
+
+    pytest.importorskip("xdist")
+    probe = _write_worker_identity_probe(tmp_path)
+    surface = tmp_path / "surface.json"
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "-n", "1",
+         "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="", TESSERA_WORKER_IDENTITY_PROBE=mode,
+    )
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out + (
+        "\n(this drives the repository's OWN source identity, so it needs a "
+        "clean checkout: from a dirty worktree the entry identity is 'unknown' "
+        "and the staged assertion above says which.)")
+    assert "1 passed" in out, out
+    payload = json.loads(surface.read_text())
+    assert payload["role"] == "population", payload
+    share = json.loads((tmp_path / "surface.gw0.json").read_text())
+    assert share["role"] == "worker-share", share
+    return payload["source_identity"], share["source_identity"]
+
+
+def test_a_worker_whose_final_identity_refuses_is_not_reported_as_agreeing(tmp_path):
+    """The publication ORDER, driven through real xdist (#291).
+
+    The worker's final identity used to be written into ``workeroutput`` from
+    ``_write_surface_json``, which pytest calls from the terminal reporter's
+    ``pytest_sessionfinish`` wrapper *after it resumes*.  xdist's
+    ``WorkerInteractor.pytest_sessionfinish`` is an inner wrapper that sends
+    ``workerfinished`` when IT resumes, which is earlier -- so the controller
+    read the entry seed ``pytest_sessionstart`` had put there, and a worker
+    whose own share said ``unknown`` was published as agreeing.
+
+    The staged substitution is one function, in the worker only: what its final
+    ``measured_source`` returns.  Everything that carries that answer to the
+    controller is the repository's own code, which is the point -- the defect
+    was never in the aggregation, it was in when the aggregation was told.
+
+    Before the fix::
+
+        E       AssertionError: the controller published 'agrees' for a worker
+        E       whose own final measurement refused: {'gw0': 'agrees'}
+    """
+
+    identity, share = _worker_identity_run(tmp_path, "refuses")
+
+    assert identity["workers"].get("gw0") != "agrees", (
+        "the controller published 'agrees' for a worker whose own final "
+        f"measurement refused: {identity['workers']}")
+    assert identity["verification"] == "unknown", identity
+    assert identity["sha256"] is None, identity
+    assert "gw0" in identity["reason"], identity
+    # And the worker's own share says the same thing, so the two artefacts of
+    # one run cannot be quoted against each other.
+    assert share["verification"] == "unknown", share
+    assert share["sha256"] is None, share
+
+
+def test_a_worker_that_reports_only_its_entry_seed_is_refused_by_name(tmp_path):
+    """An entry identity is a seed, not a measurement of the run.
+
+    ``pytest_sessionstart`` publishes the entry identity so that a worker which
+    never finishes is still distinguishable from one that never spoke.  It is
+    not evidence about the tests that worker ran: it was taken before it ran
+    any.  A controller that accepts it is accepting the very thing #291 is
+    about, so the final, entry-BOUND identity is what counts and its absence is
+    named.
+
+    Staged by disabling the worker's finalisation entirely, which reproduces
+    the pre-#291 wire exactly: only the session-start seed ever reaches the
+    controller.
+
+    Before the fix::
+
+        E       AssertionError: the controller accepted an unbound entry
+        E       identity: {'gw0': 'agrees'}
+    """
+
+    identity, _ = _worker_identity_run(tmp_path, "entry-only")
+
+    assert identity["workers"].get("gw0") != "agrees", (
+        f"the controller accepted an unbound entry identity: {identity['workers']}")
+    assert "entry" in identity["workers"]["gw0"], identity
+    assert identity["verification"] == "unknown", identity
+    assert identity["sha256"] is None, identity
+    assert "gw0" in identity["reason"], identity
 
 
 def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):

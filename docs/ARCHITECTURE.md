@@ -80,7 +80,22 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The controller-side hook that collects those reports
+until they do. Each process measures that identity **once, in
+`pytest_sessionfinish`**, and it is a plain hook implementation rather than a
+wrapper: pluggy runs every non-wrapper implementation inside all of a hook's
+wrappers, so it completes before xdist's `WorkerInteractor.pytest_sessionfinish`
+wrapper resumes and sends `workerfinished`. Publishing it from
+`pytest_terminal_summary` instead -- which pytest reaches from the terminal
+reporter's own, outer, session-finish wrapper -- was too late by exactly one
+wrapper resume, so the controller read the seed `pytest_sessionstart` had left
+in `workeroutput` and published a worker as agreeing while that worker's own
+share said `unknown` (#291). The measurement no longer depends on
+`--surface-json` either, and the share and the population now carry the same
+record rather than two hashes taken at two instants. An entry identity remains
+a seed and never establishes agreement: only an entry-BOUND record -- one
+carrying a `measurement_span`, which `suite_source.is_entry_bound` is the one
+home for -- counts, and a worker that supplies only the seed, or no identity at
+all, is named and refused. The controller-side hook that collects those reports
 (`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
 run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
 worker set, as a serial run always did, instead of pluggy refusing the file at
