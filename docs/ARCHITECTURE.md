@@ -448,6 +448,17 @@ prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
 the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
 manifest's `serving_gate`).
 
+A row is a *normalised* pattern over many modules, so the census does not let
+one member speak for the rest: it keeps the first answer and records the exact
+prefixes that differed under `disagreements`. Those rows now travel into the
+block, their patterns are struck from `offered`, and `classify_construction`
+answers `disagreement` for every member of such a pattern (issue #204). A
+4-layer cut of a 92-layer model observes four members of each pattern, so a
+pattern that answered both ways clears none of them — reading the first
+member's `True` as a clearance is how a wire lands where the runtime builds
+BF16. No committed receipt carries a disagreement, so the key is absent from
+every current row.
+
 The census answers "which patterns" in the *runtime's* namespace and a
 producer names modules in the *checkpoint's*, so the two are joined by
 `contract.vllm_module_name` -- the one place this repo computes what vLLM
