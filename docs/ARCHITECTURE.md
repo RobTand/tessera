@@ -1663,10 +1663,25 @@ two are spelled apart rather than sharing one word that fits neither. The
 `glm_bar` override **tightens the pinned `GLM_GATE` and never relaxes it**:
 comparing only against the caller's own bar let `glm_ratio=1.5` promote under
 `glm_bar=2.0`, the coordinator's cross-check answering to the arm it checks.
-The domains live on `PlanePromotion` as well as in the assertion, because the
-class is public and `promotion_block`'s "only a promotion this gate accepted
-reaches here" has to be true by construction; the `geomean` and `wins` it
-publishes must be the pair the promotion's own unit ratios make.
+**The legs live where the domains do: on the object** (tessera#287).
+`PlanePromotion` is public and `dataclasses.replace` rebuilds it, so
+`promotion_block`'s "only a promotion this gate accepted reaches here" is a
+claim about the *type* or it is a claim about one caller. #224 put the domains
+there and left the five legs in `assert_plane_promotion`, which left the
+sentence false for evidence whose every number is valid: `replace(accepted,
+glm_ratio=1.2)`, `served_kl=0.7` against a 0.6 bar, `served_arm` naming another
+arm, `landing="none"`, or a unit set that loses every unit with a consistent
+geomean beside it — all five built, and `promotion_block` published each as
+`promoted=True`. The five legs are now one function,
+`control._require_promotion_legs`, and `PlanePromotion.__post_init__` calls it
+after the domains and the derived pair: the factory derives `geomean` and
+`wins` from the unit ratios and builds the object, and the object refuses
+itself, so the factory, a hand-built promotion and a replaced one are one door
+rather than three. Direct construction stays supported — that is what the
+public class is for — and a legitimate hand-built promotion still builds; what
+it can no longer do is publish a leg it failed. The `geomean` and `wins` it
+publishes must still be the pair the promotion's own unit ratios make, and
+`served_kl` is therefore never `None` on an object that exists.
 
 No default moves by this, and `tests/test_plane_promotion.py` is what makes
 that checkable rather than asserted: it runs the receipt's own six-unit
