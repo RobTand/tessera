@@ -688,6 +688,17 @@ def _reparse_shard(parsed, sharded, label: str):
     shape would then get the whole module's.  Serialising is the same round trip
     ``tests/test_slice_unit.py::test_shard_round_trips_through_bytes`` proves
     exact, and it costs one write and one parse per role, once, at load.
+
+    THE PARENT'S ENCODER IS THE SHARD'S ENCODER.  ``fixture_id`` is passed
+    EXPLICITLY, including when the parent carries none: cutting restricts
+    planes the parent's encoder already produced and re-encodes nothing, so the
+    identity a shard names must be the one those bytes were written under.
+    ``build_unit_artifact``'s default asks ``encoder_identity`` for THIS
+    build's digest, which made every shard of an older artifact claim an
+    encoder that never saw it -- and made a load compute that digest, over a
+    cold fixture set, to attest bytes it had no part in (tessera#236).  The
+    same holds in the other direction: an untagged parent's ``None`` is
+    forwarded rather than promoted to a current identity it never carried.
     """
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
@@ -697,7 +708,8 @@ def _reparse_shard(parsed, sharded, label: str):
         sharded, label, parsed.forests, int(manifest.branch.root_q256),
         parsed.code or ConvCode(),
         superblock=int(manifest.geometry.superblock_columns),
-        container=manifest.branch.container)
+        container=manifest.branch.container,
+        fixture_id=manifest.encoder_fixture_id)
     return parse_unit_artifact(blob, device=parsed.unit.body_bits.device)
 
 

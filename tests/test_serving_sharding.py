@@ -30,6 +30,8 @@ not look.
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, RoleShard,
@@ -485,6 +487,69 @@ def test_sharding_roles_cuts_and_re_derives_the_parse(units, axis):
     assert record.parent_digest == parsed.manifest.manifest_digest()
     want = whole[rows // 2:, :] if axis == AXIS_ROWS else whole[:, columns // 2:]
     assert torch.equal(_decode(shard), want)
+
+
+#: Artifacts written by master ``da2b371`` -- a different encoder from this
+#: tree's, which is what makes them the right parent for a provenance test.
+LEGACY = pathlib.Path(__file__).parent / "data" / "legacy"
+
+
+def _legacy(name):
+    from tessera.unit_artifact import parse_unit_artifact
+
+    return parse_unit_artifact((LEGACY / f"{name}.tessera").read_bytes(), device="cpu")
+
+
+def test_a_shard_keeps_its_parent_encoder_identity_and_never_asks_the_current_one(monkeypatch):
+    """Cutting restricts planes.  It does not encode, so it may not re-attest.
+
+    ``_reparse_shard`` writes the shard and reads it back, and it wrote it at
+    ``build_unit_artifact``'s default ``fixture_id`` -- which asks
+    ``encoder_identity.stamped_fixture_id`` for the digest of what THIS
+    encoder does.  The shard then named an encoder that never produced its
+    bytes, which is false for every artifact any other encoder wrote, and it
+    made a load compute that identity (a cold fixture set) to attest bytes it
+    had no part in.
+
+    The parent is a committed minor-6 artifact, so its stamp really is another
+    encoder's.  The current stamp is made to RAISE rather than to differ: a
+    reparse that asks the question at all is the defect, not only one that
+    gets a different answer back.
+
+    Both directions are checked, because both are a false claim: a tagged
+    parent keeps its own id, and an untagged one is not promoted to a current
+    one it never carried.
+    """
+    from tessera import encoder_identity
+    from tessera.layout import slice_unit
+    from tessera.serving.sharding import _reparse_shard
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parsed = _legacy("e4m3-1024-window-channel-256c")
+    manifest = parsed.manifest
+    assert manifest.encoder_fixture_id is not None, "the parent must carry an identity"
+
+    def refuse():
+        raise AssertionError(
+            "a shard reparse asked the current encoder to attest bytes it did not produce")
+
+    monkeypatch.setattr(encoder_identity, "stamped_fixture_id", refuse)
+    rows = manifest.geometry.rows
+    shard = _reparse_shard(parsed, slice_unit(parsed, rows=(rows // 2, rows)), "rank1")
+    assert shard.manifest.encoder_fixture_id == manifest.encoder_fixture_id
+    assert shard.manifest.shard is not None
+    assert shard.manifest.shard.row_offset == rows // 2
+
+    # ``fixture_id=None`` writes no field and asks nothing, so an untagged
+    # parent can be built with the stamp still refusing.
+    _m, _region, blob = build_unit_artifact(
+        parsed.unit, "untagged", parsed.forests, int(manifest.branch.root_q256),
+        parsed.code, superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container, fixture_id=None)
+    plain = parse_unit_artifact(blob, device="cpu")
+    assert plain.manifest.encoder_fixture_id is None
+    untagged = _reparse_shard(plain, slice_unit(plain, rows=(rows // 2, rows)), "rank1")
+    assert untagged.manifest.encoder_fixture_id is None
 
 
 @needs_cuda

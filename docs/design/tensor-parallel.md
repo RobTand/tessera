@@ -191,7 +191,11 @@ parent with its offsets composed, and writes the record a direct cut would
 (tessera#140 fixed a writer that named the immediate parent's extent under
 the original's offsets). The encoder profile id is *unchanged* by slicing: a
 shard is decoded by the same trellis over the same grid at the same span. A
-shard is not a different encoding.
+shard is not a different encoding. Neither is the `encoder_fixture_id` — which
+names the encoder that *produced* the bytes, and a cut produces none — so the
+serving loader's `_reparse_shard` forwards the parent's explicitly, `None`
+included, instead of letting `build_unit_artifact` stamp this build's
+(tessera#236).
 
 ## Kernel implications
 
