@@ -72,6 +72,27 @@ def _encode_cpu(q256, rows=32, cols=64, seed=0):
     return exported, unit, forests
 
 
+def _parse(exported):
+    """The PARSED object off the exported bytes: since #264 the gate reads
+    the published predicate, which includes the grid, so it takes a parse."""
+    from tessera.unit_artifact import parse_unit_artifact
+
+    return parse_unit_artifact(exported.blob, device="cpu")
+
+
+def _probe(rates, window_bits=14, initial_state=None):
+    """A parsed-unit stand-in carrying every fact the published predicate
+    reads (``scheme.wire_facts_of_parsed``'s vocabulary)."""
+    from types import SimpleNamespace
+
+    unit = SimpleNamespace(
+        body="WINDOW", scale_plane="CHANNEL",
+        release_index=torch.zeros(0, dtype=torch.int64), diagonals=None,
+        rotation=None, rates=tuple(rates), window_bits=window_bits,
+        initial_state=initial_state)
+    return SimpleNamespace(unit=unit, grid=SimpleNamespace(arity=1))
+
+
 def test_eligibility_is_derived_from_the_kernel_constants():
     """The rule, not a roster: every rate and window THE KERNEL DECLARES is
     eligible.
@@ -84,56 +105,49 @@ def test_eligibility_is_derived_from_the_kernel_constants():
     eligibility gate says yes to everything the kernel has a lane for.
     """
     kg = _kg()
-    from types import SimpleNamespace
     top = max(kg.SUPPORTED_RATES)
     for rate in kg.SUPPORTED_RATES:
         for window_bits in kg.WINDOW_BITS_SUPPORTED:
-            unit = SimpleNamespace(rates=(rate,) * 8, window_bits=window_bits,
-                                   initial_state=None)
-            assert route.gemv_eligible_for_unit(unit), (rate, window_bits)
+            assert route.gemv_eligible_for_unit(
+                _probe((rate,) * 8, window_bits=window_bits)), (rate, window_bits)
     outside = max(kg.WINDOW_BITS_SUPPORTED) + 1
+    assert not route.gemv_eligible_for_unit(_probe((top,) * 8, window_bits=outside))
     assert not route.gemv_eligible_for_unit(
-        SimpleNamespace(rates=(top,) * 8, window_bits=outside, initial_state=None))
-    assert not route.gemv_eligible_for_unit(
-        SimpleNamespace(rates=(max(kg.SUPPORTED_RATES) + 1,) * 8,
-                        window_bits=kg.WINDOW_BITS_SUPPORTED[0], initial_state=None))
+        _probe((max(kg.SUPPORTED_RATES) + 1,) * 8,
+               window_bits=kg.WINDOW_BITS_SUPPORTED[0]))
 
 
 def test_a_bresenham_mix_inside_the_supported_set_is_eligible():
     """Rates are per column: a schedule mixing supported rates is in range even
     though no uniform rung sits between them."""
-    from types import SimpleNamespace
-    unit = SimpleNamespace(rates=(2,) * 4 + (4,) * 4, window_bits=14, initial_state=None)
-    assert route.gemv_eligible_for_unit(unit)
+    assert route.gemv_eligible_for_unit(_probe((2,) * 4 + (4,) * 4))
 
 
 @pytest.mark.parametrize("q256", [256, 512, 1024])
 def test_low_rungs_are_eligible(q256):
     """Real BF16 units at rate 1, 2 and 4: the kernel reads all three."""
-    _exported, unit, _forests = _encode_cpu(q256)
+    exported, unit, _forests = _encode_cpu(q256)
     assert set(int(r) for r in unit.rates) <= {1, 2, 4}, [int(r) for r in unit.rates]
-    assert route.gemv_eligible_for_unit(unit)
+    assert route.gemv_eligible_for_unit(_parse(exported))
 
 
 @pytest.mark.parametrize("q256", [768, 1792])
 def test_a_rate_outside_the_supported_set_is_not_eligible(q256):
     """R = 3 has no lane here, and neither does R = 7: the torch path serves."""
-    _exported, unit, _forests = _encode_cpu(q256)
-    assert not route.gemv_eligible_for_unit(unit)
+    exported, _unit, _forests = _encode_cpu(q256)
+    assert not route.gemv_eligible_for_unit(_parse(exported))
 
 
 def test_a_mixed_schedule_with_one_unsupported_column_is_not_eligible():
     """q256=896 mixes 3 and 4: the 4-columns are readable, the unit is not --
     dispatch is per module, so one unsupported column keeps the torch path."""
-    _exported, unit, _forests = _encode_cpu(896, cols=96)
+    exported, unit, _forests = _encode_cpu(896, cols=96)
     assert set(int(r) for r in unit.rates) == {3, 4}
-    assert not route.gemv_eligible_for_unit(unit)
+    assert not route.gemv_eligible_for_unit(_parse(exported))
 
 
 def test_a_window_outside_the_supported_set_is_not_eligible():
-    from types import SimpleNamespace
-    unit = SimpleNamespace(rates=(4,) * 8, window_bits=15, initial_state=None)
-    assert not route.gemv_eligible_for_unit(unit)
+    assert not route.gemv_eligible_for_unit(_probe((4,) * 8, window_bits=15))
 
 
 def test_a_shard_start_state_is_not_eligible():
@@ -149,7 +163,7 @@ def test_a_shard_start_state_is_not_eligible():
     exported, _unit, _forests = export.encode_linear_planes(
         weight, grid=alphabet.BF16_GRID, q256=512, name="unit", verify=False)
     parsed = parse_unit_artifact(exported.blob, device="cpu")
-    assert route.gemv_eligible_for_unit(parsed.unit)
+    assert route.gemv_eligible_for_unit(parsed)
     shard = slice_unit(parsed, rows=(8, 24))
     manifest = parsed.manifest
     _m, _region, blob = build_unit_artifact(
@@ -159,7 +173,7 @@ def test_a_shard_start_state_is_not_eligible():
         container=manifest.branch.container)
     reparsed = parse_unit_artifact(blob, device="cpu")
     assert reparsed.unit.initial_state is not None
-    assert not route.gemv_eligible_for_unit(reparsed.unit)
+    assert not route.gemv_eligible_for_unit(reparsed)
 
 
 # --- the lane's names ----------------------------------------------------------

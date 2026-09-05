@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 19,
+ "contract_version": 20,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -59,7 +59,16 @@
        14
       ],
       "body": "window",
-      "plane": "channel"
+      "plane": "channel",
+      "release_overrides": false,
+      "diagonals": false,
+      "rotation": [
+       "none"
+      ],
+      "start_state": false,
+      "grid_arities": [
+       1
+      ]
      }
     },
     "when_unavailable": {
@@ -1081,6 +1090,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 20,
+   "date": "2026-09-05",
+   "change": "native_extensions[tessera_window_gemv].lane.requires publishes the lane's WHOLE predicate (#264): release_overrides false, diagonals false, rotation ['none'], start_state false and grid_arities [1] join the four conditions of v12. WHAT WAS WRONG: the loader (kernel_window_gemv.prepare_from_parsed) refuses nine conditions by name on the same bytes, and the five above were published nowhere, so the two gates that decide 'can this lane read this wire' from this block -- scheme.refuse_unreachable_lane at plan time and scheme.lane_wire_report at byte time (tools/tessera_lane_preflight.py) -- declared READABLE, exit 0, wire the loader refuses module by module. The live case is a TP row shard: layout.slice_unit stamps an INITIAL_STATE plane the kernel cannot take (serving/csrc/window_gemv.cu supplies state_{-1} = 0 itself; the L-bit pad that opens a wire column is not stored), the preflight said READABLE, and every module fell back at load -- #104/#206 one condition class over. WHAT THE FIELDS ARE: release_overrides, diagonals and start_state are booleans -- whether the lane reads a unit that CARRIES the thing (false: it does not; the kernel decodes straight off the wire, applies no diagonals, takes no start state); rotation is the list of rotation states the lane reads, in the checkpoint dialect ('none', 'r_in_only') the body and plane fields already speak; grid_arities is the list of grid arities (the kernel decodes one code per position). DELIBERATELY NOT PUBLISHED: prepare_from_parsed's scalar-256-native grid clause. That is an entry-point fact of the E4M3 table build, not a lane fact: the same extension reads BF16 window wire through prepare_value_unit, whose scalar grid has 65536 codes, so publishing size/native would declare wire unreadable that the lane serves -- a false claim in the refusing direction -- while every unit the published predicate admits on the FP8 route carries the scalar-256 native grid by construction (that is what the E4M3 grid is). ONE HOME: the decision is scheme.decide_lane_requirements, which the byte-time report, the plan-time gate, the loader itself and bf16_route.gemv_refusal_for_unit all run over this block (the validator pins the block to ext.NATIVE_EXTENSIONS exactly as before), so predicate == loader by construction rather than by three restatements that drift. PLAN DECIDABILITY, correcting v12's premise that every requires field is a function of (grid, q256): rotation, diagonals and releases are statements a plan makes and refuse_unreachable_lane now takes them (defaults are the exporter's own pinned plan -- whole, undecorated units on a scalar grid); start_state is a property of a LATER slice, so the plan gate decides the plan's own statement while the byte-time gate reads it off the wire, which is where the shard case is caught. The plan gate also now REFUSES a published requirement it has not learned instead of skipping it -- the plan-time twin of the #206 rule the byte-time reader already had. NOT ADDITIVE: a v19 validator refuses these fields (closed LANE_REQUIREMENT_FIELDS), which is the fail-closed direction, and a byte-time reader that has not learned a class refuses every unit rather than passing the subset it knows (lane_wire_report raises on an unknown requirement, #206). The preflight report schema stays tessera.lane_preflight/2: its shape -- the requirements and refusals beside every verdict -- is unchanged; only the requirement roster it relays grows. No rung, route, range, cell, launch, activation contract, TP/EP bound or wire byte moves; column_rates and window_bits are still the parse of csrc/window_gemv.cu."
+  },
   {
    "contract_version": 19,
    "date": "2026-09-05",

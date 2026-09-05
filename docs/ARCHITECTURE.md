@@ -622,14 +622,37 @@ is a literal, the parse fails closed on a source it cannot read
 Python spellings between them.
 
 The predicate is therefore published (`runtime_contract.json` v12,
-`native_extensions[].lane.requires`) and read on both sides:
+`native_extensions[].lane.requires`) and, since contract v20, it is the
+lane's **whole** predicate (#264): beside the rates, window, body and plane
+it states the decoration classes the loader refuses by name -- RELEASE
+overrides, diagonals, rotation, a TP shard's start state
+(`layout.slice_unit` stamps `INITIAL_STATE`; the kernel supplies
+`state_{-1} = 0` itself) and the grid's arity. Four published conditions
+against nine refused was #104's failure mode one class over: a TP row
+shard read `READABLE`, exit 0, at preflight while every module fell back
+at load. One loader clause stays unpublished on purpose --
+`prepare_from_parsed`'s scalar-256-native grid check is an entry-point
+fact of the E4M3 table build, and the same extension reads BF16 window
+wire through `prepare_value_unit` (a scalar grid of 65536 codes), so
+publishing it would call wire unreadable that the lane serves. The
+decision has ONE home, `scheme.decide_lane_requirements`: the plan-time
+gate, the byte-time report, the loader and `bf16_route`'s gate all decide
+a unit through it over the published block, so the predicate and the
+loader agree by construction, and a requirement the contract grows is
+*refused* by any gate that has not learned it -- on the plan side too,
+which used to skip unknown fields. The block is read on both sides:
 
 - **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
   calls `scheme.refuse_unreachable_lane` at argument time, beside
   `check_recipe`, for the default rung and every plan override. It needs no
   shape -- reachability is a function of the rung alone (`grammar.rate_set`)
   -- so it refuses before a unit is encoded and names the offending rates.
-  The flag is stamped into the manifest as `requires_lanes`.
+  The decoration classes are decided from the plan's own statement: the
+  keyword defaults state the exporter's pinned plan (whole, undecorated
+  units on a scalar grid), and a caller planning a rotated, diagonal- or
+  release-carrying wire, or one to be sliced into shards, says so and is
+  refused by name. The flag is stamped into the manifest as
+  `requires_lanes`.
 - **Serve time.** `tools/tessera_route_census.py --require-lane` (or the
   artifact's own `requires_lanes`) makes an arm in which the lane took zero
   modules in every phase a REFUSAL, and writes a `lane_engagement` block

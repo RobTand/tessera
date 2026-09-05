@@ -196,7 +196,7 @@ def test_the_refusal_is_a_property_of_the_rung_not_of_the_shape():
 
 
 def test_a_window_the_lanes_table_cannot_hold_is_refused():
-    with pytest.raises(ValueError, match="window bits"):
+    with pytest.raises(ValueError, match="window_bits 16"):
         refuse_unreachable_lane(LANE, grid="BF16", q256=1024, rate_cap=15,
                                 body="WINDOW", plane="CHANNEL", window_bits=16,
                                 target="probe")
@@ -635,3 +635,387 @@ def test_the_cli_refuses_a_directory_with_no_tessera_wire(tmp_path, monkeypatch,
     monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
     assert tool.main() == 1
     assert "READABLE" not in capsys.readouterr().out
+
+
+# --------------------------------------------------------------------------
+# the decision core: ONE home for every requirement class (#264)
+# --------------------------------------------------------------------------
+#
+# THE DEFECT THIS HALF PINS.  The published predicate named four conditions
+# while ``kernel_window_gemv.prepare_from_parsed`` refuses nine on the same
+# bytes -- RELEASE overrides, diagonals, rotation, a TP shard's start state
+# and the grid's arity were conditions no gate outside the loader could see.
+# A TP row shard (``layout.slice_unit`` stamps ``initial_state``) read
+# READABLE, exit 0, at preflight, and every module fell back at load: an
+# experiment built to measure the lane measured the fallback, which is #104
+# and #206 one condition class over.
+#
+# The fix is one DECISION CORE (``scheme.decide_lane_requirements``): the
+# byte-time report, the plan-time gate, the loader and the bf16 route's gate
+# all decide a unit through it, over the requirements the contract publishes,
+# so the predicate and the loader cannot drift.  These tests drive the core
+# over the full requirement set explicitly; the published block itself is
+# pinned to the same set where the contract grows it.
+
+#: The window-GEMV lane's full predicate, spelled explicitly HERE so the core
+#: can be tested against it independently of what the packaged contract
+#: publishes.  ``test_the_published_predicate_is_the_full_requirement_set``
+#: ties the two once the contract carries it.
+FULL_REQUIRES = {
+    "column_rates": [1, 2, 4],
+    "window_bits": [14],
+    "body": "window",
+    "plane": "channel",
+    "release_overrides": False,
+    "diagonals": False,
+    "rotation": ["none"],
+    "start_state": False,
+    "grid_arities": [1],
+}
+
+#: Facts of a unit the lane reads, in ``wire_facts_of_parsed``'s vocabulary.
+READABLE_FACTS = {
+    "rates": (4,), "window_bits": 14, "body": "WINDOW", "plane": "CHANNEL",
+    "release_overrides": 0, "diagonals": False, "rotation": "NONE",
+    "start_state": False, "grid_arity": 1,
+}
+
+
+def _shard_reparse():
+    """A REAL TP row shard of the readable fixture, reparsed from its own bytes.
+
+    ``layout.slice_unit`` stamps ``initial_state`` -- the issue's live case --
+    and the facts must come off the shard's serialized wire, not off the
+    in-memory slice, because the preflight reads bytes somebody else built.
+    """
+    import torch  # noqa: F401  (parse needs it; the file already imports kg)
+
+    from tessera.layout import slice_unit
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parsed = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    rows = int(parsed.manifest.geometry.rows)
+    shard = slice_unit(parsed, rows=(rows // 2, rows))
+    manifest = parsed.manifest
+    _m, _r, blob = build_unit_artifact(
+        shard, "rank1", parsed.forests, int(manifest.branch.root_q256),
+        parsed.code or ConvCode(),
+        superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container)
+    return parse_unit_artifact(blob, device="cpu"), blob
+
+
+def test_the_core_reads_a_readable_unit_as_readable():
+    from tessera.serving.scheme import decide_lane_requirements
+
+    assert decide_lane_requirements(LANE, FULL_REQUIRES, READABLE_FACTS) == []
+
+
+@pytest.mark.parametrize("field,value,named", [
+    ("start_state", True, "start state"),
+    ("rotation", "R_IN_ONLY", "rotation R_IN_ONLY"),
+    ("diagonals", True, "diagonals"),
+    ("release_overrides", 3, "3 RELEASE override"),
+    ("grid_arity", 2, "grid_arities"),
+])
+def test_the_core_refuses_each_new_class_by_name(field, value, named):
+    from tessera.serving.scheme import decide_lane_requirements
+
+    refusals = decide_lane_requirements(
+        LANE, FULL_REQUIRES, dict(READABLE_FACTS, **{field: value}))
+    assert refusals, field
+    assert any(named in refusal for refusal in refusals), (field, refusals)
+
+
+def test_the_core_refuses_an_absent_new_fact_rather_than_skipping_it():
+    """Absent evidence is not a pass, for the new classes exactly as for the
+    four #206 taught the byte-side reader."""
+    from tessera.serving.scheme import decide_lane_requirements
+
+    for field in ("release_overrides", "rotation", "grid_arity"):
+        facts = dict(READABLE_FACTS)
+        facts[field] = None
+        refusals = decide_lane_requirements(LANE, FULL_REQUIRES, facts)
+        assert any(field in refusal and "not read" in refusal
+                   for refusal in refusals), (field, refusals)
+
+
+def test_wire_facts_carry_the_five_new_classes_off_real_bytes():
+    """The facts travel: a whole readable unit reads pass values for all five,
+    and a REAL row shard's serialized bytes read ``start_state`` True."""
+    facts = _facts(READABLE_WIRE)
+    assert facts["release_overrides"] == 0
+    assert facts["diagonals"] is False
+    assert facts["rotation"] == "NONE"
+    assert facts["start_state"] is False
+    assert facts["grid_arity"] == 1
+
+    from tessera.serving.scheme import wire_facts_of_parsed
+
+    reparsed, _blob = _shard_reparse()
+    shard_facts = wire_facts_of_parsed(reparsed)
+    assert shard_facts["start_state"] is True
+    assert shard_facts["rates"] == facts["rates"]
+
+
+def test_the_plan_gate_takes_the_plan_facts_and_refuses_them(monkeypatch):
+    """A plan that says it will rotate, carry diagonals or slice into shards
+    is refused BY NAME at plan time -- and the defaults, which state the
+    exporter's own pinned plan, still pass."""
+    from tessera.serving import contract as contract_module
+
+    monkeypatch.setattr(contract_module, "lane_requirements",
+                        lambda lane, contract=None: dict(FULL_REQUIRES))
+    ok = dict(grid="E4M3", q256=1024, rate_cap=15, body="WINDOW",
+              plane="CHANNEL", window_bits=14, target="probe")
+    assert refuse_unreachable_lane(LANE, **ok) == (4,)
+    with pytest.raises(ValueError, match="rotation R_IN_ONLY"):
+        refuse_unreachable_lane(LANE, **ok, rotation="R_IN_ONLY")
+    with pytest.raises(ValueError, match="start state"):
+        refuse_unreachable_lane(LANE, **ok, start_state=True)
+    with pytest.raises(ValueError, match="diagonals"):
+        refuse_unreachable_lane(LANE, **ok, diagonals=True)
+    with pytest.raises(ValueError, match="RELEASE override"):
+        refuse_unreachable_lane(LANE, **ok, release_overrides=7)
+    with pytest.raises(ValueError, match="grid_arities"):
+        refuse_unreachable_lane(LANE, **ok, grid_arity=2)
+
+
+def test_the_published_predicate_is_the_full_requirement_set():
+    """The contract publishes EVERY class the loader refuses -- the roster IS
+    the decision here (#264, decided and delegated), so it is pinned: four
+    conditions published against nine refused is the defect itself.
+
+    The one loader clause deliberately NOT here is ``prepare_from_parsed``'s
+    scalar-256-native grid check: an entry-point fact of the E4M3 table
+    build, not a lane fact -- the same extension reads BF16 window wire
+    through ``prepare_value_unit``, whose grid is scalar with 65536 codes,
+    so publishing size/native would call wire unreadable that the lane
+    serves.  ``grid_arities`` is the lane-wide part (one code per
+    position)."""
+    assert lane_requirements(LANE) == FULL_REQUIRES
+
+
+def test_the_live_case_a_tp_row_shard_is_refused_at_preflight(tmp_path, monkeypatch, capsys):
+    """#264's live failure, end to end off serialized bytes: a TP row shard
+    (``layout.slice_unit`` stamps ``initial_state``) must be UNREACHABLE at
+    preflight, exit 1, with the start state named.
+
+    PRE-FIX (b4e5231): ``lane tessera_window_gemv (requires {'column_rates':
+    [1, 2, 4], 'window_bits': [14], 'body': 'window', 'plane': 'channel'}):
+    READABLE -- 1/1 units readable`` and exit 0, while
+    ``prepare_from_parsed`` refuses the same bytes by name -- so an
+    experiment built to measure the lane measured the fallback."""
+    _reparsed, blob = _shard_reparse()
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "shard", {"model.layers.0.mlp.down_proj": blob})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    out = capsys.readouterr().out
+    assert "UNREACHABLE" in out and "READABLE" not in out.replace("UNREACHABLE", "")
+    assert "start_state" in out and "shard start state" in out
+
+
+def _rotated_blob():
+    """Real rotated wire: the readable recipe, R_IN_ONLY, off the encoder."""
+    import torch
+
+    from tessera.alphabet import E4M3_GRID
+    from tessera.export import encode_linear_planes
+    from tessera.manifest import RotationState
+
+    torch.manual_seed(0)
+    weight = torch.randn(32, 128) * 0.02
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=E4M3_GRID, q256=1024, name="unit", verify=False,
+        rotation=RotationState.R_IN_ONLY)
+    return exported.blob
+
+
+def test_a_rotated_unit_is_refused_at_preflight(tmp_path, monkeypatch, capsys):
+    """A second missing class end to end: rotated wire at a readable rung was
+    READABLE, exit 0, pre-fix (b4e5231) while the loader refuses 'the unit is
+    rotated; not read here'."""
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "rotated",
+                            {"model.layers.0.mlp.down_proj": _rotated_blob()})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    out = capsys.readouterr().out
+    assert "UNREACHABLE" in out and "rotation R_IN_ONLY" in out
+
+
+def test_every_published_requirement_has_a_violating_case():
+    """Rule 3 on the grown roster: derive the classes from the PUBLISHED
+    block, flip one fact per class, and require a refusal naming it -- so a
+    requirement added to the contract without a violating case here fails
+    this test rather than passing vacuously."""
+    from tessera.serving.scheme import lane_wire_report
+
+    violate = {
+        "column_rates": ("rates", (3, 4)),
+        "window_bits": ("window_bits", 12),
+        "body": ("body", "TCQ"),
+        "plane": ("plane", "LUT"),
+        "release_overrides": ("release_overrides", 2),
+        "diagonals": ("diagonals", True),
+        "start_state": ("start_state", True),
+        "rotation": ("rotation", "R_IN_ONLY"),
+        "grid_arities": ("grid_arity", 2),
+    }
+    published = lane_requirements(LANE)
+    missing = sorted(set(published) - set(violate))
+    assert not missing, f"published requirement(s) {missing} have no violating case here"
+    facts = _facts(READABLE_WIRE)
+    for name in published:
+        fact, value = violate[name]
+        report = lane_wire_report(LANE, dict(facts, **{fact: value}))
+        assert not report["readable"], name
+        assert any(name in refusal for refusal in report["refusals"]), (name, report)
+
+
+def test_a_lane_predicate_with_an_unknown_rotation_state_is_refused(monkeypatch):
+    def _bad_rotation(entry):
+        entry["lane"]["requires"]["rotation"] = ["widdershins"]
+
+    payload = _mutated_lane(monkeypatch, _bad_rotation)
+    with pytest.raises(ValueError, match="rotation"):
+        validate_serving_contract(payload)
+
+
+def test_a_lane_predicate_with_a_non_boolean_carry_is_refused(monkeypatch):
+    def _bad_start_state(entry):
+        entry["lane"]["requires"]["start_state"] = "no"
+
+    payload = _mutated_lane(monkeypatch, _bad_start_state)
+    with pytest.raises(ValueError, match="start_state"):
+        validate_serving_contract(payload)
+
+
+def _violated_parse(name):
+    """The readable fixture's REAL parse, one published class violated.
+
+    The map is keyed by the requirement's published name, and the drift test
+    below derives its roster from the contract, so a requirement added to
+    the block without a violation here fails the test rather than passing
+    vacuously.
+    """
+    import torch
+    from types import SimpleNamespace
+
+    from tessera.manifest import BodyKind, RotationState, ScalePlaneKind
+    from tessera.unit_artifact import parse_unit_artifact
+
+    parsed = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    unit = parsed.unit
+    if name == "column_rates":
+        unit.rates = (3,) * len(tuple(unit.rates))
+    elif name == "window_bits":
+        unit.window_bits = 12
+    elif name == "body":
+        unit.body = BodyKind.TCQ
+    elif name == "plane":
+        unit.scale_plane = ScalePlaneKind.LUT
+    elif name == "release_overrides":
+        unit.release_index = torch.arange(2)
+    elif name == "diagonals":
+        unit.diagonals = object()
+    elif name == "start_state":
+        unit.initial_state = torch.zeros(256, dtype=torch.int64)
+    elif name == "rotation":
+        unit.rotation = RotationState.R_IN_ONLY
+    elif name == "grid_arities":
+        parsed.grid = SimpleNamespace(arity=2, native=None, size=256, name="probe")
+    else:
+        raise AssertionError(
+            f"published requirement {name!r} has no violating parse here; "
+            "teach _violated_parse to build one")
+    return parsed
+
+
+def test_the_loader_and_the_predicate_refuse_together_class_by_class():
+    """THE DRIFT PIN (#264): for EVERY class the contract publishes, the
+    loader (``prepare_from_parsed``) and the byte-side predicate
+    (``lane_wire_report``) refuse the same parse, naming the same class --
+    and the readable parse passes the predicate.  The roster is derived from
+    the published block, so a grown requirement lands here by itself.
+
+    The loader delegates to ``scheme.decide_lane_requirements`` over the
+    same block, so this pins the delegation rather than restating nine
+    conditions a third time."""
+    from tessera.errors import GrammarError
+    from tessera.kernel_window_gemv import lane_refusal_for_parsed, prepare_from_parsed
+    from tessera.serving.scheme import lane_wire_report, wire_facts_of_parsed
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert lane_refusal_for_parsed(readable) is None
+
+    for name in sorted(lane_requirements(LANE)):
+        parsed = _violated_parse(name)
+        report = lane_wire_report(LANE, wire_facts_of_parsed(parsed))
+        assert not report["readable"], name
+        assert any(name in refusal for refusal in report["refusals"]), (name, report)
+        with pytest.raises(GrammarError) as exc:
+            prepare_from_parsed(parsed)
+        assert name in str(exc.value), (name, str(exc.value))
+
+
+def test_the_bf16_gate_is_the_same_decision():
+    """``bf16_route.gemv_refusal_for_unit`` was the third partial spelling
+    (rates, window, start state; 'everything else is refused upstream').  It
+    now delegates: a rotated parse -- a class the old spelling could not see
+    -- is refused with the class named."""
+    from tessera.serving.bf16_route import gemv_eligible_for_unit, gemv_refusal_for_unit
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert gemv_refusal_for_unit(readable) is None and gemv_eligible_for_unit(readable)
+    rotated = _violated_parse("rotation")
+    refusal = gemv_refusal_for_unit(rotated)
+    assert refusal is not None and "rotation R_IN_ONLY" in refusal
+    shard, _blob = _shard_reparse()
+    refusal = gemv_refusal_for_unit(shard)
+    assert refusal is not None and "start_state" in refusal
+
+
+def test_on_the_device_the_loader_loads_what_the_predicate_calls_readable():
+    """The agreement, on real bytes on a real device: the fixture the
+    predicate calls READABLE prepares and decodes; the shard the predicate
+    refuses raises the same class the report names."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA device: the positive arm builds the extension")
+
+    from tessera.errors import GrammarError
+    from tessera.kernel_window_gemv import decode_fp8, prepare_from_parsed
+    from tessera.serving.scheme import lane_wire_report, wire_facts_of_parsed
+    from tessera.unit_artifact import parse_unit_artifact
+
+    readable = parse_unit_artifact(READABLE_WIRE.read_bytes(), device="cpu")
+    assert lane_wire_report(LANE, wire_facts_of_parsed(readable))["readable"]
+    unit = prepare_from_parsed(readable)
+    got, _scale = decode_fp8(unit)
+    assert got.shape == (unit.rows, unit.cols)
+
+    shard, _blob = _shard_reparse()
+    report = lane_wire_report(LANE, wire_facts_of_parsed(shard))
+    assert not report["readable"]
+    with pytest.raises(GrammarError, match="start_state"):
+        prepare_from_parsed(shard)
+
+
+def test_the_plan_gate_refuses_a_requirement_it_has_not_learned(monkeypatch):
+    """#206's rule, applied to the PLAN side too: the old gate silently skipped
+    requirements it did not know, so a contract that grew one would have been
+    quietly ignored where the plan is made."""
+    from tessera.serving import contract as contract_module
+
+    monkeypatch.setattr(contract_module, "lane_requirements",
+                        lambda lane, contract=None: {"column_rates": [4], "sparsity": "2:4"})
+    with pytest.raises(ValueError, match="sparsity"):
+        refuse_unreachable_lane(LANE, grid="E4M3", q256=1024, rate_cap=15,
+                                body="WINDOW", plane="CHANNEL", window_bits=14,
+                                target="probe")

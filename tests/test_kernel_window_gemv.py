@@ -200,7 +200,7 @@ def test_synthetic_decode_is_the_definition(rates_spec, rows):
 def test_prepare_refuses_rate_three_and_names_the_fallback():
     kg = _kg()
     body, codes = _synthetic(512, 8, (3,) * 8)
-    with pytest.raises(GrammarError, match="materialised FP8 path"):
+    with pytest.raises(GrammarError, match="materialised path serves"):
         kg.prepare_from_parsed(_Parsed(body, (3,) * 8, codes, torch.ones(512, dtype=torch.float16)))
 
 

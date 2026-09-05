@@ -603,7 +603,7 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
                     f"{spot} is empty; a lane with no wire predicate omits the block rather "
                     "than publishing an empty one, because 'no constraint' and 'nobody wrote "
                     "the constraint down' must not read the same to a gate")
-            for field in ("column_rates", "window_bits"):
+            for field in ("column_rates", "window_bits", "grid_arities"):
                 if field not in lane["requires"]:
                     continue
                 values = lane["requires"][field]
@@ -616,6 +616,25 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
                 if sorted(values) != list(values) or len(set(values)) != len(values):
                     raise ValueError(
                         f"{spot}.{field} must be ascending and without repeats, got {values!r}")
+            # The decoration classes (#264): whether the lane reads a unit
+            # that CARRIES the thing.  A boolean, so 'false' is a claim ("it
+            # does not") and an absent field is an absence, exactly as for
+            # the block itself.
+            for field in ("release_overrides", "diagonals", "start_state"):
+                if field in lane["requires"] and not isinstance(lane["requires"][field], bool):
+                    raise ValueError(
+                        f"{spot}.{field} must be a JSON boolean -- whether this lane reads a "
+                        f"unit that carries it -- got {lane['requires'][field]!r}")
+            if "rotation" in lane["requires"]:
+                value = lane["requires"]["rotation"]
+                if (not isinstance(value, list) or not value
+                        or any(v not in _ATTESTED_WIRE_ROTATION for v in value)
+                        or len(set(value)) != len(value)):
+                    raise ValueError(
+                        f"{spot}.rotation must be a non-empty list, without repeats, of the "
+                        f"rotation states this package names "
+                        f"({sorted(_ATTESTED_WIRE_ROTATION)}); a lane predicate a gate cannot "
+                        f"resolve is prose. Got {value!r}")
             # The CHECKPOINT's dialect for body and plane (``attested_wire``'s,
             # not ``ROUTES``'), because that is the vocabulary a plan speaks;
             # the map to the route's spelling is the one already written for
@@ -1476,31 +1495,48 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],
-                          rates: "tuple[int, ...]") -> tuple[str, ...]:
+                          rates: "tuple[int, ...]", grid: str) -> tuple[str, ...]:
     """Which of ``route``'s extension lanes can read a rung, by the published predicate.
 
     The predicate is the one the extension itself publishes at
-    ``native_extensions[].lane.requires`` -- column rates, window bits, body and
-    plane -- which ``tests/test_lane_reachability.py`` ties to
-    ``kernel_window_gemv``'s own constants.  So a cell whose ``executes`` names
-    a lane launch is bound to the kernel's constants transitively, and the day
-    the kernel drops a rate the contract stops validating.
+    ``native_extensions[].lane.requires``, decided by the ONE decision core
+    every gate runs (``scheme.decide_lane_requirements``, #264) over the
+    facts an attested wire stamp states.  A stamp is the pinned whole wire
+    -- rotation, diagonals, RELEASE overrides and a shard start state are
+    not representable in it -- so those facts are the pinned values, and the
+    grid's arity comes off the family's own grid (``grid``, the formats
+    row's name, resolved through ``tessera.alphabet``).  The numeric fields
+    are tied to ``kernel_window_gemv``'s own constants by
+    ``tests/test_lane_reachability.py``, so a cell whose ``executes`` names
+    a lane launch is bound to the kernel transitively, and the day the
+    kernel drops a rate the contract stops validating.
     """
-    from .scheme import lane_rate_report
+    from ..alphabet import SERIALISABLE_GRIDS
+    from .scheme import decide_lane_requirements
 
+    arities = {g.name: int(g.arity) for g in SERIALISABLE_GRIDS.values()}
+    if grid not in arities:
+        raise ValueError(
+            f"formats grid {grid!r} names no serialisable grid this package holds "
+            f"({sorted(arities)}); a rung's lane reachability cannot be derived for it")
+    facts = {
+        "rates": tuple(int(r) for r in rates),
+        "window_bits": int(wire["window_bits"]),
+        "body": route_wire_spelling("body", str(wire["body"])),
+        "plane": route_wire_spelling("plane", str(wire["plane"])),
+        "release_overrides": 0, "diagonals": False, "start_state": False,
+        "rotation": "NONE", "grid_arity": arities[grid],
+    }
     out = []
     for entry in contract["native_extensions"]:
         lane = entry.get("lane")
         if not lane or route not in entry.get("routes", ()):
             continue
         requires = lane.get("requires") or {}
-        if not lane_rate_report(entry["module_name_prefix"], rates, contract)["reachable"]:
-            continue
-        if int(wire["window_bits"]) not in [int(b) for b in requires.get("window_bits", ())]:
-            continue
-        if str(wire["body"]) != str(requires.get("body")):
-            continue
-        if str(wire["plane"]) != str(requires.get("plane")):
+        # No predicate published means the lane's eligibility is the route's
+        # own (formats[]), so every rung of its routes reaches it.
+        if requires and decide_lane_requirements(
+                entry["module_name_prefix"], requires, facts):
             continue
         out.append(entry["module_name_prefix"])
     return tuple(out)
@@ -1532,7 +1568,8 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     want: set = set()
     for rung in cell["rungs_q256"]:
         rates = rate_set(root_from_q256(int(rung)), cap=cap)
-        lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates)
+        lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
+                                      str(entry["grid"]))
         for mode in modes:
             want |= launch_pairs(route, structure=cell["structure"],
                                  regime=cell["regime"], mode=mode, lanes=lanes)
@@ -1579,20 +1616,26 @@ assert len(PAYLOAD_FAMILY_BY_ROUTE) == len(_FAMILY_TO_ROUTE), (
 #: sources, so a rename on either side fails there rather than drifting here.
 _ATTESTED_WIRE_BODY = {"tcq": "TCQ", "window": "WINDOW"}
 _ATTESTED_WIRE_PLANE = {"s6b": "S6B", "lut16": "LUT", "channel": "CHANNEL"}
+#: ``manifest.RotationState`` names, in the checkpoint dialect a lane
+#: predicate speaks (``lane.requires.rotation``, #264).
+_ATTESTED_WIRE_ROTATION = {"none": "NONE", "r_in_only": "R_IN_ONLY"}
 
 
 def route_wire_spelling(field: str, value: str) -> str:
-    """``scheme.ROUTES``' spelling of a checkpoint-dialect body or plane name.
+    """``scheme.ROUTES``' spelling of a checkpoint-dialect wire fact name.
 
     The contract states a wire in the vocabulary a checkpoint's own config
-    records (``window``, ``channel``); the table a loader gates on spells the
-    same facts ``WINDOW`` and ``CHANNEL``.  One map, the one
-    ``attested_wire`` already uses, so a caller comparing a recipe against a
-    published predicate does not carry a second copy of it.
+    records (``window``, ``channel``, ``none``); the tables a loader gates on
+    spell the same facts ``WINDOW``, ``CHANNEL`` and ``RotationState.NONE``.
+    One map, the one ``attested_wire`` already uses for body and plane, so a
+    caller comparing a recipe against a published predicate does not carry a
+    second copy of it.
     """
-    dialect = {"body": _ATTESTED_WIRE_BODY, "plane": _ATTESTED_WIRE_PLANE}.get(field)
+    dialect = {"body": _ATTESTED_WIRE_BODY, "plane": _ATTESTED_WIRE_PLANE,
+               "rotation": _ATTESTED_WIRE_ROTATION}.get(field)
     if dialect is None:
-        raise ValueError(f"no wire dialect for field {field!r}; known: ['body', 'plane']")
+        raise ValueError(
+            f"no wire dialect for field {field!r}; known: ['body', 'plane', 'rotation']")
     if value not in dialect:
         raise ValueError(f"{value!r} is not a {field} this package names ({sorted(dialect)})")
     return dialect[value]

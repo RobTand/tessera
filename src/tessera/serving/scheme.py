@@ -106,6 +106,7 @@ __all__ = [
     "is_tessera_scheme",
     "route_for_grid",
     "attested_cells",
+    "decide_lane_requirements",
     "lane_wire_report",
     "wire_facts_of_parsed",
     "refuse_a_family_with_no_expert_route",
@@ -935,12 +936,118 @@ def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dic
 #: which is the whole of #206 -- an offline checker that quietly evaluated the
 #: subset it knew published ``READABLE`` for wire its own loader rejects, and
 #: was therefore weaker than the plan-time gate it exists to double-check.
+#:
+#: This table and :func:`decide_lane_requirements` below are ONE HOME (#264):
+#: the byte-time report (:func:`lane_wire_report`), the plan-time gate
+#: (:func:`refuse_unreachable_lane`), the loader
+#: (``kernel_window_gemv.prepare_from_parsed``) and the route-side gate
+#: (``bf16_route.gemv_refusal_for_unit``) all decide a unit through the same
+#: function over the same published requirements.  Before that, the contract
+#: published four conditions while the loader refused nine, so a TP row shard
+#: -- ``layout.slice_unit`` stamps ``initial_state`` -- read READABLE at
+#: preflight and fell back module by module at load.
 _LANE_WIRE_CHECKS = {
     "column_rates": ("rates", "every_in"),
     "window_bits": ("window_bits", "one_of"),
     "body": ("body", "wire_spelling"),
     "plane": ("plane", "wire_spelling"),
+    "release_overrides": ("release_overrides", "carries"),
+    "diagonals": ("diagonals", "carries"),
+    "start_state": ("start_state", "carries"),
+    "rotation": ("rotation", "state_in"),
+    "grid_arities": ("grid_arity", "one_of"),
 }
+
+#: What a ``carries``-mode refusal says, per requirement.  ``{n}`` is the
+#: fact's count where the fact carries one (RELEASE overrides), else elided.
+_CARRIES_REFUSALS = {
+    "release_overrides": (
+        "the unit carries {n}RELEASE override(s), and the lane decodes straight "
+        "off the wire with no override read"),
+    "diagonals": (
+        "the unit carries segment-2a diagonals, and the lane applies none"),
+    "start_state": (
+        "the unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
+        "and the lane supplies state_{{-1}} = 0 itself -- the L-bit pad that opens "
+        "a wire column is not stored, so a shard packed against the pinned start "
+        "would decode its first rows to plausible wrong weights; a lane that "
+        "threads the state (tessera.kernel_window) or the materialised path "
+        "serves this shard"),
+}
+
+
+def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
+                             facts: Mapping[str, Any]) -> "list[str]":
+    """Refusals, by name, for ONE unit's facts against a lane's requirements.
+
+    THE HOME of the lane-readability decision (#264).  ``requires`` is the
+    published predicate (``native_extensions[].lane.requires``, or the
+    build's own copy ``ext.WINDOW_GEMV_LANE["requires"]`` -- the contract
+    validator pins the two equal); ``facts`` is one unit's wire facts in
+    :func:`wire_facts_of_parsed`'s vocabulary.  Every caller that answers
+    "can this lane read this unit" calls this: the byte-time and plan-time
+    gates, the loader and the bf16 route's gate, so the published predicate
+    and the loader agree by construction rather than by three restatements.
+
+    A requirement this function has not learned RAISES rather than being
+    skipped (#206), and a fact the caller did not supply is a refusal, never
+    a pass -- absent evidence is not evidence of absence.
+    """
+    from .contract import route_wire_spelling
+
+    unknown = sorted(set(requires) - set(_LANE_WIRE_CHECKS))
+    if unknown:
+        raise ValueError(
+            f"lane {lane!r} publishes requirement(s) {unknown} that this reader cannot "
+            f"decide (it decides {sorted(_LANE_WIRE_CHECKS)}). A checker that skipped a "
+            "published condition would call a unit readable that the loader refuses, so "
+            "it refuses to answer instead. Teach scheme._LANE_WIRE_CHECKS to read the "
+            "fact, and give it a case in tests/test_lane_reachability.py.")
+
+    refusals: "list[str]" = []
+    for name in sorted(requires):
+        fact_name, how = _LANE_WIRE_CHECKS[name]
+        value = facts.get(fact_name)
+        if value is None or (how == "every_in" and not tuple(value)):
+            refusals.append(
+                f"the unit's {fact_name} was not read, so the lane's {name} requirement "
+                f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
+            continue
+        if how == "every_in":
+            supported = [int(r) for r in requires[name]]
+            offending = sorted({int(r) for r in value} - set(supported))
+            if offending:
+                refusals.append(
+                    f"{name} {offending} are outside the rates this lane reads "
+                    f"({supported}); the lane repacks each column at its own rate, "
+                    "so one column out of range refuses the whole unit")
+        elif how == "one_of":
+            allowed = [int(v) for v in requires[name]]
+            if int(value) not in allowed:
+                refusals.append(
+                    f"{name} {int(value)} is outside the {allowed} this lane reads")
+        elif how == "carries":
+            if bool(value) != bool(requires[name]):
+                if bool(requires[name]):
+                    refusals.append(
+                        f"{name}: the lane reads only units that carry this, "
+                        "and the unit does not")
+                else:
+                    count = "" if isinstance(value, bool) else f"{int(value)} "
+                    refusals.append(
+                        f"{name}: " + _CARRIES_REFUSALS[name].format(n=count))
+        elif how == "state_in":
+            allowed = [route_wire_spelling("rotation", v) for v in requires[name]]
+            if str(value) not in allowed:
+                refusals.append(
+                    f"{name} {value} is not among the {allowed} states this lane reads; "
+                    "the kernel decodes the wire without applying a rotation")
+        else:
+            wanted = route_wire_spelling(name, requires[name])
+            if str(value) != wanted:
+                refusals.append(
+                    f"{name} {value} is not the {wanted} {name} this lane reads")
+    return refusals
 
 
 def wire_facts_of_parsed(parsed) -> dict:
@@ -955,15 +1062,39 @@ def wire_facts_of_parsed(parsed) -> dict:
     (``tests/test_census_no_torch.py``) and the manifest enums are not. A fact
     the unit does not carry comes back ``None``, which the report refuses by
     name rather than defaulting -- absent evidence is not a passing check.
+
+    Three facts read a MISSING attribute as its whole-unit value rather than
+    as absent evidence, because that is exactly how the loader reads it and
+    the loader is what this predicate must agree with (#264): a plain
+    ``EncodedUnit`` has no ``initial_state`` at all (only ``layout.SlicedUnit``
+    does), ``diagonals`` is ``None`` on every CHANNEL-plane unit, and a unit
+    written before the rotation field decodes as ``RotationState.NONE`` --
+    ``prepare_from_parsed`` spells all three with the same ``getattr``
+    defaults.  ``grid_arity`` has no such default: it lives on the PARSED
+    wrapper, not the unit, so a caller holding only a bare unit gets ``None``
+    and the report refuses to decide it.
     """
     unit = getattr(parsed, "unit", parsed)
     body = getattr(unit, "body", None)
     plane = getattr(unit, "scale_plane", None)
+    release = getattr(unit, "release_index", None)
+    rotation = getattr(unit, "rotation", None)
+    grid = getattr(parsed, "grid", None)
+    arity = int(getattr(grid, "arity", 0)) if grid is not None else 0
     return {
         "rates": tuple(int(r) for r in (getattr(unit, "rates", ()) or ())),
         "window_bits": getattr(unit, "window_bits", None),
         "body": getattr(body, "name", body),
         "plane": getattr(plane, "name", plane),
+        # The COUNT, not a flag: a refusal that says how many overrides the
+        # unit carries is a value; ``None`` when the plane was never read.
+        "release_overrides": None if release is None else int(release.numel()),
+        "diagonals": getattr(unit, "diagonals", None) is not None,
+        "start_state": getattr(unit, "initial_state", None) is not None,
+        # The state's NAME (``RotationState.name``); an unrecognisable value
+        # -- neither an enum nor absent -- reads ``None`` and is refused.
+        "rotation": "NONE" if rotation is None else getattr(rotation, "name", None),
+        "grid_arity": arity if arity > 0 else None,
     }
 
 
@@ -980,56 +1111,25 @@ def lane_wire_report(lane: str, facts: Mapping[str, Any],
     the parse and dropped everything else (#206).
 
     ``{"lane", "requirements", "facts", "refusals", "readable"}``. The
-    requirement roster is the contract's, not a list here: an unknown
-    requirement RAISES, so a lane predicate that grows a condition refuses
-    every unit until this reader learns to decide it.
+    requirement roster is the contract's, not a list here, and the decision
+    is :func:`decide_lane_requirements` -- the one home every gate shares
+    (#264): an unknown requirement RAISES, so a lane predicate that grows a
+    condition refuses every unit until the core learns to decide it.
     """
-    from .contract import lane_requirements, route_wire_spelling
+    from .contract import lane_requirements
 
     requires = lane_requirements(lane, contract)
-    unknown = sorted(set(requires) - set(_LANE_WIRE_CHECKS))
-    if unknown:
-        raise ValueError(
-            f"lane {lane!r} publishes requirement(s) {unknown} that this byte-side reader "
-            f"cannot decide (it decides {sorted(_LANE_WIRE_CHECKS)}). A wire checker that "
-            "skipped a published condition would call a unit readable that the loader "
-            "refuses, so it refuses to answer instead. Teach scheme._LANE_WIRE_CHECKS to "
-            "read the fact, and give it a case in tests/test_lane_reachability.py.")
-
-    refusals: "list[str]" = []
-    for name in sorted(requires):
-        fact_name, how = _LANE_WIRE_CHECKS[name]
-        value = facts.get(fact_name)
-        if value is None or (how == "every_in" and not tuple(value)):
-            refusals.append(
-                f"the unit's {fact_name} was not read, so the lane's {name} requirement "
-                f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
-            continue
-        if how == "every_in":
-            report = lane_rate_report(lane, value, contract)
-            if not report["reachable"]:
-                refusals.append(
-                    f"{name} {report['offending']} are outside the rates this lane reads "
-                    f"({report['supported']}); the lane repacks each column at its own rate, "
-                    "so one column out of range refuses the whole unit")
-        elif how == "one_of":
-            allowed = [int(v) for v in requires[name]]
-            if int(value) not in allowed:
-                refusals.append(
-                    f"{name} {int(value)} is outside the {allowed} this lane's value table is "
-                    "built for")
-        else:
-            wanted = route_wire_spelling(name, requires[name])
-            if str(value) != wanted:
-                refusals.append(
-                    f"{name} {value} is not the {wanted} {name} this lane reads")
+    refusals = decide_lane_requirements(lane, requires, facts)
     return {"lane": lane, "requirements": dict(requires), "facts": dict(facts),
             "refusals": refusals, "readable": not refusals}
 
 
 def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
                             body: str, plane: str, window_bits: int,
-                            target: str) -> tuple[int, ...]:
+                            target: str, release_overrides: int = 0,
+                            diagonals: bool = False, rotation: str = "NONE",
+                            start_state: bool = False,
+                            grid_arity: int = 1) -> tuple[int, ...]:
     """Refuse, AT PLAN TIME, a rung whose columns ``lane`` could never read.
 
     THE SEAM MOVES ONE STAGE EARLIER, and that is the whole point of #104.
@@ -1052,12 +1152,23 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
 
     Every bound comes from the packaged contract (``lane_requirements``),
     never from a constant here: the day the kernel grows a 6-byte lane, the
-    contract changes and this follows it.  Returns the accepted rate set.
+    contract changes and this follows it.  The DECISION is
+    :func:`decide_lane_requirements`, the same core the byte-time report and
+    the loader run (#264), so a requirement the contract grows and this gate
+    has not learned refuses the plan rather than being skipped -- the plan
+    side of #206's rule.  Returns the accepted rate set.
+
+    The keyword facts past ``target`` state what the PLAN will write, and
+    their defaults are the exporter's own pinned plan: whole units (no shard
+    ``start_state`` -- a slice is a later act, ``layout.slice_unit``, which
+    the byte-time gate reads off the wire), unrotated, no diagonals, no
+    RELEASE overrides, a scalar (arity-1) grid.  A caller planning otherwise
+    says so and is refused by name.
     """
     from fractions import Fraction
 
     from ..grammar import rate_set, root_from_q256
-    from .contract import lane_requirements, route_wire_spelling
+    from .contract import lane_requirements
 
     requires = lane_requirements(lane)
     q256 = int(q256)
@@ -1067,42 +1178,31 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
         "(for the window GEMV: the torch window decode plus _scaled_mm, same bytes, slower). "
         "What is refused here is only the CLAIM that this artifact exercises the lane.")
 
-    wanted_body = requires.get("body")
-    if wanted_body is not None and body != route_wire_spelling("body", wanted_body):
-        raise ValueError(
-            f"tessera lane {lane!r} for {target}: the lane reads the "
-            f"{route_wire_spelling('body', wanted_body)} body; grid {grid!r} at q256={q256} "
-            f"resolves to {body}. " + still_legal)
-    wanted_plane = requires.get("plane")
-    if wanted_plane is not None and plane != route_wire_spelling("plane", wanted_plane):
-        raise ValueError(
-            f"tessera lane {lane!r} for {target}: the lane reads the "
-            f"{route_wire_spelling('plane', wanted_plane)} scale plane; grid {grid!r} at "
-            f"q256={q256} resolves to {plane}. " + still_legal)
-    windows = [int(w) for w in requires.get("window_bits", ())]
-    if windows and int(window_bits) not in windows:
-        raise ValueError(
-            f"tessera lane {lane!r} for {target}: the lane's value table is built for window "
-            f"bits {windows}; grid {grid!r} at q256={q256} resolves to L={int(window_bits)}. "
-            + still_legal)
-
     rates = rate_set(root_from_q256(q256), cap=int(rate_cap))
-    report = lane_rate_report(lane, rates)
-    if not report["reachable"]:
-        supported = report["supported"]
+    facts = {
+        "rates": rates, "window_bits": int(window_bits), "body": str(body),
+        "plane": str(plane), "release_overrides": int(release_overrides),
+        "diagonals": bool(diagonals), "rotation": str(rotation),
+        "start_state": bool(start_state), "grid_arity": int(grid_arity),
+    }
+    refusals = decide_lane_requirements(lane, requires, facts)
+    if not refusals:
+        return rates
+    notes = ""
+    if any(refusal.startswith("column_rates") for refusal in refusals):
         root = Fraction(q256, 256)
-        raise ValueError(
-            f"tessera lane {lane!r} for {target}: q256={q256} is root rate {float(root):.4f}, "
-            f"which bresenham_rate_schedule realises as column rates {report['rates']} -- and "
-            f"{report['offending']} {'is' if len(report['offending']) == 1 else 'are'} outside "
-            f"the rates this lane reads ({supported}, runtime_contract.json "
-            f"native_extensions[{lane}].lane.requires.column_rates). EVERY unit of a checkpoint "
-            f"at this rung would refuse the lane at load and be served by the fallback, so an "
-            f"artifact built to measure the lane would measure the fallback. Re-plan on a rung "
-            f"whose rate set is inside {supported}: an integral root lands every column on one "
-            f"rate (q256 = 256*R), and a fractional root mixes only the two rates bracketing "
-            f"it. " + still_legal)
-    return rates
+        notes = (
+            f" q256={q256} is root rate {float(root):.4f}, which bresenham_rate_schedule "
+            f"realises as column rates {list(rates)} (runtime_contract.json "
+            f"native_extensions[{lane}].lane.requires.column_rates). EVERY unit of a "
+            "checkpoint at this rung would refuse the lane at load and be served by the "
+            "fallback, so an artifact built to measure the lane would measure the "
+            "fallback. Re-plan on a rung whose rate set is inside the published set: an "
+            "integral root lands every column on one rate (q256 = 256*R), and a "
+            "fractional root mixes only the two rates bracketing it.")
+    raise ValueError(
+        f"tessera lane {lane!r} for {target}: grid {grid!r} at q256={q256} is refused -- "
+        + "; ".join(refusals) + "." + notes + " " + still_legal)
 
 
 def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str) -> dict:

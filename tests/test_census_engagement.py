@@ -177,10 +177,21 @@ def test_the_lane_decoder_defaults_to_the_packaged_contract():
 # --------------------------------------------------------------------------
 
 class _Unit:
+    """A parsed-unit stand-in carrying every fact the published lane
+    predicate reads: since #264 the gate decides ALL of it (one home,
+    ``scheme.decide_lane_requirements``), not just rates/window/state."""
+
     def __init__(self, rates, window_bits=14, initial_state=None):
-        self.rates = tuple(rates)
-        self.window_bits = window_bits
-        self.initial_state = initial_state
+        from types import SimpleNamespace
+
+        import torch
+
+        self.unit = SimpleNamespace(
+            body="WINDOW", scale_plane="CHANNEL",
+            release_index=torch.zeros(0, dtype=torch.int64), diagonals=None,
+            rotation=None, rates=tuple(rates), window_bits=window_bits,
+            initial_state=initial_state)
+        self.grid = SimpleNamespace(arity=1)
 
 
 def test_the_bf16_lane_gate_names_its_reason():
@@ -193,7 +204,7 @@ def test_the_bf16_lane_gate_names_its_reason():
     assert rate is not None and "[3]" in rate
     assert not bf16_route.gemv_eligible_for_unit(_Unit((3, 4)))
     window = bf16_route.gemv_refusal_for_unit(_Unit((4, 4), window_bits=16))
-    assert window is not None and "L=16" in window
+    assert window is not None and "window_bits 16" in window
     shard = bf16_route.gemv_refusal_for_unit(_Unit((4, 4), initial_state=object()))
     assert shard is not None and "shard start state" in shard
 

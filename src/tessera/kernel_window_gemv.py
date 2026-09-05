@@ -42,6 +42,14 @@ state** (the kernel supplies ``state_{-1} = 0``, so a tensor-parallel row
 shard is refused with the two lanes that do serve it named), the rates the
 kernel declares (:data:`SUPPORTED_RATES`, read off ``window_gemv.cu``: R=3
 would need 6-byte lanes and is refused with the fallback named), M <= 8.  The activation contract is W4A16: ``x`` is bf16, accumulation fp32.
+The scope is PUBLISHED -- ``runtime_contract.json``
+``native_extensions[tessera_window_gemv].lane.requires``, contract v20 --
+and :func:`prepare_from_parsed` refuses through the same decision every
+gate reads (:func:`lane_refusal_for_parsed` ->
+``scheme.decide_lane_requirements``), so preflight and loader agree on the
+same bytes by construction (#264); only the 256-code ``native`` table-build
+clause is this entry point's own, because :func:`prepare_value_unit` reads
+the same wire under the BF16 alphabet without it.
 
 **Under a compiled forward.**  Every route in ``tessera.serving`` is served
 eager and compiled, and this lane has been broken by exactly the shape the
@@ -72,7 +80,6 @@ import torch
 
 from .errors import GrammarError
 from .kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED, WINDOW_GEMV_SOURCE
-from .manifest import BodyKind, RotationState, ScalePlaneKind
 
 __all__ = [
     "TILE_ROWS",
@@ -88,6 +95,7 @@ __all__ = [
     "WindowGemvUnit",
     "repack_window_body",
     "plan_items",
+    "lane_refusal_for_parsed",
     "prepare_from_parsed",
     "prepare_value_unit",
     "window_gemv",
@@ -432,9 +440,13 @@ class WindowGemvUnit:
         return dataclasses.replace(self, plan=plan, table=table.contiguous(), items_by_mt=shared)
 
 
-#: What ``prepare_*`` says when handed a unit whose columns do not start from
-#: the pinned zero register.  One spelling, so the two entry points cannot
-#: drift.
+#: What ``prepare_value_unit`` says when handed a start state.  The RULE --
+#: the lane reads no shard start state -- has ONE home, the published
+#: predicate (``ext.WINDOW_GEMV_LANE["requires"]["start_state"]``) decided by
+#: ``scheme.decide_lane_requirements``, which ``prepare_from_parsed`` runs;
+#: this text is the raw-bits entry point's spelling of the same class,
+#: because that entry point takes body bits rather than a unit and has no
+#: wire facts to hand the core.
 _NO_START_STATE = (
     "this unit carries a shard start state (INITIAL_STATE, layout.slice_unit), "
     "and the window GEMV does not take a start state: serving/csrc/window_gemv.cu "
@@ -458,6 +470,35 @@ def _refuse_start_state(initial_state) -> None:
         raise GrammarError(_NO_START_STATE)
 
 
+def lane_refusal_for_parsed(parsed) -> "str | None":
+    """WHY this lane's published predicate refuses a unit, or ``None``.
+
+    The loader's spelling of the ONE decision (#264): the facts come off the
+    parsed object (``scheme.wire_facts_of_parsed``, the same reader the
+    byte-time preflight uses) and the requirements are the build's own copy
+    of the published block (``ext.WINDOW_GEMV_LANE`` -- the contract
+    validator pins the packaged JSON equal to it), decided by
+    ``scheme.decide_lane_requirements`` -- the same core the plan-time and
+    byte-time gates run.  So what preflight calls READABLE, this loader
+    loads, by construction; before this, the contract published four
+    conditions while ``prepare_from_parsed`` refused nine, and a TP row
+    shard read READABLE at preflight then fell back module by module.
+
+    Takes a ``ParsedUnit`` or anything duck-shaped like one (the bf16 route
+    hands its roles' parses through here).  A bare unit with no grid is
+    refused by name rather than passed: absent evidence is not a pass.
+    """
+    from .serving.ext import WINDOW_GEMV_LANE, WINDOW_GEMV_MODULE_NAME
+    from .serving.scheme import decide_lane_requirements, wire_facts_of_parsed
+
+    refusals = decide_lane_requirements(
+        WINDOW_GEMV_MODULE_NAME, WINDOW_GEMV_LANE["requires"],
+        wire_facts_of_parsed(parsed))
+    if not refusals:
+        return None
+    return "; ".join(refusals) + " -- this lane does not read the unit and the route's materialised path serves it"
+
+
 def _check_window_bits(window_bits: int) -> None:
     if int(window_bits) not in WINDOW_BITS_SUPPORTED:
         raise GrammarError(
@@ -469,26 +510,24 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
                         table_dtype: torch.dtype = torch.bfloat16) -> WindowGemvUnit:
     """A parsed E4M3 window unit over a CHANNEL plane -> the GEMV's unit.
 
-    Refuses, naming why, what this lane does not read: another body or
-    plane, a RELEASE plane, diagonals, rotation, a grid without ``native``
-    bytes, a rate outside :data:`SUPPORTED_RATES`, a window outside
-    :data:`WINDOW_BITS_SUPPORTED`.
+    Refuses, naming why, everything the PUBLISHED lane predicate refuses --
+    :func:`lane_refusal_for_parsed`, the one decision every gate shares
+    (#264), covering the body, the plane, RELEASE overrides, diagonals,
+    rotation, a shard start state, the grid's arity, the rates and the
+    window width -- plus this entry point's own table-build clause: the
+    E4M3 value table is ``native[window_codes]``, so the grid must be a
+    256-code hardware grid with ``native`` bytes.  That clause is not part
+    of the lane predicate on purpose (the same kernel reads BF16 window
+    wire through :func:`prepare_value_unit`, whose scalar grid has 65536
+    codes and whose table is the values themselves), and no wire the
+    predicate admits on the FP8 route can violate it -- it catches a
+    mis-routed parse, not a wire.
     """
     unit, grid = parsed.unit, parsed.grid
-    body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
-    if body is not BodyKind.WINDOW:
-        raise GrammarError(f"the window GEMV reads a WINDOW body, this unit is {body.name}")
-    plane = getattr(unit, "scale_plane", ScalePlaneKind.S6B)
-    if plane is not ScalePlaneKind.CHANNEL:
-        raise GrammarError(f"the window GEMV reads a CHANNEL plane, this unit carries {plane.name}")
-    if unit.release_index.numel():
-        raise GrammarError(f"the unit carries {unit.release_index.numel()} RELEASE overrides; not read here")
-    if getattr(unit, "diagonals", None) is not None:
-        raise GrammarError("the unit carries diagonals; not read here")
-    if RotationState(getattr(unit, "rotation", RotationState.NONE)) is not RotationState.NONE:
-        raise GrammarError("the unit is rotated; not read here")
-    _refuse_start_state(getattr(unit, "initial_state", None))
-    if grid.arity != 1 or grid.native is None or grid.size != 256:
+    refusal = lane_refusal_for_parsed(parsed)
+    if refusal is not None:
+        raise GrammarError(refusal)
+    if grid.native is None or grid.size != 256:
         raise GrammarError(f"the window GEMV needs a scalar 256-code hardware grid, got {grid.name}")
     if unit.window_codes is None:
         raise GrammarError("a window body needs the unit's table")
