@@ -524,6 +524,118 @@ def test_reslice_record_names_the_original(cpu_units, label, axis):
     assert torch.equal(reconstruct_unit(back.unit, back.forests, back.code), window)
 
 
+@pytest.fixture(scope="module")
+def cpu_released_unit():
+    """A CPU parent that actually carries a RELEASE plane.
+
+    ``cpu_units`` builds both of its parents at ``released=0``, so every
+    record-frame test above runs over an eight-plane unit and the ninth plane
+    -- whose restriction is the only thing a cut does to a plane that is not a
+    slice -- is serialised by no re-slice test at all.  The released unit
+    otherwise lives only in ``units``, which is CUDA-gated, and
+    ``test_reslice_equals_direct_slice`` compares reconstructions rather than
+    bytes.  That is the gap tessera#183 (M11) names.
+
+    Three things about the shape, each so the test above cannot pass
+    vacuously.  32 rows rather than ``cpu_units``' 64: the cut granularity is
+    ``arity * span`` = 2, so two depths of halving land legally, and the CPU
+    encode is the expensive part of this file.  512 columns: a RELEASE plane's
+    counts are **per superblock**, and over one superblock that vector is a
+    scalar which binning and a recomputed quota agree on whatever either
+    means.  And a row ramp, opposed between the two superblocks, so the two
+    disagree in fact and not just in principle -- on a plain Gaussian the
+    restricted set splits evenly and a quota reproduces it by luck.
+
+    Rows are the only axis a re-slice can use here: a RELEASE plane raises the
+    column granularity to the superblock (``shard_granularity``), so the legal
+    column cuts of 512 columns are the two halves and neither halves again.
+    """
+    grid = GRIDS["E2M1"]
+    rows, cols, superblock = 32, 512, 256
+    q256 = tcq_cap_q256(grid)
+    recipe = wire_recipe(grid, q256)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    ramp = torch.linspace(0.25, 4.0, rows).unsqueeze(1)
+    weight[:, :superblock] *= ramp
+    weight[:, superblock:] *= ramp.flip(0)
+    rates, forests = _plan_for(grid, q256, cols, recipe.body, None)
+    unit = encode_unit(
+        weight, forests, rates, CODE, completion=0, released_positions=48,
+        span=recipe.span, scale_plane=recipe.scale_plane, body=recipe.body,
+        scale_refit=2,
+    )
+    _m, _r, blob = build_unit_artifact(
+        unit, "e2m1-tcq-lut-release", forests, q256 * grid.arity, CODE)
+    return unit, forests, grid, blob
+
+
+def test_a_reslice_of_a_released_shard_serialises_its_record(cpu_released_unit):
+    """A re-sliced released shard writes the direct cut's bytes, RELEASE plane
+    and all.
+
+    Coverage, not a bug: the reviewer looked for a defect behind this gap and
+    found none.  ``slicing._slice_release`` bins the already-restricted index
+    per superblock rather than recomputing a quota from the shard's extent, so
+    restricting twice is restricting once and composition is correct by
+    construction.  What was missing was any test that *serialised* one, which
+    is what would catch a future change to that reasoning.
+    """
+    _unit, forests, grid, blob = cpu_released_unit
+    parsed = _cpu_parse(blob)
+    geometry = parsed.manifest.geometry
+    rows, cols = geometry.rows, geometry.columns
+    assert parsed.unit.release_index.numel(), "this case exists to carry releases"
+    row_gran, col_gran = shard_granularity(
+        parsed.unit, geometry.superblock_columns, grid.arity
+    )
+    # The premises of the row-only cut over two superblocks, derived rather
+    # than asserted.
+    assert col_gran == geometry.superblock_columns
+    assert superblock_count(cols, col_gran) > 1
+    quarter = rows // 4
+    assert quarter % row_gran == 0
+
+    half = slice_unit(parsed, rows=(rows // 2, rows))
+    composed = slice_unit(
+        half, rows=(quarter, 2 * quarter), arity=grid.arity, code=parsed.code,
+        grid=grid, superblock=geometry.superblock_columns,
+    )
+    direct = slice_unit(parsed, rows=(rows // 2 + quarter, rows))
+    # The reviewer's reason the composition is correct, made observable: the
+    # shard's per-superblock counts are the parent's set *binned*, not a quota
+    # recomputed from the shard's own total.  This weight makes the two
+    # disagree, so what follows is not a restatement of ``release_quota``.
+    assert tuple(direct.release_counts) != tuple(
+        release_quota(int(direct.release_index.numel()), cols, col_gran)
+    )
+    m_composed, _r, composed_blob = _build_shard(composed, forests, parsed, "q")
+    m_direct, _r, direct_blob = _build_shard(direct, forests, parsed, "q")
+    want = _origin_record(
+        parsed, rows // 2 + quarter, 0, m_direct.shard.state_bits
+    )
+    assert m_composed.shard == want
+    assert m_direct.shard == want
+    assert composed_blob == direct_blob
+
+    # The plane is on the wire and it is the parent's set restricted -- read
+    # back from the shard's own bytes, so a shard that dropped or renumbered
+    # its releases could not pass by agreeing with the other shard object.
+    low = rows // 2 + quarter
+    expected = {
+        (flat // cols - low) * cols + flat % cols
+        for flat in parsed.unit.release_index.tolist()
+        if flat // cols >= low
+    }
+    assert expected, "the cut has to keep some of the parent's releases"
+    back = _cpu_parse(composed_blob)
+    assert set(back.unit.release_index.tolist()) == expected
+    full = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    assert torch.equal(
+        reconstruct_unit(back.unit, back.forests, back.code), full[low:]
+    )
+
+
 def test_the_reslice_the_issue_refused_builds(cpu_units):
     """tessera#140, first reproduction: rows (32, 64) then (16, 32) is the
     legal shard [48, 64) of a 64-row parent, and it was refused as running
