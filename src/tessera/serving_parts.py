@@ -478,3 +478,41 @@ def source_part_identity(source: Path, shards=None) -> dict:
             "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
             "files": {name: sha256_file(source / name) for name in chosen},
             "tensors": tensors}
+
+
+#: The block an exporter stamps for the shards it WROTE (``tessera_config.json``
+#: ``output``; tessera#337).  ``source`` says which checkpoint's bytes went in;
+#: it cannot say which bytes came out, and that is the whole of #337: a retry
+#: into a completed output directory overwrote shards one at a time, so a run
+#: that stopped part way left new shards beside the previous run's index,
+#: config and source seal -- valid replacement blobs for the same named unit at
+#: the same rung and shape, which every name-, header- and manifest-shaped
+#: check in the merge accepts.  The serving-part path already binds its output
+#: (``export_partition.output_sha256``, verified in :func:`merge_serving_parts`
+#: before a byte is copied); this is the same binding for the legacy parts,
+#: under a schema so a future spelling is refused rather than misread.
+OUTPUT_PART_SCHEMA = "tessera.output-part.v1"
+
+
+def output_part_stamp(files: dict) -> dict:
+    """The ``output`` block over digests a writer already took.
+
+    The one home of the block's shape.  The exporter hashes each shard as it
+    finishes it -- while the bytes it just wrote are still warm, and so that
+    the stamp is of what THIS run wrote rather than of whatever is on disk
+    when the config is written -- and hands the accumulated mapping here.
+    """
+    return {"schema": OUTPUT_PART_SCHEMA, "files": dict(sorted(files.items()))}
+
+
+def output_part_identity(out: Path, files) -> dict:
+    """The same block, hashed now: what a verifier computes and compares.
+
+    ``files`` are local shard filenames under ``out``, digested with the same
+    :func:`sha256_file` the serving path and the source stamp use, so there is
+    one digest of a checkpoint file in this tree rather than three.  A merge
+    that wants to name the shard that differs hashes shard by shard against
+    the stamped mapping instead of comparing two whole blocks.
+    """
+    out = Path(out)
+    return output_part_stamp({name: sha256_file(out / _leaf(name)) for name in files})

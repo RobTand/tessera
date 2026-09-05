@@ -1882,7 +1882,15 @@ CONFIG_ENCODING_FIELDS = (
 #: each part's owned slice of the plan against that part's actual output --
 #: blob present, raw tensor absent, the blob's own manifest at the planned
 #: rung -- before it copies a byte.
-CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256", "source")
+#:
+#: ``output`` is the other half of that contract (tessera#337): the sha256 of
+#: every shard THIS run wrote (``tessera.serving_parts.output_part_identity``;
+#: ``null`` from the in-memory ``export_checkpoint``, which is not a part).
+#: ``source`` proves which checkpoint went in and cannot prove which bytes came
+#: out, so a directory holding one run's shards under another run's seal passed
+#: every check the merge had.  Per-part like ``source``, and proved the same
+#: way: the merge hashes each part's shards and holds them to this stamp.
+CONFIG_PER_PART_FIELDS = ("accounting", "output", "plan", "rungs_q256", "source")
 
 #: The activation-aware block: ``null`` on a weights-only export and a dict
 #: otherwise, so it is neither an encoding field that always resolves nor a
@@ -1930,7 +1938,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   trellis_weighting: str = "none",
                   table: "tuple[RecipeRange, ...] | None" = None,
                   activation: "ActivationSource | None" = None,
-                  source: "dict | None" = None) -> None:
+                  source: "dict | None" = None,
+                  output: "dict | None" = None) -> None:
     if table is None:
         table = recipe_table(grid)
     used = _used_recipes(table, plan.values())
@@ -2056,6 +2065,14 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         # in-memory exporter wrote tensors it was handed and read no
         # checkpoint, which is what a shard-split merge refuses to bind to.
         "source": source,
+        # And which bytes this run WROTE: the sha256 of each shard it just
+        # finished (``tessera.serving_parts.output_part_identity``,
+        # tessera#337).  Written last, because the config is the only file
+        # that can hold the receipt for the others.  ``null`` from the
+        # in-memory ``export_checkpoint``: it writes one file and replaces it
+        # whole or not at all, so it has no partial-replacement window to
+        # seal against, and it is not a part a merge assembles.
+        "output": output,
     }
     _check_config_fields(config)
     if extra_config:
@@ -2132,6 +2149,31 @@ def export_checkpoint_streaming(
     taken before the first encode, against the index-verified inventory, and
     costs one pass over the part's own input.
 
+    **A completed output is immutable** (tessera#337).  This loop writes one
+    shard at a time over whatever is at that path, and replaces the index and
+    config only after the last one succeeds, so a *re-run into a directory an
+    earlier run completed* had a window in which the new shards sat under the
+    old index, the old ``tessera_config.json`` and the old ``source`` seal --
+    which still verified, because it describes the input.  The merge accepted
+    that mixture and republished it as the original checkpoint: measured, a
+    two-shard export whose retry failed on its second unit decoded to
+    ``[9.0, 1.03125]`` where the artifact its config priced is
+    ``[1.03125, 1.03125]``.  So an ``out`` that already holds a
+    ``tessera_config.json`` is refused here, by name, before a byte of it is
+    read or replaced: the previous complete artifact survives, and a retry
+    names a fresh destination.  A directory holding no config was never a
+    complete artifact -- an earlier run died before sealing it -- and is
+    written into, since the run either completes it or leaves it unsealed,
+    which the merge and the reader already refuse.
+
+    The shards this run does write are stamped in that config (``output``:
+    ``tessera.serving_parts.output_part_identity``, one sha256 per shard,
+    taken as each is finished), and the merge proves them before assembly the
+    way ``merge_serving_parts`` proves a serving part's ``output_sha256``.
+    Immutability keeps this exporter from making a mixed directory; the stamp
+    is what refuses one made any other way, since ``source`` hashes prove only
+    what went in.
+
     ``activation`` supplies per-unit input Hessians and turns on the measured
     activation-aware recipe (LDLQ plus the full-Hessian row-scale refit).  It
     is refused, not ignored, when a planned unit has no Hessian: an encode
@@ -2145,15 +2187,31 @@ def export_checkpoint_streaming(
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    from .serving_parts import source_part_identity
+    from .serving_parts import (output_part_stamp, sha256_file,
+                                source_part_identity)
 
     src = Path(source_dir)
     out = Path(out_dir)
 
+    # A completed export output is immutable (tessera#337).  Cheapest refusal
+    # first: one stat, before the source is read and long before a shard is
+    # replaced, so the previous artifact is intact whatever this run does.
+    sealed = out / "tessera_config.json"
+    if sealed.exists():
+        raise FileExistsError(
+            f"{out} already holds a completed export ({sealed.name}): a "
+            f"completed output is immutable. This run would overwrite its "
+            f"shards one at a time and replace the index and config only at "
+            f"the end, so stopping part way would leave new bytes under the "
+            f"previous run's index, config and source seal -- a checkpoint "
+            f"that loads, verifies against its source, and is not the "
+            f"artifact its config prices (tessera#337). Export into a fresh "
+            f"directory, or remove this one first.")
+
     # The source, as its headers reproduce it, and the sha256 of every shard
     # this run is about to read: the receipt the merge proves each part by.
-    # Taken first, so a mistyped filter or an index that lies is refused
-    # before a shard is opened for encoding and before ``out`` exists.
+    # Taken before the first encode, so a mistyped filter or an index that
+    # lies is refused before a shard is opened and before ``out`` exists.
     source = source_part_identity(src, shard_filter)
     shards: "dict[str, list[str]]" = {shard: [] for shard in source["files"]}
     for tensor_name, shard in sorted(source["tensors"].items()):
@@ -2179,6 +2237,7 @@ def export_checkpoint_streaming(
     units: "list[ExportedUnit]" = []
     passthrough_bytes = 0
     new_weight_map: "dict[str, str]" = {}
+    written: "dict[str, str]" = {}
 
     for position, (shard, names) in enumerate(sorted(shards.items()), start=1):
         payload: "dict[str, torch.Tensor]" = {}
@@ -2211,6 +2270,11 @@ def export_checkpoint_streaming(
         for key in payload:
             new_weight_map[key] = shard
         save_file(payload, str(out / shard), metadata={"format": "pt"})
+        # Hashed here, one shard at a time and while the bytes just written
+        # are still warm, rather than in a second pass over the finished
+        # export: on the 151 GiB artifact this path exists for, a re-read of
+        # the whole output would be minutes of nothing but IO.
+        written[shard] = sha256_file(out / shard)
         del payload
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -2232,7 +2296,12 @@ def export_checkpoint_streaming(
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, trellis_weighting, table,
-                  activation, source)
+                  activation, source,
+                  # The digests taken as each shard was finished, not a fresh
+                  # pass: re-hashing here would seal whatever is on disk NOW
+                  # rather than what this run wrote, which is the substitution
+                  # the stamp exists to catch.
+                  output_part_stamp(written))
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):
