@@ -5,9 +5,9 @@ unreachable on every artifact this tree writes, and making it reachable is a
 wire change (two, in fact) before it is a reader change. That is Rob's
 decision; this report prices it and does not make it.
 
-Every number below was produced on `4f2f95a` plus this branch, on CPU, with
-`/tmp/.../fleet/ladder_count.py` and `ladder_rows.py` (16-row toy units, seed
-0) and is pinned by
+Every number below was produced on `4f2f95a` plus this branch, on CPU, by
+`experiments/tessera_terminal_ladder_count.py` (`--count` for the table in
+§1, `--rows` for the refusals; 16-row toy units, seed 0) and is pinned by
 `tests/test_audit_container_accounting.py::test_no_shorter_terminal_survives_the_wire_on_an_encode`.
 The one quality number quoted is someone else's screen and is labelled as such.
 
@@ -21,7 +21,7 @@ The one quality number quoted is someone else's screen and is labelled as such.
 ladder's only producer, was deleted in `b504d70` as unreachable. So the
 "prose in four modules" half of the issue was closed before this branch.
 
-**The count.** Twelve `(grid, rung)` points through the exporter's own path
+**The count.** Thirteen `(grid, rung)` points attempted through the exporter's own path, twelve written
 (`export.encode_linear_planes`, default arguments, so `wire_recipe` chose the
 body and plane): E2M1 at q256 256/512/768, E2M1x2 at 384/640/896 (1024 is
 refused above the cap), E4M3 at 768/1024/1536/1792, BF16 at 1024/2048.
