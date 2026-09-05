@@ -731,10 +731,8 @@ decode cell is refused -- the confusion #133 is about), and `grade` is
 derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 `kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
-every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_
-decode_streamed` (the only route a decode-regime KL was scored against:
-`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-
-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
+every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
+`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
 `routed_moe` cells record a repetitive one. `qualification` is not
 overloaded with the grade; whether a `route_only` `routed_moe` cell should
 stay `device_qualified` is #133's open decision. Receipt existence is

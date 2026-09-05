@@ -34,6 +34,12 @@ from tessera.serving.contract import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+#: Placeholder the LAWS table carries for the dense image; the pinning test
+#: resolves it through :func:`_dense_runtime_image` at test time, so a
+#: checkout without ``docs/`` fails one test instead of collection.
+_DENSE_IMAGE_FROM_RECEIPT = "<the image the migration receipt records>"
+
+
 def _dense_runtime_image() -> str:
     """The vanilla vLLM image the eight dense cells were measured on, read
     from the receipt that records it rather than copied here: the pin lives
@@ -46,11 +52,18 @@ def _dense_runtime_image() -> str:
     return found[0]
 
 
+def _resolved(laws: dict[str, object]) -> dict[str, object]:
+    runtime = laws["runtime"]
+    if runtime["image"] is _DENSE_IMAGE_FROM_RECEIPT:
+        laws = {**laws, "runtime": {**runtime, "image": _dense_runtime_image()}}
+    return laws
+
+
 #: The toolchain the dense receipts record, verbatim:
 #: ``tessera-window-gemv-served-2026-09-03.md`` :75 and
 #: ``tessera-bf16-route-served-2026-09-02.md`` :39 (vLLM 0.28.0, torch
 #: 2.13.0+cu130).  The v5 global block wrote ``2.13.0`` without the suffix.
-_DENSE_RUNTIME = {"image": _dense_runtime_image(), "execution_modes": ["eager", "compiled"],
+_DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager", "compiled"],
                   "vllm": "0.28.0", "torch": "2.13.0+cu130"}
 
 #: The eight preserved dense cells the served Tessera receipts cover:
@@ -400,7 +413,7 @@ def test_the_cells_are_pinned_field_for_field(contract):
     assert sorted(cells) == sorted(_CELL_LAWS)
     for cell_id, laws in _CELL_LAWS.items():
         got = cells[cell_id]
-        for field, value in laws.items():
+        for field, value in _resolved(laws).items():
             assert got[field] == value, f"{cell_id}.{field}"
 
 
