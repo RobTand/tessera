@@ -244,6 +244,19 @@ HESSIAN_IDENTITY = ("text_sha256", "fit_tokens", "fit_ids_sha256")
 CAPTURE_CONTEXT = ("model", "seqlen", "source")
 
 
+class _CaptureSeal(NamedTuple):
+    """What ``ActivationSource`` sealed, kept so a later read can be proved
+    against it: the published digest, the identity fields it covered, and one
+    content digest per unit.  ``ActivationSource`` owns neither its mapping
+    nor its tensors (both are the caller's, and the frozen dataclass freezes
+    only the field binding), so the seal is the snapshot and every read is
+    checked against it rather than trusted (tessera#302)."""
+
+    sha256: str
+    identity: "Mapping[str, object]"
+    units: "Mapping[str, str]"
+
+
 def _check_refit_objective(obj: str) -> None:
     """One refit objective spelling, checked where every path can reach it."""
     if not isinstance(obj, str):
@@ -644,6 +657,11 @@ class ActivationSource:
         receives from this call is therefore in ITS working basis, which is
         the one basis convention that also holds trivially for the
         untransformed default.
+
+        The H handed out is proved against the capture seal
+        (``capture_sha256``): the seal is taken on the first read, whichever
+        path reads first, and every unit consumed afterwards must digest to
+        what the seal covered, or this refuses by name (tessera#302).
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -653,7 +671,9 @@ class ActivationSource:
                 f"weights-only would raise nothing and quietly price a different "
                 f"artifact, so the export refuses instead"
             )
+        seal = self._seal()
         H = self.hessians[key]
+        self._require_sealed_unit(seal, key, H)
         H = H.to(device=device, dtype=torch.float32)
         if H.ndim != 2 or H.shape[0] != H.shape[1] or H.shape[0] != in_features:
             raise GrammarError(
@@ -775,6 +795,101 @@ class ActivationSource:
             ldlq_sigma=sigma, **settings,
         )
 
+    def _sealed_identity(self) -> dict:
+        """The provenance fields the seal covers, read live."""
+        identity = {field: self.provenance.get(field) for field in HESSIAN_IDENTITY}
+        identity.update({field: self.provenance.get(field) for field in CAPTURE_CONTEXT})
+        return identity
+
+    def _seal(self) -> _CaptureSeal:
+        """Digest the capture once, on first read, and keep what was digested.
+
+        The digest's construction is the one the #214 exporter stamped on every
+        activation-aware part already on disk -- identity JSON, then per unit
+        the name and its ``tensor_identity`` -- and must not move, or a
+        re-export from the same capture would refuse to merge with them.
+        """
+        sealed = getattr(self, "_capture_seal", None)
+        if sealed is not None:
+            return sealed
+        import copy
+
+        from .cached_unit import tensor_identity
+
+        identity = self._sealed_identity()
+        units = {name: tensor_identity(self.hessians[name])["sha256"]
+                 for name in sorted(self.hessians)}
+        digest = hashlib.sha256()
+        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
+                                  "identity": identity},
+                                 sort_keys=True, default=str).encode())
+        for name, unit_sha256 in units.items():
+            digest.update(b"\0" + name.encode() + b"\0")
+            digest.update(unit_sha256.encode())
+        sealed = _CaptureSeal(digest.hexdigest(),
+                              MappingProxyType(copy.deepcopy(identity)),
+                              MappingProxyType(units))
+        object.__setattr__(self, "_capture_seal", sealed)
+        return sealed
+
+    def _require_sealed_roster(self, seal: _CaptureSeal) -> None:
+        """Refuse to publish a seal whose identity fields or unit roster moved.
+
+        Cheap by construction -- a handful of scalars and a key set -- so the
+        publication path can afford it per unit.  Content is NOT re-digested
+        here: that is paid once per unit, where the unit is consumed.
+        """
+        identity = self._sealed_identity()
+        if identity != dict(seal.identity):
+            moved = sorted(f for f in identity if identity[f] != seal.identity[f])
+            raise GrammarError(
+                f"the capture's provenance moved after it was sealed: {moved} "
+                f"differ from what capture_sha256 {seal.sha256[:16]}... covers. "
+                f"A config carrying the edited fields beside the old seal would "
+                f"misdescribe the bytes; build a fresh ActivationSource over the "
+                f"capture as it now is")
+        names = set(self.hessians)
+        if names != set(seal.units):
+            gained = sorted(names - set(seal.units))
+            lost = sorted(set(seal.units) - names)
+            raise GrammarError(
+                f"the Hessian mapping's roster moved after it was sealed: "
+                f"gained {gained}, lost {lost}. capture_sha256 "
+                f"{seal.sha256[:16]}... names the capture as first read, and a "
+                f"config stamped with it would not describe this mapping; build "
+                f"a fresh ActivationSource over the mapping as it now is")
+
+    def _require_sealed_unit(self, seal: _CaptureSeal, key: str, H) -> None:
+        """Refuse to hand the encoder an H the published seal does not cover.
+
+        One unit's content digest per unit consumed -- the same
+        ``tensor_identity`` the cache intake already pays for that unit --
+        never the whole capture again.  This is where the bytes are decided,
+        so this is where a stale seal is refused (rule 5): an H edited in
+        place or swapped in the mapping after the seal would otherwise shape
+        bytes under a config that names the capture it was not.
+        """
+        from .cached_unit import tensor_identity
+
+        expected = seal.units.get(key)
+        if expected is None:
+            raise GrammarError(
+                f"{key!r} is not in the sealed capture: the Hessian mapping "
+                f"gained it after capture_sha256 {seal.sha256[:16]}... was "
+                f"taken, so bytes shaped by it would ship under a seal that "
+                f"never covered it. Build a fresh ActivationSource over the "
+                f"mapping as it now is")
+        actual = tensor_identity(H)["sha256"]
+        if actual != expected:
+            raise GrammarError(
+                f"{key!r}: the Hessian about to shape this unit digests to "
+                f"{actual[:16]}... but the sealed capture "
+                f"(capture_sha256 {seal.sha256[:16]}...) covered "
+                f"{expected[:16]}... -- it was edited in place or replaced in "
+                f"the mapping after the seal was taken. The seal names what "
+                f"shaped the bytes, so this source refuses; build a fresh "
+                f"ActivationSource over the capture as it now is")
+
     def capture_sha256(self) -> str:
         """Seal the capture this source holds: content plus effective identity.
 
@@ -788,24 +903,19 @@ class ActivationSource:
         with.  Stamped into ``config_block()['hessian']['capture_sha256']``
         and compared by the legacy part-merge guard; computed once per source
         (an export calls ``config_block`` per unit through the cache intake).
-        """
-        sealed = getattr(self, "_capture_sha256", None)
-        if sealed is not None:
-            return sealed
-        from .cached_unit import tensor_identity
 
-        digest = hashlib.sha256()
-        identity = {field: self.provenance.get(field) for field in HESSIAN_IDENTITY}
-        identity.update({field: self.provenance.get(field) for field in CAPTURE_CONTEXT})
-        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
-                                  "identity": identity},
-                                 sort_keys=True, default=str).encode())
-        for name in sorted(self.hessians):
-            digest.update(b"\0" + name.encode() + b"\0")
-            digest.update(tensor_identity(self.hessians[name])["sha256"].encode())
-        sealed = digest.hexdigest()
-        object.__setattr__(self, "_capture_sha256", sealed)
-        return sealed
+        Once is the point, and it is also the hazard (tessera#302): the
+        mapping and its tensors are the caller's, and ``for_unit`` reads them
+        live.  So the seal is taken on the FIRST read -- by this method or by
+        ``for_unit``, whichever comes first -- and from then on every unit
+        ``for_unit`` hands the encoder is digested and proved against it, and
+        this method proves the identity fields and the unit roster before
+        returning the memo.  The capture is never re-digested whole; what
+        the seal certifies is exactly the H each unit was encoded against.
+        """
+        seal = self._seal()
+        self._require_sealed_roster(seal)
+        return seal.sha256
 
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.
@@ -1753,10 +1863,22 @@ CONFIG_ENCODING_FIELDS = (
     "tp_size",
 )
 
-#: Per-part by construction: a shard subset has its own byte counts, its own
-#: slice of the plan and its own rungs, so a merge sums or unions these rather
-#: than comparing them.
-CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256")
+#: Not compared across parts, and for two different reasons.  ``accounting``
+#: and ``rungs_q256`` are per-part by construction -- a shard subset has its
+#: own byte counts and its own rungs -- so a merge sums or unions them.
+#: ``plan`` and ``source`` are the assembly contract (tessera#300), and a merge
+#: PROVES them rather than comparing or unioning: every part stamps the whole
+#: checkpoint's plan (the one it was cut to; ``export_checkpoint_streaming``
+#: refuses a plan naming a tensor no shard of the source holds) and the
+#: identity of the source it read (``tessera.serving_parts.source_part_identity``:
+#: config, auxiliary files, the whole tensor inventory and the sha256 of each
+#: shard this part read; ``null`` from the in-memory ``export_checkpoint``,
+#: which reads no checkpoint).  The merge requires one plan across the parts,
+#: proves each part's shards against the source it publishes for, and proves
+#: each part's owned slice of the plan against that part's actual output --
+#: blob present, raw tensor absent, the blob's own manifest at the planned
+#: rung -- before it copies a byte.
+CONFIG_PER_PART_FIELDS = ("accounting", "plan", "rungs_q256", "source")
 
 #: The activation-aware block: ``null`` on a weights-only export and a dict
 #: otherwise, so it is neither an encoding field that always resolves nor a
@@ -1803,7 +1925,8 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
                   extra_config: "dict | None", scale_refit: int = 0,
                   trellis_weighting: str = "none",
                   table: "tuple[RecipeRange, ...] | None" = None,
-                  activation: "ActivationSource | None" = None) -> None:
+                  activation: "ActivationSource | None" = None,
+                  source: "dict | None" = None) -> None:
     if table is None:
         table = recipe_table(grid)
     used = _used_recipes(table, plan.values())
@@ -1914,9 +2037,26 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         "activation_aware": None if activation is None else activation.config_block(),
         "plan": dict(plan),
         "rungs_q256": sorted({u.q256 for u in report.units}),
+        # Which checkpoint these bytes were cut from: the content identity the
+        # streaming exporter took of the shards it read (schema, config and
+        # auxiliary hashes, the whole tensor inventory, sha256 per shard read;
+        # ``tessera.serving_parts.source_part_identity``).  ``null`` means the
+        # in-memory exporter wrote tensors it was handed and read no
+        # checkpoint, which is what a shard-split merge refuses to bind to.
+        "source": source,
     }
     _check_config_fields(config)
     if extra_config:
+        # A driver's ``extra_config`` is its own vocabulary beside the
+        # exporter's fields, never over them: a driver that could restate
+        # ``source`` or ``plan`` would turn the receipt a merge proves into a
+        # declaration.
+        clash = sorted(set(extra_config) & set(config))
+        if clash:
+            raise GrammarError(
+                f"extra_config restates field(s) the exporter writes: {clash}. "
+                "Those are the exporter's receipt of what it did; a driver adds "
+                "keys of its own beside them.")
         config.update(extra_config)
     (out / "tessera_config.json").write_text(json.dumps(config, indent=2))
 
@@ -1965,9 +2105,20 @@ def export_checkpoint_streaming(
     nothing accumulates across shards except the report -- so N boxes each
     taking a disjoint subset produce exactly the files one box would have
     written, and the run becomes embarrassingly parallel across a fleet.  The
-    index and config a filtered run writes cover **only its own shards**; the
-    caller merges them.  This exists because a 320B-parameter export is nine
-    hours on one GB10 and the second one was idle at 4 W.
+    index and accounting a filtered run writes cover **only its own shards**;
+    ``experiments/merge_tessera_parts.py`` assembles the parts.  This exists
+    because a 320B-parameter export is nine hours on one GB10 and the second
+    one was idle at 4 W.
+
+    What lets that merge *prove* the assembly rather than trust filenames
+    (tessera#300): every part's config stamps the whole plan it was cut to
+    (``plan``; a name no shard of the source holds is refused here, filtered
+    or not, as a mistyped plan) and the content identity of the source it read
+    (``source``: ``tessera.serving_parts.source_part_identity`` -- config and
+    auxiliary hashes, the whole tensor inventory as the shard headers
+    reproduce it, and the sha256 of each shard this run read).  The stamp is
+    taken before the first encode, against the index-verified inventory, and
+    costs one pass over the part's own input.
 
     ``activation`` supplies per-unit input Hessians and turns on the measured
     activation-aware recipe (LDLQ plus the full-Hessian row-scale refit).  It
@@ -1982,36 +2133,31 @@ def export_checkpoint_streaming(
     from safetensors import safe_open
     from safetensors.torch import save_file
 
+    from .serving_parts import source_part_identity
+
     src = Path(source_dir)
     out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
 
-    index_path = src / "model.safetensors.index.json"
-    if index_path.exists():
-        weight_map = json.loads(index_path.read_text())["weight_map"]
-        shards: "dict[str, list[str]]" = {}
-        for tensor_name, shard in weight_map.items():
-            shards.setdefault(shard, []).append(tensor_name)
-    else:
-        shards = {}
-        for shard_path in sorted(src.glob("*.safetensors")):
-            with safe_open(str(shard_path), framework="pt") as handle:
-                shards[shard_path.name] = list(handle.keys())
+    # The source, as its headers reproduce it, and the sha256 of every shard
+    # this run is about to read: the receipt the merge proves each part by.
+    # Taken first, so a mistyped filter or an index that lies is refused
+    # before a shard is opened for encoding and before ``out`` exists.
+    source = source_part_identity(src, shard_filter)
+    shards: "dict[str, list[str]]" = {shard: [] for shard in source["files"]}
+    for tensor_name, shard in sorted(source["tensors"].items()):
+        if shard in shards:
+            shards[shard].append(tensor_name)
 
-    if shard_filter is not None:
-        unknown = sorted(set(shard_filter) - set(shards))
-        if unknown:
-            raise KeyError(f"shard_filter names absent shards: {unknown[:5]}")
-        shards = {k: v for k, v in shards.items() if k in shard_filter}
-        if not shards:
-            raise ValueError("shard_filter selected no shards")
-
-    known = {name for names in shards.values() for name in names}
-    missing = sorted(set(plan) - known)
-    if missing and shard_filter is None:
+    # A plan naming a tensor no shard of the source holds is a plan that would
+    # silently fail to apply -- the same refusal ``export_checkpoint`` makes.
+    # Names that live in shards OTHER than this run's are the point of a
+    # filtered run and are left to the parts that own them.
+    missing = sorted(set(plan) - set(source["tensors"]))
+    if missing:
         raise KeyError(
             f"plan names {len(missing)} tensor(s) not present: {missing[:5]}"
         )
+    out.mkdir(parents=True, exist_ok=True)
     resolve = _resolve_recipe(
         grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
         channel_sigma,
@@ -2074,7 +2220,7 @@ def export_checkpoint_streaming(
          "weight_map": new_weight_map}, indent=2))
     _write_config(out, grid, code, group, half, rotation, with_diagonals,
                   report, plan, extra_config, scale_refit, trellis_weighting, table,
-                  activation)
+                  activation, source)
     if copy_aux:
         for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
             for aux in src.glob(pattern):

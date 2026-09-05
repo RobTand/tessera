@@ -374,3 +374,91 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     (out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
     (out / "config.json").write_text(json.dumps(config, indent=2))
     return manifest
+
+
+#: The block a shard-split part stamps for the checkpoint it was cut from
+#: (``tessera_config.json`` ``source``, written by
+#: ``tessera.export.export_checkpoint_streaming``; tessera#300).  The same
+#: binding ``source_identity`` gives a serving part, restricted to the shards
+#: the part read, so the legacy merge (``experiments/merge_tessera_parts.py``)
+#: proves its parts against ``--source`` the way ``merge_serving_parts`` does
+#: rather than comparing shard filenames.
+SOURCE_PART_SCHEMA = "tessera.source-part.v1"
+
+
+def source_inventory(source: Path) -> dict:
+    """``tensor -> shard`` for a checkpoint, the headers' word on it.
+
+    ``source_identity``'s inventory step on its own: with an index, every
+    shard it names is opened and the headers must reproduce the index exactly
+    -- an index that names a tensor no shard holds, or omits one a shard
+    holds, is refused here rather than discovered by the first reader to ask
+    for the tensor; without an index the ``*.safetensors`` files are the
+    inventory.  One home, so the exporter that stamps a part and the merge
+    that proves it read the same roster.
+    """
+    source = Path(source)
+    index_path = source / "model.safetensors.index.json"
+    tensors: dict = {}
+    if index_path.exists():
+        declared = json.loads(index_path.read_text())["weight_map"]
+        files = sorted({_leaf(name) for name in declared.values()})
+    else:
+        declared = None
+        files = sorted(path.name for path in source.glob("*.safetensors"))
+    for name in files:
+        for tensor in sorted(tensor_names(source / name)):
+            if tensor in tensors:
+                raise ValueError(f"source tensor appears twice: {tensor}")
+            tensors[tensor] = name
+    if declared is not None and tensors != declared:
+        extra = sorted(set(declared) - set(tensors))
+        unlisted = sorted(set(tensors) - set(declared))
+        moved = sorted(t for t in set(declared) & set(tensors) if declared[t] != tensors[t])
+        raise ValueError(
+            "source index does not exactly cover the source tensor files: "
+            f"named but held by no shard {extra[:3]}, held but unnamed "
+            f"{unlisted[:3]}, in another shard than named {moved[:3]}")
+    if not tensors:
+        raise ValueError("source has no safetensors tensors")
+    return tensors
+
+
+def source_part_identity(source: Path, shards=None) -> dict:
+    """``source_identity`` for a part that read only ``shards``.
+
+    The same binding under the same field names -- ``config_sha256``,
+    ``auxiliary_sha256``, ``tensors`` (the whole inventory, so two parts of
+    one checkpoint stamp the same roster) and ``files`` -- with ``files``
+    hashed for the shards the part read, every shard when ``shards`` is
+    ``None``.  A part's stamp therefore costs one pass over its own input,
+    and the merge's one pass over the whole source proves every part's entry
+    against the checkpoint it publishes for.  Two deliberate differences from
+    ``source_identity``: the block names its ``schema``, and a source with no
+    ``config.json`` records ``config_sha256: null`` instead of refusing -- the
+    streaming exporter takes bare shard directories -- which is proved against
+    the merge's ``--source`` like every other field, since a recorded absence
+    and a present file do not compare equal.  A ``shards`` entry that names no
+    shard of the source is refused: a filter over absent shards is a mistyped
+    range, not an empty part.
+    """
+    source = Path(source)
+    tensors = source_inventory(source)
+    files = sorted(set(tensors.values()))
+    if shards is None:
+        chosen = files
+    else:
+        chosen = sorted({_leaf(name) for name in shards})
+        unknown = sorted(set(chosen) - set(files))
+        if unknown:
+            raise KeyError(f"shard_filter names absent shards: {unknown[:5]}")
+        if not chosen:
+            raise ValueError("shard_filter selected no shards")
+    auxiliary = sorted({p for pattern in ("*.json", "*.txt", "*.jinja", "*.model")
+                        for p in source.glob(pattern)})
+    config_path = source / "config.json"
+    return {"schema": SOURCE_PART_SCHEMA,
+            "config_sha256": sha256_file(config_path) if config_path.exists() else None,
+            "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
+            "files": {name: sha256_file(source / name) for name in chosen},
+            "tensors": tensors}
