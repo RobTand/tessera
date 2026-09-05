@@ -75,24 +75,26 @@ def _tensors():
     }
 
 
-#: ``source_model``, ``prismaquant_plan`` and ``inherits`` are in the guard's
-#: ``SHARED`` but are **not** written by ``_write_config``: they arrive through
-#: ``extra_config`` from ``experiments/export_glm53_tessera.py``, the driver
-#: whose shard-split parts this merge exists for.  A part written by a bare
-#: ``export_checkpoint`` therefore has no ``source_model`` and the guard refuses
-#: it -- correctly, since it cannot say what those parts are halves *of*.  The
-#: fixtures build the config the way that driver does, so the anti-vacuity test
-#: below checks the guard against the config shape it actually guards.
+#: ``source_model``, ``prismaquant_plan`` and ``inherits`` are **not** written
+#: by ``_write_config``: they arrive through ``extra_config`` from
+#: ``experiments/export_glm53_tessera.py``, the driver whose shard-split parts
+#: this merge exists for.  The guard used to *require* them, so a part written
+#: by a bare ``export_checkpoint`` was refused with a message blaming the
+#: exporter (tessera#137); it now finds them by subtracting the exporter's own
+#: fields and compares them when every part has one.  The fixtures build the
+#: config the way that driver does, so the anti-vacuity test below checks the
+#: guard against the config shape it actually guards.
 DRIVER_EXTRA = {"source_model": "/mnt/shared/models/GLM-5.3-Flash-BF16",
                 "prismaquant_plan": "everything-eligible",
                 "inherits": {"vision": "bf16 passthrough"}}
 
 
-def _export(out_dir, *, activation=None, tensors=None):
+def _export(out_dir, *, activation=None, tensors=None, extra=DRIVER_EXTRA):
     tensors = _tensors() if tensors is None else tensors
     plan = {name: Q256 for name in tensors}
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
     export_checkpoint(tensors, plan, out_dir, grid=E4M3_GRID, activation=activation,
-                      extra_config=DRIVER_EXTRA)
+                      extra_config=extra)
     return json.loads((Path(out_dir) / "tessera_config.json").read_text())
 
 
@@ -125,7 +127,8 @@ def test_every_guarded_field_is_written_by_the_exporter(tmp_path):
     populated, and refuses to let any guarded path resolve to nothing.
     """
     config = _export(tmp_path, activation=_source())
-    guarded = (merge.SHARED + merge.SHARED_WHEN_WRITTEN + merge.SHARED_ACTIVATION)
+    guarded = (merge.shared_fields() + merge.SHARED_WHEN_WRITTEN
+               + merge.SHARED_ACTIVATION)
     unwritten = [f for f in guarded if merge.dotted(config, f) is merge._MISSING]
     assert not unwritten, (
         f"the merge guard compares {unwritten}, which the exporter does not "
@@ -151,6 +154,83 @@ def test_the_config_names_which_hessian_shaped_the_bytes(tmp_path):
     # (an omitted key would compare vacuous across parts).
     assert block["refit_objective_trailing"] is None
     assert block["refit_gauss_seidel"] is False
+
+
+# --------------------------------------------------------------------------
+# The guard's field set is the exporter's, not a roster beside it (#137).
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def bare_config(tmp_path_factory):
+    """What a plain ``export_checkpoint`` writes: no driver ``extra_config``.
+
+    CPU, and small: the question is which fields the config carries, so the
+    trellis is incidental and a GPU gate would leave the answer unmeasured on
+    the population that actually runs these files.
+    """
+    return _export(tmp_path_factory.mktemp("bare"), extra=None)
+
+
+def test_two_bare_export_parts_are_a_legal_merge(bare_config):
+    """The defect: the guard required three fields no exporter writes.
+
+    ``source_model``, ``prismaquant_plan`` and ``inherits`` come from
+    ``export_glm53_tessera.py``'s ``extra_config``.  Requiring them refused
+    every pair of parts a plain ``export_checkpoint_streaming`` produced --
+    and the refusal told the operator the exporter had stopped writing fields
+    it never wrote (tessera#137).
+    """
+    base = merge.check_configs([("partA", copy.deepcopy(bare_config)),
+                                ("partB", copy.deepcopy(bare_config))])
+    assert base["quant_method"] == "tessera"
+
+
+def test_the_guard_requires_only_fields_the_exporter_writes(bare_config):
+    """Every guarded name resolves in a config the exporter alone wrote.
+
+    The complement of the anti-vacuity test above: that one says no guarded
+    field is missing from a *driver's* config, this one says none of them is a
+    driver's field.  Both are needed -- a name absent from every part compares
+    ``_MISSING`` to ``_MISSING`` and passes, and a name only one driver writes
+    refuses a merge that is fine.
+    """
+    unwritten = [f for f in merge.shared_fields()
+                 if merge.dotted(bare_config, f) is merge._MISSING]
+    assert not unwritten, (
+        f"the merge guard requires {unwritten}, which the exporter does not "
+        f"write: no plain export can be merged")
+
+
+def test_the_guarded_set_is_exactly_the_encoding_half_of_the_config(bare_config):
+    """Derived, not restated: the two lists are one list.
+
+    ``tessera.export`` checks its declaration against the dict it just built on
+    every export, so this binds the guard to the bytes rather than to a tuple
+    someone maintained.
+    """
+    from tessera.export import (CONFIG_ACTIVATION_FIELD, CONFIG_PER_PART_FIELDS,
+                                _config_leaves)
+
+    stop = frozenset(CONFIG_PER_PART_FIELDS) | {CONFIG_ACTIVATION_FIELD}
+    encoding = _config_leaves(bare_config, stop) - stop
+    assert set(merge.shared_fields()) | set(merge.SHARED_WHEN_WRITTEN) == encoding
+
+
+def test_a_driver_field_only_one_part_carries_is_refused(bare_config, tmp_path):
+    """Two drivers, two artifacts -- found by subtraction, named by nobody."""
+    driven = _export(tmp_path / "driven")
+    with pytest.raises(SystemExit, match="different drivers"):
+        merge.check_configs([("partA", driven), ("partB", copy.deepcopy(bare_config))])
+
+
+def test_parts_that_disagree_on_a_driver_field_are_refused(tmp_path):
+    """A driver field every part carries is compared like any other."""
+    a = _export(tmp_path / "a")
+    b = _export(tmp_path / "b")
+    b["source_model"] = "/mnt/shared/models/somewhere-else"
+    with pytest.raises(SystemExit, match="source_model"):
+        merge.check_configs([("partA", a), ("partB", b)])
 
 
 # --------------------------------------------------------------------------
@@ -555,35 +635,22 @@ def test_a_bad_trailing_leg_is_refused_by_name():
         partial.trailing_objective_for(ScalePlaneKind.LUT)
 
 
-def _guard_template():
-    """A config carrying every dotted path the guard compares, activation
-    block included, so a refusal below names a compared field and never a
-    missing one."""
-    return {
-        "quant_method": "tessera", "container_version": 1,
-        "blob_suffix": ".tessera",
-        "grid": {"digest": "d", "name": "n", "base": "E4M3",
-                 "partition": "coset", "arity": 1, "size": 1, "rate_cap": 1},
-        "conv_memory": 6, "conv_generators": ["0o17"],
-        "trellis": {"span": 1, "weighting": "scale"},
-        "body": {"kind": "window", "window_bits": 14, "seed": 0,
-                 "sigma": None},
-        "scale": {"group": 32, "half": 16, "refit": 4,
-                  "schedule": "trailing-refit", "plane": "channel"},
-        "rotation": "NONE", "with_diagonals": False, "tp_size": 1,
-        "source_model": "m", "prismaquant_plan": "p",
-        "route_status": "unbacked", "requires_serve_flags": [],
-        "inherits": {},
-        "activation_aware": {
-            "ldlq_sigma": 1.0, "ldlq_block": 32,
-            "refit_objective": {"channel": "hessian", "lut16": "h^1.0",
-                                "s6b": "plain"},
-            "refit_objective_trailing": None,
-            "refit_reach_floor": False, "refit_gauss_seidel": False,
-            "hessian": {"text_sha256": "a" * 64, "fit_tokens": 1,
-                        "fit_ids_sha256": "b" * 64},
-        },
-    }
+@pytest.fixture
+def guard_template(bare_config):
+    """A config carrying every dotted path the guard compares, so a refusal
+    below names a compared field and never a missing one.
+
+    Assembled from a real export, a driver's ``extra_config`` and an
+    ``ActivationSource``'s own block -- never typed out.  A hand-written
+    template restates today's field list and goes stale the day one is added:
+    this one lacked ``scale.sigma``, and would have said the guard passed over
+    a field it compares (AGENTS.md principle 3).
+    """
+    config = copy.deepcopy(bare_config)
+    config.update(copy.deepcopy(DRIVER_EXTRA))
+    config["activation_aware"] = ActivationSource(
+        hessians={}, provenance=_provenance()).config_block()
+    return config
 
 
 @pytest.mark.parametrize("field,other", [
@@ -592,17 +659,17 @@ def _guard_template():
      {"channel": "hessian", "lut16": "hessian", "s6b": "plain"}),
     ("activation_aware.refit_gauss_seidel", True),
 ])
-def test_the_guard_refuses_a_trailing_leg_it_did_not_compare_before(field,
-                                                                     other):
+def test_the_guard_refuses_a_trailing_leg_it_did_not_compare_before(guard_template,
+                                                                     field, other):
     """Two parts encoded under different trailing schedules are two
     artifacts: the guard compares the leg, it does not pass over it."""
-    a = _guard_template()
-    b = _guard_template()
+    a = copy.deepcopy(guard_template)
+    b = copy.deepcopy(guard_template)
     assert merge.dotted(b, field) != other
     _set(b, field, other)
     with pytest.raises(SystemExit, match=field):
         merge.check_configs([("partA", a), ("partB", b)])
-    merge.check_configs([("partA", a), ("partB", _guard_template())])
+    merge.check_configs([("partA", a), ("partB", copy.deepcopy(guard_template))])
 
 
 def test_a_plain_trailing_leg_over_a_weighted_base_is_refused():
@@ -766,10 +833,10 @@ def test_a_bad_sweep_setting_is_refused_by_name(bad, message):
                          refit_gauss_seidel=bad)
 
 
-def test_the_guard_refuses_two_parts_that_swept_different_planes():
+def test_the_guard_refuses_two_parts_that_swept_different_planes(guard_template):
     """The map is compared like the objective map: whole, and by value."""
-    a = _guard_template()
-    b = _guard_template()
+    a = copy.deepcopy(guard_template)
+    b = copy.deepcopy(guard_template)
     _set(a, "activation_aware.refit_gauss_seidel", {"lut16": True})
     _set(b, "activation_aware.refit_gauss_seidel", {"channel": True})
     with pytest.raises(SystemExit, match="refit_gauss_seidel"):

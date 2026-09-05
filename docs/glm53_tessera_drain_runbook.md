@@ -20,8 +20,8 @@ Expect `shards 120/120`, `failed 0`. The monitor also emits
 
 `--move` needs one filesystem; both are on /mnt/shared. The merge enforces:
 no shard claimed twice, the union covers the source's 120 shards exactly,
-every `weight_map` entry resolves, and all 21 SHARED encoding fields agree
-across parts. That last check was repaired in `317c882` -- it was comparing
+every `weight_map` entry resolves, and every encoding field the exporter
+declares it writes agrees across parts. That last check was repaired in `317c882` -- it was comparing
 5 of 13 fields and silently skipping the eight that do not exist, including
 `grid.digest` and `conv_memory`, the two that detect encoder drift.
 
