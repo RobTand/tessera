@@ -52,7 +52,13 @@ def test_the_refused_set_is_what_the_recipe_table_calls_window_only():
     holds a TCQ row at some rung.  `build_forest` decides the same thing from
     the registry and the plane width, without importing the exporter; this
     pins the two spellings together so neither can drift alone.
+
+    That asymmetry is why this body skips rather than fails without torch:
+    the refusal is torch-free and so is this module's import, so the `pure`
+    job collects it -- and reaching the *other* home means reaching the
+    exporter, which imports torch (tessera#309's convention).
     """
+    pytest.importorskip("torch")
     from tessera.export import recipe_table
     from tessera.manifest import BodyKind
 
@@ -108,6 +114,7 @@ def test_the_tcq_override_on_bf16_is_refused_at_plan_time():
     `_build_plan` would build one forest per scheduled rate.  It now refuses
     instead, before the first allocation.
     """
+    pytest.importorskip("torch")
     from tessera.export import _plan_for
     from tessera.manifest import BodyKind
 
