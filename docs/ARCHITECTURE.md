@@ -556,7 +556,17 @@ The predicate is therefore published (`runtime_contract.json` v12,
   stderr.
 - **After the fact.** `tools/tessera_lane_preflight.py` answers the same
   question from the bytes of a checkpoint somebody else built, over every
-  unit, and exits non-zero.
+  unit, and exits non-zero. It decides each unit through
+  `scheme.lane_wire_report` — the byte-side twin of the plan-time gate, over
+  the facts `scheme.wire_facts_of_parsed` keeps off the parse — so the same
+  four published requirements are read on both sides. It checked only the
+  rates until issue #206, which made the offline checker weaker than the gate
+  it exists to double-check: a unit at rate 4 with an L=12 window on a LUT
+  plane was published `READABLE`, `reachable: true`, exit 0. A requirement the
+  contract grows and that reader has not learned raises rather than passing,
+  and a directory holding no `.wire_bytes` is a refusal rather than
+  `READABLE 0/0`. Its report is `tessera.lane_preflight/2`, which carries the
+  requirements each verdict was decided against and the refusals by name.
 
 The rate axis was **not** narrowed to fit the kernel: it is 2-D and
 continuous by design, and pinning the format to three values so one lane can

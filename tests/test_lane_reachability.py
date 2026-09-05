@@ -473,3 +473,165 @@ def test_the_bf16_familys_own_attested_rung_cannot_reach_the_lane():
     rates = rate_set(root_from_q256(1792), cap=15)
     assert rates == (7,)
     assert not lane_rate_report(LANE, rates)["reachable"]
+
+
+
+# --------------------------------------------------------------------------
+# the same question asked of the BYTES: tools/tessera_lane_preflight.py (#206)
+# --------------------------------------------------------------------------
+#
+# THE DEFECT THIS HALF PINS.  The preflight parses every unit and then throws
+# the parse away except its RATES, so a unit whose rates are inside the lane
+# and whose window width, body or plane is not was published as
+# ``units_readable``, ``reachable: true``, ``READABLE`` -- and the CLI exited
+# 0 on an artifact that falls back on every module at load.  The producer-side
+# checker (``refuse_unreachable_lane``, above) has always read all four
+# published requirements, so the offline wire checker was strictly WEAKER than
+# the plan checker it exists to double-check on bytes somebody else built.
+#
+# The fixtures are real committed wire, not a shape invented here
+# (``tests/data/legacy``, written at master da2b371 and pinned byte for byte
+# by ``tests/test_ladder_wire.py``).  ``e2m1-256-c1-lut-512c`` is the exact
+# trap: rate 1, which the lane reads, over a TCQ body on a LUT plane with no
+# window at all, none of which it reads.
+#
+# The second vacuity in the same verdict: a directory with no ``.wire_bytes``
+# tensor read ``READABLE 0/0`` and exited 0.  Zero units is not a lane an
+# artifact reaches; it is an artifact with no Tessera wire in it.
+
+PREFLIGHT = ROOT / "tools" / "tessera_lane_preflight.py"
+LEGACY_WIRE = ROOT / "tests" / "data" / "legacy"
+#: Rate 1 -- inside the lane -- and nothing else about it is.
+UNREADABLE_WIRE = LEGACY_WIRE / "e2m1-256-c1-lut-512c.tessera"
+#: The wire this lane is for: rate 4, window body, channel plane, L=14.
+READABLE_WIRE = LEGACY_WIRE / "e4m3-1024-window-channel-256c.tessera"
+
+
+def _preflight():
+    spec = importlib.util.spec_from_file_location("tessera_lane_preflight", PREFLIGHT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _facts(path):
+    from tessera.serving.scheme import wire_facts_of_parsed
+    from tessera.unit_artifact import parse_unit_artifact
+
+    return wire_facts_of_parsed(parse_unit_artifact(path.read_bytes(), device="cpu"))
+
+
+def _wire_checkpoint(directory, blobs):
+    """A checkpoint directory holding one shard of ``{module: fused blob}``."""
+    import torch
+    from safetensors.torch import save_file
+
+    from tessera.fused import pack_fused
+
+    directory.mkdir(parents=True, exist_ok=True)
+    tensors = {}
+    for module, blob in blobs.items():
+        packed = pack_fused([("unit", 16, blob)])
+        tensors[f"{module}.wire_bytes"] = torch.frombuffer(
+            bytearray(packed), dtype=torch.uint8).clone()
+    if not tensors:
+        tensors["model.layers.0.mlp.down_proj.weight"] = torch.zeros(4, 4)
+    save_file(tensors, str(directory / "model.safetensors"))
+    return directory
+
+
+def test_the_unreadable_fixture_is_one_whose_rates_alone_would_pass():
+    """Anti-vacuity: the rate check -- all the tool used to do -- says readable."""
+    facts = _facts(UNREADABLE_WIRE)
+    assert lane_rate_report(LANE, facts["rates"])["reachable"], facts
+    requires = lane_requirements(LANE)
+    assert facts["window_bits"] not in requires["window_bits"]
+    assert facts["body"] != requires["body"].upper()
+
+
+def test_the_byte_side_predicate_refuses_what_the_plan_side_refuses():
+    """One set of facts, both sides of the seam: the offline checker must not
+    be weaker than the gate it double-checks."""
+    from tessera.serving.scheme import lane_wire_report
+
+    facts = _facts(UNREADABLE_WIRE)
+    report = lane_wire_report(LANE, facts)
+    assert not report["readable"]
+    assert any("window_bits" in refusal for refusal in report["refusals"]), report
+    with pytest.raises(ValueError):
+        refuse_unreachable_lane(
+            LANE, grid="E2M1", q256=256, rate_cap=7, body=facts["body"],
+            plane=facts["plane"], window_bits=facts["window_bits"], target="probe")
+
+
+def test_the_wire_the_lane_is_for_is_readable():
+    """The positive control, off committed bytes rather than off a fixture dict."""
+    from tessera.serving.scheme import lane_wire_report
+
+    report = lane_wire_report(LANE, _facts(READABLE_WIRE))
+    assert report["readable"], report
+
+
+def test_every_published_requirement_is_decided_and_named():
+    """Each one, flipped in turn: a checker that reads three of four is #206."""
+    from tessera.serving.scheme import lane_wire_report
+
+    facts = _facts(READABLE_WIRE)
+    for field, value in (("window_bits", 12), ("body", "TCQ"), ("plane", "LUT"),
+                         ("rates", (3, 4))):
+        report = lane_wire_report(LANE, dict(facts, **{field: value}))
+        assert not report["readable"], field
+        assert any(field in refusal for refusal in report["refusals"]), (field, report)
+
+
+def test_a_fact_the_unit_did_not_carry_is_refused_rather_than_skipped():
+    from tessera.serving.scheme import lane_wire_report
+
+    facts = _facts(READABLE_WIRE)
+    facts.pop("window_bits")
+    report = lane_wire_report(LANE, facts)
+    assert not report["readable"]
+    assert any("window_bits" in refusal for refusal in report["refusals"]), report
+
+
+def test_a_published_requirement_this_reader_cannot_decide_is_refused(monkeypatch):
+    """Pin the rule, not the roster: a requirement the contract grows and this
+    reader has not learned must refuse, never pass as readable."""
+    from tessera.serving import contract as contract_module
+    from tessera.serving import scheme
+
+    monkeypatch.setattr(
+        contract_module, "lane_requirements",
+        lambda lane, contract=None: {"column_rates": [4], "sparsity": "2:4"})
+    with pytest.raises(ValueError, match="sparsity"):
+        scheme.lane_wire_report(LANE, {"rates": (4,)})
+
+
+def test_the_cli_refuses_a_checkpoint_the_lane_cannot_read(tmp_path, monkeypatch, capsys):
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "ckpt",
+                            {"model.layers.0.mlp.down_proj": UNREADABLE_WIRE.read_bytes()})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    out = capsys.readouterr().out
+    assert "UNREACHABLE" in out and "window_bits" in out
+
+
+def test_the_cli_reads_the_wire_the_lane_is_for(tmp_path, monkeypatch, capsys):
+    """The positive control at the CLI, so the refusal above is not a gate that
+    refuses everything."""
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "ckpt",
+                            {"model.layers.0.mlp.down_proj": READABLE_WIRE.read_bytes()})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 0
+    assert "READABLE" in capsys.readouterr().out
+
+
+def test_the_cli_refuses_a_directory_with_no_tessera_wire(tmp_path, monkeypatch, capsys):
+    """``READABLE 0/0`` on an ordinary safetensors directory is a vacuous pass."""
+    tool = _preflight()
+    path = _wire_checkpoint(tmp_path / "plain", {})
+    monkeypatch.setattr("sys.argv", ["tessera_lane_preflight.py", str(path), "--lane", LANE])
+    assert tool.main() == 1
+    assert "READABLE" not in capsys.readouterr().out
