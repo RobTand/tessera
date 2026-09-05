@@ -171,3 +171,150 @@ def test_mode_symlink_and_nul_safe_path_identity_are_preserved(tmp_path):
     records = [_measure(item) for item in fixtures]
     assert all(row["verification"] == "verified" for row in records)
     assert len({row["sha256"] for row in records}) == len(records)
+
+
+def _plain(tmp_path, name, body="A\n"):
+    """An ordinary (non-PB) checkout, which is what a local suite runs in."""
+
+    root = tmp_path / name
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "source.py").write_text(body)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "ordinary source")
+    return root
+
+
+def _module():
+    return importlib.import_module("tessera._dev.suite_source")
+
+
+def test_a_clean_source_switch_during_the_run_is_not_attested(tmp_path):
+    """#219: identity was sampled after execution, and named the wrong tree.
+
+    A suite imports A, the shared checkout is fast-forwarded to B while it
+    runs, and the terminal summary hashes B: clean tree, HEAD stable across
+    the hashing interval, ``verification: verified``.  Python is still holding
+    the modules it imported from A, so the receipt attests a tree that was
+    never tested.
+    """
+
+    module = _module()
+    root = _plain(tmp_path, "checkout")
+    entry = module.measured_source(root)
+    assert entry["verification"] == "verified", entry
+
+    (root / "source.py").write_text("B\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "the checkout moved, cleanly, mid-run")
+
+    published = module.measured_source(root, entry=entry)
+    assert published["verification"] == "unknown", published
+    assert published["sha256"] is None, published
+    assert published["measurement_span"]["agrees"] is False, published
+    assert published["measurement_span"]["entry_sha256"] == entry["sha256"]
+    assert "entry" in published["reason"], published
+
+
+def test_an_unchanged_source_is_attested_and_says_it_was_bound(tmp_path):
+    """The valid case, and it has to say what makes it valid."""
+
+    module = _module()
+    root = _plain(tmp_path, "checkout")
+    entry = module.measured_source(root)
+    published = module.measured_source(root, entry=entry)
+
+    assert published["verification"] == "verified", published
+    assert published["sha256"] == entry["sha256"]
+    assert published["measurement_span"]["agrees"] is True, published
+
+
+def test_an_unverifiable_entry_cannot_bind_a_verified_publication(tmp_path):
+    """Unknown at entry is not agreement; it is the absence of it."""
+
+    module = _module()
+    root = _plain(tmp_path, "checkout")
+    unknown_entry = {"schema": module.SCHEMA, "snapshot_commit": None,
+                     "sha256": None, "verification": "unknown",
+                     "excluded_metadata": [], "reason": "no git here"}
+
+    published = module.measured_source(root, entry=unknown_entry)
+    assert published["verification"] == "unknown", published
+    assert published["measurement_span"]["agrees"] is False, published
+
+
+def test_the_immutable_snapshot_case_still_binds(tmp_path):
+    """A PB snapshot cannot move under a run, and must stay attestable."""
+
+    fixture = _snapshot(tmp_path, "gpu")
+    entry = _measure(fixture)
+    published = _measure(fixture, entry=entry)
+    assert published["verification"] == "verified", published
+    assert published["sha256"] == entry["sha256"]
+    assert len(published["excluded_metadata"]) == 1
+
+
+def test_a_population_measured_by_several_processes_must_agree(tmp_path):
+    """Under -n the controller hashes its filesystem and the workers ran.
+
+    The canonical population is written by a process that executed none of the
+    tests it reports.  Its own hash is therefore a claim about the controller's
+    filesystem, and it becomes a claim about the measured source only when the
+    processes that did the executing say the same thing.
+    """
+
+    module = _module()
+    root = _plain(tmp_path, "checkout")
+    identity = module.measured_source(root)
+    other = dict(identity, sha256="f" * 64)
+
+    assert module.agreed_source(identity, {}) == identity
+    agreed = module.agreed_source(identity, {"gw0": identity, "gw1": identity})
+    assert agreed["verification"] == "verified", agreed
+    assert agreed["sha256"] == identity["sha256"]
+    assert agreed["workers"] == {"gw0": "agrees", "gw1": "agrees"}, agreed
+
+    split = module.agreed_source(identity, {"gw0": identity, "gw1": other})
+    assert split["verification"] == "unknown", split
+    assert split["sha256"] is None, split
+    assert "gw1" in split["reason"], split
+
+    silent = module.agreed_source(identity, {"gw0": identity, "gw1": None})
+    assert silent["verification"] == "unknown", silent
+    assert "gw1" in silent["reason"], silent
+
+
+def test_the_suite_publishes_an_entry_bound_identity_its_workers_agree_with():
+    """The rule, wired into the file that publishes the population.
+
+    ``tests/conftest.py`` captures the entry identity above its first import
+    of the code under test, and folds each worker's reported identity into
+    what it publishes.  This drives those two seams directly, because xdist is
+    absent from this interpreter and the seam is the thing under test.
+    """
+
+    import types
+
+    import conftest
+
+    assert conftest.SOURCE_AT_ENTRY["schema"] == _module().SCHEMA
+    saved = dict(conftest._WORKER_SOURCES)
+    try:
+        conftest._WORKER_SOURCES.clear()
+        alone = conftest.published_source_identity()
+        assert "measurement_span" in alone, alone
+        assert "workers" not in alone, alone
+
+        node = types.SimpleNamespace(
+            gateway=types.SimpleNamespace(id="gw3"),
+            workeroutput={"tessera_source_identity":
+                          dict(conftest.SOURCE_AT_ENTRY, sha256="f" * 64,
+                               verification="verified")})
+        conftest.pytest_testnodedown(node, None)
+        disagreed = conftest.published_source_identity()
+        assert disagreed["verification"] == "unknown", disagreed
+        assert disagreed["sha256"] is None, disagreed
+        assert "gw3" in disagreed["reason"], disagreed
+    finally:
+        conftest._WORKER_SOURCES.clear()
+        conftest._WORKER_SOURCES.update(saved)

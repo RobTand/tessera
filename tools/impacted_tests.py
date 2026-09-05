@@ -21,9 +21,12 @@ the root conftest imports it, and the whole tree was uncertain forever.
 
 Other kinds of coupling do not have ordinary import edges:
 
-* *conftest.py* is imported by pytest, not by the tests.  A changed conftest
-  impacts every test at or below its directory, and that edge is added
-  explicitly.  The reverse -- a conftest that execs each ``test_*.py`` below it
+* *conftest.py* is imported by pytest, not by the tests.  A conftest the
+  change *reaches* -- because it was edited, or because it imports something
+  that was -- impacts every test at or below its directory, and that edge is
+  added explicitly.  A test names a fixture, never the module the conftest
+  built the fixture from, so this is the only path there is from a conftest's
+  helper to its consumers.  The reverse -- a conftest that execs each ``test_*.py`` below it
   to decide what it can collect -- is a collection probe, and it is excluded
   from the walk that forces full: read as a dependency it closes a cycle
   through which any one uncertain test file makes the whole population
@@ -109,6 +112,34 @@ def _module_name(path: Path, root: Path) -> str | None:
     return ".".join(parts) if parts else None
 
 
+def _package_name(path: Path, root: Path) -> str | None:
+    """The name this file has under its own package root.
+
+    pytest's rootdir rule, and the one ``tests/conftest.py`` makes explicit by
+    inserting its own directory on ``sys.path``: a module's package is the
+    chain of directories above it that hold an ``__init__.py``, and the first
+    directory that does not is an import root.  ``tests/`` holds no
+    ``__init__.py``, so ``tests/box_artifacts.py`` is importable as
+    ``box_artifacts`` -- which is how every test in this tree spells it, and
+    how none of them spells ``tests.box_artifacts``.  An import that resolves
+    to no node selects nothing, so the alias is the difference between an edge
+    and a silent drop (#215).
+    """
+
+    name = _module_name(path, root)
+    if name is None:
+        return None
+    parts = name.split(".")
+    directory = path.parent
+    depth = 0
+    while (directory / "__init__.py").exists() and directory != root:
+        depth += 1
+        directory = directory.parent
+    alias = ".".join(parts[len(parts) - depth - 1:]) if path.stem != "__init__" \
+        else ".".join(parts[len(parts) - depth:])
+    return alias or None
+
+
 def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
@@ -122,8 +153,18 @@ def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (SyntaxError, OSError):
-        return set()
-    package = own.rsplit(".", 1)[0] if "." in own else ""
+        # Three sets, like every other return here: answering with one made
+        # the caller's unpack raise, and a selector that raises selects
+        # nothing.  A file that does not parse states no dependencies.
+        return set(), set(), set()
+    # An ``__init__.py`` IS its package: ``from .child import VALUE`` there
+    # names ``pkg.child``, not a top-level ``child``.  Climbing from the
+    # parent instead lost every relative re-export a package initializer
+    # makes -- the form ``src/tessera/__init__.py`` is written in (#215).
+    if path.name == "__init__.py":
+        package = own
+    else:
+        package = own.rsplit(".", 1)[0] if "." in own else ""
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -192,6 +233,22 @@ def import_graph(
         name = _module_name(path, root)
         if name:
             by_name.setdefault(name, path)
+    # The other spellings the same files have on the import roots that are
+    # actually on ``sys.path``.  An alias can be ambiguous -- two import roots
+    # can each hold a ``helper.py`` -- and every candidate gets the edge,
+    # because the graph cannot tell which one ran and a dropped edge is the
+    # failure mode this tool refuses.
+    aliases: dict[str, set[str]] = defaultdict(set)
+    for name, path in by_name.items():
+        alias = _package_name(path, root)
+        if alias and alias != name:
+            aliases[alias].add(name)
+
+    def _targets(candidate: str) -> tuple[str, ...]:
+        if candidate in by_name:
+            return (candidate,)
+        return tuple(sorted(aliases.get(candidate, ())))
+
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
     for name, path in by_name.items():
@@ -211,14 +268,13 @@ def import_graph(
             matched = False
             for cut in range(len(parts), 0, -1):
                 candidate = ".".join(parts[:cut])
-                known = by_name.get(candidate)
-                if known is None:
+                known = _targets(candidate)
+                if not known:
                     continue
-                if not matched:
-                    importers[candidate].add(name)
-                    matched = True
-                elif known.name == "__init__.py":
-                    importers[candidate].add(name)
+                for resolved in known:
+                    if not matched or by_name[resolved].name == "__init__.py":
+                        importers[resolved].add(name)
+                matched = True
         for target in loaded:
             # An exact path names an exact file.  It does not execute the
             # packages above it, so it gets no prefix edges.
@@ -362,11 +418,11 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     could not reach this code before: it went through ``changed_files``, so
     every case had to be a synthetic repository.
     """
-    forced = [
-        f for f in changed
-        if Path(f).suffix not in INERT
-        and any(f.startswith(o) for o in OPAQUE)
-    ]
+    # An explicitly OPAQUE path outranks the generic inert-suffix rule: the
+    # wire spec IS a Markdown file, so filtering ``.md`` first meant the one
+    # path ``docs/schema/`` was listed for could never reach the rule that
+    # lists it, and a wire change certified a narrowed selection (#216).
+    forced = [f for f in changed if any(f.startswith(o) for o in OPAQUE)]
     # The root conftest is imported by pytest for the whole tree.
     forced += [f for f in changed if f == "conftest.py"]
     # An unowned metadata-shaped file remains a real change. We cannot infer
@@ -438,14 +494,23 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
                 text_matched.update(matches)
         tests = sorted(set(tests))
 
-    # A changed conftest is imported by pytest, not by the tests it serves.
-    for f in changed:
-        if Path(f).name == "conftest.py" and f != "conftest.py":
-            scope = str(Path(f).parent)
-            tests = sorted(set(tests) | {
-                str(q.relative_to(root))
-                for q in (root / scope).rglob("test_*.py")
-            })
+    # A conftest is imported by pytest, not by the tests it serves, so its
+    # scope -- every test at or below its directory -- is an edge no import
+    # statement expresses.  REACHING one is the same fact as changing one: a
+    # fixture consumer names the fixture, never the module the conftest built
+    # it from, so a helper the conftest imports has no other path to the tests
+    # that request it (#215).  The probe edges are excluded here for the same
+    # reason they are excluded from the escalation walk: a conftest that execs
+    # the test files below it would otherwise make any one changed test file
+    # select the whole population.
+    reached = _reverse_reachable(seeds, importers, skip=probes)
+    scopes = {by_name[name].parent for name in reached
+              if name in by_name and by_name[name].name == "conftest.py"}
+    scopes |= {(root / f).parent for f in changed if Path(f).name == "conftest.py"}
+    for scope in sorted(scopes):
+        tests = sorted(set(tests) | {
+            str(q.relative_to(root)) for q in scope.rglob("test_*.py")
+        })
 
     # Edges out of a file that is not in this tree cannot be read, so a branch
     # analysed from another checkout is under-approximated.  Say so loudly
@@ -472,6 +537,10 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     }
     if unresolved:
         result["reason"] += "; unresolved file loaders conservatively select their consumers"
+    if scopes:
+        result["reason"] += (
+            "; a changed path reaches a conftest, which pytest imports for "
+            "every test in its scope")
     return result
 
 

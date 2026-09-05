@@ -422,11 +422,8 @@ def test_a_green_verdict_names_the_populations_it_is_green_on():
     """One arm run must never report a verdict about two."""
 
     merge_suite = _module()
-    one = merge_suite._verdict([{"arm": "gpu", "surface": {}, "returncode": 0}])
-    two = merge_suite._verdict([
-        {"arm": "gpu", "surface": {}, "returncode": 0},
-        {"arm": "x86", "surface": {}, "returncode": 0},
-    ])
+    one = merge_suite._verdict([_population("gpu")])
+    two = merge_suite._verdict([_population("gpu"), _population("x86")])
     assert one == "green on 1 population(s): gpu"
     assert two == "green on 2 population(s): gpu, x86"
     assert "x86" not in one
@@ -589,16 +586,12 @@ def test_a_resumed_receipt_reports_failures_but_never_declares_green(tmp_path):
     """
 
     merge_suite = _module()
-    # ``cuda``/``strict_cuda`` are in every surface a run publishes, and the
-    # verdict now reads them for an arm submitted to cover the CUDA surface
-    # (see the second-leg test below).  A fixture without them is not a
-    # smaller version of a real population; it is a different one.
-    clean = {"counts": {"passed": 10, "failed": 0, "error": 0, "skipped": 1},
-             "cuda": True, "strict_cuda": True,
-             "device": "torch 2.11, 1 CUDA device(s), device 0 = NVIDIA GB10"}
-    broken = {"counts": {"passed": 9, "failed": 1, "error": 0, "skipped": 1},
-              "cuda": False, "strict_cuda": False,
-              "device": "torch 2.11.0+cpu reports no CUDA device"}
+    # Every field a published population carries, because the verdict reads
+    # them: a fixture with three keys in it is not a smaller version of a real
+    # population, it is a different object (see ``_population``).
+    clean = _population("gpu")["surface"]
+    broken = _population("x86", counts={"passed": 9, "failed": 1, "error": 0,
+                                        "skipped": 1})["surface"]
 
     (tmp_path / "surface.gpu.json").write_text(json.dumps(clean))
     record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], tmp_path)
@@ -629,14 +622,9 @@ def test_resume_submits_nothing_and_needs_no_shared_checkout(tmp_path):
 
     surfaces = tmp_path / "surfaces"
     surfaces.mkdir()
-    for arm, cuda, device in (
-            ("gpu", True, "1 CUDA device(s), device 0 = NVIDIA GB10"),
-            ("x86", False, "torch 2.11.0+cpu reports no CUDA device")):
-        (surfaces / f"surface.{arm}.json").write_text(json.dumps(
-            {"device": device, "cuda": cuda, "strict_cuda": cuda,
-             "role": "population",
-             "counts": {"passed": 5, "failed": 0, "skipped": 2},
-             "not_collected": []}))
+    for arm in ("gpu", "x86"):
+        (surfaces / f"surface.{arm}.json").write_text(
+            json.dumps(_population(arm)["surface"]))
     out = tmp_path / "receipt.json"
     ledger = tmp_path / "ledger.md"
     result = subprocess.run(
@@ -1155,35 +1143,28 @@ def test_the_gpu_arms_green_has_two_legs_not_one(tmp_path):
     """
 
     merge_suite = _module()
-    cpu_population = {
-        "cuda": False, "strict_cuda": False,
-        "device": "torch 2.11.0+cpu reports no CUDA device",
-        "counts": {"passed": 1406, "failed": 0, "error": 0, "skipped": 499}}
+    device_less = {"cuda": False, "strict_cuda": False,
+                   "device": "torch 2.11.0+cpu reports no CUDA device"}
 
     # Submitted to cover the CUDA surface, ran on a box with no device.
-    landed_wrong = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
-                    "surface": cpu_population}
+    landed_wrong = _population("gpu", **device_less)
     verdict = merge_suite._verdict([landed_wrong])
     assert "green" not in verdict, verdict
     assert "no device" in verdict and "gpu" in verdict, verdict
 
     # A device, but the gate was not armed: the run passed because nothing
     # made it refuse, which is the same coverage question one step earlier.
-    unarmed = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
-               "surface": dict(cpu_population, cuda=True, strict_cuda=False,
-                               device="torch 2.11, 1 CUDA device(s)")}
+    unarmed = _population("gpu", cuda=True, strict_cuda=False,
+                          device="torch 2.11, 1 CUDA device(s)")
     assert "not armed" in merge_suite._verdict([unarmed])
 
     # Both legs: a device, and the gate that would have refused without one.
-    covered = {"arm": "gpu", "requires_cuda": True, "returncode": 0,
-               "surface": dict(cpu_population, cuda=True, strict_cuda=True,
-                               device="torch 2.11, 1 CUDA device(s)")}
+    covered = _population("gpu")
     assert merge_suite._verdict([covered]) == "green on 1 population(s): gpu"
 
     # The x86 arm was never submitted to cover that surface, and must not be
     # held to it -- that box has no torch by design.
-    x86 = {"arm": "x86", "requires_cuda": False, "returncode": 0,
-           "surface": cpu_population}
+    x86 = _population("x86")
     assert merge_suite._verdict([x86]) == "green on 1 population(s): x86"
 
     # The arm records the tool builds carry the flag, so this is the verdict
@@ -1253,7 +1234,8 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     assert appended.count("no population published") == 2, appended
 
 
-def _fake_pool(root, surface_json, actions):
+def _fake_pool(root, surface_json, actions, command=None, params=None,
+               outcome=None):
     """A pb-queue and a CAS request tree holding exactly these actions.
 
     The layout is the fleet's, not an invention: an outcome record per action
@@ -1270,30 +1252,20 @@ def _fake_pool(root, surface_json, actions):
     for key, state, returncode, host in actions:
         (requests / key[:2]).mkdir(parents=True, exist_ok=True)
         (requests / key[:2] / f"{key}.json").write_text(json.dumps({
-            "params": {"command": ["python", "-m", "pytest", "tests",
-                                   "--surface-json", str(surface_json),
-                                   "--strict-cuda"]}}))
+            "params": {"command": command or [
+                "python", "-m", "pytest", "tests",
+                "--surface-json", str(surface_json), "--strict-cuda"],
+                **(params or {})}}))
         (queue / state / f"{key}.json").write_text(json.dumps({
             "attempts": 1, "claimed_host": host, "status": state,
             "detail": {"returncode": returncode, "status": "executed",
-                       "elapsed_s": 511.4}}))
+                       "elapsed_s": 511.4},
+            **(outcome or {})}))
     return queue, requests
 
 
 def _gpu_population(path, commit="a" * 40):
-    path.write_text(json.dumps({
-        "schema": "tessera.test_surface.v2",
-        "role": "population",
-        "worker_id": None,
-        "commit": commit,
-        "cuda": True,
-        "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = GB10",
-        "strict_cuda": True,
-        "counts": {"passed": 1827, "failed": 0, "error": 0, "skipped": 10,
-                   "xfailed": 0, "xpassed": 0},
-        "skip_reasons": {},
-        "not_collected": [],
-    }))
+    path.write_text(json.dumps(_population("gpu", commit=commit)["surface"]))
 
 
 def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
@@ -1538,27 +1510,252 @@ def test_an_arm_that_ran_nothing_is_not_a_green_population():
     """
 
     merge_suite = _module()
-    all_skipped = merge_suite._verdict([
-        {"arm": "gpu", "returncode": 0, "requires_cuda": True,
-         "surface": {"cuda": True, "strict_cuda": True,
-                     "counts": {"passed": 2059, "failed": 0, "skipped": 13}}},
-        {"arm": "x86", "returncode": 0, "requires_cuda": False,
-         "surface": {"cuda": False,
-                     "counts": {"passed": 0, "failed": 0, "skipped": 2072},
-                     "skip_reasons": {"no CUDA device on this box": 2072}}},
-    ])
+    gpu = _population("gpu", counts={"passed": 2059, "failed": 0, "error": 0,
+                                     "skipped": 13})
+    all_skipped = merge_suite._verdict([gpu, _population(
+        "x86",
+        counts={"passed": 0, "failed": 0, "error": 0, "skipped": 2072},
+        skip_reasons={"no CUDA device on this box": 2072})])
     assert all_skipped.startswith("incomplete: the x86 arm"), all_skipped
     assert "0 passed" in all_skipped and "2072 skipped" in all_skipped
 
     # And the same two arms, with the x86 one having actually executed the
     # device-less surface, is the verdict this issue is trying to reach.
-    ran = merge_suite._verdict([
-        {"arm": "gpu", "returncode": 0, "requires_cuda": True,
-         "surface": {"cuda": True, "strict_cuda": True,
-                     "counts": {"passed": 2059, "failed": 0, "skipped": 13}}},
-        {"arm": "x86", "returncode": 0, "requires_cuda": False,
-         "surface": {"cuda": False,
-                     "counts": {"passed": 1600, "failed": 0, "skipped": 472},
-                     "skip_reasons": {"no CUDA device on this box": 467}}},
-    ])
+    ran = merge_suite._verdict([gpu, _population(
+        "x86",
+        counts={"passed": 1600, "failed": 0, "error": 0, "skipped": 472},
+        skip_reasons={"no CUDA device on this box": 467})])
     assert ran == "green on 2 population(s): gpu, x86", ran
+
+
+def _population(arm="gpu", *, source="c" * 64, commit="a" * 40, **overrides):
+    """An arm record holding a population with every field green requires.
+
+    A hand-made surface with three fields in it is not a smaller version of a
+    published population; it is a different object, and a verdict tested only
+    against it is a verdict tested against nothing the suite writes.  This is
+    what ``tests/conftest.py`` actually publishes, so a test that wants a gap
+    states the gap as an override.
+    """
+
+    cuda = arm == "gpu"
+    surface = {
+        "schema": "tessera.test_surface.v3",
+        "role": "population",
+        "worker_id": None,
+        "commit": commit,
+        "source_identity": {"schema": "tessera.suite_source.v1",
+                            "verification": "verified",
+                            "snapshot_commit": commit, "sha256": source},
+        "cuda": cuda,
+        "strict_cuda": cuda,
+        "device": ("torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10"
+                   if cuda else "torch 2.11.0+cpu reports no CUDA device"),
+        "counts": {"passed": 1827, "failed": 0, "error": 0, "skipped": 10,
+                   "xfailed": 0, "xpassed": 0},
+        "skip_reasons": {},
+        "cuda_surface": {"executed": 311 if cuda else 0,
+                         "is_a_floor": True,
+                         "box_artifact_skips": {}},
+        "not_collected": [],
+    }
+    surface.update(overrides)
+    return {"arm": arm, "requires_cuda": cuda, "returncode": 0,
+            "surface": surface}
+
+
+def test_a_complete_matching_source_pair_is_the_only_shape_of_green():
+    """#217: the receipt's own fields said the arms measured two trees."""
+
+    merge_suite = _module()
+    arms = [_population("gpu"), _population("x86")]
+    assert merge_suite._verdict(arms) == "green on 2 population(s): gpu, x86"
+
+
+def test_arms_that_measured_different_source_are_not_a_merge_success():
+    """A merge check compares two runs of ONE tree, or it compares nothing.
+
+    ``commits_measured.effective_source.agree`` already answered this on the
+    receipt while ``_verdict`` never read it, so a receipt whose own fields
+    said the arms ran different source still exited 0.
+    """
+
+    merge_suite = _module()
+    arms = [_population("gpu", source="c" * 64),
+            _population("x86", source="d" * 64)]
+
+    assert merge_suite._commits_measured(arms)["effective_source"]["agree"] is False
+    verdict = merge_suite._verdict(arms)
+    assert not verdict.startswith("green on"), verdict
+    assert "source" in verdict, verdict
+
+
+@pytest.mark.parametrize("gap", [
+    pytest.param({"source_identity": None}, id="no-source-identity"),
+    pytest.param({"source_identity": {"schema": "tessera.suite_source.v1",
+                                      "verification": "unknown",
+                                      "snapshot_commit": "a" * 40,
+                                      "sha256": None}}, id="unverified"),
+    pytest.param({"source_identity": {"schema": "tessera.suite_source.v1",
+                                      "verification": "verified",
+                                      "snapshot_commit": "b" * 40,
+                                      "sha256": "c" * 64}},
+                 id="identity-from-another-snapshot"),
+])
+def test_an_unestablished_source_identity_is_not_a_merge_success(gap):
+    """Unknown provenance is not equivalence; it is the absence of it."""
+
+    merge_suite = _module()
+    arms = [_population("gpu", **gap), _population("x86")]
+    verdict = merge_suite._verdict(arms)
+    assert not verdict.startswith("green on"), verdict
+    assert "source" in verdict, verdict
+
+
+@pytest.mark.parametrize(("gap", "expected"), [
+    pytest.param({"schema": None}, "schema", id="no-schema"),
+    pytest.param({"schema": "tessera.test_surface.v99"}, "schema",
+                 id="unrecognised-schema"),
+    pytest.param({"role": None}, "role", id="no-role"),
+    pytest.param({"role": "worker-share"}, "role", id="worker-share"),
+    pytest.param({"counts": None}, "counts", id="no-counts"),
+    pytest.param({"counts": {"passed": "many", "failed": 0}}, "counts",
+                 id="counts-are-not-numbers"),
+])
+def test_a_population_that_cannot_be_read_is_not_green(gap, expected):
+    """#217: the executed-test check was skipped entirely when counts were absent.
+
+    ``_verdict`` walked past a surface with no ``counts`` -- ``continue`` --
+    and then had nothing left to object to, so a record with no population
+    evidence in it at all reached ``green``.
+    """
+
+    merge_suite = _module()
+    verdict = merge_suite._verdict([_population("x86", **gap)])
+    assert not verdict.startswith("green on"), verdict
+    assert expected in verdict, verdict
+
+
+@pytest.mark.parametrize(("gap", "expected"), [
+    pytest.param({"cuda_surface": {"executed": 0, "box_artifact_skips": {}}},
+                 "allocated", id="nothing-executed-on-the-device"),
+    pytest.param({"cuda_surface": {"executed": 311, "box_artifact_skips": {
+        "TESSERA_SHIPPED_CHECKPOINT is unset": 4}}},
+        "does not hold", id="box-artifact-skips"),
+    pytest.param({"schema": "tessera.test_surface.v2", "cuda_surface": None},
+                 "cannot say", id="pre-v3-cannot-answer"),
+])
+def test_a_gpu_arm_that_did_not_cover_the_surface_is_not_green(gap, expected):
+    """The third leg of tessera#152, read by the tool that quotes the receipt.
+
+    ``tests/conftest.py`` publishes ``cuda_surface.executed`` and the
+    box-artifact skip reasons, and ``--strict-cuda`` refuses on them in the
+    run's own process.  ``_verdict`` read neither, so a receipt could carry a
+    population that says nothing ran on the device and still exit 0.
+    """
+
+    merge_suite = _module()
+    verdict = merge_suite._verdict([_population("gpu", **gap)])
+    assert not verdict.startswith("green on"), verdict
+    assert expected in verdict, verdict
+    # The x86 arm is not submitted to cover that surface and is not held to it.
+    assert merge_suite._verdict([_population("x86")]).startswith("green on")
+
+
+def test_each_arms_own_result_is_readable_without_being_the_merge_verdict():
+    """Per-population success, kept where automation cannot read it as merge success."""
+
+    merge_suite = _module()
+    arms = [_population("gpu"), _population("x86", source="d" * 64)]
+
+    statuses = merge_suite._arm_results(arms)
+    assert statuses == {"gpu": "green", "x86": "green"}, statuses
+    assert not merge_suite._verdict(arms).startswith("green on")
+
+    red = _population("x86", counts={"passed": 1, "failed": 2, "error": 0,
+                                     "skipped": 0})
+    assert merge_suite._arm_results([red])["x86"].startswith("red"), \
+        merge_suite._arm_results([red])
+
+
+def _resumed_with(tmp_path, **pool):
+    """A resumed GPU record whose pool holds exactly the actions given."""
+
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir(exist_ok=True)
+    surface = receipt_dir / "surface.gpu.json"
+    _gpu_population(surface)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path, surface, [("beef" + "0" * 60, "done", 0, "sparky")], **pool)
+    return merge_suite, merge_suite._resume("gpu", merge_suite.ARMS["gpu"],
+                                            receipt_dir)
+
+
+def test_an_action_that_only_read_the_population_is_not_its_producer(tmp_path):
+    """#218: any command containing the path was treated as the writer.
+
+    A successful ``cat`` of a published summary says nothing about whether the
+    suite that wrote it crashed, timed out or failed after publication -- and
+    it was enough to turn a resumed arm green, because the join was mere argv
+    membership of the path string.
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, command=["cat", str(tmp_path / "receipt/surface.gpu.json")])
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert "pool_action" not in record, record
+    assert not merge_suite._verdict([record]).startswith("green on")
+
+
+def test_a_command_whose_effective_output_is_elsewhere_cannot_claim_this_path(
+        tmp_path):
+    """pytest takes the last ``--surface-json``; so does the reader of it."""
+
+    ours = str(tmp_path / "receipt/surface.gpu.json")
+    theirs = str(tmp_path / "somewhere-else.json")
+
+    _, overridden = _resumed_with(tmp_path, command=[
+        "python", "-m", "pytest", "tests",
+        "--surface-json", ours, "--surface-json", theirs])
+    assert overridden["exit_status_observed"] is False, overridden
+
+    _, effective = _resumed_with(tmp_path, command=[
+        "python", "-m", "pytest", "tests",
+        "--surface-json", theirs, "--surface-json", ours])
+    assert effective["exit_status_observed"] is True, effective
+    assert effective["returncode"] == 0, effective
+
+
+def test_a_status_recorded_for_another_source_tree_is_not_borrowed(tmp_path):
+    """The population names the tree it measured; so does the sealed action."""
+
+    merge_suite, record = _resumed_with(tmp_path, params={
+        "checkout_snapshot": {
+            "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
+            "commit": "b" * 40, "subdirectory": "."}})
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert any("commit" in reason
+               for reason in record.get("pool_actions_refused", [])), record
+
+
+def test_a_population_older_than_the_attempt_that_claimed_it_is_not_bound(
+        tmp_path):
+    """The pool requeues on any non-zero exit, and a retry may never publish.
+
+    An attempt that died before its terminal summary leaves the previous
+    attempt's population at the path and its own status in the outcome record.
+    Reading the two together attributes one attempt's bytes to another
+    attempt's exit.
+    """
+
+    merge_suite, record = _resumed_with(
+        tmp_path, outcome={"attempts": 2, "claimed_unix": time.time() + 86400})
+
+    assert record["exit_status_observed"] is False, record
+    assert record["returncode"] is None, record
+    assert not merge_suite._verdict([record]).startswith("green on")

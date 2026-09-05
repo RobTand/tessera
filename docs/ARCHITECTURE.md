@@ -73,18 +73,48 @@ hash/size, logical path and generated filename fingerprint must all agree.
 Other closure-looking tracked files remain source. Original-head and dirty
 stamps are never substituted for the actual source hash. Post-materialization
 dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
+identity above its first import of the code under test and the publication is
+bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
+rather than attesting a tree nothing tested. Under `-n`, each worker reports
+its own entry-bound identity through xdist's `workeroutput` and the
+controller's population is `unknown` unless every executing process agrees with
+it -- the controller runs no tests, so its own hash describes its filesystem
+until they do. The `tessera.suite_source.v1` receipt string is unchanged: the
+span and worker fields are additive, and `verified` became harder to earn, never
+easier.
 The merge receipt keeps raw commit agreement and effective-source agreement
 separate; legacy populations cannot establish the latter. Population pass
 counts alone still do not establish a same-source merge check.
+The merge **verdict** now reads those fields rather than reporting them beside
+an unrelated conclusion: a green exit requires, per arm, a recognised surface
+schema, the `population` role, readable counts with something passed, and --
+for an arm submitted under `--strict-cuda` -- a device, an armed gate, a
+`tessera.test_surface.v3` population, a positive `cuda_surface.executed` and no
+`box_artifact_skips`; and, across arms, `commits_measured.effective_source.agree
+== true`. Different verified source is refused, unknown provenance is
+incomplete, and a pre-v3 population cannot answer the execution question, so it
+is not green. Each arm's own result stays readable in the receipt's
+`arm_results`, which is deliberately not the merge verdict and never sets the
+exit status.
 `tools/impacted_tests.py` reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
+A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
+suite whatever its extension: the wire spec is a Markdown file, and filtering
+inert suffixes first meant the rule that names it could never see it.
 An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
 `__init__` above it, because importing a submodule executes them; a file loaded
 by explicit path gets an edge to that file only, because loading by path does
-not.
+not. A relative import in a package's own `__init__.py` climbs from that
+package, not from its parent, so `src/tessera/__init__.py`'s `from .manifest
+import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
+file is also a node under every name an import root on `sys.path` gives it:
+`tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
+`box_artifacts`, which is how every test in the tree spells it. An ambiguous
+alias edges to every candidate.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
@@ -119,7 +149,12 @@ the reader can execute Python; a parameterized filename in a source-executing
 module is not silently treated as no dependency. What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
-A conftest change reaches its entire test population; a delegated runner-fix task records
+A conftest **reached** -- changed, or importing anything changed -- reaches its
+entire test population, because pytest imports it for every test at or below its
+directory and a fixture consumer names the fixture rather than the module the
+conftest built it from; collection-probe edges are excluded from that walk, so
+one changed test file does not select the population through the conftest that
+execs it. A delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
 

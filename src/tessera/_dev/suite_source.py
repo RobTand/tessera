@@ -143,12 +143,91 @@ def _source_files(root, commit, excluded):
     return files
 
 
-def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None):
+def _bound_to_entry(record, entry):
+    """Bind a publication-time measurement to the one taken at suite entry.
+
+    Hashing a clean tree proves the bytes are HEAD's bytes *now*.  It does not
+    prove they are the bytes the run imported: a shared checkout can be
+    fast-forwarded cleanly while a suite is running, and the modules Python
+    already holds do not move with it.  The stability check inside
+    ``measured_source`` covers its own hashing interval and nothing longer, so
+    the span the receipt is about is bracketed here instead -- entry identity
+    in, publication identity out, and equality between them is the attestation
+    (#219).  Anything else is an explicit unknown that keeps both hashes.
+    """
+
+    span = {"entry_sha256": entry.get("sha256"),
+            "entry_snapshot_commit": entry.get("snapshot_commit"),
+            "entry_verification": entry.get("verification"),
+            "agrees": False}
+    if (entry.get("verification") == "verified"
+            and record.get("verification") == "verified"
+            and entry.get("sha256") == record.get("sha256")):
+        span["agrees"] = True
+        return {**record, "measurement_span": span}
+    if record.get("verification") != "verified":
+        reason = ("source at suite entry could not be bound: "
+                  + str(record.get("reason", "publication is unverified")))
+    elif entry.get("verification") != "verified":
+        reason = ("the source identity captured at suite entry is not "
+                  "verified (" + str(entry.get("reason", "unknown")) + "), so "
+                  "this publication attests bytes nothing bound to the run")
+    else:
+        reason = ("source changed between suite entry and publication: "
+                  + str(entry.get("sha256"))[:12] + " -> "
+                  + str(record.get("sha256"))[:12] + "; the tests ran against "
+                  "the first and this tree is the second")
+    return {**record, "verification": "unknown", "sha256": None,
+            "excluded_metadata": [], "measurement_span": span,
+            "reason": reason}
+
+
+def agreed_source(record, workers):
+    """One identity for a population several processes measured, or unknown.
+
+    Under xdist the canonical population is written by the controller, which
+    executed none of the tests it reports: its hash is a fact about the
+    controller's filesystem and becomes a fact about the measured source only
+    when every process that did the executing agrees.  A worker that reported
+    nothing establishes no agreement either, so it is named rather than
+    ignored.
+    """
+
+    if not workers:
+        return record
+    verdicts, disputed = {}, []
+    for name in sorted(workers):
+        other = workers[name] if isinstance(workers[name], dict) else {}
+        if other.get("verification") != "verified" or not other.get("sha256"):
+            verdicts[name] = "did not establish a verified source identity"
+            disputed.append(name)
+        elif other.get("sha256") != record.get("sha256"):
+            verdicts[name] = "measured " + str(other["sha256"])[:12]
+            disputed.append(name)
+        else:
+            verdicts[name] = "agrees"
+    if not disputed and record.get("verification") == "verified":
+        return {**record, "workers": verdicts}
+    return {**record, "verification": "unknown", "sha256": None,
+            "excluded_metadata": [], "workers": verdicts,
+            "reason": ("the processes that executed this population did not "
+                       "agree on its source: "
+                       + "; ".join(f"{name} {verdicts[name]}"
+                                   for name in disputed))}
+
+
+def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None,
+                    entry=None):
     """Verified effective source hash, or an explicit unknown with the raw ID.
 
     This performs no repository writes and no full CAS/queue scan. Dirty input
     changes already included in a PB snapshot affect its actual file hashes;
     changes made after materialization refuse equality instead of hiding them.
+
+    ``entry`` is the identity captured before the code under test was
+    imported.  Given one, the answer is about the *span* between the two
+    measurements rather than about this instant, and it is verified only if
+    the source did not move across it.
     """
     record = {"schema": SCHEMA, "snapshot_commit": None, "sha256": None,
               "verification": "unknown", "excluded_metadata": []}
@@ -171,4 +250,4 @@ def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None):
                       files_verified=len(files), excluded_metadata=[stamp] if is_snapshot else [])
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         record["reason"] = str(error)
-    return record
+    return record if entry is None else _bound_to_entry(record, entry)

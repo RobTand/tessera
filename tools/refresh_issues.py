@@ -26,15 +26,42 @@ REPOS = ("RobTand/tessera", "RobTand/prismaquant")
 SNAPSHOT = Path(__file__).resolve().parent.parent / "docs" / "issues-snapshot.json"
 
 
+def rows(out: str):
+    """Every issue row in gh's paginated output, whatever shape it came in.
+
+    ``gh api --paginate`` prints one JSON array per page, concatenated, which
+    is not a JSON document; ``--slurp`` wraps those pages in a single array
+    and exists only in gh 2.53 and later.  Requiring it made this tool
+    unrunnable on a box with gh 2.45 -- ``unknown flag: --slurp`` -- and the
+    snapshot the offline reference gate reads cannot be refreshed from a box
+    that cannot run this.  Decoding values off the stream reads both shapes,
+    so the refresher does not depend on the gh version it happens to find.
+    """
+
+    decoder = json.JSONDecoder()
+    index = 0
+    while True:
+        while index < len(out) and out[index].isspace():
+            index += 1
+        if index >= len(out):
+            return
+        value, index = decoder.raw_decode(out, index)
+        for item in value:
+            if isinstance(item, list):       # a --slurp'd array of pages
+                yield from item
+            else:
+                yield item
+
+
 def fetch(repo: str) -> dict[str, dict]:
     out = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp",
+        ["gh", "api", "--paginate",
          f"repos/{repo}/issues?state=all&per_page=100"],
         capture_output=True, text=True, check=True,
     ).stdout
     return {
         str(row["number"]): {"title": row["title"], "state": row["state"].upper()}
-        for page in json.loads(out) for row in page
+        for row in rows(out)
     }
 
 
@@ -49,7 +76,10 @@ def build() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true",
-                    help="exit 1 if the committed snapshot is missing an issue")
+                    help="exit 1 if the committed snapshot and the repository "
+                         "disagree: an issue the snapshot lacks, one it still "
+                         "lists that the repository no longer has, or one "
+                         "whose state moved")
     a = ap.parse_args()
     fresh = build()
     if a.check:
@@ -61,11 +91,21 @@ def main() -> int:
         for repo, issues in fresh["repos"].items():
             known = old.get("repos", {}).get(repo, {})
             missing = sorted(set(issues) - set(known), key=int)
+            # The other direction, which nothing checked: an ID the snapshot
+            # still lists and the repository no longer has -- deleted, or
+            # transferred out. `tests/test_issue_refs.py` builds its allowed
+            # set straight out of this file, so a stale ID keeps validating
+            # every documentation reference to an issue that is gone (#220).
+            removed = sorted(set(known) - set(issues), key=int)
             moved = sorted(
                 (n for n in set(issues) & set(known)
                  if issues[n]["state"] != known[n]["state"]), key=int)
             if missing:
                 print(f"{repo}: not in the snapshot: {missing}", file=sys.stderr)
+                stale = True
+            if removed:
+                print(f"{repo}: in the snapshot but not in the repository: "
+                      f"{removed}", file=sys.stderr)
                 stale = True
             if moved:
                 print(f"{repo}: state changed: {moved}", file=sys.stderr)

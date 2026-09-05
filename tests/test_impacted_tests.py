@@ -657,17 +657,88 @@ def test_a_package_init_change_selects_every_test_that_imports_the_package():
     )
 
 
+def test_an_opaque_path_outranks_the_generic_inert_suffix_rule():
+    """#216: the wire is named in OPAQUE and is written in Markdown.
+
+    ``docs/schema/`` is in ``OPAQUE`` because a wire change is exactly what
+    nothing here can reason about -- and the classification excluded every
+    ``.md`` path before that rule was ever consulted, so the one file the rule
+    exists for was the one file it could not reach.
+    """
+
+    opaque_docs = sorted(
+        str(path.relative_to(ROOT))
+        for prefix in impacted.OPAQUE
+        for path in ROOT.glob(prefix + "*")
+        if path.is_file() and path.suffix in impacted.INERT
+    )
+    assert opaque_docs, "no opaque path has an inert suffix; fixture is vacuous"
+
+    for changed in opaque_docs:
+        result = impacted.select(ROOT, [changed])
+        assert result["verdict"] == "full", (changed, result)
+        assert changed in result["forces_full"], (changed, result)
+
+    # And an ordinary Markdown edit outside those prefixes stays inert.
+    ordinary = impacted.select(ROOT, ["docs/measurements/a-note-2026-09-05.md"])
+    assert ordinary["verdict"] == "none", ordinary
+    assert ordinary["forces_full"] == [], ordinary
+
+
+def _leaves_outside_the_shared_conftest(root: Path) -> list[str]:
+    """Source files ``tests/conftest.py`` does not reach, derived from the graph.
+
+    Which files those are is not this test's business to pin -- the shared
+    conftest imports the container, the grammar and the layout, and a file
+    below any of those is one pytest re-imports for every test in ``tests/``.
+    The rule is that a source file OUTSIDE that closure still narrows.
+    """
+
+    by_name, importers, probes = impacted.import_graph(root)
+    leaves = []
+    for name, path in sorted(by_name.items()):
+        if not str(path.relative_to(root)).startswith("src/"):
+            continue
+        if "tests.conftest" in impacted._reverse_reachable({name}, importers,
+                                                           skip=probes):
+            continue
+        leaves.append(str(path.relative_to(root)))
+    return leaves
+
+
 def test_this_repository_narrows_for_a_leaf_source_edit():
     """#148: the verdict was ``full`` for every change this tree can make."""
 
+    population = len(list((ROOT / "tests").rglob("test_*.py")))
+    leaves = _leaves_outside_the_shared_conftest(ROOT)
+    assert leaves, "no source file is outside the shared conftest's closure"
+
+    # One graph build per select, so this samples the ends and the middle of
+    # the derived list rather than paying for all of it.
+    for leaf in {leaves[0], leaves[len(leaves) // 2], leaves[-1]}:
+        result = impacted.select(ROOT, [leaf])
+        assert result["verdict"] == "narrowed", (leaf, result["forces_full"])
+        assert result["tests"], f"{leaf}: a narrowed verdict selecting nothing"
+        assert len(result["tests"]) < population, (
+            f"{leaf}: narrowed must mean fewer than the whole population")
+
+
+def test_a_file_the_shared_conftest_imports_selects_every_test_below_it():
+    """The other half of the same rule, and it is not a regression (#215).
+
+    ``tests/conftest.py`` imports the container, so pytest re-imports the wire
+    for every test in ``tests/`` whether or not that test names it.  Selecting
+    fewer than all of them was under-selection, and the receipt says which
+    edge widened it rather than leaving a reader to wonder.
+    """
+
     result = impacted.select(ROOT, ["src/tessera/wire.py"])
+    population = {str(p.relative_to(ROOT))
+                  for p in (ROOT / "tests").rglob("test_*.py")}
 
     assert result["verdict"] == "narrowed", result["forces_full"]
-    assert result["tests"], "a narrowed verdict selecting nothing is not a selection"
-    population = len(list((ROOT / "tests").rglob("test_*.py")))
-    assert len(result["tests"]) < population, (
-        "narrowed must mean fewer than the whole population"
-    )
+    assert not population - set(result["tests"])
+    assert "conftest" in result["reason"], result["reason"]
 
 
 _GROUND_TRUTH_PROBE = '''
@@ -837,6 +908,183 @@ def test_a_conftest_that_imports_a_test_module_outright_still_forces_full(tmp_pa
     _git(repo, "commit", "-qm", "source change")
 
     assert _selector(repo, f"{base}...HEAD")["verdict"] == "full"
+
+
+def test_a_conftest_helper_selects_the_tests_that_request_its_fixtures(tmp_path):
+    """#215: pytest imports the conftest; the tests never import the helper.
+
+    A fixture consumer names the fixture, not the module the fixture's value
+    came from.  So the only path from ``tests/helper.py`` to
+    ``tests/test_consumer.py`` runs through the conftest, and it runs the way
+    pytest runs it -- by import at collection time, for every test at or below
+    the conftest's directory.  Reaching the conftest and stopping there
+    selected nothing at all.
+    """
+
+    repo, base = _dynamic_repo(tmp_path, "def test_dynamic(): pass\n", {
+        "tests/helper.py": "VALUE = 1\n",
+        "tests/conftest.py": '''
+            import pytest
+            from helper import VALUE
+
+            @pytest.fixture
+            def value():
+                return VALUE
+        ''',
+        "tests/test_consumer.py": '''
+            def test_consumer(value):
+                assert value
+        ''',
+    })
+    (repo / "tests/helper.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "tests/helper.py")
+    _git(repo, "commit", "-qm", "the fixture's helper changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "narrowed", result["forces_full"]
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
+def test_a_changed_conftest_dependency_names_the_scope_it_selected(tmp_path):
+    """The receipt says WHY tests nothing imports the changed file appeared."""
+
+    repo, base = _dynamic_repo(tmp_path, "def test_dynamic(): pass\n", {
+        "support/state.py": "VALUE = 1\n",
+        "tests/conftest.py": "from support.state import VALUE\n",
+    })
+    (repo / "support/state.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "support/state.py")
+    _git(repo, "commit", "-qm", "a conftest dependency changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["tests"] == ["tests/test_dynamic.py"], result
+    assert "conftest" in result["reason"], result["reason"]
+
+
+def test_a_relative_re_export_is_an_edge_from_the_child_to_the_package(tmp_path):
+    """#215: ``from .child import VALUE`` in a package's own initializer.
+
+    ``src/tessera/__init__.py`` is spelled exactly this way.  The package name
+    of an ``__init__.py`` is the package itself, not its parent, so the
+    relative import resolved to a top-level ``child`` that does not exist and
+    the ``pkg.child -> pkg`` edge was dropped.
+    """
+
+    repo, base = _repo(tmp_path)
+    files = {
+        "src/pkg/__init__.py": "from .child import VALUE\n",
+        "src/pkg/child.py": "VALUE = 1\n",
+        "src/pkg/inner/__init__.py": "from ..child import VALUE as V\n",
+        "tests/test_consumer.py": "from pkg import VALUE\ndef test_v(): assert VALUE\n",
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "relative re-export fixture")
+
+    _, importers = impacted.build_graph(repo)
+    assert "pkg" in importers.get("pkg.child", set()), (
+        "an initializer's relative import climbs from its own package")
+    assert "pkg.inner" in importers.get("pkg.child", set()), (
+        "a two-dot import from a subpackage's initializer climbs one level")
+
+    (repo / "src/pkg/child.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "src/pkg/child.py")
+    _git(repo, "commit", "-qm", "the re-exported child changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed", result["forces_full"]
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
+def _modules_importing_bare(root: Path, name: str) -> set[str]:
+    """Test files whose own AST imports ``name`` with no package qualifier.
+
+    Ground truth read from the tests themselves, so the selector's graph and
+    the expectation cannot agree by sharing a bug.
+    """
+
+    import ast
+
+    found = set()
+    for path in sorted((root / "tests").rglob("test_*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except SyntaxError:  # pragma: no cover - a broken test file is its own bug
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level:
+                names = [node.module or ""]
+            else:
+                continue
+            if any(spelled == name or spelled.startswith(name + ".")
+                   for spelled in names):
+                found.add(str(path.relative_to(root)))
+                break
+    return found
+
+
+@pytest.mark.parametrize("helper", ["box_artifacts", "conftest"])
+def test_pytest_import_roots_resolve_the_bare_helper_imports(helper):
+    """#215: ``tests/`` is on ``sys.path``, so ``import box_artifacts`` works.
+
+    The graph named the file ``tests.box_artifacts`` and nothing else, while
+    every test that uses it spells it bare -- the spelling pytest's own
+    rootdir/basedir rule makes valid, and the one ``tests/conftest.py``
+    guarantees by inserting its own directory.  Those imports resolved to no
+    node, so editing the helper selected none of its consumers.
+    """
+
+    consumers = _modules_importing_bare(ROOT, helper)
+    assert consumers, f"the fixture is vacuous if no test imports {helper}"
+    _, importers = impacted.build_graph(ROOT)
+    reached = {
+        str((ROOT / m.replace(".", "/")).with_suffix(".py").relative_to(ROOT))
+        for m in importers.get(f"tests.{helper}", set())
+    }
+    assert not consumers - reached, sorted(consumers - reached)
+
+
+def test_a_box_artifacts_edit_selects_the_tests_that_read_its_roots():
+    """#215's own example: the shipped-checkpoint gate reads those roots."""
+
+    result = impacted.select(ROOT, ["tests/box_artifacts.py"])
+
+    assert result["verdict"] != "full", result["forces_full"]
+    consumers = _modules_importing_bare(ROOT, "box_artifacts")
+    assert not consumers - set(result["tests"]), (
+        sorted(consumers - set(result["tests"])))
+    shipped = "tests/test_shipped_checkpoint_minor7.py"
+    if (ROOT / shipped).exists():
+        assert shipped in result["tests"], "the audit's named example"
+
+
+def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
+    """A file the branch is mid-edit on must not take the selector down.
+
+    ``_imports`` answers with three sets and answered a syntax error with one,
+    so every caller unpacked it into a ``ValueError`` -- and a selector that
+    raises selects nothing at all, which is the failure mode this tool exists
+    to refuse.
+    """
+
+    repo, base = _dynamic_repo(tmp_path, '''
+        from tools.driver import VALUE
+        def test_example(): assert VALUE
+    ''', {"support/broken.py": "def (\n"})
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change beside an unparseable file")
+
+    _, importers = impacted.build_graph(repo)
+    assert importers.get("support.broken", set()) == set()
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["tests"] == ["tests/test_dynamic.py"], result
 
 
 def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):

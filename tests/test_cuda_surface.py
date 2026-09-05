@@ -490,6 +490,50 @@ def test_the_population_names_the_tree_it_was_measured_on(tmp_path):
     assert len(payload["source_identity"]["sha256"]) == 64
 
 
+def test_an_xdist_population_names_the_workers_that_agreed_on_its_source(tmp_path):
+    """Under ``-n`` the process that writes the population runs no tests.
+
+    Its source hash is therefore a fact about the controller's filesystem, and
+    becomes a fact about the measured source only once the processes that did
+    the executing say the same thing (#219).  This drives the real hook path
+    -- each worker's ``workeroutput``, the controller's ``pytest_testnodedown``
+    -- because the ordering between those and the terminal summary is exactly
+    what a unit test of the aggregation cannot check.
+
+    Before the fix the population's ``source_identity`` had no ``workers``
+    field at all: it was one hash taken at the end, by the process that ran
+    nothing.
+    """
+
+    pytest.importorskip("xdist")
+    pytest.importorskip("torch")
+    probe = _write_synthetic(tmp_path)
+    surface = tmp_path / "surface.json"
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "-n", "2", "--dist", "worksteal",
+         "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="",
+    )
+    out = result.stdout + result.stderr
+    assert result.returncode == 0, out
+
+    import json
+
+    payload = json.loads(surface.read_text())
+    identity = payload["source_identity"]
+    assert payload["role"] == "population", payload
+    assert identity["workers"] == {"gw0": "agrees", "gw1": "agrees"}, identity
+    assert identity["verification"] == "verified", identity
+    assert identity["measurement_span"]["agrees"] is True, identity
+
+    # Each worker's own share carries its own entry-bound identity, and the
+    # controller's hash is the one they agreed with.
+    for worker in ("gw0", "gw1"):
+        share = json.loads(
+            (tmp_path / f"surface.{worker}.json").read_text())["source_identity"]
+        assert share["sha256"] == identity["sha256"], (worker, share)
+
+
 def test_a_second_run_keeps_the_population_the_first_one_published(tmp_path):
     """A retry must not erase the measurement it is retrying.
 
