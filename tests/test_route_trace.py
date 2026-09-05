@@ -24,7 +24,6 @@ Pinned here:
 
 import json
 import os
-import stat
 
 import pytest
 
@@ -84,15 +83,16 @@ def test_the_file_exists_the_moment_tracing_starts(tracing):
 
 
 def test_an_unwritable_path_refuses_at_startup(tmp_path):
-    ro = tmp_path / "readonly"
-    ro.mkdir()
-    ro.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    # A file cannot be a directory, even for root in the runtime image.
+    # chmod alone is writable under CAP_DAC_OVERRIDE and tests no failure.
+    parent = tmp_path / "not-a-directory"
+    parent.write_text("occupied")
     try:
         with pytest.raises(OSError):
-            telemetry.start_route_trace(ro / "trace.json")
+            telemetry.start_route_trace(parent / "trace.json")
+        assert telemetry.route_trace() is None
     finally:
         telemetry.stop_route_trace()
-        ro.chmod(stat.S_IRWXU)
 
 
 def test_a_relative_trace_path_is_refused(monkeypatch):
