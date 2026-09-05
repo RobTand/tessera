@@ -30,6 +30,8 @@ not look.
 """
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from tessera.serving.sharding import (AXIS_COLUMNS, AXIS_ROWS, RoleShard,
@@ -152,6 +154,49 @@ def test_a_replicated_linear_inside_a_tp_group_is_a_whole_unit():
                       in_size=2048, tp_rank=2, tp_size=4)
     assert plan.axis is None
     assert (plan.shard_rows, plan.shard_columns) == (1024, 2048)
+
+
+def test_equal_totals_with_disagreeing_role_boundaries_are_refused_by_name():
+    """A fused module the two sides stack DIFFERENTLY is not a whole module.
+
+    Wire roles q/k/v of ``[4, 8, 4]`` and a layer asking for ``[8, 4, 4]``
+    total 16 either way, so a planner that compares only the totals hands back
+    a whole-module plan and the load succeeds.  The wire is decoded as four q
+    rows then eight k rows while the consumer reads the first eight as q, and
+    nothing downstream can catch it: the decoder returns the role arrangement
+    it was given, and a self-consistent wire agrees with its own sidecar.  So
+    the refusal has to be here, and it has to name the member that failed.
+
+    Both cases the shortcut covered are checked -- ``tp_size == 1`` and a
+    module replicated inside a TP group -- plus the same disagreement under a
+    row-parallel (input) cut, where the output is whole too.
+    """
+    roles = [("q_proj", 4), ("k_proj", 8), ("v_proj", 4)]
+    for rank, tp, in_size in ((0, 1, 64), (2, 4, 64), (1, 2, 32)):
+        with pytest.raises(ValueError) as e:
+            plan_shard("qkv", roles=roles, columns=64, out_partitions=[8, 4, 4],
+                       in_size=in_size, tp_rank=rank, tp_size=tp)
+        msg = str(e.value)
+        assert "'q_proj'" in msg, "the refusal names the member that failed"
+        assert "4 rows" in msg and "asks for 8" in msg
+        assert "Equal totals are not equal boundaries" in msg
+
+
+def test_a_fused_container_and_a_layer_that_stack_differently_are_refused():
+    """The list lengths are the same rule as the boundaries, asked once.
+
+    A three-role container against a layer offering one output partition is
+    the same checkpoint/serve disagreement about how a module is fused, and it
+    has to be refused for a whole module too -- not only for a cut, which is
+    the one branch that used to ask.
+    """
+    roles = [("q_proj", 512), ("k_proj", 256), ("v_proj", 256)]
+    with pytest.raises(ValueError) as e:
+        plan_shard("qkv", roles=roles, columns=2048, out_partitions=[1024],
+                   in_size=2048, tp_rank=0, tp_size=1)
+    msg = str(e.value)
+    assert "3 roles" in msg and "1 output partition" in msg
+    assert "how this module is fused" in msg
 
 
 def test_replicated_kv_heads_under_gqa_are_a_plan_not_a_refusal():
@@ -442,6 +487,69 @@ def test_sharding_roles_cuts_and_re_derives_the_parse(units, axis):
     assert record.parent_digest == parsed.manifest.manifest_digest()
     want = whole[rows // 2:, :] if axis == AXIS_ROWS else whole[:, columns // 2:]
     assert torch.equal(_decode(shard), want)
+
+
+#: Artifacts written by master ``da2b371`` -- a different encoder from this
+#: tree's, which is what makes them the right parent for a provenance test.
+LEGACY = pathlib.Path(__file__).parent / "data" / "legacy"
+
+
+def _legacy(name):
+    from tessera.unit_artifact import parse_unit_artifact
+
+    return parse_unit_artifact((LEGACY / f"{name}.tessera").read_bytes(), device="cpu")
+
+
+def test_a_shard_keeps_its_parent_encoder_identity_and_never_asks_the_current_one(monkeypatch):
+    """Cutting restricts planes.  It does not encode, so it may not re-attest.
+
+    ``_reparse_shard`` writes the shard and reads it back, and it wrote it at
+    ``build_unit_artifact``'s default ``fixture_id`` -- which asks
+    ``encoder_identity.stamped_fixture_id`` for the digest of what THIS
+    encoder does.  The shard then named an encoder that never produced its
+    bytes, which is false for every artifact any other encoder wrote, and it
+    made a load compute that identity (a cold fixture set) to attest bytes it
+    had no part in.
+
+    The parent is a committed minor-6 artifact, so its stamp really is another
+    encoder's.  The current stamp is made to RAISE rather than to differ: a
+    reparse that asks the question at all is the defect, not only one that
+    gets a different answer back.
+
+    Both directions are checked, because both are a false claim: a tagged
+    parent keeps its own id, and an untagged one is not promoted to a current
+    one it never carried.
+    """
+    from tessera import encoder_identity
+    from tessera.layout import slice_unit
+    from tessera.serving.sharding import _reparse_shard
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parsed = _legacy("e4m3-1024-window-channel-256c")
+    manifest = parsed.manifest
+    assert manifest.encoder_fixture_id is not None, "the parent must carry an identity"
+
+    def refuse():
+        raise AssertionError(
+            "a shard reparse asked the current encoder to attest bytes it did not produce")
+
+    monkeypatch.setattr(encoder_identity, "stamped_fixture_id", refuse)
+    rows = manifest.geometry.rows
+    shard = _reparse_shard(parsed, slice_unit(parsed, rows=(rows // 2, rows)), "rank1")
+    assert shard.manifest.encoder_fixture_id == manifest.encoder_fixture_id
+    assert shard.manifest.shard is not None
+    assert shard.manifest.shard.row_offset == rows // 2
+
+    # ``fixture_id=None`` writes no field and asks nothing, so an untagged
+    # parent can be built with the stamp still refusing.
+    _m, _region, blob = build_unit_artifact(
+        parsed.unit, "untagged", parsed.forests, int(manifest.branch.root_q256),
+        parsed.code, superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container, fixture_id=None)
+    plain = parse_unit_artifact(blob, device="cpu")
+    assert plain.manifest.encoder_fixture_id is None
+    untagged = _reparse_shard(plain, slice_unit(plain, rows=(rows // 2, rows)), "rank1")
+    assert untagged.manifest.encoder_fixture_id is None
 
 
 @needs_cuda

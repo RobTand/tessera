@@ -93,8 +93,18 @@ the checks `slice_unit` applies, not asserted beside them.
   halfway carries a **label phase** no state can express. At a super-symbol
   boundary there is no residual phase, and the convolutional register is the
   whole of the carried state. The window body is always span 1.
-* Raised only if a row is not a whole number of scale blocks, which no shipping
-  shape does.
+* Never raised. A row that is *not* a whole number of scale blocks used to
+  raise it, so that a run of rows closed the straddling block; but the block
+  planes are indexed `(row * cols + col) // block`, and when a block spans two
+  rows no rectangle of the unit is a run of the plane — not even the whole of
+  it. `slice_unit` refuses every cut of such a unit and `can_shard` refuses the
+  unit, from one predicate (`_block_straddles_rows`), rather than reporting a
+  granularity that would not have sliced (tessera#235). No *encoder* produces
+  one — `encode._pack_scales` refuses an S6b width that is not a whole number of
+  32-weight groups (tessera#57) — but the *writer* enforces only the weaker
+  `half`-group rule (`build_unit_artifact`, tessera#56), so one assembled
+  without going through `encode_unit` is still writable and parseable
+  (tessera#260), which is why the cutter is asked about it at all.
 
 **Columns.** The scale plane's block, raised to the superblock by releases or a
 mixed rate schedule.
@@ -138,7 +148,7 @@ shard = slice_unit(parsed, cols=(lo, lo + in_size_per_partition))  # row-paralle
 | vLLM layer | what is split | the call | note |
 |---|---|---|---|
 | `ColumnParallelLinear` | output features = **rows** | `rows=(lo, hi)` | |
-| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **`plan_shard` agrees since #32:** it takes `output_partition_sizes` and the declared roles as **lists**, gives every member its own `RoleShard(lo, hi, shards)`, and asks `can_shard` with the member's own `shards` — which is `num_kv_heads`, not `tp` |
+| `QKVParallelLinear`, `MergedColumnParallelLinear` | output features, per member | one `slice_unit` per fused member | the fused container (`fused.py`) is framing: each member is its own unit and is sliced on its own rows. q/k/v shard by **heads**, so the row range is the member's own head range, not an even split of the container — and under GQA with `num_kv_heads < tp` vLLM replicates KV heads, so two ranks can ask for the *same* k/v rows. `slice_unit` takes any contiguous range, so an overlap is ordinary; it is not an error to detect. **`plan_shard` agrees since #32:** it takes `output_partition_sizes` and the declared roles as **lists**, gives every member its own `RoleShard(lo, hi, shards)`, and asks `can_shard` with the member's own `shards` — which is `num_kv_heads`, not `tp`. It never reads the two lists' **sums** as agreement: the lengths, and wherever the output is whole the per-member extents, are compared before any branch, so a container stacked `[4, 8, 4]` against a layer that reads `[8, 4, 4]` is refused by member name rather than served as a whole module (tessera#234) |
 | `RowParallelLinear` (`o_proj`, `down_proj`) | input features = **columns** | `cols=(lo, hi)` | |
 | `FusedMoE` with expert parallelism | whole experts | no slicing | EP moves units, it does not cut them |
 | `FusedMoE` with tensor parallelism inside an expert | as the dense cases | `rows=` for w1/w3, `cols=` for w2 | |
@@ -183,7 +193,11 @@ parent with its offsets composed, and writes the record a direct cut would
 (tessera#140 fixed a writer that named the immediate parent's extent under
 the original's offsets). The encoder profile id is *unchanged* by slicing: a
 shard is decoded by the same trellis over the same grid at the same span. A
-shard is not a different encoding.
+shard is not a different encoding. Neither is the `encoder_fixture_id` — which
+names the encoder that *produced* the bytes, and a cut produces none — so the
+serving loader's `_reparse_shard` forwards the parent's explicitly, `None`
+included, instead of letting `build_unit_artifact` stamp this build's
+(tessera#236).
 
 ## Kernel implications
 

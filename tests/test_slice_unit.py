@@ -32,6 +32,7 @@ a served two-box TP=2 gate.
 import hashlib
 import pathlib
 import random
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -63,6 +64,7 @@ from tessera.errors import GrammarError, ManifestError
 from tessera.export import _plan_for, tcq_cap_q256, wire_recipe
 from tessera.layout import (
     SlicedUnit,
+    _scale_columns_per_row,
     _slice_release,
     can_shard,
     shard_granularity,
@@ -1392,6 +1394,75 @@ def test_can_shard_matches_what_slice_unit_accepts(units):
                     assert not allowed, (label, axis, tp)
                 else:
                     assert allowed, (label, axis, tp)
+
+
+def _narrowed(unit, rows, width):
+    """The same encoded unit restricted to its first ``width`` columns.
+
+    Every plane a column restriction touches, and nothing re-encoded: this is
+    the wire at a narrower width, which is what a capability query is asked
+    about.  It is built by restriction rather than by ``encode_unit`` because
+    the encoder refuses a width whose S6b groups cross rows (tessera#57) --
+    which is exactly the population the two answers disagreed on.
+    """
+    fields = dict(
+        rates=unit.rates[:width],
+        body_bits=unit.body_bits[:, :width].contiguous(),
+        scale_base=unit.scale_base[: rows * width // unit.group].clone(),
+        scale_refine=unit.scale_refine[: rows * width // unit.half].clone(),
+    )
+    for key in ("completion_bits", "anchors", "codes"):
+        plane = getattr(unit, key)
+        if plane is not None and plane.ndim == 2 and plane.numel():
+            fields[key] = plane[:, :width].contiguous()
+    return replace(unit, **fields)
+
+
+def test_can_shard_is_exactly_what_the_slicer_accepts_at_every_block_width(cpu_units):
+    """The predicate and the cutter answer from one rule, at every width.
+
+    ``shard_granularity`` used to *raise the row granularity* for a unit whose
+    columns are not a whole number of scale blocks, on the reasoning that a run
+    of rows closes a straddling block -- so ``can_shard(unit, 2, "row")`` said
+    yes for a 48-column S6b unit.  ``_slice_block_plane`` refuses every cut of
+    such a unit, the identity slice included, because the plane is indexed
+    ``(row * cols + col) // block`` and no rectangle of the weight is a run of
+    it.  A loader that asks first and cuts second got ``True`` and then a
+    ``GrammarError``, which is a capability answer it cannot act on.
+
+    The widths come from the plane's own block and half --
+    ``_scale_columns_per_row``, the number ``shard_granularity`` itself reads
+    -- rather than from 48, and both kinds have to appear or the test says so.
+    """
+    unit, _forests, grid, _blob = cpu_units["s6b-tcq"]
+    block = _scale_columns_per_row(unit)
+    steps, columns = unit.body_bits.shape
+    rows = steps * grid.arity
+    widths = tuple(range(2 * unit.half, columns + 1, unit.half))
+    assert {bool(w % block) for w in widths} == {True, False}, (
+        "the roster must hold both a width the block tiles and one it does not")
+    seen = set()
+    for width in widths:
+        narrow = _narrowed(unit, rows, width)
+        for axis in ("row", "column"):
+            extent = rows if axis == "row" else width
+            for tp in (1, 2, 4):
+                allowed = can_shard(narrow, tp, axis, 256, grid.arity)
+                if extent % tp:
+                    assert not allowed, (width, axis, tp)
+                    continue
+                lo, hi = _tp_ranges(extent, tp)[-1]
+                kwargs = {"rows": (lo, hi)} if axis == "row" else {"cols": (lo, hi)}
+                try:
+                    slice_unit(narrow, arity=grid.arity, code=CODE, **kwargs)
+                except GrammarError:
+                    assert not allowed, (width, axis, tp)
+                    seen.add(("refused", bool(width % block)))
+                else:
+                    assert allowed, (width, axis, tp)
+                    seen.add(("cut", bool(width % block)))
+    assert ("refused", True) in seen, "a straddling width must be refused by both"
+    assert ("cut", False) in seen, "a tiled width must still cut, or nothing is tested"
 
 
 def test_plane_order_is_the_only_place_the_two_orders_live():

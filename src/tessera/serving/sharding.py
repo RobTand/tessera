@@ -421,9 +421,17 @@ def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int
     container whose members are not exactly the declared roles in order, that
     order is the row order the exporter packed (``fused.pack_fused``), and it
     is the order the SERVED tp=1 tile is stacked in, so a mis-ordering would
-    already be wrong at one rank.  The per-role divisibility check below is the
-    only cross-check available here; it catches a mis-ordering whenever the
-    roles differ in size, and cannot when they do not.
+    already be wrong at one rank.  The per-role checks below are the only
+    cross-check available here; they catch a mis-ordering whenever the roles
+    differ in size, and cannot when they do not.
+
+    THE TOTALS ARE NEVER THE ANSWER ON THEIR OWN.  Two lists that sum alike
+    can name different boundaries -- ``[4, 8, 4]`` and ``[8, 4, 4]`` are both
+    16 rows -- and a plan built on the sums would hand back the whole module
+    while the layer read one role's rows as another's.  So the lengths and,
+    wherever the output is whole, the per-member extents are compared BEFORE
+    any branch: the whole-module shortcut is reached only by a request that
+    agrees with the checkpoint member by member.
 
     Refuses -- with the module's shape, the role and the relation that failed --
     when the request is neither the whole module nor a split this wire can
@@ -447,6 +455,41 @@ def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int
     out_size = sum(out_partitions)
     shape = (f"{prefix}: tessera module is {rows}x{columns}; rank {tp_rank} of {tp_size} wants "
              f"{out_size}x{in_size}")
+
+    # THE TWO LISTS ARE ONE LIST, and that is asked ONCE, before any branch.
+    # It used to be asked only where the output is cut, so the two ways a
+    # module can be served WHOLE -- one rank, and a replicated Linear inside a
+    # group -- reached their shortcut on the totals alone.
+    if len(out_partitions) != len(roles):
+        raise ValueError(
+            f"{shape}. The checkpoint declares {len(roles)} roles "
+            f"{[name for name, _ in roles]} but the layer asks for {len(out_partitions)} output "
+            f"partitions {list(out_partitions)}; a fused container's members and a layer's "
+            f"output partitions are the same list in the same order, so the two disagree about "
+            f"how this module is fused -- which is a checkpoint/serve mismatch, not a shard.")
+    if out_size == rows:
+        # EQUAL TOTALS ARE NOT EQUAL BOUNDARIES.  A whole output is every
+        # role's rows, member by member: a container that stacks q/k/v as
+        # [4, 8, 4] and a layer that reads [8, 4, 4] agree on 16 and on
+        # nothing else, and the load succeeds serving four q rows and the
+        # first four k rows as this layer's q.  Nothing downstream sees it --
+        # the decoder returns the role arrangement it was handed, and the
+        # sidecar agrees with the wire it was written beside -- so the
+        # boundaries are compared HERE, where both lists are in hand.
+        disagree = [(name, role_rows, out)
+                    for (name, role_rows), out in zip(roles, out_partitions)
+                    if out != role_rows]
+        if disagree:
+            name, role_rows, out = disagree[0]
+            raise ValueError(
+                f"{shape}, which is every output row of the module -- but not at the "
+                f"checkpoint's boundaries. Its role {name!r} is {role_rows} rows on the wire and "
+                f"this rank asks for {out} of them; the declared roles stack as "
+                f"{[(n, r) for n, r in roles]} and the layer's output partitions are "
+                f"{list(out_partitions)}. Equal totals are not equal boundaries: a container "
+                f"decoded at the wire's boundaries and consumed at the layer's serves one role's "
+                f"rows as another's, which no decoder can detect. The checkpoint and the serve "
+                f"disagree about how this module is fused.")
 
     if out_size == rows and in_size == columns:
         # Whole module.  True at tp_size == 1, and also on a replicated Linear
@@ -476,13 +519,6 @@ def plan_shard(prefix: str, *, roles, columns: int, out_partitions, in_size: int
         raise ValueError(
             f"{shape}, which cuts BOTH axes. A vLLM parallel Linear splits exactly one: the "
             f"output (ColumnParallel and its merged/QKV forms) or the input (RowParallel).")
-    if len(out_partitions) != len(roles):
-        raise ValueError(
-            f"{shape}. The checkpoint declares {len(roles)} roles "
-            f"{[name for name, _ in roles]} but the layer asks for {len(out_partitions)} output "
-            f"partitions {list(out_partitions)}; a fused container's members and a layer's "
-            f"output partitions are the same list in the same order, so the two disagree about "
-            f"how this module is fused -- which is a checkpoint/serve mismatch, not a shard.")
     placed = []
     for (name, role_rows), out in zip(roles, out_partitions):
         if out <= 0 or role_rows % out:
@@ -652,6 +688,17 @@ def _reparse_shard(parsed, sharded, label: str):
     shape would then get the whole module's.  Serialising is the same round trip
     ``tests/test_slice_unit.py::test_shard_round_trips_through_bytes`` proves
     exact, and it costs one write and one parse per role, once, at load.
+
+    THE PARENT'S ENCODER IS THE SHARD'S ENCODER.  ``fixture_id`` is passed
+    EXPLICITLY, including when the parent carries none: cutting restricts
+    planes the parent's encoder already produced and re-encodes nothing, so the
+    identity a shard names must be the one those bytes were written under.
+    ``build_unit_artifact``'s default asks ``encoder_identity`` for THIS
+    build's digest, which made every shard of an older artifact claim an
+    encoder that never saw it -- and made a load compute that digest, over a
+    cold fixture set, to attest bytes it had no part in (tessera#236).  The
+    same holds in the other direction: an untagged parent's ``None`` is
+    forwarded rather than promoted to a current identity it never carried.
     """
     from tessera.trellis import ConvCode
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
@@ -661,7 +708,8 @@ def _reparse_shard(parsed, sharded, label: str):
         sharded, label, parsed.forests, int(manifest.branch.root_q256),
         parsed.code or ConvCode(),
         superblock=int(manifest.geometry.superblock_columns),
-        container=manifest.branch.container)
+        container=manifest.branch.container,
+        fixture_id=manifest.encoder_fixture_id)
     return parse_unit_artifact(blob, device=parsed.unit.body_bits.device)
 
 
