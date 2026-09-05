@@ -51,6 +51,7 @@ DECODE_COMPILED = "docs/measurements/tessera-compiled-decode-kl-r6-2026-09-04.md
 BF16 = "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
 LFM = "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
 MOE_DEBT = "docs/measurements/moe-evidence-debt-2026-09-04.md"
+MOE_SMOKE = "docs/measurements/moe-smoke-recorded-2026-09-05.md"
 
 
 def _bound(regime, modes, receipt):
@@ -118,18 +119,20 @@ _EVIDENCE = {
         "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], BF16)],
         "smoke": _uncontrolled("recorded", BF16)},
     # Routed MoE (LFM2.5-8B-A1B, q1024): prefill top-1024 bound, eager,
-    # resident; the decode regime has the census alone.  The greedy smoke was
-    # repetitive AND the BF16 source repeats identically on the same prompt
-    # (MOE_DEBT section 7), so the symptom is shared with the reference and the
-    # cells say so where a gate reads rather than in prose (#195).
+    # resident; the decode regime has the census alone.  The campaign's greedy
+    # smoke was repetitive and the BF16 source repeated identically (MOE_DEBT
+    # section 7, contract v18) -- a shared symptom, not a positive record.
+    # MOE_SMOKE is the positive record (#198, contract v21): through the
+    # checkpoint's own chat template both arms answer without a cycle, so the
+    # cells record the smoke the way the two BF16 cells record theirs.  The
+    # v8 control vocabulary attributes a symptom; a recorded smoke has none,
+    # so the control is null and the attribution the validator derives.
     "tessera_e4m3_k1_routed_moe_sm121_decode_resident": {
         "grade": "route_only", "kl": [],
-        "smoke": {"status": "repetitive", "receipt": LFM,
-                  "attribution": "shared_with_reference", "control": _BF16_CONTROL}},
+        "smoke": _uncontrolled("recorded", MOE_SMOKE)},
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident": {
         "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], LFM)],
-        "smoke": {"status": "repetitive", "receipt": LFM,
-                  "attribution": "shared_with_reference", "control": _BF16_CONTROL}},
+        "smoke": _uncontrolled("recorded", MOE_SMOKE)},
 }
 
 
@@ -179,15 +182,33 @@ def test_no_cell_claims_full_vocabulary_kl(contract):
 
 def test_the_routed_moe_cells_are_now_distinguishable_from_the_dense_ones(contract):
     """The defect #133 names, closed on the shipped file: a gate reading
-    ``evidence`` alone tells the MoE decode cell (census only, repetitive
-    smoke) from a dense batch cell (a bound in its own regime)."""
+    ``evidence`` alone tells the MoE decode cell (census only, a recorded
+    smoke) from a dense batch cell (a bound in its own regime) and from the
+    six dense E4M3 cells that never ran a smoke."""
     cells = _cells(contract)
     moe_decode = cells["tessera_e4m3_k1_routed_moe_sm121_decode_resident"]["evidence"]
     moe_batch = cells["tessera_e4m3_k1_routed_moe_sm121_batch_resident"]["evidence"]
     assert moe_decode["grade"] == "route_only"
     assert moe_batch["grade"] == "kl_lower_bound"
-    assert moe_decode["smoke"]["status"] == moe_batch["smoke"]["status"] == "repetitive"
+    assert moe_decode["smoke"]["status"] == moe_batch["smoke"]["status"] == "recorded"
+    assert moe_decode["smoke"]["receipt"] == moe_batch["smoke"]["receipt"] == MOE_SMOKE
     assert moe_batch["kl"][0]["execution_modes"] == ["eager"]
+
+
+def test_the_routed_moe_smoke_is_a_positive_record_the_source_shares(contract):
+    """#198: a control showing the reference degenerates too removed the
+    evidence against the route without adding any for it, and a status-only
+    consumer kept refusing -- rightly.  The word moves only on a Tessera
+    measurement: the receipt named here records, on BOTH arms, a prompt with
+    no cycle (its ``positive_record``), and the campaign's own prompt still
+    reads ``repetitive`` on both arms in the same receipt."""
+    receipt = (ROOT / MOE_SMOKE).read_text()
+    assert "`positive_record` (campaign form, both arms `recorded`): P4, P5, P6." in receipt
+    assert "| P0 | campaign | 16 | `repetitive` L=16 p=2 s=16 finish=`length` | " \
+           "`repetitive` L=16 p=2 s=16 finish=`length` | yes |" in receipt
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["structure"] == "routed_moe":
+            assert cell["evidence"]["smoke"]["status"] == "recorded", cell["id"]
 
 
 def test_only_the_streamed_e4m3_decode_cell_has_a_decode_regime_bound(contract):
@@ -356,24 +377,23 @@ def _smoke(status=None, control=None, **over):
 
 
 def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
-    """The defect #195 names, closed where a gate reads it.
+    """The field #195 added, and where the shipped table stands on it.
 
-    Both routed-MoE cells record `repetitive`, and the BF16 SOURCE returns the
-    identical completion on the identical prompt, so the repetition is the
-    model and the prompt.  A consumer refusing the lane on `status` alone was
-    right under its rule and wrong about the runtime; `attribution` is the
-    field that carries the decision.
+    Contract v18 put the BF16 SOURCE's identical completion on the two
+    routed-MoE cells as a control, so a consumer could tell a shared symptom
+    from a route-specific one.  Contract v21 (#198) retired that control from
+    the cells with the symptom: a recorded smoke has nothing for a control's
+    outcome vocabulary to attribute (the arms' recorded completions are not
+    identical, and `different_completion` was written for a symptom the
+    reference lacks).  So today no cell carries a control and every cell is
+    `unattributed` -- the derivation exercised below is what a future
+    `repetitive` cell with a reference arm reads.
     """
     for cell in contract["lane_eligibility"]["cells"]:
         smoke = cell["evidence"]["smoke"]
-        if cell["structure"] != "routed_moe":
-            assert smoke["control"] is None and smoke["attribution"] == "unattributed", cell["id"]
-            continue
-        assert smoke["status"] == "repetitive"
-        assert smoke["attribution"] == "shared_with_reference", cell["id"]
-        assert smoke["control"] == {"reference": "bf16_source",
-                                    "outcome": "identical_completion",
-                                    "receipt": MOE_DEBT}, cell["id"]
+        assert smoke["control"] is None and smoke["attribution"] == "unattributed", cell["id"]
+        if cell["structure"] == "routed_moe":
+            assert smoke["status"] == "recorded", cell["id"]
 
 
 def test_the_stored_attribution_is_the_derived_one(contract):
