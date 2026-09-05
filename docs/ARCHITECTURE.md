@@ -193,20 +193,30 @@ GEMM's one input tensor actually spans. A max-join picks the smallest
 calibrated range and silently clips every wider member's peak activations;
 the exporter took the max until RobTand/prismaquant#196 flagged the
 divergence against PrismaQuant's `unify_fused_sibling_input_global_scales`
-(min-scale = max-amax, the same rule at calibration time). The stock twin
+(min-scale = max-amax, the same join *direction* at calibration time;
+PrismaQuant's join applies no divergence bound of its own). The stock twin
 carries the joined value on every member for the same reason: vLLM reduces
 whatever the members carry into one scale per fused module -- warning, not
 refusing, when they differ -- and the twin exists to execute the A side this
 export serves. The join accepts only members that agree to within one bf16
 ULP (`fused.FUSED_INPUT_SCALE_ULP` = `torch.finfo(torch.bfloat16).eps` =
-2^-7): the route casts every A tensor to bf16 before the quantiser sees it,
-so a calibrated amax is an observation of a bf16 tensor and scales from ONE
-calibration land within one step of that lattice. A wider spread is two
-calibrations -- mixed draws, mixed policies, or a group never calibrated
-jointly -- and is refused where the bytes are decided rather than joined
-into a distribution nobody measured; the fix is a joint recalibration (one
-amax over the members' shared input, which is what both repos' calibrators
-already emit), not a wider bound.
+2^-7). That bound is **declared policy, not a derivation** (#283): what it
+rests on is that the route casts every A tensor to bf16 before the
+quantiser sees it, so two spellings of ONE calibrated amax agree to within a
+step of that lattice (a single rounding moves an F32 value by at most half
+a step; one full step is the line drawn one doubling outside anything one
+measurement produces). It describes no calibrator: PrismaQuant captures the
+shared input once and writes one value on every member, so its donors
+arrive with spread 0 and never meet the gate; members captured from
+different sample subsets have a spread bounded by nothing, and that is the
+donor the gate exists to refuse. Tessera is stricter here than PrismaQuant's
+join by choice -- it serves one measured distribution or none. A spread
+beyond the bound is two calibrations (mixed draws, mixed policies, or a
+group never calibrated jointly) and is refused where the bytes are decided
+rather than joined into a distribution nobody measured; the fix is a joint
+recalibration (one amax over the members' shared input, which is what both
+repos' calibrators already emit), not a wider bound. Changing the policy
+means changing the constant and this paragraph in one commit.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 

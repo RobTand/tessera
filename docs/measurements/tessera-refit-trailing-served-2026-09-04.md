@@ -1,9 +1,12 @@
 # The trailing refit's objective, served (2026-09-04)
 
-**Status: the exporter flag, the pair instrument and the encoder-drift finding
-are measured and stand. The served A/B is IN FLIGHT — the three `PENDING`
-sections below are produced by one pool action, not by hand, and no number in
-them may be quoted until they are filled.**
+**Status: measured and closed. The exporter flag, the pair instrument and the
+encoder-drift finding are measured and stand; the served A/B completed, and
+its receipts are retained in
+[branch-recovery-2026-09-05.md](branch-recovery-2026-09-05.md), which
+supersedes the three `PENDING` sections below (kept as history of the queued
+run; quote numbers from the recovery receipt, not from them). The closing
+note is at the end of this document.**
 
 The action is `experiments/refit_trailing_run_all.sh`, queued on the PrismaBuild
 pool twice — `aadd46b6525d…` at `gpu 1 / mem_gb 40 / cpu 4`, and

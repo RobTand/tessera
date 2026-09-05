@@ -223,16 +223,26 @@ def shared_lut_global(
     )
 
 
-#: One bf16 ULP, relative -- the derived bound between "one calibration,
-#: spelled twice" and "two calibrations".  The NVFP4 route casts every A
-#: tensor to bf16 before the native quantiser sees it
+#: One bf16 ULP, relative -- the DECLARED bound on how far a fused module's
+#: members may disagree on ``input_global_scale`` before the join refuses.
+#: This is policy, not a derivation (RobTand/tessera#283): no calibrator's
+#: producer yields 2^-7 as *the* line.  What it rests on: the NVFP4 route
+#: casts every A tensor to bf16 before the native quantiser sees it
 #: (``serving.nvfp4_route``; ``native_ops.native_fp4_quant`` refuses anything
-#: but BF16/FP16), so a calibrated amax is an observation of a bf16 tensor:
-#: any arithmetic that faithfully read the same tensor lands within one step
-#: of its lattice, and ``input_global_scale`` (capacity over amax) inherits
-#: the same relative bound.  A wider spread cannot be an observation of one
-#: tensor.  ``torch.finfo(torch.bfloat16).eps`` = 2^-7, the lattice's
-#: relative step -- a dtype's precision, not a chosen tolerance.
+#: but BF16/FP16), so a member's amax describes a tensor of bf16 resolution,
+#: and two spellings of ONE calibrated amax (capacity over amax inherits the
+#: relative bound) cannot differ by more than a step of that lattice -- a
+#: single rounding through bf16 moves an F32 value by at most half a step,
+#: so one full step is the line drawn one doubling outside anything one
+#: measurement can produce.  What it does not describe: a calibrator that
+#: captures the shared input once and writes one amax on every member
+#: (PrismaQuant's ``unify_fused_sibling_input_global_scales``, which joins
+#: with no bound of its own) arrives with spread exactly 0 and never meets
+#: this gate; members captured from different sample subsets have a spread
+#: bounded by nothing, and that donor is what the gate exists to refuse.
+#: Tessera is therefore stricter than PrismaQuant's join by choice: it
+#: serves one measured distribution or none.  Change the policy here, with
+#: ARCHITECTURE.md §2 in the same commit; do not widen it in a caller.
 FUSED_INPUT_SCALE_ULP = float(torch.finfo(torch.bfloat16).eps)
 
 
@@ -252,14 +262,20 @@ def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" =
     checkpoints whose calibrators already unified the members, warning when
     they differ: a degenerate no-op over equal values, not a join rule.
     PrismaQuant's ``unify_fused_sibling_input_global_scales`` states the same
-    min-scale / max-amax rule at calibration time.)
+    join *direction* -- min scale, max amax -- at calibration time; it
+    applies no divergence bound of its own, unifying any spread and writing
+    the joined value on every member, so a PrismaQuant donor arrives here
+    with spread 0.)
 
     Members that diverge beyond ``FUSED_INPUT_SCALE_ULP`` are refused rather
-    than joined: they are two calibrations (mixed draws, mixed policies, or a
-    group that was never calibrated jointly), and a joined value would serve
-    a distribution nobody measured.  The fix is a joint recalibration -- one
-    amax over the members' shared input, which is what both calibrators
-    already emit -- not a wider tolerance here.
+    than joined.  That bound is declared policy, stricter than PrismaQuant's
+    join (see the constant; RobTand/tessera#283): a spread wider than bf16
+    resolution is not one measured amax spelled twice, it is two
+    calibrations (mixed draws, mixed policies, or a group that was never
+    calibrated jointly), and a joined value would serve a distribution nobody
+    measured.  The fix is a joint recalibration -- one amax over the members'
+    shared input, which is what both calibrators already emit -- not a wider
+    tolerance here.
     """
     if not scales:
         raise GrammarError("shared_input_global_scale needs at least one member scale")
@@ -279,11 +295,12 @@ def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" =
         spread = ", ".join(f"{n}={v:g}" for n, v in zip(names, values))
         raise GrammarError(
             "fused members' input_global_scale values diverge beyond one bf16 "
-            f"ULP (max/min = {high / low:.6g} > 1 + 2^-7): {spread}. The members "
-            "of a fused module quantise ONE bf16 input tensor, so scales from "
-            "one calibration agree to within one step of its lattice; this "
-            "spread is two calibrations, and a joined value would serve a "
-            "distribution nobody measured. Recalibrate the group jointly -- "
-            "one amax over the shared input, the minimum scale -- rather than "
-            "widening this bound.")
+            f"ULP (max/min = {high / low:.6g} > 1 + 2^-7, the declared bound "
+            f"FUSED_INPUT_SCALE_ULP): {spread}. The members of a fused module "
+            "quantise ONE bf16 input tensor, so two spellings of one calibrated "
+            "amax agree to within one step of its lattice; this spread is two "
+            "calibrations, and a joined value would serve a distribution "
+            "nobody measured. Recalibrate the group jointly -- one amax over "
+            "the shared input, the minimum scale -- rather than widening this "
+            "bound.")
     return low
