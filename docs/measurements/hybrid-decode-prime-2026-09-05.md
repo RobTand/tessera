@@ -19,7 +19,7 @@ A measurement on any other digest attests a different runtime.
 | model | `/mnt/shared/models/LFM2.5-8B-A1B-BF16` (BF16 source, served as `kl-target`) |
 | corpus contract | `/mnt/shared/tessera-runs/ts5/lfm25/teacher-gate/corpus_n8_s512.json`, sha256 `c8eeabde8fce06c78073d5f2c3783ed217d2dd96f6f98a6a565920b1e7ce6ff5` |
 | logs | `/home/rob/tessera-runs/ts192/` (`probe_align.log`, `prime_variants_align.log`, `prime_anomaly_align.log`, `prime_512_align.log`, `probe_all.log`, `serve_align.log`, `serve_all.log`) |
-| instrument | `/home/rob/dq-runs/kl_tool.py`, md5 `8d70629f6df55e560fe5ad845e3a66dd` on sparky **and** sparklina after the change (`c88a91b7f300870272fedb59235c40ca` before it); `kl_estimator.py` unchanged at `0a48e5c8014f9d7f91cc89b8866830cb` |
+| instrument | `/home/rob/dq-runs/kl_tool.py`: md5 `c88a91b7f300870272fedb59235c40ca` before the change, `8d70629f6df55e560fe5ad845e3a66dd` **as the §5 dump was taken**, `a2a5d1a214b4a52b4f5067bfd51d17ab` now on sparky and sparklina. The last step is one line, outside the decode path: the `--decode-prime`-without-`--regime decode` refusal reads the flag as `getattr(args, "decode_prime", False)` so that a hand-built `Namespace` caller cannot raise. It changes no request and no number. `kl_estimator.py` unchanged throughout at `0a48e5c8014f9d7f91cc89b8866830cb` |
 
 Serve command (arm 1; arm 2 adds `--mamba-cache-mode all`):
 
