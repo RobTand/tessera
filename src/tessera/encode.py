@@ -2287,6 +2287,23 @@ def encode_unit(
             f"{rows} rows is not a whole number of arity-{arity} tuples; a "
             "k-tuple code spans k consecutive rows and cannot straddle the edge"
         )
+    # Two refusals stand between a caller and a released encode, and this one
+    # goes first because it is the substantive one: a k-tuple code stands for
+    # k positions, so there is no per-position code for an override to
+    # replace, and no width of RELEASE plane fixes that.  Asked after the
+    # width rule below, every tuple grid a recipe can select is told its
+    # problem is plane width instead -- E2M1x2 is 256 codes -- which is a
+    # reason a wider plane would remove and this one would not, and this
+    # refusal is left reachable only on a hand-built narrow tuple grid.
+    # Encoder-local on purpose: both readers carry their own arity refusal,
+    # and the width rule is the one tessera#180 gave a single home.
+    if released_positions and arity > 1:
+        raise GrammarError(
+            "release is not defined at arity > 1: an override replaces one "
+            "position's code, and a k-tuple code has no per-position code to "
+            "replace. The k-tuple trellis is what release was the alternative "
+            "to -- see docs/measurements/release-vs-tuple-trellis.md."
+        )
     # A release stores a whole payload code and the RELEASE plane is one fixed
     # width whatever the grid, so release is defined only where the grid's
     # codes fit it.  The rule and its words live in ``grammar`` because the two
@@ -2809,15 +2826,10 @@ def encode_unit(
     # Stage B: release, in S9's canonical order -- descending |decoded value|
     # within the superblock, on the PRE-release decode so the decoder can
     # reproduce the order from bytes it already has.
+    # Both of release's refusals -- arity, and a grid wider than the plane --
+    # were made at the top, before any of the work above ran.
     release_index = torch.zeros(0, dtype=torch.long, device=device)
     release_code = torch.zeros(0, dtype=torch.long, device=device)
-    if released_positions and arity > 1:
-        raise GrammarError(
-            "release is not defined at arity > 1: an override replaces one "
-            "position's code, and a k-tuple code has no per-position code to "
-            "replace. The k-tuple trellis is what release was the alternative "
-            "to -- see docs/measurements/release-vs-tuple-trellis.md."
-        )
     if released_positions:
         values = grid_value_table(grid, device)
         decoded = values[codes] * scale

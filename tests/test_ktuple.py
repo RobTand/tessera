@@ -27,6 +27,7 @@ from tessera.alphabet import (
 from tessera.decode import decode_codes_mixed, reconstruct_unit
 from tessera.encode import encode_unit, grid_value_table, grid_vector_table, viterbi_columns
 from tessera.errors import GrammarError
+from tessera.grammar import RELEASE_BITS
 from tessera.manifest import RotationState
 from tessera.trellis import TCQ, ConvCode
 
@@ -214,16 +215,58 @@ def test_ktuple_beats_the_scalar_trellis_at_its_own_rate_ceiling():
 # --- fail-closed guards ---------------------------------------------------
 
 
-def test_release_is_refused_at_arity_above_one():
+#: A tuple grid narrow enough that its codes fit the RELEASE plane, so the
+#: only thing standing between it and a released encode is its arity.  Built
+#: from a four-value base rather than declared at 16 codes, so the size below
+#: is the construction's and not a number this file chose.
+_NARROW_PAIR = tuple_grid(
+    PayloadGrid(name="quad", values=(-1.0, -0.5, 0.5, 1.0)), 2
+)
+
+
+@pytest.mark.parametrize(
+    "grid", [tuple_grid(E2M1_GRID, 2), _NARROW_PAIR], ids=["shipping", "narrow"]
+)
+def test_release_is_refused_at_arity_above_one(grid):
+    """A tuple grid is refused release for its *arity*, never for its width.
+
+    Two refusals stand between a caller and a released encode -- ``arity > 1``
+    and a grid wider than the RELEASE plane -- and the arity one is the
+    substantive one: a k-tuple code stands for k positions, so there is no
+    per-position code for an override to replace, and no width of plane fixes
+    that.  Asked in the other order, every tuple grid a recipe can select is
+    told its problem is plane width (E2M1x2 is 256 codes), which is a reason
+    that would go away if the plane were widened and this one would not; and
+    the arity refusal is then reachable only on a hand-built narrow grid,
+    which is how it went unpinned -- ``grep "not defined at arity" tests/``
+    found nothing before this test (tessera#183, M8).
+
+    The two cases are the two sides of that ordering: ``shipping`` is wide
+    enough that both refusals apply and only the order decides which speaks,
+    ``narrow`` is the one the arity check was already reachable on.
+    """
     device = _device()
-    grid = tuple_grid(E2M1_GRID, 2)
-    forests = {7: build_forest(7, grid=grid)}
+    assert grid.arity > 1
+    rate = grid.rate_cap
+    forests = {rate: build_forest(rate, grid=grid)}
     weights = torch.randn(16, 32, device=device) * 0.02
-    with pytest.raises(GrammarError, match="release is not defined"):
+    with pytest.raises(GrammarError, match="not defined at arity"):
         encode_unit(
-            weights, forests, (7,) * 32, CC, rotation=RotationState.NONE,
+            weights, forests, (rate,) * 32, CC, rotation=RotationState.NONE,
             with_diagonals=False, completion=0, released_positions=4,
         )
+
+
+def test_the_two_release_refusals_are_asked_in_the_substantive_order():
+    """The ordering the test above pins, stated over the grids themselves.
+
+    ``shipping`` is wider than the RELEASE plane and ``narrow`` is not, so the
+    width refusal covers one of the two arity cases and the arity refusal
+    covers both.  That is what makes the order a decision rather than an
+    accident of which grids exist.
+    """
+    assert tuple_grid(E2M1_GRID, 2).size > (1 << RELEASE_BITS)
+    assert _NARROW_PAIR.size <= (1 << RELEASE_BITS)
 
 
 def test_rows_must_be_a_whole_number_of_tuples():

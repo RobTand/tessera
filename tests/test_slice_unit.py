@@ -524,6 +524,118 @@ def test_reslice_record_names_the_original(cpu_units, label, axis):
     assert torch.equal(reconstruct_unit(back.unit, back.forests, back.code), window)
 
 
+@pytest.fixture(scope="module")
+def cpu_released_unit():
+    """A CPU parent that actually carries a RELEASE plane.
+
+    ``cpu_units`` builds both of its parents at ``released=0``, so every
+    record-frame test above runs over an eight-plane unit and the ninth plane
+    -- whose restriction is the only thing a cut does to a plane that is not a
+    slice -- is serialised by no re-slice test at all.  The released unit
+    otherwise lives only in ``units``, which is CUDA-gated, and
+    ``test_reslice_equals_direct_slice`` compares reconstructions rather than
+    bytes.  That is the gap tessera#183 (M11) names.
+
+    Three things about the shape, each so the test above cannot pass
+    vacuously.  32 rows rather than ``cpu_units``' 64: the cut granularity is
+    ``arity * span`` = 2, so two depths of halving land legally, and the CPU
+    encode is the expensive part of this file.  512 columns: a RELEASE plane's
+    counts are **per superblock**, and over one superblock that vector is a
+    scalar which binning and a recomputed quota agree on whatever either
+    means.  And a row ramp, opposed between the two superblocks, so the two
+    disagree in fact and not just in principle -- on a plain Gaussian the
+    restricted set splits evenly and a quota reproduces it by luck.
+
+    Rows are the only axis a re-slice can use here: a RELEASE plane raises the
+    column granularity to the superblock (``shard_granularity``), so the legal
+    column cuts of 512 columns are the two halves and neither halves again.
+    """
+    grid = GRIDS["E2M1"]
+    rows, cols, superblock = 32, 512, 256
+    q256 = tcq_cap_q256(grid)
+    recipe = wire_recipe(grid, q256)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    ramp = torch.linspace(0.25, 4.0, rows).unsqueeze(1)
+    weight[:, :superblock] *= ramp
+    weight[:, superblock:] *= ramp.flip(0)
+    rates, forests = _plan_for(grid, q256, cols, recipe.body, None)
+    unit = encode_unit(
+        weight, forests, rates, CODE, completion=0, released_positions=48,
+        span=recipe.span, scale_plane=recipe.scale_plane, body=recipe.body,
+        scale_refit=2,
+    )
+    _m, _r, blob = build_unit_artifact(
+        unit, "e2m1-tcq-lut-release", forests, q256 * grid.arity, CODE)
+    return unit, forests, grid, blob
+
+
+def test_a_reslice_of_a_released_shard_serialises_its_record(cpu_released_unit):
+    """A re-sliced released shard writes the direct cut's bytes, RELEASE plane
+    and all.
+
+    Coverage, not a bug: the reviewer looked for a defect behind this gap and
+    found none.  ``slicing._slice_release`` bins the already-restricted index
+    per superblock rather than recomputing a quota from the shard's extent, so
+    restricting twice is restricting once and composition is correct by
+    construction.  What was missing was any test that *serialised* one, which
+    is what would catch a future change to that reasoning.
+    """
+    _unit, forests, grid, blob = cpu_released_unit
+    parsed = _cpu_parse(blob)
+    geometry = parsed.manifest.geometry
+    rows, cols = geometry.rows, geometry.columns
+    assert parsed.unit.release_index.numel(), "this case exists to carry releases"
+    row_gran, col_gran = shard_granularity(
+        parsed.unit, geometry.superblock_columns, grid.arity
+    )
+    # The premises of the row-only cut over two superblocks, derived rather
+    # than asserted.
+    assert col_gran == geometry.superblock_columns
+    assert superblock_count(cols, col_gran) > 1
+    quarter = rows // 4
+    assert quarter % row_gran == 0
+
+    half = slice_unit(parsed, rows=(rows // 2, rows))
+    composed = slice_unit(
+        half, rows=(quarter, 2 * quarter), arity=grid.arity, code=parsed.code,
+        grid=grid, superblock=geometry.superblock_columns,
+    )
+    direct = slice_unit(parsed, rows=(rows // 2 + quarter, rows))
+    # The reviewer's reason the composition is correct, made observable: the
+    # shard's per-superblock counts are the parent's set *binned*, not a quota
+    # recomputed from the shard's own total.  This weight makes the two
+    # disagree, so what follows is not a restatement of ``release_quota``.
+    assert tuple(direct.release_counts) != tuple(
+        release_quota(int(direct.release_index.numel()), cols, col_gran)
+    )
+    m_composed, _r, composed_blob = _build_shard(composed, forests, parsed, "q")
+    m_direct, _r, direct_blob = _build_shard(direct, forests, parsed, "q")
+    want = _origin_record(
+        parsed, rows // 2 + quarter, 0, m_direct.shard.state_bits
+    )
+    assert m_composed.shard == want
+    assert m_direct.shard == want
+    assert composed_blob == direct_blob
+
+    # The plane is on the wire and it is the parent's set restricted -- read
+    # back from the shard's own bytes, so a shard that dropped or renumbered
+    # its releases could not pass by agreeing with the other shard object.
+    low = rows // 2 + quarter
+    expected = {
+        (flat // cols - low) * cols + flat % cols
+        for flat in parsed.unit.release_index.tolist()
+        if flat // cols >= low
+    }
+    assert expected, "the cut has to keep some of the parent's releases"
+    back = _cpu_parse(composed_blob)
+    assert set(back.unit.release_index.tolist()) == expected
+    full = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    assert torch.equal(
+        reconstruct_unit(back.unit, back.forests, back.code), full[low:]
+    )
+
+
 def test_the_reslice_the_issue_refused_builds(cpu_units):
     """tessera#140, first reproduction: rows (32, 64) then (16, 32) is the
     legal shard [48, 64) of a 64-row parent, and it was refused as running
@@ -843,6 +955,117 @@ def test_release_is_refused_at_read_on_a_grid_wider_than_the_plane(body, plane, 
 
     with pytest.raises(GrammarError, match=f"stores {RELEASE_BITS} bits"):
         parse_unit_artifact(blob)
+
+
+@pytest.mark.parametrize(
+    "body,plane",
+    [(BodyKind.WINDOW, ScalePlaneKind.CHANNEL), (BodyKind.TCQ, ScalePlaneKind.LUT)],
+    ids=["window", "tcq"],
+)
+def test_the_release_element_width_is_one_number(monkeypatch, body, plane):
+    """Move ``grammar.RELEASE_BITS`` and the bytes move with the descriptor.
+
+    The RELEASE plane's element width is derived once --
+    ``planes.NORMATIVE_ELEMENT_BITS[RELEASE]`` is ``RELEASE_BITS`` -- and was
+    then spelled ``4`` at the three sites that actually touch the bits: the
+    writer's ``pack_uniform`` and both readers' ``unpack_uniform``
+    (tessera#183, M10).  Three literals agreeing with a constant are not the
+    same object as the constant, and the failure mode is the one the audit
+    names: the descriptor says one width, the payload is packed at another,
+    and the two halves of the wire disagree.
+
+    Widening the constant is exactly the move that catches it, so the test
+    makes it: the three homes of the number are patched together and the
+    artifact has to round-trip.  Nothing here is a wire change -- the patch is
+    undone with the test, and at the shipping ``RELEASE_BITS`` the bytes are
+    what they always were, which
+    ``test_encoded_unit_bytes_match_encoder_identity_baseline`` pins.
+
+    E2M1 rather than a wider grid, and codes the grid can name, because
+    widening the plane widens ``grammar.release_defined_on`` with it: the
+    admissible grids are derived from ``RELEASE_BITS`` (tessera#180), so a
+    grid that is undefined at 4 bits is undefined at 5 too, and both readers
+    would refuse the artifact before they ever unpacked the plane.  The
+    premise is asserted from that predicate rather than restated.
+
+    Both readers are covered because there are two: ``parse_unit_artifact``
+    reads a TCQ unit's RELEASE plane and ``_read_window_unit`` reads a window
+    unit's.  The unit is encoded with ``released_positions=0`` and released by
+    hand so the codes are this test's and not an argmin's; they are distinct
+    and non-zero, so a reader left at the old width reads different numbers
+    out of the same bits rather than the same ones by luck.
+    """
+    from tessera import grammar, planes as planes_module, unit_artifact
+
+    widened = RELEASE_BITS + 1
+    monkeypatch.setattr(grammar, "RELEASE_BITS", widened)
+    monkeypatch.setitem(
+        planes_module.NORMATIVE_ELEMENT_BITS, PlaneKind.RELEASE, widened
+    )
+    monkeypatch.setattr(unit_artifact, "RELEASE_BITS", widened, raising=False)
+
+    grid = GRIDS["E2M1"]
+    assert release_defined_on(grid), "the widened plane still has to name this grid"
+    rows, cols, superblock, released, q256 = 8, 256, 256, 8, 512
+    rates, forests = _plan_for(grid, q256, cols, body, None)
+    torch.manual_seed(7)
+    weight = torch.randn(rows, cols) * 0.02
+    extra = {}
+    if body is BodyKind.WINDOW:
+        recipe = wire_recipe(grid, q256)
+        extra = dict(
+            window_bits=max(rates), window_seed=recipe.window_seed,
+            window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma,
+        )
+    unit = encode_unit(
+        weight, forests, rates, CODE, completion=0, released_positions=0,
+        span=1, scale_plane=plane, body=body, scale_refit=2, **extra,
+    )
+
+    forest = grid if body is BodyKind.WINDOW else forests
+    code = None if body is BodyKind.WINDOW else CODE
+    pre = decode_codes_mixed(unit, forest, code, apply_release=False)
+    decoded = grid_value_table(grid)[pre.int()] * unit_scale_field(unit, rows, cols)
+    unit.release_index = _canonical_release_order(decoded, cols, superblock, released)
+    unit.release_code = torch.arange(1, released + 1)
+    assert int(unit.release_code.max()) < grid.size, "codes the grid can name"
+
+    _m, _r, blob = build_unit_artifact(
+        unit, "widened-release", forest, q256 * grid.arity, code
+    )
+    parsed = parse_unit_artifact(blob)
+    assert torch.equal(parsed.unit.release_code.cpu(), unit.release_code.cpu())
+    assert torch.equal(parsed.unit.release_index.cpu(), unit.release_index.cpu())
+
+
+def test_the_block_scale_plane_widths_are_one_number(monkeypatch):
+    """The same statement as above, for the two block scale planes.
+
+    Found while fixing the RELEASE plane's copy of it (tessera#183, M10) and
+    fixed here rather than filed: ``pack_uniform(unit.scale_base, 8)`` and
+    ``pack_uniform(unit.scale_refine, 4)`` restate
+    ``planes.NORMATIVE_ELEMENT_BITS`` at the writer, and each reader restates
+    it once more.  Unlike RELEASE these two have no constant in ``grammar`` to
+    point at, so the descriptor table -- which is what a reader consults and
+    what ``layout.build_planes`` charges the bytes against -- is their one
+    home.
+
+    Both widths move together because one unit carries both planes, and an
+    S6b unit is the only kind that does: a LUT plane carries no SCALE_BASE and
+    a CHANNEL plane carries neither.
+    """
+    from tessera import planes as planes_module
+
+    for kind in (PlaneKind.SCALE_BASE, PlaneKind.SCALE_REFINE):
+        monkeypatch.setitem(
+            planes_module.NORMATIVE_ELEMENT_BITS, kind,
+            planes_module.NORMATIVE_ELEMENT_BITS[kind] + 1,
+        )
+    unit, _forests, _grid, blob = _s6b_unit(device="cpu")
+    parsed = _cpu_parse(blob)
+    assert unit.scale_base.numel() and unit.scale_refine.numel()
+    assert torch.equal(parsed.unit.scale_base.cpu(), unit.scale_base.cpu())
+    assert torch.equal(parsed.unit.scale_refine.cpu(), unit.scale_refine.cpu())
 
 
 def test_release_is_refused_on_a_grid_wider_than_the_release_plane():
