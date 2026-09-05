@@ -40,6 +40,7 @@ from .planes import (
     CountGranularity,
     PlaneDescriptor,
     PlaneKind,
+    PlaneLayout,
     Storage,
     plane_order,
 )
@@ -524,9 +525,10 @@ class ShardOrigin:
 class TerminalRecord:
     """One concrete, exactly-priced terminal.
 
-    `plane_elements` is the per-plane element count *in canonical plane order*
-    -- the "complete per-plane count arrays" of Codex round-6 P0-1.  A plane
-    absent from this terminal carries zero.
+    `plane_elements` is the per-plane element count *in the unit's wire
+    order* (``Manifest.plane_order``: by layout, and by whether the unit is a
+    shard with a state plane) -- the "complete per-plane count arrays" of
+    Codex round-6 P0-1.  A plane absent from this terminal carries zero.
     """
 
     slot_id: str
@@ -659,11 +661,22 @@ class Manifest:
     # module encodes, and encoding imports this one); the exporter supplies
     # the value and a test pins the two together.
     encoder_fixture_id: "bytes | None" = None
+    # Schema minor 7 (2026-09-05).  ``layout`` is which wire order and which
+    # COMPLETION cut the planes use (``planes.PlaneLayout``).  Not a wire
+    # field: the header minor implies it -- ``decode`` sets LEGACY below
+    # minor 7 and LADDER from it -- and the descriptors' own order and
+    # COMPLETION granularity are checked against it, so a manifest cannot
+    # claim one layout and carry the other.  Every artifact this tree writes
+    # is LADDER; LEGACY is what a minor 0-6 artifact decodes to, and what a
+    # test that builds one asks for.
+    layout: PlaneLayout = PlaneLayout.LADDER
 
     @property
     def plane_order(self) -> "tuple[PlaneKind, ...]":
         """This manifest's wire order -- the order its counts are indexed by."""
-        return plane_order(self.shard is not None and self.shard.has_initial_state)
+        return plane_order(
+            self.shard is not None and self.shard.has_initial_state, self.layout
+        )
 
     @property
     def schema_minor(self) -> int:
@@ -679,8 +692,14 @@ class Manifest:
         manifest carrying one declares the minor that can.  Minor 6
         (2026-09-04) appends the encoder identity, which an earlier reader
         cannot compare across parts or against its own encoder, so a manifest
-        carrying one declares the minor that can.
+        carrying one declares the minor that can.  Minor 7 (2026-09-05) adds
+        no field either: it is the ``LADDER`` layout -- COMPLETION after the
+        scale planes and cut by depth level -- which an earlier reader would
+        index by the wrong order, so every manifest in that layout declares
+        the minor that can read it.
         """
+        if self.layout is PlaneLayout.LADDER:
+            return 7
         if self.encoder_fixture_id is not None:
             return 6
         if self.reach is not None:
@@ -745,7 +764,22 @@ class Manifest:
                 "to nothing else"
             )
         if [order[kind] for kind in kinds] != sorted(order[kind] for kind in kinds):
-            raise ManifestError("planes are not in canonical plane order")
+            raise ManifestError(
+                f"planes are not in the {self.layout.name} layout's wire order"
+            )
+        completion = self.plane(PlaneKind.COMPLETION)
+        if completion is not None:
+            # The cut and the order are one revision of the wire: a level-cut
+            # plane in the legacy order, or a superblock-cut plane in the
+            # ladder order, would let the prefix validator accept cuts the
+            # bytes do not mean (``wire.pack_levels`` vs ``pack_body``).
+            per_level = completion.count_granularity is CountGranularity.PER_LEVEL
+            if per_level is not (self.layout is PlaneLayout.LADDER):
+                raise ManifestError(
+                    f"a COMPLETION plane in the {self.layout.name} layout is "
+                    f"cut {'by depth level' if self.layout is PlaneLayout.LADDER else 'by superblock'}; "
+                    f"this one declares {completion.count_granularity.name}"
+                )
         self._validate_shard(wire)
 
         if len(self.rates) != self.geometry.columns:
@@ -861,20 +895,23 @@ class Manifest:
         """
         wire = self.plane_order
         extents = [0] * len(wire)
+        widths = [0] * len(wire)
         order = {kind: index for index, kind in enumerate(wire)}
         # The quota boundaries a granular plane may be cut at: its running
         # prefix sums, 0 and the full extent included.  ``planes.py`` states
-        # the rule -- "the last non-empty plane [is] cut at a per-superblock
-        # quota boundary" -- and nothing enforced it, so a terminal could name
+        # the rule -- "the last non-empty plane [is] cut at a granule
+        # boundary" -- and nothing enforced it, so a terminal could name
         # a count that falls in the middle of a granule and price it exactly.
         # A WHOLE_PLANE plane has no granule structure and is deliberately not
         # bound: a whole unit's RELEASE counts are respread by the reader.
         boundaries: "dict[int, set[int]]" = {}
         for descriptor in self.planes:
             extents[order[descriptor.kind]] = descriptor.element_count
+            widths[order[descriptor.kind]] = descriptor.element_bits
             if descriptor.count_granularity in (
                 CountGranularity.PER_SUPERBLOCK,
                 CountGranularity.PER_BLOCK,
+                CountGranularity.PER_LEVEL,
             ):
                 allowed, running = {0}, 0
                 for count in descriptor.counts:
@@ -908,8 +945,27 @@ class Manifest:
                 if allowed is not None and count not in allowed:
                     raise ManifestError(
                         f"terminal {terminal.slot_id!r} cuts {kind.name} at "
-                        f"{count} elements, which is not a per-superblock quota "
-                        f"boundary of {sorted(allowed)}"
+                        f"{count} elements, which is not a granule boundary "
+                        f"of {sorted(allowed)}"
+                    )
+                # A cut strictly inside a plane must also end on a byte,
+                # whether the plane has granules or not.  A terminal's byte
+                # prefix rounds its last plane's bits up to whole bytes
+                # (``container.plane_ranges``), and D4 requires the slack bits
+                # of that final byte to be zero -- but the bits sharing that
+                # byte belong to the plane's *next* element, which is real
+                # content.  Such a terminal would verify only while that
+                # content happened to be zero (``verify_plane_region``), which
+                # is not a legal length, it is a coincidence.  8 is the codec's
+                # byte width, the one constant the wire is allowed to have.
+                if 0 < count < extent and (count * widths[index]) % 8:
+                    raise ManifestError(
+                        f"terminal {terminal.slot_id!r} cuts {kind.name} at "
+                        f"{count} elements = {count * widths[index]} bits, which "
+                        "is not a whole number of bytes: the plane's next "
+                        "element's leading bits would share the terminal's "
+                        "final byte, where the zero-slack rule (schema D4) "
+                        "must hold"
                     )
                 if count < extent:
                     truncated = True
@@ -954,6 +1010,7 @@ class Manifest:
                 f"span {self.span} with a {self.scale_plane.kind.name} scale "
                 f"plane"
                 + (" on a shard" if self.shard is not None else "")
+                + f" in the {self.layout.name} plane layout"
                 + f"; needs minor {self.schema_minor}"
             )
         writer = Writer()
@@ -1057,6 +1114,10 @@ class Manifest:
         if schema_minor >= 6:
             if reader.bool():
                 encoder_fixture_id = reader.digest32()
+        # Minor 7 writes no field: the header minor *is* the layout, and the
+        # descriptor order and COMPLETION granularity are held to it in
+        # ``__post_init__``.
+        layout = PlaneLayout.LADDER if schema_minor >= 7 else PlaneLayout.LEGACY
         reader.finish()
         return cls(
             encoder_profile_id=profile_id,
@@ -1074,6 +1135,7 @@ class Manifest:
             shard=shard,
             reach=reach,
             encoder_fixture_id=encoder_fixture_id,
+            layout=layout,
         )
 
     def manifest_digest(self) -> bytes:

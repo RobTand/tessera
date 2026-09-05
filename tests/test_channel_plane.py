@@ -42,7 +42,7 @@ from tessera.export import (
 )
 from tessera.grammar import bresenham_rate_schedule, root_from_q256
 from tessera.manifest import BodyKind, Manifest, ScalePlane, ScalePlaneKind
-from tessera.planes import CANONICAL_PLANE_ORDER, PlaneKind
+from tessera.planes import PlaneKind, PlaneLayout
 from tessera.scale_channel import default_channel_sigma, initial_channel_scale, refit_channel_scale
 from tessera.trellis import ConvCode
 from tessera.unit_artifact import build_unit_artifact, encoder_profile_id, read_unit_artifact
@@ -59,7 +59,8 @@ def _weights(rows=64, cols=512, seed=0):
 
 
 def _elements(blob: bytes, kind: PlaneKind) -> int:
-    return parse(blob).terminal.plane_elements[CANONICAL_PLANE_ORDER.index(kind)]
+    art = parse(blob)
+    return art.terminal.plane_elements[art.manifest.plane_order.index(kind)]
 
 
 def _forests(grid, rates):
@@ -98,7 +99,7 @@ def test_wire_round_trip_of_a_channel_plane(grid, q256, body, window):
     # This assertion prices the CHANNEL record, not the encoder-identity
     # envelope.  Ask for the born-against spelling explicitly.
     manifest, region, blob = build_unit_artifact(
-        unit, "unit0", forest, q256, CODE, fixture_id=None
+        unit, "unit0", forest, q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     recovered = read_unit_artifact(blob)
     assert torch.equal(recovered, reconstruct_unit(unit, forest, CODE))
@@ -200,7 +201,7 @@ def test_the_reader_fails_closed_on_planes_that_disagree_with_the_kind():
     unit = encode_unit(w, E4M3_GRID, (4,) * 512, CODE, body=WINDOW, window_bits=8,
                        scale_plane=CHANNEL)
     manifest, region, blob = build_unit_artifact(
-        unit, "unit0", E4M3_GRID, 4 * 256, CODE, fixture_id=None
+        unit, "unit0", E4M3_GRID, 4 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     # a LUT unit's bytes relabelled as CHANNEL: the terminal declares a
     # refinement plane a CHANNEL plane cannot have
@@ -260,7 +261,7 @@ def test_the_window_lane_decodes_a_channel_plane(grid, rate, window):
     unit = encode_unit(w, grid, rates, CODE, body=WINDOW, window_bits=window,
                        scale_plane=CHANNEL, scale_refit=1, completion=0)
     _manifest, _region, blob = build_unit_artifact(
-        unit, "unit0", grid, rate * 256, CODE, fixture_id=None
+        unit, "unit0", grid, rate * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob[10] == 3
     reference = read_unit_artifact(blob, device="cuda")
@@ -286,18 +287,18 @@ def test_block_plane_artifacts_keep_their_bytes_and_their_minor():
     forests = {7: build_forest(7, grid=K2)}
     tcq = encode_unit(w, forests, (7,) * 512, CODE, span=2, scale_plane=ScalePlaneKind.LUT)
     m, _, blob = build_unit_artifact(
-        tcq, "unit0", forests, 7 * 256, CODE, fixture_id=None
+        tcq, "unit0", forests, 7 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob[10] == 1 and m.schema_minor == 1 and tcq.scale_rows is None
     win = encode_unit(w, K2, (7,) * 512, CODE, body=WINDOW, window_bits=9,
                       scale_plane=ScalePlaneKind.LUT)
     m, _, blob = build_unit_artifact(
-        win, "unit0", K2, 7 * 256, CODE, fixture_id=None
+        win, "unit0", K2, 7 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob[10] == 2 and m.schema_minor == 2
     legacy = encode_unit(w, forests, (7,) * 512, CODE)
     m, _, blob = build_unit_artifact(
-        legacy, "unit0", forests, 7 * 256, CODE, fixture_id=None
+        legacy, "unit0", forests, 7 * 256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob[10] == 0 and m.schema_minor == 0
     assert torch.equal(read_unit_artifact(blob), reconstruct_unit(legacy, forests, CODE))

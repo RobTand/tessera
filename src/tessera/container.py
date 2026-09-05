@@ -22,16 +22,19 @@ languages are disjoint *by construction* rather than by a lookup table, and the
 legacy two-tuple parser cannot silently accept a Tessera artifact.
 
 Truncation is fail-closed: a byte length that does not match a declared
-terminal's plane-region size is rejected.  Per-superblock quota-boundary
-truncations within a plane are legal and enumerate their own ``terminal_id``;
-arbitrary interleaved byte-prefixes are not terminals.
+terminal's plane-region size is rejected.  Granule-boundary truncations within
+a plane -- a superblock of BODY, a depth level of COMPLETION since minor 7 --
+are legal and enumerate their own ``terminal_id``; arbitrary interleaved
+byte-prefixes are not terminals.
 
 The ladder that makes a *shorter* length legal is the writer's to declare, and
 ``unit_artifact.build_unit_artifact`` declares one terminal: an encoded unit
 has exactly one legal length, and every truncation of one is refused here.
-Multi-terminal artifacts are laid out directly in the tests.  Why a shorter
-terminal cannot be added to an encode without a wire change is stated once,
-with the measured refusals, in the schema's §3c (tessera#144).
+Since minor 7 the wire *can* carry a ladder on an encode -- the plane order
+and the COMPLETION cut that refused one are the schema's §3c history
+(tessera#144) -- and whether a writer declares one is the writer's decision,
+not this module's.  Multi-terminal artifacts are laid out directly in the
+tests.
 """
 
 from __future__ import annotations
@@ -96,8 +99,21 @@ SCHEMA_MAJOR = 1
 #: so every artifact on disk is byte-identical; unlike the earlier fields this
 #: one is *not* bound into ``encoder_profile_id``, which stays input-only by
 #: decision, so a reader recomputes the profile id exactly as before.
-SCHEMA_MINOR = 6
-SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5, 6)
+#: Minor 7 (2026-09-05) adds no manifest field: it is the ``LADDER`` plane
+#: layout (``planes.PlaneLayout``) -- COMPLETION moves behind the scale planes
+#: to sit ahead of RELEASE only, and is cut by depth level rather than by
+#: superblock -- so a shallower completion rung is a byte prefix of the plane
+#: and every plane a decode needs precedes the cut (tessera#144).  An earlier
+#: reader would index the count array by the wrong order, so a manifest in
+#: that layout declares minor 7, which no earlier reader accepts.  Unlike
+#: every minor before it this one moves the *writer* for every artifact: the
+#: encoder is unchanged, but the descriptor order and the terminal's count
+#: array are not, so every fresh artifact is minor 7 and the encoder identity
+#: moves with them.  The plane *region* of a unit today's recipe table writes
+#: is byte-identical (its COMPLETION plane is empty).  Minors 0-6 read exactly
+#: as before through ``PlaneLayout.LEGACY``.
+SCHEMA_MINOR = 7
+SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5, 6, 7)
 
 _HEADER = struct.Struct("<8sHHIII")
 
@@ -143,7 +159,7 @@ def plane_ranges(
 ) -> "list[tuple[PlaneDescriptor, int, int, int]]":
     """`(descriptor, offset, content_bytes, total_bytes)` per plane, in order.
 
-    The canonical plane order is the byte order, so a terminal's region is the
+    The unit's wire order is the byte order, so a terminal's region is the
     concatenation of each plane's truncated extent.  `content_bytes` excludes
     alignment padding; `total_bytes` includes it.
     """

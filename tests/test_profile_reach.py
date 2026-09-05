@@ -19,6 +19,7 @@ import torch
 
 from tessera.alphabet import E4M3_GRID, build_forest
 from tessera.container import parse
+from tessera.planes import PlaneLayout
 from tessera.decode import reconstruct_unit
 from tessera.encode import encode_unit
 from tessera.errors import TesseraError
@@ -54,7 +55,7 @@ def _built(unit):
     # These tests pin the reach record's own lowest minor.  Suppress the
     # independent encoder-identity envelope so that assertion stays literal.
     manifest, region, blob = build_unit_artifact(
-        unit, "unit0", E4M3_GRID, Q256, CODE, fixture_id=None
+        unit, "unit0", E4M3_GRID, Q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     return manifest, region, blob
 
@@ -191,13 +192,13 @@ def test_inert_reach_attrs_change_neither_bytes_nor_digest():
     forests = {2: build_forest(2, grid=E4M3_GRID)}
     unit = encode_unit(w, forests, rates, CODE, scale_refit=1, completion=0)
     _m0, _r0, blob0 = build_unit_artifact(
-        unit, "unit0", forests, Q256, CODE, fixture_id=None
+        unit, "unit0", forests, Q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     unit.window_seed = 7
     unit.window_sigma = 2.5
     unit.channel_sigma = 2.5
     manifest, _region, blob = build_unit_artifact(
-        unit, "unit0", forests, Q256, CODE, fixture_id=None
+        unit, "unit0", forests, Q256, CODE, fixture_id=None, layout=PlaneLayout.LEGACY
     )
     assert blob == blob0
     assert blob[10] == 0 and manifest.schema_minor == 0
@@ -214,10 +215,14 @@ def test_a_shard_keeps_its_parents_reach_profile():
     _m, _r, blob = _built(unit)
     parsed = parse_unit_artifact(blob)
     whole = slice_unit(parsed)
+    # A byte-for-byte rebuild inherits the parsed artifact's identity *and*
+    # its plane layout, both explicitly: ``_built`` asks for the minor-5
+    # spelling, which is the LEGACY layout.
     _m2, _r2, again = build_unit_artifact(
         whole, parsed.manifest.branch.unit_id, parsed.forests,
         parsed.manifest.branch.root_q256, parsed.code or CODE,
-        fixture_id=parsed.manifest.encoder_fixture_id)
+        fixture_id=parsed.manifest.encoder_fixture_id,
+        layout=parsed.manifest.layout)
     assert again == blob
     shard = slice_unit(parsed, rows=(0, 16))
     _m3, _r3, shard_blob = build_unit_artifact(

@@ -43,8 +43,9 @@ class TruncationError(TesseraError):
     select.  The multi-terminal ladder is a capability of the layout and
     container layers (``layout.build_terminal``, and the terminal match in
     ``container.parse``), exercised by artifacts the tests lay out directly;
-    no encoder in this tree produces one, and the wire refuses one added to
-    an encode -- the schema's §3c says why (tessera#144).
+    no encoder in this tree produces one.  Since schema minor 7 the wire can
+    carry one on an encode (schema §1h, tessera#144); §3c keeps the history
+    of why, before it, the wire refused one.
     """
 
 

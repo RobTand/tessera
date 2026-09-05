@@ -26,6 +26,7 @@ from tessera.container import SCHEMA_MINOR, SCHEMA_MINORS_READ, parse
 from tessera.errors import ManifestError, TesseraError
 from tessera.export import encode_linear, encode_linear_planes, recipe_table
 from tessera.manifest import Manifest
+from tessera.planes import PlaneLayout
 from tessera.unit_artifact import _resolve_fixture_id, build_unit_artifact
 
 
@@ -154,13 +155,23 @@ def test_unraised_boundary_fixture_reaches_the_exact_residual_branch():
     assert float(stored[0]) == 1.0
 
 
-def test_every_compatibility_witness_is_neutral_for_the_current_encoder(identity):
-    """Coverage added after #101 must not relabel bytes it did not change.
+def test_a_compatibility_witness_contributes_exactly_when_its_bytes_moved(identity):
+    """The mechanism, pinned: a witness contributes the empty string while its
+    encoded contribution matches the baseline it recorded, and its
+    self-delimiting bytes otherwise -- and the identity is the digest of
+    exactly those contributions, in fixture order.
 
     Every witness, not the first one: a set membership test would pass with a
-    wrong constant on any case it did not reach, and a wrong constant is the
-    one failure this mechanism has -- it silently turns a neutral witness into
-    an Option-A re-base, relabelling every artifact on disk.
+    wrong constant on any case it did not reach.
+
+    Since schema minor 7 (tessera#144) every witness *does* contribute: the
+    LADDER plane layout reordered the terminal record of every fixture, so no
+    encoded contribution matches the baseline measured under minors 0-6.  That
+    is the mechanism working, not failing -- the encoder's output moved for
+    every artifact, and the identity moved with it.  The baselines are
+    measured history and are **not** advanced to bless the new bytes
+    (``encoder_identity`` docstring, schema §1g); a witness that matched its
+    baseline again would mean one had been.
     """
     witnesses = [
         case for case in ei.fixtures()
@@ -170,19 +181,19 @@ def test_every_compatibility_witness_is_neutral_for_the_current_encoder(identity
     for case in witnesses:
         encoded = ei._encode_fixture(case)
         computed = hashlib.sha256(encoded).hexdigest()
-        assert computed == case.compatibility_baseline, (
-            f"{case.label} encodes to {computed}, not its recorded "
-            f"compatibility baseline {case.compatibility_baseline}: it "
-            f"therefore contributes its bytes and re-bases the identity, "
-            f"relabelling every artifact on disk"
+        neutral = computed == case.compatibility_baseline
+        contribution = ei._identity_contribution(case)
+        assert (contribution == b"") is neutral, case.label
+        if not neutral:
+            assert contribution.endswith(encoded), case.label
+        assert not neutral, (
+            f"{case.label} encodes to its minor 0-6 compatibility baseline "
+            f"{computed} on the minor-7 wire: the baseline was advanced, or "
+            "the layout stopped moving the terminal record"
         )
-        assert ei._identity_contribution(case) == b""
 
-    old_payload = b"".join(
-        ei._encode_fixture(case) for case in ei.fixtures()
-        if case.compatibility_baseline is None
-    )
-    assert identity == hashlib.sha256(ei._DOMAIN + old_payload).digest()
+    payload = b"".join(ei._identity_contribution(case) for case in ei.fixtures())
+    assert identity == hashlib.sha256(ei._DOMAIN + payload).digest()
 
 
 def test_the_identity_sees_the_s6b_scale_plane(identity, monkeypatch):
@@ -562,10 +573,12 @@ def test_the_field_is_absent_exactly_when_it_is_the_untagged_encoder():
     manifest = parse(exported.blob).manifest
     untagged = ei.encoder_fixture_id() == ei.UNTAGGED_ENCODER_ID
     assert (manifest.encoder_fixture_id is None) is untagged
-    if untagged:
-        assert manifest.schema_minor < 6
-    else:
-        assert manifest.schema_minor == 6
+    # Since minor 7 the minor is the plane layout's, so the field's presence
+    # no longer moves it on a fresh artifact; the equivalence that remains is
+    # field <-> encoder.  The minor-6 envelope is pinned on the LEGACY layout
+    # in ``test_the_field_moves_no_plane_byte``.
+    assert manifest.schema_minor == SCHEMA_MINOR
+    if not untagged:
         assert manifest.encoder_fixture_id == ei.encoder_fixture_id()
 
 
@@ -580,12 +593,23 @@ def test_the_field_moves_no_plane_byte():
     _exported, unit, forests = encode_linear_planes(
         weight, grid=E4M3_GRID, q256=1024
     )
-    plain = build_unit_artifact(unit, "u", forests, 1024, fixture_id=None)
-    tagged = build_unit_artifact(unit, "u", forests, 1024, fixture_id=bytes(range(32)))
-    assert plain[1] == tagged[1]
-    assert plain[0].payload_digest == tagged[0].payload_digest
-    assert plain[0].schema_minor < 6 and tagged[0].schema_minor == 6
-    assert len(tagged[2]) > len(plain[2])
+    # On the LEGACY layout the field is what moves the minor, so the envelope
+    # is visible; on the current layout both sides are minor 7 and the field
+    # still moves no plane byte.
+    for layout in (PlaneLayout.LEGACY, PlaneLayout.LADDER):
+        plain = build_unit_artifact(
+            unit, "u", forests, 1024, fixture_id=None, layout=layout
+        )
+        tagged = build_unit_artifact(
+            unit, "u", forests, 1024, fixture_id=bytes(range(32)), layout=layout
+        )
+        assert plain[1] == tagged[1]
+        assert plain[0].payload_digest == tagged[0].payload_digest
+        if layout is PlaneLayout.LEGACY:
+            assert plain[0].schema_minor < 6 and tagged[0].schema_minor == 6
+        else:
+            assert plain[0].schema_minor == tagged[0].schema_minor == SCHEMA_MINOR
+        assert len(tagged[2]) > len(plain[2])
 
 
 # --------------------------------------------------------------------------
@@ -600,16 +624,18 @@ def test_the_identity_round_trips_through_the_container():
     )
     stamp = hashlib.sha256(b"a foreign encoder").digest()
     _m, _r, blob = build_unit_artifact(unit, "u", forests, 1024, fixture_id=stamp)
-    assert blob[10] == 6
+    assert blob[10] == SCHEMA_MINOR
     back = parse(blob).manifest
     assert back.encoder_fixture_id == stamp
     # The profile id is untouched: the identity is a sibling, never an input.
     assert back.encoder_profile_id == _m.encoder_profile_id
 
 
-def test_minor_six_is_readable_and_current():
-    assert SCHEMA_MINOR == 6
-    assert 6 in SCHEMA_MINORS_READ
+def test_the_identity_minor_is_readable_and_the_current_one_carries_it():
+    # Minor 6 is the identity-bearing envelope; minor 7 (the LADDER layout,
+    # tessera#144) is current and carries the same field.
+    assert SCHEMA_MINOR == 7
+    assert 6 in SCHEMA_MINORS_READ and 7 in SCHEMA_MINORS_READ
     assert tuple(SCHEMA_MINORS_READ) == tuple(range(SCHEMA_MINOR + 1))
 
 
@@ -661,10 +687,10 @@ def test_a_presence_flag_that_is_not_a_bool_is_refused():
     manifest = build_unit_artifact(
         unit, "u", forests, 1024, fixture_id=bytes(range(32))
     )[0]
-    data = manifest.encode(6)
-    assert Manifest.decode(data, 6) == manifest
+    data = manifest.encode(SCHEMA_MINOR)
+    assert Manifest.decode(data, SCHEMA_MINOR) == manifest
     # The fixture record is the last field: one flag byte, then its digest.
     assert data[-33] == 1
     patched = data[:-33] + b"\x02" + data[-32:]
     with pytest.raises(TesseraError, match="bool"):
-        Manifest.decode(patched, 6)
+        Manifest.decode(patched, SCHEMA_MINOR)

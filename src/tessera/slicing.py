@@ -41,7 +41,7 @@ from .encode import EncodedUnit
 from .errors import GrammarError
 from .grammar import superblock_count
 from .manifest import BodyKind, RotationState, ScalePlaneKind
-from .planes import PlaneKind, plane_order
+from .planes import PlaneKind
 
 __all__ = [
     "SlicedUnit",
@@ -160,10 +160,7 @@ def _manifest_granularity(manifest):
         row = _lcm(row, block // gcd(block, geometry.columns))
     col = 1 if block is None else block
     released = max(
-        terminal.plane_elements[
-            plane_order(manifest.shard is not None
-                        and manifest.shard.has_initial_state).index(PlaneKind.RELEASE)
-        ]
+        terminal.plane_elements[manifest.plane_order.index(PlaneKind.RELEASE)]
         for terminal in manifest.terminals
     )
     if len(set(manifest.rates)) > 1 or released:
@@ -191,7 +188,7 @@ def _steps_of(manifest) -> int:
     from .alphabet import SERIALISABLE_GRIDS as _GRIDS
     from .trellis import body_bits as _bits
 
-    wire = plane_order(manifest.shard is not None and manifest.shard.has_initial_state)
+    wire = manifest.plane_order
     elements = max(
         terminal.plane_elements[wire.index(PlaneKind.BODY)]
         for terminal in manifest.terminals

@@ -16,7 +16,8 @@ ALPHABET          byte           8
 DESCENDANT        byte           8
 BODY              bit            1   (count = sum over columns of R * rows)
 SCALE_BASE        group          8   (one E8M0 byte per 32 weights)
-COMPLETION        bit            1   (count = sum over columns of c * rows)
+COMPLETION        bit            1   (count = sum over columns of c * rows;
+                                      level-major since schema minor 7)
 DIAG_SU           in-channel    16
 DIAG_SV           out-channel   16
 SCALE_REFINE      half-block     4   (one nibble per 16 weights)
@@ -43,6 +44,7 @@ from .grammar import (
     C_FULL_BITS,
     RELEASE_BITS,
     completion_capacity,
+    completion_level_counts,
     superblock_count,
 )
 from .trellis import body_bits as _body_bits
@@ -53,6 +55,7 @@ from .manifest import (
 from .planes import (
     CANONICAL_PLANE_ORDER,
     plane_order,
+    layout_of,
     NORMATIVE_ELEMENT_BITS,
     BitOrder,
     CountGranularity,
@@ -60,6 +63,7 @@ from .planes import (
     PayloadDtype,
     PlaneDescriptor,
     PlaneKind,
+    PlaneLayout,
     Storage,
 )
 
@@ -158,6 +162,12 @@ class TerminalSpec:
     #: state one column starts from.  Zero -- the default, and every whole
     #: unit -- declares the plane absent and the pinned zero start.
     state_bits: int = 0
+    #: How many leading halves of an S6b unit's SCALE_REFINE plane this
+    #: terminal carries.  Schema D3 gives the plane prefix semantics -- the
+    #: halves a terminal does not carry sit at their group's po2 base -- and
+    #: this is the spelling of that rung.  ``None`` defers to
+    #: ``with_scale_refine``: the whole plane, or none of it.
+    scale_refine_halves: "int | None" = None
 
 
 def _counts_for(
@@ -223,6 +233,12 @@ def _counts_for(
         return rows
     if kind is PlaneKind.SCALE_REFINE:
         if spec is not None and not spec.with_scale_refine:
+            if spec.scale_refine_halves:
+                raise GrammarError(
+                    f"terminal {spec.slot_id!r} carries "
+                    f"{spec.scale_refine_halves} refinement halves but declares "
+                    "no SCALE_REFINE plane"
+                )
             return 0
         if positions % geometry.half_weights:
             raise GrammarError(
@@ -230,7 +246,15 @@ def _counts_for(
                 f"{geometry.half_weights}-weight halves; a floored count "
                 "would silently leave the trailing weights scaleless"
             )
-        return positions // geometry.half_weights
+        halves = positions // geometry.half_weights
+        if spec is None or spec.scale_refine_halves is None:
+            return halves
+        if not 0 <= spec.scale_refine_halves <= halves:
+            raise GrammarError(
+                f"terminal {spec.slot_id!r} carries "
+                f"{spec.scale_refine_halves} refinement halves of {halves}"
+            )
+        return spec.scale_refine_halves
     if kind is PlaneKind.RELEASE:
         return max_released if spec is None else spec.released_positions
     if kind is PlaneKind.INITIAL_STATE:
@@ -331,8 +355,15 @@ def build_planes(
     with_row_scale: bool = False,
     state_bits: int = 0,
     release_counts: "tuple[int, ...] | None" = None,
+    layout: PlaneLayout = PlaneLayout.LADDER,
 ) -> tuple[PlaneDescriptor, ...]:
-    """Full-extent descriptors, one per plane, in canonical order.
+    """Full-extent descriptors, one per plane, in the layout's wire order.
+
+    ``layout`` selects the wire (``planes.PlaneLayout``).  The default is the
+    current one, minor 7: COMPLETION after the scale planes and cut by depth
+    level.  ``LEGACY`` reproduces a minor 0-6 artifact -- COMPLETION between
+    SCALE_BASE and DIAG_SU, cut by superblock -- byte for byte, and exists so
+    a reader can be held to those bytes by a test that builds them.
 
     ``state_bits > 0`` declares an INITIAL_STATE plane (schema minor 4): one
     ``state_bits``-wide word per column, ahead of BODY in the wire order, and
@@ -396,7 +427,8 @@ def build_planes(
             f"schedule has {superblocks} superblocks"
         )
     descriptors = []
-    for kind in plane_order(state_bits > 0):
+    steps = geometry.rows // arity
+    for kind in plane_order(state_bits > 0, layout):
         total = _counts_for(
             kind,
             geometry,
@@ -421,6 +453,24 @@ def build_planes(
                 )
             granularity = CountGranularity.PER_SUPERBLOCK
             counts = tuple(release_counts)
+        elif kind is PlaneKind.COMPLETION and layout is PlaneLayout.LADDER:
+            # One granule per depth level, so a terminal cut at level ``l``
+            # is the first ``l`` granules and a byte prefix of the plane
+            # (``wire.pack_levels``).  The widths are the terminal's when it
+            # declares them and the rate ceiling otherwise -- the same rule
+            # ``_counts_for`` sizes the total by, which the sum check binds.
+            granularity = CountGranularity.PER_LEVEL
+            widths = (
+                tuple(completion_capacity(rate, cap) for rate in rates)
+                if spec is None
+                else tuple(spec.completion_bits)
+            )
+            counts = completion_level_counts(widths, steps)
+            if sum(counts) != total:
+                raise PlaneLayoutError(
+                    f"{kind.name}: the per-level counts sum to {sum(counts)}, "
+                    f"the plane holds {total}"
+                )
         elif kind in (PlaneKind.BODY, PlaneKind.COMPLETION):
             granularity = CountGranularity.PER_SUPERBLOCK
             counts = _superblock_counts(
@@ -502,9 +552,13 @@ def build_terminal(
     artifact currently offers: ``unit_artifact.build_unit_artifact`` declares
     one terminal per unit, so every artifact this tree writes has exactly one
     legal length and the per-terminal digest is, for now, a second digest over
-    the whole region.  It is kept because the ladder is the wire's (doc S6,
-    §3c); whether a writer will ever emit one is tessera#144, and the schema's
-    §3c records why the current wire refuses one on an encode.
+    the whole region.  Since minor 7 the wire *can* carry a shorter one --
+    the plane order and the COMPLETION cut were the obstacles, and the
+    schema's §3c records that history -- so what a writer declares is the
+    writer's decision (tessera#144), and this function prices whatever it is
+    asked for.  The layout is read off ``planes``: a full descriptor sequence
+    is in exactly one wire order, and taking it as a second parameter would
+    only let the two disagree.
     """
     if len(spec.completion_bits) != len(rates):
         raise GrammarError(
@@ -525,8 +579,10 @@ def build_terminal(
     elements, total_bytes = [], 0
     # The terminal's count array is indexed by the *unit's* wire order, and a
     # shard's has one more entry than a whole unit's.  Taking it from the spec
-    # rather than from a module constant is what keeps the two from drifting.
-    for kind in plane_order(spec.state_bits > 0):
+    # and the descriptors rather than from a module constant is what keeps
+    # the three from drifting.
+    layout = layout_of((plane.kind for plane in planes), spec.state_bits > 0)
+    for kind in plane_order(spec.state_bits > 0, layout):
         count = _counts_for(
             kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
             cap=cap, arity=arity, span=span,

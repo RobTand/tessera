@@ -17,7 +17,7 @@ Little-endian. Three regions: header, manifest, plane region.
 |---|---|---|
 | 0 | 8 | magic `\x89TESSERA` |
 | 8 | 2 | schema major (`1`) |
-| 10 | 2 | schema minor (`0`–`6`; see §1a–§1d, §1f for the reach record, §1g for the encoder identity, and §1e for a width that needs no minor) |
+| 10 | 2 | schema minor (`0`–`7`; see §1a–§1d, §1f for the reach record, §1g for the encoder identity, §1h for the plane layout, and §1e for a width that needs no minor) |
 | 12 | 4 | header bytes (`24`) |
 | 16 | 4 | manifest bytes |
 | 20 | 4 | plane-region bytes (full extent) |
@@ -541,6 +541,87 @@ identity lives instead of being invented inside the first consumer to need it.
 Both compare a stamped value; only a process that is about to encode ever
 computes one.
 
+### 1h. Schema minor 7 (2026-09-05): the truncation ladder on the wire
+
+Minor 7 appends **no field**. Like minor 3 it is a value an earlier reader
+cannot resolve: the plane *layout* (`planes.PlaneLayout.LADDER`), implied by
+the header minor and checked against the descriptors on decode. It is option
+(b) of `docs/reports/tessera-terminal-ladder-2026-09-04.md`, tessera#144, and
+it moves two things — only these two:
+
+| | Minors 0–6 (`PlaneLayout.LEGACY`) | Minor 7 (`PlaneLayout.LADDER`) |
+|---|---|---|
+| Plane order (D5) | `… BODY → SCALE_BASE → COMPLETION → DIAG_SU → DIAG_SV → SCALE_REFINE → RELEASE` | `… BODY → SCALE_BASE → DIAG_SU → DIAG_SV → SCALE_REFINE → COMPLETION → RELEASE` |
+| COMPLETION cut | `PER_SUPERBLOCK`: one granule per superblock of columns at full depth; the plane packs one `c`-bit word per position, column-major (`wire.pack_body`) | `PER_LEVEL`: one granule per depth level; the plane is level-major — for level `l = 1..max c`, for every column whose width reaches `l`, every step, bit `l` of that position's word counted from the most significant (`wire.pack_levels`) |
+
+**Why the order.** A terminal is a prefix, so everything a decode at *any*
+completion depth consumes must precede the cut: the blob planes, the body,
+the block scales (an S6b base and its refinement, or the LUT plane's index
+nibble on `SCALE_REFINE`), the diagonals, a CHANNEL plane's row scale on
+`DIAG_SV`. RELEASE follows COMPLETION and nothing else could: §9 places
+releases by ranking the pre-release decode at the *written* depth
+(`unit_artifact._release_placement`), so a shallower reading moves the
+positions the RELEASE codes land on, and a rung that shortens COMPLETION
+cannot keep RELEASE. Only COMPLETION moved; every other adjacency is
+unchanged, the shard order included (`INITIAL_STATE` still leads BODY).
+
+**Why level-major.** The running prefix sum through level `l` is
+`Σ_j min(l, c_j) · steps` — exactly the count
+`grammar.completion_limit_from_elements` already inverts — so a terminal cut
+at a level boundary declares its depth with no new field, `plane_elements`
+keeps its length, and no `PlaneKind` is added. The descendant map is a tree
+read most-significant-bit first, so the first `l` levels are the words a
+depth-`l` reading needs (`decode.decode_codes_mixed` shifts the low bits
+away). A plane per level would have cost up to seven kinds (the E4M3 cap), a
+longer count array and the single-count inversion. A plane written at depth 0
+has no levels and declares no granules (`counts = ()`), the one granular
+plane allowed to.
+
+**A rule the cut adds.** A cut strictly inside a plane must end on a byte,
+whether the plane has granules or not. D4 requires the final content byte's
+slack to be zero and `container.verify_plane_region` checks it from the
+terminal's count, but the bits sharing that byte would be the plane's *next*
+element's real content -- the next granule's, on a granular plane -- so such
+a terminal would verify only while that content happened to be zero.
+`Manifest` refuses any count at which `count × element_bits` is not a whole
+number of bytes, on every plane (§3b). A level count
+`steps × N_l` is byte-aligned for every real shape (rows are multiples of 8),
+but nothing derives that; the refusal is where the rule lives.
+
+**Reading.** The header minor is the layout: `Manifest.decode` sets `LEGACY`
+below 7 and `LADDER` from it, and `__post_init__` holds the descriptor order
+and the COMPLETION granularity to it, so a manifest cannot claim one layout
+and carry the other. Minors 0–6 read exactly as before:
+`tests/test_ladder_wire.py` holds the reader to eleven artifacts written by
+master `da2b371` (the last tree before this minor; `tests/data/legacy/`),
+tensor for tensor, order for order. A minor-7 artifact is refused by every
+earlier reader, as it must be — an earlier reader would index the count array
+by the wrong order. Within a minor-7 artifact every plane is read at the
+terminal's count, so a rung the manifest admits is one the reader decodes or
+refuses by name (§3c, item 3).
+
+**Writing.** Every artifact this tree writes is minor 7. Unlike every minor
+before it, this one moves the writer for every unit and not only for the
+units that carry the new thing: two orders chosen by content would be a third
+layout, and no reader outside these boxes exists to protect. The encoder is
+unchanged; the descriptor order and the terminal's count array are not, so
+the encoder identity (§1g) moves with them, and the compatibility witnesses
+recorded under minors 0–6 now contribute their bytes — the mechanism working,
+not failing; their baselines are measured history and are not advanced. The
+plane *region* of a unit today's recipe table writes is byte-identical across
+the minor, because its COMPLETION plane is empty, so its `payload_digest` is
+unchanged while its manifest is not. `PlaneLayout.LEGACY` reproduces a minor
+0–6 artifact byte for byte (proved on the same eleven) and exists for tests;
+the exporter never passes it.
+
+**What it does not do.** `unit_artifact.build_unit_artifact` still declares
+one terminal, at the depth the encoder used. The wire *can* now carry a
+shorter rung on an encode — `tests/test_audit_container_accounting.py` lays
+one on the exporter's own bytes and reads it from a byte prefix — but whether
+the exporter writes a ladder is a separate decision, and on today's recipe
+table (every default rung at `completion=0`) a ladder has no rung to shorten.
+Nothing here claims truncation is worth bytes anywhere.
+
 ## 2. Decisions this schema makes
 
 The design document leaves these open. Deciding them *is* item 1a.
@@ -577,14 +658,25 @@ on the read path (every `unpack_*`, `parse(verify=False)` included), and
 `container.verify_plane_region` over a plane's declared extent under
 `parse(verify=True)`.
 
-**D5 — canonical plane order**, which is also the truncation order:
+**D5 — canonical plane order**, which is also the truncation order (revised at
+minor 7, §1h):
 
-`ALPHABET → DESCENDANT → BODY → SCALE_BASE → COMPLETION → DIAG_SU → DIAG_SV →
-SCALE_REFINE → RELEASE`
+`ALPHABET → DESCENDANT → [INITIAL_STATE] → BODY → SCALE_BASE → DIAG_SU →
+DIAG_SV → SCALE_REFINE → COMPLETION → RELEASE`
 
-Forced by §6's terminal classes: T-po2 is body + po2 base + partial completion;
-T-C3 adds C-full; T-nvfp4-class adds refinement and release. The two blob
-planes lead because nothing decodes without them.
+Forced by what a truncated reading needs: everything a decode at any
+completion depth consumes precedes COMPLETION, and RELEASE — placed by
+ranking the pre-release decode at the written depth — follows it, so a rung
+that shortens the completion axis keeps every scale and drops only the
+releases. The two blob planes lead because nothing decodes without them.
+Minors 0–6 wrote COMPLETION between SCALE_BASE and DIAG_SU
+(`planes.LEGACY_PLANE_ORDER`), the order §6's original classes implied —
+T-po2 body + po2 base + partial completion, T-C3 adding C-full,
+T-nvfp4-class adding refinement and release — under which a LUT plane's index
+sat after the axis it scales and no completion rung was a prefix. The classes
+the current order admits: T-po2 (base and nothing after), then the block
+scales and diagonals, then completion depth `1..c`, then release;
+"completion without refinement" is no longer a prefix.
 
 **D6 — what `exact_bpp` means.** `TerminalRecord.exact_bpp` is the
 **plane-region** rate over quantizable parameters. Header and manifest side
@@ -617,7 +709,7 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 | ALPHABET / DESCENDANT | grid code | 8 (byte count; a two-byte grid code is two elements -- §1e) |
 | BODY | bit | 1 (count = Σ_col R·rows) |
 | SCALE_BASE | 32-weight group | 8 (E8M0) |
-| COMPLETION | bit | 1 (count = Σ_col c·rows) |
+| COMPLETION | bit | 1 (count = Σ_col c·rows; level-major since minor 7, §1h) |
 | DIAG_SU / DIAG_SV | channel | 16 |
 | SCALE_REFINE | 16-weight half | 4 |
 | RELEASE | released position | 4 |
@@ -655,6 +747,14 @@ read different bytes:
   partial one, and it is the partial one a seeking consumer lands wrong on.
   `ceil(columns / superblock_columns)` granules, and the count is a sum
   (2026-09-02 audit §2 P0-4/P0-5).
+- A `PER_LEVEL` plane (minor 7; COMPLETION only, and COMPLETION only under
+  the `LADDER` layout) carries one granule per completion depth level, each
+  the count over the columns whose width reaches that level, at every step
+  (`grammar.completion_level_counts`); a plane at depth 0 carries no
+  granules. Its running prefix sums are the depths a terminal may be cut at.
+- A cut strictly inside a granular plane ends on a byte (§1h): `Manifest`
+  refuses a granule boundary at which `count × element_bits` is not a whole
+  number of bytes, whatever the granularity.
 - `geometry.quantizable_params` is at most `rows × columns`. It is the
   denominator of every bpp figure the artifact quotes, so an unbounded value
   understates the rate by however much it likes. Below the position count is
@@ -667,45 +767,60 @@ complete one. Truncation is one of this format's design features, so if the
 case arises it must not be the unverified one.
 
 **What the encoder writes.** `unit_artifact.build_unit_artifact` declares one
-terminal per unit, of the T-nvfp4 class, so every artifact this tree writes has
-exactly one legal length and the rules below are exercised only by artifacts
-laid out directly (`layout.build_terminal`).
+terminal per unit, at the depth the encoder used, so every artifact this tree
+writes has exactly one legal length. The rules below are exercised by
+artifacts laid out directly (`layout.build_terminal`) — and, since minor 7, on
+top of an encode too: `tests/test_audit_container_accounting.py` adds shorter
+completion rungs to the exporter's own bytes and reads each from a byte
+prefix. Since minor 7 the reader reads every plane at the **terminal's**
+count (`unit_artifact.parse_unit_artifact`); what each shorter count means,
+and which counts mean nothing and are refused by name, is item 3 below.
 
-**Why a second terminal cannot be added to an encode without a wire change.**
-This paragraph is the one home of that rule; the docstrings in `container`,
+**Why an encode could not be truncated before minor 7 — history.** This
+paragraph is the one home of that record; the docstrings in `container`,
 `errors`, `layout` and `planes` point here. Measured 2026-09-04
-(`docs/reports/tessera-terminal-ladder-2026-09-04.md`, pinned by
-`tests/test_audit_container_accounting.py::test_no_shorter_terminal_survives_the_wire_on_an_encode`),
-in the order the obstacles are met:
+(`docs/reports/tessera-terminal-ladder-2026-09-04.md`), three obstacles in
+the order they were met:
 
-0. The exporter's default path has no rung to shorten. `export.encode_linear_planes`
-   defaults to `completion=0` and `released_positions=0`, and a window body --
-   every E2M1x2 sub-cap, E4M3 and BF16 rung of the recipe table -- refuses any
-   other completion. On all four serialisable grids the written terminal's
-   COMPLETION and RELEASE counts are 0; the planes left are the alphabet, the
-   body and the scale index, none of which decodes without the others.
-1. Where a completion axis exists at all (E2M1, TCQ body, below the cap, with
-   `completion` asked for explicitly), D5 puts `SCALE_REFINE` -- the LUT
-   plane's index nibble -- *after* COMPLETION, so a terminal that shortens
-   COMPLETION by any amount drops the scales, and rule 1 below refuses it:
-   `not a prefix: SCALE_REFINE carries 512 elements after an earlier plane was
-   left incomplete`.
-2. The COMPLETION granule is a superblock of columns at full depth, not a
-   depth level of every column. A shallower reading is the top bits of each
-   per-position word (`decode.reconstruct_unit` shifts them), never a byte
-   prefix of the plane; on one superblock the depth-1 count is refused as `not
-   a per-superblock quota boundary of [0, 8192]`.
-3. Only a terminal that keeps COMPLETION whole and drops `SCALE_REFINE` -- the
-   T-po2 / T-C3 classes on an S6B plane -- passes the manifest (+57-58 manifest
-   bytes per record), and `parse_unit_artifact` then reads `SCALE_REFINE` at the
-   geometry's count and fails in `unpack_uniform`: `need 2048 bits for 512
-   elements of 4 bits, the plane holds 0`. That is the reader obstacle the
-   audit named; it is the third, and no default plane reaches it.
-
-Making an encode truncatable therefore moves the wire twice (the D5 order, and
-a COMPLETION plane cut by depth rather than by superblock) before the reader
-is touched. Whether that is a planned capability or a retired one is
-tessera#144 and is Rob's to price.
+0. The exporter's default path has no rung to shorten — still true.
+   `export.encode_linear_planes` defaults to `completion=0` and
+   `released_positions=0`, and a window body -- every E2M1x2 sub-cap, E4M3 and
+   BF16 rung of the recipe table -- refuses any other completion. On all four
+   serialisable grids the written terminal's COMPLETION and RELEASE counts are
+   0 (`test_the_exporters_default_path_still_writes_no_completion_and_no_release`).
+1. The minor 0–6 order put `SCALE_REFINE` -- the LUT plane's index nibble --
+   *after* COMPLETION, so a terminal that shortened COMPLETION by any amount
+   dropped the scales and rule 1 below refused it: `not a prefix:
+   SCALE_REFINE carries 512 elements after an earlier plane was left
+   incomplete`. **Removed at minor 7** by the D5 order (§1h).
+2. The COMPLETION granule was a superblock of columns at full depth, so a
+   shallower reading was the top bits of each per-position word and never a
+   byte prefix of the plane; on one superblock the depth-1 count was refused
+   as `not a per-superblock quota boundary of [0, 8192]`. **Removed at minor
+   7** by the level-major cut (§1h). Both inversions are
+   `test_a_shallower_completion_rung_reads_from_a_byte_prefix_of_an_encode`.
+3. The reader sized `SCALE_REFINE` from the geometry, so the one S6b prefix
+   that passed the manifest failed in `unpack_uniform`: `need 2048 bits for
+   512 elements of 4 bits, the plane holds 0`. **Removed at minor 7, on the
+   reader's side:** `parse_unit_artifact` reads every plane at the terminal's
+   count. What a shorter count means, plane by plane. COMPLETION: the first
+   depth levels (item 2). S6b `SCALE_REFINE`: the first halves refined and
+   every later half at its group's po2 base (D3 -- the all-zero word);
+   `TerminalSpec.scale_refine_halves` spells the rung, byte-aligned (§1h),
+   and `with_scale_refine=False` is the T-po2 case. RELEASE: the first codes
+   in plane order, on the first positions of the placement the writer ranked
+   at the plane's *full* count (`unit_artifact._release_placement`; before
+   minor 7 a whole unit's plane was *respread* at the terminal's count, which
+   put every code past the first superblock's share on a position the encoder
+   never chose). Every other plane -- ALPHABET, DESCENDANT, INITIAL_STATE,
+   BODY, SCALE_BASE, the LUT plane's index nibble (no base to fall back on),
+   and the DIAG_SU/DIAG_SV pair, which travels together -- means nothing short
+   of whole and is refused **by name** (`unit_artifact._refuse_partial_planes`)
+   where it used to die in `wire.unpack_*` naming neither the plane nor the
+   rule. `test_a_po2_rung_of_an_s6b_unit_reads_at_the_po2_base`,
+   `test_a_refinement_prefix_leaves_the_later_halves_at_the_po2_base`,
+   `test_a_release_rung_is_the_first_codes_in_plane_order`,
+   `test_planes_with_no_prefix_meaning_are_refused_by_name`.
 
 1. **Every terminal is a prefix.** In canonical plane order a terminal declares
    full planes, then at most one partially-present plane, then nothing. A
@@ -714,10 +829,12 @@ tessera#144 and is Rob's to price.
    bytes it describes. The shape is validated in `Manifest.__post_init__`
    (finding F8), alongside the bound that no terminal may claim more elements
    than its plane declares (finding F2). On a plane with granule structure
-   (`PER_SUPERBLOCK`, `PER_BLOCK`) the cut must also land on a **quota
-   boundary** — a running prefix sum of that plane's `counts`, `0` and the full
-   extent included. A count in the middle of a granule prices exactly and
-   describes a stream no granule boundary matches (2026-09-02 audit §2 P0-3).
+   (`PER_SUPERBLOCK`, `PER_BLOCK`, `PER_LEVEL`) the cut must also land on a
+   **granule boundary** — a running prefix sum of that plane's `counts`, `0`
+   and the full extent included. A count in the middle of a granule prices
+   exactly and describes a stream no granule boundary matches (2026-09-02
+   audit §2 P0-3); a cut strictly inside any plane, granular or not, that is
+   not a whole number of bytes is refused for the reason §1h gives.
 2. **Every terminal carries `payload_digest`** over its own byte prefix — 32
    bytes per terminal. The whole-artifact digest covers only the untruncated
    bytes, so without this a truncation carries no integrity check at all
@@ -738,17 +855,21 @@ tessera#144 and is Rob's to price.
 ## 4. Parse algorithm
 
 1. Read and validate the 24-byte header: magic, version (major `1`, minor
-   `0`–`4`), header size.
+   `0`–`7`), header size.
 2. Read exactly `manifest_bytes`; decode canonically **under the header's
    minor** (minor 1 reads `span` and the scale-plane record after the payload
    digest; minor 2 reads `body` and `window_bits` after those; minor 4 reads
-   the shard record after those); **reject trailing bytes**. Reject a header
-   that declares a minor lower than the one the manifest needs.
-3. Validate the manifest: the unit's plane order (canonical, or the shard order
-   when a shard record declares a start state), no duplicate kinds, rate
-   schedule exact against the root, complete superblocks keep the quota, no two
-   terminals share an `exact_bytes`, and — for a shard — that its extent fits
-   the parent it names and its state plane matches the width the record
+   the shard record after those; minor 5 the reach record; minor 6 the
+   encoder identity; minor 7 reads no further field and selects the `LADDER`
+   plane layout, `LEGACY` below it); **reject trailing bytes**. Reject a
+   header that declares a minor lower than the one the manifest needs.
+3. Validate the manifest: the unit's plane order (the layout's — §1h — and
+   the shard variant of it when a shard record declares a start state), the
+   COMPLETION granularity the layout requires, no duplicate kinds, rate
+   schedule exact against the root, complete superblocks keep the quota, no
+   two terminals share an `exact_bytes`, every terminal a prefix cut on a
+   byte-aligned granule boundary (§3c), and — for a shard — that its extent
+   fits the parent it names and its state plane matches the width the record
    declares.
 4. Measure the physical plane region. Find the terminal whose `exact_bytes`
    equals it. **No match is a rejection** — arbitrary byte prefixes are not

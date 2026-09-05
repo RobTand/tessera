@@ -74,7 +74,7 @@ def count():
                 ext = d.element_count if d else 0
                 if ext == 0:
                     continue
-                if d.count_granularity in (CountGranularity.PER_SUPERBLOCK, CountGranularity.PER_BLOCK):
+                if d.count_granularity is not CountGranularity.WHOLE_PLANE:
                     cuts, run = {0}, 0
                     for c in d.counts:
                         run += c
