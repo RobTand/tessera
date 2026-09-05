@@ -63,7 +63,10 @@ class PlaneKind(IntEnum):
 #:
 #: The classes are what the order makes *possible*, not what an encode carries:
 #: ``unit_artifact.build_unit_artifact`` declares one terminal, of the
-#: T-nvfp4 class, so a written unit has a single legal length (tessera#144).
+#: T-nvfp4 class, so a written unit has a single legal length.  This order is
+#: also the first thing that stops a shorter terminal being added to one: the
+#: LUT plane's index (SCALE_REFINE) sits after COMPLETION, so no terminal can
+#: shorten the completion axis and keep the scales (schema §3c, tessera#144).
 CANONICAL_PLANE_ORDER: tuple[PlaneKind, ...] = (
     PlaneKind.ALPHABET,
     PlaneKind.DESCENDANT,

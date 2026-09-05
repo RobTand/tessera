@@ -179,6 +179,16 @@ their containers do not change.
 
 ## 3. Bytes: priced == served
 
+Every artifact the exporter writes has exactly one legal length: the encoder
+declares one terminal per unit, and the wire refuses a shorter one added to an
+encode before the reader is consulted (the D5 plane order puts the scale index
+after COMPLETION, and COMPLETION is cut by superblock, not by depth). The
+multi-terminal truncation ladder is a capability of the layout and container
+layers only; whether it is planned or retired is tessera#144, priced in
+`docs/reports/tessera-terminal-ladder-2026-09-04.md` and pinned by
+`tests/test_audit_container_accounting.py`. No release note may claim
+truncatable artifacts until that decision moves the wire.
+
 The sidecar's charged bits and the export manifest's `wire_bytes * 8` agree
 per unit, checked by `experiments/check_wire_against_plan.py`. A plan that
 leaves a body Linear unnamed does not get a passthrough: the exporter falls

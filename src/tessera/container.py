@@ -29,11 +29,9 @@ arbitrary interleaved byte-prefixes are not terminals.
 The ladder that makes a *shorter* length legal is the writer's to declare, and
 ``unit_artifact.build_unit_artifact`` declares one terminal: an encoded unit
 has exactly one legal length, and every truncation of one is refused here.
-Multi-terminal artifacts are laid out directly in the tests.  Making an encode
-truncatable is not a writer change alone -- ``parse_unit_artifact`` reads the
-scale and body planes at counts derived from the geometry, not at the
-terminal's declared counts, so a short rung would fail in ``unpack_uniform``
-after passing this match (tessera#144).
+Multi-terminal artifacts are laid out directly in the tests.  Why a shorter
+terminal cannot be added to an encode without a wire change is stated once,
+with the measured refusals, in the schema's §3c (tessera#144).
 """
 
 from __future__ import annotations
