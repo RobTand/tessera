@@ -23,14 +23,17 @@ tests are what make a divergence a test failure:
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 from pathlib import Path
 
 import pytest
 
+from tessera.serving.census import cell_launch_agreement
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
+    PAYLOAD_FAMILY_BY_ROUTE,
     contract_path,
     load_serving_contract,
     validate_serving_contract,
@@ -128,3 +131,96 @@ def test_the_census_writes_no_phase_name_of_its_own():
         "the census keys a phase by a literal instead of through "
         f"contract.CENSUS_PHASE_REGIMES:\n  " + "\n  ".join(literals)
     )
+
+
+# --- a phase attests the regime its forward RAN, not the one it is named (#207)
+#
+# The phase label is what the census asked for; the record's ``M`` is what the
+# machine did.  ``cell_launch_agreement`` selected the cell from the label
+# alone, so an eight-row forward recorded under the decode phase was counted as
+# a covered, agreeing decode observation -- and resident FP8 publishes the same
+# launch pair in both regimes, so nothing downstream could notice.  The census's
+# own generic shape check could not catch it either: it asked only whether the
+# two phases' shape strings differed in aggregate.  A decode attestation needs
+# an M=1 observation; a multi-row forward is prefill evidence.
+
+_MODULE = "model.layers.0.mlp.down_proj"
+
+
+def _tool():
+    """The census tool, loaded by path: its top level is stdlib-only by design."""
+    spec = importlib.util.spec_from_file_location("tessera_route_census", CENSUS)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _record(m, **over):
+    """One served resident-FP8 dense record whose forward ran ``m`` rows."""
+    return dict({"kind": "dense", "policy": "TESSERA_FP8:resident",
+                 "symbol": "torch._scaled_mm", "decoder": "torch_window",
+                 "shape": f"M{m}:N64:K64", "state": "served",
+                 "contract": "fp8_per_token_dynamic"}, **over)
+
+
+def _records(batch_m, decode_m):
+    phases = {regime: m for regime, m in (("batch", batch_m), ("decode", decode_m))}
+    return {phase: {_MODULE: _record(phases[regime])}
+            for phase, regime in CENSUS_PHASE_REGIMES.items()}
+
+
+def _agreement(records):
+    contract = load_serving_contract()
+    return cell_launch_agreement(
+        records, cells=contract["lane_eligibility"]["cells"],
+        phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
+        rungs_by_module={_MODULE: 1024}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        runtime_image=contract["versions"]["default_serve_image"], execution_mode="eager")
+
+
+def _decode_phase():
+    return next(p for p, regime in CENSUS_PHASE_REGIMES.items() if regime == "decode")
+
+
+def test_a_multi_row_forward_cannot_be_counted_as_a_decode_observation():
+    """The shared cell matcher, which the generic census and ts111 replay share."""
+    block, problems = _agreement(_records(64, 8))
+    decode = block["phases"][_decode_phase()]
+    assert problems and "M8" in problems[0], problems
+    assert block["agrees"] is False
+    assert decode["covered_by_cell"] == 0
+
+
+def test_a_record_with_no_concrete_shape_attests_no_regime():
+    records = _records(64, 1)
+    records[_decode_phase()][_MODULE].pop("shape")
+    block, problems = _agreement(records)
+    assert problems and "shape" in problems[0], problems
+    assert block["agrees"] is False
+    assert block["phases"][_decode_phase()]["covered_by_cell"] == 0
+
+
+def test_the_matched_shapes_are_the_control():
+    block, problems = _agreement(_records(64, 1))
+    assert problems == []
+    assert block["agrees"] is True
+    assert block["phases"][_decode_phase()]["covered_by_cell"] == 1
+
+
+def test_the_generic_shape_check_reads_each_record_against_its_own_phase():
+    """Not an aggregate difference: every counted record must exercise its regime."""
+    tool = _tool()
+    assert tool.phase_shape_problems(
+        _records(64, 1), phase_regimes=CENSUS_PHASE_REGIMES) == []
+    problems = tool.phase_shape_problems(_records(64, 8), phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems and all(_MODULE in p for p in problems), problems
+    # ...and the case the aggregate check could see is still refused.
+    assert tool.phase_shape_problems(_records(64, 64), phase_regimes=CENSUS_PHASE_REGIMES)
+
+
+def test_a_compiled_census_keeps_its_symbolic_records():
+    """Eager M parsing is not imposed on a shape-polymorphic trace."""
+    tool = _tool()
+    records = {phase: {_MODULE: _record("*")} for phase in CENSUS_PHASE_REGIMES}
+    assert tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True) == []

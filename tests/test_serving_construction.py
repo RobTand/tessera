@@ -147,6 +147,97 @@ def test_an_uncensused_architecture_answers_none_rather_than_yes():
     assert construction_entry(["NoSuchModelForCausalLM"]) is None
 
 
+# --- a pattern whose members disagreed is not a clearance (#204) -----------
+#
+# The census does NOT let the last member win: when two modules under one
+# normalised pattern answer differently it keeps the first value and records
+# the exact prefixes that differ under ``disagreements``
+# (``tools/tessera_construction_census.py``'s ``census``).  Derivation used to
+# read only the first member's ``offered_to_quant_config`` and drop that field
+# on the floor, so a pattern the census SAW disagree became an unconditional
+# ``offered`` for every one of its members -- a clearance to delete a
+# ``<module>.weight`` the runtime may build with ``quant_config=None``, which is
+# the exact artifact this block exists to prevent.  A normalised pattern whose
+# observed members disagree predicts nothing about the members that were not
+# observed (the GLM receipt is a 4-layer cut of a 92-layer model), so the only
+# honest verdict is that the pattern does not answer.
+
+
+def _receipt(name):
+    return json.loads((ROOT / "docs" / "measurements" / "construction" / name).read_text())
+
+
+def _with_disagreement(receipt, pattern, field, prefixes):
+    """The census's own disagreement schema, written onto a committed receipt."""
+    row = next(r for r in receipt["linears"] if r["prefix_pattern"] == pattern)
+    row.setdefault("disagreements", {})[field] = list(prefixes)
+    return receipt
+
+
+def test_a_first_offered_pattern_with_a_disagreeing_member_clears_nobody():
+    receipt = _with_disagreement(
+        _receipt("qwen3-0.6b.json"), "model.layers.*.mlp.down_proj",
+        "offered_to_quant_config", ["model.layers.1.mlp.down_proj"])
+    entry = construction_entry_from_receipt(receipt)
+    for module in ("model.layers.1.mlp.down_proj", "model.layers.0.mlp.down_proj"):
+        verdict, pattern = classify_construction(entry, module)
+        assert (verdict, pattern) == ("disagreement", "model.layers.*.mlp.down_proj"), module
+    assert entry["disagreements"] == [
+        {"prefix_pattern": "model.layers.*.mlp.down_proj",
+         "fields": {"offered_to_quant_config": ["model.layers.1.mlp.down_proj"]}}], (
+        "the derived entry dropped the disagreement the census recorded")
+    assert "model.layers.*.mlp.down_proj" not in entry["offered"], (
+        "a pattern the census saw disagree cannot sit in the clearance list")
+    # Every other pattern in the same receipt is unaffected.
+    assert classify_construction(entry, "model.layers.0.self_attn.o_proj")[0] == "offered"
+
+
+def test_the_inverse_ordering_says_disagreement_rather_than_never_offered():
+    """First member unoffered, a later one offered: still not an answer.
+
+    This ordering fails safe for the exporter -- ``never_offered`` refuses too
+    -- but it refuses for a reason the census did not observe, and a refusal
+    that names the wrong fact is not something a producer can act on.
+    """
+    pattern = "language_model.model.layers.*.self_attn.o_proj"
+    receipt = _with_disagreement(
+        _receipt("glm53-flash-4layer.json"), pattern, "offered_to_quant_config",
+        ["language_model.model.layers.3.self_attn.o_proj"])
+    entry = construction_entry_from_receipt(receipt)
+    verdict, seen = classify_construction(
+        entry, "model.language_model.layers.3.self_attn.o_proj")
+    assert (verdict, seen) == ("disagreement", pattern)
+    assert [row["prefix_pattern"] for row in entry["disagreements"]] == [pattern]
+
+
+def test_the_committed_receipts_are_the_homogeneous_control():
+    """No committed census observed a disagreement, so nothing above moves them."""
+    for path in RECEIPTS:
+        entry = construction_entry_from_receipt(json.loads(path.read_text()))
+        assert entry.get("disagreements", []) == [], path.name
+    entry = construction_entry(["Qwen3ForCausalLM"])
+    assert classify_construction(entry, "model.layers.0.mlp.down_proj")[0] == "offered"
+
+
+def test_validator_refuses_a_disagreeing_pattern_that_is_also_cleared():
+    """A hand-typed block cannot list a pattern as both disagreeing and offered."""
+    contract = _contract_with(json.loads(json.dumps(load_serving_contract()["construction"])))
+    entry = contract["construction"]["architectures"][0]
+    entry["disagreements"] = [
+        {"prefix_pattern": entry["offered"][0],
+         "fields": {"offered_to_quant_config": ["a.0.b"]}}]
+    with pytest.raises(ValueError, match="disagreed"):
+        validate_serving_contract(contract)
+
+
+def test_validator_refuses_an_empty_disagreement_row():
+    contract = _contract_with(json.loads(json.dumps(load_serving_contract()["construction"])))
+    entry = contract["construction"]["architectures"][0]
+    entry["disagreements"] = [{"prefix_pattern": "model.layers.*.mlp.down_proj", "fields": {}}]
+    with pytest.raises(ValueError, match="fields"):
+        validate_serving_contract(contract)
+
+
 def _contract_with(block):
     contract = json.loads(json.dumps(load_serving_contract()))
     contract["construction"] = block

@@ -468,6 +468,17 @@ prefixes, and offers two escapes: `--passthrough-unrouted` (source precision,
 the safe direction) and `--allow-unrouted` (write it anyway, stamped into the
 manifest's `serving_gate`).
 
+A row is a *normalised* pattern over many modules, so the census does not let
+one member speak for the rest: it keeps the first answer and records the exact
+prefixes that differed under `disagreements`. Those rows now travel into the
+block, their patterns are struck from `offered`, and `classify_construction`
+answers `disagreement` for every member of such a pattern (issue #204). A
+4-layer cut of a 92-layer model observes four members of each pattern, so a
+pattern that answered both ways clears none of them — reading the first
+member's `True` as a clearance is how a wire lands where the runtime builds
+BF16. No committed receipt carries a disagreement, so the key is absent from
+every current row.
+
 The census answers "which patterns" in the *runtime's* namespace and a
 producer names modules in the *checkpoint's*, so the two are joined by
 `contract.vllm_module_name` -- the one place this repo computes what vLLM
@@ -565,7 +576,17 @@ The predicate is therefore published (`runtime_contract.json` v12,
   stderr.
 - **After the fact.** `tools/tessera_lane_preflight.py` answers the same
   question from the bytes of a checkpoint somebody else built, over every
-  unit, and exits non-zero.
+  unit, and exits non-zero. It decides each unit through
+  `scheme.lane_wire_report` — the byte-side twin of the plan-time gate, over
+  the facts `scheme.wire_facts_of_parsed` keeps off the parse — so the same
+  four published requirements are read on both sides. It checked only the
+  rates until issue #206, which made the offline checker weaker than the gate
+  it exists to double-check: a unit at rate 4 with an L=12 window on a LUT
+  plane was published `READABLE`, `reachable: true`, exit 0. A requirement the
+  contract grows and that reader has not learned raises rather than passing,
+  and a directory holding no `.wire_bytes` is a refusal rather than
+  `READABLE 0/0`. Its report is `tessera.lane_preflight/2`, which carries the
+  requirements each verdict was decided against and the refusals by name.
 
 The rate axis was **not** narrowed to fit the kernel: it is 2-D and
 continuous by design, and pinning the format to three values so one lane can
@@ -773,6 +794,18 @@ Compiled dense per-cell agreement remains unsupported because its trace combines
 launches across shapes. A compiled routed-MoE record can agree only when the
 record and the runtime-scoped cell each name one launch. Unsupported records
 are counted as unattested and retained verbatim in the receipt.
+
+An eager record attests the regime its forward RAN, not the one its phase is
+named after. The phase label is what the census asked for; `M` is what the
+machine did, and resident FP8 publishes one launch pair for both regimes, so an
+eight-row forward filed under the decode phase used to be counted as covered,
+agreeing decode evidence (issue #207). `scheme.eager_regime_problem` owns that
+rule — `regime_of_m` for the map, `parse_eager_shape` for the spelling — and
+both readers call it: `census.cell_launch_agreement` refuses a covered eager
+record whose shape is absent, unparseable, or of the other regime, and the
+census's own `phase_shape_problems` now reads every record against its own
+phase instead of asking only whether the two phases differed somewhere. A
+refused record is counted unattested and its problem makes the block disagree.
 
 Lane eligibility schema v5 additionally requires each cell's `runtime` scope:
 an exact `image` manifest reference and a nonempty, distinct `execution_modes`

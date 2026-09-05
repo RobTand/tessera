@@ -1727,6 +1727,16 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
     Generated, not transcribed: the receipt is the observation, this is the
     subset a gate reads, and the test that compares them is what keeps the two
     from drifting.
+
+    A census row is a NORMALISED pattern over several modules, and the census
+    does not let the last member win: it keeps the first member's answer and
+    records the exact prefixes that disagreed under ``disagreements``.  Those
+    rows travel into the entry and their patterns are struck from ``offered``,
+    because a pattern whose observed members disagree answers nothing about the
+    members that were not observed -- the GLM receipt is a 4-layer cut of a
+    92-layer model -- and reading the first member's ``True`` as a clearance is
+    how a wire gets written where the runtime builds BF16.  The key is present
+    only when the census recorded one, which is the census's own spelling.
     """
     if receipt.get("schema") != CONSTRUCTION_CENSUS_SCHEMA:
         raise ValueError(
@@ -1738,7 +1748,16 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
             f"a construction census covers exactly one architecture; {architectures} "
             "does not say which module tree was walked")
     linears = receipt["linears"]
-    return {
+    ordered = sorted(linears, key=lambda r: r["prefix_pattern"])
+    # Whatever the census recorded a disagreement on -- not a roster typed
+    # here, so a field it starts recording tomorrow blocks tomorrow.
+    disagreements = [
+        {"prefix_pattern": row["prefix_pattern"],
+         "fields": {field: sorted(prefixes)
+                    for field, prefixes in sorted(row["disagreements"].items())}}
+        for row in ordered if row.get("disagreements")]
+    disagreeing = {row["prefix_pattern"] for row in disagreements}
+    entry = {
         "architecture": architectures[0],
         "runtime": {key: receipt["runtime"][key] for key in ("image", "image_id", "vllm")},
         "model": {key: receipt["model"][key] for key in
@@ -1746,14 +1765,17 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
         "supports_quant": bool(receipt["supports_quant"]),
         "hf_to_vllm_mapper_unstacked": receipt["hf_to_vllm_mapper_unstacked"] or {},
         "offered": sorted(row["prefix_pattern"] for row in linears
-                          if row["offered_to_quant_config"]),
+                          if row["offered_to_quant_config"]
+                          and row["prefix_pattern"] not in disagreeing),
         "never_offered": [
             {"prefix_pattern": row["prefix_pattern"], "class": row["class"],
              "quant_method": row["quant_method"]}
-            for row in sorted(linears, key=lambda r: r["prefix_pattern"])
-            if not row["offered_to_quant_config"]],
+            for row in ordered if not row["offered_to_quant_config"]],
         "offered_non_linear": [dict(row) for row in receipt["offered_non_linear"]],
     }
+    if disagreements:
+        entry["disagreements"] = disagreements
+    return entry
 
 
 def _validate_construction(block: Any, where: str) -> None:
@@ -1768,7 +1790,7 @@ def _validate_construction(block: Any, where: str) -> None:
                       required={"architecture", "runtime", "model", "supports_quant",
                                 "hf_to_vllm_mapper_unstacked", "offered", "never_offered",
                                 "offered_non_linear"},
-                      optional={"receipt"})
+                      optional={"receipt", "disagreements"})
         name = entry["architecture"]
         if name in seen:
             raise ValueError(
@@ -1780,12 +1802,50 @@ def _validate_construction(block: Any, where: str) -> None:
         if overlap:
             raise ValueError(
                 f"{row}: {overlap} are both offered and never offered; a census cannot say both")
+        _validate_construction_disagreements(entry, row)
         for key in ("image", "image_id", "vllm"):
             if not entry["runtime"].get(key):
                 raise ValueError(
                     f"{row}.runtime.{key} is empty: a construction answer is a property of the "
                     "image it was observed in, and an unstamped one cannot be checked against "
                     "the image a serve actually runs")
+
+
+def _validate_construction_disagreements(entry: Mapping[str, Any], where: str) -> None:
+    """Refuse a disagreement row a gate could read as nothing.
+
+    The block carries the census's ``disagreements`` so ``classify_construction``
+    can refuse a pattern whose members were observed answering differently. A
+    row that names no field says nothing, and a pattern that is disagreeing AND
+    cleared is the contradiction this whole block exists to keep out of an
+    exporter -- both are refused here rather than at the far end.
+    """
+    patterns: set[str] = set()
+    for j, item in enumerate(entry.get("disagreements", ())):
+        at = f"{where}.disagreements[{j}]"
+        _require_keys(item, at, required={"prefix_pattern", "fields"})
+        pattern = item["prefix_pattern"]
+        if not isinstance(pattern, str) or not pattern:
+            raise ValueError(f"{at}.prefix_pattern must name the normalised module pattern")
+        if pattern in patterns:
+            raise ValueError(f"{at}: {pattern!r} is recorded twice")
+        patterns.add(pattern)
+        fields = item["fields"]
+        if not isinstance(fields, Mapping) or not fields:
+            raise ValueError(
+                f"{at}.fields is empty: a disagreement that names no census field and no "
+                "disagreeing prefix is not an observation a gate can act on")
+        for field, prefixes in fields.items():
+            if not isinstance(prefixes, list) or not prefixes or not all(
+                    isinstance(p, str) and p for p in prefixes):
+                raise ValueError(
+                    f"{at}.fields.{field} must list the exact module prefixes that disagreed")
+    cleared = sorted(patterns & set(entry["offered"]))
+    if cleared:
+        raise ValueError(
+            f"{where}: {cleared} disagreed across their observed members and are still listed as "
+            "offered. A normalised pattern whose members answer differently clears none of them; "
+            "regenerate the block with tools/tessera_update_construction_block.py")
 
 
 def construction_entry(architectures, contract: Mapping[str, Any] | None = None):
@@ -1900,8 +1960,11 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     it with ``quant_config=None``, so the plugin is never asked and the wire is
     dead.  ``absent`` -- the census walked the whole module tree and this name
     is not a module the runtime builds at all (a fused role named at its leaf,
-    a name from another architecture).  The last two are the same outcome for a
-    producer and are told apart only so the refusal can say which it is.
+    a name from another architecture).  ``disagreement`` -- the census observed
+    the members of this pattern answering differently and recorded which ones,
+    so the pattern says nothing about any of them.  The last three are the same
+    outcome for a producer and are told apart only so the refusal can say which
+    it is.
 
     ``offered`` IS TWO LISTS, because "was this prefix offered a quant config"
     and "is this prefix a Linear" are different questions and the census
@@ -1913,8 +1976,16 @@ def classify_construction(entry: Mapping[str, Any], checkpoint_module: str) -> t
     exists to serve while the census receipt said, in the same file, that the
     runtime asks about it.  The census is the attestation either way
     (principle 14); this reads all of what it wrote.
+
+    That includes what it wrote about members that DISAGREED, which is checked
+    first: a pattern the census saw answer both ways is not evidence for either
+    answer, and reading the first member's ``True`` as a clearance is how a
+    producer deletes a ``<module>.weight`` the runtime builds with
+    ``quant_config=None`` (#204).
     """
     pattern = normalise_module(vllm_module_name(entry, checkpoint_module))
+    if pattern in {row["prefix_pattern"] for row in entry.get("disagreements", ())}:
+        return "disagreement", pattern
     if pattern in set(entry["offered"]):
         return "offered", pattern
     if pattern in {row["prefix_pattern"] for row in entry.get("offered_non_linear", ())}:

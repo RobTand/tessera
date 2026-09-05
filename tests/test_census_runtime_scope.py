@@ -21,6 +21,9 @@ def _case(*, structure="dense", execution_modes=("eager",)):
     records = {"decode": {"model.proj": {
         "kind": "dense" if structure == "dense" else "moe",
         "policy": "TESSERA_FP8:resident", "symbol": symbol,
+        # The one-row forward the decode cell covers: a record counted as
+        # decode evidence has to carry the shape that ran (#207).
+        "shape": "M1:N4096:K4096",
         "decoder": "torch_materialize_stock"}}}
     cell = {
         "id": "synthetic", "platform": "sm_121", "structure": structure,

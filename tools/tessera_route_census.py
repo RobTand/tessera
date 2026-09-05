@@ -88,7 +88,6 @@ import collections
 import json
 import os
 import platform
-import re
 import subprocess
 import sys
 import time
@@ -221,21 +220,31 @@ def declared_rung(scheme):
 
 
 def parse_eager_shape(value):
-    """Read telemetry.route_shape's canonical concrete M:N:K spelling."""
-    match = re.fullmatch(r"M([1-9][0-9]*):N([1-9][0-9]*):K([1-9][0-9]*)", value) if isinstance(value, str) else None
-    if match is None:
-        raise ValueError(f"eager shape must be canonical M<n>:N<n>:K<n>, got {value!r}")
-    return tuple(int(dimension) for dimension in match.groups())
+    """Read telemetry.route_shape's canonical concrete M:N:K spelling.
+
+    The grammar lives in ``scheme`` beside ``regime_of_m``, because the census
+    tool and the shared cell matcher must read a shape the same way or one of
+    them attests a regime the other would refuse.  Kept here as a name its
+    existing callers already import.
+    """
+    from tessera.serving.scheme import parse_eager_shape as _parse
+    return _parse(value)
 
 
 def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
                          require_each_owner=False):
-    """The two driven shapes, optionally required for every campaign owner.
+    """Every eager record's own shape against the regime its phase declares.
 
-    Callers requiring owner coverage first join records into owner space. The
-    generic census retains its aggregate eager check; a complete-population
-    gate additionally refuses missing/equal eager shapes at any owner.
+    Callers requiring owner coverage first join records into owner space; that
+    arm additionally refuses a missing or unchanged shape at any owner.  Both
+    arms then read EACH record, because a phase attests the forward that ran
+    and not the one it was named after: an aggregate "the two phases differ
+    somewhere" passes a census in which one module kept its prefill record
+    while another moved, and passes an eight-row forward filed under the decode
+    phase (#207).  The M -> regime rule is ``scheme.eager_regime_problem``, the
+    same one ``census.cell_launch_agreement`` applies to a covered record.
     """
+    from tessera.serving.scheme import eager_regime_problem
     batch_phase = next(p for p, regime in phase_regimes.items() if regime == "batch")
     decode_phase = next(p for p, regime in phase_regimes.items() if regime == "decode")
     batch, decode = records_by_phase[batch_phase], records_by_phase[decode_phase]
@@ -250,28 +259,19 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
                if not (str(p).startswith("M*:") and str(d).startswith("M*:"))]
         return ([f"compiled records must be shape-polymorphic (M*); got {bad[:3]}"]
                 if bad else [])
+    problems = []
     if require_each_owner:
-        from tessera.serving.scheme import regime_of_m
         missing = sorted(set(batch) ^ set(decode))
         bad = [name for name, p, d in shapes
                if not isinstance(p, str) or not p or not isinstance(d, str) or not d or p == d]
         problems = ([f"each owner needs distinct nonempty eager shapes in both driven phases; "
                      f"missing={missing}, unchanged/missing shape={bad}"] if missing or bad else [])
-        for phase, records in records_by_phase.items():
-            for owner, record in records.items():
-                try:
-                    m, _, _ = parse_eager_shape(record.get("shape"))
-                except ValueError as exc:
-                    problems.append(f"{phase} {owner}: {exc}")
-                    continue
-                if regime_of_m(m) != phase_regimes[phase]:
-                    problems.append(f"{phase} {owner}: shape M{m} does not exercise "
-                                    f"declared regime {phase_regimes[phase]}")
-        return problems
-    if all(p == d for _, p, d in shapes):
-        return [f"{batch_phase} and {decode_phase} records carry the same shape; only one "
-                "shape was exercised"]
-    return []
+    for phase, records in sorted(records_by_phase.items()):
+        for owner, record in sorted(records.items()):
+            why = eager_regime_problem(record.get("shape"), phase_regimes.get(phase))
+            if why is not None:
+                problems.append(f"{phase} {owner}: {why}")
+    return problems
 
 
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
@@ -675,8 +675,16 @@ def main() -> int:
         if args.expect_modules is not None and len(tess) != args.expect_modules:
             problems.append(
                 f"{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
+    # THE TESSERA RECORDS ARE WHAT THIS RECEIPT ATTESTS, so they are what the
+    # shape and agreement checks below read: a record from another quant
+    # method's route is observed and counted, never used as evidence for a
+    # Tessera regime.
+    tessera_by_phase = {
+        phase: {n: r for n, r in recs.items()
+                if str(r.get("policy", "")).startswith(prefixes)}
+        for phase, recs in phases.items()}
     problems.extend(phase_shape_problems(
-        phases, phase_regimes=CENSUS_PHASE_REGIMES, compiled=args.compiled))
+        tessera_by_phase, phase_regimes=CENSUS_PHASE_REGIMES, compiled=args.compiled))
 
     # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
     # the decode regime legitimately admits both the GEMV pair and the
@@ -685,10 +693,6 @@ def main() -> int:
     # lane this arm requested take any units at all (issue #104)?  Emitted
     # unconditionally so a receipt written without --require-lane still carries
     # the decoder counts a gate would need.
-    tessera_by_phase = {
-        phase: {n: r for n, r in recs.items()
-                if str(r.get("policy", "")).startswith(prefixes)}
-        for phase, recs in phases.items()}
     engagement, engagement_problems = lane_engagement(
         tessera_by_phase, required_lanes=required_lanes, lane_decoders=lane_decoders or None,
         refusals_by_phase={phase: refusals for phase in phases})

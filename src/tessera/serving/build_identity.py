@@ -61,6 +61,12 @@ imports vLLM or torch -- it runs on the host after the container is gone.
 WHAT IT DOES NOT CLAIM.  A stamp read from the log alone, without the serve's
 cache root, is marked ``complete: false`` and refuses to certify either
 sameness or difference. The teacher wrapper now pins and reads that cache root.
+An EAGER stamp is a claim too, and it rests on the same kind of evidence: a
+missing or unreadable log, a log with no vLLM startup line, or a startup line
+that resolved ``enforce_eager=False`` with no compile line anywhere is
+``complete: false`` -- because ``compiled_forward`` is false for an eager arm
+and for a serve nobody observed alike, and reading the second as the first let
+two unobserved arms certify as one build (issue #205).
 And a build identity says two arms
 ran the same compiled code; it does not say the compiled code is correct, and
 it is not a substitute for serving both arms.
@@ -82,6 +88,7 @@ __all__ = [
     "build_identity",
     "compare",
     "deterministic_effective",
+    "incomplete_reason",
     "load",
     "read_cache_root",
     "read_serve_log",
@@ -113,6 +120,10 @@ _BACKBONE = re.compile(
     r"Using cache directory: \S*?torch_compile_cache/([0-9a-f]{6,})/rank_[0-9_]+/backbone")
 _FRESH = re.compile(r"Dynamo bytecode transform time")
 _VLLM_VERSION = re.compile(r"Initializing a V\d+ LLM engine \(v([0-9][^)]*)\)")
+#: The execution mode vLLM RESOLVED, printed in the same startup line as the
+#: version.  Positive evidence, which is the point: the absence of compile
+#: lines is not an eager serve, it is a log that says nothing (#205).
+_ENFORCE_EAGER = re.compile(r"enforce_eager=(True|False)")
 # The resolved dispatch, printed by vLLM in the same startup config line.
 _CUSTOM_OPS = re.compile(r"'custom_ops': \[([^\]]*)\]")
 _IR_PRIORITY = re.compile(r"ir_op_priority=IrOpPriorityConfig\(([^)]*)\)")
@@ -132,6 +143,13 @@ def read_serve_log(text: str) -> dict:
     saved, or a backbone directory was opened), not from the flag the operator
     believes they passed: an ``--enforce-eager`` serve that compiled anyway
     would otherwise stamp as eager.
+
+    Its FALSE is therefore an absence, and an absence is not an eager serve.
+    ``vllm_version`` and ``enforce_eager`` come off vLLM's own startup line and
+    are the positive evidence a "nothing was compiled here" claim rests on: a
+    log that names no engine recorded no serve at all, and one whose engine
+    line says ``enforce_eager=False`` while carrying no compile line is a
+    contradiction rather than an eager arm (#205).
     """
     loaded: set[str] = set()
     saved: set[str] = set()
@@ -139,6 +157,7 @@ def read_serve_log(text: str) -> dict:
     failures: list[str] = []
     fresh = 0
     version: str | None = None
+    enforce_eager: bool | None = None
     dispatch: dict | None = None
     requested: dict | None = None
     for line in text.splitlines():
@@ -177,9 +196,15 @@ def read_serve_log(text: str) -> dict:
             fresh += 1
         if version is None and (m := _VLLM_VERSION.search(line)):
             version = m.group(1)
+            # Read off the SAME line, so the mode recorded is the one the
+            # engine that started reported, not a value scraped from any line
+            # of a concatenated log.
+            mode = _ENFORCE_EAGER.search(line)
+            enforce_eager = None if mode is None else mode.group(1) == "True"
     keys = sorted(loaded | saved)
     return {
         "vllm_version": version,
+        "enforce_eager": enforce_eager,
         "aot_keys": keys,
         "aot_keys_loaded": sorted(loaded),
         "aot_keys_saved": sorted(saved),
@@ -311,8 +336,13 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
     and the check would be turned off within a week.
     """
     log_path = Path(serve_log)
-    text = log_path.read_text(errors="replace") if log_path.is_file() else ""
-    parsed = read_serve_log(text)
+    try:
+        text = log_path.read_text(errors="replace") if log_path.is_file() else None
+    except OSError:
+        # Unreadable and absent are one state for this record: no serve was
+        # observed.  Neither is an eager arm (#205).
+        text = None
+    parsed = read_serve_log(text or "")
 
     slots = (read_cache_root(cache_root, parsed["aot_keys"], parsed["backbone_keys"])
              if cache_root is not None
@@ -350,7 +380,7 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
     # and refused the very "replayed by a second serve" row this stamp exists
     # to certify.  The autotune digest already separates the two real caches
     # (04525ea7... vs dbeb2b8b...), so nothing is lost by moving it out.
-    complete = _is_complete(identity, slots["backbone"], cache_root is not None)
+    complete = _is_complete(identity, parsed, slots["backbone"], cache_root is not None)
     return {
         "schema": SCHEMA,
         "build_fingerprint": _fingerprint(identity),
@@ -360,7 +390,14 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
             "produced_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(
                 timespec="seconds"),
             "serve_log": str(log_path),
+            "serve_log_read": text is not None,
             "serve_log_sha256": _sha256(log_path),
+            # What vLLM's own startup line said it resolved, beside the
+            # ``eager`` the caller asked for above.  Provenance by the same
+            # rule as ``dispatch_requested``: it is read to decide whether
+            # this record ESTABLISHES an execution mode, and the mode that
+            # decides the arithmetic is already ``compiled_forward``.
+            "enforce_eager": parsed["enforce_eager"],
             "cache_root": slots["root"],
             "backbone": slots["backbone"],
             "artifact_path": artifact_path,
@@ -379,16 +416,28 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
     }
 
 
-def _is_complete(identity: dict, backbone: dict, had_cache_root: bool) -> bool:
+def _is_complete(identity: dict, parsed: dict, backbone: dict,
+                 had_cache_root: bool) -> bool:
     """True when the record answers "which compiled build served this arm".
 
-    An eager serve answers it with "none" and is complete.  A compiled serve is
-    complete only when every cache slot its log named was found and digested:
-    the key alone does not distinguish two builds, so a key-only record must
-    not be allowed to certify.
+    An eager serve answers it with "none" -- but only a serve that was
+    OBSERVED does.  ``compiled_forward`` is false both for an eager arm and
+    for a log nobody wrote, and reading the second as the first is how two
+    unobserved serves certified as one build (#205).  So the eager answer
+    rests on vLLM's own startup line: the engine version proves a serve was
+    seen, and the ``enforce_eager`` it resolved proves the arm was the eager
+    one.  A log that says it was NOT eager and carries no compile line is a
+    contradiction, not an eager arm, and neither is a request to compile that
+    left no compile evidence.
+
+    A compiled serve is complete only when every cache slot its log named was
+    found and digested: the key alone does not distinguish two builds, so a
+    key-only record must not be allowed to certify.
     """
+    if parsed["vllm_version"] is None:
+        return False
     if not identity["compiled_forward"]:
-        return True
+        return parsed["enforce_eager"] is True and identity["eager"] is not False
     if not had_cache_root or not identity["aot"]:
         return False
     if not all(s["present"] and s["autotune_digest"] for s in identity["aot"].values()):
@@ -434,20 +483,48 @@ def compare(a: dict, b: dict) -> dict:
     }
 
 
-def _refuse_incomplete(verdict: dict, why: str) -> None:
+def incomplete_reason(record: dict) -> "str | None":
+    """Why this record cannot certify, in its own fields -- or ``None``.
+
+    Derived at the refusal rather than stored, so a record written by an older
+    stamp answers too.  The reason matters because the states are different
+    repairs: a missing cache root is re-stamped with the root mounted, and a
+    log that recorded no serve is not a stamping problem at all.
+    """
+    if record.get("complete"):
+        return None
+    identity, provenance = record["identity"], record["provenance"]
+    if identity.get("vllm_version") is None:
+        return ("its serve log carries no vLLM startup line"
+                + ("" if provenance.get("serve_log_read", True)
+                   else f" (no readable log at {provenance.get('serve_log')!r})")
+                + ", so no serve was observed; an absent compile record is not an eager "
+                  "serve, it is a log that says nothing")
+    if not identity["compiled_forward"]:
+        if provenance.get("enforce_eager") is not True:
+            return ("its serve log records no compiled forward while vLLM's own startup "
+                    f"line resolved enforce_eager={provenance.get('enforce_eager')!r}, so "
+                    "what this arm ran is not established")
+        return ("it was stamped eager=False -- the arm was asked to compile -- and its "
+                "serve log carries no compile evidence at all")
+    return ("its serve log names an AOT key but no compile-cache root was read, and the "
+            "key does not identify the build (one key held both of the two builds that "
+            "differ by 0.017117); mount the cache root the serve used and stamp again")
+
+
+def _refuse_incomplete(verdict: dict, why: str, records: dict) -> None:
     if verdict["incomplete"]:
+        reasons = "; ".join(
+            f"{name}: {incomplete_reason(records[name])}" for name in verdict["incomplete"])
         raise BuildIdentityError(
             f"{why}: build identity is incomplete for {', '.join(verdict['incomplete'])} "
-            "-- the serve log names an AOT key but no compile-cache root was read, and "
-            "the key does not identify the build (one key held both of the two builds "
-            "that differ by 0.017117).  Mount the cache root the serve used and stamp "
-            "again; do not read this as agreement.")
+            f"-- {reasons}. Do not read this as agreement.")
 
 
 def require_same_build(a: dict, b: dict, *, why: str) -> None:
     """Refuse unless both arms provably served one compiled build."""
     verdict = compare(a, b)
-    _refuse_incomplete(verdict, why)
+    _refuse_incomplete(verdict, why, {"a": a, "b": b})
     if not verdict["same_build"]:
         raise BuildIdentityError(
             f"{why}: the two arms served a different compiled build "
@@ -490,7 +567,7 @@ def require_distinct_build(a: dict, b: dict, *, why: str) -> None:
     replay as a rebuild would report 0.000000 as evidence that rebuilds agree.
     """
     verdict = compare(a, b)
-    _refuse_incomplete(verdict, why)
+    _refuse_incomplete(verdict, why, {"a": a, "b": b})
     if verdict["same_build"]:
         raise BuildIdentityError(
             f"{why}: both arms served the same compiled build "

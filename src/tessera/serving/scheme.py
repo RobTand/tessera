@@ -62,6 +62,7 @@ covers it (principle 14); absence resolves ``unattested``.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 __all__ = [
@@ -92,6 +93,8 @@ __all__ = [
     "WINDOW_GEMV_SYMBOL",
     "MOE_GEMM_SYMBOL",
     "moe_census_symbol_base",
+    "eager_regime_problem",
+    "parse_eager_shape",
     "regime_of_m",
     "route_launches",
     "launch_pairs",
@@ -103,6 +106,8 @@ __all__ = [
     "is_tessera_scheme",
     "route_for_grid",
     "attested_cells",
+    "lane_wire_report",
+    "wire_facts_of_parsed",
     "refuse_a_family_with_no_expert_route",
     "refuse_unserveable_wire",
     "refuse_unreachable_lane",
@@ -342,6 +347,49 @@ def regime_of_m(m: int) -> str:
     if int(m) < 1:
         raise ValueError(f"M={m} is not a forward; a regime is a shape a route was called on")
     return "decode" if int(m) == 1 else "batch"
+
+
+#: ``telemetry.route_shape``'s canonical concrete spelling.  Eager only: a
+#: compiled forward is shape-polymorphic and stamps ``M*`` on purpose, so a
+#: parser that accepted it would be reading a graph as a forward.
+_EAGER_SHAPE = re.compile(r"M([1-9][0-9]*):N([1-9][0-9]*):K([1-9][0-9]*)")
+
+
+def parse_eager_shape(value: Any) -> "tuple[int, int, int]":
+    """Read ``telemetry.route_shape``'s canonical concrete ``M:N:K`` spelling."""
+    match = _EAGER_SHAPE.fullmatch(value) if isinstance(value, str) else None
+    if match is None:
+        raise ValueError(f"eager shape must be canonical M<n>:N<n>:K<n>, got {value!r}")
+    return tuple(int(dimension) for dimension in match.groups())
+
+
+def eager_regime_problem(shape: Any, regime: Any) -> "str | None":
+    """Why an eager record does not exercise ``regime`` -- or ``None`` if it does.
+
+    THE PHASE LABEL IS THE REQUEST; ``M`` IS WHAT RAN.  A census names its
+    phases and a cell is keyed by the regime that phase maps to, so a gate
+    reading the label alone attests the forward it asked for rather than the
+    one the machine took: an eight-row observation filed under the decode
+    phase was counted as a covered decode launch, and resident FP8 publishes
+    the same pair in both regimes, so nothing downstream could see it (#207).
+
+    One home for the rule (``regime_of_m`` above owns the M -> regime map),
+    called by the shared cell matcher (``census.cell_launch_agreement``) and by
+    the census's own shape check, so the two cannot drift.  Absent or
+    unparseable evidence is a problem, not a pass: an attestation with no shape
+    behind it is the thing this check exists to refuse.
+    """
+    try:
+        m, _, _ = parse_eager_shape(shape)
+    except ValueError as exc:
+        return str(exc)
+    if regime is None:
+        return f"shape M{m} names no regime to be checked against"
+    observed = regime_of_m(m)
+    if observed != regime:
+        return (f"shape M{m} is a {observed}-regime forward and does not exercise the "
+                f"declared regime {regime}")
+    return None
 
 #: The op the window-GEMV lane dispatches through, in the spelling
 #: ``kernel_window_gemv`` registers it under.  It lives HERE, torch-free,
@@ -879,6 +927,104 @@ def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dic
     offending = tuple(r for r in seen if supported and r not in supported)
     return {"lane": lane, "supported": list(supported), "rates": list(seen),
             "offending": list(offending), "reachable": not offending}
+
+
+#: How each PUBLISHED lane requirement is decided against ONE parsed unit's
+#: facts: the requirement's own name -> (the fact it reads, how it is read).
+#: A requirement this table has not learned is REFUSED rather than skipped,
+#: which is the whole of #206 -- an offline checker that quietly evaluated the
+#: subset it knew published ``READABLE`` for wire its own loader rejects, and
+#: was therefore weaker than the plan-time gate it exists to double-check.
+_LANE_WIRE_CHECKS = {
+    "column_rates": ("rates", "every_in"),
+    "window_bits": ("window_bits", "one_of"),
+    "body": ("body", "wire_spelling"),
+    "plane": ("plane", "wire_spelling"),
+}
+
+
+def wire_facts_of_parsed(parsed) -> dict:
+    """The byte-side facts a lane predicate is decided against, off a parsed unit.
+
+    Read from ``unit_artifact.parse_unit_artifact``'s own unit -- the object
+    the load path gates on -- and named the way :func:`lane_wire_report` and
+    :func:`refuse_unreachable_lane` name them, so an auditor holding bytes and
+    a producer holding a plan hand the same four facts to the same rules.
+
+    Duck-typed rather than imported: this module is torch-free on purpose
+    (``tests/test_census_no_torch.py``) and the manifest enums are not. A fact
+    the unit does not carry comes back ``None``, which the report refuses by
+    name rather than defaulting -- absent evidence is not a passing check.
+    """
+    unit = getattr(parsed, "unit", parsed)
+    body = getattr(unit, "body", None)
+    plane = getattr(unit, "scale_plane", None)
+    return {
+        "rates": tuple(int(r) for r in (getattr(unit, "rates", ()) or ())),
+        "window_bits": getattr(unit, "window_bits", None),
+        "body": getattr(body, "name", body),
+        "plane": getattr(plane, "name", plane),
+    }
+
+
+def lane_wire_report(lane: str, facts: Mapping[str, Any],
+                     contract: "Mapping | None" = None) -> dict:
+    """Whether ``lane`` can read ONE unit, against EVERY requirement it publishes.
+
+    The byte-side twin of :func:`refuse_unreachable_lane`, and the reason the
+    two are next to each other: the plan-time gate reads a rung, this reads
+    the bytes that rung produced, and a wire checker that decided fewer
+    conditions than the plan checker cannot double-check it. ``tools/
+    tessera_lane_preflight.py`` reported ``READABLE`` for a unit at rate 4
+    whose window was 12 and whose plane was LUT, because it kept the rates off
+    the parse and dropped everything else (#206).
+
+    ``{"lane", "requirements", "facts", "refusals", "readable"}``. The
+    requirement roster is the contract's, not a list here: an unknown
+    requirement RAISES, so a lane predicate that grows a condition refuses
+    every unit until this reader learns to decide it.
+    """
+    from .contract import lane_requirements, route_wire_spelling
+
+    requires = lane_requirements(lane, contract)
+    unknown = sorted(set(requires) - set(_LANE_WIRE_CHECKS))
+    if unknown:
+        raise ValueError(
+            f"lane {lane!r} publishes requirement(s) {unknown} that this byte-side reader "
+            f"cannot decide (it decides {sorted(_LANE_WIRE_CHECKS)}). A wire checker that "
+            "skipped a published condition would call a unit readable that the loader "
+            "refuses, so it refuses to answer instead. Teach scheme._LANE_WIRE_CHECKS to "
+            "read the fact, and give it a case in tests/test_lane_reachability.py.")
+
+    refusals: "list[str]" = []
+    for name in sorted(requires):
+        fact_name, how = _LANE_WIRE_CHECKS[name]
+        value = facts.get(fact_name)
+        if value is None or (how == "every_in" and not tuple(value)):
+            refusals.append(
+                f"the unit's {fact_name} was not read, so the lane's {name} requirement "
+                f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
+            continue
+        if how == "every_in":
+            report = lane_rate_report(lane, value, contract)
+            if not report["reachable"]:
+                refusals.append(
+                    f"{name} {report['offending']} are outside the rates this lane reads "
+                    f"({report['supported']}); the lane repacks each column at its own rate, "
+                    "so one column out of range refuses the whole unit")
+        elif how == "one_of":
+            allowed = [int(v) for v in requires[name]]
+            if int(value) not in allowed:
+                refusals.append(
+                    f"{name} {int(value)} is outside the {allowed} this lane's value table is "
+                    "built for")
+        else:
+            wanted = route_wire_spelling(name, requires[name])
+            if str(value) != wanted:
+                refusals.append(
+                    f"{name} {value} is not the {wanted} {name} this lane reads")
+    return {"lane": lane, "requirements": dict(requires), "facts": dict(facts),
+            "refusals": refusals, "readable": not refusals}
 
 
 def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,

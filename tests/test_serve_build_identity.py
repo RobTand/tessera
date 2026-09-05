@@ -237,6 +237,67 @@ def test_a_cache_root_missing_the_slot_the_log_names_is_incomplete(tmp_path):
     assert rec["identity"]["aot"][AOT_KEY]["present"] is False
 
 
+# ------------------------------- a log that recorded no serve (#205) --------
+#
+# THE DEFECT THIS PINS.  ``build_identity`` read a missing log as the empty
+# string, ``read_serve_log`` derived ``compiled_forward=False`` from the
+# absence of compile lines, and ``_is_complete`` read THAT as "an eager serve,
+# which answers 'which build served' with 'none'".  So two arms nobody
+# observed at all stamped ``complete: true`` with equal fingerprints, and
+# ``require_same_build`` certified them as one build -- the gate that exists
+# to keep a compiled rebuild from being attributed to the weights, passing on
+# two serves it has no evidence ever happened.  Passing ``eager=False``, which
+# says the arm was asked to compile, did not stop it.
+#
+# An eager claim is a claim, so it needs evidence like any other: vLLM's own
+# startup line, which names the engine version and the ``enforce_eager`` the
+# runtime resolved.
+
+
+def _missing(tmp_path, name, **kw):
+    return build_identity(serve_log=tmp_path / f"{name}-does-not-exist.log", **kw)
+
+
+def test_a_missing_serve_log_is_unknown_rather_than_an_eager_serve(tmp_path):
+    a = _missing(tmp_path, "a", eager=False)
+    b = _missing(tmp_path, "b", eager=False)
+    assert a["complete"] is False and b["complete"] is False
+    assert a["identity"]["vllm_version"] is None
+    with pytest.raises(BuildIdentityError, match="incomplete"):
+        require_same_build(a, b, why="two serves nobody observed")
+    with pytest.raises(BuildIdentityError, match="incomplete"):
+        require_distinct_build(a, b, why="two serves nobody observed")
+
+
+def test_a_log_with_no_startup_line_is_unknown_too(tmp_path):
+    """A file that exists proves a file exists; it does not prove a serve."""
+    rec = _stamp("hello, this is not a vLLM serve log\n", tmp_path, "empty", eager=True)
+    assert rec["complete"] is False
+
+
+def test_a_serve_that_was_asked_to_compile_and_shows_no_compile_is_unknown(tmp_path):
+    """The contradiction, explicitly: vLLM's own line says it was not eager and
+    the log carries no compile evidence, so what ran is not established."""
+    log = _ENGINE + "INFO 09-02 13:53:11 [gpu_model_runner.py:3220] Model loading took 1.42 GiB\n"
+    assert "enforce_eager=False" in log
+    rec = _stamp(log, tmp_path, "asked-compiled", eager=False)
+    assert rec["identity"]["compiled_forward"] is False
+    assert rec["complete"] is False
+
+
+def test_the_refusal_names_what_the_record_is_missing(tmp_path):
+    a = _missing(tmp_path, "a")
+    with pytest.raises(BuildIdentityError, match="no vLLM startup line"):
+        require_same_build(a, a, why="missing log")
+
+
+def test_the_positive_eager_serve_is_still_complete(tmp_path):
+    """The control: a real eager log carries the startup line that says so."""
+    rec = _stamp(EAGER_LOG, tmp_path, "eager", eager=True)
+    assert rec["provenance"]["enforce_eager"] is True
+    assert rec["complete"] is True
+
+
 # ------------------------------------------------- the determinism knob ----
 
 def test_the_determinism_env_var_is_the_live_inductor_knob():

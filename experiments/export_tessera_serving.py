@@ -439,6 +439,10 @@ def unrouted_modules(src_config, modules):
       ``self_attn.{q,k,v}_proj`` on a KDA layer and vLLM builds ONE
       ``self_attn.in_proj_qkvbfg_a``, so the ``qkv_proj`` this script would
       declare corresponds to nothing.
+    * ``disagreement`` -- the census observed the members of this normalised
+      pattern answering differently and recorded which ones.  A pattern that
+      answered both ways clears none of its members, and the ones it did not
+      observe least of all.
     * ``uncensused`` -- no census covers this architecture.  That is an honest
       gap, not a clearance: the answer is unknown, so the wire is unpriced.
     """
@@ -466,6 +470,10 @@ def _unrouted_refusal(verdicts, architectures) -> str:
                          "get_quant_method is never called, so this plugin cannot even refuse it",
         "absent": "the runtime builds no module of this name (a fused role named at the wrong "
                   "seam, or a name from another architecture)",
+        "disagreement": "the census observed the members of this pattern answering differently "
+                        "(see the entry's disagreements rows), so the pattern clears none of "
+                        "them -- census this architecture on the full model, or name the "
+                        "modules the runtime actually offers",
         "uncensused": f"no construction census covers {architectures}; run "
                       "tools/tessera_construction_census.py inside the serving image and add "
                       "the receipt under docs/measurements/construction/",
