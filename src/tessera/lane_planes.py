@@ -420,6 +420,42 @@ def _require_no_post_decode_transforms(unit) -> None:
         )
 
 
+def _require_no_completion_plane(unit, forest: AnchorForest) -> None:
+    """Refuse a TCQ unit whose wire carries a COMPLETION plane.
+
+    A column at body rate ``R`` under the grid's cap may spend up to
+    ``cap - R`` further bits per position choosing among the descendants its
+    anchor reaches, and ``reconstruct_unit`` applies them.  The span-2 planes
+    this lane packs carry select, label and point bits and nothing else:
+    ``build_subset_values`` reads ``forest.blocks[*][0]`` -- the anchor -- for
+    every position and ``gemv_from_packed`` forwards no completion field, so
+    a deep unit packed to the bytes of the same unit with its plane zeroed and
+    served ``reconstruct_unit(zeroed)`` under the deep unit's name (#296).
+
+    The rule is the WRITTEN depth, from the one home that sizes the plane
+    (``grammar.completion_widths`` over ``completion_limit``): the plane is on
+    the wire whatever its words hold, and a parsed full-depth unit reads its
+    limit back as ``None`` (``completion_limit_from_elements``), so a check on
+    the limit alone would pass exactly the unit the reader recovers.  A
+    full-rate unit (``R == cap``) has no completion axis and passes at any
+    limit; that is the shipping span-2 wire.
+    """
+    from .grammar import completion_widths
+
+    limit = getattr(unit, "completion_limit", None)
+    written = max(completion_widths(tuple(unit.rates), forest.cap, limit), default=0)
+    if written:
+        raise GrammarError(
+            f"this unit carries a COMPLETION plane {written} level"
+            f"{'s' if written != 1 else ''} deep (rate {forest.rate} under a cap "
+            f"of {forest.cap}, completion_limit={limit}); the span-2 kernel lane "
+            "reads no such plane -- it would serve every position at its anchor "
+            "(blocks[anchor][0]) and drop the descendants the plane selects, "
+            "which is not reconstruct_unit(unit). Encode at completion=0, or "
+            "decode this unit through tessera.decode"
+        )
+
+
 def _pack_window_unit(unit, grid) -> dict:
     """``pack_unit_for_kernel``'s window branch.  See its docstring."""
     from .manifest import ScalePlaneKind
@@ -491,10 +527,13 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     lane applies -- released positions, diagonals, a rotation -- through the
     one function that states them (``_require_no_post_decode_transforms``).
     Beyond that the TCQ branch refuses what the span-2 kernel does not read:
-    a mixed-rate schedule (one forest per unit there) and an S6b plane at
-    span 2 (that kernel reads the LUT plane's nibbles; the shipping wire is
-    span 2 over a LUT plane).  The window branch reads both scale planes and
-    any mixed schedule.
+    a mixed-rate schedule (one forest per unit there), an S6b plane at span 2
+    (that kernel reads the LUT plane's nibbles; the shipping wire is span 2
+    over a LUT plane) and a COMPLETION plane of any written depth
+    (``_require_no_completion_plane``: the planes packed here stop at the
+    anchor, so a deep unit would be served as its zeroed twin).  The window
+    branch reads both scale planes and any mixed schedule, and a window body
+    has no completion axis by grammar.
     """
     from .manifest import BodyKind, ScalePlaneKind
 
@@ -525,6 +564,7 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     rates = set(unit.rates)
     if rates != {forest.rate}:
         raise GrammarError(f"unit rates {sorted(rates)} are not the forest's {forest.rate}")
+    _require_no_completion_plane(unit, forest)
     # Per-code planes are ``steps`` tall; a code covers ``arity`` rows.
     steps, cols = unit.codes.shape
     rows = steps * forest.grid.arity
