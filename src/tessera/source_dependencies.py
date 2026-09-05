@@ -1,7 +1,23 @@
 """Conservative, non-executing discovery of Python file-consumer dependencies.
 
 The supported expressions are finite Path constructions, not arbitrary Python.
-An unresolved recognized loader returns a wildcard edge instead of no edge.
+A resolved target inside the tree is an exact edge whatever its suffix: a
+``.py`` file is a module dependency, anything else is the data dependency it
+is.  A resolved target outside the tree is neither -- this repository's diff
+cannot change it.  An unresolved target is a wildcard edge instead of no edge.
+
+**An unresolved target is a wildcard over Python only when the reader can run
+Python.**  A loader always can, by definition.  A plain read cannot: bytes are
+a Python dependency only once something parses or executes them, so a module
+that never does is reading data, and calling its unnameable path "any module
+in the tree" made the whole tree depend on the whole tree.  ``_SOURCE_*`` is
+the recognition set for that -- the standard library's source-execution API,
+which this repository does not own and cannot derive from its own code, and
+which is deliberately matched by resolved symbol rather than by bare
+attribute name (``re.compile`` and ``model.eval()`` are not source
+execution).  What it misses is a source read this module never sees at all,
+``subprocess.run([sys.executable, path])`` above all; that was never an edge
+here and this does not change it.
 """
 from __future__ import annotations
 
@@ -177,6 +193,48 @@ class _Scanner(ast.NodeVisitor):
     visit_GeneratorExp = visit_ListComp
 
 
+#: Calls that turn bytes into running Python.  Bare names only for the
+#: builtins -- ``model.eval()`` and ``re.compile()`` are attributes and are not
+#: this.  Attribute names only where the name itself is the API.
+_SOURCE_BUILTINS = {"exec", "eval", "compile", "execfile", "__import__"}
+_SOURCE_ATTRIBUTES = {"run_path", "run_module", "spec_from_file_location",
+                      "SourceFileLoader", "SourcelessFileLoader", "exec_module",
+                      "source_to_code", "get_code", "compile_command"}
+#: ``module: attribute`` pairs whose attribute is too common to match alone.
+_SOURCE_QUALIFIED = {"ast": {"parse"}, "py_compile": {"compile"}}
+
+
+def _executes_python_source(tree):
+    """Whether this module can turn file bytes into Python it runs or parses."""
+    direct, modules = set(), {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name in _SOURCE_QUALIFIED:
+                    modules[alias.asname or alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            owned = _SOURCE_QUALIFIED.get(node.module or "", set())
+            for alias in node.names:
+                if alias.name in owned or alias.name in _SOURCE_ATTRIBUTES:
+                    direct.add(alias.asname or alias.name)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if isinstance(function, ast.Name):
+            if function.id in _SOURCE_BUILTINS or function.id in direct:
+                return True
+        elif isinstance(function, ast.Attribute):
+            if function.attr in _SOURCE_ATTRIBUTES:
+                return True
+            owner = function.value
+            if (isinstance(owner, ast.Name)
+                    and function.attr in _SOURCE_QUALIFIED.get(
+                        modules.get(owner.id, ""), set())):
+                return True
+    return False
+
+
 def _values(node, scope, root, visiting=frozenset()):
     """All statically established values; None means some alternative is unknown."""
     if isinstance(node, tuple):
@@ -317,13 +375,20 @@ def file_imports(tree, path, root):
                         aliases.setdefault(target.id, set()).update(loader)
         if aliases == before:
             break
+    executes = _executes_python_source(tree)
+
+    def wildcard(reading):
+        """An unnameable target is an unknown *module* only if it can run."""
+        return executes or not reading
+
     found, unknown = set(), False
     for call, scope in scanner.calls:
         loaders = kind(call.func)
         if not loaders:
             continue
+        reading = loaders <= _READ_METHODS
         if len(loaders) != 1:
-            unknown = True
+            unknown = unknown or wildcard(reading)
             continue
         loader = next(iter(loaders))
         try:
@@ -353,17 +418,18 @@ def file_imports(tree, path, root):
         except (OSError, ValueError, TypeError, RecursionError):
             values = None
         if values is None or not all(isinstance(value, (str, Path)) for value in values):
-            unknown = True
+            unknown = unknown or wildcard(reading)
             continue
         for value in values:
             try:
                 target = Path(value)
                 target = (target if target.is_absolute() else root / target).resolve()
             except (OSError, ValueError):
-                unknown = True
+                unknown = unknown or wildcard(reading)
                 continue
-            if target.is_relative_to(root) and target.suffix == ".py":
+            # Named and inside the tree: an exact edge, ``.py`` or not. Named
+            # and outside it: nothing this repository's diff can move, so it
+            # is neither an edge nor an unknown.
+            if target.is_relative_to(root):
                 found.add(target)
-            else:
-                unknown = True
     return found, unknown

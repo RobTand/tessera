@@ -71,13 +71,29 @@ tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
+An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
+`__init__` above it, because importing a submodule executes them; a file loaded
+by explicit path gets an edge to that file only, because loading by path does
+not.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
-than the loader's arbitrary module label. An unresolved recognized loader
-conservatively seeds its importing module and downstream tests for every
-non-inert change; an unresolved loader reaching a conftest forces the full
-population. The selector reports those unresolved importers in its receipt.
+than the loader's arbitrary module label. A resolved target inside the tree is
+an exact edge whatever its suffix -- a non-Python file is a node under its own
+repository-relative path -- and a resolved target outside the tree is neither an
+edge nor an unknown. An unresolved recognized loader conservatively seeds its
+importing module and downstream tests for every non-inert change; an unresolved
+loader reaching a conftest forces the full population. An unresolved *read* is
+an unknown module only for a module that can parse or execute Python source
+(`_SOURCE_BUILTINS`/`_SOURCE_ATTRIBUTES`/`_SOURCE_QUALIFIED`, matched by
+resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
+Python dependency once something runs them, and treating every unnameable read
+as "any module in the tree" is what held the verdict at `full` for every change
+(#148). A conftest that execs the `test_*.py` files below it is probing its
+collection targets, and that edge is excluded from the walk that forces full --
+as a dependency it closes a cycle that makes one uncertain test file uncertain
+for the whole population. The selector reports those unresolved importers in its
+receipt.
 One-directory conftest globs resolve to ordinary edges; recursive, escaping or
 otherwise unresolved path expressions retain the conservative fallback.
 Parameter, return and annotated-assignment expressions retain potential loader
@@ -86,10 +102,13 @@ use the defining scope (including a method's class scope), not value-parameter
 locals; generic type-parameter names remain unknown in a separate annotation
 scope instead of borrowing an outer file path.
 Explicit `Path.read_text`/`read_bytes`/`open` and builtin/`io.open` source reads
-also create edges, including aliased readers. This covers `ast.parse`/`exec`
-consumers without guessing what they later do with those bytes. Runtime-selected
-or shadowed paths remain conservative unknown edges and propagate to downstream
-tests; a parameterized filename is not silently treated as no dependency.
+also create edges, including aliased readers, and for a resolved path this is
+independent of what the reader does with the bytes. Runtime-selected or shadowed
+paths remain conservative unknown edges and propagate to downstream tests when
+the reader can execute Python; a parameterized filename in a source-executing
+module is not silently treated as no dependency. What this misses is a source
+read the resolver never sees -- `subprocess.run([sys.executable, path])` above
+all -- which was never an edge here.
 A conftest change reaches its entire test population; a delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
