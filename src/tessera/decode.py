@@ -45,6 +45,39 @@ __all__ = [
 ]
 
 
+#: How many distinct values one element of the fused chains can carry.  The
+#: chains run over ``uint8`` end to end -- that is the bandwidth choice the
+#: fusion is worth -- so it is the dtype that states the bound, not a literal.
+_BYTE_VALUES = torch.iinfo(torch.uint8).max + 1
+
+
+def _byte_chain_overflow(**cardinalities: int) -> "str | None":
+    """The first named quantity that does not fit a byte, or ``None``.
+
+    The compiled replay and decode chains cast their inputs to ``uint8`` and
+    index with them, so every quantity they carry has to have at most
+    ``_BYTE_VALUES`` distinct values.  A cast that wraps does not raise: it
+    decodes to a plausible wrong weight, which is why the guard is stated over
+    the quantities themselves rather than over a rate that bounds one of them.
+
+    The four the callers pass, and what each bounds:
+
+    - ``body_words`` -- ``2^rate``.  A body word at span 1 is the select bit
+      at position ``rate - 1`` over a ``rate - 1``-bit point field.
+    - ``anchors`` -- ``subsets.numel()`` = ``2^(rate+1)``.  This is the tight
+      one, and the one the old ``rate <= 8`` spelling missed by a factor of
+      two: at rate 8 the body still fits and the anchor plane runs to 511.
+    - ``states`` -- ``2^memory``.  ``_conv_state_stream`` builds the register
+      by shifting the ``uint8`` select stream, so the register is a byte too.
+    - ``completions`` -- ``reachable.shape[1]`` = ``2^level``, the width the
+      truncated completion word indexes.
+    """
+    for name, values in cardinalities.items():
+        if values > _BYTE_VALUES:
+            return f"{name}={values}"
+    return None
+
+
 def _replay_core(
     body: torch.Tensor,
     subsets_flat: torch.Tensor,
@@ -896,12 +929,28 @@ def decode_codes_mixed(
         reachable = blocks[:, :: 1 << (depth - level)].contiguous()
         points = subsets.shape[1]
         shift = points.bit_length() - 1
-        # The fused chain carries anchors and points in uint8 for bandwidth.
-        # Above 256 anchors that is not a slow path, it is a wrong one.
+        # The fused chain carries the whole trellis in uint8 for bandwidth.
+        # Past a byte that is not a slow path, it is a wrong one -- so ask the
+        # quantities.  ``picked.rate <= 8`` bounded the body word and nothing
+        # else, and the anchor plane is tighter by a factor of two; ``points
+        # <= 256`` bounded a Python int that only ever enters promoted
+        # arithmetic.  Neither was reachable (``narrow`` caps a 256-code grid
+        # at rate 7, so the anchor plane caps at 256), which is exactly why a
+        # guard that says what it means is worth the line.  ``narrow`` stays:
+        # it is what makes ``reachable`` a byte plane, and it keeps the fused
+        # path over precisely the artifacts it already covered.
         run = (
             _fused_decode()
-            if body.is_cuda and narrow and points <= 256 and picked.rate <= 8
+            if body.is_cuda
+            and narrow
             and span == 1
+            and _byte_chain_overflow(
+                body_words=1 << picked.rate,
+                anchors=subsets.numel(),
+                states=1 << code.memory,
+                completions=reachable.shape[1],
+            )
+            is None
             else None
         )
         args = (
